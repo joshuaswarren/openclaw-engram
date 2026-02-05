@@ -1,0 +1,44 @@
+{
+  "name": "openclaw-engram",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local-first memory plugin for OpenClaw. Uses GPT-5.2 for extraction and QMD for storage/retrieval.",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
+  "dependencies": {
+    "@honcho-ai/sdk": "^2.0.0",
+    "@sinclair/typebox": "^0.34.0",
+    "better-sqlite3": "^12.6.2",
+    "openai": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "openclaw": {
+    "plugin": "./openclaw.plugin.json",
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "check-types": "tsc --noEmit",
+    "migrate": "tsx scripts/migrate.ts"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "tsup": "^8.5.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}

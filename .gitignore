@@ -1,0 +1,28 @@
+# Build output
+dist/
+*.map
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local state (never commit user memory data)
+state/
+
+# Auto-generated claude-mem context files (contain session-specific data)
+src/CLAUDE.md
+scripts/CLAUDE.md

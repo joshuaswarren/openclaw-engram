@@ -1,0 +1,103 @@
+import path from "node:path";
+import type { PluginConfig, ReasoningEffort, TriggerMode } from "./types.js";
+
+const DEFAULT_MEMORY_DIR = path.join(
+  process.env.HOME ?? "~",
+  ".openclaw",
+  "workspace",
+  "memory",
+  "local",
+);
+
+const DEFAULT_WORKSPACE_DIR = path.join(
+  process.env.HOME ?? "~",
+  ".openclaw",
+  "workspace",
+);
+
+function resolveEnvVars(value: string): string {
+  return value.replace(/\$\{([^}]+)\}/g, (_, envVar: string) => {
+    const envValue = process.env[envVar];
+    if (!envValue) {
+      throw new Error(`Environment variable ${envVar} is not set`);
+    }
+    return envValue;
+  });
+}
+
+const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
+const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
+
+export function parseConfig(raw: unknown): PluginConfig {
+  const cfg =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+
+  let apiKey: string | undefined;
+  if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {
+    apiKey = resolveEnvVars(cfg.openaiApiKey);
+  } else {
+    apiKey = process.env.OPENAI_API_KEY;
+  }
+
+  // API key is optional at load time — retrieval works without it.
+  // Extraction will log a warning if called without a key.
+
+  const model =
+    typeof cfg.model === "string" && cfg.model.length > 0
+      ? cfg.model
+      : "gpt-5.2";
+
+  const rawEffort = cfg.reasoningEffort as string | undefined;
+  const reasoningEffort: ReasoningEffort =
+    rawEffort && VALID_EFFORTS.includes(rawEffort as ReasoningEffort)
+      ? (rawEffort as ReasoningEffort)
+      : "low";
+
+  const rawTrigger = cfg.triggerMode as string | undefined;
+  const triggerMode: TriggerMode =
+    rawTrigger && VALID_TRIGGERS.includes(rawTrigger as TriggerMode)
+      ? (rawTrigger as TriggerMode)
+      : "smart";
+
+  const memoryDir =
+    typeof cfg.memoryDir === "string" && cfg.memoryDir.length > 0
+      ? cfg.memoryDir
+      : DEFAULT_MEMORY_DIR;
+
+  return {
+    openaiApiKey: apiKey,
+    model,
+    reasoningEffort,
+    triggerMode,
+    bufferMaxTurns:
+      typeof cfg.bufferMaxTurns === "number" ? cfg.bufferMaxTurns : 5,
+    bufferMaxMinutes:
+      typeof cfg.bufferMaxMinutes === "number" ? cfg.bufferMaxMinutes : 15,
+    consolidateEveryN:
+      typeof cfg.consolidateEveryN === "number" ? cfg.consolidateEveryN : 3,
+    highSignalPatterns: Array.isArray(cfg.highSignalPatterns)
+      ? (cfg.highSignalPatterns as string[])
+      : [],
+    maxMemoryTokens:
+      typeof cfg.maxMemoryTokens === "number" ? cfg.maxMemoryTokens : 2000,
+    qmdEnabled: cfg.qmdEnabled !== false,
+    qmdCollection:
+      typeof cfg.qmdCollection === "string"
+        ? cfg.qmdCollection
+        : "openclaw-engram",
+    qmdMaxResults:
+      typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
+    memoryDir,
+    debug: cfg.debug === true,
+    identityEnabled: cfg.identityEnabled !== false,
+    injectQuestions: cfg.injectQuestions === true,
+    commitmentDecayDays:
+      typeof cfg.commitmentDecayDays === "number" ? cfg.commitmentDecayDays : 90,
+    workspaceDir:
+      typeof cfg.workspaceDir === "string" && cfg.workspaceDir.length > 0
+        ? cfg.workspaceDir
+        : DEFAULT_WORKSPACE_DIR,
+  };
+}

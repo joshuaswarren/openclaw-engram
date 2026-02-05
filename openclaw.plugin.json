@@ -1,0 +1,181 @@
+{
+  "id": "openclaw-engram",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "openaiApiKey": {
+        "type": "string",
+        "description": "OpenAI API key (or set OPENAI_API_KEY env var)"
+      },
+      "model": {
+        "type": "string",
+        "default": "gpt-5.2",
+        "description": "OpenAI model for extraction/consolidation"
+      },
+      "reasoningEffort": {
+        "type": "string",
+        "enum": ["none", "low", "medium", "high"],
+        "default": "low",
+        "description": "Reasoning effort for extraction"
+      },
+      "triggerMode": {
+        "type": "string",
+        "enum": ["smart", "every_n", "time_based"],
+        "default": "smart",
+        "description": "Buffer trigger mode"
+      },
+      "bufferMaxTurns": {
+        "type": "number",
+        "default": 5,
+        "description": "Max turns before forced extraction"
+      },
+      "bufferMaxMinutes": {
+        "type": "number",
+        "default": 15,
+        "description": "Max minutes before forced extraction"
+      },
+      "consolidateEveryN": {
+        "type": "number",
+        "default": 3,
+        "description": "Run consolidation every N extractions"
+      },
+      "highSignalPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Custom regex patterns for immediate extraction"
+      },
+      "maxMemoryTokens": {
+        "type": "number",
+        "default": 2000,
+        "description": "Max tokens injected per turn"
+      },
+      "qmdEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Use QMD for search"
+      },
+      "qmdCollection": {
+        "type": "string",
+        "default": "openclaw-engram",
+        "description": "QMD collection name"
+      },
+      "qmdMaxResults": {
+        "type": "number",
+        "default": 8,
+        "description": "Max QMD results per search"
+      },
+      "memoryDir": {
+        "type": "string",
+        "description": "Override memory storage directory"
+      },
+      "debug": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable debug logging"
+      },
+      "identityEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable agent identity reflections (appends to workspace IDENTITY.md)"
+      },
+      "injectQuestions": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject the most relevant open question into the system prompt"
+      },
+      "commitmentDecayDays": {
+        "type": "number",
+        "default": 90,
+        "description": "Days before fulfilled/expired commitments are removed"
+      },
+      "workspaceDir": {
+        "type": "string",
+        "description": "Override workspace directory path"
+      }
+    }
+  },
+  "uiHints": {
+    "openaiApiKey": {
+      "label": "OpenAI API Key",
+      "sensitive": true,
+      "placeholder": "sk-...",
+      "help": "API key for OpenAI (or use ${OPENAI_API_KEY})"
+    },
+    "model": {
+      "label": "Extraction Model",
+      "advanced": true,
+      "placeholder": "gpt-5.2"
+    },
+    "reasoningEffort": {
+      "label": "Reasoning Effort",
+      "advanced": true
+    },
+    "triggerMode": {
+      "label": "Trigger Mode",
+      "advanced": true
+    },
+    "bufferMaxTurns": {
+      "label": "Buffer Max Turns",
+      "advanced": true,
+      "placeholder": "5"
+    },
+    "bufferMaxMinutes": {
+      "label": "Buffer Max Minutes",
+      "advanced": true,
+      "placeholder": "15"
+    },
+    "consolidateEveryN": {
+      "label": "Consolidation Frequency",
+      "advanced": true,
+      "placeholder": "3"
+    },
+    "maxMemoryTokens": {
+      "label": "Max Memory Tokens",
+      "advanced": true,
+      "placeholder": "2000"
+    },
+    "qmdEnabled": {
+      "label": "Enable QMD",
+      "help": "Enable QMD for memory search/indexing"
+    },
+    "qmdCollection": {
+      "label": "QMD Collection",
+      "advanced": true,
+      "placeholder": "openclaw-engram"
+    },
+    "qmdMaxResults": {
+      "label": "QMD Max Results",
+      "advanced": true,
+      "placeholder": "8"
+    },
+    "memoryDir": {
+      "label": "Memory Directory",
+      "advanced": true,
+      "placeholder": "~/.openclaw/workspace/memory/local"
+    },
+    "debug": {
+      "label": "Debug Mode",
+      "advanced": true
+    },
+    "identityEnabled": {
+      "label": "Identity Reflections",
+      "help": "Append self-reflections to workspace IDENTITY.md after each extraction"
+    },
+    "injectQuestions": {
+      "label": "Inject Questions",
+      "help": "Include the most relevant open question in the system prompt"
+    },
+    "commitmentDecayDays": {
+      "label": "Commitment Decay (days)",
+      "advanced": true,
+      "placeholder": "90"
+    },
+    "workspaceDir": {
+      "label": "Workspace Directory",
+      "advanced": true,
+      "placeholder": "~/.openclaw/workspace"
+    }
+  }
+}
