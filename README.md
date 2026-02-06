@@ -1,8 +1,8 @@
 # openclaw-engram
 
-A local-first memory plugin for [OpenClaw](https://github.com/joshuaswarren/openclaw) that gives AI agents persistent, searchable long-term memory across conversations.
+A local-first memory plugin for [OpenClaw](https://github.com/openclaw/openclaw) that gives AI agents persistent, searchable long-term memory across conversations.
 
-Engram uses **LLM-powered extraction** (OpenAI Responses API) to intelligently identify what's worth remembering from each conversation, stores memories as plain **markdown files** on disk, and retrieves relevant context via **[QMD](https://github.com/nicholasgasior/qmd)** hybrid search (BM25 + vector + reranking).
+Engram uses **LLM-powered extraction** (OpenAI Responses API) to intelligently identify what's worth remembering from each conversation, stores memories as plain **markdown files** on disk, and retrieves relevant context via **[QMD](https://github.com/tobi/qmd)** hybrid search (BM25 + vector + reranking).
 
 ## Why Engram?
 
@@ -135,10 +135,10 @@ QMD supports hybrid search combining BM25 and vector embeddings with reranking.
 
 ### Prerequisites
 
-- [OpenClaw](https://github.com/joshuaswarren/openclaw) gateway
+- [OpenClaw](https://github.com/openclaw/openclaw) gateway
 - Node.js 20+
 - An OpenAI API key (for extraction; retrieval works without one)
-- [QMD](https://github.com/nicholasgasior/qmd) (optional, for hybrid search)
+- [QMD](https://github.com/tobi/qmd) (optional, for hybrid search)
 
 ### Install
 
