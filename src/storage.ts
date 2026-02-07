@@ -93,6 +93,48 @@ function parseFrontmatter(
   };
 }
 
+/**
+ * Normalize an entity name to a canonical form.
+ * Strips non-alphanumeric chars, collapses hyphens, removes type prefix duplication.
+ * e.g. "Blend Supply" → "blend-supply", "blendsupply" → "blend-supply"
+ */
+export function normalizeEntityName(raw: string, type: string): string {
+  // Known aliases: map variant spellings to canonical names
+  const ALIASES: Record<string, string> = {
+    blendsupply: "blend-supply",
+    "blend-supply": "blend-supply",
+    blend: "blend-supply",
+    openclaw: "openclaw",
+    "open-claw": "openclaw",
+    joshuawarren: "joshua-warren",
+    "joshua-warren": "joshua-warren",
+    josh: "joshua-warren",
+    creatuity: "creatuity",
+    "creatuity-com": "creatuity",
+    polymarket: "polymarket",
+  };
+
+  // Strip type prefix if present (e.g. name="person-joshua-warren", type="person")
+  let name = raw.toLowerCase().trim();
+  const typePrefix = `${type.toLowerCase()}-`;
+  if (name.startsWith(typePrefix)) {
+    name = name.slice(typePrefix.length);
+  }
+
+  // Replace non-alphanumeric with hyphens, collapse multiples, trim edges
+  let normalized = name
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  // Check aliases
+  if (ALIASES[normalized]) {
+    normalized = ALIASES[normalized];
+  }
+
+  return `${type.toLowerCase()}-${normalized}`;
+}
+
 export class StorageManager {
   constructor(private readonly baseDir: string) {}
 
@@ -185,11 +227,7 @@ export class StorageManager {
     facts: string[],
   ): Promise<string> {
     await this.ensureDirectories();
-    // Strip type prefix from name if already present (e.g. name="person-joshua-warren", type="person")
-    const stripped = name.toLowerCase().startsWith(`${type.toLowerCase()}-`)
-      ? name.slice(type.length + 1)
-      : name;
-    const normalized = `${type}-${stripped}`.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+    const normalized = normalizeEntityName(name, type);
     const filePath = path.join(this.entitiesDir, `${normalized}.md`);
 
     let existingFacts: string[] = [];
@@ -265,6 +303,14 @@ export class StorageManager {
       const withBullets = updatedTimestamp.trimEnd() + "\n" + newBullets.map((b) => `- ${b}`).join("\n") + "\n";
       await this.writeProfile(withBullets);
     }
+  }
+
+  /** Check if profile.md exceeds the max line cap and needs LLM consolidation */
+  async profileNeedsConsolidation(): Promise<boolean> {
+    const profile = await this.readProfile();
+    if (!profile) return false;
+    const lineCount = profile.split("\n").length;
+    return lineCount > StorageManager.PROFILE_MAX_LINES;
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {
@@ -620,6 +666,118 @@ export class StorageManager {
   // ---------------------------------------------------------------------------
   // Commitment decay
   // ---------------------------------------------------------------------------
+
+  /** Max lines for profile.md before oldest bullets are pruned */
+  private static readonly PROFILE_MAX_LINES = 600;
+
+  /**
+   * Merge fragmented entity files that resolve to the same canonical name.
+   * Returns count of files merged.
+   */
+  async mergeFragmentedEntities(): Promise<number> {
+    let merged = 0;
+    try {
+      const entries = await readdir(this.entitiesDir);
+      const mdFiles = entries.filter((e) => e.endsWith(".md"));
+
+      // Group files by their canonical name
+      const groups = new Map<string, string[]>();
+      for (const file of mdFiles) {
+        const baseName = file.replace(".md", "");
+        // Extract type and name from filename (type-rest-of-name)
+        const dashIdx = baseName.indexOf("-");
+        if (dashIdx === -1) continue;
+        const type = baseName.slice(0, dashIdx);
+        const restOfName = baseName.slice(dashIdx + 1);
+        const canonical = normalizeEntityName(restOfName, type);
+
+        if (!groups.has(canonical)) groups.set(canonical, []);
+        groups.get(canonical)!.push(file);
+      }
+
+      // Merge groups with more than one file
+      for (const [canonical, files] of groups) {
+        if (files.length <= 1) continue;
+
+        // Collect all facts from all files
+        const allFacts: string[] = [];
+        let bestType = "";
+        let latestUpdate = "";
+
+        for (const file of files) {
+          const filePath = path.join(this.entitiesDir, file);
+          try {
+            const content = await readFile(filePath, "utf-8");
+            const lines = content.split("\n");
+
+            // Extract type
+            const typeLine = lines.find((l) => l.startsWith("**Type:**"));
+            if (typeLine) {
+              const t = typeLine.replace("**Type:**", "").trim();
+              // Prefer "company" or "project" or "person" over "other"
+              if (!bestType || bestType === "other") bestType = t;
+            }
+
+            // Extract update time
+            const updatedLine = lines.find((l) => l.startsWith("**Updated:**"));
+            if (updatedLine) {
+              const u = updatedLine.replace("**Updated:**", "").trim();
+              if (!latestUpdate || u > latestUpdate) latestUpdate = u;
+            }
+
+            // Extract facts
+            const facts = lines
+              .filter((l) => l.startsWith("- "))
+              .map((l) => l.slice(2).trim());
+            allFacts.push(...facts);
+          } catch {
+            // Skip unreadable
+          }
+        }
+
+        // Deduplicate facts
+        const uniqueFacts = [...new Set(allFacts)];
+
+        // Extract readable name from canonical (strip type prefix)
+        const dashIdx = canonical.indexOf("-");
+        const readableName = dashIdx !== -1 ? canonical.slice(dashIdx + 1) : canonical;
+
+        // Write merged file
+        const content = [
+          `# ${readableName}`,
+          "",
+          `**Type:** ${bestType || "other"}`,
+          `**Updated:** ${latestUpdate || new Date().toISOString()}`,
+          "",
+          "## Facts",
+          "",
+          ...uniqueFacts.map((f) => `- ${f}`),
+          "",
+        ].join("\n");
+
+        const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);
+        await writeFile(canonicalPath, content, "utf-8");
+
+        // Remove non-canonical files
+        for (const file of files) {
+          const filePath = path.join(this.entitiesDir, file);
+          if (filePath !== canonicalPath) {
+            try {
+              await unlink(filePath);
+              merged++;
+              log.debug(`merged entity ${file} → ${canonical}.md`);
+            } catch {
+              // Ignore
+            }
+          }
+        }
+      }
+    } catch {
+      // Directory doesn't exist yet
+    }
+
+    return merged;
+  }
 
   async cleanExpiredCommitments(decayDays: number): Promise<number> {
     const memories = await this.readAllMemories();

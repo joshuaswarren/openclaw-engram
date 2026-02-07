@@ -5,6 +5,7 @@ import {
   ExtractionResultSchema,
   ConsolidationResultSchema,
   IdentityConsolidationResultSchema,
+  ProfileConsolidationResultSchema,
 } from "./schemas.js";
 import type {
   BufferTurn,
@@ -32,7 +33,14 @@ export class ExtractionEngine {
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     }
 
-    const conversation = turns
+    // Guard: skip if buffer is empty or all turns are whitespace-only
+    const substantiveTurns = turns.filter((t) => t.content.trim().length > 0);
+    if (substantiveTurns.length === 0) {
+      log.debug("extraction skipped — no substantive turns in buffer");
+      return { facts: [], profileUpdates: [], entities: [], questions: [] };
+    }
+
+    const conversation = substantiveTurns
       .map((t) => `[${t.role}] ${t.content}`)
       .join("\n\n");
 
@@ -66,6 +74,8 @@ Rules:
 - Corrections (user saying "actually, don't do X" or "I prefer Y") get highest confidence
 - Each fact should be a standalone, self-contained statement
 - Entity references should use normalized names (lowercase, hyphenated: "joshua-warren", "openclaw")
+- CRITICAL: Entity names must be CANONICAL. Always use the hyphenated multi-word form: "blend-supply" NOT "blendsupply" or "blend". "joshua-warren" NOT "joshuawarren" or "josh". If unsure, prefer the most specific full name.
+- Avoid creating entities typed as "other" when a more specific type fits (company, project, tool, person, place)
 - Tags should be concise and reusable (e.g., "coding-style", "personal", "tools")
 - Set confidence using these tiers:
   * Explicit (0.95-1.0): Direct user statements — "I prefer X", "my name is Y"
@@ -74,9 +84,21 @@ Rules:
   * Speculative (0.00-0.39): Tentative hypothesis — weak signal, needs future confirmation. Speculative memories auto-expire after 30 days if not confirmed.
 - For commitments: include any deadline or timeframe mentioned
 
+Entity creation rules (STRICT):
+- Only create entities for DURABLE things: real people, companies, products, tools, ongoing projects
+- NEVER create entities for transient items: individual PRs, branches, Jira tickets, meetings, agent task IDs, log files, database tables, cron job runs, sessions
+- When you learn something about a transient item (e.g., PR #58 fixed a bug), store it as a FACT with an entityRef to the parent project — do NOT create an entity for the PR itself
+- Prefer attaching facts to broad parent entities rather than creating sub-entities. E.g., "blend-supply uses Akeneo for PIM" is a fact on entity "blend-supply", NOT a new entity "blend-supply-akeneo-connector"
+- The entity list should be SHORT — think "things that would have their own Wikipedia page" not "things mentioned in passing"
+
 Also generate 1-3 genuine questions you're curious about based on this conversation. These should be things you'd actually want answers to in future sessions — not prompts, but real curiosity.
 
-Finally, write a brief identity reflection — what did you learn about yourself as an agent? How did you grow, what patterns do you notice in your own behavior, what could you improve?`,
+Finally, write a brief identity reflection about the AGENT who had this conversation (not about you, the extraction system). Based on what the agent said and did in the conversation:
+- What communication patterns did the agent show? (e.g., proactive vs reactive, verbose vs concise)
+- Did the agent handle the user's needs well or miss something?
+- What behavioral tendencies are visible? (e.g., cautious, creative, thorough, impatient)
+- What could the agent improve next time?
+Do NOT write about the extraction process itself. Do NOT say things like "I extracted durable facts" — that's about YOUR job, not the agent's behavior.`,
         input: conversation,
         text: {
           format: zodTextFormat(ExtractionResultSchema, "extraction_result"),
@@ -178,6 +200,60 @@ ${newList}`,
     } catch (err) {
       log.error("consolidation failed", err);
       return { items: [], profileUpdates: [], entityUpdates: [] };
+    }
+  }
+
+  /**
+   * Consolidate a bloated profile.md into a compact version.
+   * The LLM merges duplicates, removes stale info, and preserves section structure.
+   * Returns the consolidated markdown or null on failure.
+   */
+  async consolidateProfile(
+    fullProfileContent: string,
+  ): Promise<{ consolidatedProfile: string; removedCount: number; summary: string } | null> {
+    if (!this.client) {
+      log.warn("profile consolidation skipped — no OpenAI API key");
+      return null;
+    }
+
+    const reasoningParam =
+      this.config.reasoningEffort !== "none"
+        ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
+        : {};
+
+    try {
+      const response = await this.client.responses.parse({
+        model: this.config.model,
+        ...reasoningParam,
+        instructions: `You are a profile consolidation system. You are given a behavioral profile (markdown) that has grown too large. Your job is to produce a CONSOLIDATED version that:
+
+1. PRESERVES all ## section headers and their structure
+2. MERGES duplicate or near-duplicate bullet points into single, clear statements
+3. REMOVES stale information that has been superseded by newer bullets
+4. REMOVES trivial or overly specific operational details that won't be useful across sessions
+5. KEEPS the most important, durable observations about the user's preferences, habits, identity, and working style
+6. Target roughly 400 lines — this is a soft target, prioritize quality over length
+7. Write in the same style as the existing profile — concise bullets, no fluff
+
+The output should be the COMPLETE consolidated profile as valid markdown, starting with "# Behavioral Profile".`,
+        input: fullProfileContent,
+        text: {
+          format: zodTextFormat(ProfileConsolidationResultSchema, "profile_consolidation_result"),
+        },
+      });
+
+      if (response.output_parsed) {
+        log.debug(
+          `profile consolidation: removed ${response.output_parsed.removedCount} items — ${response.output_parsed.summary}`,
+        );
+        return response.output_parsed;
+      }
+
+      log.warn("profile consolidation returned no parsed output");
+      return null;
+    } catch (err) {
+      log.error("profile consolidation failed", err);
+      return null;
     }
   }
 

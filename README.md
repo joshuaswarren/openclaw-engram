@@ -20,8 +20,8 @@ Most AI memory systems are either too noisy (store everything) or too lossy (sto
 - **Confidence tiers**: explicit (0.95-1.0), implied (0.70-0.94), inferred (0.40-0.69), speculative (0.00-0.39)
 - **TTL on speculative memories**: Auto-expire after 30 days if unconfirmed
 - **Lineage tracking**: Memories track their parent IDs through consolidation merges and updates
-- **Entity profiles**: Accumulates facts about people, projects, tools, and companies into per-entity files
-- **Behavioral profile**: A living `profile.md` that evolves as the system learns about the user
+- **Entity profiles**: Accumulates facts about people, projects, tools, and companies into per-entity files, with automatic name normalization and periodic deduplication
+- **Behavioral profile**: A living `profile.md` that evolves as the system learns about the user, with automatic cap and pruning to control token usage
 - **Identity reflection**: Optional self-reflection that helps the agent improve over sessions
 - **Question generation**: Generates 1-3 curiosity questions per extraction to drive deeper engagement
 - **Commitment lifecycle**: Tracks promises and deadlines with configurable decay (default 90 days)
@@ -57,8 +57,9 @@ If extracted: write markdown files to disk
     v
 Every Nth extraction: Consolidation pass
     - Merge/dedup memories
+    - Merge fragmented entity files
     - Update entity profiles
-    - Update behavioral profile
+    - Update behavioral profile (with cap enforcement)
     - Clean expired commitments and TTL memories
     - Auto-consolidate identity reflections
     |
@@ -95,8 +96,8 @@ All memories are stored as markdown files with YAML frontmatter:
 ~/.openclaw/workspace/memory/local/
 ├── profile.md                  # Living behavioral profile (auto-updated)
 ├── entities/                   # One markdown file per tracked entity
-│   ├── person-joshua-warren.md
-│   ├── project-openclaw.md
+│   ├── person-jane-doe.md
+│   ├── project-my-app.md
 │   └── tool-qmd.md
 ├── facts/                      # Memory entries organized by date
 │   └── YYYY-MM-DD/
@@ -322,7 +323,7 @@ qmd update && qmd embed
 
 ### Extraction
 
-When a trigger fires, the buffered conversation turns are sent to the OpenAI Responses API with a structured output schema (Zod). The LLM returns:
+When a trigger fires, the buffered conversation turns are sent to the OpenAI Responses API with a structured output schema (Zod). Empty or whitespace-only turns are filtered out before the API call to avoid errors. The LLM returns:
 
 - **Facts**: Typed memories with category, content, confidence score, tags, and optional entity reference
 - **Entities**: Named entities with their type and newly learned facts
@@ -338,9 +339,27 @@ Every N extractions, a consolidation pass:
 2. For each memory, decides: ADD, MERGE, UPDATE, INVALIDATE, or SKIP
 3. MERGE and UPDATE actions track lineage (parent memory IDs)
 4. Updates entity profiles and the behavioral profile
-5. Cleans expired commitments (fulfilled/expired + past decay period)
-6. Removes TTL-expired speculative memories
-7. Auto-consolidates IDENTITY.md if it exceeds 8KB
+5. **Merges fragmented entity files** — entities with variant names that resolve to the same canonical form are automatically merged
+6. Cleans expired commitments (fulfilled/expired + past decay period)
+7. Removes TTL-expired speculative memories
+8. Auto-consolidates IDENTITY.md if it exceeds 8KB
+
+### Entity Normalization
+
+Entity names are automatically normalized to prevent fragmentation:
+
+- Names are lowercased and hyphenated (`BlendSupply` → `blend-supply`)
+- A configurable alias table maps common variants to canonical names
+- Type preferences resolve cross-type duplicates (e.g., `company` wins over `other`)
+- The periodic merge pass consolidates any entities that escaped normalization
+
+### Profile Management
+
+The behavioral profile (`profile.md`) is injected into every agent's system prompt to provide user context. To prevent unbounded growth:
+
+- **Smart consolidation** (threshold: 600 lines): When the profile exceeds this limit during a consolidation pass, the LLM consolidates it — merging duplicate or near-duplicate bullets, removing stale information, and preserving `##` section headers
+- Consolidation targets roughly 400 lines, prioritizing quality and durability of observations
+- All section structure is preserved; only redundant or superseded bullets are removed
 
 ### Confidence Tiers
 

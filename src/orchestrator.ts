@@ -245,6 +245,12 @@ export class Orchestrator {
       await this.storage.writeEntity(entity.name, entity.type, entity.facts);
     }
 
+    // Merge fragmented entity files
+    const entitiesMerged = await this.storage.mergeFragmentedEntities();
+    if (entitiesMerged > 0) {
+      log.info(`merged ${entitiesMerged} fragmented entity files`);
+    }
+
     // Clean expired commitments
     const cleaned = await this.storage.cleanExpiredCommitments(this.config.commitmentDecayDays);
     if (cleaned > 0) {
@@ -260,6 +266,19 @@ export class Orchestrator {
     // Auto-consolidate IDENTITY.md if it's getting large
     if (this.config.identityEnabled) {
       await this.autoConsolidateIdentity();
+    }
+
+    // Auto-consolidate profile.md if it exceeds max lines
+    if (await this.storage.profileNeedsConsolidation()) {
+      log.info("profile.md exceeds max lines — running smart consolidation");
+      const currentProfile = await this.storage.readProfile();
+      if (currentProfile) {
+        const profileResult = await this.extraction.consolidateProfile(currentProfile);
+        if (profileResult) {
+          await this.storage.writeProfile(profileResult.consolidatedProfile);
+          log.info(`profile.md consolidated: removed ${profileResult.removedCount} items — ${profileResult.summary}`);
+        }
+      }
     }
 
     const meta = await this.storage.loadMeta();

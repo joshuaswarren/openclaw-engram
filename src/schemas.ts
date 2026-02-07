@@ -96,6 +96,20 @@ export const ConsolidationResultSchema = z.object({
     .describe("Entity updates from consolidation analysis"),
 });
 
+export const ProfileConsolidationResultSchema = z.object({
+  consolidatedProfile: z
+    .string()
+    .describe(
+      "The full consolidated profile as markdown. Preserve all ## section headers. Merge duplicate or near-duplicate bullets into single clear statements. Remove stale or superseded information. Keep the most important and durable observations. Target roughly 400 lines.",
+    ),
+  removedCount: z
+    .number()
+    .describe("Number of bullets removed or merged during consolidation"),
+  summary: z
+    .string()
+    .describe("Brief summary of what was consolidated"),
+});
+
 export const IdentityConsolidationResultSchema = z.object({
   learnedPatterns: z
     .array(z.string())
