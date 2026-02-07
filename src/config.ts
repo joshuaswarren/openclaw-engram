@@ -99,5 +99,51 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.workspaceDir === "string" && cfg.workspaceDir.length > 0
         ? cfg.workspaceDir
         : DEFAULT_WORKSPACE_DIR,
+    // Access tracking (Phase 1A)
+    accessTrackingEnabled: cfg.accessTrackingEnabled !== false,
+    accessTrackingBufferMaxSize:
+      typeof cfg.accessTrackingBufferMaxSize === "number"
+        ? cfg.accessTrackingBufferMaxSize
+        : 100,
+    // Retrieval options
+    recencyWeight:
+      typeof cfg.recencyWeight === "number" ? cfg.recencyWeight : 0.2,
+    boostAccessCount: cfg.boostAccessCount !== false,
+    // Chunking (Phase 2A)
+    chunkingEnabled: cfg.chunkingEnabled === true, // Off by default initially
+    chunkingTargetTokens:
+      typeof cfg.chunkingTargetTokens === "number" ? cfg.chunkingTargetTokens : 200,
+    chunkingMinTokens:
+      typeof cfg.chunkingMinTokens === "number" ? cfg.chunkingMinTokens : 150,
+    chunkingOverlapSentences:
+      typeof cfg.chunkingOverlapSentences === "number" ? cfg.chunkingOverlapSentences : 2,
+    // Contradiction Detection (Phase 2B)
+    contradictionDetectionEnabled: cfg.contradictionDetectionEnabled === true, // Off by default initially
+    contradictionSimilarityThreshold:
+      typeof cfg.contradictionSimilarityThreshold === "number" ? cfg.contradictionSimilarityThreshold : 0.7,
+    contradictionMinConfidence:
+      typeof cfg.contradictionMinConfidence === "number" ? cfg.contradictionMinConfidence : 0.9,
+    contradictionAutoResolve: cfg.contradictionAutoResolve !== false,
+    // Memory Linking (Phase 3A)
+    memoryLinkingEnabled: cfg.memoryLinkingEnabled === true, // Off by default initially
+    // Conversation Threading (Phase 3B)
+    threadingEnabled: cfg.threadingEnabled === true, // Off by default initially
+    threadingGapMinutes:
+      typeof cfg.threadingGapMinutes === "number" ? cfg.threadingGapMinutes : 30,
+    // Memory Summarization (Phase 4A)
+    summarizationEnabled: cfg.summarizationEnabled === true, // Off by default
+    summarizationTriggerCount:
+      typeof cfg.summarizationTriggerCount === "number" ? cfg.summarizationTriggerCount : 1000,
+    summarizationRecentToKeep:
+      typeof cfg.summarizationRecentToKeep === "number" ? cfg.summarizationRecentToKeep : 300,
+    summarizationImportanceThreshold:
+      typeof cfg.summarizationImportanceThreshold === "number" ? cfg.summarizationImportanceThreshold : 0.3,
+    summarizationProtectedTags: Array.isArray(cfg.summarizationProtectedTags)
+      ? (cfg.summarizationProtectedTags as string[])
+      : ["commitment", "preference", "decision", "principle"],
+    // Topic Extraction (Phase 4B)
+    topicExtractionEnabled: cfg.topicExtractionEnabled !== false, // On by default
+    topicExtractionTopN:
+      typeof cfg.topicExtractionTopN === "number" ? cfg.topicExtractionTopN : 50,
   };
 }

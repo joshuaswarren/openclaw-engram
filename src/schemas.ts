@@ -127,6 +127,72 @@ export type IdentityConsolidationResultParsed = z.infer<
   typeof IdentityConsolidationResultSchema
 >;
 
+// Contradiction Verification (Phase 2B)
+export const ContradictionVerificationSchema = z.object({
+  isContradiction: z
+    .boolean()
+    .describe("Whether the two memories truly contradict each other"),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("How confident are you in this assessment (0-1)"),
+  reasoning: z
+    .string()
+    .describe("Explanation of why these are or are not contradictory"),
+  whichIsNewer: z
+    .enum(["first", "second", "unclear"])
+    .describe("Which memory represents the more recent/current state"),
+});
+
+export type ContradictionVerificationResult = z.infer<
+  typeof ContradictionVerificationSchema
+>;
+
+// Memory Linking (Phase 3A)
+export const MemoryLinkSchema = z.object({
+  targetId: z
+    .string()
+    .describe("The ID of the memory this links to"),
+  linkType: z
+    .enum(["follows", "references", "contradicts", "supports", "related"])
+    .describe("The type of relationship"),
+  strength: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("How strong is this relationship (0-1)"),
+  reason: z
+    .string()
+    .optional()
+    .nullable()
+    .describe("Why this link exists"),
+});
+
+export const SuggestedLinksSchema = z.object({
+  links: z
+    .array(MemoryLinkSchema)
+    .describe("Suggested links between memories based on semantic analysis"),
+});
+
+export type MemoryLink = z.infer<typeof MemoryLinkSchema>;
+export type SuggestedLinks = z.infer<typeof SuggestedLinksSchema>;
+
+// Memory Summarization (Phase 4A)
+export const MemorySummarySchema = z.object({
+  summaryText: z
+    .string()
+    .describe("A concise summary of the batch of memories"),
+  keyFacts: z
+    .array(z.string())
+    .describe("The most important facts extracted from these memories"),
+  keyEntities: z
+    .array(z.string())
+    .describe("Key entities mentioned across these memories"),
+});
+
+export type MemorySummaryResult = z.infer<typeof MemorySummarySchema>;
+
 export type ExtractedFactParsed = z.infer<typeof ExtractedFactSchema>;
 export type EntityMentionParsed = z.infer<typeof EntityMentionSchema>;
 export type ExtractedQuestionParsed = z.infer<typeof ExtractedQuestionSchema>;

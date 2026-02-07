@@ -6,6 +6,12 @@ import {
   ConsolidationResultSchema,
   IdentityConsolidationResultSchema,
   ProfileConsolidationResultSchema,
+  ContradictionVerificationSchema,
+  SuggestedLinksSchema,
+  MemorySummarySchema,
+  type ContradictionVerificationResult,
+  type SuggestedLinks,
+  type MemorySummaryResult,
 } from "./schemas.js";
 import type {
   BufferTurn,
@@ -13,6 +19,7 @@ import type {
   ConsolidationResult,
   MemoryFile,
   PluginConfig,
+  LlmTraceEvent,
 } from "./types.js";
 
 export class ExtractionEngine {
@@ -24,6 +31,15 @@ export class ExtractionEngine {
     } else {
       this.client = null;
       log.warn("no OpenAI API key — extraction/consolidation disabled (retrieval still works)");
+    }
+  }
+
+  private emit(event: LlmTraceEvent): void {
+    try {
+      const cb = (globalThis as any).__openclawEngramTrace;
+      if (typeof cb === "function") cb(event);
+    } catch {
+      // Never throw — broken subscriber must not crash extraction
     }
   }
 
@@ -48,6 +64,10 @@ export class ExtractionEngine {
       this.config.reasoningEffort !== "none"
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
+
+    const traceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
+    const startTime = Date.now();
 
     try {
       const response = await this.client.responses.parse({
@@ -111,6 +131,14 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
         },
       });
 
+      const durationMs = Date.now() - startTime;
+      const usage = (response as any).usage;
+      this.emit({
+        kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs,
+        output: response.output_parsed ? JSON.stringify(response.output_parsed).slice(0, 2000) : undefined,
+        tokenUsage: usage ? { input: usage.input_tokens, output: usage.output_tokens, total: usage.total_tokens } : undefined,
+      });
+
       if (response.output_parsed) {
         log.debug(
           `extracted ${response.output_parsed.facts.length} facts, ${response.output_parsed.entities.length} entities, ${(response.output_parsed.questions ?? []).length} questions`,
@@ -125,6 +153,10 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
       log.warn("extraction returned no parsed output");
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     } catch (err) {
+      this.emit({
+        kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+        durationMs: Date.now() - startTime, error: String(err),
+      });
       log.error("extraction failed", err);
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     }
@@ -160,6 +192,10 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
 
+    const cTraceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId: cTraceId, model: this.config.model, operation: "consolidation", input: newList });
+    const cStartTime = Date.now();
+
     try {
       const response = await this.client.responses.parse({
         model: this.config.model,
@@ -194,6 +230,14 @@ ${newList}`,
         },
       });
 
+      const cDurationMs = Date.now() - cStartTime;
+      const cUsage = (response as any).usage;
+      this.emit({
+        kind: "llm_end", traceId: cTraceId, model: this.config.model, operation: "consolidation", durationMs: cDurationMs,
+        output: response.output_parsed ? JSON.stringify(response.output_parsed).slice(0, 2000) : undefined,
+        tokenUsage: cUsage ? { input: cUsage.input_tokens, output: cUsage.output_tokens, total: cUsage.total_tokens } : undefined,
+      });
+
       if (response.output_parsed) {
         log.debug(
           `consolidation: ${response.output_parsed.items.length} decisions`,
@@ -204,6 +248,10 @@ ${newList}`,
       log.warn("consolidation returned no parsed output");
       return { items: [], profileUpdates: [], entityUpdates: [] };
     } catch (err) {
+      this.emit({
+        kind: "llm_error", traceId: cTraceId, model: this.config.model, operation: "consolidation",
+        durationMs: Date.now() - cStartTime, error: String(err),
+      });
       log.error("consolidation failed", err);
       return { items: [], profileUpdates: [], entityUpdates: [] };
     }
@@ -227,6 +275,10 @@ ${newList}`,
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
 
+    const pTraceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation", input: fullProfileContent.slice(0, 2000) });
+    const pStartTime = Date.now();
+
     try {
       const response = await this.client.responses.parse({
         model: this.config.model,
@@ -248,6 +300,14 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
         },
       });
 
+      const pDurationMs = Date.now() - pStartTime;
+      const pUsage = (response as any).usage;
+      this.emit({
+        kind: "llm_end", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation", durationMs: pDurationMs,
+        output: response.output_parsed ? response.output_parsed.summary : undefined,
+        tokenUsage: pUsage ? { input: pUsage.input_tokens, output: pUsage.output_tokens, total: pUsage.total_tokens } : undefined,
+      });
+
       if (response.output_parsed) {
         log.debug(
           `profile consolidation: removed ${response.output_parsed.removedCount} items — ${response.output_parsed.summary}`,
@@ -258,6 +318,10 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
       log.warn("profile consolidation returned no parsed output");
       return null;
     } catch (err) {
+      this.emit({
+        kind: "llm_error", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation",
+        durationMs: Date.now() - pStartTime, error: String(err),
+      });
       log.error("profile consolidation failed", err);
       return null;
     }
@@ -280,6 +344,10 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
       this.config.reasoningEffort !== "none"
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
+
+    const iTraceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId: iTraceId, model: this.config.model, operation: "identity_consolidation", input: fullIdentityContent.slice(0, 2000) });
+    const iStartTime = Date.now();
 
     try {
       const response = await this.client.responses.parse({
@@ -304,6 +372,14 @@ The goal is to reduce a bloated file to a compact, high-signal set of learned pa
         },
       });
 
+      const iDurationMs = Date.now() - iStartTime;
+      const iUsage = (response as any).usage;
+      this.emit({
+        kind: "llm_end", traceId: iTraceId, model: this.config.model, operation: "identity_consolidation", durationMs: iDurationMs,
+        output: response.output_parsed ? response.output_parsed.summary : undefined,
+        tokenUsage: iUsage ? { input: iUsage.input_tokens, output: iUsage.output_tokens, total: iUsage.total_tokens } : undefined,
+      });
+
       if (response.output_parsed) {
         log.debug(
           `identity consolidation: ${response.output_parsed.learnedPatterns.length} patterns`,
@@ -314,7 +390,182 @@ The goal is to reduce a bloated file to a compact, high-signal set of learned pa
       log.warn("identity consolidation returned no parsed output");
       return null;
     } catch (err) {
+      this.emit({
+        kind: "llm_error", traceId: iTraceId, model: this.config.model, operation: "identity_consolidation",
+        durationMs: Date.now() - iStartTime, error: String(err),
+      });
       log.error("identity consolidation failed", err);
+      return null;
+    }
+  }
+
+  /**
+   * Verify if two memories contradict each other using LLM.
+   * Called when QMD finds semantically similar memories (Phase 2B).
+   */
+  async verifyContradiction(
+    newMemory: { content: string; category: string },
+    existingMemory: { id: string; content: string; category: string; created: string },
+  ): Promise<ContradictionVerificationResult | null> {
+    if (!this.client) {
+      log.warn("contradiction verification skipped — no OpenAI API key");
+      return null;
+    }
+
+    const input = `Memory 1 (existing, created ${existingMemory.created}):
+Category: ${existingMemory.category}
+Content: ${existingMemory.content}
+
+Memory 2 (new):
+Category: ${newMemory.category}
+Content: ${newMemory.content}`;
+
+    try {
+      const response = await this.client.responses.parse({
+        model: this.config.model,
+        instructions: `You are a contradiction detection system. Analyze whether two memories contradict each other.
+
+IMPORTANT: Not all similar memories are contradictions!
+- "User likes TypeScript" and "User likes Python" are NOT contradictions (preferences can coexist)
+- "User prefers dark mode" and "User prefers light mode" ARE contradictions (mutually exclusive)
+- "User's email is a@b.com" and "User's email is c@d.com" ARE contradictions (only one email)
+- "User works at Acme" and "User used to work at Acme" might be a contradiction (temporal change)
+
+Only mark as contradiction if the two statements CANNOT both be true at the same time.
+
+If they ARE contradictory, determine which represents the more recent/current state based on:
+- Explicit time references ("now", "currently", "used to", "no longer")
+- The fact that newer corrections often start with "actually" or "correction"
+- Context clues about change over time`,
+        input,
+        text: {
+          format: zodTextFormat(ContradictionVerificationSchema, "contradiction_verification"),
+        },
+      });
+
+      if (response.output_parsed) {
+        log.debug(
+          `contradiction check: ${response.output_parsed.isContradiction ? "YES" : "NO"} (confidence: ${response.output_parsed.confidence})`,
+        );
+        return response.output_parsed as ContradictionVerificationResult;
+      }
+
+      return null;
+    } catch (err) {
+      log.error("contradiction verification failed", err);
+      return null;
+    }
+  }
+
+  /**
+   * Suggest links between a new memory and existing memories (Phase 3A).
+   * Called during extraction to build the knowledge graph.
+   */
+  async suggestLinks(
+    newMemory: { content: string; category: string },
+    candidateMemories: Array<{ id: string; content: string; category: string }>,
+  ): Promise<SuggestedLinks | null> {
+    if (!this.client) {
+      log.warn("link suggestion skipped — no OpenAI API key");
+      return null;
+    }
+
+    if (candidateMemories.length === 0) {
+      return { links: [] };
+    }
+
+    const candidateList = candidateMemories
+      .map((m, i) => `[${i + 1}] ID: ${m.id}\nCategory: ${m.category}\nContent: ${m.content}`)
+      .join("\n\n");
+
+    const input = `New memory:
+Category: ${newMemory.category}
+Content: ${newMemory.content}
+
+Candidate memories to link to:
+${candidateList}`;
+
+    try {
+      const response = await this.client.responses.parse({
+        model: this.config.model,
+        instructions: `You are a memory linking system. Analyze the new memory and suggest relationships to existing memories.
+
+Link types:
+- follows: This memory is a continuation or next step (e.g., decision follows discussion)
+- references: This memory mentions or refers to the other (e.g., fact references entity)
+- contradicts: This memory conflicts with the other (use sparingly, only for true contradictions)
+- supports: This memory provides evidence or reinforcement (e.g., example supports principle)
+- related: General topical relationship
+
+Rules:
+- Only suggest links with strength > 0.5
+- Quality over quantity — 0-3 links is typical
+- Prefer specific link types over generic "related"
+- Consider entity references, topics, and causal relationships`,
+        input,
+        text: {
+          format: zodTextFormat(SuggestedLinksSchema, "suggested_links"),
+        },
+      });
+
+      if (response.output_parsed) {
+        log.debug(`suggested ${response.output_parsed.links.length} links`);
+        return response.output_parsed as SuggestedLinks;
+      }
+
+      return { links: [] };
+    } catch (err) {
+      log.error("link suggestion failed", err);
+      return { links: [] };
+    }
+  }
+
+  /**
+   * Summarize a batch of old memories into a compact summary (Phase 4A).
+   */
+  async summarizeMemories(
+    memories: Array<{ id: string; content: string; category: string; created: string }>,
+  ): Promise<MemorySummaryResult | null> {
+    if (!this.client) {
+      log.warn("summarization skipped — no OpenAI API key");
+      return null;
+    }
+
+    if (memories.length === 0) return null;
+
+    const memoryList = memories
+      .map((m) => `[${m.id}] (${m.category}, ${m.created.slice(0, 10)})\n${m.content}`)
+      .join("\n\n");
+
+    try {
+      const response = await this.client.responses.parse({
+        model: this.config.model,
+        instructions: `You are a memory summarization system. You are given a batch of old memories that need to be compressed into a summary.
+
+Your task:
+1. Write a concise summary paragraph (2-4 sentences) capturing the essence of these memories
+2. Extract the 5-10 most important facts that should be preserved
+3. List the key entities mentioned
+
+Guidelines:
+- Preserve specific, actionable information
+- Merge redundant details into single statements
+- Focus on durable insights, not transient details
+- Maintain any preferences, decisions, or corrections as key facts`,
+        input: `Summarize these ${memories.length} memories:\n\n${memoryList}`,
+        text: {
+          format: zodTextFormat(MemorySummarySchema, "memory_summary"),
+        },
+      });
+
+      if (response.output_parsed) {
+        log.debug(`summarized ${memories.length} memories into ${response.output_parsed.keyFacts.length} key facts`);
+        return response.output_parsed as MemorySummaryResult;
+      }
+
+      return null;
+    } catch (err) {
+      log.error("memory summarization failed", err);
       return null;
     }
   }

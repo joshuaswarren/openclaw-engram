@@ -19,6 +19,13 @@ export default {
 
     const orchestrator = new Orchestrator(cfg);
 
+    // Expose for inter-plugin discovery (e.g., langsmith tracing)
+    (globalThis as any).__openclawEngramOrchestrator = orchestrator;
+    // Trace callback slot — langsmith (or any observer) will overwrite this
+    if ((globalThis as any).__openclawEngramTrace === undefined) {
+      (globalThis as any).__openclawEngramTrace = undefined;
+    }
+
     // ========================================================================
     // HOOK: gateway_start — Initialize subsystems
     // ========================================================================

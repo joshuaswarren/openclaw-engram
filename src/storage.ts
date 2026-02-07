@@ -2,12 +2,19 @@ import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { log } from "./logger.js";
 import type {
+  AccessTrackingEntry,
   BufferState,
   ConfidenceTier,
+  ImportanceLevel,
+  ImportanceScore,
   MemoryCategory,
   MemoryFile,
   MemoryFrontmatter,
+  MemoryLink,
+  MemoryStatus,
+  MemorySummary,
   MetaState,
+  TopicScore,
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
 
@@ -28,6 +35,41 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.expiresAt) lines.push(`expiresAt: ${fm.expiresAt}`);
   if (fm.lineage && fm.lineage.length > 0) {
     lines.push(`lineage: [${fm.lineage.map((l) => `"${l}"`).join(", ")}]`);
+  }
+  // Status management
+  if (fm.status && fm.status !== "active") lines.push(`status: ${fm.status}`);
+  if (fm.supersededBy) lines.push(`supersededBy: ${fm.supersededBy}`);
+  if (fm.supersededAt) lines.push(`supersededAt: ${fm.supersededAt}`);
+  if (fm.archivedAt) lines.push(`archivedAt: ${fm.archivedAt}`);
+  // Access tracking
+  if (fm.accessCount !== undefined && fm.accessCount > 0) {
+    lines.push(`accessCount: ${fm.accessCount}`);
+  }
+  if (fm.lastAccessed) lines.push(`lastAccessed: ${fm.lastAccessed}`);
+  // Importance scoring
+  if (fm.importance) {
+    lines.push(`importanceScore: ${fm.importance.score}`);
+    lines.push(`importanceLevel: ${fm.importance.level}`);
+    if (fm.importance.reasons.length > 0) {
+      lines.push(`importanceReasons: [${fm.importance.reasons.map((r) => `"${r.replace(/"/g, '\\"')}"`).join(", ")}]`);
+    }
+    if (fm.importance.keywords.length > 0) {
+      lines.push(`importanceKeywords: [${fm.importance.keywords.map((k) => `"${k}"`).join(", ")}]`);
+    }
+  }
+  // Chunking (Phase 2A)
+  if (fm.parentId) lines.push(`parentId: ${fm.parentId}`);
+  if (fm.chunkIndex !== undefined) lines.push(`chunkIndex: ${fm.chunkIndex}`);
+  if (fm.chunkTotal !== undefined) lines.push(`chunkTotal: ${fm.chunkTotal}`);
+  // Memory Linking (Phase 3A)
+  if (fm.links && fm.links.length > 0) {
+    lines.push("links:");
+    for (const link of fm.links) {
+      lines.push(`  - targetId: ${link.targetId}`);
+      lines.push(`    linkType: ${link.linkType}`);
+      lines.push(`    strength: ${link.strength}`);
+      if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
+    }
   }
   lines.push("---");
   return lines.join("\n");
@@ -74,6 +116,40 @@ function parseFrontmatter(
       .filter(Boolean);
   }
 
+  // Parse accessCount
+  const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;
+
+  // Parse importance
+  let importance: ImportanceScore | undefined;
+  if (fm.importanceScore) {
+    const score = parseFloat(fm.importanceScore);
+    const level = (fm.importanceLevel as ImportanceLevel) || "normal";
+
+    // Parse importance reasons array
+    let reasons: string[] = [];
+    const reasonsStr = fm.importanceReasons ?? "";
+    const reasonsMatch = reasonsStr.match(/\[(.*)]/);
+    if (reasonsMatch) {
+      reasons = reasonsMatch[1]
+        .split(/",\s*"/)
+        .map((r) => r.replace(/^"|"$/g, "").replace(/\\"/g, '"'))
+        .filter(Boolean);
+    }
+
+    // Parse importance keywords array
+    let keywords: string[] = [];
+    const keywordsStr = fm.importanceKeywords ?? "";
+    const keywordsMatch = keywordsStr.match(/\[(.*)]/);
+    if (keywordsMatch) {
+      keywords = keywordsMatch[1]
+        .split(",")
+        .map((k) => k.trim().replace(/^"|"$/g, ""))
+        .filter(Boolean);
+    }
+
+    importance = { score, level, reasons, keywords };
+  }
+
   return {
     frontmatter: {
       id: fm.id ?? "",
@@ -88,9 +164,45 @@ function parseFrontmatter(
       supersedes: fm.supersedes || undefined,
       expiresAt: fm.expiresAt || undefined,
       lineage: lineage && lineage.length > 0 ? lineage : undefined,
+      // Status management
+      status: (fm.status as MemoryStatus) || "active",
+      supersededBy: fm.supersededBy || undefined,
+      supersededAt: fm.supersededAt || undefined,
+      archivedAt: fm.archivedAt || undefined,
+      // Access tracking
+      accessCount: accessCount && accessCount > 0 ? accessCount : undefined,
+      lastAccessed: fm.lastAccessed || undefined,
+      // Importance scoring
+      importance,
+      // Chunking
+      parentId: fm.parentId || undefined,
+      chunkIndex: fm.chunkIndex ? parseInt(fm.chunkIndex, 10) : undefined,
+      chunkTotal: fm.chunkTotal ? parseInt(fm.chunkTotal, 10) : undefined,
+      // Links are parsed separately below
     },
     content,
   };
+
+  // Parse links (YAML array format)
+  // Note: Simple parsing - for full YAML we'd need a library
+  // This handles the format we serialize above
+  if (fmBlock.includes("links:")) {
+    const links: MemoryLink[] = [];
+    const linkMatches = fmBlock.matchAll(/- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "([^"]*)")?/g);
+    for (const match of linkMatches) {
+      links.push({
+        targetId: match[1],
+        linkType: match[2] as MemoryLink["linkType"],
+        strength: parseFloat(match[3]),
+        reason: match[4] || undefined,
+      });
+    }
+    if (links.length > 0) {
+      result.frontmatter.links = links;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -227,6 +339,8 @@ export class StorageManager {
       source?: string;
       supersedes?: string;
       lineage?: string[];
+      importance?: ImportanceScore;
+      links?: MemoryLink[];
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -256,6 +370,8 @@ export class StorageManager {
       supersedes: options.supersedes,
       expiresAt,
       lineage: options.lineage,
+      importance: options.importance,
+      links: options.links,
     };
 
     const fileContent = `${serializeFrontmatter(fm)}\n\n${content}\n`;
@@ -965,5 +1081,308 @@ export class StorageManager {
     }
 
     return cleaned;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Access Tracking (Phase 1A)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Flush batched access tracking updates to disk.
+   * Called during consolidation or when buffer exceeds max size.
+   */
+  async flushAccessTracking(entries: AccessTrackingEntry[]): Promise<number> {
+    if (entries.length === 0) return 0;
+
+    const memories = await this.readAllMemories();
+    const memoryMap = new Map(memories.map((m) => [m.frontmatter.id, m]));
+    let updated = 0;
+
+    for (const entry of entries) {
+      const memory = memoryMap.get(entry.memoryId);
+      if (!memory) continue;
+
+      const newFm: MemoryFrontmatter = {
+        ...memory.frontmatter,
+        accessCount: entry.newCount,
+        lastAccessed: entry.lastAccessed,
+      };
+
+      const fileContent = `${serializeFrontmatter(newFm)}\n\n${memory.content}\n`;
+      try {
+        await writeFile(memory.path, fileContent, "utf-8");
+        updated++;
+      } catch (err) {
+        log.debug(`failed to update access tracking for ${entry.memoryId}: ${err}`);
+      }
+    }
+
+    if (updated > 0) {
+      log.debug(`flushed access tracking for ${updated} memories`);
+    }
+    return updated;
+  }
+
+  /**
+   * Get a memory by its ID.
+   */
+  async getMemoryById(id: string): Promise<MemoryFile | null> {
+    const memories = await this.readAllMemories();
+    return memories.find((m) => m.frontmatter.id === id) ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chunking (Phase 2A)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write a memory chunk with parent reference.
+   * Chunk IDs follow format: {parentId}-chunk-{index}
+   */
+  async writeChunk(
+    parentId: string,
+    chunkIndex: number,
+    chunkTotal: number,
+    category: MemoryCategory,
+    content: string,
+    options: {
+      confidence?: number;
+      tags?: string[];
+      entityRef?: string;
+      source?: string;
+      importance?: ImportanceScore;
+    } = {},
+  ): Promise<string> {
+    await this.ensureDirectories();
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const id = `${parentId}-chunk-${chunkIndex}`;
+    const conf = options.confidence ?? 0.8;
+    const tier = confidenceTier(conf);
+
+    const fm: MemoryFrontmatter = {
+      id,
+      category,
+      created: now.toISOString(),
+      updated: now.toISOString(),
+      source: options.source ?? "chunking",
+      confidence: conf,
+      confidenceTier: tier,
+      tags: options.tags ?? [],
+      entityRef: options.entityRef,
+      importance: options.importance,
+      parentId,
+      chunkIndex,
+      chunkTotal,
+    };
+
+    const fileContent = `${serializeFrontmatter(fm)}\n\n${content}\n`;
+
+    let filePath: string;
+    if (category === "correction") {
+      filePath = path.join(this.correctionsDir, `${id}.md`);
+    } else {
+      filePath = path.join(this.factsDir, today, `${id}.md`);
+    }
+
+    await writeFile(filePath, fileContent, "utf-8");
+    log.debug(`wrote chunk ${id} (${chunkIndex + 1}/${chunkTotal}) to ${filePath}`);
+    return id;
+  }
+
+  /**
+   * Get all chunks for a given parent memory ID.
+   * Returns chunks sorted by chunkIndex.
+   */
+  async getChunksForParent(parentId: string): Promise<MemoryFile[]> {
+    const memories = await this.readAllMemories();
+    return memories
+      .filter((m) => m.frontmatter.parentId === parentId)
+      .sort((a, b) => (a.frontmatter.chunkIndex ?? 0) - (b.frontmatter.chunkIndex ?? 0));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contradiction Detection (Phase 2B)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Mark a memory as superseded by another.
+   * Updates the old memory's status and adds the supersededBy link.
+   */
+  async supersedeMemory(
+    oldMemoryId: string,
+    newMemoryId: string,
+    reason: string,
+  ): Promise<boolean> {
+    const memories = await this.readAllMemories();
+    const oldMemory = memories.find((m) => m.frontmatter.id === oldMemoryId);
+    if (!oldMemory) return false;
+
+    const now = new Date().toISOString();
+    const updatedFm: MemoryFrontmatter = {
+      ...oldMemory.frontmatter,
+      status: "superseded",
+      supersededBy: newMemoryId,
+      supersededAt: now,
+      updated: now,
+    };
+
+    const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${oldMemory.content}\n`;
+
+    try {
+      await writeFile(oldMemory.path, fileContent, "utf-8");
+      log.debug(`superseded memory ${oldMemoryId} by ${newMemoryId}: ${reason}`);
+
+      // Also write a correction entry for the audit trail
+      await this.writeMemory("correction", `Superseded: ${oldMemory.content}\n\nReason: ${reason}`, {
+        confidence: 1.0,
+        tags: ["supersession", "auto-resolved"],
+        source: "contradiction-detection",
+        lineage: [oldMemoryId, newMemoryId],
+      });
+
+      return true;
+    } catch (err) {
+      log.error(`failed to supersede memory ${oldMemoryId}:`, err);
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Memory Summarization (Phase 4A)
+  // ---------------------------------------------------------------------------
+
+  private get summariesDir(): string {
+    return path.join(this.baseDir, "summaries");
+  }
+
+  /**
+   * Write a memory summary.
+   */
+  async writeSummary(summary: MemorySummary): Promise<void> {
+    await mkdir(this.summariesDir, { recursive: true });
+    const filePath = path.join(this.summariesDir, `${summary.id}.json`);
+    await writeFile(filePath, JSON.stringify(summary, null, 2), "utf-8");
+    log.debug(`wrote summary ${summary.id}`);
+  }
+
+  /**
+   * Get all summaries.
+   */
+  async readSummaries(): Promise<MemorySummary[]> {
+    try {
+      const files = await readdir(this.summariesDir);
+      const summaries: MemorySummary[] = [];
+
+      for (const file of files) {
+        if (!file.endsWith(".json")) continue;
+        const filePath = path.join(this.summariesDir, file);
+        const raw = await readFile(filePath, "utf-8");
+        summaries.push(JSON.parse(raw) as MemorySummary);
+      }
+
+      return summaries;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Archive memories (mark as archived, not delete).
+   */
+  async archiveMemories(memoryIds: string[], summaryId: string): Promise<number> {
+    const memories = await this.readAllMemories();
+    const memoryMap = new Map(memories.map((m) => [m.frontmatter.id, m]));
+    let archived = 0;
+
+    for (const id of memoryIds) {
+      const memory = memoryMap.get(id);
+      if (!memory) continue;
+
+      const now = new Date().toISOString();
+      const updatedFm: MemoryFrontmatter = {
+        ...memory.frontmatter,
+        status: "archived",
+        archivedAt: now,
+        updated: now,
+      };
+
+      const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${memory.content}\n`;
+
+      try {
+        await writeFile(memory.path, fileContent, "utf-8");
+        archived++;
+      } catch {
+        // Ignore individual failures
+      }
+    }
+
+    if (archived > 0) {
+      log.debug(`archived ${archived} memories for summary ${summaryId}`);
+    }
+    return archived;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Topic Extraction (Phase 4B)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Save topic scores to meta.json.
+   */
+  async saveTopics(topics: TopicScore[]): Promise<void> {
+    const metaPath = path.join(this.stateDir, "topics.json");
+    await mkdir(this.stateDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ topics, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
+    log.debug(`saved ${topics.length} topic scores`);
+  }
+
+  /**
+   * Load topic scores from meta.json.
+   */
+  async loadTopics(): Promise<{ topics: TopicScore[]; updatedAt: string | null }> {
+    const metaPath = path.join(this.stateDir, "topics.json");
+    try {
+      const raw = await readFile(metaPath, "utf-8");
+      return JSON.parse(raw) as { topics: TopicScore[]; updatedAt: string | null };
+    } catch {
+      return { topics: [], updatedAt: null };
+    }
+  }
+
+  /**
+   * Add links to an existing memory.
+   */
+  async addLinksToMemory(memoryId: string, links: MemoryLink[]): Promise<boolean> {
+    const memories = await this.readAllMemories();
+    const memory = memories.find((m) => m.frontmatter.id === memoryId);
+    if (!memory) return false;
+
+    const existingLinks = memory.frontmatter.links ?? [];
+    const mergedLinks = [...existingLinks];
+
+    // Add new links, avoiding duplicates
+    for (const link of links) {
+      if (!mergedLinks.some((l) => l.targetId === link.targetId && l.linkType === link.linkType)) {
+        mergedLinks.push(link);
+      }
+    }
+
+    const updatedFm: MemoryFrontmatter = {
+      ...memory.frontmatter,
+      links: mergedLinks,
+      updated: new Date().toISOString(),
+    };
+
+    const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${memory.content}\n`;
+
+    try {
+      await writeFile(memory.path, fileContent, "utf-8");
+      log.debug(`added ${links.length} links to memory ${memoryId}`);
+      return true;
+    } catch (err) {
+      log.error(`failed to add links to memory ${memoryId}:`, err);
+      return false;
+    }
   }
 }

@@ -93,6 +93,117 @@
       "workspaceDir": {
         "type": "string",
         "description": "Override workspace directory path"
+      },
+      "accessTrackingEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Track memory access counts and recency"
+      },
+      "accessTrackingBufferMaxSize": {
+        "type": "number",
+        "default": 100,
+        "description": "Max entries in access tracking buffer before flush"
+      },
+      "recencyWeight": {
+        "type": "number",
+        "default": 0.2,
+        "description": "Weight for recency boosting in search (0-1)"
+      },
+      "boostAccessCount": {
+        "type": "boolean",
+        "default": true,
+        "description": "Boost frequently accessed memories in search results"
+      },
+      "chunkingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable automatic chunking of long memories"
+      },
+      "chunkingTargetTokens": {
+        "type": "number",
+        "default": 200,
+        "description": "Target tokens per chunk"
+      },
+      "chunkingMinTokens": {
+        "type": "number",
+        "default": 150,
+        "description": "Minimum tokens to trigger chunking"
+      },
+      "chunkingOverlapSentences": {
+        "type": "number",
+        "default": 2,
+        "description": "Number of sentences to overlap between chunks"
+      },
+      "contradictionDetectionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable automatic contradiction detection with LLM verification"
+      },
+      "contradictionSimilarityThreshold": {
+        "type": "number",
+        "default": 0.7,
+        "description": "QMD similarity threshold to trigger contradiction check"
+      },
+      "contradictionMinConfidence": {
+        "type": "number",
+        "default": 0.9,
+        "description": "Minimum LLM confidence to auto-resolve contradictions"
+      },
+      "contradictionAutoResolve": {
+        "type": "boolean",
+        "default": true,
+        "description": "Automatically supersede contradicted memories"
+      },
+      "memoryLinkingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable automatic memory linking to build knowledge graph"
+      },
+      "threadingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable conversation threading"
+      },
+      "threadingGapMinutes": {
+        "type": "number",
+        "default": 30,
+        "description": "Minutes of gap to start a new thread"
+      },
+      "summarizationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable automatic memory summarization/compression"
+      },
+      "summarizationTriggerCount": {
+        "type": "number",
+        "default": 1000,
+        "description": "Memory count threshold to trigger summarization"
+      },
+      "summarizationRecentToKeep": {
+        "type": "number",
+        "default": 300,
+        "description": "Number of recent memories to keep uncompressed"
+      },
+      "summarizationImportanceThreshold": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Only compress memories with importance below this threshold"
+      },
+      "summarizationProtectedTags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["commitment", "preference", "decision", "principle"],
+        "description": "Tags that protect memories from compression"
+      },
+      "topicExtractionEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable topic extraction during consolidation"
+      },
+      "topicExtractionTopN": {
+        "type": "number",
+        "default": 50,
+        "description": "Number of top topics to extract"
       }
     }
   },
@@ -176,6 +287,103 @@
       "label": "Workspace Directory",
       "advanced": true,
       "placeholder": "~/.openclaw/workspace"
+    },
+    "accessTrackingEnabled": {
+      "label": "Access Tracking",
+      "help": "Track which memories are accessed most frequently"
+    },
+    "accessTrackingBufferMaxSize": {
+      "label": "Access Buffer Size",
+      "advanced": true,
+      "placeholder": "100"
+    },
+    "recencyWeight": {
+      "label": "Recency Weight",
+      "advanced": true,
+      "help": "How much to boost recent memories in search (0-1)",
+      "placeholder": "0.2"
+    },
+    "boostAccessCount": {
+      "label": "Boost Frequent Access",
+      "help": "Rank frequently accessed memories higher in search"
+    },
+    "chunkingEnabled": {
+      "label": "Enable Chunking",
+      "help": "Automatically split long memories into overlapping chunks for better retrieval"
+    },
+    "chunkingTargetTokens": {
+      "label": "Chunk Target Tokens",
+      "advanced": true,
+      "placeholder": "200"
+    },
+    "chunkingMinTokens": {
+      "label": "Chunk Min Tokens",
+      "advanced": true,
+      "placeholder": "150"
+    },
+    "chunkingOverlapSentences": {
+      "label": "Chunk Overlap Sentences",
+      "advanced": true,
+      "placeholder": "2"
+    },
+    "contradictionDetectionEnabled": {
+      "label": "Contradiction Detection",
+      "help": "Detect and resolve conflicting memories using LLM verification"
+    },
+    "contradictionSimilarityThreshold": {
+      "label": "Contradiction Similarity Threshold",
+      "advanced": true,
+      "placeholder": "0.7"
+    },
+    "contradictionMinConfidence": {
+      "label": "Contradiction Min Confidence",
+      "advanced": true,
+      "placeholder": "0.9"
+    },
+    "contradictionAutoResolve": {
+      "label": "Auto-Resolve Contradictions",
+      "help": "Automatically supersede old memories when contradiction is confirmed"
+    },
+    "memoryLinkingEnabled": {
+      "label": "Memory Linking",
+      "help": "Build knowledge graph by linking related memories"
+    },
+    "threadingEnabled": {
+      "label": "Conversation Threading",
+      "help": "Group memories into conversation threads with auto-titles"
+    },
+    "threadingGapMinutes": {
+      "label": "Thread Gap (minutes)",
+      "advanced": true,
+      "placeholder": "30"
+    },
+    "summarizationEnabled": {
+      "label": "Memory Summarization",
+      "help": "Compress old, low-importance memories into summaries"
+    },
+    "summarizationTriggerCount": {
+      "label": "Summarization Trigger",
+      "advanced": true,
+      "placeholder": "1000"
+    },
+    "summarizationRecentToKeep": {
+      "label": "Recent to Keep",
+      "advanced": true,
+      "placeholder": "300"
+    },
+    "summarizationImportanceThreshold": {
+      "label": "Importance Threshold",
+      "advanced": true,
+      "placeholder": "0.3"
+    },
+    "topicExtractionEnabled": {
+      "label": "Topic Extraction",
+      "help": "Extract key topics from memory corpus"
+    },
+    "topicExtractionTopN": {
+      "label": "Top N Topics",
+      "advanced": true,
+      "placeholder": "50"
     }
   }
 }
