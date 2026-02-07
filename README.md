@@ -16,6 +16,7 @@ Most AI memory systems are either too noisy (store everything) or too lossy (sto
 
 ## Features
 
+### Core Features
 - **10 memory categories**: fact, preference, correction, entity, decision, relationship, principle, commitment, moment, skill
 - **Confidence tiers**: explicit (0.95-1.0), implied (0.70-0.94), inferred (0.40-0.69), speculative (0.00-0.39)
 - **TTL on speculative memories**: Auto-expire after 30 days if unconfirmed
@@ -32,6 +33,66 @@ Most AI memory systems are either too noisy (store everything) or too lossy (sto
 - **Migration tools**: Import memories from Honcho, Supermemory, and context files
 - **CLI**: Search, inspect, and manage memories from the command line
 - **Agent tools**: `memory_search`, `memory_store`, `memory_profile`, `memory_entities`
+
+### v1.2.0 Advanced Features
+
+All advanced features are **disabled by default** for gradual adoption. Enable them in your config as needed.
+
+#### Importance Scoring (Zero-LLM)
+- **Local heuristic scoring** at extraction time — no API calls
+- Five tiers: `critical` (0.9-1.0), `high` (0.7-0.9), `normal` (0.4-0.7), `low` (0.2-0.4), `trivial` (0.0-0.2)
+- Scores based on: explicit importance markers, personal info, instructions, emotional content, factual density
+- Extracts salient keywords for improved search relevance
+- Used for **ranking** (not exclusion) — all memories are still stored and searchable
+
+#### Access Tracking
+- Tracks `accessCount` and `lastAccessed` for each memory
+- Batched updates during consolidation (zero retrieval latency impact)
+- Enables "working set" prioritization — frequently accessed memories surface higher
+- CLI: `openclaw engram access` to view most accessed memories
+
+#### Recency Boosting
+- Recent memories ranked higher in search results
+- Configurable weight (0-1, default 0.2)
+- Exponential decay with 7-day half-life
+
+#### Automatic Chunking
+- Sentence-boundary splitting for long memories (>150 tokens)
+- Target ~200 tokens per chunk with 2-sentence overlap
+- Each chunk maintains `parentId` and `chunkIndex` for context reconstruction
+- Preserves coherent thoughts — never splits mid-sentence
+
+#### Contradiction Detection
+- QMD similarity search finds candidate conflicts (fast, cheap)
+- LLM verification confirms actual contradictions (prevents false positives)
+- Auto-resolve when confidence > 0.9
+- Full audit trail: old memory marked `status: superseded` with `supersededBy` link
+- Nothing is deleted — superseded memories remain searchable explicitly
+
+#### Memory Linking (Knowledge Graph)
+- Typed relationships: `follows`, `references`, `contradicts`, `supports`, `related`
+- LLM suggests links during extraction based on semantic connections
+- Links stored in frontmatter with strength scores (0-1)
+- Enables graph traversal between related memories
+
+#### Conversation Threading
+- Auto-detect thread boundaries (session change or 30-minute gap)
+- Auto-generate thread titles from top TF-IDF keywords
+- Group memories into conversation threads for context reconstruction
+- CLI: `openclaw engram threads` to view threads
+
+#### Memory Summarization
+- Triggered when memory count exceeds threshold (default 1000)
+- Compresses old, low-importance, unprotected memories into summaries
+- **Archive, not delete** — source memories marked `status: archived`, still searchable
+- Protected: recent memories, high-importance, entities, commitments/preferences/decisions
+- Summaries stored in `summaries/` directory
+
+#### Topic Extraction
+- TF-IDF analysis of the entire memory corpus
+- Extracts top N topics (default 50) during consolidation
+- Stored in `state/topics.json`
+- CLI: `openclaw engram topics` to view extracted topics
 
 ## Architecture
 
@@ -107,9 +168,16 @@ All memories are stored as markdown files with YAML frontmatter:
 │   └── correction-1738789200000-e5f6.md
 ├── questions/                  # Generated curiosity questions
 │   └── q-m1abc-xy.md
+├── threads/                    # Conversation threads (v1.2.0)
+│   └── thread-1738789200000-a1b2.json
+├── summaries/                  # Memory summaries (v1.2.0)
+│   └── summary-1738789200000-a1b2.json
+├── config/
+│   └── aliases.json            # Entity name aliases
 └── state/
     ├── buffer.json             # Current unbatched turns (survives restarts)
-    └── meta.json               # Extraction count, timestamps, totals
+    ├── meta.json               # Extraction count, timestamps, totals
+    └── topics.json             # Extracted topics (v1.2.0)
 ```
 
 ### Memory File Format
@@ -248,6 +316,65 @@ All settings are defined in `openclaw.json` under `plugins.entries.openclaw-engr
 | `injectQuestions` | `false` | Inject open questions into the system prompt |
 | `commitmentDecayDays` | `90` | Days before fulfilled/expired commitments are removed |
 
+### v1.2.0 Advanced Feature Settings
+
+#### Access Tracking & Retrieval
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `accessTrackingEnabled` | `true` | Track memory access counts and recency |
+| `accessTrackingBufferMaxSize` | `100` | Max entries in access buffer before flush |
+| `recencyWeight` | `0.2` | Weight for recency boosting (0-1) |
+| `boostAccessCount` | `true` | Boost frequently accessed memories in search |
+
+#### Chunking
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `chunkingEnabled` | `false` | Enable automatic chunking of long memories |
+| `chunkingTargetTokens` | `200` | Target tokens per chunk |
+| `chunkingMinTokens` | `150` | Minimum tokens to trigger chunking |
+| `chunkingOverlapSentences` | `2` | Number of sentences to overlap between chunks |
+
+#### Contradiction Detection
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `contradictionDetectionEnabled` | `false` | Enable LLM-verified contradiction detection |
+| `contradictionSimilarityThreshold` | `0.7` | QMD similarity threshold to trigger check |
+| `contradictionMinConfidence` | `0.9` | Minimum LLM confidence to auto-resolve |
+| `contradictionAutoResolve` | `true` | Automatically supersede contradicted memories |
+
+#### Memory Linking
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `memoryLinkingEnabled` | `false` | Enable automatic memory linking |
+
+#### Conversation Threading
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `threadingEnabled` | `false` | Enable conversation threading |
+| `threadingGapMinutes` | `30` | Minutes of gap to start a new thread |
+
+#### Memory Summarization
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `summarizationEnabled` | `false` | Enable automatic memory compression |
+| `summarizationTriggerCount` | `1000` | Memory count threshold to trigger |
+| `summarizationRecentToKeep` | `300` | Number of recent memories to keep uncompressed |
+| `summarizationImportanceThreshold` | `0.3` | Only compress memories with importance below this |
+| `summarizationProtectedTags` | `["commitment", "preference", "decision", "principle"]` | Tags that protect memories from compression |
+
+#### Topic Extraction
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `topicExtractionEnabled` | `true` | Enable topic extraction during consolidation |
+| `topicExtractionTopN` | `50` | Number of top topics to extract |
+
 ### Trigger Modes
 
 - **`smart`** (default): Extracts immediately on high-signal turns (corrections, preferences, identity statements). Batches low-signal turns until buffer-full or time-elapsed.
@@ -279,12 +406,35 @@ The plugin registers four tools that agents can call during conversations:
 ## CLI Commands
 
 ```bash
+# Core commands
 openclaw engram stats                 # Memory statistics (counts, last extraction, etc.)
 openclaw engram search "query"        # Search memories via QMD
 openclaw engram profile               # Display the behavioral profile
 openclaw engram entities              # List all tracked entities
 openclaw engram entities person-name  # View specific entity details
 openclaw engram questions             # List open curiosity questions
+openclaw engram identity              # Show agent identity reflections
+
+# v1.2.0 commands
+openclaw engram access                # Show most accessed memories
+openclaw engram access -n 30          # Show top 30 most accessed
+openclaw engram flush-access          # Manually flush access tracking buffer
+
+openclaw engram importance            # Show importance score distribution
+openclaw engram importance -l high    # Filter by importance level
+openclaw engram importance -n 20      # Show top 20 most important
+
+openclaw engram chunks                # Show chunking statistics
+openclaw engram chunks -p <id>        # Show chunks for a specific parent
+
+openclaw engram threads               # List conversation threads
+openclaw engram threads -t <id>       # Show details for a specific thread
+
+openclaw engram topics                # Show extracted topics
+openclaw engram topics -n 30          # Show top 30 topics
+
+openclaw engram summaries             # Show memory summaries
+openclaw engram summaries -n 10       # Show top 10 most recent summaries
 ```
 
 ## Migration
@@ -399,7 +549,11 @@ src/
 ├── qmd.ts            # QMD CLI client (search, update, collection management)
 ├── tools.ts          # Agent tool definitions
 ├── cli.ts            # CLI subcommand definitions
-└── logger.ts         # Logging utilities
+├── logger.ts         # Logging utilities
+├── chunking.ts       # [v1.2.0] Sentence-boundary chunking for long memories
+├── importance.ts     # [v1.2.0] Zero-LLM heuristic importance scoring
+├── threading.ts      # [v1.2.0] Conversation threading with TF-IDF titles
+└── topics.ts         # [v1.2.0] TF-IDF topic extraction across corpus
 scripts/
 └── migrate.ts        # Migration from Honcho, Supermemory, context files
 ```
