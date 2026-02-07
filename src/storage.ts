@@ -94,27 +94,27 @@ function parseFrontmatter(
 }
 
 /**
+ * Entity alias table loaded from the user's local config.
+ * Populated by StorageManager.loadAliases() at startup.
+ * Falls back to built-in structural aliases (e.g. "open-claw" → "openclaw").
+ */
+let userAliases: Record<string, string> = {};
+
+/** Built-in aliases for common structural normalizations (no personal data) */
+const BUILTIN_ALIASES: Record<string, string> = {
+  openclaw: "openclaw",
+  "open-claw": "openclaw",
+};
+
+/**
  * Normalize an entity name to a canonical form.
  * Strips non-alphanumeric chars, collapses hyphens, removes type prefix duplication.
- * e.g. "Blend Supply" → "blend-supply", "blendsupply" → "blend-supply"
+ * e.g. "My Project" → "my-project"
+ *
+ * Checks user-defined aliases (from config/aliases.json) first, then built-in aliases.
  */
 export function normalizeEntityName(raw: string, type: string): string {
-  // Known aliases: map variant spellings to canonical names
-  const ALIASES: Record<string, string> = {
-    blendsupply: "blend-supply",
-    "blend-supply": "blend-supply",
-    blend: "blend-supply",
-    openclaw: "openclaw",
-    "open-claw": "openclaw",
-    joshuawarren: "joshua-warren",
-    "joshua-warren": "joshua-warren",
-    josh: "joshua-warren",
-    creatuity: "creatuity",
-    "creatuity-com": "creatuity",
-    polymarket: "polymarket",
-  };
-
-  // Strip type prefix if present (e.g. name="person-joshua-warren", type="person")
+  // Strip type prefix if present (e.g. name="person-jane-doe", type="person")
   let name = raw.toLowerCase().trim();
   const typePrefix = `${type.toLowerCase()}-`;
   if (name.startsWith(typePrefix)) {
@@ -127,12 +127,42 @@ export function normalizeEntityName(raw: string, type: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 
-  // Check aliases
-  if (ALIASES[normalized]) {
-    normalized = ALIASES[normalized];
+  // Check user aliases first, then built-in
+  if (userAliases[normalized]) {
+    normalized = userAliases[normalized];
+  } else if (BUILTIN_ALIASES[normalized]) {
+    normalized = BUILTIN_ALIASES[normalized];
   }
 
   return `${type.toLowerCase()}-${normalized}`;
+}
+
+/**
+ * Simple Levenshtein distance between two strings.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/** Strip hyphens from a string for loose comparison */
+function dehyphenate(s: string): string {
+  return s.replace(/-/g, "");
 }
 
 export class StorageManager {
@@ -157,6 +187,26 @@ export class StorageManager {
     return path.join(this.baseDir, "profile.md");
   }
 
+  /**
+   * Load user-defined entity aliases from config/aliases.json in the memory store.
+   * File format: { "variant": "canonical", "variant2": "canonical", ... }
+   * Call this once at startup (e.g. from orchestrator.initialize()).
+   */
+  async loadAliases(): Promise<void> {
+    const aliasPath = path.join(this.baseDir, "config", "aliases.json");
+    try {
+      const raw = await readFile(aliasPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        userAliases = parsed as Record<string, string>;
+        log.debug(`loaded ${Object.keys(userAliases).length} entity aliases from ${aliasPath}`);
+      }
+    } catch {
+      // No aliases file — that's fine, use built-in only
+      log.debug("no config/aliases.json found — using built-in aliases only");
+    }
+  }
+
   async ensureDirectories(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
     await mkdir(path.join(this.factsDir, today), { recursive: true });
@@ -164,6 +214,7 @@ export class StorageManager {
     await mkdir(this.entitiesDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
     await mkdir(this.questionsDir, { recursive: true });
+    await mkdir(path.join(this.baseDir, "config"), { recursive: true });
   }
 
   async writeMemory(
@@ -227,7 +278,15 @@ export class StorageManager {
     facts: string[],
   ): Promise<string> {
     await this.ensureDirectories();
-    const normalized = normalizeEntityName(name, type);
+    let normalized = normalizeEntityName(name, type);
+
+    // Check for fuzzy match against existing entities before creating a new file
+    const match = await this.findMatchingEntity(name, type);
+    if (match && match !== normalized) {
+      log.debug(`fuzzy match: "${normalized}" → existing "${match}"`);
+      normalized = match;
+    }
+
     const filePath = path.join(this.entitiesDir, `${normalized}.md`);
 
     let existingFacts: string[] = [];
@@ -273,16 +332,50 @@ export class StorageManager {
     log.debug("updated profile.md");
   }
 
+  /**
+   * Normalize a string for fuzzy profile dedup: lowercase, strip punctuation, collapse whitespace.
+   */
+  private static normalizeForDedup(s: string): string {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /**
+   * Check if a new bullet is a fuzzy duplicate of any existing bullet.
+   * Returns true if the new bullet should be skipped.
+   */
+  private static isFuzzyDuplicate(newNorm: string, existingNorms: string[]): boolean {
+    for (const existing of existingNorms) {
+      // Exact normalized match
+      if (newNorm === existing) return true;
+
+      // Containment check: shorter must be >60% length of longer
+      const shorter = newNorm.length <= existing.length ? newNorm : existing;
+      const longer = newNorm.length > existing.length ? newNorm : existing;
+      if (shorter.length > 20 && shorter.length / longer.length > 0.6 && longer.includes(shorter)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async appendToProfile(updates: string[]): Promise<void> {
     if (updates.length === 0) return;
     const existing = await this.readProfile();
 
     const lines = existing ? existing.split("\n") : [];
-    const existingBullets = new Set(
-      lines.filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()),
-    );
+    const existingBulletRaw = lines
+      .filter((l) => l.startsWith("- "))
+      .map((l) => l.slice(2).trim());
+    const existingNorms = existingBulletRaw.map(StorageManager.normalizeForDedup);
 
-    const newBullets = updates.filter((u) => !existingBullets.has(u));
+    const newBullets = updates.filter((u) => {
+      const norm = StorageManager.normalizeForDedup(u);
+      return !StorageManager.isFuzzyDuplicate(norm, existingNorms);
+    });
     if (newBullets.length === 0) return;
 
     if (!existing) {
@@ -364,6 +457,71 @@ export class StorageManager {
     } catch {
       return "";
     }
+  }
+
+  /** Return sorted list of entity filenames (without .md extension) */
+  async listEntityNames(): Promise<string[]> {
+    try {
+      const entries = await readdir(this.entitiesDir);
+      return entries
+        .filter((e) => e.endsWith(".md"))
+        .map((e) => e.replace(".md", ""))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Find an existing entity that fuzzy-matches the proposed name.
+   * Returns the existing entity filename (without .md) or null if no match.
+   *
+   * Matching priority:
+   * 1. Exact normalized match (handled by normalizeEntityName already)
+   * 2. Dehyphenated match: "jane-doe" vs "janedoe"
+   * 3. Substring containment: "handle-janedoe" contains "janedoe"
+   * 4. Levenshtein ≤ 2 on dehyphenated names
+   */
+  async findMatchingEntity(proposedName: string, type: string): Promise<string | null> {
+    const existing = await this.listEntityNames();
+    if (existing.length === 0) return null;
+
+    const typePrefix = `${type.toLowerCase()}-`;
+    // Extract the name part from the proposed normalized name
+    const proposedFull = normalizeEntityName(proposedName, type);
+    const proposedNamePart = proposedFull.startsWith(typePrefix)
+      ? proposedFull.slice(typePrefix.length)
+      : proposedFull;
+    const proposedDehyph = dehyphenate(proposedNamePart);
+
+    // Only compare against entities of the same type
+    const sameType = existing.filter((e) => e.startsWith(typePrefix));
+
+    for (const entity of sameType) {
+      const entityNamePart = entity.slice(typePrefix.length);
+      const entityDehyph = dehyphenate(entityNamePart);
+
+      // Already the exact normalized form
+      if (entity === proposedFull) return entity;
+
+      // Dehyphenated exact match
+      if (entityDehyph === proposedDehyph) return entity;
+
+      // Substring containment (shorter must be >60% length of longer)
+      const shorter = proposedDehyph.length <= entityDehyph.length ? proposedDehyph : entityDehyph;
+      const longer = proposedDehyph.length > entityDehyph.length ? proposedDehyph : entityDehyph;
+      if (shorter.length > 3 && shorter.length / longer.length > 0.6 && longer.includes(shorter)) {
+        return entity;
+      }
+
+      // Levenshtein distance ≤ 2 (only for names of reasonable length)
+      if (proposedDehyph.length >= 4 && entityDehyph.length >= 4) {
+        const dist = levenshtein(proposedDehyph, entityDehyph);
+        if (dist <= 2) return entity;
+      }
+    }
+
+    return null;
   }
 
   async invalidateMemory(id: string): Promise<boolean> {
@@ -667,8 +825,8 @@ export class StorageManager {
   // Commitment decay
   // ---------------------------------------------------------------------------
 
-  /** Max lines for profile.md before oldest bullets are pruned */
-  private static readonly PROFILE_MAX_LINES = 600;
+  /** Max lines for profile.md before LLM consolidation triggers */
+  private static readonly PROFILE_MAX_LINES = 300;
 
   /**
    * Merge fragmented entity files that resolve to the same canonical name.

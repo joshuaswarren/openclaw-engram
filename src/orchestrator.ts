@@ -27,6 +27,7 @@ export class Orchestrator {
 
   async initialize(): Promise<void> {
     await this.storage.ensureDirectories();
+    await this.storage.loadAliases();
 
     if (this.config.qmdEnabled) {
       const available = await this.qmd.probe();
@@ -123,7 +124,9 @@ export class Orchestrator {
   private async runExtraction(turns: BufferTurn[]): Promise<void> {
     log.info(`running extraction on ${turns.length} turns`);
 
-    const result = await this.extraction.extract(turns);
+    // Pass existing entity names so the LLM can reuse them instead of inventing variants
+    const existingEntities = await this.storage.listEntityNames();
+    const result = await this.extraction.extract(turns, existingEntities);
     await this.persistExtraction(result);
     await this.buffer.clearAfterExtraction();
 

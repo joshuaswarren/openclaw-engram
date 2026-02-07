@@ -125,7 +125,7 @@ Best for:
         entityRef: Type.Optional(
           Type.String({
             description:
-              "Entity reference (e.g., person-joshua-warren, project-openclaw)",
+              "Entity reference (e.g., person-jane-doe, project-my-app)",
           }),
         ),
       }),
@@ -202,7 +202,7 @@ Best for:
         name: Type.Optional(
           Type.String({
             description:
-              "Specific entity to look up (e.g., person-joshua-warren)",
+              "Specific entity to look up (e.g., person-jane-doe)",
           }),
         ),
       }),

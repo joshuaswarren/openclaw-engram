@@ -15,13 +15,13 @@ export const ExtractedFactSchema = z.object({
     .string()
     .optional()
     .nullable()
-    .describe("If about an entity, its normalized name (e.g. person-joshua-warren)"),
+    .describe("If about an entity, its normalized name (e.g. person-jane-doe)"),
 });
 
 export const EntityMentionSchema = z.object({
   name: z
     .string()
-    .describe("Normalized entity name (e.g. joshua-warren, openclaw, qmd)"),
+    .describe("Normalized entity name (e.g. jane-doe, acme-corp, my-project)"),
   type: z.enum(["person", "project", "tool", "company", "place", "other"]),
   facts: z
     .array(z.string())

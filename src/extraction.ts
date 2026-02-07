@@ -27,7 +27,7 @@ export class ExtractionEngine {
     }
   }
 
-  async extract(turns: BufferTurn[]): Promise<ExtractionResult> {
+  async extract(turns: BufferTurn[], existingEntities?: string[]): Promise<ExtractionResult> {
     if (!this.client) {
       log.warn("extraction skipped — no OpenAI API key");
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
@@ -61,11 +61,11 @@ Memory categories:
 - correction: User correcting a mistake or misconception (highest priority)
 - entity: Information about a specific person, project, tool, or company
 - decision: A choice that was made with rationale
-- relationship: How two entities relate to each other (e.g., "Joshua is Jenna's husband", "Creatuity uses Adobe Commerce")
+- relationship: How two entities relate to each other (e.g., "Alice is Bob's manager", "Acme Corp uses Shopify")
 - principle: Durable rules, values, or operating beliefs (e.g., "never use Chat Completions API")
 - commitment: Promises, obligations, or deadlines (e.g., "deploy by Friday", "call accountant Monday")
 - moment: Emotionally significant events or milestones (e.g., "first successful deployment of engram")
-- skill: Capabilities the user or agent has demonstrated (e.g., "Joshua knows Magento deeply")
+- skill: Capabilities the user or agent has demonstrated (e.g., "user is proficient with Kubernetes")
 
 Rules:
 - Only extract genuinely NEW information worth remembering across sessions
@@ -73,8 +73,8 @@ Rules:
 - Priority: corrections > principles > preferences > commitments > decisions > relationships > entities > moments > skills > facts
 - Corrections (user saying "actually, don't do X" or "I prefer Y") get highest confidence
 - Each fact should be a standalone, self-contained statement
-- Entity references should use normalized names (lowercase, hyphenated: "joshua-warren", "openclaw")
-- CRITICAL: Entity names must be CANONICAL. Always use the hyphenated multi-word form: "blend-supply" NOT "blendsupply" or "blend". "joshua-warren" NOT "joshuawarren" or "josh". If unsure, prefer the most specific full name.
+- Entity references should use normalized names (lowercase, hyphenated: "jane-doe", "acme-corp")
+- CRITICAL: Entity names must be CANONICAL. Always use the hyphenated multi-word form: "acme-corp" NOT "acmecorp" or "acme". "jane-doe" NOT "janedoe" or "jane". If unsure, prefer the most specific full name.
 - Avoid creating entities typed as "other" when a more specific type fits (company, project, tool, person, place)
 - Tags should be concise and reusable (e.g., "coding-style", "personal", "tools")
 - Set confidence using these tiers:
@@ -88,9 +88,15 @@ Entity creation rules (STRICT):
 - Only create entities for DURABLE things: real people, companies, products, tools, ongoing projects
 - NEVER create entities for transient items: individual PRs, branches, Jira tickets, meetings, agent task IDs, log files, database tables, cron job runs, sessions
 - When you learn something about a transient item (e.g., PR #58 fixed a bug), store it as a FACT with an entityRef to the parent project — do NOT create an entity for the PR itself
-- Prefer attaching facts to broad parent entities rather than creating sub-entities. E.g., "blend-supply uses Akeneo for PIM" is a fact on entity "blend-supply", NOT a new entity "blend-supply-akeneo-connector"
+- Prefer attaching facts to broad parent entities rather than creating sub-entities. E.g., "acme-store uses Algolia for search" is a fact on entity "acme-store", NOT a new entity "acme-store-algolia-connector"
 - The entity list should be SHORT — think "things that would have their own Wikipedia page" not "things mentioned in passing"
 
+${existingEntities && existingEntities.length > 0 ? `
+KNOWN ENTITIES (use these exact names when referencing existing things):
+${existingEntities.join(", ")}
+
+When you see something that matches a known entity, use THAT name exactly. Only create a NEW entity if nothing in this list represents it.
+` : ""}
 Also generate 1-3 genuine questions you're curious about based on this conversation. These should be things you'd actually want answers to in future sessions — not prompts, but real curiosity.
 
 Finally, write a brief identity reflection about the AGENT who had this conversation (not about you, the extraction system). Based on what the agent said and did in the conversation:
