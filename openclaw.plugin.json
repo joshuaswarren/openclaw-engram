@@ -204,6 +204,62 @@
         "type": "number",
         "default": 50,
         "description": "Number of top topics to extract"
+      },
+      "transcriptEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable transcript archiving"
+      },
+      "transcriptRetentionDays": {
+        "type": "number",
+        "default": 7,
+        "description": "Days to retain transcript entries"
+      },
+      "transcriptSkipChannelTypes": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["cron"],
+        "description": "Channel types to skip from transcript logging (e.g., cron)"
+      },
+      "transcriptRecallHours": {
+        "type": "number",
+        "default": 12,
+        "description": "Hours of transcript history to recall"
+      },
+      "maxTranscriptTurns": {
+        "type": "number",
+        "default": 50,
+        "description": "Maximum transcript turns to inject"
+      },
+      "maxTranscriptTokens": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum tokens for transcript injection"
+      },
+      "checkpointEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable conversation checkpoints"
+      },
+      "checkpointTurns": {
+        "type": "number",
+        "default": 15,
+        "description": "Number of turns per checkpoint"
+      },
+      "hourlySummariesEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable hourly conversation summaries"
+      },
+      "summaryRecallHours": {
+        "type": "number",
+        "default": 24,
+        "description": "Hours of summary history to recall"
+      },
+      "maxSummaryCount": {
+        "type": "number",
+        "default": 6,
+        "description": "Maximum number of summaries to inject"
       }
     }
   },
@@ -384,6 +440,58 @@
       "label": "Top N Topics",
       "advanced": true,
       "placeholder": "50"
+    },
+    "transcriptEnabled": {
+      "label": "Enable Transcript Archive",
+      "help": "Archive conversation transcripts for context preservation"
+    },
+    "transcriptRetentionDays": {
+      "label": "Transcript Retention (days)",
+      "advanced": true,
+      "placeholder": "7"
+    },
+    "transcriptSkipChannelTypes": {
+      "label": "Skip Channel Types",
+      "advanced": true,
+      "help": "Channel types to exclude from transcript logging (default: cron)"
+    },
+    "transcriptRecallHours": {
+      "label": "Transcript Recall (hours)",
+      "advanced": true,
+      "placeholder": "12"
+    },
+    "maxTranscriptTurns": {
+      "label": "Max Transcript Turns",
+      "advanced": true,
+      "placeholder": "50"
+    },
+    "maxTranscriptTokens": {
+      "label": "Max Transcript Tokens",
+      "advanced": true,
+      "placeholder": "1000"
+    },
+    "checkpointEnabled": {
+      "label": "Enable Checkpoints",
+      "help": "Capture conversation checkpoints for resuming context"
+    },
+    "checkpointTurns": {
+      "label": "Checkpoint Turn Interval",
+      "advanced": true,
+      "placeholder": "15"
+    },
+    "hourlySummariesEnabled": {
+      "label": "Enable Hourly Summaries",
+      "help": "Generate hourly summaries of conversation activity"
+    },
+    "summaryRecallHours": {
+      "label": "Summary Recall (hours)",
+      "advanced": true,
+      "placeholder": "24"
+    },
+    "maxSummaryCount": {
+      "label": "Max Summary Count",
+      "advanced": true,
+      "placeholder": "6"
     }
   }
 }

@@ -145,5 +145,34 @@ export function parseConfig(raw: unknown): PluginConfig {
     topicExtractionEnabled: cfg.topicExtractionEnabled !== false, // On by default
     topicExtractionTopN:
       typeof cfg.topicExtractionTopN === "number" ? cfg.topicExtractionTopN : 50,
+    // Transcript & Context Preservation (v2.0)
+    // Transcript archive
+    transcriptEnabled: cfg.transcriptEnabled !== false, // default: true
+    transcriptRetentionDays:
+      typeof cfg.transcriptRetentionDays === "number" ? cfg.transcriptRetentionDays : 7,
+    transcriptSkipChannelTypes: Array.isArray(cfg.transcriptSkipChannelTypes)
+      ? (cfg.transcriptSkipChannelTypes as string[])
+      : ["cron"], // default: skip cron transcripts
+    // Transcript injection
+    transcriptRecallHours:
+      typeof cfg.transcriptRecallHours === "number" ? cfg.transcriptRecallHours : 12,
+    maxTranscriptTurns:
+      typeof cfg.maxTranscriptTurns === "number" ? cfg.maxTranscriptTurns : 50,
+    maxTranscriptTokens:
+      typeof cfg.maxTranscriptTokens === "number" ? cfg.maxTranscriptTokens : 1000,
+    // Checkpoint
+    checkpointEnabled: cfg.checkpointEnabled !== false, // default: true
+    checkpointTurns:
+      typeof cfg.checkpointTurns === "number" ? cfg.checkpointTurns : 15,
+    // Hourly summaries
+    hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
+    summaryRecallHours:
+      typeof cfg.summaryRecallHours === "number" ? cfg.summaryRecallHours : 24,
+    maxSummaryCount:
+      typeof cfg.maxSummaryCount === "number" ? cfg.maxSummaryCount : 6,
+    summaryModel:
+      typeof cfg.summaryModel === "string" && cfg.summaryModel.length > 0
+        ? cfg.summaryModel
+        : model, // default: same as extraction model
   };
 }

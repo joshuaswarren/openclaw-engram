@@ -64,6 +64,24 @@ export interface PluginConfig {
   // Topic Extraction (Phase 4B)
   topicExtractionEnabled: boolean;
   topicExtractionTopN: number;
+  // Transcript & Context Preservation (v2.0)
+  // Transcript archive
+  transcriptEnabled: boolean;
+  transcriptRetentionDays: number;
+  /** Channel types to skip from transcript logging (e.g., ["cron"]) */
+  transcriptSkipChannelTypes: string[];
+  // Transcript injection
+  transcriptRecallHours: number;
+  maxTranscriptTurns: number;
+  maxTranscriptTokens: number;
+  // Checkpoint
+  checkpointEnabled: boolean;
+  checkpointTurns: number;
+  // Hourly summaries
+  hourlySummariesEnabled: boolean;
+  summaryRecallHours: number;
+  maxSummaryCount: number;
+  summaryModel: string;
 }
 
 export interface BufferTurn {
@@ -283,3 +301,34 @@ export interface LlmTraceEvent {
 }
 
 export type LlmTraceCallback = (event: LlmTraceEvent) => void;
+
+// ============================================================================
+// Transcript & Context Preservation (v2.0)
+// ============================================================================
+
+export interface TranscriptEntry {
+  timestamp: string;
+  role: "user" | "assistant";
+  content: string;
+  sessionKey: string;
+  turnId: string;
+  metadata?: {
+    compactAfter?: boolean;
+    compactionId?: string | null;
+  };
+}
+
+export interface Checkpoint {
+  sessionKey: string;
+  capturedAt: string;
+  turns: TranscriptEntry[];
+  ttl: string; // ISO timestamp when checkpoint expires
+}
+
+export interface HourlySummary {
+  hour: string; // "2026-02-08T14:00:00Z"
+  sessionKey: string;
+  bullets: string[];
+  turnCount: number;
+  generatedAt: string;
+}

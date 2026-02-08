@@ -8,6 +8,8 @@ import { QmdClient } from "./qmd.js";
 import { StorageManager } from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
+import { TranscriptManager } from "./transcript.js";
+import { HourlySummarizer } from "./summarizer.js";
 import type { MemorySummary } from "./types.js";
 import type {
   AccessTrackingEntry,
@@ -22,6 +24,8 @@ export class Orchestrator {
   readonly storage: StorageManager;
   readonly qmd: QmdClient;
   readonly buffer: SmartBuffer;
+  readonly transcript: TranscriptManager;
+  readonly summarizer: HourlySummarizer;
   private readonly extraction: ExtractionEngine;
   private readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
@@ -36,6 +40,8 @@ export class Orchestrator {
     this.storage = new StorageManager(config.memoryDir);
     this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults);
     this.buffer = new SmartBuffer(config, this.storage);
+    this.transcript = new TranscriptManager(config);
+    this.summarizer = new HourlySummarizer(config);
     this.extraction = new ExtractionEngine(config);
     this.threading = new ThreadingManager(
       path.join(config.memoryDir, "threads"),
@@ -46,6 +52,8 @@ export class Orchestrator {
   async initialize(): Promise<void> {
     await this.storage.ensureDirectories();
     await this.storage.loadAliases();
+    await this.transcript.initialize();
+    await this.summarizer.initialize();
 
     if (this.config.qmdEnabled) {
       const available = await this.qmd.probe();
@@ -61,16 +69,16 @@ export class Orchestrator {
     log.info("orchestrator initialized");
   }
 
-  async recall(prompt: string): Promise<string> {
+  async recall(prompt: string, sessionKey?: string): Promise<string> {
     const sections: string[] = [];
 
-    // Read profile directly (free, instant)
+    // 1. Profile (existing)
     const profile = await this.storage.readProfile();
     if (profile) {
       sections.push(`## User Profile\n\n${profile}`);
     }
 
-    // Search memory collection via QMD
+    // 2. Memories via QMD (existing)
     if (this.config.qmdEnabled && this.qmd.isAvailable()) {
       let memoryResults = await this.qmd.search(prompt);
 
@@ -119,7 +127,72 @@ export class Orchestrator {
       }
     }
 
-    // Inject most relevant question (if enabled)
+    // 3. TRANSCRIPT INJECTION (NEW)
+    log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
+    if (this.config.transcriptEnabled) {
+      // Try checkpoint first (post-compaction recovery)
+      let checkpointInjected = false;
+      if (this.config.checkpointEnabled) {
+        const checkpoint = await this.transcript.loadCheckpoint(sessionKey);
+        log.debug(`recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`);
+        if (checkpoint && checkpoint.turns.length > 0) {
+          const formatted = this.transcript.formatForRecall(
+            checkpoint.turns,
+            this.config.maxTranscriptTokens
+          );
+          if (formatted) {
+            sections.push(`## Working Context (Recovered)\n\n${formatted}`);
+            checkpointInjected = true;
+            // Clear checkpoint after injection
+            await this.transcript.clearCheckpoint();
+          }
+        }
+      }
+
+      // If no checkpoint, inject recent transcript
+      if (!checkpointInjected) {
+        const entries = await this.transcript.readRecent(
+          this.config.transcriptRecallHours,
+          sessionKey
+        );
+        log.debug(`recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`);
+
+        // Apply max turns cap
+        const cappedEntries = entries.slice(-this.config.maxTranscriptTurns);
+
+        if (cappedEntries.length > 0) {
+          log.debug(`recall: injecting ${cappedEntries.length} transcript entries`);
+          const formatted = this.transcript.formatForRecall(
+            cappedEntries,
+            this.config.maxTranscriptTokens
+          );
+          if (formatted) {
+            sections.push(formatted);
+          }
+        }
+      }
+    }
+
+    // 4. HOURLY SUMMARIES INJECTION (NEW)
+    if (this.config.hourlySummariesEnabled && sessionKey) {
+      const summaries = await this.summarizer.readRecent(
+        sessionKey,
+        this.config.summaryRecallHours
+      );
+
+      // Apply max count cap
+      const cappedSummaries = summaries.slice(0, this.config.maxSummaryCount);
+
+      if (cappedSummaries.length > 0) {
+        const formatted = this.summarizer.formatForRecall(
+          cappedSummaries,
+          this.config.maxSummaryCount
+        );
+        sections.push(formatted);
+      }
+    }
+
+    // 5. Inject most relevant question (if enabled) (existing)
     if (this.config.injectQuestions) {
       const questions = await this.storage.readQuestions({ unresolvedOnly: true });
       if (questions.length > 0) {

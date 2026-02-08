@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
+import type { TranscriptEntry } from "./types.js";
 
 interface CliApi {
   registerCli(
@@ -495,7 +496,116 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             }
           }
         });
+
+      // Transcript commands
+      cmd
+        .command("transcript")
+        .description("View conversation transcripts")
+        .option("--date <date>", "View transcript for specific date (YYYY-MM-DD)")
+        .option("--recent <duration>", "View recent transcript (e.g., 12h, 30m)")
+        .option("--channel <key>", "Filter by channel/session key")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string>;
+          const date = options.date;
+          const recent = options.recent;
+          let channel = options.channel;
+
+          // Expand shorthand channel names to full sessionKey patterns
+          if (channel && !channel.includes(":")) {
+            // Convert "main" -> "agent:generalist:main"
+            // Convert "discord" -> "agent:generalist:discord" (will match all discord channels)
+            // Convert "cron" -> "agent:generalist:cron" (will match all cron jobs)
+            if (channel === "main") {
+              channel = "agent:generalist:main";
+            } else if (["discord", "slack", "cron", "telegram"].includes(channel)) {
+              channel = `agent:generalist:${channel}`;
+            }
+          }
+
+          if (date) {
+            // Read specific date
+            const entries = await orchestrator.transcript.readRange(
+              `${date}T00:00:00Z`,
+              `${date}T23:59:59Z`,
+              channel,
+            );
+            console.log(formatTranscript(entries));
+          } else if (recent) {
+            // Parse duration (e.g., "12h", "30m")
+            const hours = parseDuration(recent);
+            const entries = await orchestrator.transcript.readRecent(hours, channel);
+            console.log(formatTranscript(entries));
+          } else {
+            // Default: show today's transcript
+            const today = new Date().toISOString().slice(0, 10);
+            const entries = await orchestrator.transcript.readRange(
+              `${today}T00:00:00Z`,
+              `${today}T23:59:59Z`,
+              channel,
+            );
+            console.log(formatTranscript(entries));
+          }
+        });
+
+      // Checkpoint command
+      cmd
+        .command("checkpoint")
+        .description("View current compaction checkpoint (if any)")
+        .action(async () => {
+          const checkpoint = await orchestrator.transcript.loadCheckpoint();
+          if (!checkpoint) {
+            console.log("No active checkpoint found.");
+            return;
+          }
+          console.log(`Checkpoint for session: ${checkpoint.sessionKey}`);
+          console.log(`Captured at: ${checkpoint.capturedAt}`);
+          console.log(`Expires at: ${checkpoint.ttl}`);
+          console.log(`Turns: ${checkpoint.turns.length}`);
+          console.log("\n---\n");
+          console.log(orchestrator.transcript.formatForRecall(checkpoint.turns, 2000));
+        });
+
+      // Summaries command
+      cmd
+        .command("hourly")
+        .description("View hourly summaries")
+        .option("--channel <key>", "Filter by channel/session key")
+        .option("--recent <hours>", "Show recent summaries (hours)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string>;
+          const channel = options.channel ?? "default";
+          const recentHours = options.recent ? parseInt(options.recent, 10) : 24;
+
+          const summaries = await orchestrator.summarizer.readRecent(channel, recentHours);
+          if (summaries.length === 0) {
+            console.log(`No summaries found for channel: ${channel}`);
+            return;
+          }
+
+          console.log(orchestrator.summarizer.formatForRecall(summaries, summaries.length));
+        });
     },
     { commands: ["engram"] },
   );
+}
+
+function formatTranscript(entries: TranscriptEntry[]): string {
+  if (entries.length === 0) return "No transcript entries found.";
+
+  return entries
+    .map((e) => {
+      const time = e.timestamp.slice(11, 16); // HH:MM
+      return `[${time}] ${e.role}: ${e.content.slice(0, 200)}${e.content.length > 200 ? "..." : ""}`;
+    })
+    .join("\n");
+}
+
+function parseDuration(duration: string): number {
+  // Parse strings like "12h", "30m", "2h30m"
+  const hours = duration.match(/(\d+)h/);
+  const minutes = duration.match(/(\d+)m/);
+  let total = 0;
+  if (hours) total += parseInt(hours[1], 10);
+  if (minutes) total += parseInt(minutes[1], 10) / 60;
+  return total || 12; // Default to 12 hours
 }

@@ -316,4 +316,30 @@ Best for:
     },
     { name: "memory_identity" },
   );
+
+  api.registerTool(
+    {
+      name: "memory_summarize_hourly",
+      label: "Generate Hourly Summaries",
+      description: `Generate hourly summaries for the previous hour's conversations across all active sessions.
+
+Cost: Low (uses configured summary model)
+Speed: Fast
+
+Best for:
+- Cron job scheduled hourly summarization
+- Manual trigger to summarize recent conversations
+- Building conversation summaries for context preservation`,
+      parameters: Type.Object({}),
+      async execute() {
+        try {
+          await orchestrator.summarizer.runHourly();
+          return toolResult("Hourly summarization completed. Check the summaries directory for results.");
+        } catch (err) {
+          return toolResult(`Hourly summarization failed: ${err}`);
+        }
+      },
+    },
+    { name: "memory_summarize_hourly" },
+  );
 }

@@ -5,6 +5,9 @@ import { log } from "./logger.js";
 import { Orchestrator } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 export default {
   id: "openclaw-engram",
@@ -27,28 +30,27 @@ export default {
     }
 
     // ========================================================================
-    // HOOK: gateway_start — Initialize subsystems
-    // ========================================================================
-    api.on("gateway_start", async () => {
-      log.info("initializing engram memory system...");
-      await orchestrator.initialize();
-      log.info("engram memory system ready");
-    });
-
-    // ========================================================================
     // HOOK: before_agent_start — Inject memory context
     // ========================================================================
     api.on(
       "before_agent_start",
       async (
         event: Record<string, unknown>,
-        _ctx: Record<string, unknown>,
+        ctx: Record<string, unknown>,
       ) => {
         const prompt = event.prompt as string | undefined;
         if (!prompt || prompt.length < 5) return;
 
+        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        log.info(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+
         try {
-          const context = await orchestrator.recall(prompt);
+          // Check for compaction and save checkpoint if needed
+          // This is a placeholder - actual compaction detection depends on OpenClaw
+          // For now, we'll just call recall with the sessionKey
+
+          const context = await orchestrator.recall(prompt, sessionKey);
+          log.info(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
 
           // Rough token estimate: 1 token ≈ 4 chars
@@ -58,6 +60,7 @@ export default {
               ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
               : context;
 
+          log.info(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
           return {
             systemPrompt: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
           };
@@ -96,6 +99,17 @@ export default {
             const cleaned =
               role === "user" ? cleanUserMessage(content) : content;
 
+            // Append to transcript
+            if (orchestrator.config.transcriptEnabled) {
+              await orchestrator.transcript.append({
+                timestamp: new Date().toISOString(),
+                role,
+                content: cleaned,
+                sessionKey,
+                turnId: crypto.randomUUID(),
+              });
+            }
+
             await orchestrator.processTurn(role, cleaned, sessionKey);
           }
         } catch (err) {
@@ -103,6 +117,128 @@ export default {
         }
       },
     );
+
+    // ========================================================================
+    // HOOK: before_compaction — Save checkpoint before context is lost
+    // ========================================================================
+    api.on(
+      "before_compaction",
+      async (
+        event: Record<string, unknown>,
+        ctx: Record<string, unknown>,
+      ) => {
+        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+
+        if (!orchestrator.config.checkpointEnabled) {
+          return;
+        }
+
+        try {
+          // Get recent turns from transcript
+          const entries = await orchestrator.transcript.readRecent(1, sessionKey);
+          const checkpointTurns = entries.slice(-orchestrator.config.checkpointTurns);
+
+          if (checkpointTurns.length > 0) {
+            await orchestrator.transcript.saveCheckpoint({
+              sessionKey,
+              capturedAt: new Date().toISOString(),
+              turns: checkpointTurns,
+              ttl: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            });
+            log.info(`saved checkpoint for ${sessionKey} before compaction`);
+          }
+        } catch (err) {
+          log.error("before_compaction hook failed", err);
+        }
+      },
+    );
+
+    // ========================================================================
+    // HOOK: after_compaction — Cleanup and optional recovery
+    // ========================================================================
+    api.on(
+      "after_compaction",
+      async (
+        event: Record<string, unknown>,
+        ctx: Record<string, unknown>,
+      ) => {
+        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+
+        try {
+          // The checkpoint will be loaded on next recall via orchestrator.recall()
+          // This hook is mainly for logging and any post-compaction cleanup
+          log.debug(`compaction completed for ${sessionKey}`);
+
+          // Could trigger background tasks here if needed
+          // e.g., immediate summarization of the checkpointed turns
+        } catch (err) {
+          log.error("after_compaction hook failed", err);
+        }
+      },
+    );
+
+    // ========================================================================
+    // Helper: Auto-register hourly summary cron job
+    // ========================================================================
+    async function ensureHourlySummaryCron(api: OpenClawPluginApi): Promise<void> {
+      const jobId = "engram-hourly-summary";
+      const cronFilePath = path.join(os.homedir(), ".openclaw", "cron", "jobs.json");
+
+      try {
+        // Read existing jobs
+        let jobsData: { version: number; jobs: Array<{ id: string }> } = { version: 1, jobs: [] };
+        try {
+          const content = await readFile(cronFilePath, "utf-8");
+          jobsData = JSON.parse(content);
+        } catch {
+          // File doesn't exist or is invalid - will create new
+        }
+
+        // Check if job already exists
+        const exists = jobsData.jobs.some((j) => j.id === jobId);
+        if (exists) {
+          log.debug("hourly summary cron job already exists");
+          return;
+        }
+
+        // Get model to use - prefer summary model, then default, then first available
+        const model = cfg.summaryModel || cfg.model || "gpt-5.2";
+
+        // Pick a random minute (1-59) to avoid colliding with other top-of-hour crons
+        const randomMinute = Math.floor(Math.random() * 59) + 1;
+
+        // Create the hourly summary job
+        const newJob = {
+          id: jobId,
+          agentId: "generalist",
+          name: "Engram Hourly Summary",
+          enabled: true,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+          schedule: {
+            kind: "cron" as const,
+            expr: `${randomMinute} * * * *`, // Every hour at random minute
+            tz: "America/Chicago",
+          },
+          sessionTarget: "main",
+          wakeMode: "now" as const,
+          payload: {
+            kind: "toolCall" as const,
+            tool: "memory_summarize_hourly",
+            params: {},
+          },
+          state: {},
+        };
+
+        jobsData.jobs.push(newJob);
+
+        // Write back
+        await writeFile(cronFilePath, JSON.stringify(jobsData, null, 2), "utf-8");
+        log.info("auto-registered hourly summary cron job");
+      } catch (err) {
+        log.error("failed to auto-register hourly summary cron job:", err);
+      }
+    }
 
     // ========================================================================
     // Register tools and CLI
@@ -115,8 +251,21 @@ export default {
     // ========================================================================
     api.registerService({
       id: "openclaw-engram",
-      start: () => {
-        log.info("started");
+      start: async () => {
+        log.info("initializing engram memory system...");
+        await orchestrator.initialize();
+
+        // Cleanup old transcripts
+        if (orchestrator.config.transcriptEnabled) {
+          await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
+        }
+
+        // Auto-register hourly summary cron job if enabled
+        if (orchestrator.config.hourlySummariesEnabled) {
+          await ensureHourlySummaryCron(api);
+        }
+
+        log.info("engram memory system ready");
       },
       stop: () => {
         log.info("stopped");
