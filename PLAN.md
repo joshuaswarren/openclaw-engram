@@ -1,6 +1,6 @@
 # OpenClaw Engram Roadmap
 
-**Current Version:** 2.1.0
+**Current Version:** 2.2.0
 **Last Updated:** 2026-02-10
 
 ---
@@ -54,6 +54,11 @@
 - **Hard Timeout**: Configurable `localLlmTimeoutMs` (default 180s) to prevent stalls
 - **Slow Query Log**: `slowLogEnabled` + `slowLogThresholdMs` for debugging long local/QMD operations
 - **Safer Logging Defaults**: No request-body previews at info level; reduced noisy startup output
+
+### v2.2.0 — Advanced Retrieval (2026-02-10)
+- **Heuristic Query Expansion**: Optional expanded queries (no LLM calls) to improve recall coverage
+- **LLM Re-ranking**: Optional, timeboxed local-only rerank of top candidates (fail-open)
+- **Feedback Loop**: Optional thumbs up/down tool (`memory_feedback`) stored locally and applied as a soft bias
 
 ---
 

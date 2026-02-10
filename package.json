@@ -1,6 +1,6 @@
 {
   "name": "openclaw-engram",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "description": "Local-first memory plugin for OpenClaw. LLM-powered extraction, markdown storage, hybrid search via QMD.",
   "keywords": [
@@ -61,6 +61,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
+    "test": "tsx --test",
     "migrate": "tsx scripts/migrate.ts"
   },
   "devDependencies": {

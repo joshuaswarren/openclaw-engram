@@ -114,6 +114,57 @@
         "default": true,
         "description": "Boost frequently accessed memories in search results"
       },
+      "queryExpansionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable heuristic query expansion for retrieval (no LLM calls)."
+      },
+      "queryExpansionMaxQueries": {
+        "type": "number",
+        "default": 4,
+        "description": "Max expanded queries to run (including the original prompt)."
+      },
+      "queryExpansionMinTokenLen": {
+        "type": "number",
+        "default": 3,
+        "description": "Minimum token length to include in heuristic query expansion."
+      },
+      "rerankEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable LLM re-ranking of retrieved memories. Default off."
+      },
+      "rerankProvider": {
+        "type": "string",
+        "default": "local",
+        "description": "Re-ranking provider: 'local' uses local LLM only; 'cloud' uses gateway fallback chain.",
+        "enum": ["local", "cloud"]
+      },
+      "rerankMaxCandidates": {
+        "type": "number",
+        "default": 20,
+        "description": "Max candidates to send to the re-ranker."
+      },
+      "rerankTimeoutMs": {
+        "type": "number",
+        "default": 8000,
+        "description": "Timeout for re-ranking requests (ms). Fail-open on timeout."
+      },
+      "rerankCacheEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Cache re-ranking results in-memory for repeated queries."
+      },
+      "rerankCacheTtlMs": {
+        "type": "number",
+        "default": 3600000,
+        "description": "TTL for in-memory re-ranking cache (ms)."
+      },
+      "feedbackEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable feedback capture tool for memory relevance (thumbs up/down)."
+      },
       "chunkingEnabled": {
         "type": "boolean",
         "default": false,

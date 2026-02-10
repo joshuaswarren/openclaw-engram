@@ -629,6 +629,8 @@ export class LocalLlmClient {
       temperature?: number;
       maxTokens?: number;
       responseFormat?: { type: string };
+      timeoutMs?: number;
+      operation?: string;
     } = {}
   ): Promise<{
     content: string;
@@ -690,8 +692,12 @@ export class LocalLlmClient {
         }
       }
 
+      const effectiveTimeoutMs =
+        typeof options.timeoutMs === "number"
+          ? Math.min(this.config.localLlmTimeoutMs, options.timeoutMs)
+          : this.config.localLlmTimeoutMs;
       const abort = new AbortController();
-      const timeout = setTimeout(() => abort.abort(), this.config.localLlmTimeoutMs);
+      const timeout = setTimeout(() => abort.abort(), effectiveTimeoutMs);
       const response = await fetch(chatUrl, {
         method: "POST",
         headers: {
@@ -760,8 +766,9 @@ export class LocalLlmClient {
       const durationMs = Date.now() - startedAtMs;
       if (this.config.slowLogEnabled && durationMs >= this.config.slowLogThresholdMs) {
         const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+        const op = options.operation ? ` op=${options.operation}` : "";
         log.warn(
-          `SLOW local LLM: durationMs=${durationMs} model=${this.config.localLlmModel} url=${chatUrl} promptChars=${promptChars} outputTokens=${usage.completionTokens} totalTokens=${usage.totalTokens}`,
+          `SLOW local LLM:${op} durationMs=${durationMs} model=${this.config.localLlmModel} url=${chatUrl} promptChars=${promptChars} outputTokens=${usage.completionTokens} totalTokens=${usage.totalTokens}`,
         );
       }
 

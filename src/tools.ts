@@ -95,6 +95,48 @@ Best for:
 
   api.registerTool(
     {
+      name: "memory_feedback",
+      label: "Memory Feedback",
+      description:
+        "Thumbs up/down a memory's relevance. Stored locally and used as a soft ranking bias when enabled.",
+      parameters: Type.Object({
+        memoryId: Type.String({
+          description: "Memory ID (filename without .md), e.g. fact-123",
+        }),
+        vote: Type.String({
+          enum: ["up", "down"],
+          description: "up or down",
+        }),
+        note: Type.Optional(
+          Type.String({
+            description: "Optional note explaining the feedback (stored locally).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { memoryId, vote, note } = params as {
+          memoryId: string;
+          vote: "up" | "down";
+          note?: string;
+        };
+
+        if (!orchestrator.config.feedbackEnabled) {
+          return toolResult(
+            "Feedback is disabled. Enable `feedbackEnabled: true` in the Engram plugin config to store feedback.",
+          );
+        }
+
+        await orchestrator.recordMemoryFeedback(memoryId, vote, note);
+        return toolResult(
+          `Recorded feedback for ${memoryId}: ${vote}${note ? ` (note: ${note})` : ""}`,
+        );
+      },
+    },
+    { name: "memory_feedback" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_store",
       label: "Store Memory",
       description: `Explicitly store a memory. Use this when the user directly asks you to remember something, or when you identify critical information that the automatic extraction might miss.

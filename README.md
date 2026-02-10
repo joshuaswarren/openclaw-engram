@@ -94,6 +94,16 @@ All advanced features are **disabled by default** for gradual adoption. Enable t
 - Stored in `state/topics.json`
 - CLI: `openclaw engram topics` to view extracted topics
 
+### v2.2 Advanced Retrieval
+
+All v2.2 retrieval features are **disabled by default**. Enable them only if you can tolerate a small latency increase.
+
+- **Heuristic query expansion** (`queryExpansionEnabled`): Runs a few deterministic, cheap expanded queries (no LLM calls) and merges results.
+- **LLM re-ranking** (`rerankEnabled`): Re-scores the top N retrieved memories using a short, timeboxed request.
+  - Default mode: **local-only** (`rerankProvider: "local"`), fail-open on errors/timeouts.
+- **Feedback loop** (`feedbackEnabled` + `memory_feedback` tool): Store thumbs up/down locally and apply it as a small ranking bias.
+- **Slow query log** (`slowLogEnabled` + `slowLogThresholdMs`): Logs durations and metadata (never content) for local LLM and QMD operations.
+
 ## Architecture
 
 ```
@@ -315,6 +325,23 @@ All settings are defined in `openclaw.json` under `plugins.entries.openclaw-engr
 | `identityEnabled` | `true` | Enable agent identity reflections |
 | `injectQuestions` | `false` | Inject open questions into the system prompt |
 | `commitmentDecayDays` | `90` | Days before fulfilled/expired commitments are removed |
+
+### v2.2 Advanced Retrieval Settings
+
+See `docs/advanced-retrieval.md` for details and recommended safe defaults.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `queryExpansionEnabled` | `false` | Heuristic query expansion (no LLM calls) |
+| `queryExpansionMaxQueries` | `4` | Max expanded queries (including original) |
+| `queryExpansionMinTokenLen` | `3` | Minimum token length for expansion |
+| `rerankEnabled` | `false` | Enable LLM re-ranking (timeboxed; fail-open) |
+| `rerankProvider` | `local` | `local` (no cloud calls) or `cloud` |
+| `rerankMaxCandidates` | `20` | Max candidates sent to re-ranker |
+| `rerankTimeoutMs` | `8000` | Rerank timeout (ms) |
+| `rerankCacheEnabled` | `true` | Cache reranks in-memory |
+| `rerankCacheTtlMs` | `3600000` | Rerank cache TTL (ms) |
+| `feedbackEnabled` | `false` | Enable `memory_feedback` tool and ranking bias |
 
 ### v1.2.0 Advanced Feature Settings
 

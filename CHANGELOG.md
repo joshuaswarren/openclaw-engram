@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/).
+## [2.2.0] - 2026-02-10
+
+### Added
+- Advanced retrieval controls (disabled by default):
+  - Heuristic query expansion (`queryExpansionEnabled`, `queryExpansionMaxQueries`, `queryExpansionMinTokenLen`)
+  - Optional LLM re-ranking (`rerankEnabled`, `rerankProvider`, `rerankMaxCandidates`, `rerankTimeoutMs`, caching)
+  - Optional feedback capture tool (`feedbackEnabled`, `memory_feedback`) stored locally and applied as a soft ranking bias
+- Documentation: `docs/advanced-retrieval.md`
 
 ## [2.1.0] - 2026-02-10
 

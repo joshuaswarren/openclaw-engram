@@ -40,6 +40,19 @@ export interface PluginConfig {
   // Retrieval options
   recencyWeight: number;
   boostAccessCount: boolean;
+  // v2.2 Advanced Retrieval
+  queryExpansionEnabled: boolean;
+  queryExpansionMaxQueries: number;
+  /** Minimum token length to consider for query expansion. */
+  queryExpansionMinTokenLen: number;
+  rerankEnabled: boolean;
+  /** Rerank provider. "local" uses Local LLM only; "cloud" uses gateway fallback chain. */
+  rerankProvider: "local" | "cloud";
+  rerankMaxCandidates: number;
+  rerankTimeoutMs: number;
+  rerankCacheEnabled: boolean;
+  rerankCacheTtlMs: number;
+  feedbackEnabled: boolean;
   // Chunking (Phase 2A)
   chunkingEnabled: boolean;
   chunkingTargetTokens: number;
@@ -98,6 +111,13 @@ export interface PluginConfig {
   slowLogThresholdMs: number;
   // Gateway config for fallback AI
   gatewayConfig?: GatewayConfig;
+}
+
+export interface RelevanceFeedback {
+  up: number;
+  down: number;
+  lastUpdatedAt: string;
+  notes?: string[];
 }
 
 export interface BufferTurn {

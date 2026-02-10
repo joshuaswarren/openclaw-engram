@@ -12,6 +12,9 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
+import { expandQuery } from "./retrieval.js";
+import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
+import { RelevanceStore } from "./relevance.js";
 import type { MemorySummary } from "./types.js";
 import type {
   AccessTrackingEntry,
@@ -30,9 +33,11 @@ export class Orchestrator {
   readonly summarizer: HourlySummarizer;
   readonly localLlm: LocalLlmClient;
   readonly modelRegistry: ModelRegistry;
+  readonly relevance: RelevanceStore;
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
+  private readonly rerankCache = new RerankCache();
 
   // Access tracking buffer (Phase 1A)
   // Maps memoryId -> {count, lastAccessed} for batched updates
@@ -54,6 +59,7 @@ export class Orchestrator {
     this.buffer = new SmartBuffer(config, this.storage);
     this.transcript = new TranscriptManager(config);
     this.modelRegistry = new ModelRegistry(config.memoryDir);
+    this.relevance = new RelevanceStore(config.memoryDir);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
@@ -66,6 +72,7 @@ export class Orchestrator {
   async initialize(): Promise<void> {
     await this.storage.ensureDirectories();
     await this.storage.loadAliases();
+    await this.relevance.load();
     await this.transcript.initialize();
     await this.summarizer.initialize();
 
@@ -165,16 +172,80 @@ export class Orchestrator {
 
     // 2. Memories via QMD (existing)
     if (this.config.qmdEnabled && this.qmd.isAvailable()) {
-      const [memoryResultsRaw, globalResults] = await Promise.all([
-        this.qmd.search(prompt),
-        // Search global collections for workspace context
+      const expandedQueries = this.config.queryExpansionEnabled
+        ? expandQuery(prompt, {
+            maxQueries: this.config.queryExpansionMaxQueries,
+            minTokenLen: this.config.queryExpansionMinTokenLen,
+          })
+        : [prompt];
+
+      // Run the original query at full depth, and expansions shallowly.
+      const memorySearches = expandedQueries.map((q, i) =>
+        this.qmd.search(
+          q,
+          undefined,
+          i === 0 ? this.config.qmdMaxResults : Math.max(3, Math.floor(this.config.qmdMaxResults / 2)),
+        ),
+      );
+
+      const [memoryResultsLists, globalResults] = await Promise.all([
+        Promise.all(memorySearches),
+        // Search global collections for workspace context (do not expand by default).
         this.qmd.searchGlobal(prompt, 6),
       ]);
+
+      // Merge/dedupe by path; keep the best score and first non-empty snippet.
+      const mergedByPath = new Map<string, QmdSearchResult>();
+      for (const list of memoryResultsLists) {
+        for (const r of list) {
+          const prev = mergedByPath.get(r.path);
+          if (!prev) {
+            mergedByPath.set(r.path, r);
+            continue;
+          }
+          const better = r.score > prev.score ? r : prev;
+          const snippet = prev.snippet || r.snippet;
+          mergedByPath.set(r.path, { ...better, snippet });
+        }
+      }
+      const memoryResultsRaw = Array.from(mergedByPath.values());
 
       let memoryResults = memoryResultsRaw;
 
       // Apply recency and access count boosting
       memoryResults = await this.boostSearchResults(memoryResults);
+
+      // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
+      if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
+        const ranked = await rerankLocalOrNoop({
+          query: prompt,
+          candidates: memoryResults.slice(0, this.config.rerankMaxCandidates).map((r) => ({
+            id: r.path,
+            snippet: r.snippet || r.path,
+          })),
+          local: this.localLlm,
+          enabled: true,
+          timeoutMs: this.config.rerankTimeoutMs,
+          maxCandidates: this.config.rerankMaxCandidates,
+          cache: this.rerankCache,
+          cacheEnabled: this.config.rerankCacheEnabled,
+          cacheTtlMs: this.config.rerankCacheTtlMs,
+        });
+        if (ranked && ranked.length > 0) {
+          const byPath = new Map(memoryResults.map((r) => [r.path, r]));
+          const reordered: QmdSearchResult[] = [];
+          for (const p of ranked) {
+            const it = byPath.get(p);
+            if (it) reordered.push(it);
+          }
+          // Append any unranked items in original order.
+          const rankedSet = new Set(ranked);
+          for (const r of memoryResults) {
+            if (!rankedSet.has(r.path)) reordered.push(r);
+          }
+          memoryResults = reordered;
+        }
+      }
 
       if (memoryResults.length > 0) {
         // Track access for these memories
@@ -921,6 +992,15 @@ export class Orchestrator {
           const importanceBoost = (importanceScore - 0.4) * 0.25;
           score += importanceBoost;
         }
+
+        // Feedback bias (v2.2): apply small user-provided up/down vote adjustments.
+        if (this.config.feedbackEnabled) {
+          const match = memory.path.match(/([^/]+)\.md$/);
+          const memoryId = match ? match[1] : null;
+          if (memoryId) {
+            score += this.relevance.adjustment(memoryId);
+          }
+        }
       }
 
       return { ...r, score };
@@ -947,6 +1027,14 @@ export class Orchestrator {
   // ---------------------------------------------------------------------------
   // Contradiction Detection (Phase 2B)
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // Feedback (v2.2)
+  // ---------------------------------------------------------------------------
+
+  async recordMemoryFeedback(memoryId: string, vote: "up" | "down", note?: string): Promise<void> {
+    await this.relevance.record(memoryId, vote, note);
+  }
 
   /**
    * Check if a new memory contradicts an existing one.

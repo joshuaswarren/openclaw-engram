@@ -109,6 +109,27 @@ export function parseConfig(raw: unknown): PluginConfig {
     recencyWeight:
       typeof cfg.recencyWeight === "number" ? cfg.recencyWeight : 0.2,
     boostAccessCount: cfg.boostAccessCount !== false,
+    // v2.2 Advanced Retrieval (safe defaults: off unless enabled)
+    queryExpansionEnabled: cfg.queryExpansionEnabled === true,
+    queryExpansionMaxQueries:
+      typeof cfg.queryExpansionMaxQueries === "number"
+        ? cfg.queryExpansionMaxQueries
+        : 4,
+    queryExpansionMinTokenLen:
+      typeof cfg.queryExpansionMinTokenLen === "number"
+        ? cfg.queryExpansionMinTokenLen
+        : 3,
+    rerankEnabled: cfg.rerankEnabled === true,
+    rerankProvider:
+      cfg.rerankProvider === "cloud" ? "cloud" : "local",
+    rerankMaxCandidates:
+      typeof cfg.rerankMaxCandidates === "number" ? cfg.rerankMaxCandidates : 20,
+    rerankTimeoutMs:
+      typeof cfg.rerankTimeoutMs === "number" ? cfg.rerankTimeoutMs : 8000,
+    rerankCacheEnabled: cfg.rerankCacheEnabled !== false,
+    rerankCacheTtlMs:
+      typeof cfg.rerankCacheTtlMs === "number" ? cfg.rerankCacheTtlMs : 60 * 60 * 1000,
+    feedbackEnabled: cfg.feedbackEnabled === true,
     // Chunking (Phase 2A)
     chunkingEnabled: cfg.chunkingEnabled === true, // Off by default initially
     chunkingTargetTokens:
