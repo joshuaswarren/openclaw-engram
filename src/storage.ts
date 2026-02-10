@@ -150,7 +150,7 @@ function parseFrontmatter(
     importance = { score, level, reasons, keywords };
   }
 
-  return {
+  const result: { frontmatter: MemoryFrontmatter; content: string } = {
     frontmatter: {
       id: fm.id ?? "",
       category: (fm.category ?? "fact") as MemoryCategory,
@@ -184,11 +184,12 @@ function parseFrontmatter(
   };
 
   // Parse links (YAML array format)
-  // Note: Simple parsing - for full YAML we'd need a library
-  // This handles the format we serialize above
+  // Note: Simple parsing - for full YAML we'd need a library.
   if (fmBlock.includes("links:")) {
     const links: MemoryLink[] = [];
-    const linkMatches = fmBlock.matchAll(/- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "([^"]*)")?/g);
+    const linkMatches = fmBlock.matchAll(
+      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "([^"]*)")?/g,
+    );
     for (const match of linkMatches) {
       links.push({
         targetId: match[1],

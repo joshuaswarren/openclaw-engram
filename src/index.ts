@@ -6,8 +6,26 @@ import { Orchestrator } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
 import { readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+
+// Workaround: Read config directly from openclaw.json since gateway may not pass it.
+// IMPORTANT: Do not log raw config contents (may include secrets).
+function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
+  try {
+    // Gateway runs as launchd service without HOME env, use hardcoded path
+    const homeDir = "/Users/joshuawarren";
+    const configPath = path.join(homeDir, ".openclaw", "openclaw.json");
+    const content = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(content);
+    const pluginEntry = config?.plugins?.entries?.["openclaw-engram"];
+    return pluginEntry?.config;
+  } catch (err) {
+    log.warn(`Failed to load config from file: ${err}`);
+    return undefined;
+  }
+}
 
 export default {
   id: "openclaw-engram",
@@ -17,8 +35,21 @@ export default {
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
-    const cfg = parseConfig(api.pluginConfig);
+    // Initialize logger early (debug off until config is parsed).
+    initLogger(api.logger, false);
+
+    // Workaround: Load config from file since gateway may not pass it
+    const fileConfig = loadPluginConfigFromFile();
+    const cfg = parseConfig({
+      ...api.pluginConfig,
+      ...fileConfig, // Merge file config as workaround
+      gatewayConfig: api.config, // Pass gateway config for fallback AI
+    });
+    // Re-initialize with correct debug setting
     initLogger(api.logger, cfg.debug);
+    log.info(
+      `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled})`,
+    );
 
     const orchestrator = new Orchestrator(cfg);
 
@@ -42,7 +73,7 @@ export default {
         if (!prompt || prompt.length < 5) return;
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
-        log.info(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+        log.debug(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
 
         try {
           // Check for compaction and save checkpoint if needed
@@ -50,7 +81,7 @@ export default {
           // For now, we'll just call recall with the sessionKey
 
           const context = await orchestrator.recall(prompt, sessionKey);
-          log.info(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
+          log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
 
           // Rough token estimate: 1 token ≈ 4 chars
@@ -60,7 +91,7 @@ export default {
               ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
               : context;
 
-          log.info(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
+          log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
           return {
             systemPrompt: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
           };

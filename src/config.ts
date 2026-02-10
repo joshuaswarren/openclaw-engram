@@ -174,5 +174,26 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.summaryModel === "string" && cfg.summaryModel.length > 0
         ? cfg.summaryModel
         : model, // default: same as extraction model
+    // Local LLM Provider (v2.1)
+    localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
+    localLlmUrl:
+      typeof cfg.localLlmUrl === "string" && cfg.localLlmUrl.length > 0
+        ? cfg.localLlmUrl
+        : "http://localhost:1234/v1",
+    localLlmModel:
+      typeof cfg.localLlmModel === "string" && cfg.localLlmModel.length > 0
+        ? cfg.localLlmModel
+        : "local-model",
+    localLlmFallback: cfg.localLlmFallback !== false, // default: true
+    localLlmTimeoutMs:
+      typeof cfg.localLlmTimeoutMs === "number" ? cfg.localLlmTimeoutMs : 180_000,
+    localLlmMaxContext:
+      typeof cfg.localLlmMaxContext === "number" ? cfg.localLlmMaxContext : undefined,
+    // Observability (disabled by default to avoid log spam)
+    slowLogEnabled: cfg.slowLogEnabled === true,
+    slowLogThresholdMs:
+      typeof cfg.slowLogThresholdMs === "number" ? cfg.slowLogThresholdMs : 30_000,
+    // Gateway config (passed from index.ts for fallback AI)
+    gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
   };
 }

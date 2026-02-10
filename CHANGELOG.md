@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.1.0] - 2026-02-10
+
+### Added
+- Configurable local LLM hard timeout (`localLlmTimeoutMs`, default 180000ms) to prevent stalls.
+- Optional slow query logging (`slowLogEnabled`, `slowLogThresholdMs`) for local LLM + QMD operations (metadata only; never logs content).
+
+### Changed
+- Reduced default log verbosity for local LLM model listings.
+- QMD failures now include a concise error string and are backoff-suppressed.
+
+### Fixed
+- Model context budgeting now clamps output/input to avoid negative input budgets.
+- TypeScript typecheck/build issues across CLI, extraction salvage, and plugin SDK typings.
+
 ## [1.2.0] - 2026-02-07
 
 ### Added

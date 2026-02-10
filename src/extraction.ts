@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { log } from "./logger.js";
+import { LocalLlmClient } from "./local-llm.js";
+import { FallbackLlmClient } from "./fallback-llm.js";
 import {
   ExtractionResultSchema,
   ConsolidationResultSchema,
@@ -20,18 +22,31 @@ import type {
   MemoryFile,
   PluginConfig,
   LlmTraceEvent,
+  GatewayConfig,
 } from "./types.js";
+import { ModelRegistry } from "./model-registry.js";
 
 export class ExtractionEngine {
   private client: OpenAI | null;
+  private localLlm: LocalLlmClient;
+  private fallbackLlm: FallbackLlmClient;
+  private modelRegistry: ModelRegistry;
 
-  constructor(private readonly config: PluginConfig) {
+  constructor(
+    private readonly config: PluginConfig,
+    localLlm?: LocalLlmClient,
+    gatewayConfig?: GatewayConfig,
+    modelRegistry?: ModelRegistry,
+  ) {
     if (config.openaiApiKey) {
       this.client = new OpenAI({ apiKey: config.openaiApiKey });
     } else {
       this.client = null;
       log.warn("no OpenAI API key — extraction/consolidation disabled (retrieval still works)");
     }
+    this.localLlm = localLlm ?? new LocalLlmClient(config, modelRegistry);
+    this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
+    this.modelRegistry = modelRegistry ?? new ModelRegistry(config.memoryDir);
   }
 
   private emit(event: LlmTraceEvent): void {
@@ -44,10 +59,6 @@ export class ExtractionEngine {
   }
 
   async extract(turns: BufferTurn[], existingEntities?: string[]): Promise<ExtractionResult> {
-    if (!this.client) {
-      log.warn("extraction skipped — no OpenAI API key");
-      return { facts: [], profileUpdates: [], entities: [], questions: [] };
-    }
 
     // Guard: skip if buffer is empty or all turns are whitespace-only
     const substantiveTurns = turns.filter((t) => t.content.trim().length > 0);
@@ -60,20 +71,295 @@ export class ExtractionEngine {
       .map((t) => `[${t.role}] ${t.content}`)
       .join("\n\n");
 
-    const reasoningParam =
-      this.config.reasoningEffort !== "none"
-        ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
-        : {};
-
     const traceId = crypto.randomUUID();
     this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
     const startTime = Date.now();
 
+    // Try local LLM first if enabled
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResult = await this.extractWithLocalLlm(conversation, existingEntities);
+        if (localResult) {
+          const durationMs = Date.now() - startTime;
+          this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "extraction", durationMs });
+          log.debug(`extraction: used local LLM — ${localResult.facts.length} facts, ${localResult.entities.length} entities`);
+          return localResult;
+        }
+        // Local failed, fall back if allowed
+        if (!this.config.localLlmFallback) {
+          log.warn("extraction: local LLM failed and fallback disabled");
+          return { facts: [], profileUpdates: [], entities: [], questions: [] };
+        }
+        log.info("extraction: local LLM unavailable, falling back to gateway default AI");
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          log.warn("extraction: local LLM error and fallback disabled:", err);
+          return { facts: [], profileUpdates: [], entities: [], questions: [] };
+        }
+        log.info("extraction: local LLM error, falling back to gateway default AI:", err);
+      }
+    }
+
+    // Fall back to gateway's default AI
+    log.info("extraction: falling back to gateway default AI");
+
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        ...reasoningParam,
-        instructions: `You are a memory extraction system. Analyze the following conversation and extract durable, reusable memories.
+      const messages = [
+        { role: "system" as const, content: this.buildExtractionInstructions(existingEntities) },
+        { role: "user" as const, content: conversation },
+      ];
+
+      const result = await this.fallbackLlm.parseWithSchema(
+        messages,
+        ExtractionResultSchema,
+        { temperature: 0.3, maxTokens: 4096 },
+      );
+
+      const durationMs = Date.now() - startTime;
+
+      if (result && Array.isArray(result.facts)) {
+        this.emit({
+          kind: "llm_end", traceId, model: "fallback", operation: "extraction", durationMs,
+          output: JSON.stringify(result).slice(0, 2000),
+        });
+        log.debug(
+          `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback`,
+        );
+        return {
+          ...result,
+          questions: result.questions ?? [],
+          identityReflection: result.identityReflection ?? undefined,
+        } as ExtractionResult;
+      }
+
+      log.warn("extraction fallback returned no parsed output");
+      return { facts: [], profileUpdates: [], entities: [], questions: [] };
+    } catch (err) {
+      this.emit({
+        kind: "llm_error", traceId, model: "fallback", operation: "extraction",
+        durationMs: Date.now() - startTime, error: String(err),
+      });
+      log.error("extraction fallback failed", err);
+      return { facts: [], profileUpdates: [], entities: [], questions: [] };
+    }
+  }
+
+  /**
+   * Extract memories using local LLM with JSON mode.
+   * Uses a minimal prompt to fit within local model context limits (typically 4k-8k).
+   */
+  private async extractWithLocalLlm(conversation: string, existingEntities?: string[]): Promise<ExtractionResult | null> {
+    log.debug(
+      `extractWithLocalLlm: starting extraction, localLlmEnabled=${this.config.localLlmEnabled}, model=${this.config.localLlmModel}`,
+    );
+
+    // Get dynamic context sizes based on model capabilities (with optional user override)
+    const contextSizes = this.modelRegistry.calculateContextSizes(
+      this.config.localLlmModel,
+      this.config.localLlmMaxContext
+    );
+    log.debug(`Model context: ${contextSizes.description}`);
+
+    const maxConversationChars = contextSizes.maxInputChars;
+    const truncatedConversation = conversation.length > maxConversationChars
+      ? conversation.slice(0, maxConversationChars) + "\n\n[truncated]"
+      : conversation;
+
+    const localPrompt = `You are a memory extraction system. Extract durable, reusable memories from this conversation.
+
+Memory categories (use appropriately):
+- fact: Objective information about the world
+- preference: User likes, dislikes, or stylistic choices
+- correction: User correcting a mistake (highest priority)
+- entity: People, projects, tools, companies (use canonical hyphenated names like "my-project")
+- decision: Choices made with rationale
+- relationship: How entities relate (e.g., "Alice manages Bob")
+- principle: Durable rules or operating beliefs (e.g., "never use X API")
+- commitment: Promises, obligations, deadlines
+- moment: Emotionally significant events
+- skill: Demonstrated capabilities
+
+=== DO NOT EXTRACT (negative examples) ===
+These are operational noise - skip them:
+- "The user has a cron job that runs every 30 minutes" (scheduled task descriptions)
+- "The user encountered error XYZ at 3:45 PM" (temporary error states)
+- "The file is located at /Users/.../specific/path" (transient file paths)
+- "The system is using 4GB of memory" (current resource usage)
+- "The user ran the 'git status' command" (individual command executions)
+- "The conversation took place on Tuesday" (session metadata)
+- "The agent read the file at /path/to/file.txt" (agent's own actions)
+- "The user's OpenClaw automation posts to #channel on failures" (automation behavior descriptions)
+- "The user stores state in /path/to/state.json" (implementation details)
+- "The X-watch automation has been stalled for 58 hours" (system status updates)
+- "The user processed 5 batch files and extracted insights" (processing summaries)
+- "The user has a cron job that runs a Checkpoint Loop every 2 hours" (automation schedules)
+- "The user runs a Morning Surprise cron job daily at 7:30 AM" (automation schedules)
+- "The user runs an X Bookmarks → Insights pipeline hourly at :13" (automation schedules)
+- "The user's system mines X/Twitter mentions for ideas every 10a/2p/6p" (automation schedules)
+- "The user runs a Health Insights cron job weekday mornings" (automation schedules)
+- "The system monitors the showcase page every 12 hours" (system monitoring configurations)
+
+=== DO EXTRACT (positive examples) ===
+These are durable insights - capture them:
+- "The user prefers dark mode interfaces and finds light mode uncomfortable" (preference)
+- "The user works primarily with TypeScript and avoids Python for frontend code" (long-term fact)
+- "The user's side project 'alpha-trader' uses a custom algorithm for arbitrage" (entity + detail)
+- "The user corrected that PostgreSQL 15 is required, not version 14" (correction)
+- "The user never commits code without running tests first" (principle)
+- "The user has a meeting with the design team every Friday at 2pm" (commitment)
+
+=== Rules ===
+- Extract only NEW information worth remembering across sessions
+- Skip transient details (file paths, current errors, temporary states, agent actions)
+- Confidence: Explicit (0.95-1.0), Implied (0.70-0.94), Inferred (0.40-0.69), Speculative (0.00-0.39)
+- Corrections get highest confidence (0.95+)
+- Each fact should be standalone and self-contained
+- CRITICAL: Use canonical hyphenated entity names (e.g., "jane-doe" not "janedoe")
+- CRITICAL: NEVER extract the same fact twice - check for duplicates before adding to facts array
+- CRITICAL: NEVER extract cron job schedules, automation configurations, or system monitoring details (these are operational noise)
+- If uncertain about relevance, prefer NOT extracting
+
+Also generate:
+1. 1-3 genuine questions you're curious about from this conversation
+2. Profile updates about user patterns/behaviors (if any)
+
+Output JSON:
+{
+  "facts": [{"category": "...", "content": "...", "confidence": 0.9}],
+  "entities": [{"name": "...", "type": "..."}],
+  "profileUpdates": ["..."],
+  "questions": [{"question": "...", "context": "..."}]
+}
+
+Conversation:
+${truncatedConversation}`;
+
+    log.debug(
+      `extractWithLocalLlm: calling localLlm.chatCompletion with prompt length ${localPrompt.length}...`,
+    );
+    const response = await this.localLlm.chatCompletion(
+      [
+        { role: "system", content: "You are a memory extraction system. Output valid JSON only." },
+        { role: "user", content: localPrompt },
+      ],
+      { temperature: 0.1, maxTokens: contextSizes.maxOutputTokens },
+    );
+
+    if (!response?.content) {
+      log.debug("extractWithLocalLlm: chatCompletion returned null or empty content");
+      return null;
+    }
+
+    const content = response.content.trim();
+    // Avoid logging model output content by default (may contain user data).
+    log.debug(`extractWithLocalLlm: got response content, length=${content.length}`);
+
+    let jsonStr = content;
+    try {
+      // Parse JSON response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      jsonStr = jsonMatch ? jsonMatch[0] : content;
+      log.debug(`extractWithLocalLlm: attempting JSON parse, jsonStr length=${jsonStr.length}`);
+      const parsed = JSON.parse(jsonStr);
+
+      // Validate and normalize
+      const result: ExtractionResult = {
+        facts: Array.isArray(parsed.facts) ? parsed.facts : [],
+        entities: Array.isArray(parsed.entities) ? parsed.entities : [],
+        profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
+        questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+        identityReflection: parsed.identityReflection ?? undefined,
+      };
+
+      log.debug(
+        `extractWithLocalLlm: successfully parsed response, facts=${result.facts.length}, entities=${result.entities.length}, profileUpdates=${result.profileUpdates.length}, questions=${result.questions.length}`,
+      );
+      return result;
+    } catch (err) {
+      // Try to extract partial facts from truncated JSON
+      log.debug("extractWithLocalLlm: JSON parse failed, attempting partial extraction...");
+      const partial = this.extractPartialFacts(jsonStr);
+      if (partial.facts.length > 0 || partial.entities.length > 0) {
+        log.debug(
+          `extractWithLocalLlm: extracted ${partial.facts.length} partial facts from truncated JSON`,
+        );
+        return partial;
+      }
+
+      // Could not extract anything
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log.debug(`extractWithLocalLlm: JSON parse error: ${errMsg}`);
+      return null;
+    }
+  }
+
+  /**
+   * Extract partial facts from truncated JSON responses.
+   * Local LLMs sometimes hit token limits mid-JSON. This tries to salvage valid facts.
+   */
+  private extractPartialFacts(jsonStr: string): ExtractionResult {
+    const allowedCategories = new Set([
+      "fact",
+      "preference",
+      "correction",
+      "entity",
+      "decision",
+      "relationship",
+      "principle",
+      "commitment",
+      "moment",
+      "skill",
+    ]);
+    const allowedEntityTypes = new Set([
+      "person",
+      "project",
+      "tool",
+      "company",
+      "place",
+      "other",
+    ]);
+
+    const facts: ExtractionResult["facts"] = [];
+    const entities: ExtractionResult["entities"] = [];
+
+    try {
+      // Find all complete fact objects (ones with all required fields)
+      const factRegex = /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([^"]+)"\s*,\s*"confidence"\s*:\s*([0-9.]+)/g;
+      let match;
+      while ((match = factRegex.exec(jsonStr)) !== null) {
+        const rawCat = match[1];
+        const category = allowedCategories.has(rawCat) ? (rawCat as ExtractionResult["facts"][number]["category"]) : "fact";
+        facts.push({
+          category,
+          content: match[2].replace(/\\n/g, '\n').replace(/\\"/g, '"'),
+          confidence: parseFloat(match[3]),
+          tags: [],
+        });
+      }
+
+      // Find all complete entity objects
+      const entityRegex = /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"type"\s*:\s*"([^"]+)"/g;
+      while ((match = entityRegex.exec(jsonStr)) !== null) {
+        const rawType = match[2];
+        const type = allowedEntityTypes.has(rawType) ? (rawType as ExtractionResult["entities"][number]["type"]) : "other";
+        entities.push({
+          name: match[1],
+          type,
+          facts: [],
+        });
+      }
+    } catch {
+      // Ignore regex errors
+    }
+
+    return { facts, entities, profileUpdates: [], questions: [] };
+  }
+
+  /**
+   * Build extraction instructions shared between local and cloud LLM.
+   */
+  private buildExtractionInstructions(existingEntities?: string[]): string {
+    return `You are a memory extraction system. Analyze the following conversation and extract durable, reusable memories.
 
 Memory categories:
 - fact: Objective information about the world
@@ -124,42 +410,7 @@ Finally, write a brief identity reflection about the AGENT who had this conversa
 - Did the agent handle the user's needs well or miss something?
 - What behavioral tendencies are visible? (e.g., cautious, creative, thorough, impatient)
 - What could the agent improve next time?
-Do NOT write about the extraction process itself. Do NOT say things like "I extracted durable facts" — that's about YOUR job, not the agent's behavior.`,
-        input: conversation,
-        text: {
-          format: zodTextFormat(ExtractionResultSchema, "extraction_result"),
-        },
-      });
-
-      const durationMs = Date.now() - startTime;
-      const usage = (response as any).usage;
-      this.emit({
-        kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs,
-        output: response.output_parsed ? JSON.stringify(response.output_parsed).slice(0, 2000) : undefined,
-        tokenUsage: usage ? { input: usage.input_tokens, output: usage.output_tokens, total: usage.total_tokens } : undefined,
-      });
-
-      if (response.output_parsed) {
-        log.debug(
-          `extracted ${response.output_parsed.facts.length} facts, ${response.output_parsed.entities.length} entities, ${(response.output_parsed.questions ?? []).length} questions`,
-        );
-        return {
-          ...response.output_parsed,
-          questions: response.output_parsed.questions ?? [],
-          identityReflection: response.output_parsed.identityReflection ?? undefined,
-        } as ExtractionResult;
-      }
-
-      log.warn("extraction returned no parsed output");
-      return { facts: [], profileUpdates: [], entities: [], questions: [] };
-    } catch (err) {
-      this.emit({
-        kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
-        durationMs: Date.now() - startTime, error: String(err),
-      });
-      log.error("extraction failed", err);
-      return { facts: [], profileUpdates: [], entities: [], questions: [] };
-    }
+Do NOT write about the extraction process itself. Do NOT say things like "I extracted durable facts" — that's about YOUR job, not the agent's behavior.`;
   }
 
   async consolidate(
@@ -167,11 +418,6 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
     existingMemories: MemoryFile[],
     currentProfile: string,
   ): Promise<ConsolidationResult> {
-    if (!this.client) {
-      log.warn("consolidation skipped — no OpenAI API key");
-      return { items: [], profileUpdates: [], entityUpdates: [] };
-    }
-
     const newList = newMemories
       .map(
         (m) =>
@@ -187,14 +433,44 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
       )
       .join("\n");
 
+    const cTraceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId: cTraceId, model: this.config.model, operation: "consolidation", input: newList });
+    const cStartTime = Date.now();
+
+    // Try local LLM first if enabled
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResult = await this.consolidateWithLocalLlm(newList, existingList, currentProfile);
+        if (localResult) {
+          const durationMs = Date.now() - cStartTime;
+          this.emit({ kind: "llm_end", traceId: cTraceId, model: this.config.localLlmModel, operation: "consolidation", durationMs });
+          log.debug(`consolidation: used local LLM — ${localResult.items.length} decisions`);
+          return localResult;
+        }
+        if (!this.config.localLlmFallback) {
+          log.warn("consolidation: local LLM failed and fallback disabled");
+          return { items: [], profileUpdates: [], entityUpdates: [] };
+        }
+        log.info("consolidation: local LLM unavailable, falling back to gateway AI");
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          log.warn("consolidation: local LLM error and fallback disabled:", err);
+          return { items: [], profileUpdates: [], entityUpdates: [] };
+        }
+        log.info("consolidation: local LLM error, falling back to gateway AI:", err);
+      }
+    }
+
+    // Fall back to OpenAI API
+    if (!this.client) {
+      log.warn("consolidation skipped — no OpenAI API key and local LLM failed/disabled");
+      return { items: [], profileUpdates: [], entityUpdates: [] };
+    }
+
     const reasoningParam =
       this.config.reasoningEffort !== "none"
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
-
-    const cTraceId = crypto.randomUUID();
-    this.emit({ kind: "llm_start", traceId: cTraceId, model: this.config.model, operation: "consolidation", input: newList });
-    const cStartTime = Date.now();
 
     try {
       const response = await this.client.responses.parse({
@@ -258,6 +534,81 @@ ${newList}`,
   }
 
   /**
+   * Consolidate memories using local LLM.
+   */
+  private async consolidateWithLocalLlm(
+    newList: string,
+    existingList: string,
+    currentProfile: string,
+  ): Promise<ConsolidationResult | null> {
+    // Get dynamic context sizes
+    const contextSizes = this.modelRegistry.calculateContextSizes(
+      this.config.localLlmModel,
+      this.config.localLlmMaxContext
+    );
+    log.debug(`Consolidation model context: ${contextSizes.description}`);
+
+    const prompt = `You are a memory consolidation system. Compare new memories against existing ones and decide what to do with each.
+
+Actions:
+- ADD: Keep the new memory as-is (no duplicate exists)
+- MERGE: Combine with an existing memory (provide mergeWith ID and updated content)
+- UPDATE: Replace existing memory content (provide updated content)
+- INVALIDATE: Remove existing memory (it's been superseded or is wrong)
+- SKIP: This new memory is redundant (exact duplicate or subset of existing)
+
+Also:
+- Suggest profile updates based on patterns across memories
+- Identify entity updates for entity tracking
+
+Current behavioral profile:
+${currentProfile || "(empty)"}
+
+Existing memories:
+${existingList || "(none)"}
+
+New memories to consolidate:
+${newList}
+
+Respond with valid JSON matching this schema:
+{
+  "items": [
+    {"memoryId": "id", "action": "ADD|MERGE|UPDATE|INVALIDATE|SKIP", "reason": "why", "updatedContent": "optional new content"}
+  ],
+  "profileUpdates": [{"section": "section name", "content": "new bullet"}],
+  "entityUpdates": [{"entityId": "id", "updates": {"field": "value"}}]
+}`;
+
+    const response = await this.localLlm.chatCompletion(
+      [
+        { role: "system", content: "You are a memory consolidation system. Output valid JSON only." },
+        { role: "user", content: prompt },
+      ],
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+    );
+
+    if (!response?.content) {
+      return null;
+    }
+
+    try {
+      const content = response.content.trim();
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonStr = jsonMatch ? jsonMatch[0] : content;
+      const parsed = JSON.parse(jsonStr);
+
+      return {
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+        profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
+        entityUpdates: Array.isArray(parsed.entityUpdates) ? parsed.entityUpdates : [],
+      } as ConsolidationResult;
+    } catch (err) {
+      log.warn("local LLM consolidation: failed to parse JSON response:", err);
+      return null;
+    }
+  }
+
+  /**
    * Consolidate a bloated profile.md into a compact version.
    * The LLM merges duplicates, removes stale info, and preserves section structure.
    * Returns the consolidated markdown or null on failure.
@@ -265,8 +616,37 @@ ${newList}`,
   async consolidateProfile(
     fullProfileContent: string,
   ): Promise<{ consolidatedProfile: string; removedCount: number; summary: string } | null> {
+    const pTraceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation", input: fullProfileContent.slice(0, 2000) });
+    const pStartTime = Date.now();
+
+    // Try local LLM first if enabled
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResult = await this.consolidateProfileWithLocalLlm(fullProfileContent);
+        if (localResult) {
+          const durationMs = Date.now() - pStartTime;
+          this.emit({ kind: "llm_end", traceId: pTraceId, model: this.config.localLlmModel, operation: "profile_consolidation", durationMs });
+          log.debug(`profile consolidation: used local LLM — removed ${localResult.removedCount} items`);
+          return localResult;
+        }
+        if (!this.config.localLlmFallback) {
+          log.warn("profile consolidation: local LLM failed and fallback disabled");
+          return null;
+        }
+        log.info("profile consolidation: local LLM unavailable, falling back to gateway AI");
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          log.warn("profile consolidation: local LLM error and fallback disabled:", err);
+          return null;
+        }
+        log.info("profile consolidation: local LLM error, falling back to gateway AI:", err);
+      }
+    }
+
+    // Fall back to OpenAI API
     if (!this.client) {
-      log.warn("profile consolidation skipped — no OpenAI API key");
+      log.warn("profile consolidation skipped — no OpenAI API key and local LLM failed/disabled");
       return null;
     }
 
@@ -274,10 +654,6 @@ ${newList}`,
       this.config.reasoningEffort !== "none"
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
-
-    const pTraceId = crypto.randomUUID();
-    this.emit({ kind: "llm_start", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation", input: fullProfileContent.slice(0, 2000) });
-    const pStartTime = Date.now();
 
     try {
       const response = await this.client.responses.parse({
@@ -328,6 +704,68 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
   }
 
   /**
+   * Consolidate profile using local LLM.
+   */
+  private async consolidateProfileWithLocalLlm(
+    fullProfileContent: string,
+  ): Promise<{ consolidatedProfile: string; removedCount: number; summary: string } | null> {
+    // Get dynamic context sizes
+    const contextSizes = this.modelRegistry.calculateContextSizes(
+      this.config.localLlmModel,
+      this.config.localLlmMaxContext
+    );
+    log.debug(`Profile consolidation model context: ${contextSizes.description}`);
+
+    const prompt = `You are a profile consolidation system. You are given a behavioral profile (markdown) that has grown too large. Your job is to produce a CONSOLIDATED version that:
+
+1. PRESERVES all ## section headers and their structure
+2. MERGES duplicate or near-duplicate bullet points into single, clear statements
+3. REMOVES stale information that has been superseded by newer bullets
+4. REMOVES trivial or overly specific operational details that won't be useful across sessions
+5. KEEPS the most important, durable observations about the user's preferences, habits, identity, and working style
+6. Target roughly 400 lines — this is a soft target, prioritize quality over length
+7. Write in the same style as the existing profile — concise bullets, no fluff
+
+Profile to consolidate:
+${fullProfileContent}
+
+Respond with valid JSON matching this schema:
+{
+  "consolidatedProfile": "# Behavioral Profile\\n\\n... (complete markdown)",
+  "removedCount": 42,
+  "summary": "brief summary of what was consolidated"
+}`;
+
+    const response = await this.localLlm.chatCompletion(
+      [
+        { role: "system", content: "You are a profile consolidation system. Output valid JSON only." },
+        { role: "user", content: prompt },
+      ],
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+    );
+
+    if (!response?.content) {
+      return null;
+    }
+
+    try {
+      const content = response.content.trim();
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonStr = jsonMatch ? jsonMatch[0] : content;
+      const parsed = JSON.parse(jsonStr);
+
+      return {
+        consolidatedProfile: String(parsed.consolidatedProfile || ""),
+        removedCount: Number(parsed.removedCount || 0),
+        summary: String(parsed.summary || ""),
+      };
+    } catch (err) {
+      log.warn("local LLM profile consolidation: failed to parse JSON response:", err);
+      return null;
+    }
+  }
+
+  /**
    * Consolidate IDENTITY.md reflections into a concise "Learned Patterns" section.
    * Returns the new content for the IDENTITY.md file (everything below the static header).
    */
@@ -335,8 +773,37 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
     fullIdentityContent: string,
     staticHeaderEndMarker: string,
   ): Promise<{ learnedPatterns: string[]; summary: string } | null> {
+    const iTraceId = crypto.randomUUID();
+    this.emit({ kind: "llm_start", traceId: iTraceId, model: this.config.model, operation: "identity_consolidation", input: fullIdentityContent.slice(0, 2000) });
+    const iStartTime = Date.now();
+
+    // Try local LLM first if enabled
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResult = await this.consolidateIdentityWithLocalLlm(fullIdentityContent);
+        if (localResult) {
+          const durationMs = Date.now() - iStartTime;
+          this.emit({ kind: "llm_end", traceId: iTraceId, model: this.config.localLlmModel, operation: "identity_consolidation", durationMs });
+          log.debug(`identity consolidation: used local LLM — ${localResult.learnedPatterns.length} patterns`);
+          return localResult;
+        }
+        if (!this.config.localLlmFallback) {
+          log.warn("identity consolidation: local LLM failed and fallback disabled");
+          return null;
+        }
+        log.info("identity consolidation: local LLM unavailable, falling back to gateway AI");
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          log.warn("identity consolidation: local LLM error and fallback disabled:", err);
+          return null;
+        }
+        log.info("identity consolidation: local LLM error, falling back to gateway AI:", err);
+      }
+    }
+
+    // Fall back to OpenAI API
     if (!this.client) {
-      log.warn("identity consolidation skipped — no OpenAI API key");
+      log.warn("identity consolidation skipped — no OpenAI API key and local LLM failed/disabled");
       return null;
     }
 
@@ -344,10 +811,6 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
       this.config.reasoningEffort !== "none"
         ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
         : {};
-
-    const iTraceId = crypto.randomUUID();
-    this.emit({ kind: "llm_start", traceId: iTraceId, model: this.config.model, operation: "identity_consolidation", input: fullIdentityContent.slice(0, 2000) });
-    const iStartTime = Date.now();
 
     try {
       const response = await this.client.responses.parse({
@@ -395,6 +858,67 @@ The goal is to reduce a bloated file to a compact, high-signal set of learned pa
         durationMs: Date.now() - iStartTime, error: String(err),
       });
       log.error("identity consolidation failed", err);
+      return null;
+    }
+  }
+
+  /**
+   * Consolidate identity using local LLM.
+   */
+  private async consolidateIdentityWithLocalLlm(
+    fullIdentityContent: string,
+  ): Promise<{ learnedPatterns: string[]; summary: string } | null> {
+    // Get dynamic context sizes
+    const contextSizes = this.modelRegistry.calculateContextSizes(
+      this.config.localLlmModel,
+      this.config.localLlmMaxContext
+    );
+    log.debug(`Identity consolidation model context: ${contextSizes.description}`);
+
+    const prompt = `You are an identity consolidation system. You are given the full contents of an IDENTITY.md file that contains many individual reflection entries. Your job is to:
+
+1. Read all the reflection entries (sections starting with "## Reflection")
+2. Extract the most important, durable behavioral patterns and lessons learned
+3. Consolidate them into concise, standalone statements (aim for 10-25 key patterns)
+4. Remove redundancy — if multiple reflections say the same thing, merge into one clear statement
+5. Prioritize patterns that are actionable and recurring over one-off observations
+6. Write a brief summary paragraph
+
+The goal is to reduce a bloated file to a compact, high-signal set of learned patterns while preserving all genuinely useful self-knowledge.
+
+IDENTITY.md content:
+${fullIdentityContent}
+
+Respond with valid JSON matching this schema:
+{
+  "learnedPatterns": ["pattern 1", "pattern 2", "pattern 3"],
+  "summary": "brief summary of consolidation"
+}`;
+
+    const response = await this.localLlm.chatCompletion(
+      [
+        { role: "system", content: "You are an identity consolidation system. Output valid JSON only." },
+        { role: "user", content: prompt },
+      ],
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+    );
+
+    if (!response?.content) {
+      return null;
+    }
+
+    try {
+      const content = response.content.trim();
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonStr = jsonMatch ? jsonMatch[0] : content;
+      const parsed = JSON.parse(jsonStr);
+
+      return {
+        learnedPatterns: Array.isArray(parsed.learnedPatterns) ? parsed.learnedPatterns : [],
+        summary: String(parsed.summary || ""),
+      };
+    } catch (err) {
+      log.warn("local LLM identity consolidation: failed to parse JSON response:", err);
       return null;
     }
   }

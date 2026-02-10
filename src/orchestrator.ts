@@ -10,6 +10,8 @@ import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
+import { LocalLlmClient } from "./local-llm.js";
+import { ModelRegistry } from "./model-registry.js";
 import type { MemorySummary } from "./types.js";
 import type {
   AccessTrackingEntry,
@@ -26,8 +28,10 @@ export class Orchestrator {
   readonly buffer: SmartBuffer;
   readonly transcript: TranscriptManager;
   readonly summarizer: HourlySummarizer;
+  readonly localLlm: LocalLlmClient;
+  readonly modelRegistry: ModelRegistry;
   private readonly extraction: ExtractionEngine;
-  private readonly config: PluginConfig;
+  readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
 
   // Access tracking buffer (Phase 1A)
@@ -35,14 +39,24 @@ export class Orchestrator {
   private accessTrackingBuffer: Map<string, { count: number; lastAccessed: string }> =
     new Map();
 
+  // Background serial queue for extractions (agent_end optimization)
+  // Queue stores promises that resolve when extraction should run
+  private extractionQueue: Array<() => Promise<void>> = [];
+  private queueProcessing = false;
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.storage = new StorageManager(config.memoryDir);
-    this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults);
+    this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults, {
+      enabled: config.slowLogEnabled,
+      thresholdMs: config.slowLogThresholdMs,
+    });
     this.buffer = new SmartBuffer(config, this.storage);
     this.transcript = new TranscriptManager(config);
-    this.summarizer = new HourlySummarizer(config);
-    this.extraction = new ExtractionEngine(config);
+    this.modelRegistry = new ModelRegistry(config.memoryDir);
+    this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry);
+    this.localLlm = new LocalLlmClient(config, this.modelRegistry);
+    this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
     this.threading = new ThreadingManager(
       path.join(config.memoryDir, "threads"),
       config.threadingGapMinutes,
@@ -66,10 +80,81 @@ export class Orchestrator {
     }
 
     await this.buffer.load();
+
+    // Validate local LLM model configuration
+    if (this.config.localLlmEnabled) {
+      await this.validateLocalLlmModel();
+    }
+
     log.info("orchestrator initialized");
   }
 
+  /**
+   * Validate local LLM model availability and context window compatibility.
+   * Warns the user if there's a mismatch.
+   */
+  private async validateLocalLlmModel(): Promise<void> {
+    log.info("Local LLM: Validating model configuration...");
+    try {
+      const modelInfo = await this.localLlm.getLoadedModelInfo();
+      if (!modelInfo) {
+        log.warn("Local LLM validation: Could not query model info from server");
+        log.warn(
+          "Local LLM validation: Could not query model info. " +
+          "Ensure LM Studio/Ollama is running with the model loaded."
+        );
+        return;
+      }
+
+      // Check for context window mismatch
+      const configuredMaxContext = this.config.localLlmMaxContext;
+
+      if (modelInfo.contextWindow) {
+        log.info(
+          `Local LLM: ${modelInfo.id} loaded with ${modelInfo.contextWindow.toLocaleString()} token context window`
+        );
+
+        if (configuredMaxContext && configuredMaxContext > modelInfo.contextWindow) {
+          log.warn(
+            `Local LLM context mismatch: engram configured for ${configuredMaxContext.toLocaleString()} tokens, ` +
+            `but ${modelInfo.id} only supports ${modelInfo.contextWindow.toLocaleString()}. ` +
+            `Reducing to ${modelInfo.contextWindow.toLocaleString()} to avoid errors.`
+          );
+          // Update the config in-memory to match actual capability
+          // (This is a temporary fix - user should update their config)
+          (this.config as { localLlmMaxContext?: number }).localLlmMaxContext = modelInfo.contextWindow;
+        }
+      } else {
+        log.info(`Local LLM: ${modelInfo.id} loaded (context window not reported by server)`);
+
+        if (!configuredMaxContext) {
+          log.warn(
+            "Local LLM: Server did not report context window. " +
+            "If you get 'context length exceeded' errors, set localLlmMaxContext in your config. " +
+            "Common defaults: LM Studio (32K), Ollama (2K-128K depending on model)."
+          );
+        }
+      }
+    } catch (err) {
+      log.warn(`Local LLM validation failed: ${err}`);
+    }
+  }
+
   async recall(prompt: string, sessionKey?: string): Promise<string> {
+    // Wrap recall logic with a 30-second timeout to prevent agent hangs
+    const RECALL_TIMEOUT_MS = 30000;
+    return Promise.race([
+      this.recallInternal(prompt, sessionKey),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error("recall timeout")), RECALL_TIMEOUT_MS)
+      ),
+    ]).catch((err) => {
+      log.warn(`recall timed out or failed: ${err}`);
+      return ""; // Return empty context on timeout/error
+    });
+  }
+
+  private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const sections: string[] = [];
 
     // 1. Profile (existing)
@@ -80,7 +165,13 @@ export class Orchestrator {
 
     // 2. Memories via QMD (existing)
     if (this.config.qmdEnabled && this.qmd.isAvailable()) {
-      let memoryResults = await this.qmd.search(prompt);
+      const [memoryResultsRaw, globalResults] = await Promise.all([
+        this.qmd.search(prompt),
+        // Search global collections for workspace context
+        this.qmd.searchGlobal(prompt, 6),
+      ]);
+
+      let memoryResults = memoryResultsRaw;
 
       // Apply recency and access count boosting
       memoryResults = await this.boostSearchResults(memoryResults);
@@ -93,8 +184,6 @@ export class Orchestrator {
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       }
 
-      // Search global collections for workspace context
-      const globalResults = await this.qmd.searchGlobal(prompt, 6);
       if (globalResults.length > 0) {
         sections.push(
           this.formatQmdResults("Workspace Context", globalResults),
@@ -225,16 +314,70 @@ export class Orchestrator {
 
     if (decision === "keep_buffering") return;
 
-    const turns = this.buffer.getTurns();
-    await this.runExtraction(turns);
+    // Queue extraction for background processing (agent_end returns immediately)
+    // Capture the current buffer turns in a closure
+    const turnsToExtract = this.buffer.getTurns();
+    this.extractionQueue.push(async () => {
+      await this.runExtraction(turnsToExtract);
+    });
+
+    // Start background processor if not already running
+    if (!this.queueProcessing) {
+      this.queueProcessing = true;
+      this.processQueue().catch(err => {
+        log.error("background extraction queue processor failed", err);
+        this.queueProcessing = false;
+      });
+    }
+  }
+
+  /**
+   * Background serial queue processor.
+   * Processes extractions one at a time to avoid race conditions.
+   * Called automatically when items are queued.
+   */
+  private async processQueue(): Promise<void> {
+    while (this.extractionQueue.length > 0) {
+      const task = this.extractionQueue.shift();
+      if (task) {
+        try {
+          await task();
+        } catch (err) {
+          log.error("background extraction task failed", err);
+        }
+      }
+    }
+
+    this.queueProcessing = false;
   }
 
   private async runExtraction(turns: BufferTurn[]): Promise<void> {
-    log.info(`running extraction on ${turns.length} turns`);
+    log.debug(`running extraction on ${turns.length} turns`);
+
+    // Skip extraction for cron job sessions - these are system operations, not user conversations
+    const sessionKey = turns[0]?.sessionKey ?? "";
+    if (sessionKey.includes(":cron:")) {
+      log.debug(`skipping extraction for cron session: ${sessionKey}`);
+      await this.buffer.clearAfterExtraction();
+      return;
+    }
 
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await this.storage.listEntityNames();
     const result = await this.extraction.extract(turns, existingEntities);
+
+    // Defensive: validate extraction result before processing
+    if (!result) {
+      log.warn("runExtraction: extraction returned null/undefined");
+      await this.buffer.clearAfterExtraction();
+      return;
+    }
+    if (!Array.isArray(result.facts)) {
+      log.warn("runExtraction: extraction returned invalid facts (not an array)", { factsType: typeof result.facts, resultKeys: Object.keys(result) });
+      await this.buffer.clearAfterExtraction();
+      return;
+    }
+
     const persistedIds = await this.persistExtraction(result);
     await this.buffer.clearAfterExtraction();
 
@@ -259,11 +402,11 @@ export class Orchestrator {
       );
     }
 
-    // Update meta
+    // Update meta (safely handle potentially invalid result)
     meta.extractionCount += 1;
     meta.lastExtractionAt = new Date().toISOString();
-    meta.totalMemories += result.facts.length;
-    meta.totalEntities += result.entities.length;
+    meta.totalMemories += Array.isArray(result?.facts) ? result.facts.length : 0;
+    meta.totalEntities += Array.isArray(result?.entities) ? result.entities.length : 0;
     await this.storage.saveMeta(meta);
 
     // Trigger QMD re-index in background
@@ -276,6 +419,12 @@ export class Orchestrator {
 
   private async persistExtraction(result: ExtractionResult): Promise<string[]> {
     const persistedIds: string[] = [];
+
+    // Defensive: validate result and facts array
+    if (!result || !Array.isArray(result.facts)) {
+      log.warn("persistExtraction: result or result.facts is invalid, skipping", { resultType: typeof result, factsType: typeof result?.facts });
+      return persistedIds;
+    }
 
     // Chunking config from plugin settings
     const chunkingConfig: ChunkingConfig = {

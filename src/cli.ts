@@ -33,6 +33,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("stats")
         .description("Show memory system statistics")
         .action(async () => {
+          // Ensure QMD is probed before checking availability
+          await orchestrator.qmd.probe();
+
           const meta = await orchestrator.storage.loadMeta();
           const memories = await orchestrator.storage.readAllMemories();
           const entities = await orchestrator.storage.readEntities();
@@ -68,8 +71,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .argument("<query>", "Search query")
         .option("-n, --max-results <number>", "Max results", "8")
         .description("Search memories via QMD")
-        .action(async (query: string, options: Record<string, string>) => {
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
+          const options = (args[1] ?? {}) as Record<string, string>;
           const maxResults = parseInt(options.maxResults ?? "8", 10);
+          if (!query) {
+            console.log("Missing query. Usage: openclaw engram search <query>");
+            return;
+          }
 
           if (orchestrator.qmd.isAvailable()) {
             const results = await orchestrator.qmd.search(

@@ -82,6 +82,22 @@ export interface PluginConfig {
   summaryRecallHours: number;
   maxSummaryCount: number;
   summaryModel: string;
+  // Local LLM Provider (v2.1)
+  localLlmEnabled: boolean;
+  localLlmUrl: string;
+  localLlmModel: string;
+  localLlmFallback: boolean;
+  /** Hard timeout for local LLM requests (ms). */
+  localLlmTimeoutMs: number;
+  /** Max context window for local LLM (override auto-detection). Set lower if your LLM server defaults to smaller contexts. */
+  localLlmMaxContext?: number;
+  // Observability
+  /** If true, log slow operations (local LLM + related I/O) with durations and metadata (no content). */
+  slowLogEnabled: boolean;
+  /** Threshold for slow operation logging (ms). */
+  slowLogThresholdMs: number;
+  // Gateway config for fallback AI
+  gatewayConfig?: GatewayConfig;
 }
 
 export interface BufferTurn {
@@ -301,6 +317,55 @@ export interface LlmTraceEvent {
 }
 
 export type LlmTraceCallback = (event: LlmTraceEvent) => void;
+
+// ============================================================================
+// Gateway Configuration Types (for fallback AI)
+// ============================================================================
+
+export type ModelApi = "openai-completions" | "anthropic-messages" | "google-generative" | string;
+
+export type ModelProviderAuthMode = "bearer" | "header" | "query";
+
+export interface ModelDefinitionConfig {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  costPer1MInput?: number;
+  costPer1MOutput?: number;
+  aliases?: string[];
+}
+
+export interface ModelProviderConfig {
+  baseUrl: string;
+  apiKey?: string;
+  auth?: ModelProviderAuthMode;
+  api?: ModelApi;
+  headers?: Record<string, string>;
+  authHeader?: boolean;
+  models: ModelDefinitionConfig[];
+}
+
+export interface AgentDefaultsConfig {
+  model?: {
+    primary?: string;
+    backup?: string;
+    fallbacks?: string[];
+  };
+  thinking?: {
+    mode?: "off" | "on" | "adaptive";
+    budget?: number;
+  };
+}
+
+export interface GatewayConfig {
+  agents?: {
+    defaults?: AgentDefaultsConfig;
+  };
+  models?: {
+    providers?: Record<string, ModelProviderConfig>;
+  };
+}
 
 // ============================================================================
 // Transcript & Context Preservation (v2.0)

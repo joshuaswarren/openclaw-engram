@@ -1,15 +1,25 @@
 import { spawn } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 
 const QMD_TIMEOUT_MS = 5000;
+const QMD_UPDATE_BACKOFF_MS = 15 * 60 * 1000; // 15m
+const QMD_EMBED_BACKOFF_MS = 60 * 60 * 1000; // 60m
+const QMD_FALLBACK_PATHS = [
+  path.join(os.homedir(), ".bun", "bin", "qmd"),
+  "/usr/local/bin/qmd",
+  "/opt/homebrew/bin/qmd",
+];
 
 function runQmd(
   args: string[],
   timeoutMs: number = QMD_TIMEOUT_MS,
+  qmdPath: string = "qmd",
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("qmd", args, {
+    const child = spawn(qmdPath, args, {
       env: { ...process.env, NO_COLOR: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -34,7 +44,9 @@ function runQmd(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) {
+      // QMD returns exit code 1 for --version (shows usage), but that's ok
+      const isVersionCheck = args.length === 1 && args[0] === "--version";
+      if (code === 0 || (isVersionCheck && code === 1)) {
         resolve({ stdout, stderr });
       } else {
         reject(
@@ -49,18 +61,37 @@ function runQmd(
 
 export class QmdClient {
   private available: boolean | null = null;
+  private lastUpdateFailAtMs: number | null = null;
+  private lastEmbedFailAtMs: number | null = null;
 
   constructor(
     private readonly collection: string,
     private readonly maxResults: number,
+    private readonly slowLog?: { enabled: boolean; thresholdMs: number },
   ) {}
 
+  private qmdPath: string = "qmd";
+
   async probe(): Promise<boolean> {
+    // Try PATH first
     try {
-      await runQmd(["--version"], 3000);
+      await runQmd(["--version"], 3000, "qmd");
       this.available = true;
+      this.qmdPath = "qmd";
       return true;
     } catch {
+      // Try fallback paths
+      for (const fallbackPath of QMD_FALLBACK_PATHS) {
+        try {
+          await runQmd(["--version"], 3000, fallbackPath);
+          this.available = true;
+          this.qmdPath = fallbackPath;
+          log.info(`QMD: found at ${fallbackPath}`);
+          return true;
+        } catch {
+          // Continue to next fallback
+        }
+      }
       this.available = false;
       return false;
     }
@@ -82,16 +113,19 @@ export class QmdClient {
     const col = collection ?? this.collection;
     const n = maxResults ?? this.maxResults;
 
+    const startedAtMs = Date.now();
     try {
-      const { stdout } = await runQmd([
-        "query",
-        trimmed,
-        "-c",
-        col,
-        "--json",
-        "-n",
-        String(n),
-      ]);
+      const { stdout } = await runQmd(
+        ["query", trimmed, "-c", col, "--json", "-n", String(n)],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      const durationMs = Date.now() - startedAtMs;
+      if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
+        log.warn(
+          `SLOW QMD query: durationMs=${durationMs} collection=${col} maxResults=${n} queryChars=${trimmed.length}`,
+        );
+      }
 
       const parsed = JSON.parse(stdout);
       if (!Array.isArray(parsed)) return [];
@@ -120,14 +154,19 @@ export class QmdClient {
 
     const n = maxResults ?? 6;
 
+    const startedAtMs = Date.now();
     try {
-      const { stdout } = await runQmd([
-        "query",
-        trimmed,
-        "--json",
-        "-n",
-        String(n),
-      ]);
+      const { stdout } = await runQmd(
+        ["query", trimmed, "--json", "-n", String(n)],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      const durationMs = Date.now() - startedAtMs;
+      if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
+        log.warn(
+          `SLOW QMD global query: durationMs=${durationMs} maxResults=${n} queryChars=${trimmed.length}`,
+        );
+      }
 
       const parsed = JSON.parse(stdout);
       if (!Array.isArray(parsed)) return [];
@@ -148,37 +187,70 @@ export class QmdClient {
 
   async update(): Promise<void> {
     if (this.available === false) return;
+    if (
+      this.lastUpdateFailAtMs &&
+      Date.now() - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+    ) {
+      log.debug("QMD update: suppressed due to recent failures (backoff)");
+      return;
+    }
     try {
-      await runQmd(["update"], 30_000);
+      const startedAtMs = Date.now();
+      await runQmd(["update"], 30_000, this.qmdPath);
+      const durationMs = Date.now() - startedAtMs;
+      if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
+        log.warn(`SLOW QMD update: durationMs=${durationMs}`);
+      }
       log.debug("QMD update completed");
     } catch (err) {
-      log.warn("QMD update failed", err);
+      this.lastUpdateFailAtMs = Date.now();
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`QMD update failed: ${msg}`);
     }
   }
 
   async embed(): Promise<void> {
     if (this.available === false) return;
+    if (
+      this.lastEmbedFailAtMs &&
+      Date.now() - this.lastEmbedFailAtMs < QMD_EMBED_BACKOFF_MS
+    ) {
+      log.debug("QMD embed: suppressed due to recent failures (backoff)");
+      return;
+    }
     try {
-      await runQmd(["embed"], 60_000);
+      const startedAtMs = Date.now();
+      await runQmd(["embed"], 60_000, this.qmdPath);
+      const durationMs = Date.now() - startedAtMs;
+      if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
+        log.warn(`SLOW QMD embed: durationMs=${durationMs}`);
+      }
       log.debug("QMD embed completed");
     } catch (err) {
-      log.warn("QMD embed failed", err);
+      this.lastEmbedFailAtMs = Date.now();
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`QMD embed failed: ${msg}`);
     }
   }
 
   async ensureCollection(memoryDir: string): Promise<boolean> {
     if (this.available === false) return false;
     try {
-      const { stdout } = await runQmd(["collection", "list", "--json"]);
-      const collections = JSON.parse(stdout);
-      if (Array.isArray(collections)) {
-        const exists = collections.some(
-          (c: Record<string, unknown>) => c.name === this.collection,
-        );
-        if (exists) return true;
+      const { stdout } = await runQmd(
+        ["collection", "list"],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      // Parse text output: "openclaw-engram (qmd://openclaw-engram/)"
+      const collectionRegex = new RegExp(
+        `^${this.collection}\\s+\\(qmd://`,
+        "m",
+      );
+      if (collectionRegex.test(stdout)) {
+        return true;
       }
     } catch {
-      // collection list command may not support --json, that's fine
+      // collection list command failed
     }
 
     log.info(

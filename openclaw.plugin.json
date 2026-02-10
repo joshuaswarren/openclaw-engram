@@ -260,6 +260,49 @@
         "type": "number",
         "default": 6,
         "description": "Maximum number of summaries to inject"
+      },
+      "summaryModel": {
+        "type": "string",
+        "description": "Model for hourly summaries (defaults to main model)"
+      },
+      "localLlmEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable local LLM for extraction and summarization (e.g., LM Studio, Ollama)"
+      },
+      "localLlmUrl": {
+        "type": "string",
+        "default": "http://localhost:1234/v1",
+        "description": "URL for local LLM OpenAI-compatible endpoint"
+      },
+      "localLlmModel": {
+        "type": "string",
+        "default": "local-model",
+        "description": "Model name for local LLM requests"
+      },
+      "localLlmFallback": {
+        "type": "boolean",
+        "default": true,
+        "description": "Fall back to cloud OpenAI if local LLM is unavailable"
+      },
+      "localLlmTimeoutMs": {
+        "type": "number",
+        "default": 180000,
+        "description": "Hard timeout for local LLM requests (ms)"
+      },
+      "slowLogEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If enabled, log slow operations (durations + metadata; never logs content)"
+      },
+      "slowLogThresholdMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Threshold for slow operation logging (ms)"
+      },
+      "localLlmMaxContext": {
+        "type": "number",
+        "description": "Override the detected context window for local LLM. Set to 32768 if your LLM server defaults to 32K context despite the model supporting 128K."
       }
     }
   },
@@ -492,6 +535,38 @@
       "label": "Max Summary Count",
       "advanced": true,
       "placeholder": "6"
+    },
+    "summaryModel": {
+      "label": "Summary Model",
+      "advanced": true,
+      "placeholder": "(same as extraction model)"
+    },
+    "localLlmEnabled": {
+      "label": "Enable Local LLM",
+      "help": "Use local LLM (LM Studio, Ollama, etc.) for extraction and summaries. Falls back to OpenAI if unavailable."
+    },
+    "localLlmUrl": {
+      "label": "Local LLM URL",
+      "advanced": true,
+      "placeholder": "http://localhost:1234/v1",
+      "help": "OpenAI-compatible endpoint URL for local LLM"
+    },
+    "localLlmModel": {
+      "label": "Local LLM Model",
+      "advanced": true,
+      "placeholder": "local-model",
+      "help": "Model identifier for local LLM requests"
+    },
+    "localLlmFallback": {
+      "label": "Local LLM Fallback",
+      "advanced": true,
+      "help": "Fall back to cloud OpenAI if local LLM fails or is unavailable"
+    },
+    "localLlmMaxContext": {
+      "label": "Local LLM Max Context",
+      "advanced": true,
+      "placeholder": "(auto-detected from model)",
+      "help": "Override context window if your LLM server uses smaller default (e.g., 32768 for LM Studio default)"
     }
   }
 }

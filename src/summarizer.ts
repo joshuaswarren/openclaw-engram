@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { log } from "./logger.js";
-import type { HourlySummary, TranscriptEntry, PluginConfig } from "./types.js";
+import { LocalLlmClient } from "./local-llm.js";
+import { FallbackLlmClient } from "./fallback-llm.js";
+import { ModelRegistry } from "./model-registry.js";
+import type { HourlySummary, TranscriptEntry, PluginConfig, GatewayConfig } from "./types.js";
 
 // Schema for LLM summary output
 const HourlySummarySchema = z.object({
@@ -18,18 +19,23 @@ type HourlySummaryResult = z.infer<typeof HourlySummarySchema>;
 export class HourlySummarizer {
   private summariesDir: string;
   private config: PluginConfig;
-  private client: OpenAI | null;
+  private localLlm: LocalLlmClient;
+  private fallbackLlm: FallbackLlmClient;
+  private modelRegistry: ModelRegistry;
 
-  constructor(config: PluginConfig) {
+  constructor(config: PluginConfig, gatewayConfig?: GatewayConfig, modelRegistry?: ModelRegistry) {
     this.config = config;
     this.summariesDir = path.join(config.memoryDir, "summaries", "hourly");
+    this.modelRegistry = modelRegistry ?? new ModelRegistry(config.memoryDir);
 
-    // Initialize OpenAI client same way extraction.ts does
-    if (config.openaiApiKey) {
-      this.client = new OpenAI({ apiKey: config.openaiApiKey });
-    } else {
-      this.client = null;
-      log.warn("no OpenAI API key — hourly summarization disabled");
+    // Initialize local LLM client with shared model registry
+    this.localLlm = new LocalLlmClient(config, this.modelRegistry);
+
+    // Initialize fallback client with gateway config
+    this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
+
+    if (!gatewayConfig?.agents?.defaults?.model?.primary && !config.localLlmEnabled) {
+      log.warn("no gateway default AI and local LLM disabled — hourly summarization disabled");
     }
   }
 
@@ -46,24 +52,54 @@ export class HourlySummarizer {
   ): Promise<HourlySummary | null> {
     if (entries.length === 0) return null;
 
-    if (!this.client) {
-      log.warn("summary generation skipped — no OpenAI API key");
-      return null;
-    }
-
     // Format entries for the LLM
     const conversation = entries
       .map((e) => `[${e.role}] ${e.content}`)
       .join("\n\n");
 
     const hourIso = hourStart.toISOString();
-    const traceId = crypto.randomUUID();
     const startTime = Date.now();
 
+    // Try local LLM first if enabled
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResult = await this.generateWithLocalLlm(conversation);
+        if (localResult) {
+          const durationMs = Date.now() - startTime;
+          log.debug(
+            `generated hourly summary for ${sessionKey} at ${hourIso} in ${durationMs}ms using local LLM`
+          );
+          return {
+            hour: hourIso,
+            sessionKey,
+            bullets: localResult.bullets,
+            turnCount: entries.length,
+            generatedAt: new Date().toISOString(),
+          };
+        }
+        // Local failed, fall back if allowed
+        if (!this.config.localLlmFallback) {
+          log.warn("summary generation: local LLM failed and fallback disabled");
+          return null;
+        }
+        log.info("summary generation: local LLM unavailable, falling back to gateway default AI");
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          log.warn("summary generation: local LLM error and fallback disabled:", err);
+          return null;
+        }
+        log.info("summary generation: local LLM error, falling back to gateway default AI:", err);
+      }
+    }
+
+    // Fall back to gateway's default AI
+    log.info("summary generation: falling back to gateway default AI");
+
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.summaryModel || this.config.model,
-        instructions: `You are a conversation summarization system. Summarize the following conversation transcript into 3-5 concise bullet points.
+      const messages = [
+        {
+          role: "system" as const,
+          content: `You are a conversation summarization system. Summarize the following conversation transcript into 3-5 concise bullet points.
 
 Guidelines:
 - Focus on what was accomplished, decided, or discussed
@@ -71,25 +107,28 @@ Guidelines:
 - Note any significant user requests or agent actions
 - Keep bullets brief but informative (1-2 sentences each)
 - Skip trivial greetings or meta-conversation
-- Use present tense for ongoing work, past for completed items`,
-        input: conversation,
-        text: {
-          format: zodTextFormat(HourlySummarySchema, "hourly_summary"),
+- Use present tense for ongoing work, past for completed items
+
+Respond with valid JSON matching this schema:
+{
+  "bullets": ["bullet 1", "bullet 2", "bullet 3"]
+}`,
         },
-      });
+        { role: "user" as const, content: `Summarize this conversation:\n\n${conversation}` },
+      ];
 
-      const durationMs = Date.now() - startTime;
-      const usage = (response as any).usage;
-
-      log.debug(
-        `generated hourly summary for ${sessionKey} at ${hourIso} in ${durationMs}ms`,
-        usage
-          ? `(tokens: ${usage.input_tokens}/${usage.output_tokens})`
-          : ""
+      const result = await this.fallbackLlm.parseWithSchema(
+        messages,
+        HourlySummarySchema,
+        { temperature: 0.3, maxTokens: 8192 },
       );
 
-      if (response.output_parsed) {
-        const result = response.output_parsed as HourlySummaryResult;
+      const durationMs = Date.now() - startTime;
+
+      if (result) {
+        log.debug(
+          `generated hourly summary for ${sessionKey} at ${hourIso} in ${durationMs}ms via fallback`,
+        );
         return {
           hour: hourIso,
           sessionKey,
@@ -99,10 +138,75 @@ Guidelines:
         };
       }
 
-      log.warn("summary generation returned no parsed output");
+      log.warn("summary generation fallback returned no parsed output");
       return null;
     } catch (err) {
-      log.error("summary generation failed", err);
+      log.error("summary generation fallback failed", err);
+      return null;
+    }
+  }
+
+  /**
+   * Generate summary using local LLM with JSON mode.
+   * Uses dynamic context sizing based on model capabilities.
+   */
+  private async generateWithLocalLlm(conversation: string): Promise<HourlySummaryResult | null> {
+    // Get dynamic context sizes based on model capabilities
+    const contextSizes = this.modelRegistry.calculateContextSizes(
+      this.config.localLlmModel,
+      this.config.localLlmMaxContext
+    );
+    log.debug(`Summarizer model context: ${contextSizes.description}`);
+
+    const maxConversationChars = contextSizes.maxInputChars;
+    const truncatedConversation = conversation.length > maxConversationChars
+      ? conversation.slice(0, maxConversationChars) + "\n\n[truncated]"
+      : conversation;
+
+    const instructions = `You are a conversation summarization system. Summarize the following conversation transcript into 3-5 concise bullet points.
+
+Guidelines:
+- Focus on what was accomplished, decided, or discussed
+- Include specific topics, projects, or entities mentioned
+- Note any significant user requests or agent actions
+- Keep bullets brief but informative (1-2 sentences each)
+- Skip trivial greetings or meta-conversation
+- Use present tense for ongoing work, past for completed items
+
+Respond with valid JSON matching this schema:
+{
+  "bullets": ["bullet 1", "bullet 2", "bullet 3"]
+}`;
+
+    const fullPrompt = `${instructions}\n\nConversation to summarize:\n${truncatedConversation}`;
+
+    const response = await this.localLlm.chatCompletion(
+      [
+        { role: "system", content: "You are a conversation summarization system. Output valid JSON only." },
+        { role: "user", content: fullPrompt },
+      ],
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+    );
+
+    if (!response?.content) {
+      return null;
+    }
+
+    try {
+      // Parse JSON response
+      const content = response.content.trim();
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonStr = jsonMatch ? jsonMatch[0] : content;
+      const parsed = JSON.parse(jsonStr);
+
+      // Validate and normalize
+      const result: HourlySummaryResult = {
+        bullets: Array.isArray(parsed.bullets) ? parsed.bullets : [],
+      };
+
+      return result;
+    } catch (err) {
+      log.warn("local LLM summary: failed to parse JSON response:", err);
       return null;
     }
   }
