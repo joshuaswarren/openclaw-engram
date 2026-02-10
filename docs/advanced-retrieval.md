@@ -31,6 +31,7 @@ Behavior:
 - Sends up to `rerankMaxCandidates` candidates (ID + snippet) to a short ranking prompt.
 - **Fail-open**: on timeout/error, keeps the original ordering.
 - Recommended: `rerankProvider: "local"` so this never forces cloud calls.
+- Note: `rerankProvider: "cloud"` is reserved/experimental in v2.2.0 and currently behaves as a no-op.
 
 ### Feedback Loop (Thumbs Up/Down)
 
@@ -79,4 +80,3 @@ When enabled, Engram logs warnings like:
 - `SLOW QMD query: durationMs=...`
 
 These logs never include user content.
-

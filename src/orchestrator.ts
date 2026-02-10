@@ -246,6 +246,9 @@ export class Orchestrator {
           memoryResults = reordered;
         }
       }
+      if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
+        log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
+      }
 
       if (memoryResults.length > 0) {
         // Track access for these memories

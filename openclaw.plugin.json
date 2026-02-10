@@ -137,7 +137,7 @@
       "rerankProvider": {
         "type": "string",
         "default": "local",
-        "description": "Re-ranking provider: 'local' uses local LLM only; 'cloud' uses gateway fallback chain.",
+        "description": "Re-ranking provider: 'local' uses local LLM only. 'cloud' is reserved/experimental (currently treated as no-op).",
         "enum": ["local", "cloud"]
       },
       "rerankMaxCandidates": {

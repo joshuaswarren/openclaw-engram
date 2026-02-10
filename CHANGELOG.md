@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1] - 2026-02-10
+
+### Changed
+- Documentation clarified: `rerankProvider: "cloud"` is reserved/experimental and currently treated as a no-op.
+
 ## [2.2.0] - 2026-02-10
 
 ### Added

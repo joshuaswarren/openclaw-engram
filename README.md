@@ -336,7 +336,7 @@ See `docs/advanced-retrieval.md` for details and recommended safe defaults.
 | `queryExpansionMaxQueries` | `4` | Max expanded queries (including original) |
 | `queryExpansionMinTokenLen` | `3` | Minimum token length for expansion |
 | `rerankEnabled` | `false` | Enable LLM re-ranking (timeboxed; fail-open) |
-| `rerankProvider` | `local` | `local` (no cloud calls) or `cloud` |
+| `rerankProvider` | `local` | `local` (no cloud calls). `cloud` is reserved/experimental (no-op in v2.2.0). |
 | `rerankMaxCandidates` | `20` | Max candidates sent to re-ranker |
 | `rerankTimeoutMs` | `8000` | Rerank timeout (ms) |
 | `rerankCacheEnabled` | `true` | Cache reranks in-memory |
