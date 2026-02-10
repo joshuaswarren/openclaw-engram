@@ -53,6 +53,13 @@ export interface PluginConfig {
   rerankCacheEnabled: boolean;
   rerankCacheTtlMs: number;
   feedbackEnabled: boolean;
+  // v2.2 Negative Examples (safe defaults: off unless enabled)
+  /** If true, allow recording negative examples and apply a soft penalty during ranking. */
+  negativeExamplesEnabled: boolean;
+  /** Score penalty per "not useful" hit (typical QMD scores ~0-1). Keep small. */
+  negativeExamplesPenaltyPerHit: number;
+  /** Maximum penalty applied from negative examples. */
+  negativeExamplesPenaltyCap: number;
   // Chunking (Phase 2A)
   chunkingEnabled: boolean;
   chunkingTargetTokens: number;

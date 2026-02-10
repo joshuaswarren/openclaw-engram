@@ -3,6 +3,8 @@ import type { SignalLevel, SignalScanResult } from "./types.js";
 const BUILTIN_HIGH_PATTERNS: RegExp[] = [
   /\bactually,?\s+(i|my|we)\b/i,
   /\bno,?\s+(i|my|we|that'?s)\s+(not|wrong|incorrect)\b/i,
+  /\bthat'?s\s+not\s+right\b/i,
+  /\bwhy\s+did\s+you\s+say\s+that\b/i,
   /\bi\s+(?:always|never|prefer|hate|love|want|need)\b/i,
   /\bdon'?t\s+(?:use|do|call|say|make)\b/i,
   /\bplease\s+(?:always|never|remember|note)\b/i,

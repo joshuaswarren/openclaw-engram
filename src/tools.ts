@@ -137,6 +137,151 @@ Best for:
 
   api.registerTool(
     {
+      name: "memory_last_recall",
+      label: "Last Recall Snapshot",
+      description:
+        "Fetch the last set of memory IDs that were injected into context for a session. Useful when the user says things like 'why did you say that?' or 'that's not right' and you want to identify which memories may have misled the response.",
+      parameters: Type.Object({
+        sessionKey: Type.Optional(
+          Type.String({
+            description:
+              "Session key to look up. If omitted, returns the most recent snapshot across all sessions (may be wrong under concurrency).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { sessionKey } = params as { sessionKey?: string };
+
+        const snap = sessionKey
+          ? orchestrator.lastRecall.get(sessionKey)
+          : orchestrator.lastRecall.getMostRecent();
+
+        if (!snap) {
+          return toolResult("No last-recall snapshot found yet.");
+        }
+
+        const prefix = sessionKey
+          ? `## Last Recall (${snap.sessionKey})`
+          : `## Last Recall (most recent: ${snap.sessionKey})\n\nNOTE: You did not provide sessionKey; under concurrency this may not match your current session.`;
+
+        return toolResult(
+          [
+            prefix,
+            "",
+            `Recorded at: ${snap.recordedAt}`,
+            `Query hash: ${snap.queryHash} (len=${snap.queryLen})`,
+            `Memories (${snap.memoryIds.length}):`,
+            ...snap.memoryIds.map((id) => `- ${id}`),
+          ].join("\n"),
+        );
+      },
+    },
+    { name: "memory_last_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_feedback_last_recall",
+      label: "Feedback Last Recall",
+      description:
+        "Batch feedback tool for the last recall snapshot. Can mark retrieved memories as 'not useful' (negative examples) so they are softly penalized in future ranking when negative examples are enabled.",
+      parameters: Type.Object({
+        sessionKey: Type.Optional(
+          Type.String({
+            description:
+              "Session key. If omitted, uses the most recent snapshot across all sessions (may be wrong under concurrency).",
+          }),
+        ),
+        notUsefulMemoryIds: Type.Optional(
+          Type.Array(Type.String(), {
+            description:
+              "Memory IDs to mark as not useful. If omitted, you may use usefulMemoryIds + autoMarkOthersNotUseful to mark the rest as not useful.",
+          }),
+        ),
+        usefulMemoryIds: Type.Optional(
+          Type.Array(Type.String(), {
+            description:
+              "Memory IDs that were useful. Only used when autoMarkOthersNotUseful=true.",
+          }),
+        ),
+        autoMarkOthersNotUseful: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, marks all last-recall memory IDs not listed in usefulMemoryIds as not useful. Safer than auto-marking without an explicit useful list.",
+          }),
+        ),
+        note: Type.Optional(
+          Type.String({
+            description:
+              "Optional note explaining why these were not useful (stored locally).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const {
+          sessionKey,
+          notUsefulMemoryIds,
+          usefulMemoryIds,
+          autoMarkOthersNotUseful,
+          note,
+        } = params as {
+          sessionKey?: string;
+          notUsefulMemoryIds?: string[];
+          usefulMemoryIds?: string[];
+          autoMarkOthersNotUseful?: boolean;
+          note?: string;
+        };
+
+        if (!orchestrator.config.negativeExamplesEnabled) {
+          return toolResult(
+            "Negative examples are disabled. Enable `negativeExamplesEnabled: true` in the Engram plugin config to store retrieved-but-not-useful feedback and apply penalties.",
+          );
+        }
+
+        const snap = sessionKey
+          ? orchestrator.lastRecall.get(sessionKey)
+          : orchestrator.lastRecall.getMostRecent();
+
+        if (!snap) {
+          return toolResult("No last-recall snapshot found yet.");
+        }
+
+        let toMark: string[] | null = null;
+
+        if (Array.isArray(notUsefulMemoryIds) && notUsefulMemoryIds.length > 0) {
+          toMark = notUsefulMemoryIds;
+        } else if (autoMarkOthersNotUseful) {
+          if (!Array.isArray(usefulMemoryIds) || usefulMemoryIds.length === 0) {
+            return toolResult(
+              "autoMarkOthersNotUseful=true requires a non-empty usefulMemoryIds list (to avoid accidental mass-negative marking).",
+            );
+          }
+          const useful = new Set(usefulMemoryIds);
+          toMark = snap.memoryIds.filter((id) => !useful.has(id));
+        }
+
+        if (!toMark || toMark.length === 0) {
+          return toolResult(
+            "Nothing to record. Provide notUsefulMemoryIds, or provide usefulMemoryIds with autoMarkOthersNotUseful=true.",
+          );
+        }
+
+        await orchestrator.recordNotUsefulMemories(toMark, note);
+
+        const warn = sessionKey
+          ? ""
+          : "\n\nNOTE: You did not provide sessionKey; under concurrency this may not match your current session.";
+
+        return toolResult(
+          `Recorded ${toMark.length} not-useful memory ID(s) for last recall (${snap.sessionKey}).${warn}`,
+        );
+      },
+    },
+    { name: "memory_feedback_last_recall" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_store",
       label: "Store Memory",
       description: `Explicitly store a memory. Use this when the user directly asks you to remember something, or when you identify critical information that the automatic extraction might miss.

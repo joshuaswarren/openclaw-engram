@@ -15,6 +15,8 @@ import { ModelRegistry } from "./model-registry.js";
 import { expandQuery } from "./retrieval.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
+import { NegativeExampleStore } from "./negative.js";
+import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
 import type { MemorySummary } from "./types.js";
 import type {
   AccessTrackingEntry,
@@ -34,6 +36,8 @@ export class Orchestrator {
   readonly localLlm: LocalLlmClient;
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
+  readonly negatives: NegativeExampleStore;
+  readonly lastRecall: LastRecallStore;
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
@@ -60,6 +64,8 @@ export class Orchestrator {
     this.transcript = new TranscriptManager(config);
     this.modelRegistry = new ModelRegistry(config.memoryDir);
     this.relevance = new RelevanceStore(config.memoryDir);
+    this.negatives = new NegativeExampleStore(config.memoryDir);
+    this.lastRecall = new LastRecallStore(config.memoryDir);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
@@ -73,6 +79,8 @@ export class Orchestrator {
     await this.storage.ensureDirectories();
     await this.storage.loadAliases();
     await this.relevance.load();
+    await this.negatives.load();
+    await this.lastRecall.load();
     await this.transcript.initialize();
     await this.summarizer.initialize();
 
@@ -255,6 +263,14 @@ export class Orchestrator {
         const memoryIds = this.extractMemoryIdsFromResults(memoryResults);
         this.trackMemoryAccess(memoryIds);
 
+        // Record last recall snapshot + impression log for feedback loops.
+        if (sessionKey) {
+          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+          this.lastRecall
+            .record({ sessionKey, query: prompt, memoryIds: unique })
+            .catch((err) => log.debug(`last recall record failed: ${err}`));
+        }
+
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       }
 
@@ -282,6 +298,13 @@ export class Orchestrator {
         // Track access for these memories
         const memoryIds = recent.map((m) => m.frontmatter.id);
         this.trackMemoryAccess(memoryIds);
+
+        if (sessionKey) {
+          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+          this.lastRecall
+            .record({ sessionKey, query: prompt, memoryIds: unique })
+            .catch((err) => log.debug(`last recall record failed: ${err}`));
+        }
 
         const lines = recent.map(
           (m) => `- [${m.frontmatter.category}] ${m.content}`,
@@ -1004,6 +1027,18 @@ export class Orchestrator {
             score += this.relevance.adjustment(memoryId);
           }
         }
+
+        // Negative examples (v2.2): apply a small penalty for memories repeatedly marked "not useful".
+        if (this.config.negativeExamplesEnabled) {
+          const match = memory.path.match(/([^/]+)\.md$/);
+          const memoryId = match ? match[1] : null;
+          if (memoryId) {
+            score -= this.negatives.penalty(memoryId, {
+              perHit: this.config.negativeExamplesPenaltyPerHit,
+              cap: this.config.negativeExamplesPenaltyCap,
+            });
+          }
+        }
       }
 
       return { ...r, score };
@@ -1037,6 +1072,15 @@ export class Orchestrator {
 
   async recordMemoryFeedback(memoryId: string, vote: "up" | "down", note?: string): Promise<void> {
     await this.relevance.record(memoryId, vote, note);
+  }
+
+  // Negative Examples (v2.2)
+  async recordNotUsefulMemories(memoryIds: string[], note?: string): Promise<void> {
+    await this.negatives.recordNotUseful(memoryIds, note);
+  }
+
+  getLastRecall(sessionKey: string): LastRecallSnapshot | null {
+    return this.lastRecall.get(sessionKey);
   }
 
   /**

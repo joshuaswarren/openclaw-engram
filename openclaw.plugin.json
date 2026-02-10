@@ -165,6 +165,21 @@
         "default": false,
         "description": "Enable feedback capture tool for memory relevance (thumbs up/down)."
       },
+      "negativeExamplesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable negative examples (track retrieved-but-not-useful memories) and apply a small ranking penalty."
+      },
+      "negativeExamplesPenaltyPerHit": {
+        "type": "number",
+        "default": 0.05,
+        "description": "Ranking penalty per negative example hit (keep small; QMD scores are ~0-1)."
+      },
+      "negativeExamplesPenaltyCap": {
+        "type": "number",
+        "default": 0.25,
+        "description": "Maximum ranking penalty applied from negative examples."
+      },
       "chunkingEnabled": {
         "type": "boolean",
         "default": false,
@@ -456,6 +471,20 @@
     "boostAccessCount": {
       "label": "Boost Frequent Access",
       "help": "Rank frequently accessed memories higher in search"
+    },
+    "negativeExamplesEnabled": {
+      "label": "Negative Examples",
+      "help": "Track retrieved-but-not-useful memories and apply a small ranking penalty (optional)"
+    },
+    "negativeExamplesPenaltyPerHit": {
+      "label": "Negative Penalty / Hit",
+      "advanced": true,
+      "placeholder": "0.05"
+    },
+    "negativeExamplesPenaltyCap": {
+      "label": "Negative Penalty Cap",
+      "advanced": true,
+      "placeholder": "0.25"
     },
     "chunkingEnabled": {
       "label": "Enable Chunking",

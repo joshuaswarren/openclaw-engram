@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.2] - 2026-02-10
+
+### Added
+- Negative examples (retrieved-but-not-useful) feedback loop (opt-in):
+  - Config: `negativeExamplesEnabled`, `negativeExamplesPenaltyPerHit`, `negativeExamplesPenaltyCap`
+  - Storage: `memoryDir/state/negative_examples.json`
+- Last recall snapshot + impression log for debugging/feedback workflows:
+  - Storage: `memoryDir/state/last_recall.json`, `memoryDir/state/recall_impressions.jsonl`
+  - Tools: `memory_last_recall`, `memory_feedback_last_recall`
+
+### Changed
+- Signal scan now treats phrases like "that's not right" / "why did you say that" as high-signal (more likely to extract corrections).
+
 ## [2.2.1] - 2026-02-10
 
 ### Changed

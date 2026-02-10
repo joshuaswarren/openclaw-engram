@@ -130,6 +130,16 @@ export function parseConfig(raw: unknown): PluginConfig {
     rerankCacheTtlMs:
       typeof cfg.rerankCacheTtlMs === "number" ? cfg.rerankCacheTtlMs : 60 * 60 * 1000,
     feedbackEnabled: cfg.feedbackEnabled === true,
+    // v2.2 Negative Examples (safe defaults: off unless enabled)
+    negativeExamplesEnabled: cfg.negativeExamplesEnabled === true,
+    negativeExamplesPenaltyPerHit:
+      typeof cfg.negativeExamplesPenaltyPerHit === "number"
+        ? cfg.negativeExamplesPenaltyPerHit
+        : 0.05,
+    negativeExamplesPenaltyCap:
+      typeof cfg.negativeExamplesPenaltyCap === "number"
+        ? cfg.negativeExamplesPenaltyCap
+        : 0.25,
     // Chunking (Phase 2A)
     chunkingEnabled: cfg.chunkingEnabled === true, // Off by default initially
     chunkingTargetTokens:

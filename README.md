@@ -102,6 +102,7 @@ All v2.2 retrieval features are **disabled by default**. Enable them only if you
 - **LLM re-ranking** (`rerankEnabled`): Re-scores the top N retrieved memories using a short, timeboxed request.
   - Default mode: **local-only** (`rerankProvider: "local"`), fail-open on errors/timeouts.
 - **Feedback loop** (`feedbackEnabled` + `memory_feedback` tool): Store thumbs up/down locally and apply it as a small ranking bias.
+- **Negative examples** (`negativeExamplesEnabled` + `memory_feedback_last_recall` tool): Track retrieved-but-not-useful memories and apply a small ranking penalty.
 - **Slow query log** (`slowLogEnabled` + `slowLogThresholdMs`): Logs durations and metadata (never content) for local LLM and QMD operations.
 
 ## Architecture
@@ -342,6 +343,9 @@ See `docs/advanced-retrieval.md` for details and recommended safe defaults.
 | `rerankCacheEnabled` | `true` | Cache reranks in-memory |
 | `rerankCacheTtlMs` | `3600000` | Rerank cache TTL (ms) |
 | `feedbackEnabled` | `false` | Enable `memory_feedback` tool and ranking bias |
+| `negativeExamplesEnabled` | `false` | Enable negative examples + ranking penalty (opt-in) |
+| `negativeExamplesPenaltyPerHit` | `0.05` | Penalty per "not useful" hit |
+| `negativeExamplesPenaltyCap` | `0.25` | Maximum total penalty applied |
 
 ### v1.2.0 Advanced Feature Settings
 
