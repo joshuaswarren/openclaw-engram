@@ -1,6 +1,6 @@
 # OpenClaw Engram Roadmap
 
-**Current Version:** 2.2.2
+**Current Version:** 2.2.3
 **Last Updated:** 2026-02-10
 
 ---

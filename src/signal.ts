@@ -28,6 +28,20 @@ const MEDIUM_PATTERNS: RegExp[] = [
   /\bmy\s+(?:team|project|stack|setup)\b/i,
 ];
 
+const DISAGREEMENT_PATTERNS: RegExp[] = [
+  /\bthat'?s\s+not\s+right\b/i,
+  /\bwhy\s+did\s+you\s+say\s+that\b/i,
+  /\bthat'?s\s+wrong\b/i,
+  /\bnot\s+correct\b/i,
+];
+
+export function isDisagreementPrompt(text: string): boolean {
+  for (const rx of DISAGREEMENT_PATTERNS) {
+    if (rx.test(text)) return true;
+  }
+  return false;
+}
+
 export function scanSignals(
   text: string,
   customPatterns: string[] = [],

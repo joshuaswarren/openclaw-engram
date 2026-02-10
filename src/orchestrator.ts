@@ -17,6 +17,7 @@ import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
+import { isDisagreementPrompt } from "./signal.js";
 import type { MemorySummary } from "./types.js";
 import type {
   AccessTrackingEntry,
@@ -279,6 +280,23 @@ export class Orchestrator {
           this.formatQmdResults("Workspace Context", globalResults),
         );
       }
+
+      // If the user is pushing back ("that's not right", "why did you say that"),
+      // gently suggest an explicit workflow to inspect what was recalled and record feedback.
+      // IMPORTANT: this is suggestion-only; never auto-mark negatives.
+      if (isDisagreementPrompt(prompt)) {
+        sections.push(
+          [
+            "## Retrieval Feedback Helper",
+            "",
+            "The user may be disputing an answer. To debug whether retrieval misled the response:",
+            "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+            "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
+            "",
+            "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
+          ].join("\n"),
+        );
+      }
     } else {
       // Fallback: read recent memories directly
       const memories = await this.storage.readAllMemories();
@@ -310,6 +328,20 @@ export class Orchestrator {
           (m) => `- [${m.frontmatter.category}] ${m.content}`,
         );
         sections.push(`## Recent Memories\n\n${lines.join("\n")}`);
+      }
+
+      if (isDisagreementPrompt(prompt)) {
+        sections.push(
+          [
+            "## Retrieval Feedback Helper",
+            "",
+            "The user may be disputing an answer. To debug whether retrieval misled the response:",
+            "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+            "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
+            "",
+            "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
+          ].join("\n"),
+        );
       }
     }
 

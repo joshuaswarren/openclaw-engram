@@ -15,6 +15,14 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Signal scan now treats phrases like "that's not right" / "why did you say that" as high-signal (more likely to extract corrections).
 
+## [2.2.3] - 2026-02-10
+
+### Added
+- Disagreement heuristic (suggestion-only): when the user pushes back ("that's not right", "why did you say that"), Engram injects a short helper section encouraging use of `memory_last_recall` and (optionally) `memory_feedback_last_recall`.
+
+### Changed
+- No auto-marking: this heuristic never records negative examples automatically.
+
 ## [2.2.1] - 2026-02-10
 
 ### Changed
