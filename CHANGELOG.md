@@ -30,6 +30,9 @@ All notable changes to this project will be documented in this file.
   - Consolidation cooldown + non-zero gating
   - Debounced/singleflight QMD maintenance worker
   - Local LLM resilience knobs (bounded 5xx retries, 400 trip threshold + cooldown)
+- Path override knobs for non-committed local installs:
+  - Config: `localLlmHomeDir`, `localLmsCliPath`, `localLmsBinDir`
+  - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 
 ### Changed
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.

@@ -245,6 +245,18 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.localLlmModel
         : "local-model",
     localLlmFallback: cfg.localLlmFallback !== false, // default: true
+    localLlmHomeDir:
+      typeof cfg.localLlmHomeDir === "string" && cfg.localLlmHomeDir.length > 0
+        ? cfg.localLlmHomeDir
+        : undefined,
+    localLmsCliPath:
+      typeof cfg.localLmsCliPath === "string" && cfg.localLmsCliPath.length > 0
+        ? cfg.localLmsCliPath
+        : undefined,
+    localLmsBinDir:
+      typeof cfg.localLmsBinDir === "string" && cfg.localLmsBinDir.length > 0
+        ? cfg.localLmsBinDir
+        : undefined,
     localLlmTimeoutMs:
       typeof cfg.localLlmTimeoutMs === "number" ? cfg.localLlmTimeoutMs : 180_000,
     localLlmMaxContext:

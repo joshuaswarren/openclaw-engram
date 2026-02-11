@@ -351,6 +351,18 @@
         "default": true,
         "description": "Fall back to cloud OpenAI if local LLM is unavailable"
       },
+      "localLlmHomeDir": {
+        "type": "string",
+        "description": "Optional home directory override for local LLM helpers (LM Studio settings + CLI PATH resolution)."
+      },
+      "localLmsCliPath": {
+        "type": "string",
+        "description": "Optional absolute path to LMS CLI binary. Preferred over auto-detected locations."
+      },
+      "localLmsBinDir": {
+        "type": "string",
+        "description": "Optional bin directory prepended to PATH for LMS CLI execution."
+      },
       "localLlmTimeoutMs": {
         "type": "number",
         "default": 180000,
@@ -918,6 +930,24 @@
       "label": "Local LLM Fallback",
       "advanced": true,
       "help": "Fall back to cloud OpenAI if local LLM fails or is unavailable"
+    },
+    "localLlmHomeDir": {
+      "label": "Local LLM Home Dir",
+      "advanced": true,
+      "placeholder": "(auto: HOME / os.homedir)",
+      "help": "Optional home directory override for LM Studio settings and local helper paths."
+    },
+    "localLmsCliPath": {
+      "label": "LMS CLI Path",
+      "advanced": true,
+      "placeholder": "/path/to/lms",
+      "help": "Optional absolute path to LMS CLI. Overrides auto-detection."
+    },
+    "localLmsBinDir": {
+      "label": "LMS Bin Dir",
+      "advanced": true,
+      "placeholder": "/path/to/bin",
+      "help": "Optional bin directory prepended to PATH for LMS CLI execution."
     },
     "localLlmMaxContext": {
       "label": "Local LLM Max Context",

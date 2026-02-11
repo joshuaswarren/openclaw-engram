@@ -363,6 +363,10 @@ For a full v2.3-v5 setup (including cron and QMD conversation-index collections)
 - `docs/shared-context.md`
 - `docs/compounding.md`
 
+Bootstrap config path override (for service environments) can be set via env var:
+- `OPENCLAW_ENGRAM_CONFIG_PATH=/absolute/path/to/openclaw.json`
+- Fallback: `OPENCLAW_CONFIG_PATH`
+
 ### Core Settings
 
 | Setting | Default | Description |
@@ -420,6 +424,9 @@ See `docs/advanced-retrieval.md` for details and recommended safe defaults.
 | `negativeExamplesEnabled` | `false` | Enable negative examples + ranking penalty (opt-in) |
 | `negativeExamplesPenaltyPerHit` | `0.05` | Penalty per "not useful" hit |
 | `negativeExamplesPenaltyCap` | `0.25` | Maximum total penalty applied |
+| `localLlmHomeDir` | `(auto)` | Optional home directory override for LM Studio settings + helper paths |
+| `localLmsCliPath` | `(auto)` | Optional absolute path to `lms` CLI |
+| `localLmsBinDir` | `(auto)` | Optional bin dir prepended to PATH for `lms` execution |
 
 ### v1.2.0 Advanced Feature Settings
 

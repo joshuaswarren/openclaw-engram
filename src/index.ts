@@ -14,9 +14,15 @@ import os from "node:os";
 // IMPORTANT: Do not log raw config contents (may include secrets).
 function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
   try {
+    const explicitConfigPath =
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
+      process.env.OPENCLAW_CONFIG_PATH;
     // Gateway may run without HOME env under service managers.
     const homeDir = process.env.HOME ?? os.homedir();
-    const configPath = path.join(homeDir, ".openclaw", "openclaw.json");
+    const configPath =
+      explicitConfigPath && explicitConfigPath.length > 0
+        ? explicitConfigPath
+        : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
     const pluginEntry = config?.plugins?.entries?.["openclaw-engram"];

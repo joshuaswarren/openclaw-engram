@@ -22,6 +22,9 @@ In `openclaw.json`:
           "localLlmUrl": "http://127.0.0.1:1234/v1",
           "localLlmModel": "qwen3-coder-30b-a3b-instruct-mlx@4bit",
           "localLlmFallback": true,
+          "localLlmHomeDir": "~",
+          "localLmsCliPath": "~/.cache/lm-studio/bin/lms",
+          "localLmsBinDir": "~/.cache/lm-studio/bin",
           "localLlmMaxContext": 4096,
 
           "rerankEnabled": true,
@@ -34,6 +37,9 @@ In `openclaw.json`:
   }
 }
 ```
+
+Service env override (optional):
+- `OPENCLAW_ENGRAM_CONFIG_PATH=/absolute/path/to/openclaw.json`
 
 ## 2) v2.4 Context Retention
 

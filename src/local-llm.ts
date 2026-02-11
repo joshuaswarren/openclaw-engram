@@ -86,6 +86,10 @@ export class LocalLlmClient {
     this.modelRegistry = modelRegistry;
   }
 
+  private resolveHomeDir(): string {
+    return this.config.localLlmHomeDir || process.env.HOME || os.homedir();
+  }
+
   /**
    * Set the ModelRegistry for caching detected capabilities
    */
@@ -193,7 +197,7 @@ export class LocalLlmClient {
    */
   private getContextFromLmStudioSettings(): number | null {
     try {
-      const homeDir = process.env.HOME || os.homedir();
+      const homeDir = this.resolveHomeDir();
       const settingsPath = `${homeDir}/.cache/lm-studio/settings.json`;
 
       if (!existsSync(settingsPath)) {
@@ -232,14 +236,15 @@ export class LocalLlmClient {
     try {
       // Check if lms CLI exists in common locations
       // Note: process.env.HOME may not be set in launchd environment
-      const homeDir = process.env.HOME || os.homedir();
+      const homeDir = this.resolveHomeDir();
       const lmsPaths = [
+        this.config.localLmsCliPath || "",
         `${homeDir}/.cache/lm-studio/bin/lms`,
         "/usr/local/bin/lms",
         "/opt/homebrew/bin/lms",
       ];
 
-      const lmsPath = lmsPaths.find((p) => existsSync(p));
+      const lmsPath = lmsPaths.find((p) => p.length > 0 && existsSync(p));
       if (!lmsPath) {
         log.debug(`LMS CLI: not found in standard locations (checked: ${lmsPaths.join(", ")})`);
         return null;
@@ -254,7 +259,7 @@ export class LocalLlmClient {
         shell: false, // Don't use shell for JSON output - more reliable
         env: {
           ...process.env,
-          PATH: `${homeDir}/.cache/lm-studio/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
+          PATH: `${this.config.localLmsBinDir || `${homeDir}/.cache/lm-studio/bin`}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
           HOME: homeDir,
         },
       });
