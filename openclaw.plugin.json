@@ -453,6 +453,11 @@
         "default": 3600000,
         "description": "Minimum interval between background QMD embed runs (ms)."
       },
+      "qmdUpdateTimeoutMs": {
+        "type": "number",
+        "default": 90000,
+        "description": "Timeout for QMD update command (ms). Increase if your index grows and updates exceed 30s."
+      },
       "localLlmRetry5xxCount": {
         "type": "number",
         "default": 1,
@@ -522,6 +527,16 @@
         "type": "number",
         "default": 30,
         "description": "Days to retain conversation chunk docs."
+      },
+      "conversationIndexMinUpdateIntervalMs": {
+        "type": "number",
+        "default": 900000,
+        "description": "Minimum interval between conversation_index_update runs per session (ms). Prevents redundant reindex churn."
+      },
+      "conversationIndexEmbedOnUpdate": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, conversation_index_update also runs QMD embed by default. Keep false for lower load."
       },
       "conversationRecallTopK": {
         "type": "number",

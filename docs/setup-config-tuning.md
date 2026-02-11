@@ -58,6 +58,8 @@ Recommended starting config:
   "conversationIndexBackend": "qmd",
   "conversationIndexQmdCollection": "openclaw-engram-conversations",
   "conversationIndexRetentionDays": 30,
+  "conversationIndexMinUpdateIntervalMs": 900000,
+  "conversationIndexEmbedOnUpdate": false,
   "conversationRecallTopK": 4,
   "conversationRecallMaxChars": 2000,
   "conversationRecallTimeoutMs": 800
@@ -153,6 +155,7 @@ Use isolated `agentTurn` jobs and `delivery.mode: "none"`:
 2. Conversation index refresh:
 - schedule: `23 * * * *`
 - action: call tool `conversation_index_update` with `{"hours":48}`
+- optional one-off deep refresh: `{"hours":48,"embed":true}`
 
 3. Shared-context daily curation:
 - schedule: `5 21 * * *`
@@ -181,6 +184,7 @@ Reliability / load:
 - QMD maintenance off the hot path:
   - `qmdMaintenanceEnabled: true`
   - `qmdMaintenanceDebounceMs: 30000`
+  - `qmdUpdateTimeoutMs: 90000`
   - `qmdAutoEmbedEnabled: false` (enable only when you need frequent embed refresh)
   - `qmdEmbedMinIntervalMs: 3600000`
 - Local LLM failure damping:
@@ -199,6 +203,7 @@ Recall quality:
 
 Storage growth:
 - Keep `conversationIndexRetentionDays` finite.
+- Keep `conversationIndexMinUpdateIntervalMs` >= 10m unless you are actively debugging.
 - Keep transcript retention finite (`transcriptRetentionDays`).
 
 Safety:

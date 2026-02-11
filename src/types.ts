@@ -115,6 +115,8 @@ export interface PluginConfig {
   conversationIndexBackend: "qmd" | "faiss";
   conversationIndexQmdCollection: string;
   conversationIndexRetentionDays: number;
+  conversationIndexMinUpdateIntervalMs: number;
+  conversationIndexEmbedOnUpdate: boolean;
   conversationRecallTopK: number;
   conversationRecallMaxChars: number;
   conversationRecallTimeoutMs: number;
@@ -155,6 +157,7 @@ export interface PluginConfig {
   qmdMaintenanceDebounceMs: number;
   qmdAutoEmbedEnabled: boolean;
   qmdEmbedMinIntervalMs: number;
+  qmdUpdateTimeoutMs: number;
   // Local LLM resilience
   localLlmRetry5xxCount: number;
   localLlmRetryBackoffMs: number;

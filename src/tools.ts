@@ -648,6 +648,12 @@ Best for:
             maximum: 24 * 30,
           }),
         ),
+        embed: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, run QMD embed after update for this invocation. If omitted, uses conversationIndexEmbedOnUpdate config.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
         if (!orchestrator.config.conversationIndexEnabled) {
@@ -656,20 +662,44 @@ Best for:
           );
         }
 
-        const { sessionKey, hours } = params as { sessionKey?: string; hours?: number };
+        const { sessionKey, hours, embed } = params as { sessionKey?: string; hours?: number; embed?: boolean };
         const h = typeof hours === "number" && Number.isFinite(hours) ? hours : 24;
 
         if (sessionKey) {
-          const count = await orchestrator.updateConversationIndex(sessionKey, h);
-          return toolResult(`Indexed ${count} chunk(s) for sessionKey=${sessionKey}.`);
+          const res = await orchestrator.updateConversationIndex(sessionKey, h, { embed });
+          if (res.skipped && res.reason === "min_interval") {
+            const retrySec = Math.max(1, Math.ceil((res.retryAfterMs ?? 0) / 1000));
+            return toolResult(
+              `Skipped for sessionKey=${sessionKey} due to min interval. Retry in ~${retrySec}s or pass a higher interval config.`,
+            );
+          }
+          return toolResult(
+            `Indexed ${res.chunks} chunk(s) for sessionKey=${sessionKey}.${res.embedded ? " Ran embed." : ""}`,
+          );
         }
 
         const sessions = await orchestrator.transcript.listSessionKeys();
         let total = 0;
+        let skipped = 0;
+        const skippedIds: string[] = [];
+        let embeddedRuns = 0;
         for (const sk of sessions) {
-          total += await orchestrator.updateConversationIndex(sk, h);
+          const res = await orchestrator.updateConversationIndex(sk, h, { embed });
+          total += res.chunks;
+          if (res.skipped) {
+            skipped += 1;
+            skippedIds.push(sk);
+          }
+          if (res.embedded) embeddedRuns += 1;
         }
-        return toolResult(`Indexed ${total} total chunk(s) across ${sessions.length} session(s).`);
+        const skippedSummary =
+          skipped > 0
+            ? ` Skipped ${skipped} session(s) due to min-interval gating: ${skippedIds.slice(0, 6).join(", ")}${skippedIds.length > 6 ? "..." : ""}.`
+            : "";
+        const embedSummary = embeddedRuns > 0 ? ` Ran embed for ${embeddedRuns} session update(s).` : "";
+        return toolResult(
+          `Indexed ${total} total chunk(s) across ${sessions.length} session(s).${skippedSummary}${embedSummary}`,
+        );
       },
     },
     { name: "conversation_index_update" },

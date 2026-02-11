@@ -79,14 +79,18 @@ export class Orchestrator {
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
   private lastQmdEmbedAtMs = 0;
+  private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
 
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
     this.storage = new StorageManager(config.memoryDir);
     this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults, {
-      enabled: config.slowLogEnabled,
-      thresholdMs: config.slowLogThresholdMs,
+      slowLog: {
+        enabled: config.slowLogEnabled,
+        thresholdMs: config.slowLogThresholdMs,
+      },
+      updateTimeoutMs: config.qmdUpdateTimeoutMs,
     });
     this.conversationQmd =
       config.conversationIndexEnabled && config.conversationIndexBackend === "qmd"
@@ -94,8 +98,11 @@ export class Orchestrator {
             config.conversationIndexQmdCollection,
             Math.max(6, config.conversationRecallTopK),
             {
-              enabled: config.slowLogEnabled,
-              thresholdMs: config.slowLogThresholdMs,
+              slowLog: {
+                enabled: config.slowLogEnabled,
+                thresholdMs: config.slowLogThresholdMs,
+              },
+              updateTimeoutMs: config.qmdUpdateTimeoutMs,
             },
           )
         : undefined;
@@ -181,8 +188,30 @@ export class Orchestrator {
     return this.storageRouter.storageFor(ns);
   }
 
-  async updateConversationIndex(sessionKey: string, hours: number = 24): Promise<number> {
-    if (!this.config.conversationIndexEnabled) return 0;
+  async updateConversationIndex(
+    sessionKey: string,
+    hours: number = 24,
+    opts?: { embed?: boolean; enforceMinInterval?: boolean },
+  ): Promise<{ chunks: number; skipped: boolean; reason?: string; retryAfterMs?: number; embedded?: boolean }> {
+    if (!this.config.conversationIndexEnabled) {
+      return { chunks: 0, skipped: true, reason: "disabled", embedded: false };
+    }
+    const enforceMinInterval = opts?.enforceMinInterval !== false;
+    if (enforceMinInterval) {
+      const minIntervalMs = Math.max(0, this.config.conversationIndexMinUpdateIntervalMs);
+      const now = Date.now();
+      const last = this.conversationIndexLastUpdateAtMs.get(sessionKey) ?? 0;
+      const elapsed = now - last;
+      if (minIntervalMs > 0 && elapsed < minIntervalMs) {
+        return {
+          chunks: 0,
+          skipped: true,
+          reason: "min_interval",
+          retryAfterMs: minIntervalMs - elapsed,
+          embedded: false,
+        };
+      }
+    }
     // Read transcript history and chunk it into markdown docs for QMD indexing.
     const entries = await this.transcript.readRecent(hours, sessionKey);
     const chunks = chunkTranscriptEntries(sessionKey, entries, {
@@ -196,11 +225,17 @@ export class Orchestrator {
     );
     // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
     const q = this.conversationQmd ?? this.qmd;
+    const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
+    let embedded = false;
     if (this.config.qmdEnabled && q.isAvailable()) {
       await q.update();
-      await q.embed();
+      if (shouldEmbed) {
+        await q.embed();
+        embedded = true;
+      }
     }
-    return chunks.length;
+    this.conversationIndexLastUpdateAtMs.set(sessionKey, Date.now());
+    return { chunks: chunks.length, skipped: false, embedded };
   }
 
   /**

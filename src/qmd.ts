@@ -63,12 +63,20 @@ export class QmdClient {
   private available: boolean | null = null;
   private lastUpdateFailAtMs: number | null = null;
   private lastEmbedFailAtMs: number | null = null;
+  private readonly updateTimeoutMs: number;
+  private readonly slowLog?: { enabled: boolean; thresholdMs: number };
 
   constructor(
     private readonly collection: string,
     private readonly maxResults: number,
-    private readonly slowLog?: { enabled: boolean; thresholdMs: number },
-  ) {}
+    opts?: {
+      slowLog?: { enabled: boolean; thresholdMs: number };
+      updateTimeoutMs?: number;
+    },
+  ) {
+    this.slowLog = opts?.slowLog;
+    this.updateTimeoutMs = opts?.updateTimeoutMs ?? 30_000;
+  }
 
   private qmdPath: string = "qmd";
 
@@ -196,7 +204,7 @@ export class QmdClient {
     }
     try {
       const startedAtMs = Date.now();
-      await runQmd(["update"], 30_000, this.qmdPath);
+      await runQmd(["update"], this.updateTimeoutMs, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);

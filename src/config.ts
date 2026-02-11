@@ -228,6 +228,11 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram-conversations",
     conversationIndexRetentionDays:
       typeof cfg.conversationIndexRetentionDays === "number" ? cfg.conversationIndexRetentionDays : 30,
+    conversationIndexMinUpdateIntervalMs:
+      typeof cfg.conversationIndexMinUpdateIntervalMs === "number"
+        ? cfg.conversationIndexMinUpdateIntervalMs
+        : 15 * 60_000,
+    conversationIndexEmbedOnUpdate: cfg.conversationIndexEmbedOnUpdate === true,
     conversationRecallTopK:
       typeof cfg.conversationRecallTopK === "number" ? cfg.conversationRecallTopK : 3,
     conversationRecallMaxChars:
@@ -293,6 +298,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     qmdAutoEmbedEnabled: cfg.qmdAutoEmbedEnabled === true,
     qmdEmbedMinIntervalMs:
       typeof cfg.qmdEmbedMinIntervalMs === "number" ? cfg.qmdEmbedMinIntervalMs : 60 * 60_000,
+    qmdUpdateTimeoutMs:
+      typeof cfg.qmdUpdateTimeoutMs === "number" ? cfg.qmdUpdateTimeoutMs : 90_000,
     // Local LLM resilience
     localLlmRetry5xxCount:
       typeof cfg.localLlmRetry5xxCount === "number" ? cfg.localLlmRetry5xxCount : 1,

@@ -127,8 +127,8 @@ Details: `docs/import-export.md`
 - **Extended hourly summaries** (structured topics/decisions/action items/rejections) are optional:
   - Config: `hourlySummariesExtendedEnabled`, `hourlySummariesIncludeToolStats`
 - **Conversation semantic recall hook** (optional): index transcript chunks and inject top-K relevant past chunks:
-  - Config: `conversationIndexEnabled`, `conversationIndexQmdCollection`, `conversationRecallTopK`
-  - Tool: `conversation_index_update`
+  - Config: `conversationIndexEnabled`, `conversationIndexQmdCollection`, `conversationRecallTopK`, `conversationIndexMinUpdateIntervalMs`, `conversationIndexEmbedOnUpdate`
+  - Tool: `conversation_index_update` (optional `embed: true` override)
 
 Details: `docs/context-retention.md`
 
@@ -193,6 +193,11 @@ Every Nth extraction: Consolidation pass
     v
 Background: qmd update (re-index new files)
 ```
+
+Performance note for conversation indexing:
+- `conversation_index_update` now runs `qmd update` only by default.
+- `qmd embed` is optional (`conversationIndexEmbedOnUpdate: true` or tool param `embed: true`).
+- Re-indexing is min-interval gated per session (`conversationIndexMinUpdateIntervalMs`, default 15m).
 
 ### Retrieval Flow
 
