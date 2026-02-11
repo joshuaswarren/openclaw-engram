@@ -28,6 +28,11 @@ function toolResult(text: string) {
 }
 
 export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
+  function namespaceFromPath(p: string): string {
+    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
+    return m && m[1] ? m[1] : orchestrator.config.defaultNamespace;
+  }
+
   api.registerTool(
     {
       name: "memory_search",
@@ -46,6 +51,12 @@ Best for:
         query: Type.String({
           description: "Search query — keywords, phrases, or natural language",
         }),
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Optional namespace filter. When set, only returns results under memoryDir/namespaces/<namespace>/ (default namespace uses legacy root).",
+          }),
+        ),
         maxResults: Type.Optional(
           Type.Number({
             description: "Maximum results (default: 8)",
@@ -61,10 +72,11 @@ Best for:
         ),
       }),
       async execute(_toolCallId, params) {
-        const { query, maxResults, collection } = params as {
+        const { query, maxResults, collection, namespace } = params as {
           query: string;
           maxResults?: number;
           collection?: string;
+          namespace?: string;
         };
 
         const results =
@@ -72,11 +84,16 @@ Best for:
             ? await orchestrator.qmd.searchGlobal(query, maxResults)
             : await orchestrator.qmd.search(query, undefined, maxResults);
 
-        if (results.length === 0) {
+        const filtered =
+          namespace && namespace.length > 0
+            ? results.filter((r) => namespaceFromPath(r.path) === namespace)
+            : results;
+
+        if (filtered.length === 0) {
           return toolResult(`No memories found matching: "${query}"`);
         }
 
-        const formatted = results
+        const formatted = filtered
           .map((r, i) => {
             const snippet = r.snippet
               ? r.snippet.slice(0, 800)
@@ -86,7 +103,7 @@ Best for:
           .join("\n\n");
 
         return toolResult(
-          `## Memory Search: "${query}"\n\n${results.length} result(s)\n\n${formatted}`,
+          `## Memory Search: "${query}"\n\n${filtered.length} result(s)\n\n${formatted}`,
         );
       },
     },
@@ -297,6 +314,12 @@ Best for:
         content: Type.String({
           description: "The memory to store — a clear, standalone statement",
         }),
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Namespace to store into (v3.0+). Omit to store into defaultNamespace.",
+          }),
+        ),
         category: Type.Optional(
           Type.String({
             description:
@@ -319,17 +342,20 @@ Best for:
       async execute(_toolCallId, params) {
         const {
           content,
+          namespace,
           category = "fact",
           tags = [],
           entityRef,
         } = params as {
           content: string;
+          namespace?: string;
           category?: string;
           tags?: string[];
           entityRef?: string;
         };
 
-        const id = await orchestrator.storage.writeMemory(
+        const storage = await orchestrator.getStorage(namespace);
+        const id = await storage.writeMemory(
           category as MemoryCategory,
           content,
           {
@@ -340,10 +366,77 @@ Best for:
           },
         );
 
-        return toolResult(`Memory stored: ${id}\n\nContent: ${content}`);
+        return toolResult(`Memory stored: ${id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`);
       },
     },
     { name: "memory_store" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_promote",
+      label: "Promote Memory To Shared",
+      description:
+        "Copy a memory into the shared namespace (v3.0+). This is intended for curated promotion of agent-specific learning into a shared brain.",
+      parameters: Type.Object({
+        memoryId: Type.String({
+          description: "Memory ID (filename without .md), e.g. fact-123",
+        }),
+        fromNamespace: Type.Optional(
+          Type.String({
+            description: "Source namespace (default: defaultNamespace).",
+          }),
+        ),
+        toNamespace: Type.Optional(
+          Type.String({
+            description: "Target namespace (default: sharedNamespace).",
+          }),
+        ),
+        note: Type.Optional(
+          Type.String({
+            description:
+              "Optional note explaining why this should be shared (stored as a tag-like annotation).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.namespacesEnabled) {
+          return toolResult(
+            "Namespaces are disabled. Enable `namespacesEnabled: true` to use memory promotion.",
+          );
+        }
+
+        const { memoryId, fromNamespace, toNamespace, note } = params as {
+          memoryId: string;
+          fromNamespace?: string;
+          toNamespace?: string;
+          note?: string;
+        };
+
+        const srcNs = fromNamespace && fromNamespace.length > 0 ? fromNamespace : orchestrator.config.defaultNamespace;
+        const dstNs = toNamespace && toNamespace.length > 0 ? toNamespace : orchestrator.config.sharedNamespace;
+
+        const src = await orchestrator.getStorage(srcNs);
+        const mem = await src.getMemoryById(memoryId);
+        if (!mem) {
+          return toolResult(`Memory not found in ${srcNs}: ${memoryId}`);
+        }
+
+        const dst = await orchestrator.getStorage(dstNs);
+        const newId = await dst.writeMemory(mem.frontmatter.category, mem.content, {
+          confidence: mem.frontmatter.confidence,
+          tags: Array.from(new Set([...(mem.frontmatter.tags ?? []), "promoted", `promotedFrom:${srcNs}:${memoryId}`, ...(note ? [`note:${note}`] : [])])),
+          entityRef: mem.frontmatter.entityRef,
+          source: "promote",
+          importance: mem.frontmatter.importance,
+          supersedes: mem.frontmatter.supersedes,
+          links: mem.frontmatter.links,
+        });
+
+        return toolResult(`Promoted ${srcNs}:${memoryId} → ${dstNs}:${newId}`);
+      },
+    },
+    { name: "memory_promote" },
   );
 
   api.registerTool(
@@ -528,5 +621,200 @@ Best for:
       },
     },
     { name: "memory_summarize_hourly" },
+  );
+
+  api.registerTool(
+    {
+      name: "conversation_index_update",
+      label: "Update Conversation Index",
+      description: `Chunk recent transcript history into "conversation chunk" documents and (best-effort) update the semantic index for past-conversation recall.
+
+This is optional and default-off (see config: conversationIndexEnabled).
+
+Best for:
+- Cron jobs to keep the conversation index fresh
+- Manual rebuild after changing chunk sizes or retention`,
+      parameters: Type.Object({
+        sessionKey: Type.Optional(
+          Type.String({
+            description:
+              "Session key to index. If omitted, Engram will best-effort scan transcript storage and index all discovered sessionKeys.",
+          }),
+        ),
+        hours: Type.Optional(
+          Type.Number({
+            description: "How many hours of transcript history to include (default: 24).",
+            minimum: 1,
+            maximum: 24 * 30,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.conversationIndexEnabled) {
+          return toolResult(
+            "Conversation indexing is disabled. Enable `conversationIndexEnabled: true` in the Engram plugin config to use this tool.",
+          );
+        }
+
+        const { sessionKey, hours } = params as { sessionKey?: string; hours?: number };
+        const h = typeof hours === "number" && Number.isFinite(hours) ? hours : 24;
+
+        if (sessionKey) {
+          const count = await orchestrator.updateConversationIndex(sessionKey, h);
+          return toolResult(`Indexed ${count} chunk(s) for sessionKey=${sessionKey}.`);
+        }
+
+        const sessions = await orchestrator.transcript.listSessionKeys();
+        let total = 0;
+        for (const sk of sessions) {
+          total += await orchestrator.updateConversationIndex(sk, h);
+        }
+        return toolResult(`Indexed ${total} total chunk(s) across ${sessions.length} session(s).`);
+      },
+    },
+    { name: "conversation_index_update" },
+  );
+
+  api.registerTool(
+    {
+      name: "shared_context_write_output",
+      label: "Write Shared Agent Output",
+      description:
+        "Write an agent work product into the shared-context directory (v4.0). Other agents can read these files to coordinate without explicit message passing.",
+      parameters: Type.Object({
+        agentId: Type.String({ description: "Agent ID producing this output (e.g., generalist, oracle, flash)." }),
+        title: Type.String({ description: "Short title for the output." }),
+        content: Type.String({ description: "Markdown content to write." }),
+      }),
+      async execute(_toolCallId, params) {
+        const { agentId, title, content } = params as { agentId: string; title: string; content: string };
+        if (!orchestrator.sharedContext) {
+          return toolResult(
+            "Shared context is disabled. Enable `sharedContextEnabled: true` to use shared-context tools.",
+          );
+        }
+        const fp = await orchestrator.sharedContext.writeAgentOutput({ agentId, title, content });
+        return toolResult(`Wrote shared agent output: ${fp}`);
+      },
+    },
+    { name: "shared_context_write_output" },
+  );
+
+  api.registerTool(
+    {
+      name: "shared_feedback_record",
+      label: "Record Shared Feedback",
+      description:
+        "Append an approval/rejection decision into shared-context feedback inbox (v4.0/v5.0). Intended to power compounding learning.",
+      parameters: Type.Object({
+        agent: Type.String({ description: "Agent name that produced the recommendation/output." }),
+        decision: Type.String({
+          enum: ["approved", "approved_with_feedback", "rejected"],
+          description: "Decision outcome.",
+        }),
+        reason: Type.String({ description: "Why the decision was made (short but specific)." }),
+        date: Type.Optional(Type.String({ description: "ISO timestamp. Defaults to now." })),
+        learning: Type.Optional(Type.String({ description: "Optional distilled learning/pattern." })),
+        outcome: Type.Optional(Type.String({ description: "Optional downstream outcome (day-one supported; may be empty initially)." })),
+        refs: Type.Optional(Type.Array(Type.String(), { description: "Optional references (URLs, IDs, filenames)." })),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.sharedContext) {
+          return toolResult(
+            "Shared context is disabled. Enable `sharedContextEnabled: true` to record shared feedback.",
+          );
+        }
+        const p = params as any;
+        const entry = {
+          agent: String(p.agent ?? ""),
+          decision: p.decision as "approved" | "approved_with_feedback" | "rejected",
+          reason: String(p.reason ?? ""),
+          date: typeof p.date === "string" && p.date.length > 0 ? p.date : new Date().toISOString(),
+          learning: typeof p.learning === "string" ? p.learning : undefined,
+          outcome: typeof p.outcome === "string" ? p.outcome : undefined,
+          refs: Array.isArray(p.refs) ? p.refs.map(String) : undefined,
+        };
+        await orchestrator.sharedContext.appendFeedback(entry);
+        return toolResult("OK");
+      },
+    },
+    { name: "shared_feedback_record" },
+  );
+
+  api.registerTool(
+    {
+      name: "shared_priorities_append",
+      label: "Append Priorities Inbox",
+      description:
+        "Append text into shared-context priorities inbox. A curator run should merge this into priorities.md.",
+      parameters: Type.Object({
+        agentId: Type.String({ description: "Agent ID appending priorities." }),
+        text: Type.String({ description: "Priority notes to append (markdown)." }),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.sharedContext) {
+          return toolResult(
+            "Shared context is disabled. Enable `sharedContextEnabled: true` to write priorities inbox.",
+          );
+        }
+        const { agentId, text } = params as { agentId: string; text: string };
+        await orchestrator.sharedContext.appendPrioritiesInbox({ agentId, text });
+        return toolResult("OK");
+      },
+    },
+    { name: "shared_priorities_append" },
+  );
+
+  api.registerTool(
+    {
+      name: "shared_context_curate_daily",
+      label: "Curate Daily Roundtable",
+      description:
+        "Curator tool: generate today's roundtable summary in shared-context/roundtable (deterministic baseline).",
+      parameters: Type.Object({
+        date: Type.Optional(Type.String({ description: "YYYY-MM-DD. Defaults to today." })),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.sharedContext) {
+          return toolResult(
+            "Shared context is disabled. Enable `sharedContextEnabled: true` to curate roundtables.",
+          );
+        }
+        const { date } = params as { date?: string };
+        const fp = await orchestrator.sharedContext.curateDaily({ date });
+        return toolResult(`Wrote: ${fp}`);
+      },
+    },
+    { name: "shared_context_curate_daily" },
+  );
+
+  api.registerTool(
+    {
+      name: "compounding_weekly_synthesize",
+      label: "Synthesize Weekly Learning",
+      description:
+        "Generate weekly compounding outputs (v5.0): weekly report + mistakes.json. Designed to work from day one (writes even if no feedback exists yet).",
+      parameters: Type.Object({
+        weekId: Type.Optional(
+          Type.String({
+            description:
+              "ISO week ID like YYYY-Www. Omit to use current week.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.compounding) {
+          return toolResult(
+            "Compounding engine is disabled. Enable `compoundingEnabled: true` to use this tool.",
+          );
+        }
+        const { weekId } = params as { weekId?: string };
+        const res = await orchestrator.compounding.synthesizeWeekly({ weekId });
+        return toolResult(
+          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nmistakes: ${res.mistakesCount} patterns`,
+        );
+      },
+    },
+    { name: "compounding_weekly_synthesize" },
   );
 }

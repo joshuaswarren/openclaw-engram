@@ -395,6 +395,7 @@ export class StorageManager {
     facts: string[],
   ): Promise<string> {
     await this.ensureDirectories();
+    const safeFacts = Array.isArray(facts) ? facts.filter((f) => typeof f === "string") : [];
     let normalized = normalizeEntityName(name, type);
 
     // Check for fuzzy match against existing entities before creating a new file
@@ -417,7 +418,7 @@ export class StorageManager {
       // File doesn't exist yet
     }
 
-    const allFacts = [...new Set([...existingFacts, ...facts])];
+    const allFacts = [...new Set([...existingFacts, ...safeFacts])];
     const content = [
       `# ${name}`,
       "",

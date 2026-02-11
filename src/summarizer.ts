@@ -6,6 +6,7 @@ import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import type { HourlySummary, TranscriptEntry, PluginConfig, GatewayConfig } from "./types.js";
+import type { TranscriptManager } from "./transcript.js";
 
 // Schema for LLM summary output
 const HourlySummarySchema = z.object({
@@ -16,17 +17,35 @@ const HourlySummarySchema = z.object({
 
 type HourlySummaryResult = z.infer<typeof HourlySummarySchema>;
 
+const HourlySummaryExtendedSchema = z.object({
+  topics: z.array(z.string()).default([]),
+  decisions: z.array(z.string()).default([]),
+  actionItems: z.array(z.string()).default([]),
+  rejected: z.array(z.string()).default([]),
+});
+
+type HourlySummaryExtendedResult = z.infer<typeof HourlySummaryExtendedSchema>;
+
+type HourlySummaryExtendedMeta = {
+  userTurns: number;
+  assistantTurns: number;
+  toolCalls: number;
+  toolCounts: Record<string, number>;
+};
+
 export class HourlySummarizer {
   private summariesDir: string;
   private config: PluginConfig;
   private localLlm: LocalLlmClient;
   private fallbackLlm: FallbackLlmClient;
   private modelRegistry: ModelRegistry;
+  private transcript?: TranscriptManager;
 
-  constructor(config: PluginConfig, gatewayConfig?: GatewayConfig, modelRegistry?: ModelRegistry) {
+  constructor(config: PluginConfig, gatewayConfig?: GatewayConfig, modelRegistry?: ModelRegistry, transcript?: TranscriptManager) {
     this.config = config;
     this.summariesDir = path.join(config.memoryDir, "summaries", "hourly");
     this.modelRegistry = modelRegistry ?? new ModelRegistry(config.memoryDir);
+    this.transcript = transcript;
 
     // Initialize local LLM client with shared model registry
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
@@ -56,6 +75,29 @@ export class HourlySummarizer {
     const conversation = entries
       .map((e) => `[${e.role}] ${e.content}`)
       .join("\n\n");
+
+    if (this.config.hourlySummariesExtendedEnabled) {
+      const extended = await this.generateExtended(sessionKey, hourStart, conversation, entries);
+      if (!extended) return null;
+      const meta: HourlySummaryExtendedMeta = {
+        userTurns: entries.filter((e) => e.role === "user").length,
+        assistantTurns: entries.filter((e) => e.role === "assistant").length,
+        toolCalls: extended._meta.toolCalls,
+        toolCounts: extended._meta.toolCounts,
+      };
+      // Keep HourlySummary surface stable; encode "topics" as bullets for recall injection.
+      const base: HourlySummary = {
+        hour: hourStart.toISOString(),
+        sessionKey,
+        bullets: extended.topics.length > 0 ? extended.topics.slice(0, 5) : ["(summary generated)"],
+        turnCount: entries.length,
+        generatedAt: new Date().toISOString(),
+      };
+      const withExtras = base as any;
+      withExtras._extended = extended;
+      withExtras._extendedMeta = meta;
+      return base;
+    }
 
     const hourIso = hourStart.toISOString();
     const startTime = Date.now();
@@ -142,6 +184,80 @@ Respond with valid JSON matching this schema:
       return null;
     } catch (err) {
       log.error("summary generation fallback failed", err);
+      return null;
+    }
+  }
+
+  private async generateExtended(
+    sessionKey: string,
+    hourStart: Date,
+    conversation: string,
+    entries: TranscriptEntry[],
+  ): Promise<(HourlySummaryExtendedResult & { _meta: HourlySummaryExtendedMeta }) | null> {
+    const hourIso = hourStart.toISOString();
+    const startTime = Date.now();
+
+    const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
+    let toolCounts: Record<string, number> = {};
+    if (this.config.hourlySummariesIncludeToolStats && this.transcript) {
+      const uses = await this.transcript.readToolUse(sessionKey, hourStart, hourEnd);
+      for (const u of uses) toolCounts[u.tool] = (toolCounts[u.tool] ?? 0) + 1;
+    }
+
+    const sys = `You are a conversation summarization system.\n\nSummarize the hour into structured sections.\n\nReturn valid JSON matching:\n{\n  \"topics\": [\"...\"],\n  \"decisions\": [\"...\"],\n  \"actionItems\": [\"...\"],\n  \"rejected\": [\"...\"]\n}\n\nGuidelines:\n- Prefer concrete topics and decisions.\n- Action items should be imperative.\n- Rejected ideas are things that were explicitly discarded or reversed.\n- If there are none for a section, return an empty array.\n`;
+
+    const toolStatsLine = Object.keys(toolCounts).length > 0
+      ? `Tools used (counts): ${Object.entries(toolCounts).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>`${k}=${v}`).join(", ")}\n\n`
+      : "";
+    const userTurns = entries.filter((e) => e.role === "user").length;
+    const assistantTurns = entries.filter((e) => e.role === "assistant").length;
+    const toolCalls = Object.values(toolCounts).reduce((a,b)=>a+b,0);
+    const statsLine = `Stats: userTurns=${userTurns}, assistantTurns=${assistantTurns}, toolCalls=${toolCalls}\n\n`;
+
+    const user = `Hour: ${hourIso}\nSession: ${sessionKey}\n\n${statsLine}${toolStatsLine}Conversation:\n${conversation}\n`;
+
+    // Try local LLM first if enabled
+    if (this.config.localLlmEnabled) {
+      try {
+        const contextSizes = this.modelRegistry.calculateContextSizes(this.config.localLlmModel, this.config.localLlmMaxContext);
+        const truncated = user.length > contextSizes.maxInputChars ? user.slice(0, contextSizes.maxInputChars) + "\n\n[truncated]" : user;
+        const response = await this.localLlm.chatCompletion(
+          [
+            { role: "system", content: "Output valid JSON only." },
+            { role: "user", content: sys + "\n\n" + truncated },
+          ],
+          { temperature: 0.2, maxTokens: contextSizes.maxOutputTokens },
+        );
+        if (response?.content) {
+          const jsonMatch = response.content.trim().match(/\{[\s\S]*\}/);
+          const jsonStr = jsonMatch ? jsonMatch[0] : response.content.trim();
+          const parsed = JSON.parse(jsonStr);
+          const result = HourlySummaryExtendedSchema.parse(parsed);
+          log.debug(`generated extended hourly summary for ${sessionKey} at ${hourIso} in ${Date.now() - startTime}ms (local)`);
+          return { ...result, _meta: { userTurns, assistantTurns, toolCalls, toolCounts } };
+        }
+      } catch (err) {
+        if (!this.config.localLlmFallback) return null;
+        log.info("extended summary: local failed, falling back:", err);
+      }
+    }
+
+    try {
+      const result = await this.fallbackLlm.parseWithSchema(
+        [
+          { role: "system" as const, content: sys },
+          { role: "user" as const, content: user },
+        ],
+        HourlySummaryExtendedSchema,
+        { temperature: 0.2, maxTokens: 2048 },
+      );
+      if (result) {
+        log.debug(`generated extended hourly summary for ${sessionKey} at ${hourIso} in ${Date.now() - startTime}ms (fallback)`);
+        return { ...result, _meta: { userTurns, assistantTurns, toolCalls, toolCounts } };
+      }
+      return null;
+    } catch (err) {
+      log.error("extended summary generation failed", err);
       return null;
     }
   }
@@ -269,10 +385,43 @@ Respond with valid JSON matching this schema:
   }
 
   private formatHourSection(summary: HourlySummary, hourHeader: string): string {
+    const ext = (summary as any)._extended as (HourlySummaryExtendedResult & { _meta?: HourlySummaryExtendedMeta }) | undefined;
+    const meta = (summary as any)._extendedMeta as HourlySummaryExtendedMeta | undefined;
     const lines: string[] = [hourHeader, ""];
-    for (const bullet of summary.bullets) {
-      lines.push(`- ${bullet}`);
+
+    if (this.config.hourlySummariesExtendedEnabled && ext) {
+      lines.push("### Topics Discussed");
+      for (const t of ext.topics) lines.push(`- ${t}`);
+      lines.push("");
+      lines.push("### Decisions Made");
+      for (const d of ext.decisions) lines.push(`- ${d}`);
+      lines.push("");
+      lines.push("### Action Items");
+      for (const a of ext.actionItems) lines.push(`- ${a}`);
+      lines.push("");
+      lines.push("### Rejected Ideas / Reversals");
+      for (const r of ext.rejected) lines.push(`- ${r}`);
+      lines.push("");
+      if (meta && Object.keys(meta.toolCounts).length > 0) {
+        lines.push("### Tools Used");
+        const top = Object.entries(meta.toolCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 12);
+        for (const [name, count] of top) lines.push(`- ${name}: ${count}`);
+        lines.push("");
+      }
+      lines.push("### Stats");
+      lines.push(`- Turns: ${summary.turnCount}`);
+      if (meta) {
+        lines.push(`- User turns: ${meta.userTurns}`);
+        lines.push(`- Assistant turns: ${meta.assistantTurns}`);
+        lines.push(`- Tool calls: ${meta.toolCalls}`);
+      }
+      lines.push("");
+      return lines.join("\n");
     }
+
+    for (const bullet of summary.bullets) lines.push(`- ${bullet}`);
     lines.push(`  *(${summary.turnCount} turns)*`);
     lines.push("");
     return lines.join("\n");
@@ -333,15 +482,24 @@ Respond with valid JSON matching this schema:
       const lines = sectionContent.split("\n");
       let turnCount = 0;
 
+      let inTopics = false;
+      let sawExtendedTopicsHeader = false;
       for (const line of lines) {
+        if (line.startsWith("### Topics")) {
+          inTopics = true;
+          sawExtendedTopicsHeader = true;
+          continue;
+        }
+        if (line.startsWith("### ") && !line.startsWith("### Topics")) {
+          inTopics = false;
+        }
         const bulletMatch = line.match(/^- (.+)$/);
         if (bulletMatch) {
-          bullets.push(bulletMatch[1]);
+          // For extended format, only treat topic bullets as recall bullets.
+          if (!sawExtendedTopicsHeader || inTopics) bullets.push(bulletMatch[1]);
         }
         const turnMatch = line.match(/\((\d+) turns?\)/);
-        if (turnMatch) {
-          turnCount = parseInt(turnMatch[1], 10);
-        }
+        if (turnMatch) turnCount = parseInt(turnMatch[1], 10);
       }
 
       if (bullets.length > 0) {
@@ -411,10 +569,32 @@ Respond with valid JSON matching this schema:
     const transcriptDir = path.join(this.config.memoryDir, "transcripts");
 
     try {
-      const entries = await readdir(transcriptDir, { withFileTypes: true });
-      return entries
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name);
+      const sessionKeys = new Set<string>();
+      const typeEntries = await readdir(transcriptDir, { withFileTypes: true });
+      for (const typeEnt of typeEntries) {
+        if (!typeEnt.isDirectory()) continue;
+        const typeDir = path.join(transcriptDir, typeEnt.name);
+        const idEntries = await readdir(typeDir, { withFileTypes: true });
+        for (const idEnt of idEntries) {
+          if (!idEnt.isDirectory()) continue;
+          const chanDir = path.join(typeDir, idEnt.name);
+          const files = (await readdir(chanDir)).filter((f) => f.endsWith(".jsonl")).sort();
+          const last = files[files.length - 1];
+          if (!last) continue;
+          try {
+            const raw = await readFile(path.join(chanDir, last), "utf-8");
+            const firstLine = raw.split("\n").find((l) => l.trim().length > 0);
+            if (!firstLine) continue;
+            const entry = JSON.parse(firstLine) as TranscriptEntry;
+            if (typeof entry.sessionKey === "string" && entry.sessionKey.length > 0) {
+              sessionKeys.add(entry.sessionKey);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return Array.from(sessionKeys);
     } catch {
       return [];
     }

@@ -183,7 +183,7 @@ Memory categories (use appropriately):
 These are operational noise - skip them:
 - "The user has a cron job that runs every 30 minutes" (scheduled task descriptions)
 - "The user encountered error XYZ at 3:45 PM" (temporary error states)
-- "The file is located at /Users/.../specific/path" (transient file paths)
+- "The file is located at /path/to/project/file" (transient file paths)
 - "The system is using 4GB of memory" (current resource usage)
 - "The user ran the 'git status' command" (individual command executions)
 - "The conversation took place on Tuesday" (session metadata)
@@ -263,9 +263,18 @@ ${truncatedConversation}`;
       const parsed = JSON.parse(jsonStr);
 
       // Validate and normalize
+      const entities = Array.isArray(parsed.entities)
+        ? parsed.entities.map((e: any) => ({
+            name: typeof e?.name === "string" ? e.name : "",
+            type: typeof e?.type === "string" ? e.type : "other",
+            // Local models frequently omit or malform `facts`; harden to avoid runtime crashes downstream.
+            facts: Array.isArray(e?.facts) ? e.facts.filter((f: any) => typeof f === "string") : [],
+          })).filter((e: any) => e.name.length > 0)
+        : [];
+
       const result: ExtractionResult = {
         facts: Array.isArray(parsed.facts) ? parsed.facts : [],
-        entities: Array.isArray(parsed.entities) ? parsed.entities : [],
+        entities,
         profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
         questions: Array.isArray(parsed.questions) ? parsed.questions : [],
         identityReflection: parsed.identityReflection ?? undefined,

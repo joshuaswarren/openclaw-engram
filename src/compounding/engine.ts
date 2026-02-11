@@ -1,0 +1,164 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { log } from "../logger.js";
+import type { PluginConfig } from "../types.js";
+import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
+
+type MistakesFile = {
+  updatedAt: string;
+  patterns: string[];
+};
+
+function isoWeekId(d: Date): string {
+  // ISO week based on Thursday
+  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((dt.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  const yyyy = dt.getUTCFullYear();
+  return `${yyyy}-W${String(week).padStart(2, "0")}`;
+}
+
+function sharedContextDir(config: PluginConfig): string {
+  if (typeof config.sharedContextDir === "string" && config.sharedContextDir.length > 0) {
+    return config.sharedContextDir;
+  }
+  return path.join(os.homedir(), ".openclaw", "workspace", "shared-context");
+}
+
+export class CompoundingEngine {
+  private readonly weeklyDir: string;
+  private readonly mistakesPath: string;
+  private readonly feedbackInboxPath: string;
+
+  constructor(private readonly config: PluginConfig) {
+    this.weeklyDir = path.join(config.memoryDir, "compounding", "weekly");
+    this.mistakesPath = path.join(config.memoryDir, "compounding", "mistakes.json");
+    this.feedbackInboxPath = path.join(sharedContextDir(config), "feedback", "inbox.jsonl");
+  }
+
+  async ensureDirs(): Promise<void> {
+    await mkdir(this.weeklyDir, { recursive: true });
+    await mkdir(path.dirname(this.mistakesPath), { recursive: true });
+  }
+
+  async synthesizeWeekly(opts?: { weekId?: string }): Promise<{ weekId: string; reportPath: string; mistakesCount: number }> {
+    await this.ensureDirs();
+    const weekId = opts?.weekId ?? isoWeekId(new Date());
+
+    const entries = await this.readFeedbackEntriesForWeek(weekId);
+    const mistakes = this.buildMistakes(entries);
+
+    // Write weekly report (always, even if empty: "day-one outcomes").
+    const reportPath = path.join(this.weeklyDir, `${weekId}.md`);
+    const md = this.formatWeeklyReport(weekId, entries, mistakes.patterns);
+    await writeFile(reportPath, md, "utf-8");
+
+    // Update mistakes.json (always).
+    await writeFile(this.mistakesPath, JSON.stringify(mistakes, null, 2) + "\n", "utf-8");
+
+    log.info(`compounding: wrote weekly=${reportPath} mistakes=${this.mistakesPath}`);
+    return { weekId, reportPath, mistakesCount: mistakes.patterns.length };
+  }
+
+  async readMistakes(): Promise<MistakesFile | null> {
+    try {
+      const raw = await readFile(this.mistakesPath, "utf-8");
+      const parsed = JSON.parse(raw) as MistakesFile;
+      if (!parsed || !Array.isArray(parsed.patterns)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readFeedbackEntriesForWeek(weekId: string): Promise<SharedFeedbackEntry[]> {
+    // Minimal implementation: includes entries where date starts with any day in the ISO week.
+    // We approximate by taking all entries and filtering by computed isoWeekId(date).
+    const out: SharedFeedbackEntry[] = [];
+    try {
+      const raw = await readFile(this.feedbackInboxPath, "utf-8");
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const obj = JSON.parse(line);
+          const parsed = SharedFeedbackEntrySchema.safeParse(obj);
+          if (!parsed.success) continue;
+          const d = new Date(parsed.data.date);
+          if (!Number.isFinite(d.getTime())) continue;
+          if (isoWeekId(d) === weekId) out.push(parsed.data);
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // missing feedback is normal
+    }
+    return out;
+  }
+
+  private buildMistakes(entries: SharedFeedbackEntry[]): MistakesFile {
+    const patterns: string[] = [];
+    for (const e of entries) {
+      if (e.learning && e.learning.trim().length > 0) {
+        patterns.push(`${e.agent}: ${e.learning.trim()}`);
+        continue;
+      }
+      if (e.decision === "rejected") {
+        patterns.push(`${e.agent}: ${e.reason.trim()}`.slice(0, 240));
+      }
+    }
+
+    const uniq = Array.from(new Set(patterns)).slice(0, 500);
+    return { updatedAt: new Date().toISOString(), patterns: uniq };
+  }
+
+  private formatWeeklyReport(weekId: string, entries: SharedFeedbackEntry[], patterns: string[]): string {
+    const byAgent = new Map<string, SharedFeedbackEntry[]>();
+    for (const e of entries) {
+      const list = byAgent.get(e.agent) ?? [];
+      list.push(e);
+      byAgent.set(e.agent, list);
+    }
+
+    const lines: string[] = [
+      `# Weekly Compounding — ${weekId}`,
+      "",
+      "This file is generated by Engram's compounding engine (v5.0).",
+      "",
+      "## Summary",
+      `- Feedback entries: ${entries.length}`,
+      `- Mistake patterns: ${patterns.length}`,
+      "",
+      "## By Agent",
+    ];
+
+    if (byAgent.size === 0) {
+      lines.push("- (none)");
+    } else {
+      for (const [agent, list] of Array.from(byAgent.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+        const approved = list.filter((e) => e.decision === "approved").length;
+        const awf = list.filter((e) => e.decision === "approved_with_feedback").length;
+        const rejected = list.filter((e) => e.decision === "rejected").length;
+        lines.push(`### ${agent}`);
+        lines.push(`- approved: ${approved}`);
+        lines.push(`- approved_with_feedback: ${awf}`);
+        lines.push(`- rejected: ${rejected}`);
+        lines.push("");
+      }
+    }
+
+    lines.push("## Patterns (Avoid / Prefer)");
+    if (patterns.length === 0) {
+      lines.push("- (none yet)");
+    } else {
+      for (const p of patterns.slice(0, 100)) lines.push(`- ${p}`);
+    }
+    lines.push("");
+
+    return lines.join("\n");
+  }
+}
+

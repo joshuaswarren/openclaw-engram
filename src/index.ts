@@ -14,8 +14,8 @@ import os from "node:os";
 // IMPORTANT: Do not log raw config contents (may include secrets).
 function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
   try {
-    // Gateway runs as launchd service without HOME env, use hardcoded path
-    const homeDir = "/Users/joshuawarren";
+    // Gateway may run without HOME env under service managers.
+    const homeDir = process.env.HOME ?? os.homedir();
     const configPath = path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
@@ -121,8 +121,38 @@ export default {
           const messages = event.messages as Array<Record<string, unknown>>;
           const lastTurn = extractLastTurn(messages);
 
+          // Best-effort tool usage stats for extended hourly summaries.
+          if (orchestrator.config.hourlySummariesIncludeToolStats) {
+            const toolNames: string[] = [];
+            for (const msg of messages) {
+              const role = msg.role as string | undefined;
+              if (role === "tool") {
+                const name = (msg as any).name ?? (msg as any).toolName ?? (msg as any).tool;
+                if (typeof name === "string" && name.length > 0) toolNames.push(name);
+              }
+              if (role === "assistant") {
+                const toolCalls = (msg as any).tool_calls ?? (msg as any).toolCalls;
+                if (Array.isArray(toolCalls)) {
+                  for (const tc of toolCalls) {
+                    const fnName = tc?.function?.name ?? tc?.name;
+                    if (typeof fnName === "string" && fnName.length > 0) toolNames.push(fnName);
+                  }
+                }
+              }
+            }
+            const ts = new Date().toISOString();
+            for (const tool of toolNames) {
+              await orchestrator.transcript.appendToolUse({ timestamp: ts, sessionKey, tool });
+            }
+          }
+
           for (const msg of lastTurn) {
-            const role = msg.role as "user" | "assistant";
+            const rawRole = typeof msg.role === "string" ? msg.role : "";
+            if (rawRole !== "user" && rawRole !== "assistant") {
+              // Ignore tool/system blocks for extraction to avoid noisy memory churn.
+              continue;
+            }
+            const role = rawRole;
             const content = extractTextContent(msg);
             if (content.length < 10) continue;
 
@@ -238,7 +268,12 @@ export default {
         // Pick a random minute (1-59) to avoid colliding with other top-of-hour crons
         const randomMinute = Math.floor(Math.random() * 59) + 1;
 
-        // Create the hourly summary job
+        // Create the hourly summary job.
+        //
+        // NOTE:
+        // - `sessionTarget: "main"` only supports `payload.kind: "systemEvent"` in this install.
+        // - For agent-driven automation, use `sessionTarget: "isolated"` + `payload.kind: "agentTurn"`.
+        // - We intentionally avoid posting anywhere; success is silent.
         const newJob = {
           id: jobId,
           agentId: "generalist",
@@ -251,13 +286,24 @@ export default {
             expr: `${randomMinute} * * * *`, // Every hour at random minute
             tz: "America/Chicago",
           },
-          sessionTarget: "main",
+          sessionTarget: "isolated",
           wakeMode: "now" as const,
           payload: {
-            kind: "toolCall" as const,
-            tool: "memory_summarize_hourly",
-            params: {},
+            kind: "agentTurn" as const,
+            timeoutSeconds: 120,
+            thinking: "off" as const,
+            message:
+              "You are OpenClaw automation.\n\n" +
+              "Task: Generate Engram hourly summaries.\n\n" +
+              "Call the tool `memory_summarize_hourly` with empty params.\n\n" +
+              "Output policy:\n" +
+              "- If you generated summaries successfully: output exactly NO_REPLY.\n" +
+              "- If there is an error: output one concise line describing it.\n\n" +
+              "Rules:\n" +
+              "- Do NOT post to Discord.\n" +
+              "- Never print secrets.\n",
           },
+          delivery: { mode: "none" as const },
           state: {},
         };
 
@@ -291,9 +337,16 @@ export default {
           await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
         }
 
-        // Auto-register hourly summary cron job if enabled
-        if (orchestrator.config.hourlySummariesEnabled) {
+        // Cron integration guard:
+        // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
+        // - Only auto-register when explicitly enabled by config.
+        if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
           await ensureHourlySummaryCron(api);
+        } else if (orchestrator.config.hourlySummariesEnabled) {
+          log.info(
+            "hourly summaries enabled; cron auto-register is disabled. " +
+            "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
+          );
         }
 
         log.info("engram memory system ready");

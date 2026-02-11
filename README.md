@@ -30,9 +30,9 @@ Most AI memory systems are either too noisy (store everything) or too lossy (sto
 - **Smart buffer**: Configurable trigger logic (signal-based, turn count, or time-based)
 - **QMD integration**: Hybrid search with BM25, vector embeddings, and reranking
 - **Graceful degradation**: Works without QMD (falls back to direct file reads) and without an API key (retrieval-only mode)
-- **Migration tools**: Import memories from Honcho, Supermemory, and context files
+- **Portability**: Import/export/backup your memory store via CLI (v2.3)
 - **CLI**: Search, inspect, and manage memories from the command line
-- **Agent tools**: `memory_search`, `memory_store`, `memory_profile`, `memory_entities`
+- **Agent tools**: `memory_search`, `memory_store`, `memory_profile`, `memory_entities`, `memory_promote`
 
 ### v1.2.0 Advanced Features
 
@@ -105,6 +105,61 @@ All v2.2 retrieval features are **disabled by default**. Enable them only if you
 - **Negative examples** (`negativeExamplesEnabled` + `memory_feedback_last_recall` tool): Track retrieved-but-not-useful memories and apply a small ranking penalty.
 - **Slow query log** (`slowLogEnabled` + `slowLogThresholdMs`): Logs durations and metadata (never content) for local LLM and QMD operations.
 
+### v2.3 Import / Export / Backup
+
+Engram supports **portable exports** and **safe backups** via CLI:
+
+```bash
+openclaw engram export --format json --out /tmp/engram-export
+openclaw engram export --format sqlite --out /tmp/engram.sqlite
+openclaw engram export --format md --out /tmp/engram-md
+
+openclaw engram import --from /tmp/engram-export --format auto
+openclaw engram backup --out-dir /tmp/engram-backups --retention-days 14
+```
+
+If namespaces are enabled (v3.0+), the CLI accepts `--namespace <ns>` for export/import/backup.
+
+Details: `docs/import-export.md`
+
+### v2.4 Context Retention Hardening
+
+- **Extended hourly summaries** (structured topics/decisions/action items/rejections) are optional:
+  - Config: `hourlySummariesExtendedEnabled`, `hourlySummariesIncludeToolStats`
+- **Conversation semantic recall hook** (optional): index transcript chunks and inject top-K relevant past chunks:
+  - Config: `conversationIndexEnabled`, `conversationIndexQmdCollection`, `conversationRecallTopK`
+  - Tool: `conversation_index_update`
+
+Details: `docs/context-retention.md`
+
+### v3.0 Namespaces (Multi-Agent Memory)
+
+Optional namespaces let multiple agents share a memory store with isolation:
+
+- Config: `namespacesEnabled`, `defaultNamespace`, `sharedNamespace`, `namespacePolicies`
+- Tooling: `memory_store` supports `namespace`; `memory_promote` copies curated items into the shared namespace.
+
+Details: `docs/namespaces.md`
+
+### v4.0 Shared Context (Cross-Agent Shared Intelligence)
+
+Optional shared-context is a **file-based shared brain** (priorities, agent outputs, feedback, roundtables):
+
+- Config: `sharedContextEnabled`, `sharedContextDir`, `sharedContextMaxInjectChars`
+- Tools: `shared_context_write_output`, `shared_priorities_append`, `shared_feedback_record`, `shared_context_curate_daily`
+
+Details: `docs/shared-context.md`
+
+### v5.0 Compounding Engine
+
+Optional compounding turns shared feedback into persistent learning:
+
+- Writes: `memoryDir/compounding/weekly/<YYYY-Www>.md`, `memoryDir/compounding/mistakes.json`
+- Tool: `compounding_weekly_synthesize`
+- Injection: `compoundingInjectEnabled` (default true when compounding is enabled)
+
+Details: `docs/compounding.md`
+
 ## Architecture
 
 ```
@@ -159,6 +214,17 @@ Optionally inject highest-priority open question
     v
 Combine and inject into system prompt
 ```
+
+## Hourly Summaries (Cron)
+
+Engram can generate **hourly summaries** of conversation activity, written to disk under the configured `memoryDir` summaries folder.
+
+In most installs, the safest setup is to drive this via OpenClaw cron using an **agent turn** (not a tool call directly):
+- `sessionTarget: "isolated"`
+- `payload.kind: "agentTurn"` that calls `memory_summarize_hourly`
+- `delivery.mode: "none"` (so it never posts to Discord)
+
+Why: some OpenClaw installations restrict `sessionTarget: "main"` to `payload.kind: "systemEvent"` only. If you configure `main` + `toolCall`, it may be repeatedly skipped and summaries will silently stop.
 
 ## Storage Layout
 
@@ -288,6 +354,14 @@ tail -f ~/.openclaw/logs/gateway.log
 ## Configuration
 
 All settings are defined in `openclaw.json` under `plugins.entries.openclaw-engram.config`:
+
+For a full v2.3-v5 setup (including cron and QMD conversation-index collections) and tuning guidance, see:
+- `docs/setup-config-tuning.md`
+- `docs/import-export.md`
+- `docs/context-retention.md`
+- `docs/namespaces.md`
+- `docs/shared-context.md`
+- `docs/compounding.md`
 
 ### Core Settings
 
@@ -425,14 +499,22 @@ The plugin resolves the OpenAI API key in this order:
 
 ## Agent Tools
 
-The plugin registers four tools that agents can call during conversations:
+The plugin registers tools that agents can call during conversations:
 
 | Tool | Description |
 |------|-------------|
 | `memory_search` | Search memories by query string via QMD hybrid search |
 | `memory_store` | Explicitly store a memory with category, confidence, and tags |
+| `memory_promote` | Promote/copy a curated memory to shared namespace (v3.0+) |
 | `memory_profile` | View the current behavioral profile |
 | `memory_entities` | List all tracked entities or view a specific entity's facts |
+| `memory_summarize_hourly` | Generate hourly summaries |
+| `conversation_index_update` | Refresh conversation chunk index (v2.4) |
+| `shared_context_write_output` | Write an agent output into shared-context (v4.0) |
+| `shared_priorities_append` | Append priorities proposal to inbox (v4.0) |
+| `shared_feedback_record` | Record approval/rejection feedback for compounding (v4/v5) |
+| `shared_context_curate_daily` | Curate daily roundtable in shared-context (v4.0) |
+| `compounding_weekly_synthesize` | Build weekly compounding report + mistakes file (v5.0) |
 
 ## CLI Commands
 
@@ -440,6 +522,14 @@ The plugin registers four tools that agents can call during conversations:
 # Core commands
 openclaw engram stats                 # Memory statistics (counts, last extraction, etc.)
 openclaw engram search "query"        # Search memories via QMD
+openclaw engram export --format json --out /tmp/engram-export
+openclaw engram import --from /tmp/engram-export --format auto
+openclaw engram backup --out-dir /tmp/engram-backups --retention-days 14
+
+# Namespace-aware (v3.0+, when namespacesEnabled=true)
+openclaw engram export --format json --out /tmp/engram-shared --namespace shared
+openclaw engram import --from /tmp/engram-shared --format auto --namespace shared
+openclaw engram backup --out-dir /tmp/engram-backups --namespace main
 openclaw engram profile               # Display the behavioral profile
 openclaw engram entities              # List all tracked entities
 openclaw engram entities person-name  # View specific entity details

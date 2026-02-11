@@ -1,0 +1,84 @@
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { ExportBundleV1Schema } from "./types.js";
+import { fileExists, readJsonFile, fromPosixRelPath } from "./fs-utils.js";
+
+export type ConflictPolicy = "skip" | "overwrite" | "dedupe";
+
+export interface ImportJsonOptions {
+  targetMemoryDir: string;
+  fromDir: string;
+  conflict?: ConflictPolicy;
+  dryRun?: boolean;
+  workspaceDir?: string;
+}
+
+function normalizeForDedupe(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+export async function importJsonBundle(opts: ImportJsonOptions): Promise<{ written: number; skipped: number }> {
+  const conflict = opts.conflict ?? "skip";
+  const fromDirAbs = path.resolve(opts.fromDir);
+  const bundlePath = path.join(fromDirAbs, "bundle.json");
+  const bundle = ExportBundleV1Schema.parse(await readJsonFile(bundlePath));
+
+  const memDirAbs = path.resolve(opts.targetMemoryDir);
+  const written: Array<{ abs: string; content: string }> = [];
+
+  let skipped = 0;
+
+  for (const rec of bundle.records) {
+    const isWorkspace = rec.path.startsWith("workspace/");
+    const targetBase = isWorkspace ? (opts.workspaceDir ? path.resolve(opts.workspaceDir) : null) : memDirAbs;
+    if (isWorkspace && !targetBase) {
+      skipped += 1;
+      continue;
+    }
+
+    const relFs = fromPosixRelPath(isWorkspace ? rec.path.replace(/^workspace\//, "") : rec.path);
+    const absTarget = path.join(targetBase!, relFs);
+
+    const exists = await fileExists(absTarget);
+    if (exists) {
+      if (conflict === "skip") {
+        skipped += 1;
+        continue;
+      }
+      if (conflict === "dedupe") {
+        try {
+          const existing = await (await import("node:fs/promises")).readFile(absTarget, "utf-8");
+          if (normalizeForDedupe(existing) === normalizeForDedupe(rec.content)) {
+            skipped += 1;
+            continue;
+          }
+        } catch {
+          // if can't read, fall through to overwrite
+        }
+      }
+      // overwrite: proceed
+    }
+
+    written.push({ abs: absTarget, content: rec.content });
+  }
+
+  if (opts.dryRun) {
+    return { written: 0, skipped };
+  }
+
+  for (const w of written) {
+    await mkdir(path.dirname(w.abs), { recursive: true });
+    await writeFile(w.abs, w.content, "utf-8");
+  }
+
+  return { written: written.length, skipped };
+}
+
+export function looksLikeEngramJsonExport(fromDir: string): Promise<boolean> {
+  const dir = path.resolve(fromDir);
+  return Promise.all([
+    fileExists(path.join(dir, "manifest.json")),
+    fileExists(path.join(dir, "bundle.json")),
+  ]).then(([m, b]) => m && b);
+}
+

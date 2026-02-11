@@ -1,5 +1,6 @@
 import { log } from "./logger.js";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
@@ -19,18 +20,34 @@ import { NegativeExampleStore } from "./negative.js";
 import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import type { MemorySummary } from "./types.js";
+import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
+import { writeConversationChunks } from "./conversation-index/indexer.js";
+import { cleanupConversationChunks } from "./conversation-index/cleanup.js";
+import { NamespaceStorageRouter } from "./namespaces/storage.js";
+import {
+  defaultNamespaceForPrincipal,
+  recallNamespacesForPrincipal,
+  resolvePrincipal,
+} from "./namespaces/principal.js";
+import { SharedContextManager } from "./shared-context/manager.js";
+import { CompoundingEngine } from "./compounding/engine.js";
 import type {
   AccessTrackingEntry,
   BufferTurn,
   ExtractionResult,
   MemoryLink,
+  MemoryFile,
   PluginConfig,
   QmdSearchResult,
 } from "./types.js";
 
 export class Orchestrator {
   readonly storage: StorageManager;
+  private readonly storageRouter: NamespaceStorageRouter;
   readonly qmd: QmdClient;
+  private readonly conversationQmd?: QmdClient;
+  readonly sharedContext?: SharedContextManager;
+  readonly compounding?: CompoundingEngine;
   readonly buffer: SmartBuffer;
   readonly transcript: TranscriptManager;
   readonly summarizer: HourlySummarizer;
@@ -39,6 +56,7 @@ export class Orchestrator {
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
   readonly lastRecall: LastRecallStore;
+  private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
@@ -53,21 +71,44 @@ export class Orchestrator {
   // Queue stores promises that resolve when extraction should run
   private extractionQueue: Array<() => Promise<void>> = [];
   private queueProcessing = false;
+  private recentExtractionFingerprints = new Map<string, number>();
+  private nonZeroExtractionsSinceConsolidation = 0;
+  private lastConsolidationRunAtMs = 0;
+  private consolidationInFlight = false;
+  private qmdMaintenanceTimer: NodeJS.Timeout | null = null;
+  private qmdMaintenancePending = false;
+  private qmdMaintenanceInFlight = false;
+  private lastQmdEmbedAtMs = 0;
 
   constructor(config: PluginConfig) {
     this.config = config;
+    this.storageRouter = new NamespaceStorageRouter(config);
     this.storage = new StorageManager(config.memoryDir);
     this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults, {
       enabled: config.slowLogEnabled,
       thresholdMs: config.slowLogThresholdMs,
     });
+    this.conversationQmd =
+      config.conversationIndexEnabled && config.conversationIndexBackend === "qmd"
+        ? new QmdClient(
+            config.conversationIndexQmdCollection,
+            Math.max(6, config.conversationRecallTopK),
+            {
+              enabled: config.slowLogEnabled,
+              thresholdMs: config.slowLogThresholdMs,
+            },
+          )
+        : undefined;
+    this.sharedContext = config.sharedContextEnabled ? new SharedContextManager(config) : undefined;
+    this.compounding = config.compoundingEnabled ? new CompoundingEngine(config) : undefined;
     this.buffer = new SmartBuffer(config, this.storage);
     this.transcript = new TranscriptManager(config);
+    this.conversationIndexDir = path.join(config.memoryDir, "conversation-index", "chunks");
     this.modelRegistry = new ModelRegistry(config.memoryDir);
     this.relevance = new RelevanceStore(config.memoryDir);
     this.negatives = new NegativeExampleStore(config.memoryDir);
     this.lastRecall = new LastRecallStore(config.memoryDir);
-    this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry);
+    this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
     this.threading = new ThreadingManager(
@@ -79,11 +120,29 @@ export class Orchestrator {
   async initialize(): Promise<void> {
     await this.storage.ensureDirectories();
     await this.storage.loadAliases();
+    if (this.config.namespacesEnabled) {
+      const namespaces = new Set<string>([
+        this.config.defaultNamespace,
+        this.config.sharedNamespace,
+        ...this.config.namespacePolicies.map((p) => p.name),
+      ]);
+      for (const ns of namespaces) {
+        const sm = await this.storageRouter.storageFor(ns);
+        await sm.ensureDirectories();
+        await sm.loadAliases().catch(() => undefined);
+      }
+    }
     await this.relevance.load();
     await this.negatives.load();
     await this.lastRecall.load();
     await this.transcript.initialize();
     await this.summarizer.initialize();
+    if (this.sharedContext) {
+      await this.sharedContext.ensureStructure();
+    }
+    if (this.compounding) {
+      await this.compounding.ensureDirs();
+    }
 
     if (this.config.qmdEnabled) {
       const available = await this.qmd.probe();
@@ -95,6 +154,18 @@ export class Orchestrator {
       }
     }
 
+    if (this.config.conversationIndexEnabled && this.conversationQmd) {
+      const available = await this.conversationQmd.probe();
+      if (available) {
+        log.info("Conversation index QMD: available");
+        await this.conversationQmd.ensureCollection(
+          path.join(this.config.memoryDir, "conversation-index"),
+        );
+      } else {
+        log.warn("Conversation index QMD: not available (qmd command not found)");
+      }
+    }
+
     await this.buffer.load();
 
     // Validate local LLM model configuration
@@ -103,6 +174,33 @@ export class Orchestrator {
     }
 
     log.info("orchestrator initialized");
+  }
+
+  async getStorage(namespace?: string): Promise<StorageManager> {
+    const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
+    return this.storageRouter.storageFor(ns);
+  }
+
+  async updateConversationIndex(sessionKey: string, hours: number = 24): Promise<number> {
+    if (!this.config.conversationIndexEnabled) return 0;
+    // Read transcript history and chunk it into markdown docs for QMD indexing.
+    const entries = await this.transcript.readRecent(hours, sessionKey);
+    const chunks = chunkTranscriptEntries(sessionKey, entries, {
+      maxChars: this.config.conversationRecallMaxChars * 2,
+      maxTurns: Math.max(10, this.config.hourlySummariesMaxTurnsPerRun),
+    });
+    await writeConversationChunks(this.conversationIndexDir, chunks);
+    await cleanupConversationChunks(
+      this.conversationIndexDir,
+      this.config.conversationIndexRetentionDays,
+    );
+    // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
+    const q = this.conversationQmd ?? this.qmd;
+    if (this.config.qmdEnabled && q.isAvailable()) {
+      await q.update();
+      await q.embed();
+    }
+    return chunks.length;
   }
 
   /**
@@ -173,8 +271,35 @@ export class Orchestrator {
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const sections: string[] = [];
 
+    const principal = resolvePrincipal(sessionKey, this.config);
+    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
+    const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    const profileStorage = await this.storageRouter.storageFor(selfNamespace);
+
+    // 0. Shared context (v4.0, optional)
+    if (this.sharedContext) {
+      const [priorities, roundtable] = await Promise.all([
+        this.sharedContext.readPriorities(),
+        this.sharedContext.readLatestRoundtable(),
+      ]);
+      const combined =
+        [
+          "## Shared Context",
+          "",
+          priorities ? "### Priorities\n\n" + priorities.trim() : "",
+          roundtable ? "\n\n### Latest Roundtable\n\n" + roundtable.trim() : "",
+        ]
+          .filter((s) => s.trim().length > 0)
+          .join("\n");
+
+      const max = Math.max(500, this.config.sharedContextMaxInjectChars);
+      const trimmed =
+        combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
+      if (trimmed.trim().length > 0) sections.push(trimmed);
+    }
+
     // 1. Profile (existing)
-    const profile = await this.storage.readProfile();
+    const profile = await profileStorage.readProfile();
     if (profile) {
       sections.push(`## User Profile\n\n${profile}`);
     }
@@ -221,8 +346,15 @@ export class Orchestrator {
 
       let memoryResults = memoryResultsRaw;
 
+      // Enforce namespace read policies by filtering paths.
+      if (this.config.namespacesEnabled) {
+        memoryResults = memoryResults.filter((r) =>
+          recallNamespaces.includes(this.namespaceFromPath(r.path)),
+        );
+      }
+
       // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults);
+      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces);
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
@@ -299,7 +431,7 @@ export class Orchestrator {
       }
     } else {
       // Fallback: read recent memories directly
-      const memories = await this.storage.readAllMemories();
+      const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
       if (memories.length > 0) {
         // Filter out non-active memories
         const activeMemories = memories.filter(
@@ -410,9 +542,65 @@ export class Orchestrator {
       }
     }
 
+    // 4.5. Conversation semantic recall hook (optional, default off).
+    // This searches over transcript chunk docs (ideally a separate QMD collection).
+    if (
+      this.config.conversationIndexEnabled &&
+      this.config.qmdEnabled &&
+      this.conversationQmd &&
+      this.conversationQmd.isAvailable()
+    ) {
+      const startedAtMs = Date.now();
+      const timeoutMs = Math.max(200, this.config.conversationRecallTimeoutMs);
+      const topK = Math.max(1, this.config.conversationRecallTopK);
+      const maxChars = Math.max(400, this.config.conversationRecallMaxChars);
+
+      const results = (await Promise.race([
+        this.conversationQmd.search(prompt, undefined, topK),
+        new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
+      ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
+
+      const durationMs = Date.now() - startedAtMs;
+      if (durationMs >= timeoutMs) {
+        log.debug(`conversation recall: timed out after ${timeoutMs}ms`);
+      }
+
+      if (Array.isArray(results) && results.length > 0) {
+        const lines: string[] = ["## Semantic Recall (Past Conversations)", ""];
+        let used = 0;
+        for (const r of results) {
+          if (!r?.snippet) continue;
+          const chunk =
+            `### ${r.path}\n` +
+            `Score: ${r.score.toFixed(3)}\n\n` +
+            `${r.snippet.trim()}\n`;
+          if (used + chunk.length > maxChars) break;
+          lines.push(chunk);
+          used += chunk.length;
+        }
+        if (used > 0) {
+          sections.push(lines.join("\n"));
+        }
+      }
+    }
+
+    // 4.75. Compounding injection (v5.0, optional)
+    if (this.compounding && this.config.compoundingInjectEnabled) {
+      const mistakes = await this.compounding.readMistakes();
+      if (mistakes && Array.isArray(mistakes.patterns) && mistakes.patterns.length > 0) {
+        const lines: string[] = [
+          "## Institutional Learning (Compounded)",
+          "",
+          "Avoid repeating these patterns:",
+          ...mistakes.patterns.slice(0, 40).map((p) => `- ${p}`),
+        ];
+        sections.push(lines.join("\n"));
+      }
+    }
+
     // 5. Inject most relevant question (if enabled) (existing)
     if (this.config.injectQuestions) {
-      const questions = await this.storage.readQuestions({ unresolvedOnly: true });
+      const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
       if (questions.length > 0) {
         // Find the most relevant question to the current prompt
         // Simple approach: use the highest-priority unresolved question
@@ -432,6 +620,11 @@ export class Orchestrator {
     content: string,
     sessionKey?: string,
   ): Promise<void> {
+    if (role !== "user" && role !== "assistant") {
+      log.debug(`processTurn: ignoring unsupported role=${String(role)}`);
+      return;
+    }
+
     const turn: BufferTurn = {
       role,
       content,
@@ -446,6 +639,11 @@ export class Orchestrator {
     // Queue extraction for background processing (agent_end returns immediately)
     // Capture the current buffer turns in a closure
     const turnsToExtract = this.buffer.getTurns();
+    if (!this.shouldQueueExtraction(turnsToExtract)) {
+      // We still clear buffered turns so the queue doesn't keep re-enqueueing duplicates.
+      await this.buffer.clearAfterExtraction();
+      return;
+    }
     this.extractionQueue.push(async () => {
       await this.runExtraction(turnsToExtract);
     });
@@ -458,6 +656,39 @@ export class Orchestrator {
         this.queueProcessing = false;
       });
     }
+  }
+
+  private shouldQueueExtraction(turns: BufferTurn[]): boolean {
+    if (!this.config.extractionDedupeEnabled) return true;
+    if (!Array.isArray(turns) || turns.length === 0) return false;
+
+    // Fingerprint only user/assistant text; tool/system noise should not produce unique runs.
+    const normalized = turns
+      .filter((t) => t.role === "user" || t.role === "assistant")
+      .map((t) => `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`)
+      .join("\n");
+    if (!normalized) return false;
+
+    const fingerprint = createHash("sha256").update(normalized).digest("hex");
+    const now = Date.now();
+    const seenAt = this.recentExtractionFingerprints.get(fingerprint);
+    if (seenAt && now - seenAt < this.config.extractionDedupeWindowMs) {
+      log.debug("extraction dedupe: skipped duplicate buffered turn set");
+      return false;
+    }
+
+    this.recentExtractionFingerprints.set(fingerprint, now);
+    // Keep this cache bounded to avoid unbounded growth.
+    if (this.recentExtractionFingerprints.size > 200) {
+      const entries = Array.from(this.recentExtractionFingerprints.entries()).sort(
+        (a, b) => a[1] - b[1],
+      );
+      for (const [key] of entries.slice(0, entries.length - 200)) {
+        this.recentExtractionFingerprints.delete(key);
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -491,9 +722,34 @@ export class Orchestrator {
       return;
     }
 
+    const normalizedTurns = turns
+      .filter((t) => (t.role === "user" || t.role === "assistant") && typeof t.content === "string")
+      .map((t) => ({
+        ...t,
+        content: t.content.trim().slice(0, this.config.extractionMaxTurnChars),
+      }))
+      .filter((t) => t.content.length > 0);
+
+    const userTurns = normalizedTurns.filter((t) => t.role === "user");
+    const totalChars = normalizedTurns.reduce((sum, t) => sum + t.content.length, 0);
+    if (
+      totalChars < this.config.extractionMinChars ||
+      userTurns.length < this.config.extractionMinUserTurns
+    ) {
+      log.debug(
+        `skipping extraction: below threshold (totalChars=${totalChars}, userTurns=${userTurns.length})`,
+      );
+      await this.buffer.clearAfterExtraction();
+      return;
+    }
+
+    const principal = resolvePrincipal(sessionKey, this.config);
+    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
+    const storage = await this.storageRouter.storageFor(selfNamespace);
+
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
-    const existingEntities = await this.storage.listEntityNames();
-    const result = await this.extraction.extract(turns, existingEntities);
+    const existingEntities = await storage.listEntityNames();
+    const result = await this.extraction.extract(normalizedTurns, existingEntities);
 
     // Defensive: validate extraction result before processing
     if (!result) {
@@ -506,8 +762,18 @@ export class Orchestrator {
       await this.buffer.clearAfterExtraction();
       return;
     }
+    if (
+      result.facts.length === 0 &&
+      result.entities.length === 0 &&
+      result.questions.length === 0 &&
+      result.profileUpdates.length === 0
+    ) {
+      log.debug("runExtraction: extraction produced no durable outputs; skipping persistence");
+      await this.buffer.clearAfterExtraction();
+      return;
+    }
 
-    const persistedIds = await this.persistExtraction(result);
+    const persistedIds = await this.persistExtraction(result, storage);
     await this.buffer.clearAfterExtraction();
 
     // Process threading if enabled (Phase 3B)
@@ -520,33 +786,84 @@ export class Orchestrator {
       await this.threading.updateThreadTitle(threadId, conversationContent);
     }
 
-    // Check if consolidation is needed
-    const meta = await this.storage.loadMeta();
-    const extractionCount = this.buffer.getExtractionCount();
-
-    if (extractionCount > 0 && extractionCount % this.config.consolidateEveryN === 0) {
-      // Run consolidation in background (don't await)
-      this.runConsolidation().catch((err) =>
-        log.error("background consolidation failed", err),
-      );
-    }
+    // Check if consolidation is needed (debounced + non-zero gated).
+    const nonZeroExtraction =
+      result.facts.length > 0 ||
+      result.entities.length > 0 ||
+      result.questions.length > 0 ||
+      result.profileUpdates.length > 0;
+    if (nonZeroExtraction) this.nonZeroExtractionsSinceConsolidation += 1;
+    this.maybeScheduleConsolidation(nonZeroExtraction);
 
     // Update meta (safely handle potentially invalid result)
+    const meta = await storage.loadMeta();
     meta.extractionCount += 1;
     meta.lastExtractionAt = new Date().toISOString();
     meta.totalMemories += Array.isArray(result?.facts) ? result.facts.length : 0;
     meta.totalEntities += Array.isArray(result?.entities) ? result.entities.length : 0;
-    await this.storage.saveMeta(meta);
+    await storage.saveMeta(meta);
 
-    // Trigger QMD re-index in background
-    if (this.config.qmdEnabled && this.qmd.isAvailable()) {
-      this.qmd.update().catch((err) =>
-        log.debug(`background qmd update failed: ${err}`),
+    this.requestQmdMaintenance();
+  }
+
+  private maybeScheduleConsolidation(nonZeroExtraction: boolean): void {
+    if (this.config.consolidationRequireNonZeroExtraction && !nonZeroExtraction) return;
+    if (this.nonZeroExtractionsSinceConsolidation < this.config.consolidateEveryN) return;
+
+    const now = Date.now();
+    if (now - this.lastConsolidationRunAtMs < this.config.consolidationMinIntervalMs) return;
+    if (this.consolidationInFlight) return;
+
+    this.consolidationInFlight = true;
+    this.lastConsolidationRunAtMs = now;
+    this.nonZeroExtractionsSinceConsolidation = 0;
+    this.runConsolidation()
+      .catch((err) => log.error("background consolidation failed", err))
+      .finally(() => {
+        this.consolidationInFlight = false;
+      });
+  }
+
+  private requestQmdMaintenance(): void {
+    if (!this.config.qmdEnabled || !this.qmd.isAvailable()) return;
+    if (!this.config.qmdMaintenanceEnabled) return;
+
+    this.qmdMaintenancePending = true;
+    if (this.qmdMaintenanceTimer) return;
+
+    this.qmdMaintenanceTimer = setTimeout(() => {
+      this.qmdMaintenanceTimer = null;
+      this.runQmdMaintenance().catch((err) =>
+        log.debug(`background qmd maintenance failed: ${err}`),
       );
+    }, this.config.qmdMaintenanceDebounceMs);
+  }
+
+  private async runQmdMaintenance(): Promise<void> {
+    if (this.qmdMaintenanceInFlight) return;
+    if (!this.qmdMaintenancePending) return;
+    this.qmdMaintenanceInFlight = true;
+    this.qmdMaintenancePending = false;
+
+    try {
+      await this.qmd.update();
+      const now = Date.now();
+      if (
+        this.config.qmdAutoEmbedEnabled &&
+        now - this.lastQmdEmbedAtMs >= this.config.qmdEmbedMinIntervalMs
+      ) {
+        await this.qmd.embed();
+        this.lastQmdEmbedAtMs = now;
+      }
+    } finally {
+      this.qmdMaintenanceInFlight = false;
+      if (this.qmdMaintenancePending) {
+        this.requestQmdMaintenance();
+      }
     }
   }
 
-  private async persistExtraction(result: ExtractionResult): Promise<string[]> {
+  private async persistExtraction(result: ExtractionResult, storage: StorageManager): Promise<string[]> {
     const persistedIds: string[] = [];
 
     // Defensive: validate result and facts array
@@ -562,7 +879,28 @@ export class Orchestrator {
       overlapSentences: this.config.chunkingOverlapSentences,
     };
 
-    for (const fact of result.facts) {
+    const facts = result.facts.slice(0, this.config.extractionMaxFactsPerRun);
+    const entities = result.entities.slice(0, this.config.extractionMaxEntitiesPerRun);
+    const questions = result.questions.slice(0, this.config.extractionMaxQuestionsPerRun);
+    const profileUpdates = result.profileUpdates.slice(
+      0,
+      this.config.extractionMaxProfileUpdatesPerRun,
+    );
+
+    if (
+      facts.length < result.facts.length ||
+      entities.length < result.entities.length ||
+      questions.length < result.questions.length ||
+      profileUpdates.length < result.profileUpdates.length
+    ) {
+      log.warn(
+        "persistExtraction: capped extraction payload to guardrails " +
+          `(facts ${facts.length}/${result.facts.length}, entities ${entities.length}/${result.entities.length}, ` +
+          `questions ${questions.length}/${result.questions.length}, profile ${profileUpdates.length}/${result.profileUpdates.length})`,
+      );
+    }
+
+    for (const fact of facts) {
       // Score importance using local heuristics (Phase 1B)
       const importance = scoreImportance(fact.content, fact.category, fact.tags);
 
@@ -572,7 +910,7 @@ export class Orchestrator {
 
         if (chunkResult.chunked && chunkResult.chunks.length > 1) {
           // Write the parent memory first (with full content for reference)
-          const parentId = await this.storage.writeMemory(fact.category, fact.content, {
+          const parentId = await storage.writeMemory(fact.category, fact.content, {
             confidence: fact.confidence,
             tags: [...fact.tags, "chunked"],
             entityRef: fact.entityRef,
@@ -585,7 +923,7 @@ export class Orchestrator {
             // Score each chunk's importance separately
             const chunkImportance = scoreImportance(chunk.content, fact.category, fact.tags);
 
-            await this.storage.writeChunk(
+            await storage.writeChunk(
               parentId,
               chunk.index,
               chunkResult.chunks.length,
@@ -633,7 +971,7 @@ export class Orchestrator {
       }
 
       // Normal write (no chunking)
-      const memoryId = await this.storage.writeMemory(fact.category, fact.content, {
+      const memoryId = await storage.writeMemory(fact.category, fact.content, {
         confidence: fact.confidence,
         tags: fact.tags,
         entityRef: fact.entityRef,
@@ -645,30 +983,33 @@ export class Orchestrator {
       persistedIds.push(memoryId);
     }
 
-    for (const entity of result.entities) {
-      await this.storage.writeEntity(entity.name, entity.type, entity.facts);
+    for (const entity of entities) {
+      const safeFacts = Array.isArray((entity as any)?.facts)
+        ? (entity as any).facts.filter((f: any) => typeof f === "string")
+        : [];
+      await storage.writeEntity(entity.name, entity.type, safeFacts);
     }
 
-    if (result.profileUpdates.length > 0) {
-      await this.storage.appendToProfile(result.profileUpdates);
+    if (profileUpdates.length > 0) {
+      await storage.appendToProfile(profileUpdates);
     }
 
     // Persist questions
-    for (const q of result.questions) {
-      await this.storage.writeQuestion(q.question, q.context, q.priority);
+    for (const q of questions) {
+      await storage.writeQuestion(q.question, q.context, q.priority);
     }
 
     // Persist identity reflection
     if (this.config.identityEnabled && result.identityReflection) {
       try {
-        await this.storage.appendToIdentity(this.config.workspaceDir, result.identityReflection);
+        await storage.appendToIdentity(this.config.workspaceDir, result.identityReflection);
       } catch (err) {
         log.debug(`identity reflection write failed: ${err}`);
       }
     }
 
     log.info(
-      `persisted: ${result.facts.length} facts, ${result.entities.length} entities, ${result.questions.length} questions, ${result.profileUpdates.length} profile updates`,
+      `persisted: ${facts.length} facts, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
     );
 
     // Return the persisted fact IDs for threading
@@ -736,7 +1077,10 @@ export class Orchestrator {
     }
 
     for (const entity of result.entityUpdates) {
-      await this.storage.writeEntity(entity.name, entity.type, entity.facts);
+      const safeFacts = Array.isArray((entity as any)?.facts)
+        ? (entity as any).facts.filter((f: any) => typeof f === "string")
+        : [];
+      await this.storage.writeEntity(entity.name, entity.type, safeFacts);
     }
 
     // Merge fragmented entity files
@@ -987,7 +1331,16 @@ export class Orchestrator {
 
     // Build entries from buffer, merging with existing counts
     const entries: AccessTrackingEntry[] = [];
-    const memories = await this.storage.readAllMemories();
+    const namespaces = this.config.namespacesEnabled
+      ? Array.from(
+          new Set<string>([
+            this.config.defaultNamespace,
+            this.config.sharedNamespace,
+            ...this.config.namespacePolicies.map((p) => p.name),
+          ]),
+        )
+      : [this.config.defaultNamespace];
+    const memories = await this.readAllMemoriesForNamespaces(namespaces);
     const memoryMap = new Map(memories.map((m) => [m.frontmatter.id, m]));
 
     for (const [memoryId, update] of this.accessTrackingBuffer) {
@@ -1000,7 +1353,19 @@ export class Orchestrator {
       });
     }
 
-    await this.storage.flushAccessTracking(entries);
+    const byNamespace = new Map<string, AccessTrackingEntry[]>();
+    for (const e of entries) {
+      const m = memoryMap.get(e.memoryId);
+      if (!m) continue;
+      const ns = this.namespaceFromPath(m.path);
+      const list = byNamespace.get(ns) ?? [];
+      list.push(e);
+      byNamespace.set(ns, list);
+    }
+    for (const [ns, list] of byNamespace) {
+      const sm = await this.storageRouter.storageFor(ns);
+      await sm.flushAccessTracking(list);
+    }
     this.accessTrackingBuffer.clear();
     log.debug(`flushed ${entries.length} access tracking entries`);
   }
@@ -1011,11 +1376,12 @@ export class Orchestrator {
    */
   private async boostSearchResults(
     results: QmdSearchResult[],
+    recallNamespaces: string[],
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
     const now = Date.now();
-    const memories = await this.storage.readAllMemories();
+    const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
     const memoryByPath = new Map(memories.map((m) => [m.path, m]));
 
     // Calculate boosted scores
@@ -1239,5 +1605,22 @@ export class Orchestrator {
       strength: link.strength,
       reason: link.reason || undefined,
     }));
+  }
+
+  private namespaceFromPath(p: string): string {
+    if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
+    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
+    return m && m[1] ? m[1] : this.config.defaultNamespace;
+  }
+
+  private async readAllMemoriesForNamespaces(namespaces: string[]): Promise<MemoryFile[]> {
+    const uniq = Array.from(new Set(namespaces.filter(Boolean)));
+    const lists = await Promise.all(
+      uniq.map(async (ns) => {
+        const sm = await this.storageRouter.storageFor(ns);
+        return sm.readAllMemories();
+      }),
+    );
+    return lists.flat();
   }
 }

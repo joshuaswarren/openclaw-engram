@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- v2.3 portability:
+  - CLI: `openclaw engram export|import|backup` (json/md/sqlite bundles)
+  - Format autodetection on import (`--format auto`)
+  - Namespace-aware CLI surface (`--namespace <ns>`) when namespaces are enabled
+- v2.4 context retention hardening:
+  - Optional structured hourly summaries (`hourlySummariesExtendedEnabled`)
+  - Optional tool usage stats capture for summaries (`hourlySummariesIncludeToolStats`)
+  - Optional conversation chunk indexing + semantic recall injection (`conversationIndexEnabled`)
+  - Tool: `conversation_index_update`
+- v3.0 multi-agent memory (namespaces):
+  - Principal resolution from `sessionKey`
+  - Namespace-scoped profile storage (when enabled)
+  - Tool: `memory_promote`
+- v4.0 cross-agent shared intelligence (shared-context):
+  - Shared-context injection (priorities + latest roundtable)
+  - Tools: `shared_context_write_output`, `shared_priorities_append`, `shared_feedback_record`, `shared_context_curate_daily`
+- v5.0 compounding engine:
+  - Weekly synthesis output + mistakes file
+  - Tool: `compounding_weekly_synthesize`
+- Reliability guardrails (P0/P1):
+  - Extraction dedupe window + minimum extraction thresholds
+  - Per-run extraction caps (facts/entities/questions/profile updates)
+  - Consolidation cooldown + non-zero gating
+  - Debounced/singleflight QMD maintenance worker
+  - Local LLM resilience knobs (bounded 5xx retries, 400 trip threshold + cooldown)
+
+### Changed
+- `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
+- Extractions with no durable outputs skip persistence/log churn paths.
+
 ## [2.2.2] - 2026-02-10
 
 ### Added
@@ -22,6 +55,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - No auto-marking: this heuristic never records negative examples automatically.
+
+## [2.2.4] - 2026-02-11
+
+### Fixed
+- Prevented background extraction crashes when local LLM entity output omits or malforms `entities[].facts` (defensive sanitation + persistence hardening).
+
+### Changed
+- Hourly summary cron auto-registration (when used) now targets `sessionTarget: "isolated"` with `payload.kind: "agentTurn"` instead of `main/toolCall` (which can be rejected by cron validation in some installs).
 
 ## [2.2.1] - 2026-02-10
 

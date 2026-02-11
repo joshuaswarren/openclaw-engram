@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { PluginConfig, ReasoningEffort, TriggerMode } from "./types.js";
+import type { PluginConfig, PrincipalRule, ReasoningEffort, TriggerMode } from "./types.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   process.env.HOME ?? "~",
@@ -65,6 +65,13 @@ export function parseConfig(raw: unknown): PluginConfig {
     typeof cfg.memoryDir === "string" && cfg.memoryDir.length > 0
       ? cfg.memoryDir
       : DEFAULT_MEMORY_DIR;
+
+  const principalRules: PrincipalRule[] = Array.isArray(cfg.principalFromSessionKeyRules)
+    ? (cfg.principalFromSessionKeyRules as any[]).map((r) => ({
+        match: typeof r?.match === "string" ? r.match : "",
+        principal: typeof r?.principal === "string" ? r.principal : "",
+      })).filter((r) => r.match.length > 0 && r.principal.length > 0)
+    : [];
 
   return {
     openaiApiKey: apiKey,
@@ -197,6 +204,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.checkpointTurns === "number" ? cfg.checkpointTurns : 15,
     // Hourly summaries
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
+    hourlySummaryCronAutoRegister: cfg.hourlySummaryCronAutoRegister === true,
     summaryRecallHours:
       typeof cfg.summaryRecallHours === "number" ? cfg.summaryRecallHours : 24,
     maxSummaryCount:
@@ -205,6 +213,27 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.summaryModel === "string" && cfg.summaryModel.length > 0
         ? cfg.summaryModel
         : model, // default: same as extraction model
+    // v2.4 Extended hourly summaries (default off)
+    hourlySummariesExtendedEnabled: cfg.hourlySummariesExtendedEnabled === true,
+    hourlySummariesIncludeToolStats: cfg.hourlySummariesIncludeToolStats === true,
+    hourlySummariesIncludeSystemMessages: cfg.hourlySummariesIncludeSystemMessages === true,
+    hourlySummariesMaxTurnsPerRun:
+      typeof cfg.hourlySummariesMaxTurnsPerRun === "number" ? cfg.hourlySummariesMaxTurnsPerRun : 200,
+    // v2.4 Conversation index (default off)
+    conversationIndexEnabled: cfg.conversationIndexEnabled === true,
+    conversationIndexBackend: cfg.conversationIndexBackend === "faiss" ? "faiss" : "qmd",
+    conversationIndexQmdCollection:
+      typeof cfg.conversationIndexQmdCollection === "string" && cfg.conversationIndexQmdCollection.length > 0
+        ? cfg.conversationIndexQmdCollection
+        : "openclaw-engram-conversations",
+    conversationIndexRetentionDays:
+      typeof cfg.conversationIndexRetentionDays === "number" ? cfg.conversationIndexRetentionDays : 30,
+    conversationRecallTopK:
+      typeof cfg.conversationRecallTopK === "number" ? cfg.conversationRecallTopK : 3,
+    conversationRecallMaxChars:
+      typeof cfg.conversationRecallMaxChars === "number" ? cfg.conversationRecallMaxChars : 2500,
+    conversationRecallTimeoutMs:
+      typeof cfg.conversationRecallTimeoutMs === "number" ? cfg.conversationRecallTimeoutMs : 800,
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:
@@ -224,7 +253,95 @@ export function parseConfig(raw: unknown): PluginConfig {
     slowLogEnabled: cfg.slowLogEnabled === true,
     slowLogThresholdMs:
       typeof cfg.slowLogThresholdMs === "number" ? cfg.slowLogThresholdMs : 30_000,
+    // Extraction stability guards (P0/P1)
+    extractionDedupeEnabled: cfg.extractionDedupeEnabled !== false,
+    extractionDedupeWindowMs:
+      typeof cfg.extractionDedupeWindowMs === "number" ? cfg.extractionDedupeWindowMs : 5 * 60_000,
+    extractionMinChars:
+      typeof cfg.extractionMinChars === "number" ? cfg.extractionMinChars : 40,
+    extractionMinUserTurns:
+      typeof cfg.extractionMinUserTurns === "number" ? cfg.extractionMinUserTurns : 1,
+    extractionMaxTurnChars:
+      typeof cfg.extractionMaxTurnChars === "number" ? cfg.extractionMaxTurnChars : 4000,
+    extractionMaxFactsPerRun:
+      typeof cfg.extractionMaxFactsPerRun === "number" ? cfg.extractionMaxFactsPerRun : 12,
+    extractionMaxEntitiesPerRun:
+      typeof cfg.extractionMaxEntitiesPerRun === "number" ? cfg.extractionMaxEntitiesPerRun : 6,
+    extractionMaxQuestionsPerRun:
+      typeof cfg.extractionMaxQuestionsPerRun === "number" ? cfg.extractionMaxQuestionsPerRun : 3,
+    extractionMaxProfileUpdatesPerRun:
+      typeof cfg.extractionMaxProfileUpdatesPerRun === "number" ? cfg.extractionMaxProfileUpdatesPerRun : 4,
+    consolidationRequireNonZeroExtraction: cfg.consolidationRequireNonZeroExtraction !== false,
+    consolidationMinIntervalMs:
+      typeof cfg.consolidationMinIntervalMs === "number" ? cfg.consolidationMinIntervalMs : 10 * 60_000,
+    // QMD maintenance (debounced singleflight)
+    qmdMaintenanceEnabled: cfg.qmdMaintenanceEnabled !== false,
+    qmdMaintenanceDebounceMs:
+      typeof cfg.qmdMaintenanceDebounceMs === "number" ? cfg.qmdMaintenanceDebounceMs : 30_000,
+    qmdAutoEmbedEnabled: cfg.qmdAutoEmbedEnabled === true,
+    qmdEmbedMinIntervalMs:
+      typeof cfg.qmdEmbedMinIntervalMs === "number" ? cfg.qmdEmbedMinIntervalMs : 60 * 60_000,
+    // Local LLM resilience
+    localLlmRetry5xxCount:
+      typeof cfg.localLlmRetry5xxCount === "number" ? cfg.localLlmRetry5xxCount : 1,
+    localLlmRetryBackoffMs:
+      typeof cfg.localLlmRetryBackoffMs === "number" ? cfg.localLlmRetryBackoffMs : 400,
+    localLlm400TripThreshold:
+      typeof cfg.localLlm400TripThreshold === "number" ? cfg.localLlm400TripThreshold : 5,
+    localLlm400CooldownMs:
+      typeof cfg.localLlm400CooldownMs === "number" ? cfg.localLlm400CooldownMs : 120_000,
     // Gateway config (passed from index.ts for fallback AI)
     gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
+
+    // v3.0 namespaces (default off)
+    namespacesEnabled: cfg.namespacesEnabled === true,
+    defaultNamespace:
+      typeof cfg.defaultNamespace === "string" && cfg.defaultNamespace.length > 0 ? cfg.defaultNamespace : "default",
+    sharedNamespace:
+      typeof cfg.sharedNamespace === "string" && cfg.sharedNamespace.length > 0 ? cfg.sharedNamespace : "shared",
+    principalFromSessionKeyMode:
+      cfg.principalFromSessionKeyMode === "prefix"
+        ? "prefix"
+        : cfg.principalFromSessionKeyMode === "regex"
+          ? "regex"
+          : "map",
+    principalFromSessionKeyRules: principalRules,
+    namespacePolicies: Array.isArray(cfg.namespacePolicies)
+      ? (cfg.namespacePolicies as any[]).map((p) => ({
+          name: typeof p?.name === "string" ? p.name : "",
+          readPrincipals: Array.isArray(p?.readPrincipals) ? p.readPrincipals.filter((x: any) => typeof x === "string") : [],
+          writePrincipals: Array.isArray(p?.writePrincipals) ? p.writePrincipals.filter((x: any) => typeof x === "string") : [],
+          includeInRecallByDefault: p?.includeInRecallByDefault === true,
+        })).filter((p) => p.name.length > 0)
+      : [],
+    defaultRecallNamespaces: Array.isArray(cfg.defaultRecallNamespaces) ? ["self", "shared"].filter((x) => (cfg.defaultRecallNamespaces as any[]).includes(x)) as any : ["self", "shared"],
+    autoPromoteToSharedEnabled: cfg.autoPromoteToSharedEnabled === true,
+    autoPromoteToSharedCategories: Array.isArray(cfg.autoPromoteToSharedCategories)
+      ? (cfg.autoPromoteToSharedCategories as any[]).filter((c) => c === "correction" || c === "decision" || c === "preference")
+      : ["correction", "decision", "preference"],
+    autoPromoteMinConfidenceTier:
+      cfg.autoPromoteMinConfidenceTier === "explicit"
+        ? "explicit"
+        : cfg.autoPromoteMinConfidenceTier === "implied"
+          ? "implied"
+          : "explicit",
+
+    // v4.0 shared-context (default off)
+    sharedContextEnabled: cfg.sharedContextEnabled === true,
+    sharedContextDir:
+      typeof cfg.sharedContextDir === "string" && cfg.sharedContextDir.length > 0 ? cfg.sharedContextDir : undefined,
+    sharedContextMaxInjectChars:
+      typeof cfg.sharedContextMaxInjectChars === "number" ? cfg.sharedContextMaxInjectChars : 4000,
+    crossSignalsSemanticEnabled: cfg.crossSignalsSemanticEnabled === true,
+    crossSignalsSemanticTimeoutMs:
+      typeof cfg.crossSignalsSemanticTimeoutMs === "number" ? cfg.crossSignalsSemanticTimeoutMs : 4000,
+
+    // v5.0 compounding (default off)
+    compoundingEnabled: cfg.compoundingEnabled === true,
+    compoundingWeeklyCronEnabled: cfg.compoundingWeeklyCronEnabled === true,
+    compoundingSemanticEnabled: cfg.compoundingSemanticEnabled === true,
+    compoundingSynthesisTimeoutMs:
+      typeof cfg.compoundingSynthesisTimeoutMs === "number" ? cfg.compoundingSynthesisTimeoutMs : 15_000,
+    compoundingInjectEnabled: cfg.compoundingInjectEnabled !== false,
   };
 }

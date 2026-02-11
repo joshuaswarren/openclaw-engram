@@ -1,7 +1,16 @@
 import path from "node:path";
+import { access, readFile } from "node:fs/promises";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
 import type { TranscriptEntry } from "./types.js";
+import { exportJsonBundle } from "./transfer/export-json.js";
+import { exportMarkdownBundle } from "./transfer/export-md.js";
+import { backupMemoryDir } from "./transfer/backup.js";
+import { exportSqlite } from "./transfer/export-sqlite.js";
+import { importJsonBundle } from "./transfer/import-json.js";
+import { importSqlite } from "./transfer/import-sqlite.js";
+import { importMarkdownBundle } from "./transfer/import-md.js";
+import { detectImportFormat } from "./transfer/autodetect.js";
 
 interface CliApi {
   registerCli(
@@ -20,6 +29,38 @@ interface CliCommand {
   argument(name: string, desc: string): CliCommand;
   action(fn: (...args: unknown[]) => Promise<void> | void): CliCommand;
   command(name: string): CliCommand;
+}
+
+async function getPluginVersion(): Promise<string> {
+  try {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const raw = await readFile(pkgPath, "utf-8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveMemoryDirForNamespace(orchestrator: Orchestrator, namespace?: string): Promise<string> {
+  const ns = (namespace ?? "").trim();
+  if (!ns) return orchestrator.config.memoryDir;
+  if (!orchestrator.config.namespacesEnabled) return orchestrator.config.memoryDir;
+
+  const candidate = path.join(orchestrator.config.memoryDir, "namespaces", ns);
+  if (ns === orchestrator.config.defaultNamespace) {
+    return (await exists(candidate)) ? candidate : orchestrator.config.memoryDir;
+  }
+  return candidate;
 }
 
 export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
@@ -64,6 +105,142 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ${cat}: ${count}`);
             }
           }
+        });
+
+      cmd
+        .command("export")
+        .description("Export Engram memory to JSON, Markdown bundle, or SQLite")
+        .option("--format <format>", "Export format: json|md|sqlite", "json")
+        .option("--out <path>", "Output path (dir for json/md, file for sqlite)")
+        .option("--include-transcripts", "Include transcripts in export (default: false)")
+        .option("--namespace <ns>", "Namespace to export (v3.0+, default: config defaultNamespace)", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const format = String(options.format ?? "json");
+          const out = options.out ? String(options.out) : "";
+          const includeTranscripts = options.includeTranscripts === true;
+          const namespace = options.namespace ? String(options.namespace) : "";
+          if (!out) {
+            console.log("Missing --out. Example: openclaw engram export --format json --out /tmp/engram-export");
+            return;
+          }
+
+          const pluginVersion = await getPluginVersion();
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          if (format === "json") {
+            await exportJsonBundle({
+              memoryDir,
+              outDir: out,
+              includeTranscripts,
+              pluginVersion,
+              workspaceDir: orchestrator.config.workspaceDir,
+              includeWorkspaceIdentity: true,
+            });
+          } else if (format === "md") {
+            await exportMarkdownBundle({
+              memoryDir,
+              outDir: out,
+              includeTranscripts,
+              pluginVersion,
+            });
+          } else if (format === "sqlite") {
+            await exportSqlite({
+              memoryDir,
+              outFile: out,
+              includeTranscripts,
+              pluginVersion,
+            });
+          } else {
+            console.log(`Unknown format: ${format}`);
+            return;
+          }
+          console.log("OK");
+        });
+
+      cmd
+        .command("import")
+        .description("Import Engram memory from JSON bundle, Markdown bundle, or SQLite")
+        .option("--from <path>", "Import source path (dir or file)")
+        .option("--format <format>", "Import format: auto|json|md|sqlite", "auto")
+        .option("--conflict <mode>", "Conflict policy: skip|overwrite|dedupe", "skip")
+        .option("--dry-run", "Validate import without writing files")
+        .option("--namespace <ns>", "Namespace to import into (v3.0+, default: config defaultNamespace)", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const from = options.from ? String(options.from) : "";
+          const formatOpt = String(options.format ?? "auto");
+          const conflict = String(options.conflict ?? "skip") as "skip" | "overwrite" | "dedupe";
+          const dryRun = options.dryRun === true;
+          const namespace = options.namespace ? String(options.namespace) : "";
+          if (!from) {
+            console.log("Missing --from. Example: openclaw engram import --from /tmp/engram-export --format auto");
+            return;
+          }
+
+          const detected = formatOpt === "auto" ? await detectImportFormat(from) : (formatOpt as any);
+          if (!detected) {
+            console.log("Could not detect import format (use --format json|md|sqlite).");
+            return;
+          }
+
+          const targetMemoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+
+          if (detected === "json") {
+            await importJsonBundle({
+              targetMemoryDir,
+              fromDir: from,
+              conflict,
+              dryRun,
+              workspaceDir: orchestrator.config.workspaceDir,
+            });
+          } else if (detected === "sqlite") {
+            await importSqlite({
+              targetMemoryDir,
+              fromFile: from,
+              conflict,
+              dryRun,
+            });
+          } else if (detected === "md") {
+            await importMarkdownBundle({
+              targetMemoryDir,
+              fromDir: from,
+              conflict,
+              dryRun,
+            });
+          } else {
+            console.log(`Unknown detected format: ${detected}`);
+            return;
+          }
+          console.log("OK");
+        });
+
+      cmd
+        .command("backup")
+        .description("Create a timestamped backup of the Engram memory directory")
+        .option("--out-dir <dir>", "Backup root directory")
+        .option("--retention-days <n>", "Delete backups older than N days", "0")
+        .option("--include-transcripts", "Include transcripts (default false)")
+        .option("--namespace <ns>", "Namespace to back up (v3.0+, default: config defaultNamespace)", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const outDir = options.outDir ? String(options.outDir) : "";
+          const retentionDays = parseInt(String(options.retentionDays ?? "0"), 10);
+          const includeTranscripts = options.includeTranscripts === true;
+          const namespace = options.namespace ? String(options.namespace) : "";
+          if (!outDir) {
+            console.log("Missing --out-dir. Example: openclaw engram backup --out-dir /tmp/engram-backups");
+            return;
+          }
+          const pluginVersion = await getPluginVersion();
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          await backupMemoryDir({
+            memoryDir,
+            outDir,
+            retentionDays: Number.isFinite(retentionDays) ? retentionDays : undefined,
+            includeTranscripts,
+            pluginVersion,
+          });
+          console.log("OK");
         });
 
       cmd

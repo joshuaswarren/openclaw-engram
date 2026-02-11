@@ -366,9 +366,286 @@
         "default": 30000,
         "description": "Threshold for slow operation logging (ms)"
       },
+      "extractionDedupeEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable deduplication of near-identical extraction batches within a time window."
+      },
+      "extractionDedupeWindowMs": {
+        "type": "number",
+        "default": 300000,
+        "description": "Window for extraction dedupe fingerprints (ms)."
+      },
+      "extractionMinChars": {
+        "type": "number",
+        "default": 40,
+        "description": "Minimum combined user/assistant characters required before extraction runs."
+      },
+      "extractionMinUserTurns": {
+        "type": "number",
+        "default": 1,
+        "description": "Minimum number of user turns required before extraction runs."
+      },
+      "extractionMaxTurnChars": {
+        "type": "number",
+        "default": 4000,
+        "description": "Maximum characters per turn fed to extraction (long turns are truncated)."
+      },
+      "extractionMaxFactsPerRun": {
+        "type": "number",
+        "default": 12,
+        "description": "Maximum facts persisted from a single extraction run."
+      },
+      "extractionMaxEntitiesPerRun": {
+        "type": "number",
+        "default": 6,
+        "description": "Maximum entities persisted from a single extraction run."
+      },
+      "extractionMaxQuestionsPerRun": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum questions persisted from a single extraction run."
+      },
+      "extractionMaxProfileUpdatesPerRun": {
+        "type": "number",
+        "default": 4,
+        "description": "Maximum profile updates persisted from a single extraction run."
+      },
+      "consolidationRequireNonZeroExtraction": {
+        "type": "boolean",
+        "default": true,
+        "description": "Only schedule consolidation when the last extraction produced durable outputs."
+      },
+      "consolidationMinIntervalMs": {
+        "type": "number",
+        "default": 600000,
+        "description": "Minimum interval between consolidation runs (ms)."
+      },
+      "qmdMaintenanceEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable debounced background QMD maintenance instead of immediate updates on extraction."
+      },
+      "qmdMaintenanceDebounceMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Debounce window for background QMD maintenance updates (ms)."
+      },
+      "qmdAutoEmbedEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, background QMD maintenance also runs embed on a throttled cadence."
+      },
+      "qmdEmbedMinIntervalMs": {
+        "type": "number",
+        "default": 3600000,
+        "description": "Minimum interval between background QMD embed runs (ms)."
+      },
+      "localLlmRetry5xxCount": {
+        "type": "number",
+        "default": 1,
+        "description": "Number of retry attempts for local LLM 5xx responses."
+      },
+      "localLlmRetryBackoffMs": {
+        "type": "number",
+        "default": 400,
+        "description": "Base backoff delay between local LLM retries (ms)."
+      },
+      "localLlm400TripThreshold": {
+        "type": "number",
+        "default": 5,
+        "description": "Consecutive 400 responses before local LLM enters temporary cooldown."
+      },
+      "localLlm400CooldownMs": {
+        "type": "number",
+        "default": 120000,
+        "description": "Cooldown duration after tripping local LLM 400 threshold (ms)."
+      },
       "localLlmMaxContext": {
         "type": "number",
         "description": "Override the detected context window for local LLM. Set to 32768 if your LLM server defaults to 32K context despite the model supporting 128K."
+      },
+      "hourlySummaryCronAutoRegister": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, Engram may attempt to auto-register an hourly summary cron job (default off)."
+      },
+      "hourlySummariesExtendedEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable structured hourly summaries (topics/decisions/action items/rejections). Default off."
+      },
+      "hourlySummariesIncludeToolStats": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include tool usage counts in extended hourly summaries (requires tool usage capture)."
+      },
+      "hourlySummariesIncludeSystemMessages": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include system messages in extended hourly summaries (use with care)."
+      },
+      "hourlySummariesMaxTurnsPerRun": {
+        "type": "number",
+        "default": 200,
+        "description": "Maximum transcript turns to consider per session per hourly summarizer run."
+      },
+      "conversationIndexEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable conversation chunk indexing + semantic recall hook (default off)."
+      },
+      "conversationIndexBackend": {
+        "type": "string",
+        "enum": ["qmd", "faiss"],
+        "default": "qmd",
+        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss reserved/experimental."
+      },
+      "conversationIndexQmdCollection": {
+        "type": "string",
+        "default": "openclaw-engram-conversations",
+        "description": "QMD collection to use for conversation chunk search (must be configured in ~/.config/qmd/index.yml)."
+      },
+      "conversationIndexRetentionDays": {
+        "type": "number",
+        "default": 30,
+        "description": "Days to retain conversation chunk docs."
+      },
+      "conversationRecallTopK": {
+        "type": "number",
+        "default": 3,
+        "description": "Top-K conversation chunks to inject."
+      },
+      "conversationRecallMaxChars": {
+        "type": "number",
+        "default": 2500,
+        "description": "Max characters of semantic conversation recall to inject."
+      },
+      "conversationRecallTimeoutMs": {
+        "type": "number",
+        "default": 800,
+        "description": "Timeout for semantic conversation recall search (ms). Fail-open on timeout."
+      },
+      "namespacesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable multi-agent namespaces (v3.0). Default off."
+      },
+      "defaultNamespace": {
+        "type": "string",
+        "default": "default",
+        "description": "Default namespace name."
+      },
+      "sharedNamespace": {
+        "type": "string",
+        "default": "shared",
+        "description": "Shared namespace name."
+      },
+      "principalFromSessionKeyMode": {
+        "type": "string",
+        "enum": ["map", "prefix", "regex"],
+        "default": "map",
+        "description": "How to derive principal identity from sessionKey."
+      },
+      "principalFromSessionKeyRules": {
+        "type": "array",
+        "description": "Rules for resolving principal from sessionKey (ordered).",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "match": { "type": "string" },
+            "principal": { "type": "string" }
+          },
+          "required": ["match", "principal"]
+        }
+      },
+      "namespacePolicies": {
+        "type": "array",
+        "description": "Namespace access policies.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "readPrincipals": { "type": "array", "items": { "type": "string" } },
+            "writePrincipals": { "type": "array", "items": { "type": "string" } },
+            "includeInRecallByDefault": { "type": "boolean" }
+          },
+          "required": ["name", "readPrincipals", "writePrincipals"]
+        }
+      },
+      "defaultRecallNamespaces": {
+        "type": "array",
+        "description": "Which namespaces to include by default in recall.",
+        "items": { "type": "string", "enum": ["self", "shared"] },
+        "default": ["self", "shared"]
+      },
+      "autoPromoteToSharedEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If enabled, Engram may auto-promote selected categories to shared (reserved; conservative)."
+      },
+      "autoPromoteToSharedCategories": {
+        "type": "array",
+        "items": { "type": "string", "enum": ["correction", "decision", "preference"] },
+        "default": ["correction", "decision", "preference"],
+        "description": "Categories eligible for auto-promotion to shared."
+      },
+      "autoPromoteMinConfidenceTier": {
+        "type": "string",
+        "enum": ["explicit", "implied"],
+        "default": "explicit",
+        "description": "Minimum confidence tier for auto-promotion."
+      },
+      "sharedContextEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable shared-context injection + tools (v4.0). Default off."
+      },
+      "sharedContextDir": {
+        "type": "string",
+        "description": "Override shared-context directory (default: ~/.openclaw/workspace/shared-context)."
+      },
+      "sharedContextMaxInjectChars": {
+        "type": "number",
+        "default": 4000,
+        "description": "Max characters of shared-context to inject into each prompt."
+      },
+      "crossSignalsSemanticEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable semantic cross-signal grouping (reserved/experimental)."
+      },
+      "crossSignalsSemanticTimeoutMs": {
+        "type": "number",
+        "default": 4000,
+        "description": "Timeout for semantic cross-signal grouping (ms)."
+      },
+      "compoundingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable compounding engine (v5.0). Default off."
+      },
+      "compoundingWeeklyCronEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, compounding weekly synthesis can be scheduled externally via cron."
+      },
+      "compoundingSemanticEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable semantic compounding synthesis (reserved/experimental)."
+      },
+      "compoundingSynthesisTimeoutMs": {
+        "type": "number",
+        "default": 15000,
+        "description": "Timeout for compounding synthesis (ms)."
+      },
+      "compoundingInjectEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Inject compounded mistakes/patterns into recall when compounding is enabled."
       }
     }
   },

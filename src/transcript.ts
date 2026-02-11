@@ -16,6 +16,7 @@ export class TranscriptManager {
   private transcriptsDir: string;
   private checkpointPath: string;
   private stateDir: string;
+  private toolUsageDir: string;
   private config: PluginConfig;
 
   /** Default checkpoint TTL in hours */
@@ -28,6 +29,7 @@ export class TranscriptManager {
     this.transcriptsDir = path.join(config.memoryDir, "transcripts");
     this.stateDir = path.join(config.memoryDir, "state");
     this.checkpointPath = path.join(this.stateDir, "checkpoint.json");
+    this.toolUsageDir = path.join(this.stateDir, "tool-usage");
   }
 
   /**
@@ -81,7 +83,98 @@ export class TranscriptManager {
   async initialize(): Promise<void> {
     await mkdir(this.transcriptsDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
+    await mkdir(this.toolUsageDir, { recursive: true });
     log.info("transcript manager initialized");
+  }
+
+  /**
+   * Best-effort list of sessionKeys that have transcript files on disk.
+   * This is used by cron-style tooling (hourly summaries, conversation indexing)
+   * to iterate across "active" sessions.
+   */
+  async listSessionKeys(): Promise<string[]> {
+    const transcriptDir = this.transcriptsDir;
+    const sessionKeys = new Set<string>();
+
+    try {
+      const typeEntries = await readdir(transcriptDir, { withFileTypes: true });
+      for (const typeEnt of typeEntries) {
+        if (!typeEnt.isDirectory()) continue;
+        const typeDir = path.join(transcriptDir, typeEnt.name);
+        const idEntries = await readdir(typeDir, { withFileTypes: true });
+        for (const idEnt of idEntries) {
+          if (!idEnt.isDirectory()) continue;
+          const chanDir = path.join(typeDir, idEnt.name);
+          const files = (await readdir(chanDir)).filter((f) => f.endsWith(".jsonl")).sort();
+          const last = files[files.length - 1];
+          if (!last) continue;
+          try {
+            const raw = await readFile(path.join(chanDir, last), "utf-8");
+            const firstLine = raw.split("\n").find((l) => l.trim().length > 0);
+            if (!firstLine) continue;
+            const entry = JSON.parse(firstLine) as TranscriptEntry;
+            if (typeof entry.sessionKey === "string" && entry.sessionKey.length > 0) {
+              sessionKeys.add(entry.sessionKey);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      return [];
+    }
+
+    return Array.from(sessionKeys);
+  }
+
+  getToolUsagePath(sessionKey: string): { dir: string; file: string } {
+    const p = this.getTranscriptPath(sessionKey);
+    return { dir: p.dir, file: p.file };
+  }
+
+  async appendToolUse(entry: { timestamp: string; sessionKey: string; tool: string }): Promise<void> {
+    const { dir, file } = this.getToolUsagePath(entry.sessionKey);
+    const channelDir = path.join(this.toolUsageDir, dir);
+    await mkdir(channelDir, { recursive: true });
+    const filePath = path.join(channelDir, file);
+    await appendFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+  }
+
+  async readToolUse(
+    sessionKey: string,
+    startTime: Date,
+    endTime: Date,
+  ): Promise<Array<{ timestamp: string; sessionKey: string; tool: string }>> {
+    const { dir } = this.getToolUsagePath(sessionKey);
+    const channelDir = path.join(this.toolUsageDir, dir);
+    try {
+      const files = await readdir(channelDir);
+      const out: Array<{ timestamp: string; sessionKey: string; tool: string }> = [];
+      for (const file of files) {
+        if (!file.endsWith(".jsonl")) continue;
+        const fp = path.join(channelDir, file);
+        const raw = await readFile(fp, "utf-8");
+        for (const line of raw.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const obj = JSON.parse(line) as any;
+            const ts = new Date(String(obj.timestamp ?? "")).getTime();
+            if (!Number.isFinite(ts)) continue;
+            if (ts >= startTime.getTime() && ts < endTime.getTime()) {
+              if (typeof obj.tool === "string" && typeof obj.sessionKey === "string") {
+                out.push({ timestamp: obj.timestamp, sessionKey: obj.sessionKey, tool: obj.tool });
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -102,7 +195,8 @@ export class TranscriptManager {
       const { dir, file } = this.getTranscriptPath(entry.sessionKey);
 
       // Skip if this channel type is in the skip list
-      if (this.config.transcriptSkipChannelTypes.includes(dir)) {
+      const channelType = dir.split(path.sep)[0] ?? dir;
+      if (this.config.transcriptSkipChannelTypes.includes(channelType)) {
         return;
       }
 

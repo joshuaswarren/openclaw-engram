@@ -4,6 +4,7 @@ export type SignalLevel = "none" | "low" | "medium" | "high";
 export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill";
 export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "SKIP";
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
+export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
 
 export function confidenceTier(score: number): ConfidenceTier {
   if (score >= 0.95) return "explicit";
@@ -99,9 +100,24 @@ export interface PluginConfig {
   checkpointTurns: number;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
+  /** If true, Engram may attempt to auto-register an hourly summary cron job (default off). */
+  hourlySummaryCronAutoRegister: boolean;
   summaryRecallHours: number;
   maxSummaryCount: number;
   summaryModel: string;
+  // v2.4 Extended hourly summaries
+  hourlySummariesExtendedEnabled: boolean;
+  hourlySummariesIncludeToolStats: boolean;
+  hourlySummariesIncludeSystemMessages: boolean;
+  hourlySummariesMaxTurnsPerRun: number;
+  // v2.4 Conversation index (optional)
+  conversationIndexEnabled: boolean;
+  conversationIndexBackend: "qmd" | "faiss";
+  conversationIndexQmdCollection: string;
+  conversationIndexRetentionDays: number;
+  conversationRecallTopK: number;
+  conversationRecallMaxChars: number;
+  conversationRecallTimeoutMs: number;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;
@@ -116,8 +132,68 @@ export interface PluginConfig {
   slowLogEnabled: boolean;
   /** Threshold for slow operation logging (ms). */
   slowLogThresholdMs: number;
+  // Extraction stability guards (P0/P1)
+  extractionDedupeEnabled: boolean;
+  extractionDedupeWindowMs: number;
+  extractionMinChars: number;
+  extractionMinUserTurns: number;
+  extractionMaxTurnChars: number;
+  extractionMaxFactsPerRun: number;
+  extractionMaxEntitiesPerRun: number;
+  extractionMaxQuestionsPerRun: number;
+  extractionMaxProfileUpdatesPerRun: number;
+  consolidationRequireNonZeroExtraction: boolean;
+  consolidationMinIntervalMs: number;
+  // QMD maintenance (debounced singleflight)
+  qmdMaintenanceEnabled: boolean;
+  qmdMaintenanceDebounceMs: number;
+  qmdAutoEmbedEnabled: boolean;
+  qmdEmbedMinIntervalMs: number;
+  // Local LLM resilience
+  localLlmRetry5xxCount: number;
+  localLlmRetryBackoffMs: number;
+  localLlm400TripThreshold: number;
+  localLlm400CooldownMs: number;
   // Gateway config for fallback AI
   gatewayConfig?: GatewayConfig;
+
+  // v3.0 Multi-agent memory (namespaces)
+  namespacesEnabled: boolean;
+  defaultNamespace: string;
+  sharedNamespace: string;
+  principalFromSessionKeyMode: PrincipalFromSessionKeyMode;
+  principalFromSessionKeyRules: PrincipalRule[];
+  namespacePolicies: NamespacePolicy[];
+  defaultRecallNamespaces: Array<"self" | "shared">;
+  autoPromoteToSharedEnabled: boolean;
+  autoPromoteToSharedCategories: Array<"correction" | "decision" | "preference">;
+  autoPromoteMinConfidenceTier: ConfidenceTier;
+
+  // v4.0 Shared-context (cross-agent shared intelligence)
+  sharedContextEnabled: boolean;
+  sharedContextDir?: string;
+  sharedContextMaxInjectChars: number;
+  crossSignalsSemanticEnabled: boolean;
+  crossSignalsSemanticTimeoutMs: number;
+
+  // v5.0 Compounding engine
+  compoundingEnabled: boolean;
+  compoundingWeeklyCronEnabled: boolean;
+  compoundingSemanticEnabled: boolean;
+  compoundingSynthesisTimeoutMs: number;
+  compoundingInjectEnabled: boolean;
+}
+
+export interface PrincipalRule {
+  match: string;
+  principal: string;
+}
+
+export interface NamespacePolicy {
+  name: string;
+  readPrincipals: string[];
+  writePrincipals: string[];
+  includeInRecallByDefault?: boolean;
 }
 
 export interface RelevanceFeedback {

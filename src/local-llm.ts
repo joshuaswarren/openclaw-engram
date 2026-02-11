@@ -2,6 +2,7 @@ import { log } from "./logger.js";
 import type { PluginConfig } from "./types.js";
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import type { ModelRegistry } from "./model-registry.js";
 
 /**
@@ -74,6 +75,8 @@ export class LocalLlmClient {
   private cachedModelInfo: LocalModelInfo | null = null;
   private cachedLmsContext: number | null = null;
   private lastLmsCheck: number = 0;
+  private consecutive400s: number = 0;
+  private cooldownUntilMs: number = 0;
   private modelRegistry?: ModelRegistry;
   private static readonly HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
   private static readonly LMS_CACHE_INTERVAL_MS = 30000; // 30 seconds
@@ -190,7 +193,7 @@ export class LocalLlmClient {
    */
   private getContextFromLmStudioSettings(): number | null {
     try {
-      const homeDir = process.env.HOME || `/Users/${process.env.USER || "joshuawarren"}`;
+      const homeDir = process.env.HOME || os.homedir();
       const settingsPath = `${homeDir}/.cache/lm-studio/settings.json`;
 
       if (!existsSync(settingsPath)) {
@@ -229,7 +232,7 @@ export class LocalLlmClient {
     try {
       // Check if lms CLI exists in common locations
       // Note: process.env.HOME may not be set in launchd environment
-      const homeDir = process.env.HOME || `/Users/${process.env.USER || "joshuawarren"}`;
+      const homeDir = process.env.HOME || os.homedir();
       const lmsPaths = [
         `${homeDir}/.cache/lm-studio/bin/lms`,
         "/usr/local/bin/lms",
@@ -251,8 +254,8 @@ export class LocalLlmClient {
         shell: false, // Don't use shell for JSON output - more reliable
         env: {
           ...process.env,
-          PATH: `/Users/joshuawarren/.cache/lm-studio/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
-          HOME: `/Users/joshuawarren`,
+          PATH: `${homeDir}/.cache/lm-studio/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
+          HOME: homeDir,
         },
       });
 
@@ -644,6 +647,13 @@ export class LocalLlmClient {
       return null;
     }
 
+    const now = Date.now();
+    if (this.cooldownUntilMs > now) {
+      const remainingMs = this.cooldownUntilMs - now;
+      log.debug(`local LLM: cooldown active (${remainingMs}ms remaining), skipping request`);
+      return null;
+    }
+
     const isAvailable = await this.checkAvailability();
     if (!isAvailable) {
       log.debug(
@@ -696,21 +706,41 @@ export class LocalLlmClient {
         typeof options.timeoutMs === "number"
           ? Math.min(this.config.localLlmTimeoutMs, options.timeoutMs)
           : this.config.localLlmTimeoutMs;
-      const abort = new AbortController();
-      const timeout = setTimeout(() => abort.abort(), effectiveTimeoutMs);
-      const response = await fetch(chatUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-        signal: abort.signal,
-      });
-      clearTimeout(timeout);
+      const maxAttempts = 1 + Math.max(0, this.config.localLlmRetry5xxCount);
+      let response: Response | null = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const attemptAbort = new AbortController();
+        const attemptTimeout = setTimeout(() => attemptAbort.abort(), effectiveTimeoutMs);
+        try {
+          response = await fetch(chatUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+            signal: attemptAbort.signal,
+          });
+        } finally {
+          clearTimeout(attemptTimeout);
+        }
 
+        if (response.ok) break;
+        if (response.status < 500 || attempt >= maxAttempts) break;
+
+        const backoffMs = this.config.localLlmRetryBackoffMs * attempt;
+        log.warn(
+          `local LLM request got ${response.status}; retrying (attempt ${attempt + 1}/${maxAttempts}) after ${backoffMs}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
       log.debug(
-        `local LLM: received response, status=${response.status}, ok=${response.ok}`,
+        `local LLM: received response, status=${response?.status}, ok=${response?.ok}`,
       );
+
+      if (!response) {
+        log.warn("local LLM request failed: no response object");
+        return null;
+      }
 
       if (!response.ok) {
         let reason = "";
@@ -727,11 +757,27 @@ export class LocalLlmClient {
         } catch (e) {
           log.debug(`local LLM failed to read error body: ${e}`);
         }
+        const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
         log.warn(
-          `local LLM request failed: ${response.status} ${response.statusText}${reason}`,
+          `local LLM request failed: ${response.status} ${response.statusText}${reason} ` +
+          `(model=${this.config.localLlmModel}, url=${chatUrl}, promptChars=${promptChars}, maxTokens=${requestBody.max_tokens as number})`,
         );
+        if (response.status === 400) {
+          this.consecutive400s += 1;
+          if (this.consecutive400s >= this.config.localLlm400TripThreshold) {
+            this.cooldownUntilMs = Date.now() + this.config.localLlm400CooldownMs;
+            log.warn(
+              `local LLM: entering cooldown for ${this.config.localLlm400CooldownMs}ms ` +
+                `after ${this.consecutive400s} consecutive 400 responses`,
+            );
+            this.consecutive400s = 0;
+          }
+        } else {
+          this.consecutive400s = 0;
+        }
         return null;
       }
+      this.consecutive400s = 0;
 
       const data = (await response.json()) as {
         choices?: Array<{
