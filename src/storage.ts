@@ -228,8 +228,11 @@ const BUILTIN_ALIASES: Record<string, string> = {
  */
 export function normalizeEntityName(raw: string, type: string): string {
   // Strip type prefix if present (e.g. name="person-jane-doe", type="person")
-  let name = raw.toLowerCase().trim();
-  const typePrefix = `${type.toLowerCase()}-`;
+  const rawStr = typeof raw === "string" ? raw : "";
+  const typeStr = typeof type === "string" && type.trim().length > 0 ? type : "entity";
+
+  let name = rawStr.toLowerCase().trim();
+  const typePrefix = `${typeStr.toLowerCase()}-`;
   if (name.startsWith(typePrefix)) {
     name = name.slice(typePrefix.length);
   }
@@ -247,7 +250,7 @@ export function normalizeEntityName(raw: string, type: string): string {
     normalized = BUILTIN_ALIASES[normalized];
   }
 
-  return `${type.toLowerCase()}-${normalized}`;
+  return `${typeStr.toLowerCase()}-${normalized}`;
 }
 
 /**
@@ -395,6 +398,13 @@ export class StorageManager {
     facts: string[],
   ): Promise<string> {
     await this.ensureDirectories();
+    if (typeof name !== "string" || !name.trim() || typeof type !== "string" || !type.trim()) {
+      log.warn("writeEntity: invalid entity payload, skipping", {
+        nameType: typeof name,
+        typeType: typeof type,
+      });
+      return "";
+    }
     const safeFacts = Array.isArray(facts) ? facts.filter((f) => typeof f === "string") : [];
     let normalized = normalizeEntityName(name, type);
 

@@ -67,6 +67,13 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Hourly summary cron auto-registration (when used) now targets `sessionTarget: "isolated"` with `payload.kind: "agentTurn"` instead of `main/toolCall` (which can be rejected by cron validation in some installs).
 
+## [2.2.5] - 2026-02-13
+
+### Fixed
+- Reduced background extraction crashes by defensively skipping malformed entity payloads (no `toLowerCase` on undefined).
+- Improved structured JSON extraction from LLM outputs when responses contain multiple JSON blocks (example + real answer).
+- Reduced QMD update/embed flakiness by serializing QMD CLI calls within the process and retrying on transient SQLite lock errors (logs also truncate huge stderr output).
+
 ## [2.2.1] - 2026-02-10
 
 ### Changed

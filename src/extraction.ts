@@ -25,6 +25,7 @@ import type {
   GatewayConfig,
 } from "./types.js";
 import { ModelRegistry } from "./model-registry.js";
+import { extractJsonCandidates } from "./json-extract.js";
 
 export class ExtractionEngine {
   private client: OpenAI | null;
@@ -254,40 +255,49 @@ ${truncatedConversation}`;
     // Avoid logging model output content by default (may contain user data).
     log.debug(`extractWithLocalLlm: got response content, length=${content.length}`);
 
-    let jsonStr = content;
     try {
-      // Parse JSON response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      jsonStr = jsonMatch ? jsonMatch[0] : content;
-      log.debug(`extractWithLocalLlm: attempting JSON parse, jsonStr length=${jsonStr.length}`);
-      const parsed = JSON.parse(jsonStr);
+      for (const candidate of extractJsonCandidates(content)) {
+        try {
+          log.debug(`extractWithLocalLlm: attempting JSON parse, candidate length=${candidate.length}`);
+          const parsed = JSON.parse(candidate);
 
-      // Validate and normalize
-      const entities = Array.isArray(parsed.entities)
-        ? parsed.entities.map((e: any) => ({
-            name: typeof e?.name === "string" ? e.name : "",
-            type: typeof e?.type === "string" ? e.type : "other",
-            // Local models frequently omit or malform `facts`; harden to avoid runtime crashes downstream.
-            facts: Array.isArray(e?.facts) ? e.facts.filter((f: any) => typeof f === "string") : [],
-          })).filter((e: any) => e.name.length > 0)
-        : [];
+          // Validate and normalize
+          const entities = Array.isArray((parsed as any).entities)
+            ? (parsed as any).entities
+                .map((e: any) => ({
+                  name: typeof e?.name === "string" ? e.name : "",
+                  type: typeof e?.type === "string" ? e.type : "other",
+                  // Local models frequently omit or malform `facts`; harden to avoid runtime crashes downstream.
+                  facts: Array.isArray(e?.facts)
+                    ? e.facts.filter((f: any) => typeof f === "string")
+                    : [],
+                }))
+                .filter((e: any) => e.name.length > 0)
+            : [];
 
-      const result: ExtractionResult = {
-        facts: Array.isArray(parsed.facts) ? parsed.facts : [],
-        entities,
-        profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
-        questions: Array.isArray(parsed.questions) ? parsed.questions : [],
-        identityReflection: parsed.identityReflection ?? undefined,
-      };
+          const result: ExtractionResult = {
+            facts: Array.isArray((parsed as any).facts) ? (parsed as any).facts : [],
+            entities,
+            profileUpdates: Array.isArray((parsed as any).profileUpdates)
+              ? (parsed as any).profileUpdates
+              : [],
+            questions: Array.isArray((parsed as any).questions) ? (parsed as any).questions : [],
+            identityReflection: (parsed as any).identityReflection ?? undefined,
+          };
 
-      log.debug(
-        `extractWithLocalLlm: successfully parsed response, facts=${result.facts.length}, entities=${result.entities.length}, profileUpdates=${result.profileUpdates.length}, questions=${result.questions.length}`,
-      );
-      return result;
+          log.debug(
+            `extractWithLocalLlm: successfully parsed response, facts=${result.facts.length}, entities=${result.entities.length}, profileUpdates=${result.profileUpdates.length}, questions=${result.questions.length}`,
+          );
+          return result;
+        } catch {
+          // keep trying candidates
+        }
+      }
+      return null;
     } catch (err) {
       // Try to extract partial facts from truncated JSON
       log.debug("extractWithLocalLlm: JSON parse failed, attempting partial extraction...");
-      const partial = this.extractPartialFacts(jsonStr);
+      const partial = this.extractPartialFacts(content);
       if (partial.facts.length > 0 || partial.entities.length > 0) {
         log.debug(
           `extractWithLocalLlm: extracted ${partial.facts.length} partial facts from truncated JSON`,
@@ -602,15 +612,23 @@ Respond with valid JSON matching this schema:
 
     try {
       const content = response.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? jsonMatch[0] : content;
-      const parsed = JSON.parse(jsonStr);
-
-      return {
-        items: Array.isArray(parsed.items) ? parsed.items : [],
-        profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
-        entityUpdates: Array.isArray(parsed.entityUpdates) ? parsed.entityUpdates : [],
-      } as ConsolidationResult;
+      for (const candidate of extractJsonCandidates(content)) {
+        try {
+          const parsed = JSON.parse(candidate);
+          return {
+            items: Array.isArray((parsed as any).items) ? (parsed as any).items : [],
+            profileUpdates: Array.isArray((parsed as any).profileUpdates)
+              ? (parsed as any).profileUpdates
+              : [],
+            entityUpdates: Array.isArray((parsed as any).entityUpdates)
+              ? (parsed as any).entityUpdates
+              : [],
+          } as ConsolidationResult;
+        } catch {
+          // keep trying candidates
+        }
+      }
+      return null;
     } catch (err) {
       log.warn("local LLM consolidation: failed to parse JSON response:", err);
       return null;
@@ -759,15 +777,19 @@ Respond with valid JSON matching this schema:
 
     try {
       const content = response.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? jsonMatch[0] : content;
-      const parsed = JSON.parse(jsonStr);
-
-      return {
-        consolidatedProfile: String(parsed.consolidatedProfile || ""),
-        removedCount: Number(parsed.removedCount || 0),
-        summary: String(parsed.summary || ""),
-      };
+      for (const candidate of extractJsonCandidates(content)) {
+        try {
+          const parsed = JSON.parse(candidate);
+          return {
+            consolidatedProfile: String((parsed as any).consolidatedProfile || ""),
+            removedCount: Number((parsed as any).removedCount || 0),
+            summary: String((parsed as any).summary || ""),
+          };
+        } catch {
+          // keep trying candidates
+        }
+      }
+      return null;
     } catch (err) {
       log.warn("local LLM profile consolidation: failed to parse JSON response:", err);
       return null;
@@ -918,14 +940,20 @@ Respond with valid JSON matching this schema:
 
     try {
       const content = response.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? jsonMatch[0] : content;
-      const parsed = JSON.parse(jsonStr);
-
-      return {
-        learnedPatterns: Array.isArray(parsed.learnedPatterns) ? parsed.learnedPatterns : [],
-        summary: String(parsed.summary || ""),
-      };
+      for (const candidate of extractJsonCandidates(content)) {
+        try {
+          const parsed = JSON.parse(candidate);
+          return {
+            learnedPatterns: Array.isArray((parsed as any).learnedPatterns)
+              ? (parsed as any).learnedPatterns
+              : [],
+            summary: String((parsed as any).summary || ""),
+          };
+        } catch {
+          // keep trying candidates
+        }
+      }
+      return null;
     } catch (err) {
       log.warn("local LLM identity consolidation: failed to parse JSON response:", err);
       return null;

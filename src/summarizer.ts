@@ -5,6 +5,7 @@ import { log } from "./logger.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
 import { ModelRegistry } from "./model-registry.js";
+import { extractJsonCandidates } from "./json-extract.js";
 import type { HourlySummary, TranscriptEntry, PluginConfig, GatewayConfig } from "./types.js";
 import type { TranscriptManager } from "./transcript.js";
 
@@ -229,12 +230,19 @@ Respond with valid JSON matching this schema:
           { temperature: 0.2, maxTokens: contextSizes.maxOutputTokens },
         );
         if (response?.content) {
-          const jsonMatch = response.content.trim().match(/\{[\s\S]*\}/);
-          const jsonStr = jsonMatch ? jsonMatch[0] : response.content.trim();
-          const parsed = JSON.parse(jsonStr);
-          const result = HourlySummaryExtendedSchema.parse(parsed);
-          log.debug(`generated extended hourly summary for ${sessionKey} at ${hourIso} in ${Date.now() - startTime}ms (local)`);
-          return { ...result, _meta: { userTurns, assistantTurns, toolCalls, toolCounts } };
+          const content = response.content.trim();
+          for (const candidate of extractJsonCandidates(content)) {
+            try {
+              const parsed = JSON.parse(candidate);
+              const result = HourlySummaryExtendedSchema.parse(parsed);
+              log.debug(
+                `generated extended hourly summary for ${sessionKey} at ${hourIso} in ${Date.now() - startTime}ms (local)`,
+              );
+              return { ...result, _meta: { userTurns, assistantTurns, toolCalls, toolCounts } };
+            } catch {
+              // keep trying candidates
+            }
+          }
         }
       } catch (err) {
         if (!this.config.localLlmFallback) return null;
@@ -311,16 +319,17 @@ Respond with valid JSON matching this schema:
     try {
       // Parse JSON response
       const content = response.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? jsonMatch[0] : content;
-      const parsed = JSON.parse(jsonStr);
-
-      // Validate and normalize
-      const result: HourlySummaryResult = {
-        bullets: Array.isArray(parsed.bullets) ? parsed.bullets : [],
-      };
-
-      return result;
+      for (const candidate of extractJsonCandidates(content)) {
+        try {
+          const parsed = JSON.parse(candidate);
+          return {
+            bullets: Array.isArray((parsed as any).bullets) ? (parsed as any).bullets : [],
+          };
+        } catch {
+          // keep trying candidates
+        }
+      }
+      return null;
     } catch (err) {
       log.warn("local LLM summary: failed to parse JSON response:", err);
       return null;

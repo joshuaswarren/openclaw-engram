@@ -3,7 +3,10 @@ import path from "node:path";
 import type { ConversationChunk } from "./chunker.js";
 
 export function sanitizeSessionKey(sessionKey: string): string {
-  return sessionKey.toLowerCase().replace(/[^a-z0-9._-]+/g, "_").slice(0, 200);
+  const raw = typeof sessionKey === "string" && sessionKey.trim().length > 0
+    ? sessionKey
+    : "unknown-session";
+  return raw.toLowerCase().replace(/[^a-z0-9._-]+/g, "_").slice(0, 200);
 }
 
 export async function writeConversationChunks(
@@ -31,4 +34,3 @@ export async function writeConversationChunks(
   }
   return written;
 }
-

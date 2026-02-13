@@ -1,5 +1,6 @@
 import { log } from "./logger.js";
 import type { GatewayConfig, ModelProviderConfig } from "./types.js";
+import { extractJsonCandidates } from "./json-extract.js";
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -98,12 +99,16 @@ export class FallbackLlmClient {
     if (!response?.content) return null;
 
     try {
-      // Extract JSON from response
-      const content = response.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? jsonMatch[0] : content;
-      const parsed = JSON.parse(jsonStr);
-      return schema.parse(parsed);
+      const candidates = extractJsonCandidates(response.content);
+      for (const c of candidates) {
+        try {
+          const parsed = JSON.parse(c);
+          return schema.parse(parsed);
+        } catch {
+          // keep trying other candidates
+        }
+      }
+      return null;
     } catch (err) {
       log.warn("fallback LLM: failed to parse structured output:", err);
       return null;

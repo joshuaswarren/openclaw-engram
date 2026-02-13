@@ -13,10 +13,80 @@ const QMD_FALLBACK_PATHS = [
   "/opt/homebrew/bin/qmd",
 ];
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isSqliteBusyError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("database is locked") ||
+    lower.includes("sqlite_busy") ||
+    lower.includes("sqlite_busy_recovery") ||
+    lower.includes("sqliterror: database is locked")
+  );
+}
+
+function stripControlChars(s: string): string {
+  // Remove ANSI escapes and other control characters that explode logs.
+  return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/[\u0000-\u001f\u007f]/g, "");
+}
+
+function truncateForLog(s: string, max = 2000): string {
+  const cleaned = stripControlChars(s);
+  return cleaned.length > max ? cleaned.slice(0, max) + "…(truncated)" : cleaned;
+}
+
+class AsyncMutex {
+  private chain: Promise<void> = Promise.resolve();
+
+  runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+}
+
+const QMD_MUTEX = new AsyncMutex();
+
 function runQmd(
   args: string[],
   timeoutMs: number = QMD_TIMEOUT_MS,
   qmdPath: string = "qmd",
+): Promise<{ stdout: string; stderr: string }> {
+  return QMD_MUTEX.runExclusive(async () => {
+    const maxAttempts = isLikelyWriteCommand(args) ? 3 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await runQmdOnce(args, timeoutMs, qmdPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt < maxAttempts && isSqliteBusyError(msg)) {
+          // Another qmd call (or an external qmd process) currently holds the DB.
+          // Back off briefly and retry.
+          await sleep(1500 * attempt);
+          continue;
+        }
+        throw err;
+      }
+    }
+    // unreachable
+    throw new Error("qmd command failed");
+  });
+}
+
+function isLikelyWriteCommand(args: string[]): boolean {
+  const cmd = args[0] ?? "";
+  return cmd === "update" || cmd === "embed" || cmd === "cleanup" || cmd === "collection";
+}
+
+function runQmdOnce(
+  args: string[],
+  timeoutMs: number,
+  qmdPath: string,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(qmdPath, args, {
@@ -51,7 +121,7 @@ function runQmd(
       } else {
         reject(
           new Error(
-            `qmd ${args.join(" ")} failed (code ${code}): ${stderr || stdout}`,
+            `qmd ${args.join(" ")} failed (code ${code}): ${truncateForLog(stderr || stdout)}`,
           ),
         );
       }

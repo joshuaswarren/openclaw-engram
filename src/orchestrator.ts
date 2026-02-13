@@ -914,10 +914,16 @@ export class Orchestrator {
       overlapSentences: this.config.chunkingOverlapSentences,
     };
 
+    const rawEntities = Array.isArray((result as any).entities) ? (result as any).entities : [];
+    const rawQuestions = Array.isArray((result as any).questions) ? (result as any).questions : [];
+    const rawProfileUpdates = Array.isArray((result as any).profileUpdates)
+      ? (result as any).profileUpdates
+      : [];
+
     const facts = result.facts.slice(0, this.config.extractionMaxFactsPerRun);
-    const entities = result.entities.slice(0, this.config.extractionMaxEntitiesPerRun);
-    const questions = result.questions.slice(0, this.config.extractionMaxQuestionsPerRun);
-    const profileUpdates = result.profileUpdates.slice(
+    const entities = rawEntities.slice(0, this.config.extractionMaxEntitiesPerRun);
+    const questions = rawQuestions.slice(0, this.config.extractionMaxQuestionsPerRun);
+    const profileUpdates = rawProfileUpdates.slice(
       0,
       this.config.extractionMaxProfileUpdatesPerRun,
     );
@@ -936,6 +942,18 @@ export class Orchestrator {
     }
 
     for (const fact of facts) {
+      if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
+        continue;
+      }
+      if (typeof (fact as any).category !== "string" || !(fact as any).category.trim()) {
+        continue;
+      }
+      (fact as any).tags = Array.isArray((fact as any).tags)
+        ? (fact as any).tags.filter((t: any) => typeof t === "string")
+        : [];
+      (fact as any).confidence =
+        typeof (fact as any).confidence === "number" ? (fact as any).confidence : 0.7;
+
       // Score importance using local heuristics (Phase 1B)
       const importance = scoreImportance(fact.content, fact.category, fact.tags);
 
@@ -1009,7 +1027,7 @@ export class Orchestrator {
       const memoryId = await storage.writeMemory(fact.category, fact.content, {
         confidence: fact.confidence,
         tags: fact.tags,
-        entityRef: fact.entityRef,
+        entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
         source: "extraction",
         importance,
         supersedes,
@@ -1019,10 +1037,20 @@ export class Orchestrator {
     }
 
     for (const entity of entities) {
-      const safeFacts = Array.isArray((entity as any)?.facts)
-        ? (entity as any).facts.filter((f: any) => typeof f === "string")
-        : [];
-      await storage.writeEntity(entity.name, entity.type, safeFacts);
+      try {
+        const name = (entity as any)?.name;
+        const type = (entity as any)?.type;
+        if (typeof name !== "string" || !name.trim() || typeof type !== "string" || !type.trim()) {
+          continue;
+        }
+        const safeFacts = Array.isArray((entity as any)?.facts)
+          ? (entity as any).facts.filter((f: any) => typeof f === "string")
+          : [];
+        const id = await storage.writeEntity(name, type, safeFacts);
+        if (id) persistedIds.push(id);
+      } catch (err) {
+        log.warn(`persistExtraction: entity write failed: ${err}`);
+      }
     }
 
     if (profileUpdates.length > 0) {
