@@ -4,7 +4,7 @@ import path from "node:path";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 
-const QMD_TIMEOUT_MS = 5000;
+const QMD_TIMEOUT_MS = 30_000;
 const QMD_UPDATE_BACKOFF_MS = 15 * 60 * 1000; // 15m
 const QMD_EMBED_BACKOFF_MS = 60 * 60 * 1000; // 60m
 const QMD_FALLBACK_PATHS = [
@@ -57,6 +57,8 @@ function runQmd(
   timeoutMs: number = QMD_TIMEOUT_MS,
   qmdPath: string = "qmd",
 ): Promise<{ stdout: string; stderr: string }> {
+  // Serialize all qmd calls. This avoids SQLite lock contention when multiple
+  // channels/agents trigger QMD operations at nearly the same time.
   return QMD_MUTEX.runExclusive(async () => {
     const maxAttempts = isLikelyWriteCommand(args) ? 3 : 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -145,7 +147,7 @@ export class QmdClient {
     },
   ) {
     this.slowLog = opts?.slowLog;
-    this.updateTimeoutMs = opts?.updateTimeoutMs ?? 30_000;
+    this.updateTimeoutMs = opts?.updateTimeoutMs ?? 120_000;
   }
 
   private qmdPath: string = "qmd";
@@ -298,7 +300,7 @@ export class QmdClient {
     }
     try {
       const startedAtMs = Date.now();
-      await runQmd(["embed"], 60_000, this.qmdPath);
+      await runQmd(["embed"], 300_000, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD embed: durationMs=${durationMs}`);
