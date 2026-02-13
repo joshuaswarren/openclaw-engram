@@ -73,6 +73,52 @@ export function parseConfig(raw: unknown): PluginConfig {
       })).filter((r) => r.match.length > 0 && r.principal.length > 0)
     : [];
 
+  // Optional file hygiene (memory file limits / truncation risk mitigation)
+  const rawHygiene =
+    cfg.fileHygiene && typeof cfg.fileHygiene === "object" && !Array.isArray(cfg.fileHygiene)
+      ? (cfg.fileHygiene as Record<string, unknown>)
+      : undefined;
+  const hygieneEnabled = rawHygiene?.enabled === true;
+  const fileHygiene = hygieneEnabled
+    ? {
+        enabled: true,
+        lintEnabled: rawHygiene?.lintEnabled !== false,
+        lintBudgetBytes:
+          typeof rawHygiene?.lintBudgetBytes === "number" ? rawHygiene.lintBudgetBytes : 20_000,
+        lintWarnRatio:
+          typeof rawHygiene?.lintWarnRatio === "number" ? rawHygiene.lintWarnRatio : 0.8,
+        lintPaths: Array.isArray(rawHygiene?.lintPaths)
+          ? (rawHygiene!.lintPaths as string[])
+          : ["IDENTITY.md", "MEMORY.md"],
+        rotateEnabled: rawHygiene?.rotateEnabled === true,
+        rotateMaxBytes:
+          typeof rawHygiene?.rotateMaxBytes === "number" ? rawHygiene.rotateMaxBytes : 18_000,
+        rotateKeepTailChars:
+          typeof rawHygiene?.rotateKeepTailChars === "number"
+            ? rawHygiene.rotateKeepTailChars
+            : 2000,
+        rotatePaths: Array.isArray(rawHygiene?.rotatePaths)
+          ? (rawHygiene!.rotatePaths as string[])
+          : ["IDENTITY.md"],
+        archiveDir:
+          typeof rawHygiene?.archiveDir === "string" && rawHygiene.archiveDir.length > 0
+            ? (rawHygiene.archiveDir as string)
+            : ".engram-archive",
+        runMinIntervalMs:
+          typeof rawHygiene?.runMinIntervalMs === "number" ? rawHygiene.runMinIntervalMs : 5 * 60 * 1000,
+        warningsLogEnabled: rawHygiene?.warningsLogEnabled === true,
+        warningsLogPath:
+          typeof rawHygiene?.warningsLogPath === "string" && rawHygiene.warningsLogPath.length > 0
+            ? (rawHygiene.warningsLogPath as string)
+            : "hygiene/warnings.md",
+        indexEnabled: rawHygiene?.indexEnabled === true,
+        indexPath:
+          typeof rawHygiene?.indexPath === "string" && rawHygiene.indexPath.length > 0
+            ? (rawHygiene.indexPath as string)
+            : "ENGRAM_INDEX.md",
+      }
+    : undefined;
+
   return {
     openaiApiKey: apiKey,
     model,
@@ -106,6 +152,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.workspaceDir === "string" && cfg.workspaceDir.length > 0
         ? cfg.workspaceDir
         : DEFAULT_WORKSPACE_DIR,
+    fileHygiene,
     // Access tracking (Phase 1A)
     accessTrackingEnabled: cfg.accessTrackingEnabled !== false,
     accessTrackingBufferMaxSize:

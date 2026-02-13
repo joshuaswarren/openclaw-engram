@@ -383,6 +383,38 @@ Bootstrap config path override (for service environments) can be set via env var
 | `workspaceDir` | `~/.openclaw/workspace` | Workspace directory (for IDENTITY.md) |
 | `debug` | `false` | Enable debug logging |
 
+### File Hygiene (Memory File Limits / Truncation Risk)
+
+OpenClaw may bootstrap workspace markdown files (for example `IDENTITY.md`, `MEMORY.md`) into the prompt on every message.
+If those files become large, they can be silently truncated by the gateway's bootstrap budget, which causes "memory loss" without an explicit error.
+
+Engram can optionally:
+- Lint selected workspace files and warn when they are approaching a configured size budget.
+- Rotate oversized markdown files into an archive directory, replacing the original with a lean index plus a small tail excerpt for continuity.
+
+This is **off by default** because it can modify workspace files.
+
+Example config:
+
+```json
+{
+  "fileHygiene": {
+    "enabled": true,
+    "lintEnabled": true,
+    "lintPaths": ["IDENTITY.md", "MEMORY.md"],
+    "lintBudgetBytes": 20000,
+    "lintWarnRatio": 0.8,
+    "rotateEnabled": true,
+    "rotatePaths": ["IDENTITY.md"],
+    "rotateMaxBytes": 18000,
+    "rotateKeepTailChars": 2000,
+    "archiveDir": ".engram-archive",
+    "runMinIntervalMs": 300000,
+    "warningsLogEnabled": false
+  }
+}
+```
+
 ### Buffer & Trigger Settings
 
 | Setting | Default | Description |

@@ -149,11 +149,16 @@ test("v2.4 extended hourly summary parser uses Topics bullets for recall", async
   const sessionKey = "agent:test:discord:channel:123";
   const dir = path.join(memoryDir, "summaries", "hourly", sessionKey);
   await mkdir(dir, { recursive: true });
-  const fp = path.join(dir, "2026-02-11.md");
+  // Use "today" in UTC to avoid brittle time-window failures.
+  const todayUtc = new Date();
+  const yyyy = todayUtc.getUTCFullYear();
+  const mm = String(todayUtc.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(todayUtc.getUTCDate()).padStart(2, "0");
+  const fp = path.join(dir, `${yyyy}-${mm}-${dd}.md`);
   await writeFile(
     fp,
     [
-      "# Hourly Summaries — 2026-02-11",
+      `# Hourly Summaries — ${yyyy}-${mm}-${dd}`,
       "",
       `*Session: ${sessionKey}*`,
       "",

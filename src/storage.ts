@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { log } from "./logger.js";
+import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import type {
   AccessTrackingEntry,
   BufferState,
@@ -15,6 +16,7 @@ import type {
   MemorySummary,
   MetaState,
   TopicScore,
+  FileHygieneConfig,
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
 
@@ -464,6 +466,7 @@ export class StorageManager {
    * Normalize a string for fuzzy profile dedup: lowercase, strip punctuation, collapse whitespace.
    */
   private static normalizeForDedup(s: string): string {
+    if (typeof s !== "string") return "";
     return s
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, " ")
@@ -491,6 +494,8 @@ export class StorageManager {
   }
 
   async appendToProfile(updates: string[]): Promise<void> {
+    // Filter out non-string entries that the LLM may return
+    updates = updates.filter((u) => typeof u === "string" && u.trim().length > 0);
     if (updates.length === 0) return;
     const existing = await this.readProfile();
 
@@ -911,6 +916,7 @@ export class StorageManager {
   async appendToIdentity(
     workspaceDir: string,
     reflection: string,
+    opts?: { hygiene?: FileHygieneConfig },
   ): Promise<void> {
     const identityPath = path.join(workspaceDir, "IDENTITY.md");
 
@@ -921,10 +927,36 @@ export class StorageManager {
       // File doesn't exist yet
     }
 
-    // Rate-limit: skip if file is too large
-    if (existing.length > StorageManager.IDENTITY_MAX_BYTES) {
-      log.debug(`IDENTITY.md is ${existing.length} chars (limit ${StorageManager.IDENTITY_MAX_BYTES}); skipping reflection`);
-      return;
+    const hygiene = opts?.hygiene;
+    const rotateEnabled =
+      hygiene?.enabled === true &&
+      hygiene.rotateEnabled === true &&
+      Array.isArray(hygiene.rotatePaths) &&
+      hygiene.rotatePaths.includes("IDENTITY.md");
+
+    // Rotation/splitting: preserve full history, keep the bootstrap file small.
+    if (rotateEnabled) {
+      const maxBytes = hygiene.rotateMaxBytes;
+      if (existing.length > maxBytes) {
+        const archiveDir = path.join(workspaceDir, hygiene.archiveDir);
+        const { newContent } = await rotateMarkdownFileToArchive({
+          filePath: identityPath,
+          archiveDir,
+          archivePrefix: "IDENTITY",
+          keepTailChars: hygiene.rotateKeepTailChars,
+        });
+        await writeFile(identityPath, newContent, "utf-8");
+        existing = newContent;
+        log.info(
+          `rotated IDENTITY.md to archive (size=${existing.length} chars, maxBytes=${maxBytes})`,
+        );
+      }
+    } else {
+      // Legacy behavior: skip if file is too large
+      if (existing.length > StorageManager.IDENTITY_MAX_BYTES) {
+        log.debug(`IDENTITY.md is ${existing.length} chars (limit ${StorageManager.IDENTITY_MAX_BYTES}); skipping reflection`);
+        return;
+      }
     }
 
     // Rate-limit: skip if last reflection was less than 1 hour ago

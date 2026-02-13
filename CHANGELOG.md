@@ -67,6 +67,14 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Hourly summary cron auto-registration (when used) now targets `sessionTarget: "isolated"` with `payload.kind: "agentTurn"` instead of `main/toolCall` (which can be rejected by cron validation in some installs).
 
+## [2.3.0] - 2026-02-13
+
+### Added
+- Optional file hygiene (off by default):
+  - Lint selected workspace markdown files (e.g. `IDENTITY.md`, `MEMORY.md`) and warn before truncation risk.
+  - Rotate oversized markdown files into `archiveDir`, replacing the original with a lean index plus a small tail excerpt.
+  - Config: `fileHygiene.*`
+
 ## [2.2.5] - 2026-02-13
 
 ### Fixed

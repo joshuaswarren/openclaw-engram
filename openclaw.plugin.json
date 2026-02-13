@@ -94,6 +94,91 @@
         "type": "string",
         "description": "Override workspace directory path"
       },
+      "fileHygiene": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional: keep OpenClaw bootstrap workspace files small and warn before silent truncation risk.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Master switch for file hygiene (default off)."
+          },
+          "lintEnabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "If true, warn when bootstrap files approach budget."
+          },
+          "lintBudgetBytes": {
+            "type": "number",
+            "default": 20000,
+            "description": "Budget in bytes used for lint warnings (approx)."
+          },
+          "lintWarnRatio": {
+            "type": "number",
+            "default": 0.8,
+            "description": "Warn when file size >= budget * warnRatio."
+          },
+          "lintPaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["IDENTITY.md", "MEMORY.md"],
+            "description": "Workspace-relative paths to lint (or absolute paths)."
+          },
+          "rotateEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, rotate oversized markdown files into an archive and replace with a lean index."
+          },
+          "rotateMaxBytes": {
+            "type": "number",
+            "default": 18000,
+            "description": "Rotate when a target file exceeds this size (bytes)."
+          },
+          "rotateKeepTailChars": {
+            "type": "number",
+            "default": 2000,
+            "description": "How many characters of the old file to keep inline (tail) for continuity."
+          },
+          "rotatePaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["IDENTITY.md"],
+            "description": "Workspace-relative paths to rotate (or absolute paths)."
+          },
+          "archiveDir": {
+            "type": "string",
+            "default": ".engram-archive",
+            "description": "Workspace-relative archive directory where rotated files are stored."
+          },
+          "runMinIntervalMs": {
+            "type": "number",
+            "default": 300000,
+            "description": "Minimum interval between hygiene runs (ms)."
+          },
+          "warningsLogEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, append warnings to a log file under memoryDir."
+          },
+          "warningsLogPath": {
+            "type": "string",
+            "default": "hygiene/warnings.md",
+            "description": "memoryDir-relative path to write warnings to."
+          },
+          "indexEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Reserved: write an Engram index file in workspace (not required for rotation)."
+          },
+          "indexPath": {
+            "type": "string",
+            "default": "ENGRAM_INDEX.md",
+            "description": "Workspace-relative index path (if indexEnabled)."
+          }
+        },
+        "required": ["enabled"]
+      },
       "accessTrackingEnabled": {
         "type": "boolean",
         "default": true,

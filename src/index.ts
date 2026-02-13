@@ -82,6 +82,9 @@ export default {
         log.debug(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
 
         try {
+          // Optional: keep bootstrap workspace files small and warn about truncation risk.
+          await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+
           // Check for compaction and save checkpoint if needed
           // This is a placeholder - actual compaction detection depends on OpenClaw
           // For now, we'll just call recall with the sessionKey

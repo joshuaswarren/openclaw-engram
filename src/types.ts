@@ -6,6 +6,29 @@ export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "S
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
 
+export interface FileHygieneConfig {
+  enabled: boolean;
+  // Lint (warn before truncation risk)
+  lintEnabled: boolean;
+  lintBudgetBytes: number;
+  lintWarnRatio: number;
+  lintPaths: string[];
+  // Rotation/splitting
+  rotateEnabled: boolean;
+  rotateMaxBytes: number;
+  rotateKeepTailChars: number;
+  rotatePaths: string[];
+  archiveDir: string;
+  // Cadence
+  runMinIntervalMs: number;
+  // Optional warnings log (future-proofed)
+  warningsLogEnabled: boolean;
+  warningsLogPath: string;
+  // Optional index file (future-proofed)
+  indexEnabled: boolean;
+  indexPath: string;
+}
+
 export function confidenceTier(score: number): ConfidenceTier {
   if (score >= 0.95) return "explicit";
   if (score >= 0.70) return "implied";
@@ -35,6 +58,7 @@ export interface PluginConfig {
   injectQuestions: boolean;
   commitmentDecayDays: number;
   workspaceDir: string;
+  fileHygiene?: FileHygieneConfig;
   // Access tracking (Phase 1A)
   accessTrackingEnabled: boolean;
   accessTrackingBufferMaxSize: number;

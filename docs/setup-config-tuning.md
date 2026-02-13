@@ -41,6 +41,33 @@ In `openclaw.json`:
 Service env override (optional):
 - `OPENCLAW_ENGRAM_CONFIG_PATH=/absolute/path/to/openclaw.json`
 
+## 1b) File Hygiene (Avoid Silent Truncation)
+
+If your workspace bootstrap files (commonly `USER.md`, `MEMORY.md`, `IDENTITY.md`) get large, OpenClaw can silently truncate them during prompt bootstrap.
+Enable Engram's optional file hygiene to warn early and (optionally) rotate oversized files into an archive directory:
+
+```jsonc
+{
+  "fileHygiene": {
+    "enabled": true,
+    "lintEnabled": true,
+    "lintPaths": ["USER.md", "MEMORY.md", "IDENTITY.md"],
+    "lintBudgetBytes": 20000,
+    "lintWarnRatio": 0.8,
+
+    "rotateEnabled": true,
+    "rotatePaths": ["IDENTITY.md"],
+    "rotateMaxBytes": 18000,
+    "rotateKeepTailChars": 2000,
+    "archiveDir": ".engram-archive",
+
+    "runMinIntervalMs": 600000,
+    "warningsLogEnabled": true,
+    "warningsLogPath": "hygiene/warnings.md"
+  }
+}
+```
+
 ## 2) v2.4 Context Retention
 
 Recommended starting config:

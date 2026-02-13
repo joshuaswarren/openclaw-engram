@@ -1,6 +1,7 @@
 import { log } from "./logger.js";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
@@ -19,6 +20,7 @@ import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
 import { isDisagreementPrompt } from "./signal.js";
+import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -80,6 +82,7 @@ export class Orchestrator {
   private qmdMaintenanceInFlight = false;
   private lastQmdEmbedAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
+  private lastFileHygieneRunAtMs = 0;
 
   constructor(config: PluginConfig) {
     this.config = config;
@@ -181,6 +184,70 @@ export class Orchestrator {
     }
 
     log.info("orchestrator initialized");
+  }
+
+  async maybeRunFileHygiene(): Promise<void> {
+    const hygiene = this.config.fileHygiene;
+    if (!hygiene?.enabled) return;
+
+    const now = Date.now();
+    if (now - this.lastFileHygieneRunAtMs < hygiene.runMinIntervalMs) return;
+    this.lastFileHygieneRunAtMs = now;
+
+    // Rotation first (keeps bootstrap files small).
+    if (hygiene.rotateEnabled) {
+      for (const rel of hygiene.rotatePaths) {
+        const abs = path.isAbsolute(rel) ? rel : path.join(this.config.workspaceDir, rel);
+        try {
+          const raw = await readFile(abs, "utf-8");
+          if (raw.length > hygiene.rotateMaxBytes) {
+            const archiveDir = path.join(this.config.workspaceDir, hygiene.archiveDir);
+            const base = path.basename(abs);
+            const prefix =
+              base.toUpperCase().replace(/\.MD$/i, "").replace(/[^A-Z0-9]+/g, "-") || "FILE";
+            const { newContent } = await rotateMarkdownFileToArchive({
+              filePath: abs,
+              archiveDir,
+              archivePrefix: prefix,
+              keepTailChars: hygiene.rotateKeepTailChars,
+            });
+            await writeFile(abs, newContent, "utf-8");
+          }
+        } catch {
+          // ignore missing/unreadable targets
+        }
+      }
+    }
+
+    // Lint (warn before truncation risk).
+    if (hygiene.lintEnabled) {
+      const warnings = await lintWorkspaceFiles({
+        workspaceDir: this.config.workspaceDir,
+        paths: hygiene.lintPaths,
+        budgetBytes: hygiene.lintBudgetBytes,
+        warnRatio: hygiene.lintWarnRatio,
+      });
+      for (const w of warnings) {
+        log.warn(w.message);
+      }
+
+      if (hygiene.warningsLogEnabled && warnings.length > 0) {
+        const fp = path.join(this.config.memoryDir, hygiene.warningsLogPath);
+        await mkdir(path.dirname(fp), { recursive: true });
+        const stamp = new Date().toISOString();
+        const block =
+          `\n\n## ${stamp}\n\n` +
+          warnings.map((w) => `- ${w.message}`).join("\n") +
+          "\n";
+        let existing = "";
+        try {
+          existing = await readFile(fp, "utf-8");
+        } catch {
+          existing = "# Engram File Hygiene Warnings\n";
+        }
+        await writeFile(fp, existing + block, "utf-8");
+      }
+    }
   }
 
   async getStorage(namespace?: string): Promise<StorageManager> {
@@ -290,8 +357,8 @@ export class Orchestrator {
   }
 
   async recall(prompt: string, sessionKey?: string): Promise<string> {
-    // Wrap recall logic with a 30-second timeout to prevent agent hangs
-    const RECALL_TIMEOUT_MS = 30000;
+    // Wrap recall logic with a 60-second timeout to prevent agent hangs
+    const RECALL_TIMEOUT_MS = 60_000;
     return Promise.race([
       this.recallInternal(prompt, sessionKey),
       new Promise<string>((_, reject) =>
