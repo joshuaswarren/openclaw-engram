@@ -409,5 +409,18 @@ export function parseConfig(raw: unknown): PluginConfig {
     compoundingSynthesisTimeoutMs:
       typeof cfg.compoundingSynthesisTimeoutMs === "number" ? cfg.compoundingSynthesisTimeoutMs : 15_000,
     compoundingInjectEnabled: cfg.compoundingInjectEnabled !== false,
+
+    // v6.0 Fact deduplication & archival
+    factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,
+    factArchivalEnabled: cfg.factArchivalEnabled === true,
+    factArchivalAgeDays:
+      typeof cfg.factArchivalAgeDays === "number" ? cfg.factArchivalAgeDays : 90,
+    factArchivalMaxImportance:
+      typeof cfg.factArchivalMaxImportance === "number" ? cfg.factArchivalMaxImportance : 0.3,
+    factArchivalMaxAccessCount:
+      typeof cfg.factArchivalMaxAccessCount === "number" ? cfg.factArchivalMaxAccessCount : 2,
+    factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
+      ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
+      : ["commitment", "preference", "decision", "principle"],
   };
 }

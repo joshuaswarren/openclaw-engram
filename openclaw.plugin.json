@@ -758,6 +758,37 @@
         "type": "boolean",
         "default": true,
         "description": "Inject compounded mistakes/patterns into recall when compounding is enabled."
+      },
+      "factDeduplicationEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable content-hash deduplication to prevent storing semantically identical facts."
+      },
+      "factArchivalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable automatic archival of old, low-importance, rarely-accessed facts during consolidation."
+      },
+      "factArchivalAgeDays": {
+        "type": "number",
+        "default": 90,
+        "description": "Minimum age in days before a fact is eligible for archival."
+      },
+      "factArchivalMaxImportance": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Maximum importance score for archival eligibility (0-1). Only facts below this threshold are archived."
+      },
+      "factArchivalMaxAccessCount": {
+        "type": "number",
+        "default": 2,
+        "description": "Maximum access count for archival eligibility. Only rarely-accessed facts are archived."
+      },
+      "factArchivalProtectedCategories": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["commitment", "preference", "decision", "principle"],
+        "description": "Categories that protect a fact from archival regardless of other criteria."
       }
     }
   },
@@ -1054,6 +1085,34 @@
       "advanced": true,
       "placeholder": "(auto-detected from model)",
       "help": "Override context window if your LLM server uses smaller default (e.g., 32768 for LM Studio default)"
+    },
+    "factDeduplicationEnabled": {
+      "label": "Fact Deduplication",
+      "help": "Prevent storing semantically identical facts using content hashing"
+    },
+    "factArchivalEnabled": {
+      "label": "Fact Archival",
+      "help": "Automatically archive old, low-importance, rarely-accessed facts during consolidation"
+    },
+    "factArchivalAgeDays": {
+      "label": "Archival Age (days)",
+      "advanced": true,
+      "placeholder": "90"
+    },
+    "factArchivalMaxImportance": {
+      "label": "Archival Max Importance",
+      "advanced": true,
+      "placeholder": "0.3"
+    },
+    "factArchivalMaxAccessCount": {
+      "label": "Archival Max Access Count",
+      "advanced": true,
+      "placeholder": "2"
+    },
+    "factArchivalProtectedCategories": {
+      "label": "Archival Protected Categories",
+      "advanced": true,
+      "help": "Categories that are never archived regardless of age or importance"
     }
   }
 }

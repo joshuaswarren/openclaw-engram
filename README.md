@@ -101,6 +101,7 @@ All v2.2 retrieval features are **disabled by default**. Enable them only if you
 - **Heuristic query expansion** (`queryExpansionEnabled`): Runs a few deterministic, cheap expanded queries (no LLM calls) and merges results.
 - **LLM re-ranking** (`rerankEnabled`): Re-scores the top N retrieved memories using a short, timeboxed request.
   - Default mode: **local-only** (`rerankProvider: "local"`), fail-open on errors/timeouts.
+  - **Note:** If QMD is enabled (`qmdEnabled: true`), QMD's `query` command already includes built-in reranking via its bundled reranker model. Enabling `rerankEnabled` on top of QMD results in **redundant double reranking**, which adds latency for marginal quality gain. **Recommendation: keep `rerankEnabled: false` when using QMD.**
 - **Feedback loop** (`feedbackEnabled` + `memory_feedback` tool): Store thumbs up/down locally and apply it as a small ranking bias.
 - **Negative examples** (`negativeExamplesEnabled` + `memory_feedback_last_recall` tool): Track retrieved-but-not-useful memories and apply a small ranking penalty.
 - **Slow query log** (`slowLogEnabled` + `slowLogThresholdMs`): Logs durations and metadata (never content) for local LLM and QMD operations.
@@ -160,6 +161,33 @@ Optional compounding turns shared feedback into persistent learning:
 
 Details: `docs/compounding.md`
 
+### v6.0 Fact Deduplication & Archival
+
+Two features to keep the memory store lean and fast as it grows:
+
+#### Content-Hash Deduplication
+
+Prevents storing semantically identical facts. Before writing any new fact, Engram computes a normalized SHA-256 hash of the content (lowercase, strip punctuation, collapse whitespace) and checks it against a persistent index. Duplicates are silently skipped.
+
+- **Zero false positives** — exact content match only (after normalization)
+- **Persistent index** — stored as `state/fact-hashes.txt`, survives restarts
+- **Seeding** — on first enable, the index auto-loads from existing facts on disk
+- Config: `factDeduplicationEnabled` (default `true`)
+
+#### Fact Archival
+
+Automatically moves old, low-importance, rarely-accessed facts out of the hot search index into an `archive/` directory. Archived facts are still on disk but excluded from QMD queries, keeping retrieval fast.
+
+Archival runs during the periodic consolidation pass. A fact is archived when **all** of these are true:
+- Age exceeds `factArchivalAgeDays` (default 90)
+- Importance score is below `factArchivalMaxImportance` (default 0.3)
+- Access count is at or below `factArchivalMaxAccessCount` (default 2)
+- Category is not in `factArchivalProtectedCategories` (default: commitment, preference, decision, principle)
+- Status is `active` (not already superseded/archived)
+- Not a correction memory
+
+Config: `factArchivalEnabled` (default `false`), plus the threshold settings above.
+
 ## Architecture
 
 ```
@@ -179,7 +207,10 @@ Trigger check:
     else        --> Keep buffering
     |
     v
-If extracted: write markdown files to disk
+If extracted: content-hash dedup check (skip duplicates)
+    |
+    v
+Write new markdown files to disk
     |
     v
 Every Nth extraction: Consolidation pass
@@ -188,6 +219,7 @@ Every Nth extraction: Consolidation pass
     - Update entity profiles
     - Update behavioral profile (with cap enforcement)
     - Clean expired commitments and TTL memories
+    - Archive old, low-importance facts (v6.0)
     - Auto-consolidate identity reflections
     |
     v
@@ -248,6 +280,9 @@ All memories are stored as markdown files with YAML frontmatter:
 │       └── preference-1738789200000-c3d4.md
 ├── corrections/                # High-weight correction memories
 │   └── correction-1738789200000-e5f6.md
+├── archive/                    # Archived low-value facts (v6.0)
+│   └── YYYY-MM-DD/
+│       └── fact-1738789200000-a1b2.md
 ├── questions/                  # Generated curiosity questions
 │   └── q-m1abc-xy.md
 ├── threads/                    # Conversation threads (v1.2.0)
@@ -259,7 +294,8 @@ All memories are stored as markdown files with YAML frontmatter:
 └── state/
     ├── buffer.json             # Current unbatched turns (survives restarts)
     ├── meta.json               # Extraction count, timestamps, totals
-    └── topics.json             # Extracted topics (v1.2.0)
+    ├── topics.json             # Extracted topics (v1.2.0)
+    └── fact-hashes.txt         # Content-hash dedup index (v6.0)
 ```
 
 ### Memory File Format
@@ -524,6 +560,17 @@ See `docs/advanced-retrieval.md` for details and recommended safe defaults.
 | `topicExtractionEnabled` | `true` | Enable topic extraction during consolidation |
 | `topicExtractionTopN` | `50` | Number of top topics to extract |
 
+### v6.0 Deduplication & Archival Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `factDeduplicationEnabled` | `true` | Content-hash dedup prevents storing identical facts |
+| `factArchivalEnabled` | `false` | Automatically archive old, low-value facts |
+| `factArchivalAgeDays` | `90` | Minimum age (days) before a fact is eligible for archival |
+| `factArchivalMaxImportance` | `0.3` | Only archive facts with importance below this threshold |
+| `factArchivalMaxAccessCount` | `2` | Only archive facts accessed this many times or fewer |
+| `factArchivalProtectedCategories` | `["commitment", "preference", "decision", "principle"]` | Categories that are never archived |
+
 ### Trigger Modes
 
 - **`smart`** (default): Extracts immediately on high-signal turns (corrections, preferences, identity statements). Batches low-signal turns until buffer-full or time-elapsed.
@@ -657,7 +704,8 @@ Every N extractions, a consolidation pass:
 5. **Merges fragmented entity files** — entities with variant names that resolve to the same canonical form are automatically merged
 6. Cleans expired commitments (fulfilled/expired + past decay period)
 7. Removes TTL-expired speculative memories
-8. Auto-consolidates IDENTITY.md if it exceeds 8KB
+8. **Archives old, low-importance, rarely-accessed facts** (v6.0, when `factArchivalEnabled`)
+9. Auto-consolidates IDENTITY.md if it exceeds 8KB
 
 ### Entity Normalization
 

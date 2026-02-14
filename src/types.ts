@@ -215,6 +215,20 @@ export interface PluginConfig {
   compoundingSemanticEnabled: boolean;
   compoundingSynthesisTimeoutMs: number;
   compoundingInjectEnabled: boolean;
+
+  // v6.0 Fact deduplication & archival
+  /** Enable content-hash deduplication to prevent storing semantically identical facts. */
+  factDeduplicationEnabled: boolean;
+  /** Enable automatic archival of old, low-importance, rarely-accessed facts. */
+  factArchivalEnabled: boolean;
+  /** Minimum age in days before a fact is eligible for archival. */
+  factArchivalAgeDays: number;
+  /** Maximum importance score for archival eligibility (0-1). Only facts below this are archived. */
+  factArchivalMaxImportance: number;
+  /** Maximum access count for archival eligibility. Only rarely-accessed facts are archived. */
+  factArchivalMaxAccessCount: number;
+  /** Tags that protect a fact from archival regardless of other criteria. */
+  factArchivalProtectedCategories: string[];
 }
 
 export interface PrincipalRule {

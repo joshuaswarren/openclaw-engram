@@ -7,7 +7,7 @@ import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
 import { QmdClient } from "./qmd.js";
-import { StorageManager } from "./storage.js";
+import { StorageManager, ContentHashIndex } from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
@@ -63,6 +63,7 @@ export class Orchestrator {
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
   private readonly rerankCache = new RerankCache();
+  private contentHashIndex: ContentHashIndex | null = null;
 
   // Access tracking buffer (Phase 1A)
   // Maps memoryId -> {count, lastAccessed} for batched updates
@@ -145,6 +146,14 @@ export class Orchestrator {
     await this.relevance.load();
     await this.negatives.load();
     await this.lastRecall.load();
+
+    // Initialize content-hash dedup index
+    if (this.config.factDeduplicationEnabled) {
+      const stateDir = path.join(this.config.memoryDir, "state");
+      this.contentHashIndex = new ContentHashIndex(stateDir);
+      await this.contentHashIndex.load();
+      log.info(`content-hash dedup: loaded ${this.contentHashIndex.size} hashes`);
+    }
     await this.transcript.initialize();
     await this.summarizer.initialize();
     if (this.sharedContext) {
@@ -967,6 +976,7 @@ export class Orchestrator {
 
   private async persistExtraction(result: ExtractionResult, storage: StorageManager): Promise<string[]> {
     const persistedIds: string[] = [];
+    let dedupedCount = 0;
 
     // Defensive: validate result and facts array
     if (!result || !Array.isArray(result.facts)) {
@@ -1021,6 +1031,13 @@ export class Orchestrator {
       (fact as any).confidence =
         typeof (fact as any).confidence === "number" ? (fact as any).confidence : 0.7;
 
+      // Content-hash dedup check (v6.0)
+      if (this.contentHashIndex && this.contentHashIndex.has(fact.content)) {
+        log.debug(`dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`);
+        dedupedCount++;
+        continue;
+      }
+
       // Score importance using local heuristics (Phase 1B)
       const importance = scoreImportance(fact.content, fact.category, fact.tags);
 
@@ -1061,6 +1078,10 @@ export class Orchestrator {
 
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
+          // Register chunked content in hash index too
+          if (this.contentHashIndex) {
+            this.contentHashIndex.add(fact.content);
+          }
           continue; // Skip the normal write below
         }
       }
@@ -1101,6 +1122,10 @@ export class Orchestrator {
         links: links.length > 0 ? links : undefined,
       });
       persistedIds.push(memoryId);
+      // Register in content-hash index after successful write
+      if (this.contentHashIndex) {
+        this.contentHashIndex.add(fact.content);
+      }
     }
 
     for (const entity of entities) {
@@ -1138,8 +1163,16 @@ export class Orchestrator {
       }
     }
 
+    // Save content-hash index after batch
+    if (this.contentHashIndex) {
+      await this.contentHashIndex.save().catch((err) =>
+        log.warn(`content-hash index save failed: ${err}`),
+      );
+    }
+
+    const dedupSuffix = dedupedCount > 0 ? ` (${dedupedCount} deduped)` : "";
     log.info(
-      `persisted: ${facts.length} facts, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
+      `persisted: ${facts.length - dedupedCount} facts${dedupSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
     );
 
     // Return the persisted fact IDs for threading
@@ -1231,6 +1264,14 @@ export class Orchestrator {
       log.info(`cleaned ${ttlCleaned} TTL-expired memories`);
     }
 
+    // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
+    if (this.config.factArchivalEnabled) {
+      const archived = await this.runFactArchival(allMemories);
+      if (archived > 0) {
+        log.info(`archived ${archived} old low-importance facts`);
+      }
+    }
+
     // Auto-consolidate IDENTITY.md if it's getting large
     if (this.config.identityEnabled) {
       await this.autoConsolidateIdentity();
@@ -1264,6 +1305,62 @@ export class Orchestrator {
     await this.storage.saveMeta(meta);
 
     log.info("consolidation complete");
+  }
+
+  /**
+   * Archive old, low-importance, rarely-accessed facts (v6.0).
+   * Moves eligible facts from facts/ to archive/YYYY-MM-DD/.
+   * Returns the number of archived facts.
+   */
+  private async runFactArchival(allMemories: import("./types.js").MemoryFile[]): Promise<number> {
+    const now = Date.now();
+    const ageCutoffMs = this.config.factArchivalAgeDays * 24 * 60 * 60 * 1000;
+    const protectedCategories = new Set(this.config.factArchivalProtectedCategories);
+    let archivedCount = 0;
+
+    for (const memory of allMemories) {
+      const fm = memory.frontmatter;
+
+      // Skip already-archived or superseded
+      if (fm.status && fm.status !== "active") continue;
+
+      // Skip protected categories
+      if (protectedCategories.has(fm.category)) continue;
+
+      // Skip corrections (always keep)
+      if (fm.category === "correction") continue;
+
+      // Check age requirement
+      const createdMs = new Date(fm.created).getTime();
+      if (now - createdMs < ageCutoffMs) continue;
+
+      // Check importance (only archive low-importance facts)
+      const importanceScore = fm.importance?.score ?? 0.5;
+      if (importanceScore >= this.config.factArchivalMaxImportance) continue;
+
+      // Check access count
+      const accessCount = fm.accessCount ?? 0;
+      if (accessCount > this.config.factArchivalMaxAccessCount) continue;
+
+      // All criteria met — archive
+      const result = await this.storage.archiveMemory(memory);
+      if (result) {
+        // Remove from content-hash index since it's no longer in hot search
+        if (this.contentHashIndex) {
+          this.contentHashIndex.remove(memory.content);
+        }
+        archivedCount++;
+      }
+    }
+
+    // Save hash index if we removed any entries
+    if (archivedCount > 0 && this.contentHashIndex) {
+      await this.contentHashIndex.save().catch((err) =>
+        log.warn(`content-hash index save failed during archival: ${err}`),
+      );
+    }
+
+    return archivedCount;
   }
 
   /**

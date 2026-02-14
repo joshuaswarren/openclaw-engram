@@ -1,4 +1,5 @@
-import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
@@ -281,6 +282,83 @@ function levenshtein(a: string, b: string): number {
 /** Strip hyphens from a string for loose comparison */
 function dehyphenate(s: string): string {
   return s.replace(/-/g, "");
+}
+
+/**
+ * Content-hash dedup index for facts.
+ * Normalizes content (lowercase, strip punctuation, collapse whitespace),
+ * computes SHA-256, and stores hashes in a line-delimited file.
+ * Prevents writing semantically identical facts.
+ */
+export class ContentHashIndex {
+  private hashes: Set<string> = new Set();
+  private dirty = false;
+  private readonly filePath: string;
+
+  constructor(stateDir: string) {
+    this.filePath = path.join(stateDir, "fact-hashes.txt");
+  }
+
+  /** Load existing hashes from disk. Safe to call multiple times. */
+  async load(): Promise<void> {
+    try {
+      const raw = await readFile(this.filePath, "utf-8");
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          this.hashes.add(trimmed);
+        }
+      }
+      log.debug(`content-hash index: loaded ${this.hashes.size} hashes`);
+    } catch {
+      log.debug("content-hash index: no existing index — starting fresh");
+    }
+  }
+
+  /** Check if content already exists in the index. */
+  has(content: string): boolean {
+    return this.hashes.has(ContentHashIndex.computeHash(content));
+  }
+
+  /** Add content hash to the index. */
+  add(content: string): void {
+    const hash = ContentHashIndex.computeHash(content);
+    if (!this.hashes.has(hash)) {
+      this.hashes.add(hash);
+      this.dirty = true;
+    }
+  }
+
+  get size(): number {
+    return this.hashes.size;
+  }
+
+  /** Persist index to disk if changed. */
+  async save(): Promise<void> {
+    if (!this.dirty) return;
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    await writeFile(this.filePath, [...this.hashes].join("\n") + "\n", "utf-8");
+    this.dirty = false;
+    log.debug(`content-hash index: saved ${this.hashes.size} hashes`);
+  }
+
+  /** Remove a hash from the index (used when archiving/deleting). */
+  remove(content: string): void {
+    const hash = ContentHashIndex.computeHash(content);
+    if (this.hashes.delete(hash)) {
+      this.dirty = true;
+    }
+  }
+
+  /** Normalize content and compute SHA-256 hash. */
+  static computeHash(content: string): string {
+    const normalized = content
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return createHash("sha256").update(normalized).digest("hex");
+  }
 }
 
 export class StorageManager {
@@ -573,6 +651,45 @@ export class StorageManager {
     await readDir(this.factsDir);
     await readDir(this.correctionsDir);
     return memories;
+  }
+
+  private get archiveDir(): string {
+    return path.join(this.baseDir, "archive");
+  }
+
+  /**
+   * Archive a memory by moving it from facts/ to archive/YYYY-MM-DD/.
+   * Updates frontmatter with archived status before moving.
+   * Returns the new file path on success, null on failure.
+   */
+  async archiveMemory(memory: MemoryFile): Promise<string | null> {
+    try {
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10);
+      const destDir = path.join(this.archiveDir, today);
+      await mkdir(destDir, { recursive: true });
+
+      // Update frontmatter to reflect archived status
+      const updatedFm: MemoryFrontmatter = {
+        ...memory.frontmatter,
+        status: "archived",
+        archivedAt: now.toISOString(),
+        updated: now.toISOString(),
+      };
+
+      const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${memory.content}\n`;
+      const destPath = path.join(destDir, path.basename(memory.path));
+
+      // Write to archive location first, then remove original
+      await writeFile(destPath, fileContent, "utf-8");
+      await unlink(memory.path);
+
+      log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
+      return destPath;
+    } catch (err) {
+      log.warn(`failed to archive memory ${memory.frontmatter.id}: ${err}`);
+      return null;
+    }
   }
 
   async readEntities(): Promise<string[]> {
