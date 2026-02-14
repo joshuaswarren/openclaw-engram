@@ -196,14 +196,14 @@ export class QmdClient {
     const startedAtMs = Date.now();
     try {
       const { stdout } = await runQmd(
-        ["query", trimmed, "-c", col, "--json", "-n", String(n)],
+        ["search", trimmed, "-c", col, "--json", "-n", String(n)],
         QMD_TIMEOUT_MS,
         this.qmdPath,
       );
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(
-          `SLOW QMD query: durationMs=${durationMs} collection=${col} maxResults=${n} queryChars=${trimmed.length}`,
+          `SLOW QMD search: durationMs=${durationMs} collection=${col} maxResults=${n} queryChars=${trimmed.length}`,
         );
       }
 
@@ -237,14 +237,14 @@ export class QmdClient {
     const startedAtMs = Date.now();
     try {
       const { stdout } = await runQmd(
-        ["query", trimmed, "--json", "-n", String(n)],
+        ["search", trimmed, "--json", "-n", String(n)],
         QMD_TIMEOUT_MS,
         this.qmdPath,
       );
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(
-          `SLOW QMD global query: durationMs=${durationMs} maxResults=${n} queryChars=${trimmed.length}`,
+          `SLOW QMD global search: durationMs=${durationMs} maxResults=${n} queryChars=${trimmed.length}`,
         );
       }
 
