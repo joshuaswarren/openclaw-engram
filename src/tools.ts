@@ -366,6 +366,9 @@ Best for:
           },
         );
 
+        // Fire-and-forget: sync QMD index so new memory is searchable
+        orchestrator.qmd.update().then(() => orchestrator.qmd.embed()).catch(() => {});
+
         return toolResult(`Memory stored: ${id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`);
       },
     },

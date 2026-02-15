@@ -617,7 +617,7 @@ export class QmdClient {
     }
     try {
       const startedAtMs = Date.now();
-      await runQmd(["update"], this.updateTimeoutMs, this.qmdPath);
+      await runQmd(["update", "-c", this.collection], this.updateTimeoutMs, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
@@ -641,7 +641,7 @@ export class QmdClient {
     }
     try {
       const startedAtMs = Date.now();
-      await runQmd(["embed"], 300_000, this.qmdPath);
+      await runQmd(["embed", "-c", this.collection], 300_000, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD embed: durationMs=${durationMs}`);
