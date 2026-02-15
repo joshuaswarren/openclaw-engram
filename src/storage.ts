@@ -511,6 +511,9 @@ export function serializeEntityFile(entity: EntityFile): string {
 }
 
 export class StorageManager {
+  private knowledgeIndexCache: { result: string; builtAt: number } | null = null;
+  private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
+
   constructor(private readonly baseDir: string) {}
 
   private get factsDir(): string {
@@ -665,6 +668,7 @@ export class StorageManager {
     entity.updated = new Date().toISOString();
 
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    this.invalidateKnowledgeIndexCache();
     log.debug(`wrote entity ${normalized}`);
     return normalized;
   }
@@ -794,6 +798,18 @@ export class StorageManager {
     await readDir(this.factsDir);
     await readDir(this.correctionsDir);
     return memories;
+  }
+
+  /** Read a single memory file by its absolute path. Returns null if unreadable. */
+  async readMemoryByPath(filePath: string): Promise<MemoryFile | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const parsed = parseFrontmatter(raw);
+      if (!parsed) return null;
+      return { path: filePath, frontmatter: parsed.frontmatter, content: parsed.content };
+    } catch {
+      return null;
+    }
   }
 
   private get archiveDir(): string {
@@ -1269,6 +1285,7 @@ export class StorageManager {
     entity.relationships.push(rel);
     entity.updated = new Date().toISOString();
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    this.invalidateKnowledgeIndexCache();
   }
 
   /**
@@ -1296,6 +1313,7 @@ export class StorageManager {
     }
     entity.updated = new Date().toISOString();
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    this.invalidateKnowledgeIndexCache();
   }
 
   /**
@@ -1316,6 +1334,7 @@ export class StorageManager {
     entity.aliases.push(alias);
     entity.updated = new Date().toISOString();
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    this.invalidateKnowledgeIndexCache();
   }
 
   /**
@@ -1335,6 +1354,7 @@ export class StorageManager {
     entity.summary = summary;
     entity.updated = new Date().toISOString();
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    this.invalidateKnowledgeIndexCache();
   }
 
   // ---------------------------------------------------------------------------
@@ -1412,9 +1432,20 @@ export class StorageManager {
    * Build the Knowledge Index: a compact markdown table of top-scored entities.
    * Respects maxEntities and maxChars limits from config.
    */
-  async buildKnowledgeIndex(config: PluginConfig): Promise<string> {
+  async buildKnowledgeIndex(config: PluginConfig): Promise<{ result: string; cached: boolean }> {
+    // Return cached index if still fresh
+    if (
+      this.knowledgeIndexCache &&
+      Date.now() - this.knowledgeIndexCache.builtAt < StorageManager.KNOWLEDGE_INDEX_CACHE_TTL_MS
+    ) {
+      return { result: this.knowledgeIndexCache.result, cached: true };
+    }
+
     const entities = await this.readAllEntityFiles();
-    if (entities.length === 0) return "";
+    if (entities.length === 0) {
+      this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
+      return { result: "", cached: false };
+    }
 
     const now = new Date();
     const scored: ScoredEntity[] = entities.map((e) => ({
@@ -1430,7 +1461,10 @@ export class StorageManager {
     scored.sort((a, b) => b.score - a.score);
     const topN = scored.slice(0, config.knowledgeIndexMaxEntities);
 
-    if (topN.length === 0) return "";
+    if (topN.length === 0) {
+      this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
+      return { result: "", cached: false };
+    }
 
     // Build markdown table
     const header = "## Knowledge Index\n\n| Entity | Type | Summary | Connected to |\n|--------|------|---------|-------------|";
@@ -1449,8 +1483,14 @@ export class StorageManager {
       totalChars += row.length + 1;
     }
 
-    if (rows.length === 0) return "";
-    return `${header}\n${rows.join("\n")}\n`;
+    const result = rows.length === 0 ? "" : `${header}\n${rows.join("\n")}\n`;
+    this.knowledgeIndexCache = { result, builtAt: Date.now() };
+    return { result, cached: false };
+  }
+
+  /** Invalidate the Knowledge Index cache (call after entity mutations). */
+  invalidateKnowledgeIndexCache(): void {
+    this.knowledgeIndexCache = null;
   }
 
   // ---------------------------------------------------------------------------

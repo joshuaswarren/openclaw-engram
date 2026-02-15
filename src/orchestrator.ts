@@ -85,6 +85,9 @@ export class Orchestrator {
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
 
+  // Initialization gate: recall() awaits this before proceeding
+  private initPromise: Promise<void> | null = null;
+  private resolveInit: (() => void) | null = null;
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
@@ -130,6 +133,11 @@ export class Orchestrator {
       path.join(config.memoryDir, "threads"),
       config.threadingGapMinutes,
     );
+
+    // Create init gate — recall() will await this before proceeding
+    this.initPromise = new Promise<void>((resolve) => {
+      this.resolveInit = resolve;
+    });
   }
 
   async initialize(): Promise<void> {
@@ -198,6 +206,12 @@ export class Orchestrator {
     }
 
     log.info("orchestrator initialized");
+
+    // Open the init gate — any recall() calls waiting on this will proceed
+    if (this.resolveInit) {
+      this.resolveInit();
+      this.resolveInit = null;
+    }
   }
 
   async maybeRunFileHygiene(): Promise<void> {
@@ -371,6 +385,19 @@ export class Orchestrator {
   }
 
   async recall(prompt: string, sessionKey?: string): Promise<string> {
+    // Wait for initialization to complete before attempting recall.
+    // Timeout after 15s in case initialize() never fires (edge case).
+    if (this.initPromise) {
+      const INIT_GATE_TIMEOUT_MS = 15_000;
+      const gateResult = await Promise.race([
+        this.initPromise.then(() => "ok" as const),
+        new Promise<"timeout">((r) => setTimeout(() => r("timeout"), INIT_GATE_TIMEOUT_MS)),
+      ]);
+      if (gateResult === "timeout") {
+        log.warn("recall: init gate timed out — proceeding without full init");
+      }
+    }
+
     // Wrap recall logic with a 60-second timeout to prevent agent hangs
     const RECALL_TIMEOUT_MS = 60_000;
     return Promise.race([
@@ -385,6 +412,8 @@ export class Orchestrator {
   }
 
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
+    const recallStart = Date.now();
+    const timings: Record<string, string> = {};
     const sections: string[] = [];
 
     const principal = resolvePrincipal(sessionKey, this.config);
@@ -392,8 +421,12 @@ export class Orchestrator {
     const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
     const profileStorage = await this.storageRouter.storageFor(selfNamespace);
 
+    // --- Phase 1: Launch ALL independent data fetches in parallel ---
+
     // 0. Shared context (v4.0, optional)
-    if (this.sharedContext) {
+    const sharedContextPromise = (async (): Promise<string | null> => {
+      if (!this.sharedContext) return null;
+      const t0 = Date.now();
       const [priorities, roundtable] = await Promise.all([
         this.sharedContext.readPriorities(),
         this.sharedContext.readLatestRoundtable(),
@@ -411,30 +444,46 @@ export class Orchestrator {
       const max = Math.max(500, this.config.sharedContextMaxInjectChars);
       const trimmed =
         combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
-      if (trimmed.trim().length > 0) sections.push(trimmed);
-    }
+      timings.sharedCtx = `${Date.now() - t0}ms`;
+      return trimmed.trim().length > 0 ? trimmed : null;
+    })();
 
-    // 1. Profile (existing)
-    const profile = await profileStorage.readProfile();
-    if (profile) {
-      sections.push(`## User Profile\n\n${profile}`);
-    }
+    // 1. Profile
+    const profilePromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      const profile = await profileStorage.readProfile();
+      timings.profile = `${Date.now() - t0}ms`;
+      return profile || null;
+    })();
 
     // 1b. Knowledge Index (v7.0)
-    if (this.config.knowledgeIndexEnabled) {
+    const knowledgeIndexPromise = (async (): Promise<{ result: string; cached: boolean } | null> => {
+      if (!this.config.knowledgeIndexEnabled) return null;
+      const t0 = Date.now();
       try {
-        const knowledgeIndex = await this.storage.buildKnowledgeIndex(this.config);
-        if (knowledgeIndex) {
-          sections.push(knowledgeIndex);
-          log.debug(`[engram] Knowledge Index: ${knowledgeIndex.split("\n").length - 4} entities, ${knowledgeIndex.length} chars`);
-        }
+        const ki = await this.storage.buildKnowledgeIndex(this.config);
+        timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
+        return ki.result ? ki : null;
       } catch (err) {
-        log.debug(`Knowledge Index build failed: ${err}`);
+        timings.ki = `${Date.now() - t0}ms (err)`;
+        log.warn(`Knowledge Index build failed: ${err}`);
+        return null;
       }
-    }
+    })();
 
-    // 2. Memories via QMD (existing)
-    if (this.config.qmdEnabled && this.qmd.isAvailable()) {
+    // 2. QMD search (the slow part — runs in parallel with preamble)
+    type QmdPhaseResult = {
+      memoryResultsLists: QmdSearchResult[][];
+      globalResults: QmdSearchResult[];
+    } | null;
+
+    const qmdPromise = (async (): Promise<QmdPhaseResult> => {
+      if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
+        timings.qmd = "skip";
+        log.debug(`QMD skip: qmdEnabled=${this.config.qmdEnabled} ${this.qmd.debugStatus()}`);
+        return null;
+      }
+      const t0 = Date.now();
       const expandedQueries = this.config.queryExpansionEnabled
         ? expandQuery(prompt, {
             maxQueries: this.config.queryExpansionMaxQueries,
@@ -442,7 +491,6 @@ export class Orchestrator {
           })
         : [prompt];
 
-      // Run the original query at full depth, and expansions shallowly.
       const memorySearches = expandedQueries.map((q, i) =>
         this.qmd.search(
           q,
@@ -453,9 +501,38 @@ export class Orchestrator {
 
       const [memoryResultsLists, globalResults] = await Promise.all([
         Promise.all(memorySearches),
-        // Search global collections for workspace context (do not expand by default).
         this.qmd.searchGlobal(prompt, 6),
       ]);
+      timings.qmd = `${Date.now() - t0}ms`;
+      return { memoryResultsLists, globalResults };
+    })();
+
+    // --- Wait for all parallel work ---
+    const [sharedCtx, profile, kiResult, qmdResult] = await Promise.all([
+      sharedContextPromise,
+      profilePromise,
+      knowledgeIndexPromise,
+      qmdPromise,
+    ]);
+
+    // --- Phase 2: Assemble sections in correct order ---
+
+    // 0. Shared context
+    if (sharedCtx) sections.push(sharedCtx);
+
+    // 1. Profile
+    if (profile) sections.push(`## User Profile\n\n${profile}`);
+
+    // 1b. Knowledge Index
+    if (kiResult?.result) {
+      sections.push(kiResult.result);
+      log.info(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+    }
+
+    // 2. QMD results — post-process and format
+    if (qmdResult) {
+      const t0 = Date.now();
+      const { memoryResultsLists, globalResults } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
       const mergedByPath = new Map<string, QmdSearchResult>();
@@ -542,6 +619,8 @@ export class Orchestrator {
         );
       }
 
+      timings.qmdPost = `${Date.now() - t0}ms`;
+
       // If the user is pushing back ("that's not right", "why did you say that"),
       // gently suggest an explicit workflow to inspect what was recalled and record feedback.
       // IMPORTANT: this is suggestion-only; never auto-mark negatives.
@@ -558,7 +637,7 @@ export class Orchestrator {
           ].join("\n"),
         );
       }
-    } else {
+    } else if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
       // Fallback: read recent memories directly
       const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
       if (memories.length > 0) {
@@ -607,6 +686,7 @@ export class Orchestrator {
     }
 
     // 3. TRANSCRIPT INJECTION (NEW)
+    const transcriptT0 = Date.now();
     log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
     if (this.config.transcriptEnabled) {
       // Try checkpoint first (post-compaction recovery)
@@ -652,7 +732,10 @@ export class Orchestrator {
       }
     }
 
+    timings.transcript = `${Date.now() - transcriptT0}ms`;
+
     // 4. HOURLY SUMMARIES INJECTION (NEW)
+    const summariesT0 = Date.now();
     if (this.config.hourlySummariesEnabled && sessionKey) {
       const summaries = await this.summarizer.readRecent(
         sessionKey,
@@ -671,8 +754,11 @@ export class Orchestrator {
       }
     }
 
+    timings.summaries = `${Date.now() - summariesT0}ms`;
+
     // 4.5. Conversation semantic recall hook (optional, default off).
     // This searches over transcript chunk docs (ideally a separate QMD collection).
+    const convT0 = Date.now();
     if (
       this.config.conversationIndexEnabled &&
       this.config.qmdEnabled &&
@@ -713,6 +799,8 @@ export class Orchestrator {
       }
     }
 
+    timings.convRecall = `${Date.now() - convT0}ms`;
+
     // 4.75. Compounding injection (v5.0, optional)
     if (this.compounding && this.config.compoundingInjectEnabled) {
       const mistakes = await this.compounding.readMistakes();
@@ -738,6 +826,11 @@ export class Orchestrator {
         sections.push(`## Open Question\n\nSomething I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`);
       }
     }
+
+    // --- Timing summary ---
+    timings.total = `${Date.now() - recallStart}ms`;
+    const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
+    log.info(`recall: ${timingParts}`);
 
     if (sections.length === 0) return "";
 
@@ -1695,13 +1788,20 @@ export class Orchestrator {
    */
   private async boostSearchResults(
     results: QmdSearchResult[],
-    recallNamespaces: string[],
+    _recallNamespaces: string[],
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
     const now = Date.now();
-    const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
-    const memoryByPath = new Map(memories.map((m) => [m.path, m]));
+    // Only read memory files referenced in QMD results (not all 15,000+).
+    const memoryByPath = new Map<string, MemoryFile>();
+    await Promise.all(
+      results.map(async (r) => {
+        if (!r.path || memoryByPath.has(r.path)) return;
+        const mem = await this.storage.readMemoryByPath(r.path);
+        if (mem) memoryByPath.set(r.path, mem);
+      }),
+    );
 
     // Calculate boosted scores
     const boosted = results.map((r) => {

@@ -397,6 +397,11 @@ export class QmdClient {
     return this.available === true || this.daemonAvailable;
   }
 
+  /** Debug string for troubleshooting availability issues. */
+  debugStatus(): string {
+    return `cli=${this.available} daemon=${this.daemonAvailable} session=${!!this.daemonSession}`;
+  }
+
   isDaemonMode(): boolean {
     return this.daemonAvailable;
   }
