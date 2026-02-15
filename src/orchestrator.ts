@@ -526,7 +526,7 @@ export class Orchestrator {
     // 1b. Knowledge Index
     if (kiResult?.result) {
       sections.push(kiResult.result);
-      log.info(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+      log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
     }
 
     // 2. QMD results — post-process and format
@@ -830,7 +830,7 @@ export class Orchestrator {
     // --- Timing summary ---
     timings.total = `${Date.now() - recallStart}ms`;
     const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
-    log.info(`recall: ${timingParts}`);
+    log.debug(`recall: ${timingParts}`);
 
     if (sections.length === 0) return "";
 
