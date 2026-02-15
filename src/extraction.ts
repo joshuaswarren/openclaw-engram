@@ -168,7 +168,7 @@ export class ExtractionEngine {
 
     const localPrompt = `You are a memory extraction system. Extract durable, reusable memories from this conversation.
 
-Memory categories (use appropriately):
+Memory categories — use the MOST SPECIFIC category that fits:
 - fact: Objective information about the world
 - preference: User likes, dislikes, or stylistic choices
 - correction: User correcting a mistake (highest priority)
@@ -179,6 +179,8 @@ Memory categories (use appropriately):
 - commitment: Promises, obligations, deadlines
 - moment: Emotionally significant events
 - skill: Demonstrated capabilities
+
+IMPORTANT: Do NOT label everything as "fact". Use "decision" for architectural choices, "commitment" for deadlines/promises, "principle" for reusable rules, "correction" for when the user rejects a suggestion, etc.
 
 === DO NOT EXTRACT (negative examples) ===
 These are operational noise - skip them:
@@ -226,8 +228,8 @@ Also generate:
 
 Output JSON:
 {
-  "facts": [{"category": "...", "content": "...", "confidence": 0.9}],
-  "entities": [{"name": "...", "type": "..."}],
+  "facts": [{"category": "decision", "content": "Chose X over Y because...", "importance": 8, "confidence": 0.9}, {"category": "commitment", "content": "Must deliver X by date", "importance": 10, "confidence": 1.0}, {"category": "fact", "content": "X uses Y technology", "importance": 6, "confidence": 0.95}, {"category": "principle", "content": "Always do X to avoid Y", "importance": 8, "confidence": 0.9}],
+  "entities": [{"name": "...", "type": "person|company|project|tool|other"}],
   "profileUpdates": ["..."],
   "questions": [{"question": "...", "context": "..."}]
 }
