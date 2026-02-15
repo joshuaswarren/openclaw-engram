@@ -410,6 +410,15 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.compoundingSynthesisTimeoutMs === "number" ? cfg.compoundingSynthesisTimeoutMs : 15_000,
     compoundingInjectEnabled: cfg.compoundingInjectEnabled !== false,
 
+    // QMD daemon mode
+    qmdDaemonEnabled: cfg.qmdDaemonEnabled !== false,
+    qmdDaemonUrl:
+      typeof cfg.qmdDaemonUrl === "string" && cfg.qmdDaemonUrl.length > 0
+        ? cfg.qmdDaemonUrl
+        : "http://localhost:8181/mcp",
+    qmdDaemonRecheckIntervalMs:
+      typeof cfg.qmdDaemonRecheckIntervalMs === "number" ? cfg.qmdDaemonRecheckIntervalMs : 60_000,
+
     // v6.0 Fact deduplication & archival
     factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,
     factArchivalEnabled: cfg.factArchivalEnabled === true,

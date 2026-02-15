@@ -95,6 +95,8 @@ export class Orchestrator {
         thresholdMs: config.slowLogThresholdMs,
       },
       updateTimeoutMs: config.qmdUpdateTimeoutMs,
+      daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
+      daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
     });
     this.conversationQmd =
       config.conversationIndexEnabled && config.conversationIndexBackend === "qmd"
@@ -107,6 +109,8 @@ export class Orchestrator {
                 thresholdMs: config.slowLogThresholdMs,
               },
               updateTimeoutMs: config.qmdUpdateTimeoutMs,
+              daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
+              daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
             },
           )
         : undefined;
@@ -166,7 +170,8 @@ export class Orchestrator {
     if (this.config.qmdEnabled) {
       const available = await this.qmd.probe();
       if (available) {
-        log.info("QMD: available");
+        const mode = this.qmd.isDaemonMode() ? "daemon" : "subprocess";
+        log.info(`QMD: available (mode: ${mode})`);
         await this.qmd.ensureCollection(this.config.memoryDir);
       } else {
         log.warn("QMD: not available (qmd command not found)");

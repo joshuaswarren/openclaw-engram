@@ -216,6 +216,11 @@ export interface PluginConfig {
   compoundingSynthesisTimeoutMs: number;
   compoundingInjectEnabled: boolean;
 
+  // QMD daemon mode
+  qmdDaemonEnabled: boolean;
+  qmdDaemonUrl: string;
+  qmdDaemonRecheckIntervalMs: number;
+
   // v6.0 Fact deduplication & archival
   /** Enable content-hash deduplication to prevent storing semantically identical facts. */
   factDeduplicationEnabled: boolean;

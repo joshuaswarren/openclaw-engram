@@ -5,6 +5,7 @@ import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 
 const QMD_TIMEOUT_MS = 30_000;
+const QMD_DAEMON_TIMEOUT_MS = 60_000; // Longer timeout for daemon (first call may load models)
 const QMD_UPDATE_BACKOFF_MS = 15 * 60 * 1000; // 15m
 const QMD_EMBED_BACKOFF_MS = 60 * 60 * 1000; // 60m
 const QMD_FALLBACK_PATHS = [
@@ -131,6 +132,159 @@ function runQmdOnce(
   });
 }
 
+// ---------------------------------------------------------------------------
+// QMD HTTP Daemon Session (MCP over HTTP)
+// ---------------------------------------------------------------------------
+
+let nextJsonRpcId = 1;
+
+class QmdDaemonSession {
+  private sessionId: string | null = null;
+  private readonly baseUrl: string;
+
+  constructor(daemonUrl: string) {
+    // daemonUrl is the MCP endpoint, e.g. http://localhost:8181/mcp
+    // baseUrl is the root, e.g. http://localhost:8181
+    this.baseUrl = daemonUrl.replace(/\/mcp\/?$/, "");
+  }
+
+  /** Check if the daemon HTTP server is reachable. */
+  async healthCheck(): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(`${this.baseUrl}/health`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Perform MCP handshake: initialize + notifications/initialized. */
+  async initialize(): Promise<boolean> {
+    try {
+      // Step 1: initialize
+      const initRes = await this.postMcp({
+        jsonrpc: "2.0",
+        id: nextJsonRpcId++,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "openclaw-engram", version: "1.0.0" },
+        },
+      });
+
+      if (!initRes.ok) {
+        // "Server already initialized" (HTTP 400) means the daemon is running
+        // and already has an active session — treat this as success
+        if (initRes.status === 400) {
+          const body = await initRes.json().catch(() => null);
+          if (body?.error?.message?.includes("already initialized")) {
+            log.debug("QMD daemon: server already initialized, reusing");
+            // Keep or assign a placeholder session ID so isActive() returns true
+            if (!this.sessionId) {
+              this.sessionId = "reused";
+            }
+            return true;
+          }
+        }
+        log.debug(`QMD daemon: initialize returned ${initRes.status}`);
+        return false;
+      }
+
+      // Capture mcp-session-id from response headers
+      const sid = initRes.headers.get("mcp-session-id");
+      if (sid) {
+        this.sessionId = sid;
+      }
+
+      // Step 2: notifications/initialized
+      await this.postMcp({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+
+      return true;
+    } catch (err) {
+      log.debug(`QMD daemon: initialize failed: ${err}`);
+      return false;
+    }
+  }
+
+  /** Call an MCP tool and return the parsed result. */
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs: number = 30_000,
+  ): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const id = nextJsonRpcId++;
+      const res = await this.postMcp(
+        {
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: { name, arguments: args },
+        },
+        controller.signal,
+      );
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        throw new Error(`daemon tools/call ${name} returned ${res.status}`);
+      }
+
+      const body = await res.json();
+      if (body.error) {
+        throw new Error(`daemon tools/call ${name}: ${JSON.stringify(body.error)}`);
+      }
+      return body.result;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+  }
+
+  /** Clear session so the next call triggers re-initialization. */
+  invalidate(): void {
+    this.sessionId = null;
+  }
+
+  isActive(): boolean {
+    return this.sessionId !== null;
+  }
+
+  private async postMcp(
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream",
+    };
+    if (this.sessionId) {
+      headers["mcp-session-id"] = this.sessionId;
+    }
+    return fetch(`${this.baseUrl}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// QmdClient
+// ---------------------------------------------------------------------------
+
 export class QmdClient {
   private available: boolean | null = null;
   private lastUpdateFailAtMs: number | null = null;
@@ -138,21 +292,74 @@ export class QmdClient {
   private readonly updateTimeoutMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
 
+  // Daemon mode fields
+  private daemonSession: QmdDaemonSession | null = null;
+  private daemonAvailable = false;
+  private lastDaemonCheckAtMs = 0;
+  private readonly daemonRecheckIntervalMs: number;
+
   constructor(
     private readonly collection: string,
     private readonly maxResults: number,
     opts?: {
       slowLog?: { enabled: boolean; thresholdMs: number };
       updateTimeoutMs?: number;
+      daemonUrl?: string;
+      daemonRecheckIntervalMs?: number;
     },
   ) {
     this.slowLog = opts?.slowLog;
     this.updateTimeoutMs = opts?.updateTimeoutMs ?? 120_000;
+    this.daemonRecheckIntervalMs = opts?.daemonRecheckIntervalMs ?? 60_000;
+    if (opts?.daemonUrl) {
+      this.daemonSession = new QmdDaemonSession(opts.daemonUrl);
+    }
   }
 
   private qmdPath: string = "qmd";
 
   async probe(): Promise<boolean> {
+    // Try daemon first (if configured)
+    if (this.daemonSession) {
+      const daemonOk = await this.probeDaemon();
+      if (daemonOk) {
+        // Still probe CLI for update/embed (subprocess-only operations)
+        await this.probeCli();
+        return true;
+      }
+    }
+
+    // Fall back to CLI probe
+    return this.probeCli();
+  }
+
+  private async probeDaemon(): Promise<boolean> {
+    if (!this.daemonSession) return false;
+    this.lastDaemonCheckAtMs = Date.now();
+    try {
+      const healthy = await this.daemonSession.healthCheck();
+      if (!healthy) {
+        log.debug("QMD daemon: health check failed");
+        this.daemonAvailable = false;
+        return false;
+      }
+      const initialized = await this.daemonSession.initialize();
+      if (!initialized) {
+        log.debug("QMD daemon: MCP initialize failed");
+        this.daemonAvailable = false;
+        return false;
+      }
+      log.info("QMD daemon: connected");
+      this.daemonAvailable = true;
+      return true;
+    } catch (err) {
+      log.debug(`QMD daemon: probe failed: ${err}`);
+      this.daemonAvailable = false;
+      return false;
+    }
+  }
+
+  private async probeCli(): Promise<boolean> {
     // Try PATH first
     try {
       await runQmd(["--version"], 3000, "qmd");
@@ -177,8 +384,21 @@ export class QmdClient {
     }
   }
 
+  /** Re-probe daemon if it was down and recheck interval has elapsed. */
+  private async maybeProbeDaemon(): Promise<void> {
+    if (!this.daemonSession) return;
+    if (this.daemonAvailable) return;
+    const elapsed = Date.now() - this.lastDaemonCheckAtMs;
+    if (elapsed < this.daemonRecheckIntervalMs) return;
+    await this.probeDaemon();
+  }
+
   isAvailable(): boolean {
-    return this.available === true;
+    return this.available === true || this.daemonAvailable;
+  }
+
+  isDaemonMode(): boolean {
+    return this.daemonAvailable;
   }
 
   async search(
@@ -186,24 +406,149 @@ export class QmdClient {
     collection?: string,
     maxResults?: number,
   ): Promise<QmdSearchResult[]> {
-    if (this.available === false) return [];
+    if (!this.isAvailable()) return [];
     const trimmed = query.trim();
     if (!trimmed) return [];
 
     const col = collection ?? this.collection;
     const n = maxResults ?? this.maxResults;
 
+    // Try daemon first (bypasses QMD_MUTEX — daemon handles its own concurrency)
+    await this.maybeProbeDaemon();
+    if (this.daemonAvailable) {
+      const results = await this.searchViaDaemon(trimmed, col, n);
+      if (results !== null) return results;
+    }
+
+    // Subprocess fallback
+    return this.searchViaSubprocess(trimmed, col, n);
+  }
+
+  async searchGlobal(
+    query: string,
+    maxResults?: number,
+  ): Promise<QmdSearchResult[]> {
+    if (!this.isAvailable()) return [];
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    const n = maxResults ?? 6;
+
+    // Try daemon first
+    await this.maybeProbeDaemon();
+    if (this.daemonAvailable) {
+      // Global search: no collection filter
+      const results = await this.searchViaDaemon(trimmed, undefined, n);
+      if (results !== null) return results;
+    }
+
+    // Subprocess fallback
+    return this.searchGlobalViaSubprocess(trimmed, n);
+  }
+
+  private async searchViaDaemon(
+    query: string,
+    collection: string | undefined,
+    maxResults: number,
+  ): Promise<QmdSearchResult[] | null> {
+    if (!this.daemonSession || !this.daemonAvailable) return null;
+
+    const startedAtMs = Date.now();
+    try {
+      const args: Record<string, unknown> = {
+        query,
+        num_results: maxResults,
+      };
+      if (collection) {
+        args.collection = collection;
+      }
+
+      const result = await this.daemonSession.callTool("deep_search", args, QMD_DAEMON_TIMEOUT_MS);
+      const durationMs = Date.now() - startedAtMs;
+
+      if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
+        log.warn(
+          `SLOW QMD daemon query: durationMs=${durationMs} collection=${collection ?? "global"} maxResults=${maxResults} queryChars=${query.length}`,
+        );
+      }
+
+      // Parse MCP tool result — content array with structuredContent
+      const content = (result as any)?.content;
+      if (!Array.isArray(content)) return null;
+
+      const results: QmdSearchResult[] = [];
+      for (const item of content) {
+        // structuredContent contains the results
+        const structured = item?.structuredContent ?? item;
+        const docResults = structured?.results ?? structured?.documents;
+        if (Array.isArray(docResults)) {
+          for (const doc of docResults) {
+            results.push({
+              docid: typeof doc.docid === "string" ? doc.docid.replace(/^#/, "") : "",
+              path: typeof doc.file === "string" ? doc.file : (typeof doc.docid === "string" ? doc.docid.replace(/^#/, "") : "unknown"),
+              snippet: typeof doc.snippet === "string" ? doc.snippet : "",
+              score: typeof doc.score === "number" ? doc.score : 0,
+            });
+          }
+        }
+        // Also handle text content with JSON
+        if (typeof item?.text === "string") {
+          try {
+            const parsed = JSON.parse(item.text);
+            const textResults = parsed?.results ?? parsed?.documents;
+            if (Array.isArray(textResults)) {
+              for (const doc of textResults) {
+                results.push({
+                  docid: typeof doc.docid === "string" ? doc.docid.replace(/^#/, "") : "",
+                  path: typeof doc.file === "string" ? doc.file : (typeof doc.docid === "string" ? doc.docid.replace(/^#/, "") : "unknown"),
+                  snippet: typeof doc.snippet === "string" ? doc.snippet : "",
+                  score: typeof doc.score === "number" ? doc.score : 0,
+                });
+              }
+            }
+          } catch {
+            // Not JSON text, ignore
+          }
+        }
+      }
+
+      log.debug(`QMD daemon search: ${results.length} results in ${durationMs}ms`);
+      return results;
+    } catch (err) {
+      const durationMs = Date.now() - startedAtMs;
+      const errMsg = String(err);
+      // Timeout or abort: don't invalidate session — daemon is still running,
+      // just slow. Fall back to subprocess for this query only.
+      if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
+        log.debug(`QMD daemon search timed out after ${durationMs}ms, falling back to subprocess`);
+        return null;
+      }
+      // Connection error: invalidate session and mark unavailable
+      log.debug(`QMD daemon search failed after ${durationMs}ms: ${err}`);
+      this.daemonSession.invalidate();
+      this.daemonAvailable = false;
+      return null;
+    }
+  }
+
+  private async searchViaSubprocess(
+    query: string,
+    collection: string,
+    maxResults: number,
+  ): Promise<QmdSearchResult[]> {
+    if (this.available === false) return [];
+
     const startedAtMs = Date.now();
     try {
       const { stdout } = await runQmd(
-        ["query", trimmed, "-c", col, "--json", "-n", String(n)],
+        ["query", query, "-c", collection, "--json", "-n", String(maxResults)],
         QMD_TIMEOUT_MS,
         this.qmdPath,
       );
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(
-          `SLOW QMD query: durationMs=${durationMs} collection=${col} maxResults=${n} queryChars=${trimmed.length}`,
+          `SLOW QMD query: durationMs=${durationMs} collection=${collection} maxResults=${maxResults} queryChars=${query.length}`,
         );
       }
 
@@ -224,27 +569,23 @@ export class QmdClient {
     }
   }
 
-  async searchGlobal(
+  private async searchGlobalViaSubprocess(
     query: string,
-    maxResults?: number,
+    maxResults: number,
   ): Promise<QmdSearchResult[]> {
     if (this.available === false) return [];
-    const trimmed = query.trim();
-    if (!trimmed) return [];
-
-    const n = maxResults ?? 6;
 
     const startedAtMs = Date.now();
     try {
       const { stdout } = await runQmd(
-        ["query", trimmed, "--json", "-n", String(n)],
+        ["query", query, "--json", "-n", String(maxResults)],
         QMD_TIMEOUT_MS,
         this.qmdPath,
       );
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(
-          `SLOW QMD global query: durationMs=${durationMs} maxResults=${n} queryChars=${trimmed.length}`,
+          `SLOW QMD global query: durationMs=${durationMs} maxResults=${maxResults} queryChars=${query.length}`,
         );
       }
 
@@ -314,7 +655,9 @@ export class QmdClient {
   }
 
   async ensureCollection(memoryDir: string): Promise<boolean> {
-    if (this.available === false) return false;
+    if (this.available === false && !this.daemonAvailable) return false;
+    // If only daemon is available (no CLI), skip collection check
+    if (this.available === false) return true;
     try {
       const { stdout } = await runQmd(
         ["collection", "list"],

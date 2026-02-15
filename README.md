@@ -379,6 +379,27 @@ Then index:
 qmd update && qmd embed
 ```
 
+### Recommended QMD Patches (as of 2026-02-14)
+
+The following upstream QMD pull requests contain important performance and stability fixes that have not yet been merged. We recommend applying them locally to your QMD installation at `~/.bun/install/global/node_modules/qmd/`:
+
+1. **[PR #166](https://github.com/tobi/qmd/pull/166) — HTTP daemon crash fix** (fixes [#163](https://github.com/tobi/qmd/issues/163))
+   - The HTTP daemon (`qmd mcp --http --daemon`) crashes on the second MCP request due to transport reuse.
+   - **Fix**: In `src/mcp.ts`, add `sessionIdGenerator: () => crypto.randomUUID()` to the `WebStandardStreamableHTTPServerTransport` constructor.
+   - Without this fix, the daemon is unusable for sequential requests.
+
+2. **[PR #112](https://github.com/tobi/qmd/pull/112) — Model override environment variables**
+   - Adds `QMD_EMBED_MODEL`, `QMD_GENERATE_MODEL`, `QMD_RERANK_MODEL`, and `QMD_MODEL_CACHE_DIR` env vars.
+   - Allows swapping in smaller/faster models at runtime (e.g., Jina Reranker v1-tiny for 185x faster cold-start reranking).
+   - **Fix**: In `src/llm.ts`, change the `LlamaCpp` constructor to check `process.env.QMD_*` vars as fallback between config and defaults.
+
+3. **[PR #117](https://github.com/tobi/qmd/pull/117) — SQLite pathological join fix**
+   - SQLite may choose a disastrous join order for FTS queries with collection filters, making `qmd search -c <collection>` extremely slow on large indexes.
+   - **Fix**: In `src/store.ts`, change `JOIN` to `CROSS JOIN` in `searchFTS()` and move join predicates into the `WHERE` clause to preserve left-to-right evaluation order starting from the FTS MATCH.
+   - Particularly important for large collections (90K+ files like the engram memory store).
+
+Check [tobi/qmd](https://github.com/tobi/qmd) periodically — once these PRs are merged upstream, a simple `bun install -g github:tobi/qmd` will include them and these local patches can be removed.
+
 ### Restart the Gateway
 
 ```bash

@@ -789,6 +789,21 @@
         "items": { "type": "string" },
         "default": ["commitment", "preference", "decision", "principle"],
         "description": "Categories that protect a fact from archival regardless of other criteria."
+      },
+      "qmdDaemonEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Auto-detect and use QMD HTTP daemon for faster searches"
+      },
+      "qmdDaemonUrl": {
+        "type": "string",
+        "default": "http://localhost:8181/mcp",
+        "description": "QMD HTTP daemon MCP endpoint URL"
+      },
+      "qmdDaemonRecheckIntervalMs": {
+        "type": "number",
+        "default": 60000,
+        "description": "Re-probe interval when daemon is down (ms)"
       }
     }
   },

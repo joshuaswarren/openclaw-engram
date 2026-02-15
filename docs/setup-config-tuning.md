@@ -214,6 +214,9 @@ Reliability / load:
   - `qmdUpdateTimeoutMs: 90000`
   - `qmdAutoEmbedEnabled: false` (enable only when you need frequent embed refresh)
   - `qmdEmbedMinIntervalMs: 3600000`
+- QMD performance patches (as of 2026-02-14):
+  - Apply PRs [#166](https://github.com/tobi/qmd/pull/166), [#112](https://github.com/tobi/qmd/pull/112), [#117](https://github.com/tobi/qmd/pull/117) locally for daemon stability, model overrides, and FTS join fixes. See README for details.
+  - With the daemon fix (#166), `qmd mcp --http --daemon` keeps models warm — queries drop from ~13s to ~30ms.
 - Local LLM failure damping:
   - `localLlmRetry5xxCount: 1`
   - `localLlmRetryBackoffMs: 400`

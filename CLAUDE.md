@@ -95,6 +95,8 @@ grep "\[engram\]" ~/.openclaw/logs/gateway.log
 4. **Config schema strict** — new properties MUST be added to `openclaw.plugin.json` configSchema
 5. **SIGUSR1 doesn't fire gateway_start** — use `launchctl kickstart -k` for full restart
 6. **profile.md injected everywhere** — keep under 600 lines or consolidation triggers
+7. **QMD `query` is intentional** — DO NOT change from `query` to `search` or `vsearch`. The `query` command provides LLM expansion + reranking that engram relies on. Engram's own reranking was disabled because `qmd query` handles it.
+8. **QMD local patches** — PRs #166, #112, #117 are applied locally to `~/.bun/install/global/node_modules/qmd/`. These will be overwritten by `bun install -g github:tobi/qmd` — reapply if needed until merged upstream.
 
 <claude-mem-context>
 # Recent Activity
