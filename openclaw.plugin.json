@@ -804,6 +804,46 @@
         "type": "number",
         "default": 60000,
         "description": "Re-probe interval when daemon is down (ms)"
+      },
+      "knowledgeIndexEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Inject a compact Knowledge Index of top entities into every recall"
+      },
+      "knowledgeIndexMaxEntities": {
+        "type": "number",
+        "default": 40,
+        "description": "Max entities included in the Knowledge Index"
+      },
+      "knowledgeIndexMaxChars": {
+        "type": "number",
+        "default": 4000,
+        "description": "Hard character cap for the Knowledge Index section"
+      },
+      "entityRelationshipsEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Track entity-to-entity relationships during extraction"
+      },
+      "entityActivityLogEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Log timestamped activity per entity"
+      },
+      "entityActivityLogMaxEntries": {
+        "type": "number",
+        "default": 20,
+        "description": "Max activity entries per entity before oldest are pruned"
+      },
+      "entityAliasesEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Store aliases per entity file"
+      },
+      "entitySummaryEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Generate LLM summaries for entities during consolidation"
       }
     }
   },
@@ -1128,6 +1168,41 @@
       "label": "Archival Protected Categories",
       "advanced": true,
       "help": "Categories that are never archived regardless of age or importance"
+    },
+    "knowledgeIndexEnabled": {
+      "label": "Knowledge Index",
+      "help": "Inject a compact table of top entities into every recall"
+    },
+    "knowledgeIndexMaxEntities": {
+      "label": "Knowledge Index Max Entities",
+      "advanced": true,
+      "placeholder": "40"
+    },
+    "knowledgeIndexMaxChars": {
+      "label": "Knowledge Index Max Chars",
+      "advanced": true,
+      "placeholder": "4000"
+    },
+    "entityRelationshipsEnabled": {
+      "label": "Entity Relationships",
+      "help": "Track entity-to-entity relationships during extraction"
+    },
+    "entityActivityLogEnabled": {
+      "label": "Entity Activity Log",
+      "help": "Log timestamped activity per entity"
+    },
+    "entityActivityLogMaxEntries": {
+      "label": "Activity Log Max Entries",
+      "advanced": true,
+      "placeholder": "20"
+    },
+    "entityAliasesEnabled": {
+      "label": "Entity Aliases",
+      "help": "Store aliases per entity file"
+    },
+    "entitySummaryEnabled": {
+      "label": "Entity Summaries",
+      "help": "Generate LLM summaries for entities during consolidation"
     }
   }
 }

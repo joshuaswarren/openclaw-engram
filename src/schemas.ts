@@ -34,6 +34,12 @@ export const ExtractedQuestionSchema = z.object({
   priority: z.number().min(0).max(1).describe("How important/urgent this question is (0-1)"),
 });
 
+export const ExtractedRelationshipSchema = z.object({
+  source: z.string().describe("Source entity name (normalized, e.g. person-jane-doe)"),
+  target: z.string().describe("Target entity name (normalized, e.g. company-acme-corp)"),
+  label: z.string().describe("Relationship label (e.g. 'works at', 'created', 'manages')"),
+});
+
 export const ExtractionResultSchema = z.object({
   facts: z
     .array(ExtractedFactSchema)
@@ -61,6 +67,13 @@ export const ExtractionResultSchema = z.object({
     .nullable()
     .describe(
       "A brief reflection on what you learned about yourself as an agent in this interaction — patterns in your behavior, growth, things you did well or could improve.",
+    ),
+  relationships: z
+    .array(ExtractedRelationshipSchema)
+    .optional()
+    .nullable()
+    .describe(
+      "Relationships between entities discovered in this conversation. Max 5 per extraction. Format: {source, target, label}.",
     ),
 });
 

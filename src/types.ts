@@ -221,6 +221,16 @@ export interface PluginConfig {
   qmdDaemonUrl: string;
   qmdDaemonRecheckIntervalMs: number;
 
+  // v7.0 Knowledge Graph Enhancement
+  knowledgeIndexEnabled: boolean;
+  knowledgeIndexMaxEntities: number;
+  knowledgeIndexMaxChars: number;
+  entityRelationshipsEnabled: boolean;
+  entityActivityLogEnabled: boolean;
+  entityActivityLogMaxEntries: number;
+  entityAliasesEnabled: boolean;
+  entitySummaryEnabled: boolean;
+
   // v6.0 Fact deduplication & archival
   /** Enable content-hash deduplication to prevent storing semantically identical facts. */
   factDeduplicationEnabled: boolean;
@@ -406,12 +416,53 @@ export interface ExtractionResult {
   entities: EntityMention[];
   questions: ExtractedQuestion[];
   identityReflection?: string;
+  relationships?: ExtractedRelationship[];
 }
 
 export interface EntityMention {
   name: string;
   type: "person" | "project" | "tool" | "company" | "place" | "other";
   facts: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge Graph Enhancement (Entity Relationships, Activity, Scoring)
+// ---------------------------------------------------------------------------
+
+export interface EntityRelationship {
+  target: string;
+  label: string;
+}
+
+export interface EntityActivityEntry {
+  date: string;
+  note: string;
+}
+
+export interface EntityFile {
+  name: string;
+  type: string;
+  updated: string;
+  facts: string[];
+  summary?: string;
+  relationships: EntityRelationship[];
+  activity: EntityActivityEntry[];
+  aliases: string[];
+}
+
+export interface ScoredEntity {
+  name: string;
+  type: string;
+  score: number;
+  factCount: number;
+  summary?: string;
+  topRelationships: string[];
+}
+
+export interface ExtractedRelationship {
+  source: string;
+  target: string;
+  label: string;
 }
 
 export interface ConsolidationItem {

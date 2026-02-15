@@ -410,6 +410,19 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.compoundingSynthesisTimeoutMs === "number" ? cfg.compoundingSynthesisTimeoutMs : 15_000,
     compoundingInjectEnabled: cfg.compoundingInjectEnabled !== false,
 
+    // v7.0 Knowledge Graph Enhancement
+    knowledgeIndexEnabled: cfg.knowledgeIndexEnabled !== false,
+    knowledgeIndexMaxEntities:
+      typeof cfg.knowledgeIndexMaxEntities === "number" ? cfg.knowledgeIndexMaxEntities : 40,
+    knowledgeIndexMaxChars:
+      typeof cfg.knowledgeIndexMaxChars === "number" ? cfg.knowledgeIndexMaxChars : 4000,
+    entityRelationshipsEnabled: cfg.entityRelationshipsEnabled !== false,
+    entityActivityLogEnabled: cfg.entityActivityLogEnabled !== false,
+    entityActivityLogMaxEntries:
+      typeof cfg.entityActivityLogMaxEntries === "number" ? cfg.entityActivityLogMaxEntries : 20,
+    entityAliasesEnabled: cfg.entityAliasesEnabled !== false,
+    entitySummaryEnabled: cfg.entitySummaryEnabled !== false,
+
     // QMD daemon mode
     qmdDaemonEnabled: cfg.qmdDaemonEnabled !== false,
     qmdDaemonUrl:

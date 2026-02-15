@@ -225,13 +225,15 @@ These are durable insights - capture them:
 Also generate:
 1. 1-3 genuine questions you're curious about from this conversation
 2. Profile updates about user patterns/behaviors (if any)
+3. Relationships between entities (max 5). Use normalized names like "person-jane-doe", "company-acme-corp".
 
 Output JSON:
 {
   "facts": [{"category": "decision", "content": "Chose X over Y because...", "importance": 8, "confidence": 0.9}, {"category": "commitment", "content": "Must deliver X by date", "importance": 10, "confidence": 1.0}, {"category": "fact", "content": "X uses Y technology", "importance": 6, "confidence": 0.95}, {"category": "principle", "content": "Always do X to avoid Y", "importance": 8, "confidence": 0.9}],
   "entities": [{"name": "...", "type": "person|company|project|tool|other"}],
   "profileUpdates": ["..."],
-  "questions": [{"question": "...", "context": "..."}]
+  "questions": [{"question": "...", "context": "..."}],
+  "relationships": [{"source": "person-jane-doe", "target": "company-acme-corp", "label": "works at"}]
 }
 
 Conversation:
@@ -285,6 +287,11 @@ ${truncatedConversation}`;
               : [],
             questions: Array.isArray((parsed as any).questions) ? (parsed as any).questions : [],
             identityReflection: (parsed as any).identityReflection ?? undefined,
+            relationships: Array.isArray((parsed as any).relationships)
+              ? (parsed as any).relationships.filter(
+                  (r: any) => typeof r?.source === "string" && typeof r?.target === "string" && typeof r?.label === "string",
+                )
+              : undefined,
           };
 
           log.debug(
@@ -424,6 +431,12 @@ ${existingEntities.join(", ")}
 
 When you see something that matches a known entity, use THAT name exactly. Only create a NEW entity if nothing in this list represents it.
 ` : ""}
+Also extract relationships between entities mentioned in the conversation.
+- Format: {source: "entity-name", target: "entity-name", label: "relationship description"}
+- Max 5 relationships per extraction
+- Only include clear, durable relationships (e.g., "works at", "created", "manages", "uses")
+- Use normalized entity names (e.g., "person-jane-doe", "company-acme-corp")
+
 Also generate 1-3 genuine questions you're curious about based on this conversation. These should be things you'd actually want answers to in future sessions — not prompts, but real curiosity.
 
 Finally, write a brief identity reflection about the AGENT who had this conversation (not about you, the extraction system). Based on what the agent said and did in the conversation:

@@ -7,6 +7,9 @@ import type {
   AccessTrackingEntry,
   BufferState,
   ConfidenceTier,
+  EntityActivityEntry,
+  EntityFile,
+  EntityRelationship,
   ImportanceLevel,
   ImportanceScore,
   MemoryCategory,
@@ -16,6 +19,8 @@ import type {
   MemoryStatus,
   MemorySummary,
   MetaState,
+  PluginConfig,
+  ScoredEntity,
   TopicScore,
   FileHygieneConfig,
 } from "./types.js";
@@ -361,6 +366,150 @@ export class ContentHashIndex {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Entity file parsing / serialization (Knowledge Graph v7.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an entity markdown file into a structured EntityFile.
+ * Backward compatible: old files without new sections get empty arrays.
+ */
+export function parseEntityFile(content: string): EntityFile {
+  const lines = content.split("\n");
+
+  // Header
+  let name = "";
+  let type = "other";
+  let updated = "";
+  let summary: string | undefined;
+  const facts: string[] = [];
+  const relationships: EntityRelationship[] = [];
+  const activity: EntityActivityEntry[] = [];
+  const aliases: string[] = [];
+
+  // Parse name from first heading
+  const headingLine = lines.find((l) => l.startsWith("# "));
+  if (headingLine) name = headingLine.slice(2).trim();
+
+  // Parse type
+  const typeLine = lines.find((l) => l.startsWith("**Type:**"));
+  if (typeLine) type = typeLine.replace("**Type:**", "").trim();
+
+  // Parse updated
+  const updatedLine = lines.find((l) => l.startsWith("**Updated:**"));
+  if (updatedLine) updated = updatedLine.replace("**Updated:**", "").trim();
+
+  // Detect which section we're in
+  let section = "";
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      section = line.slice(3).trim().toLowerCase();
+      continue;
+    }
+    if (!line.startsWith("- ")) continue;
+
+    const bullet = line.slice(2).trim();
+    if (!bullet) continue;
+
+    switch (section) {
+      case "facts":
+        facts.push(bullet);
+        break;
+      case "summary":
+        // Summary is typically a single line after the heading, not a bullet
+        break;
+      case "connected to": {
+        // Format: [[target-entity]] — relationship label
+        const relMatch = bullet.match(/^\[\[([^\]]+)\]\]\s*[—–-]\s*(.+)$/);
+        if (relMatch) {
+          relationships.push({ target: relMatch[1].trim(), label: relMatch[2].trim() });
+        }
+        break;
+      }
+      case "activity": {
+        // Format: YYYY-MM-DD: note
+        const actMatch = bullet.match(/^(\d{4}-\d{2}-\d{2}):\s*(.+)$/);
+        if (actMatch) {
+          activity.push({ date: actMatch[1], note: actMatch[2].trim() });
+        }
+        break;
+      }
+      case "aliases":
+        aliases.push(bullet);
+        break;
+    }
+  }
+
+  // Parse summary: text between ## Summary heading and next ## heading (not bulleted)
+  const summaryIdx = lines.findIndex((l) => l.startsWith("## Summary"));
+  if (summaryIdx !== -1) {
+    const summaryLines: string[] = [];
+    for (let i = summaryIdx + 1; i < lines.length; i++) {
+      if (lines[i].startsWith("## ")) break;
+      const trimmed = lines[i].trim();
+      if (trimmed) summaryLines.push(trimmed);
+    }
+    if (summaryLines.length > 0) summary = summaryLines.join(" ");
+  }
+
+  return { name, type, updated, facts, summary, relationships, activity, aliases };
+}
+
+/**
+ * Serialize an EntityFile back to markdown.
+ * Only emits sections that have content (except Facts which is always emitted).
+ */
+export function serializeEntityFile(entity: EntityFile): string {
+  const lines: string[] = [
+    `# ${entity.name}`,
+    "",
+    `**Type:** ${entity.type}`,
+    `**Updated:** ${entity.updated || new Date().toISOString()}`,
+    "",
+  ];
+
+  // Summary (optional)
+  if (entity.summary) {
+    lines.push("## Summary", "", entity.summary, "");
+  }
+
+  // Facts (always emitted)
+  lines.push("## Facts", "");
+  for (const f of entity.facts) {
+    lines.push(`- ${f}`);
+  }
+  lines.push("");
+
+  // Connected to (optional)
+  if (entity.relationships.length > 0) {
+    lines.push("## Connected to", "");
+    for (const rel of entity.relationships) {
+      lines.push(`- [[${rel.target}]] — ${rel.label}`);
+    }
+    lines.push("");
+  }
+
+  // Activity (optional)
+  if (entity.activity.length > 0) {
+    lines.push("## Activity", "");
+    for (const act of entity.activity) {
+      lines.push(`- ${act.date}: ${act.note}`);
+    }
+    lines.push("");
+  }
+
+  // Aliases (optional)
+  if (entity.aliases.length > 0) {
+    lines.push("## Aliases", "");
+    for (const alias of entity.aliases) {
+      lines.push(`- ${alias}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 export class StorageManager {
   constructor(private readonly baseDir: string) {}
 
@@ -497,31 +646,25 @@ export class StorageManager {
 
     const filePath = path.join(this.entitiesDir, `${normalized}.md`);
 
-    let existingFacts: string[] = [];
+    // Parse existing file to preserve relationships/activity/aliases/summary
+    let entity: EntityFile = {
+      name, type, updated: new Date().toISOString(),
+      facts: [], summary: undefined, relationships: [], activity: [], aliases: [],
+    };
     try {
       const existing = await readFile(filePath, "utf-8");
-      const lines = existing.split("\n");
-      existingFacts = lines
-        .filter((l) => l.startsWith("- "))
-        .map((l) => l.slice(2).trim());
+      entity = parseEntityFile(existing);
     } catch {
       // File doesn't exist yet
     }
 
-    const allFacts = [...new Set([...existingFacts, ...safeFacts])];
-    const content = [
-      `# ${name}`,
-      "",
-      `**Type:** ${type}`,
-      `**Updated:** ${new Date().toISOString()}`,
-      "",
-      "## Facts",
-      "",
-      ...allFacts.map((f) => `- ${f}`),
-      "",
-    ].join("\n");
+    // Merge facts (dedup)
+    entity.facts = [...new Set([...entity.facts, ...safeFacts])];
+    entity.name = name;
+    entity.type = type;
+    entity.updated = new Date().toISOString();
 
-    await writeFile(filePath, content, "utf-8");
+    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
     log.debug(`wrote entity ${normalized}`);
     return normalized;
   }
@@ -1099,6 +1242,218 @@ export class StorageManager {
   }
 
   // ---------------------------------------------------------------------------
+  // Entity mutation helpers (Knowledge Graph v7.0)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Add a relationship to an entity file.
+   * Deduplicates by target+label.
+   */
+  async addEntityRelationship(name: string, rel: EntityRelationship): Promise<void> {
+    const filePath = path.join(this.entitiesDir, `${name}.md`);
+    let entity: EntityFile;
+    try {
+      const content = await readFile(filePath, "utf-8");
+      entity = parseEntityFile(content);
+    } catch {
+      log.debug(`addEntityRelationship: entity file ${name}.md not found`);
+      return;
+    }
+
+    // Dedupe by target+label
+    const exists = entity.relationships.some(
+      (r) => r.target === rel.target && r.label === rel.label,
+    );
+    if (exists) return;
+
+    entity.relationships.push(rel);
+    entity.updated = new Date().toISOString();
+    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+  }
+
+  /**
+   * Add an activity entry to an entity file.
+   * Prepends to the beginning, prunes oldest entries beyond maxEntries.
+   */
+  async addEntityActivity(
+    name: string,
+    entry: EntityActivityEntry,
+    maxEntries: number,
+  ): Promise<void> {
+    const filePath = path.join(this.entitiesDir, `${name}.md`);
+    let entity: EntityFile;
+    try {
+      const content = await readFile(filePath, "utf-8");
+      entity = parseEntityFile(content);
+    } catch {
+      log.debug(`addEntityActivity: entity file ${name}.md not found`);
+      return;
+    }
+
+    entity.activity.unshift(entry);
+    if (entity.activity.length > maxEntries) {
+      entity.activity = entity.activity.slice(0, maxEntries);
+    }
+    entity.updated = new Date().toISOString();
+    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+  }
+
+  /**
+   * Add an alias to an entity file. Deduplicates.
+   */
+  async addEntityAlias(name: string, alias: string): Promise<void> {
+    const filePath = path.join(this.entitiesDir, `${name}.md`);
+    let entity: EntityFile;
+    try {
+      const content = await readFile(filePath, "utf-8");
+      entity = parseEntityFile(content);
+    } catch {
+      log.debug(`addEntityAlias: entity file ${name}.md not found`);
+      return;
+    }
+
+    if (entity.aliases.includes(alias)) return;
+    entity.aliases.push(alias);
+    entity.updated = new Date().toISOString();
+    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+  }
+
+  /**
+   * Set or update the summary of an entity file.
+   */
+  async updateEntitySummary(name: string, summary: string): Promise<void> {
+    const filePath = path.join(this.entitiesDir, `${name}.md`);
+    let entity: EntityFile;
+    try {
+      const content = await readFile(filePath, "utf-8");
+      entity = parseEntityFile(content);
+    } catch {
+      log.debug(`updateEntitySummary: entity file ${name}.md not found`);
+      return;
+    }
+
+    entity.summary = summary;
+    entity.updated = new Date().toISOString();
+    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scoring + Knowledge Index (Knowledge Graph v7.0)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Read all entity files and return lightweight EntityFile objects.
+   * Parsing is fast (~50-100ms for ~1,800 files) since entity files are small.
+   */
+  async readAllEntityFiles(): Promise<EntityFile[]> {
+    const entities: EntityFile[] = [];
+    try {
+      const entries = await readdir(this.entitiesDir);
+      for (const entry of entries) {
+        if (!entry.endsWith(".md")) continue;
+        try {
+          const content = await readFile(
+            path.join(this.entitiesDir, entry),
+            "utf-8",
+          );
+          entities.push(parseEntityFile(content));
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    } catch {
+      // Directory doesn't exist yet
+    }
+    return entities;
+  }
+
+  /**
+   * Score an entity based on recency, frequency, activity, type priority,
+   * and relationship density.
+   *
+   * score = recency*0.40 + frequency*0.25 + activity*0.15 + typePriority*0.10 + relationshipDensity*0.10
+   */
+  static scoreEntity(entity: EntityFile, now: Date): number {
+    // Recency: 1 / (1 + daysSince/7) — 7-day half-life
+    const updated = entity.updated ? new Date(entity.updated).getTime() : 0;
+    const daysSince = Math.max(0, (now.getTime() - updated) / (1000 * 60 * 60 * 24));
+    const recency = 1 / (1 + daysSince / 7);
+
+    // Frequency: min(facts.length / 20, 1.0)
+    const frequency = Math.min(entity.facts.length / 20, 1.0);
+
+    // Activity: min(activity.length / 10, 1.0)
+    const activityScore = Math.min(entity.activity.length / 10, 1.0);
+
+    // Type priority
+    const TYPE_PRIORITY: Record<string, number> = {
+      person: 1.0,
+      project: 0.8,
+      company: 0.7,
+      tool: 0.6,
+      place: 0.5,
+      other: 0.3,
+    };
+    const typePriority = TYPE_PRIORITY[entity.type.toLowerCase()] ?? 0.3;
+
+    // Relationship density: min(relationships.length / 8, 1.0)
+    const relDensity = Math.min(entity.relationships.length / 8, 1.0);
+
+    return (
+      recency * 0.40 +
+      frequency * 0.25 +
+      activityScore * 0.15 +
+      typePriority * 0.10 +
+      relDensity * 0.10
+    );
+  }
+
+  /**
+   * Build the Knowledge Index: a compact markdown table of top-scored entities.
+   * Respects maxEntities and maxChars limits from config.
+   */
+  async buildKnowledgeIndex(config: PluginConfig): Promise<string> {
+    const entities = await this.readAllEntityFiles();
+    if (entities.length === 0) return "";
+
+    const now = new Date();
+    const scored: ScoredEntity[] = entities.map((e) => ({
+      name: e.name,
+      type: e.type,
+      score: StorageManager.scoreEntity(e, now),
+      factCount: e.facts.length,
+      summary: e.summary,
+      topRelationships: e.relationships.slice(0, 3).map((r) => r.target),
+    }));
+
+    // Sort by score descending, take top N
+    scored.sort((a, b) => b.score - a.score);
+    const topN = scored.slice(0, config.knowledgeIndexMaxEntities);
+
+    if (topN.length === 0) return "";
+
+    // Build markdown table
+    const header = "## Knowledge Index\n\n| Entity | Type | Summary | Connected to |\n|--------|------|---------|-------------|";
+    const rows: string[] = [];
+    let totalChars = header.length;
+
+    for (const entity of topN) {
+      const summary = entity.summary || `${entity.factCount} facts`;
+      const connected = entity.topRelationships.length > 0
+        ? entity.topRelationships.join(", ")
+        : "—";
+      const row = `| ${entity.name} | ${entity.type} | ${summary} | ${connected} |`;
+
+      if (totalChars + row.length + 1 > config.knowledgeIndexMaxChars) break;
+      rows.push(row);
+      totalChars += row.length + 1;
+    }
+
+    if (rows.length === 0) return "";
+    return `${header}\n${rows.join("\n")}\n`;
+  }
+
+  // ---------------------------------------------------------------------------
   // Commitment decay
   // ---------------------------------------------------------------------------
 
@@ -1107,6 +1462,7 @@ export class StorageManager {
 
   /**
    * Merge fragmented entity files that resolve to the same canonical name.
+   * Preserves relationships, activity, aliases, and summary from all fragments.
    * Returns count of files merged.
    */
   async mergeFragmentedEntities(): Promise<number> {
@@ -1134,64 +1490,96 @@ export class StorageManager {
       for (const [canonical, files] of groups) {
         if (files.length <= 1) continue;
 
-        // Collect all facts from all files
-        const allFacts: string[] = [];
-        let bestType = "";
-        let latestUpdate = "";
+        // Parse all files and merge into a single EntityFile
+        const mergedEntity: EntityFile = {
+          name: "",
+          type: "other",
+          updated: "",
+          facts: [],
+          summary: undefined,
+          relationships: [],
+          activity: [],
+          aliases: [],
+        };
 
         for (const file of files) {
           const filePath = path.join(this.entitiesDir, file);
           try {
             const content = await readFile(filePath, "utf-8");
-            const lines = content.split("\n");
+            const parsed = parseEntityFile(content);
 
-            // Extract type
-            const typeLine = lines.find((l) => l.startsWith("**Type:**"));
-            if (typeLine) {
-              const t = typeLine.replace("**Type:**", "").trim();
-              // Prefer "company" or "project" or "person" over "other"
-              if (!bestType || bestType === "other") bestType = t;
+            // Prefer specific types over "other"
+            if (!mergedEntity.type || mergedEntity.type === "other") {
+              mergedEntity.type = parsed.type;
             }
 
-            // Extract update time
-            const updatedLine = lines.find((l) => l.startsWith("**Updated:**"));
-            if (updatedLine) {
-              const u = updatedLine.replace("**Updated:**", "").trim();
-              if (!latestUpdate || u > latestUpdate) latestUpdate = u;
+            // Keep latest update time
+            if (!mergedEntity.updated || parsed.updated > mergedEntity.updated) {
+              mergedEntity.updated = parsed.updated;
             }
 
-            // Extract facts
-            const facts = lines
-              .filter((l) => l.startsWith("- "))
-              .map((l) => l.slice(2).trim());
-            allFacts.push(...facts);
+            // Keep longest/best name
+            if (parsed.name.length > mergedEntity.name.length) {
+              mergedEntity.name = parsed.name;
+            }
+
+            // Keep first non-empty summary
+            if (!mergedEntity.summary && parsed.summary) {
+              mergedEntity.summary = parsed.summary;
+            }
+
+            // Collect all facts
+            mergedEntity.facts.push(...parsed.facts);
+
+            // Collect relationships (dedup later)
+            mergedEntity.relationships.push(...parsed.relationships);
+
+            // Collect activity entries
+            mergedEntity.activity.push(...parsed.activity);
+
+            // Collect aliases
+            mergedEntity.aliases.push(...parsed.aliases);
           } catch {
             // Skip unreadable
           }
         }
 
         // Deduplicate facts
-        const uniqueFacts = [...new Set(allFacts)];
+        mergedEntity.facts = [...new Set(mergedEntity.facts)];
 
-        // Extract readable name from canonical (strip type prefix)
-        const dashIdx = canonical.indexOf("-");
-        const readableName = dashIdx !== -1 ? canonical.slice(dashIdx + 1) : canonical;
+        // Deduplicate relationships by target+label
+        const relKeys = new Set<string>();
+        mergedEntity.relationships = mergedEntity.relationships.filter((r) => {
+          const key = `${r.target}::${r.label}`;
+          if (relKeys.has(key)) return false;
+          relKeys.add(key);
+          return true;
+        });
 
-        // Write merged file
-        const content = [
-          `# ${readableName}`,
-          "",
-          `**Type:** ${bestType || "other"}`,
-          `**Updated:** ${latestUpdate || new Date().toISOString()}`,
-          "",
-          "## Facts",
-          "",
-          ...uniqueFacts.map((f) => `- ${f}`),
-          "",
-        ].join("\n");
+        // Sort activity by date descending, deduplicate by date+note
+        const actKeys = new Set<string>();
+        mergedEntity.activity = mergedEntity.activity
+          .filter((a) => {
+            const key = `${a.date}::${a.note}`;
+            if (actKeys.has(key)) return false;
+            actKeys.add(key);
+            return true;
+          })
+          .sort((a, b) => b.date.localeCompare(a.date));
+
+        // Deduplicate aliases
+        mergedEntity.aliases = [...new Set(mergedEntity.aliases)];
+
+        // Fallback name from canonical
+        if (!mergedEntity.name) {
+          const dashIdx = canonical.indexOf("-");
+          mergedEntity.name = dashIdx !== -1 ? canonical.slice(dashIdx + 1) : canonical;
+        }
+
+        mergedEntity.updated = mergedEntity.updated || new Date().toISOString();
 
         const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);
-        await writeFile(canonicalPath, content, "utf-8");
+        await writeFile(canonicalPath, serializeEntityFile(mergedEntity), "utf-8");
 
         // Remove non-canonical files
         for (const file of files) {

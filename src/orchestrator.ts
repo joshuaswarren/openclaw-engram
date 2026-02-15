@@ -7,7 +7,7 @@ import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
 import { QmdClient } from "./qmd.js";
-import { StorageManager, ContentHashIndex } from "./storage.js";
+import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
@@ -418,6 +418,19 @@ export class Orchestrator {
     const profile = await profileStorage.readProfile();
     if (profile) {
       sections.push(`## User Profile\n\n${profile}`);
+    }
+
+    // 1b. Knowledge Index (v7.0)
+    if (this.config.knowledgeIndexEnabled) {
+      try {
+        const knowledgeIndex = await this.storage.buildKnowledgeIndex(this.config);
+        if (knowledgeIndex) {
+          sections.push(knowledgeIndex);
+          log.debug(`[engram] Knowledge Index: ${knowledgeIndex.split("\n").length - 4} entities, ${knowledgeIndex.length} chars`);
+        }
+      } catch (err) {
+        log.debug(`Knowledge Index build failed: ${err}`);
+      }
     }
 
     // 2. Memories via QMD (existing)
@@ -1150,6 +1163,40 @@ export class Orchestrator {
       }
     }
 
+    // Persist entity relationships (v7.0)
+    if (this.config.entityRelationshipsEnabled && Array.isArray(result.relationships)) {
+      for (const rel of result.relationships.slice(0, 5)) {
+        if (!rel.source || !rel.target || !rel.label) continue;
+        try {
+          // Add bidirectional relationship
+          await storage.addEntityRelationship(rel.source, { target: rel.target, label: rel.label });
+          await storage.addEntityRelationship(rel.target, { target: rel.source, label: `${rel.label} (reverse)` });
+        } catch (err) {
+          log.debug(`relationship persist failed: ${err}`);
+        }
+      }
+    }
+
+    // Persist entity activity (v7.0)
+    if (this.config.entityActivityLogEnabled) {
+      const today = new Date().toISOString().slice(0, 10);
+      for (const entity of entities) {
+        const name = (entity as any)?.name;
+        const type = (entity as any)?.type;
+        if (typeof name !== "string" || typeof type !== "string") continue;
+        try {
+          const normalized = normalizeEntityName(name, type);
+          await storage.addEntityActivity(
+            normalized,
+            { date: today, note: "Mentioned in conversation" },
+            this.config.entityActivityLogMaxEntries,
+          );
+        } catch (err) {
+          log.debug(`activity persist failed: ${err}`);
+        }
+      }
+    }
+
     if (profileUpdates.length > 0) {
       await storage.appendToProfile(profileUpdates);
     }
@@ -1255,6 +1302,46 @@ export class Orchestrator {
     const entitiesMerged = await this.storage.mergeFragmentedEntities();
     if (entitiesMerged > 0) {
       log.info(`merged ${entitiesMerged} fragmented entity files`);
+    }
+
+    // Generate entity summaries (v7.0)
+    if (this.config.entitySummaryEnabled) {
+      try {
+        const entityFiles = await this.storage.readAllEntityFiles();
+        const needsSummary = entityFiles.filter(
+          (e) => e.facts.length > 5 && !e.summary,
+        );
+        const toSummarize = needsSummary.slice(0, 5);
+        let summarized = 0;
+        for (const entity of toSummarize) {
+          try {
+            const factsText = entity.facts.slice(0, 10).join("; ");
+            const prompt = `Summarize this entity in one sentence. Entity: ${entity.name} (${entity.type}). Facts: ${factsText}`;
+            const response = await this.localLlm.chatCompletion(
+              [
+                { role: "system", content: "Respond with a single concise sentence summarizing the entity. No JSON, just plain text." },
+                { role: "user", content: prompt },
+              ],
+              { temperature: 0.3, maxTokens: 100 },
+            );
+            if (response?.content) {
+              const summary = response.content.trim().replace(/^["']|["']$/g, "");
+              if (summary.length > 10 && summary.length < 500) {
+                const entityFileName = normalizeEntityName(entity.name, entity.type);
+                await this.storage.updateEntitySummary(entityFileName, summary);
+                summarized++;
+              }
+            }
+          } catch (err) {
+            log.debug(`entity summary generation failed for ${entity.name}: ${err}`);
+          }
+        }
+        if (summarized > 0) {
+          log.info(`generated ${summarized} entity summaries`);
+        }
+      } catch (err) {
+        log.debug(`entity summary pass failed: ${err}`);
+      }
     }
 
     // Clean expired commitments
