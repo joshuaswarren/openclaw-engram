@@ -484,27 +484,18 @@ export class Orchestrator {
         return null;
       }
       const t0 = Date.now();
-      const expandedQueries = this.config.queryExpansionEnabled
-        ? expandQuery(prompt, {
-            maxQueries: this.config.queryExpansionMaxQueries,
-            minTokenLen: this.config.queryExpansionMinTokenLen,
-          })
-        : [prompt];
 
-      const memorySearches = expandedQueries.map((q, i) =>
-        this.qmd.search(
-          q,
-          undefined,
-          i === 0 ? this.config.qmdMaxResults : Math.max(3, Math.floor(this.config.qmdMaxResults / 2)),
-        ),
+      // Hybrid search: parallel BM25 + vector, merged by path.
+      // Much faster than `qmd query` (LLM expansion + reranking) which
+      // takes 30-70s and causes recall timeouts.
+      const memoryResults = await this.qmd.hybridSearch(
+        prompt,
+        undefined,
+        this.config.qmdMaxResults,
       );
 
-      const [memoryResultsLists, globalResults] = await Promise.all([
-        Promise.all(memorySearches),
-        this.qmd.searchGlobal(prompt, 6),
-      ]);
       timings.qmd = `${Date.now() - t0}ms`;
-      return { memoryResultsLists, globalResults };
+      return { memoryResultsLists: [memoryResults], globalResults: [] };
     })();
 
     // --- Wait for all parallel work ---

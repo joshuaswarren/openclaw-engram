@@ -451,6 +451,118 @@ export class QmdClient {
     return this.searchGlobalViaSubprocess(trimmed, n);
   }
 
+  /**
+   * BM25 keyword search (fast, ~0.3s). Uses `qmd search`.
+   */
+  async bm25Search(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+  ): Promise<QmdSearchResult[]> {
+    if (!this.isAvailable()) return [];
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const col = collection ?? this.collection;
+    const n = maxResults ?? this.maxResults;
+
+    if (this.available === false) return [];
+    const startedAtMs = Date.now();
+    try {
+      const { stdout } = await runQmd(
+        ["search", trimmed, "-c", col, "--json", "-n", String(n)],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      log.debug(`QMD bm25: ${Date.now() - startedAtMs}ms`);
+      const parsed = JSON.parse(stdout);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(
+        (entry: Record<string, unknown>): QmdSearchResult => ({
+          docid: (entry.docid as string) ?? "",
+          path: (entry.path as string) ?? (entry.docid as string) ?? "unknown",
+          snippet: (entry.snippet as string) ?? "",
+          score: typeof entry.score === "number" ? entry.score : 0,
+        }),
+      );
+    } catch (err) {
+      log.debug(`QMD bm25 search failed: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Vector similarity search (~3-4s). Uses `qmd vsearch`.
+   */
+  async vectorSearch(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+  ): Promise<QmdSearchResult[]> {
+    if (!this.isAvailable()) return [];
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const col = collection ?? this.collection;
+    const n = maxResults ?? this.maxResults;
+
+    if (this.available === false) return [];
+    const startedAtMs = Date.now();
+    try {
+      const { stdout } = await runQmd(
+        ["vsearch", trimmed, "-c", col, "--json", "-n", String(n)],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      log.debug(`QMD vsearch: ${Date.now() - startedAtMs}ms`);
+      const parsed = JSON.parse(stdout);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(
+        (entry: Record<string, unknown>): QmdSearchResult => ({
+          docid: (entry.docid as string) ?? "",
+          path: (entry.path as string) ?? (entry.docid as string) ?? "unknown",
+          snippet: (entry.snippet as string) ?? "",
+          score: typeof entry.score === "number" ? entry.score : 0,
+        }),
+      );
+    } catch (err) {
+      log.debug(`QMD vsearch failed: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Hybrid search: runs BM25 + vector in parallel, merges/dedupes by path
+   * keeping the best score and first non-empty snippet.
+   */
+  async hybridSearch(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+  ): Promise<QmdSearchResult[]> {
+    const n = maxResults ?? this.maxResults;
+    const [bm25Results, vectorResults] = await Promise.all([
+      this.bm25Search(query, collection, n),
+      this.vectorSearch(query, collection, n),
+    ]);
+
+    // Merge by path, keeping best score
+    const merged = new Map<string, QmdSearchResult>();
+    for (const r of [...bm25Results, ...vectorResults]) {
+      const key = r.path || r.docid;
+      const existing = merged.get(key);
+      if (!existing || r.score > existing.score) {
+        merged.set(key, {
+          ...r,
+          snippet: r.snippet || existing?.snippet || "",
+        });
+      }
+    }
+
+    // Sort by score descending, take top N
+    return [...merged.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, n);
+  }
+
   private async searchViaDaemon(
     query: string,
     collection: string | undefined,
