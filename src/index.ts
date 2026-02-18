@@ -57,7 +57,10 @@ export default {
       `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled})`,
     );
 
-    const orchestrator = new Orchestrator(cfg);
+    // Singleton guard: the gateway may call register() twice (gateway + plugin contexts).
+    // Reuse the existing orchestrator if one was already created in this process.
+    const existing = (globalThis as any).__openclawEngramOrchestrator as Orchestrator | undefined;
+    const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
 
     // Expose for inter-plugin discovery (e.g., langsmith tracing)
     (globalThis as any).__openclawEngramOrchestrator = orchestrator;
