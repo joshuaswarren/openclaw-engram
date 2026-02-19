@@ -59,6 +59,30 @@ export class ExtractionEngine {
     }
   }
 
+  private async parseWithGatewayFallback<T>(
+    traceId: string,
+    operation: LlmTraceEvent["operation"],
+    startedAtMs: number,
+    schema: { parse: (data: unknown) => T },
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    options: { temperature?: number; maxTokens?: number } = {},
+  ): Promise<T | null> {
+    const result = await this.fallbackLlm.parseWithSchema(messages, schema, options);
+    if (result) {
+      const durationMs = Date.now() - startedAtMs;
+      this.emit({
+        kind: "llm_end",
+        traceId,
+        model: "fallback",
+        operation,
+        durationMs,
+        output: JSON.stringify(result).slice(0, 2000),
+      });
+      return result;
+    }
+    return null;
+  }
+
   async extract(turns: BufferTurn[], existingEntities?: string[]): Promise<ExtractionResult> {
 
     // Guard: skip if buffer is empty or all turns are whitespace-only
@@ -247,7 +271,7 @@ ${truncatedConversation}`;
         { role: "system", content: "You are a memory extraction system. Output valid JSON only." },
         { role: "user", content: localPrompt },
       ],
-      { temperature: 0.1, maxTokens: contextSizes.maxOutputTokens },
+      { temperature: 0.1, maxTokens: contextSizes.maxOutputTokens, operation: "extraction" },
     );
 
     if (!response?.content) {
@@ -495,6 +519,56 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
       }
     }
 
+    const fallbackResult = await this.parseWithGatewayFallback(
+      cTraceId,
+      "consolidation",
+      cStartTime,
+      ConsolidationResultSchema,
+      [
+        {
+          role: "system",
+          content: `You are a memory consolidation system. Compare new memories against existing ones and decide what to do with each.
+
+Actions:
+- ADD: Keep the new memory as-is (no duplicate exists)
+- MERGE: Combine with an existing memory (provide mergeWith ID and updated content)
+- UPDATE: Replace existing memory content (provide updated content)
+- INVALIDATE: Remove existing memory (it's been superseded or is wrong)
+- SKIP: This new memory is redundant (exact duplicate or subset of existing)
+
+Also:
+- Suggest profile updates based on patterns across memories
+- Identify entity updates for entity tracking`,
+        },
+        {
+          role: "user",
+          content: `Current behavioral profile:
+${currentProfile || "(empty)"}
+
+Existing memories:
+${existingList || "(none)"}
+
+New memories to consolidate:
+${newList}
+
+Consolidate the new memories against existing ones.`,
+        },
+      ],
+      { temperature: 0.3, maxTokens: 4096 },
+    );
+    if (fallbackResult) {
+      log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
+      return {
+        items: fallbackResult.items.map((item) => ({
+          ...item,
+          mergeWith: item.mergeWith ?? undefined,
+          updatedContent: item.updatedContent ?? undefined,
+        })),
+        profileUpdates: fallbackResult.profileUpdates,
+        entityUpdates: fallbackResult.entityUpdates,
+      };
+    }
+
     // Fall back to OpenAI API
     if (!this.client) {
       log.warn("consolidation skipped — no OpenAI API key and local LLM failed/disabled");
@@ -618,7 +692,7 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are a memory consolidation system. Output valid JSON only." },
         { role: "user", content: prompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "consolidation" },
     );
 
     if (!response?.content) {
@@ -684,6 +758,37 @@ Respond with valid JSON matching this schema:
         }
         log.info("profile consolidation: local LLM error, falling back to gateway AI:", err);
       }
+    }
+
+    const profileFallback = await this.parseWithGatewayFallback(
+      pTraceId,
+      "profile_consolidation",
+      pStartTime,
+      ProfileConsolidationResultSchema,
+      [
+        {
+          role: "system",
+          content: `You are a profile consolidation system. You are given a behavioral profile (markdown) that has grown too large. Your job is to produce a CONSOLIDATED version that:
+
+1. PRESERVES all ## section headers and their structure
+2. MERGES duplicate or near-duplicate bullet points into single, clear statements
+3. REMOVES stale information that has been superseded by newer bullets
+4. REMOVES trivial or overly specific operational details that won't be useful across sessions
+5. KEEPS the most important, durable observations about the user's preferences, habits, identity, and working style
+6. Target roughly 400 lines — this is a soft target, prioritize quality over length
+7. Write in the same style as the existing profile — concise bullets, no fluff
+
+The output should be the COMPLETE consolidated profile as valid markdown, starting with "# Behavioral Profile".`,
+        },
+        { role: "user", content: fullProfileContent },
+      ],
+      { temperature: 0.3, maxTokens: 4096 },
+    );
+    if (profileFallback) {
+      log.debug(
+        `profile consolidation: removed ${profileFallback.removedCount} items — ${profileFallback.summary} (fallback)`,
+      );
+      return profileFallback;
     }
 
     // Fall back to OpenAI API
@@ -783,7 +888,7 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are a profile consolidation system. Output valid JSON only." },
         { role: "user", content: prompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "profile_consolidation" },
     );
 
     if (!response?.content) {
@@ -845,6 +950,36 @@ Respond with valid JSON matching this schema:
         }
         log.info("identity consolidation: local LLM error, falling back to gateway AI:", err);
       }
+    }
+
+    const identityFallback = await this.parseWithGatewayFallback(
+      iTraceId,
+      "identity_consolidation",
+      iStartTime,
+      IdentityConsolidationResultSchema,
+      [
+        {
+          role: "system",
+          content: `You are an identity consolidation system. You are given the full contents of an IDENTITY.md file that contains many individual reflection entries. Your job is to:
+
+1. Read all the reflection entries (sections starting with "## Reflection")
+2. Extract the most important, durable behavioral patterns and lessons learned
+3. Consolidate them into concise, standalone statements (aim for 10-25 key patterns)
+4. Remove redundancy — if multiple reflections say the same thing, merge into one clear statement
+5. Prioritize patterns that are actionable and recurring over one-off observations
+6. Write a brief summary paragraph
+
+The goal is to reduce a bloated file to a compact, high-signal set of learned patterns while preserving all genuinely useful self-knowledge.`,
+        },
+        { role: "user", content: fullIdentityContent },
+      ],
+      { temperature: 0.3, maxTokens: 4096 },
+    );
+    if (identityFallback) {
+      log.debug(
+        `identity consolidation: ${identityFallback.learnedPatterns.length} patterns (fallback)`,
+      );
+      return identityFallback;
     }
 
     // Fall back to OpenAI API
@@ -946,7 +1081,7 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are an identity consolidation system. Output valid JSON only." },
         { role: "user", content: prompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "identity_consolidation" },
     );
 
     if (!response?.content) {

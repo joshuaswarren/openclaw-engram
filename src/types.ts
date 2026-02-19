@@ -52,6 +52,8 @@ export interface PluginConfig {
   qmdEnabled: boolean;
   qmdCollection: string;
   qmdMaxResults: number;
+  /** Optional absolute path to qmd binary. If unset, PATH/fallback discovery is used. */
+  qmdPath?: string;
   memoryDir: string;
   debug: boolean;
   identityEnabled: boolean;
@@ -148,6 +150,12 @@ export interface PluginConfig {
   localLlmEnabled: boolean;
   localLlmUrl: string;
   localLlmModel: string;
+  /** Optional API key for authenticated OpenAI-compatible endpoints. */
+  localLlmApiKey?: string;
+  /** Additional headers for local/compatible endpoint requests. */
+  localLlmHeaders?: Record<string, string>;
+  /** If false, do not send Authorization header even when localLlmApiKey is set. */
+  localLlmAuthHeader: boolean;
   localLlmFallback: boolean;
   /** Optional home directory override for local LLM helpers (LM Studio settings, CLI PATH). */
   localLlmHomeDir?: string;

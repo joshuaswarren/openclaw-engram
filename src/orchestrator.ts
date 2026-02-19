@@ -98,6 +98,7 @@ export class Orchestrator {
         thresholdMs: config.slowLogThresholdMs,
       },
       updateTimeoutMs: config.qmdUpdateTimeoutMs,
+      qmdPath: config.qmdPath,
       daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
       daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
     });
@@ -112,6 +113,7 @@ export class Orchestrator {
                 thresholdMs: config.slowLogThresholdMs,
               },
               updateTimeoutMs: config.qmdUpdateTimeoutMs,
+              qmdPath: config.qmdPath,
               daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
               daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
             },
@@ -179,22 +181,22 @@ export class Orchestrator {
       const available = await this.qmd.probe();
       if (available) {
         const mode = this.qmd.isDaemonMode() ? "daemon" : "subprocess";
-        log.info(`QMD: available (mode: ${mode})`);
+        log.info(`QMD: available (mode: ${mode}) ${this.qmd.debugStatus()}`);
         await this.qmd.ensureCollection(this.config.memoryDir);
       } else {
-        log.warn("QMD: not available (qmd command not found)");
+        log.warn(`QMD: not available ${this.qmd.debugStatus()}`);
       }
     }
 
     if (this.config.conversationIndexEnabled && this.conversationQmd) {
       const available = await this.conversationQmd.probe();
       if (available) {
-        log.info("Conversation index QMD: available");
+        log.info(`Conversation index QMD: available ${this.conversationQmd.debugStatus()}`);
         await this.conversationQmd.ensureCollection(
           path.join(this.config.memoryDir, "conversation-index"),
         );
       } else {
-        log.warn("Conversation index QMD: not available (qmd command not found)");
+        log.warn(`Conversation index QMD: not available ${this.conversationQmd.debugStatus()}`);
       }
     }
 
@@ -1406,7 +1408,7 @@ export class Orchestrator {
                 { role: "system", content: "Respond with a single concise sentence summarizing the entity. No JSON, just plain text." },
                 { role: "user", content: prompt },
               ],
-              { temperature: 0.3, maxTokens: 100 },
+              { temperature: 0.3, maxTokens: 100, operation: "entity_summary" },
             );
             if (response?.content) {
               const summary = response.content.trim().replace(/^["']|["']$/g, "");

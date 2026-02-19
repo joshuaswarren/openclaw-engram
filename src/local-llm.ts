@@ -90,6 +90,27 @@ export class LocalLlmClient {
     return this.config.localLlmHomeDir || process.env.HOME || os.homedir();
   }
 
+  private buildRequestHeaders(base: Record<string, string> = {}): Record<string, string> {
+    const headers: Record<string, string> = {
+      ...base,
+      ...(this.config.localLlmHeaders ?? {}),
+    };
+    if (this.config.localLlmApiKey && this.config.localLlmAuthHeader !== false) {
+      headers.Authorization = `Bearer ${this.config.localLlmApiKey}`;
+    }
+    return headers;
+  }
+
+  private isAbortError(err: unknown): boolean {
+    if (!err || typeof err !== "object") return false;
+    const maybe = err as { name?: string; message?: string };
+    return (
+      maybe.name === "AbortError" ||
+      maybe.message === "This operation was aborted" ||
+      maybe.message === "The operation was aborted"
+    );
+  }
+
   /**
    * Set the ModelRegistry for caching detected capabilities
    */
@@ -109,7 +130,8 @@ export class LocalLlmClient {
    */
   private async fetchWithTimeout(
     url: string,
-    timeoutMs: number = 2000
+    timeoutMs: number = 2000,
+    headers?: Record<string, string>,
   ): Promise<{ ok: boolean; data: unknown }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -117,7 +139,7 @@ export class LocalLlmClient {
     try {
       const response = await fetch(url, {
         signal: controller.signal,
-        headers: { Accept: "application/json" },
+        headers: this.buildRequestHeaders({ Accept: "application/json", ...(headers ?? {}) }),
       });
       clearTimeout(timeout);
 
@@ -669,6 +691,8 @@ export class LocalLlmClient {
 
     try {
       const startedAtMs = Date.now();
+      const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+      const operation = options.operation ?? "unspecified";
       const requestBody: Record<string, unknown> = {
         model: this.config.localLlmModel,
         messages,
@@ -713,18 +737,31 @@ export class LocalLlmClient {
           : this.config.localLlmTimeoutMs;
       const maxAttempts = 1 + Math.max(0, this.config.localLlmRetry5xxCount);
       let response: Response | null = null;
+      let lastAbortError: Error | null = null;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         const attemptAbort = new AbortController();
         const attemptTimeout = setTimeout(() => attemptAbort.abort(), effectiveTimeoutMs);
         try {
           response = await fetch(chatUrl, {
             method: "POST",
-            headers: {
+            headers: this.buildRequestHeaders({
               "Content-Type": "application/json",
-            },
+            }),
             body: JSON.stringify(requestBody),
             signal: attemptAbort.signal,
           });
+        } catch (err) {
+          if (!this.isAbortError(err)) throw err;
+          lastAbortError = err instanceof Error ? err : new Error(String(err));
+          if (attempt < maxAttempts) {
+            const backoffMs = this.config.localLlmRetryBackoffMs * attempt;
+            log.warn(
+              `local LLM request aborted: op=${operation} attempt=${attempt}/${maxAttempts} timeoutMs=${effectiveTimeoutMs} model=${this.config.localLlmModel}; retrying after ${backoffMs}ms`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            continue;
+          }
+          break;
         } finally {
           clearTimeout(attemptTimeout);
         }
@@ -743,7 +780,15 @@ export class LocalLlmClient {
       );
 
       if (!response) {
-        log.warn("local LLM request failed: no response object");
+        if (lastAbortError) {
+          log.warn(
+            `local LLM request aborted after ${maxAttempts} attempt(s): op=${operation} timeoutMs=${effectiveTimeoutMs} model=${this.config.localLlmModel} promptChars=${promptChars} durationMs=${Date.now() - startedAtMs}`,
+          );
+        } else {
+          log.warn(
+            `local LLM request failed: no response object (op=${operation} model=${this.config.localLlmModel} durationMs=${Date.now() - startedAtMs})`,
+          );
+        }
         return null;
       }
 
@@ -762,10 +807,9 @@ export class LocalLlmClient {
         } catch (e) {
           log.debug(`local LLM failed to read error body: ${e}`);
         }
-        const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
         log.warn(
           `local LLM request failed: ${response.status} ${response.statusText}${reason} ` +
-          `(model=${this.config.localLlmModel}, url=${chatUrl}, promptChars=${promptChars}, maxTokens=${requestBody.max_tokens as number})`,
+          `(op=${operation}, model=${this.config.localLlmModel}, url=${chatUrl}, promptChars=${promptChars}, maxTokens=${requestBody.max_tokens as number})`,
         );
         if (response.status === 400) {
           this.consecutive400s += 1;
@@ -827,8 +871,16 @@ export class LocalLlmClient {
       return { content, usage };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      log.warn(`local LLM request error: ${errMsg}`);
-      this.isAvailable = false; // Mark as unavailable on error
+      const durationMs = Date.now() - now;
+      const operation = options.operation ?? "unspecified";
+      if (this.isAbortError(err)) {
+        log.warn(
+          `local LLM request aborted: op=${operation} timeoutMs=${options.timeoutMs ?? this.config.localLlmTimeoutMs} model=${this.config.localLlmModel} durationMs=${durationMs} error=${errMsg}`,
+        );
+        return null;
+      }
+      log.warn(`local LLM request error: op=${operation} error=${errMsg}`);
+      this.isAvailable = false; // Mark as unavailable on non-abort errors
       return null;
     }
   }

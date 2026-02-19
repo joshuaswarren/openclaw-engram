@@ -490,6 +490,35 @@ Example config:
 | `qmdEnabled` | `true` | Use QMD for hybrid search |
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
 | `qmdMaxResults` | `8` | Max QMD results per search |
+| `qmdPath` | `(auto)` | Optional absolute path to `qmd` binary (bypasses PATH discovery) |
+
+### Local / OpenAI-Compatible Endpoint Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `localLlmEnabled` | `false` | Enable local/compatible endpoint for extraction + consolidation |
+| `localLlmUrl` | `http://localhost:1234/v1` | Base URL for OpenAI-compatible endpoint |
+| `localLlmModel` | `local-model` | Model ID to use on the endpoint |
+| `localLlmApiKey` | `(unset)` | Optional API key for authenticated endpoints |
+| `localLlmHeaders` | `(unset)` | Optional extra headers (for proxy/provider-specific auth/routing) |
+| `localLlmAuthHeader` | `true` | Send `Authorization: Bearer <localLlmApiKey>` when key is set |
+| `localLlmFallback` | `true` | Fall back to gateway model chain when local endpoint fails |
+
+Example (`openclaw.json` plugin config):
+
+```json
+{
+  "localLlmEnabled": true,
+  "localLlmUrl": "https://your-openai-compatible-endpoint.example/v1",
+  "localLlmModel": "your-model-id",
+  "localLlmApiKey": "${YOUR_ENDPOINT_API_KEY}",
+  "localLlmHeaders": {
+    "X-Provider-Routing": "engram-extraction"
+  },
+  "localLlmAuthHeader": true,
+  "localLlmFallback": true
+}
+```
 
 ### V2 Feature Settings
 
