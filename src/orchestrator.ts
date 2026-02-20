@@ -89,6 +89,8 @@ export class Orchestrator {
   private lastQmdEmbedAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
+  private lastRecallFailureLogAtMs = 0;
+  private suppressedRecallFailures = 0;
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -188,7 +190,13 @@ export class Orchestrator {
       if (available) {
         const mode = this.qmd.isDaemonMode() ? "daemon" : "subprocess";
         log.info(`QMD: available (mode: ${mode}) ${this.qmd.debugStatus()}`);
-        await this.qmd.ensureCollection(this.config.memoryDir);
+        const collectionReady = await this.qmd.ensureCollection(this.config.memoryDir);
+        if (!collectionReady) {
+          this.config.qmdEnabled = false;
+          log.warn(
+            "QMD collection missing for Engram memory store; disabling QMD retrieval for this runtime (fallback retrieval remains enabled)",
+          );
+        }
       } else {
         log.warn(`QMD: not available ${this.qmd.debugStatus()}`);
       }
@@ -198,9 +206,15 @@ export class Orchestrator {
       const available = await this.conversationQmd.probe();
       if (available) {
         log.info(`Conversation index QMD: available ${this.conversationQmd.debugStatus()}`);
-        await this.conversationQmd.ensureCollection(
+        const collectionReady = await this.conversationQmd.ensureCollection(
           path.join(this.config.memoryDir, "conversation-index"),
         );
+        if (!collectionReady) {
+          this.config.conversationIndexEnabled = false;
+          log.warn(
+            "Conversation index collection missing; disabling conversation semantic recall for this runtime",
+          );
+        }
       } else {
         log.warn(`Conversation index QMD: not available ${this.conversationQmd.debugStatus()}`);
       }
@@ -426,17 +440,37 @@ export class Orchestrator {
       }
     }
 
-    // Wrap recall logic with a 60-second timeout to prevent agent hangs
-    const RECALL_TIMEOUT_MS = 60_000;
+    // Keep recall fail-open and bounded to avoid long agent stalls when retrieval backends are slow.
+    const RECALL_TIMEOUT_MS = 30_000;
     return Promise.race([
       this.recallInternal(prompt, sessionKey),
       new Promise<string>((_, reject) =>
         setTimeout(() => reject(new Error("recall timeout")), RECALL_TIMEOUT_MS)
       ),
     ]).catch((err) => {
-      log.warn(`recall timed out or failed: ${err}`);
+      this.logRecallFailure(err);
       return ""; // Return empty context on timeout/error
     });
+  }
+
+  private logRecallFailure(err: unknown): void {
+    const now = Date.now();
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const LOG_WINDOW_MS = 60_000;
+
+    if (now - this.lastRecallFailureLogAtMs >= LOG_WINDOW_MS) {
+      const suffix =
+        this.suppressedRecallFailures > 0
+          ? ` (suppressed ${this.suppressedRecallFailures} similar failures in last minute)`
+          : "";
+      log.warn(`recall timed out or failed: ${errorMsg}${suffix}`);
+      this.lastRecallFailureLogAtMs = now;
+      this.suppressedRecallFailures = 0;
+      return;
+    }
+
+    this.suppressedRecallFailures += 1;
+    log.debug(`recall timed out or failed (suppressed): ${errorMsg}`);
   }
 
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
