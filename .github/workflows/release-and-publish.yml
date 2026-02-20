@@ -38,6 +38,11 @@ jobs:
           npm test
           npm run build
 
+      - name: Sync with latest main before release commit
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
