@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-engram",
+  "name": "@joshuaswarren/openclaw-engram",
   "version": "7.2.1",
   "type": "module",
   "description": "Local-first memory plugin for OpenClaw. LLM-powered extraction, markdown storage, hybrid search via QMD.",
