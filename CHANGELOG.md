@@ -60,7 +60,8 @@ All notable changes to this project will be documented in this file.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
   - Release workflow concurrency no longer cancels in-progress runs, avoiding partial side effects (tag/commit pushed) from interrupted releases.
   - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset, while scoping `NODE_AUTH_TOKEN` only to the publish step.
-  - Added idempotency guard: if the target release tag already exists on origin, release/publish steps are skipped.
+  - Added rerun-stable idempotency: tags now include `source-main-sha` metadata and reruns reuse the same tag/version for the same source commit instead of incrementing patch again.
+  - npm publish now also skips when the computed `openclaw-engram@version` already exists on npm.
 - Node version alignment with OpenClaw:
   - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
   - CI and release workflows now use Node `22.12.0`.
