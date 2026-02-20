@@ -366,6 +366,9 @@ Best for:
           },
         );
 
+        // Queue debounced QMD maintenance via orchestrator guardrails so new memory becomes searchable.
+        orchestrator.requestQmdMaintenanceForTool("memory_store");
+
         return toolResult(`Memory stored: ${id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`);
       },
     },
