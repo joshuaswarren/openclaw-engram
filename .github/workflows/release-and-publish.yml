@@ -17,8 +17,6 @@ jobs:
   release:
     if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,6 +71,8 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
