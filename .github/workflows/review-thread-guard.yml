@@ -1,0 +1,84 @@
+name: Review Thread Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  unresolved-review-threads:
+    if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on unresolved review threads
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            // pull_request and pull_request_review_comment events include issue.number for the PR.
+            // pull_request_review events include pull_request.number.
+            const candidate =
+              context.payload.pull_request?.number ??
+              context.payload.issue?.number ??
+              null;
+            const pr = Number(candidate);
+            if (!pr || Number.isNaN(pr)) {
+              core.setFailed("Unable to determine pull request number for review-thread guard.");
+              return;
+            }
+
+            const query = `
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 100) {
+                      nodes {
+                        id
+                        isResolved
+                        isOutdated
+                        comments(first: 1) {
+                          nodes {
+                            path
+                            body
+                            author { login }
+                            url
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const result = await github.graphql(query, { owner, repo, pr });
+            const threads = result.repository.pullRequest.reviewThreads.nodes || [];
+            const unresolvedActive = threads.filter((t) => t.isResolved === false && t.isOutdated === false);
+
+            if (unresolvedActive.length === 0) {
+              core.notice("No unresolved active review threads.");
+              return;
+            }
+
+            const summary = unresolvedActive
+              .slice(0, 10)
+              .map((t, i) => {
+                const c = t.comments?.nodes?.[0];
+                const author = c?.author?.login ?? "unknown";
+                const path = c?.path ?? "unknown-file";
+                const url = c?.url ?? "";
+                return `${i + 1}. ${author} on ${path}${url ? ` (${url})` : ""}`;
+              })
+              .join("\n");
+
+            core.setFailed(
+              `Found ${unresolvedActive.length} unresolved review thread(s). Resolve them before merge.\n${summary}`,
+            );

@@ -47,7 +47,7 @@ autolabeler:
     files:
       - '*.md'
       - 'docs/**'
-  - label: 'feature'
+  - label: 'source-change'
     files:
       - 'src/**'
 
