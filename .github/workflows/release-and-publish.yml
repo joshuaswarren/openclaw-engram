@@ -17,6 +17,8 @@ jobs:
   release:
     if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,17 +50,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump patch version and create tag
+      - name: Bump patch version (no tag yet)
         id: version
         run: |
-          npm version patch -m "chore(release): %s [skip ci]"
+          npm version patch --no-git-tag-version
           NEW_VERSION=$(node -p "require('./package.json').version")
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          git add package.json package-lock.json
+          git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
 
-      - name: Rebase release commit on latest main
-        run: |
-          git fetch origin main
-          git rebase origin/main
+      - name: Create version tag on release commit
+        run: git tag "v${{ steps.version.outputs.new_version }}"
 
       - name: Push release commit and tag
         run: git push origin HEAD:main --follow-tags
@@ -71,12 +73,9 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to npm
-        if: ${{ secrets.NPM_TOKEN != '' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
-
-      - name: Warn when npm publish is skipped
-        if: ${{ secrets.NPM_TOKEN == '' }}
         run: |
-          echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
+            exit 0
+          fi
+          npm publish --provenance --access public
