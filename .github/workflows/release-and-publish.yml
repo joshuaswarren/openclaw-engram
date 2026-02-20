@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   release:
-    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release):')
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,32 +48,83 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump patch version (no tag yet)
+      - name: Compute next patch version from tags
         id: version
         run: |
-          npm version patch --no-git-tag-version
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          SOURCE_MAIN_SHA=$(git rev-parse HEAD)
+          echo "source_main_sha=${SOURCE_MAIN_SHA}" >> "$GITHUB_OUTPUT"
+
+          EXISTING_TAG=""
+          while IFS= read -r tag; do
+            [ -z "${tag}" ] && continue
+            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}"; then
+              EXISTING_TAG="${tag}"
+              break
+            fi
+          done < <(git for-each-ref refs/tags --format='%(refname:short)' | grep -E '^v')
+          if [ -n "${EXISTING_TAG}" ]; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${EXISTING_TAG}" >> "$GITHUB_OUTPUT"
+            echo "new_version=${EXISTING_TAG#v}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -n 1 || true)
+          if [ -z "${LATEST_TAG}" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+          BASE_VERSION="${LATEST_TAG#v}"
+          IFS=. read -r MAJOR MINOR PATCH <<EOF
+${BASE_VERSION}
+EOF
+          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "base_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          echo "tag_name=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "new_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          npm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
           git add package.json package-lock.json
-          git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
+          if git diff --cached --quiet; then
+            echo "::notice title=Release commit skipped::Version already matches v${NEXT_VERSION}; no package files changed."
+          else
+            git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
+          fi
 
       - name: Create version tag on release commit
-        run: git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
+        if: steps.version.outputs.tag_exists != 'true'
+        run: |
+          git tag -a "${{ steps.version.outputs.tag_name }}" \
+            -m "Release ${{ steps.version.outputs.tag_name }}" \
+            -m "source-main-sha: ${{ steps.version.outputs.source_main_sha }}"
 
-      - name: Push release commit and tag
-        run: git push origin HEAD:main --follow-tags
+      - name: Push release tag
+        if: steps.version.outputs.tag_exists != 'true'
+        run: git push origin "refs/tags/${{ steps.version.outputs.tag_name }}"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.new_version }}
-          name: v${{ steps.version.outputs.new_version }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: ${{ steps.version.outputs.tag_name }}
           generate_release_notes: true
+
+      - name: Checkout release tag source for publish
+        run: git checkout --detach "${{ steps.version.outputs.tag_name }}"
+
+      - name: Install dependencies for tagged source
+        run: npm ci
 
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          VERSION="${{ steps.version.outputs.new_version }}"
+          if npm view "openclaw-engram@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice title=NPM publish skipped::openclaw-engram@${VERSION} is already published."
+            exit 0
+          fi
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
             exit 0
