@@ -76,9 +76,10 @@ jobs:
             LATEST_TAG="v0.0.0"
           fi
           BASE_VERSION="${LATEST_TAG#v}"
-          IFS=. read -r MAJOR MINOR PATCH <<EOF
-${BASE_VERSION}
-EOF
+          MAJOR="${BASE_VERSION%%.*}"
+          REST="${BASE_VERSION#*.}"
+          MINOR="${REST%%.*}"
+          PATCH="${REST##*.}"
           NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
           echo "base_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
           echo "tag_exists=false" >> "$GITHUB_OUTPUT"
