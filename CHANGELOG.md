@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Contributor onboarding and contribution governance docs:
+  - New `CONTRIBUTING.md` with standards for issues/PRs, testing, changelog policy, and AI-assisted contributions.
+  - New GitHub issue templates for bug reports and feature requests.
+  - New pull request template with validation and risk checklist.
+- Changelog/release process automation:
+  - `Changelog Guard` workflow requiring `CHANGELOG.md` updates for source/config/plugin changes (with `skip-changelog` maintainer bypass label).
+  - `Release Drafter` workflow + config for automated draft release notes from merged PRs.
 - GitHub Actions quality and security checks for pull requests:
   - `CI` (typecheck, tests, build on Node 22)
   - `Dependency Review` (blocks high+ severity dependency risks)

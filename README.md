@@ -823,9 +823,15 @@ scripts/
 
 ## Contributing
 
-Contributions are welcome. Please open an issue first to discuss what you'd like to change.
+We welcome both issues and pull requests, including AI-assisted contributions.
 
-**Important:** This is a public repository. Never commit personal data, API keys, memory content, or user-specific configuration. See [CLAUDE.md](CLAUDE.md) for the full privacy policy.
+- Report bugs: open a GitHub issue (use templates)
+- Propose features: open a GitHub issue with scope and expected impact
+- Submit PRs: keep scope focused, include tests, and update the changelog
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines, review expectations, and changelog policy.
+
+**Important:** This is a public repository. Never commit personal data, API keys, memory content, or user-specific configuration. See [CLAUDE.md](CLAUDE.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

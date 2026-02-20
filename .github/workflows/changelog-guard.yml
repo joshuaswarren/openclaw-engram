@@ -1,0 +1,58 @@
+name: Changelog Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changelog-guard:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if changelog update is required
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            const labels = (context.payload.pull_request.labels || []).map(l => (l.name || '').toLowerCase());
+            if (labels.includes('skip-changelog')) {
+              core.notice('skip-changelog label present; skipping changelog guard.');
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            const changed = files.map(f => f.filename);
+            const changelogTouched = changed.includes('CHANGELOG.md');
+
+            // If code/config/plugin schema changed, require changelog update.
+            const requiresChangelog = changed.some((path) =>
+              path.startsWith('src/') ||
+              path === 'openclaw.plugin.json' ||
+              path === 'package.json' ||
+              path === 'package-lock.json'
+            );
+
+            if (!requiresChangelog) {
+              core.notice('No source/config changes that require changelog update.');
+              return;
+            }
+
+            if (!changelogTouched) {
+              core.setFailed('CHANGELOG.md is required for source/config changes. Add an Unreleased entry or apply skip-changelog label.');
+              return;
+            }
+
+            core.notice('Changelog guard passed.');
