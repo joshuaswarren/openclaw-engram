@@ -29,4 +29,8 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
 
       - name: Scan repository files
-        run: gitleaks detect --source . --no-git --exclude-path .git --redact --exit-code 1
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          git archive --format=tar HEAD | tar -xf - -C "$tmpdir"
+          gitleaks detect --source "$tmpdir" --no-git --redact --exit-code 1
