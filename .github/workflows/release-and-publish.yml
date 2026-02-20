@@ -26,8 +26,13 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22.12.0'
           cache: npm
+
+      - name: Sync with latest main before validation
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
 
       - name: Install dependencies
         run: npm ci
@@ -38,22 +43,22 @@ jobs:
           npm test
           npm run build
 
-      - name: Sync with latest main before release commit
-        run: |
-          git fetch origin main
-          git checkout -B main origin/main
-
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump patch version and create tag
+      - name: Bump patch version (no tag yet)
         id: version
         run: |
-          npm version patch -m "chore(release): %s [skip ci]"
+          npm version patch --no-git-tag-version
           NEW_VERSION=$(node -p "require('./package.json').version")
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          git add package.json package-lock.json
+          git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
+
+      - name: Create version tag on release commit
+        run: git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
 
       - name: Push release commit and tag
         run: git push origin HEAD:main --follow-tags
@@ -66,12 +71,11 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to npm
-        if: ${{ secrets.NPM_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
-
-      - name: Warn when npm publish is skipped
-        if: ${{ secrets.NPM_TOKEN == '' }}
         run: |
-          echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
+            exit 0
+          fi
+          npm publish --provenance --access public

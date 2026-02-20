@@ -55,6 +55,15 @@ All notable changes to this project will be documented in this file.
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 
 ### Changed
+- Release automation hardening:
+  - `release-and-publish` now syncs to latest `origin/main` before validation, then bumps version with `--no-git-tag-version`, commits, and creates the `vX.Y.Z` tag on that release commit before push (avoids detached/misaligned tags during race windows while ensuring validated code is what gets released).
+  - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
+  - Release workflow concurrency no longer cancels in-progress runs, avoiding partial side effects (tag/commit pushed) from interrupted releases.
+  - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset, while scoping `NODE_AUTH_TOKEN` only to the publish step.
+- Node version alignment with OpenClaw:
+  - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
+  - CI and release workflows now use Node `22.12.0`.
+  - Contributing guide now documents Node `>=22.12.0` for local development.
 - Installation docs now lead with `openclaw plugins install openclaw-engram --pin` and move git clone/build to a developer-only path.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
 - Extractions with no durable outputs skip persistence/log churn paths.
