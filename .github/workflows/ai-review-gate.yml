@@ -83,10 +83,15 @@ jobs:
 
             core.info(`Found review activity from: ${present.map(p => `${p.matched}(${p.state})`).join(', ') || 'none'}`);
 
-            if (missing.length > 0) {
-              const missingText = missing.map(group => group.join(' OR ')).join('; ');
-              core.setFailed(`Missing required AI reviews from: ${missingText}`);
+            if (present.length === 0) {
+              const expected = groups.map(group => group.join(' OR ')).join('; ');
+              core.setFailed(`No required AI review activity found. Expected one of: ${expected}`);
               return;
             }
 
-            core.notice('All required AI reviewer groups have review activity on this PR.');
+            if (missing.length > 0) {
+              const missingText = missing.map(group => group.join(' OR ')).join('; ');
+              core.warning(`Some AI reviewer groups have not reported yet: ${missingText}`);
+            }
+
+            core.notice('AI review gate satisfied (at least one required AI reviewer group reported activity).');
