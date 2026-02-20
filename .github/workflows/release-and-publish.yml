@@ -63,7 +63,9 @@ jobs:
             exit 0
           fi
 
-          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n 1 || true)
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -n 1 || true)
           if [ -z "${LATEST_TAG}" ]; then
             LATEST_TAG="v0.0.0"
           fi
@@ -97,6 +99,12 @@ EOF
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: ${{ steps.version.outputs.tag_name }}
           generate_release_notes: true
+
+      - name: Checkout release tag source for publish
+        run: git checkout --detach "${{ steps.version.outputs.tag_name }}"
+
+      - name: Install dependencies for tagged source
+        run: npm ci
 
       - name: Publish to npm
         env:

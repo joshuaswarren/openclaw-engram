@@ -62,6 +62,8 @@ All notable changes to this project will be documented in this file.
   - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset, while scoping `NODE_AUTH_TOKEN` only to the publish step.
   - Added rerun-stable idempotency: tags now include `source-main-sha` metadata and reruns reuse the same tag/version for the same source commit instead of incrementing patch again.
   - npm publish now also skips when the computed `openclaw-engram@version` already exists on npm.
+  - Release publish now checks out the tagged source commit before npm publish (and reinstalls dependencies) so reruns publish from the exact tagged versioned source.
+  - Next-version tag discovery now ignores non-`vX.Y.Z` tags to avoid malformed version parsing when non-standard tags exist.
 - Node version alignment with OpenClaw:
   - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
   - CI and release workflows now use Node `22.12.0`.
