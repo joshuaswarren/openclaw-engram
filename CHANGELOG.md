@@ -57,6 +57,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Release automation hardening:
   - `release-and-publish` now syncs to latest `origin/main`, bumps version with `--no-git-tag-version`, commits, and creates the `vX.Y.Z` tag on that release commit before push (avoids detached/misaligned tags during race windows).
+  - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
   - Release workflow concurrency now cancels in-progress runs in the same group to reduce overlapping release races.
   - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset.
 - Node version alignment with OpenClaw:

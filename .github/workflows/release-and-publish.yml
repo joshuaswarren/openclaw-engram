@@ -60,7 +60,7 @@ jobs:
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
 
       - name: Create version tag on release commit
-        run: git tag "v${{ steps.version.outputs.new_version }}"
+        run: git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
 
       - name: Push release commit and tag
         run: git push origin HEAD:main --follow-tags
