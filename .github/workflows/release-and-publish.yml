@@ -63,6 +63,8 @@ EOF
           echo "base_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
           echo "new_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           npm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
+          git add package.json package-lock.json
+          git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
 
       - name: Stop if tag already exists
         id: tag_check
@@ -74,7 +76,7 @@ EOF
           fi
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
-      - name: Create version tag on current main commit
+      - name: Create version tag on release commit
         if: steps.tag_check.outputs.exists != 'true'
         run: git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
 

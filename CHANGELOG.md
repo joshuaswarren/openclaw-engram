@@ -56,7 +56,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Release automation hardening:
-  - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, apply version locally without committing, create/push only the release tag, then create GitHub release and publish to npm.
+  - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, create a local release commit with version bump (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
   - Release workflow concurrency no longer cancels in-progress runs, avoiding partial side effects (tag/commit pushed) from interrupted releases.
   - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset, while scoping `NODE_AUTH_TOKEN` only to the publish step.
