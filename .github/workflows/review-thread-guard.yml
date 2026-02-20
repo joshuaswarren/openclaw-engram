@@ -7,6 +7,8 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
 
 permissions:
   contents: read
@@ -14,7 +16,7 @@ permissions:
 
 jobs:
   unresolved-review-threads:
-    if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
+    if: github.event.pull_request?.draft != true
     runs-on: ubuntu-latest
     steps:
       - name: Fail on unresolved review threads
@@ -36,10 +38,14 @@ jobs:
             }
 
             const query = `
-              query($owner: String!, $repo: String!, $pr: Int!) {
+              query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
                 repository(owner: $owner, name: $repo) {
                   pullRequest(number: $pr) {
-                    reviewThreads(first: 100) {
+                    reviewThreads(first: 100, after: $after) {
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
                       nodes {
                         id
                         isResolved
@@ -59,8 +65,15 @@ jobs:
               }
             `;
 
-            const result = await github.graphql(query, { owner, repo, pr });
-            const threads = result.repository.pullRequest.reviewThreads.nodes || [];
+            let threads = [];
+            let after = null;
+            while (true) {
+              const result = await github.graphql(query, { owner, repo, pr, after });
+              const conn = result.repository.pullRequest.reviewThreads;
+              threads = threads.concat(conn.nodes || []);
+              if (!conn.pageInfo?.hasNextPage) break;
+              after = conn.pageInfo.endCursor;
+            }
             const unresolvedActive = threads.filter((t) => t.isResolved === false && t.isOutdated === false);
 
             if (unresolvedActive.length === 0) {
