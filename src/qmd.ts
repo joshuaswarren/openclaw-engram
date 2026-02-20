@@ -840,7 +840,7 @@ export class QmdClient {
     } catch (err) {
       // Treat command/probe failures as unknown so callers do not disable features
       // permanently after a transient CLI or daemon hiccup.
-      log.warn(
+      log.debug(
         `QMD collection check unavailable for "${this.collection}" (will not disable features): ${err instanceof Error ? err.message : String(err)}`,
       );
       return "unknown";
