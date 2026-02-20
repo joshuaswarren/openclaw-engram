@@ -78,8 +78,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Runtime hardening for missing QMD collections:
-  - If the primary Engram collection is not present, Engram now disables QMD retrieval for the current runtime and continues with fallback retrieval modes.
-  - If the conversation-index collection is not present, Engram now disables conversation semantic recall for the current runtime.
+  - If the primary Engram collection is confirmed missing, Engram disables QMD retrieval for the current runtime and continues with fallback retrieval modes.
+  - If the conversation-index collection is confirmed missing, Engram disables conversation semantic recall for the current runtime.
+  - Transient collection-check command failures are treated as `unknown` and do not disable retrieval features.
 - Recall timeout/failure logs are now throttled to reduce repeated warning spam during backend incidents.
 
 ## [7.2.1] - 2026-02-19

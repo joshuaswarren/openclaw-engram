@@ -190,12 +190,14 @@ export class Orchestrator {
       if (available) {
         const mode = this.qmd.isDaemonMode() ? "daemon" : "subprocess";
         log.info(`QMD: available (mode: ${mode}) ${this.qmd.debugStatus()}`);
-        const collectionReady = await this.qmd.ensureCollection(this.config.memoryDir);
-        if (!collectionReady) {
+        const collectionState = await this.qmd.ensureCollection(this.config.memoryDir);
+        if (collectionState === "missing") {
           this.config.qmdEnabled = false;
           log.warn(
             "QMD collection missing for Engram memory store; disabling QMD retrieval for this runtime (fallback retrieval remains enabled)",
           );
+        } else if (collectionState === "unknown") {
+          log.warn("QMD collection check unavailable; keeping QMD retrieval enabled for fail-open behavior");
         }
       } else {
         log.warn(`QMD: not available ${this.qmd.debugStatus()}`);
@@ -206,13 +208,17 @@ export class Orchestrator {
       const available = await this.conversationQmd.probe();
       if (available) {
         log.info(`Conversation index QMD: available ${this.conversationQmd.debugStatus()}`);
-        const collectionReady = await this.conversationQmd.ensureCollection(
+        const collectionState = await this.conversationQmd.ensureCollection(
           path.join(this.config.memoryDir, "conversation-index"),
         );
-        if (!collectionReady) {
+        if (collectionState === "missing") {
           this.config.conversationIndexEnabled = false;
           log.warn(
             "Conversation index collection missing; disabling conversation semantic recall for this runtime",
+          );
+        } else if (collectionState === "unknown") {
+          log.warn(
+            "Conversation index collection check unavailable; keeping conversation semantic recall enabled for fail-open behavior",
           );
         }
       } else {
