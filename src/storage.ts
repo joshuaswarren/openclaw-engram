@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
+import { sanitizeMemoryContent } from "./sanitize.js";
 import type {
   AccessTrackingEntry,
   BufferState,
@@ -610,7 +611,11 @@ export class StorageManager {
       links: options.links,
     };
 
-    const fileContent = `${serializeFrontmatter(fm)}\n\n${content}\n`;
+    const sanitized = sanitizeMemoryContent(content);
+    if (!sanitized.clean) {
+      log.warn(`memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
+    }
+    const fileContent = `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`;
 
     let filePath: string;
     if (category === "correction") {
@@ -967,7 +972,11 @@ export class StorageManager {
       supersedes: options?.supersedes ?? memory.frontmatter.supersedes,
       lineage: mergedLineage.length > 0 ? mergedLineage : undefined,
     };
-    const fileContent = `${serializeFrontmatter(updated)}\n\n${newContent}\n`;
+    const sanitized = sanitizeMemoryContent(newContent);
+    if (!sanitized.clean) {
+      log.warn(`updated memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
+    }
+    const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     log.debug(`updated memory ${id}`);
     return true;
@@ -1765,7 +1774,11 @@ export class StorageManager {
       chunkTotal,
     };
 
-    const fileContent = `${serializeFrontmatter(fm)}\n\n${content}\n`;
+    const sanitized = sanitizeMemoryContent(content);
+    if (!sanitized.clean) {
+      log.warn(`chunk content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
+    }
+    const fileContent = `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`;
 
     let filePath: string;
     if (category === "correction") {

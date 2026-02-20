@@ -182,7 +182,9 @@ class QmdDaemonSession {
         // "Server already initialized" (HTTP 400) means the daemon is running
         // and already has an active session — treat this as success
         if (initRes.status === 400) {
-          const body = await initRes.json().catch(() => null);
+          const body = await initRes
+            .json()
+            .catch(() => null) as { error?: { message?: string } } | null;
           if (body?.error?.message?.includes("already initialized")) {
             log.debug("QMD daemon: server already initialized, reusing");
             // Keep or assign a placeholder session ID so isActive() returns true
@@ -241,7 +243,10 @@ class QmdDaemonSession {
         throw new Error(`daemon tools/call ${name} returned ${res.status}`);
       }
 
-      const body = await res.json();
+      const body = await res.json() as {
+        error?: unknown;
+        result?: unknown;
+      };
       if (body.error) {
         throw new Error(`daemon tools/call ${name}: ${JSON.stringify(body.error)}`);
       }
@@ -291,6 +296,10 @@ export class QmdClient {
   private lastEmbedFailAtMs: number | null = null;
   private readonly updateTimeoutMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
+  private readonly configuredQmdPath?: string;
+  private qmdPathSource: "auto-path" | "auto-fallback" | "configured" = "auto-path";
+  private cliVersion: string | null = null;
+  private lastCliProbeError: string | null = null;
 
   // Daemon mode fields
   private daemonSession: QmdDaemonSession | null = null;
@@ -304,12 +313,14 @@ export class QmdClient {
     opts?: {
       slowLog?: { enabled: boolean; thresholdMs: number };
       updateTimeoutMs?: number;
+      qmdPath?: string;
       daemonUrl?: string;
       daemonRecheckIntervalMs?: number;
     },
   ) {
     this.slowLog = opts?.slowLog;
     this.updateTimeoutMs = opts?.updateTimeoutMs ?? 120_000;
+    this.configuredQmdPath = opts?.qmdPath?.trim() ? opts.qmdPath.trim() : undefined;
     this.daemonRecheckIntervalMs = opts?.daemonRecheckIntervalMs ?? 60_000;
     if (opts?.daemonUrl) {
       this.daemonSession = new QmdDaemonSession(opts.daemonUrl);
@@ -360,22 +371,56 @@ export class QmdClient {
   }
 
   private async probeCli(): Promise<boolean> {
+    const parseVersion = (stdout: string, stderr: string): string | null => {
+      const text = `${stdout}\n${stderr}`.trim();
+      if (!text) return null;
+      return text.split("\n").map((s) => s.trim()).find((s) => s.length > 0) ?? null;
+    };
+    const markProbeFailure = (err: unknown): void => {
+      this.lastCliProbeError = err instanceof Error ? err.message : String(err);
+    };
+
+    if (this.configuredQmdPath) {
+      try {
+        const result = await runQmd(["--version"], 3000, this.configuredQmdPath);
+        this.available = true;
+        this.qmdPath = this.configuredQmdPath;
+        this.qmdPathSource = "configured";
+        this.cliVersion = parseVersion(result.stdout, result.stderr);
+        this.lastCliProbeError = null;
+        return true;
+      } catch (err) {
+        markProbeFailure(err);
+        log.warn(`QMD: configured qmdPath failed (${this.configuredQmdPath}): ${this.lastCliProbeError}`);
+        this.available = false;
+        return false;
+      }
+    }
+
     // Try PATH first
     try {
-      await runQmd(["--version"], 3000, "qmd");
+      const result = await runQmd(["--version"], 3000, "qmd");
       this.available = true;
       this.qmdPath = "qmd";
+      this.qmdPathSource = "auto-path";
+      this.cliVersion = parseVersion(result.stdout, result.stderr);
+      this.lastCliProbeError = null;
       return true;
-    } catch {
+    } catch (err) {
+      markProbeFailure(err);
       // Try fallback paths
       for (const fallbackPath of QMD_FALLBACK_PATHS) {
         try {
-          await runQmd(["--version"], 3000, fallbackPath);
+          const result = await runQmd(["--version"], 3000, fallbackPath);
           this.available = true;
           this.qmdPath = fallbackPath;
+          this.qmdPathSource = "auto-fallback";
+          this.cliVersion = parseVersion(result.stdout, result.stderr);
+          this.lastCliProbeError = null;
           log.info(`QMD: found at ${fallbackPath}`);
           return true;
-        } catch {
+        } catch (fallbackErr) {
+          markProbeFailure(fallbackErr);
           // Continue to next fallback
         }
       }
@@ -399,7 +444,10 @@ export class QmdClient {
 
   /** Debug string for troubleshooting availability issues. */
   debugStatus(): string {
-    return `cli=${this.available} daemon=${this.daemonAvailable} session=${!!this.daemonSession}`;
+    const cliPath = this.available ? this.qmdPath : (this.configuredQmdPath ?? "unavailable");
+    const cliVersion = this.cliVersion ?? "unknown";
+    const probeError = this.lastCliProbeError ? ` cliProbeError=${this.lastCliProbeError}` : "";
+    return `cli=${this.available} daemon=${this.daemonAvailable} session=${!!this.daemonSession} cliPath=${cliPath} cliPathSource=${this.qmdPathSource} cliVersion=${cliVersion}${probeError}`;
   }
 
   isDaemonMode(): boolean {
@@ -734,7 +782,7 @@ export class QmdClient {
     }
     try {
       const startedAtMs = Date.now();
-      await runQmd(["update"], this.updateTimeoutMs, this.qmdPath);
+      await runQmd(["update", "-c", this.collection], this.updateTimeoutMs, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
@@ -758,7 +806,7 @@ export class QmdClient {
     }
     try {
       const startedAtMs = Date.now();
-      await runQmd(["embed"], 300_000, this.qmdPath);
+      await runQmd(["embed", "-c", this.collection], 300_000, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD embed: durationMs=${durationMs}`);

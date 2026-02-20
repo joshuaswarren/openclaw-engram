@@ -70,6 +70,21 @@
         "default": 8,
         "description": "Max QMD results per search"
       },
+      "embeddingFallbackEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable embedding-based semantic recall fallback when QMD is unavailable or returns no matches"
+      },
+      "embeddingFallbackProvider": {
+        "type": "string",
+        "enum": ["auto", "openai", "local"],
+        "default": "auto",
+        "description": "Embedding provider selection for semantic fallback"
+      },
+      "qmdPath": {
+        "type": "string",
+        "description": "Optional absolute path to qmd binary (bypasses PATH/fallback discovery)"
+      },
       "memoryDir": {
         "type": "string",
         "description": "Override memory storage directory"
@@ -434,6 +449,22 @@
         "type": "string",
         "default": "local-model",
         "description": "Model name for local LLM requests"
+      },
+      "localLlmApiKey": {
+        "type": "string",
+        "description": "Optional API key for authenticated OpenAI-compatible local endpoints"
+      },
+      "localLlmHeaders": {
+        "type": "object",
+        "description": "Optional additional headers for local/compatible endpoint requests",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "localLlmAuthHeader": {
+        "type": "boolean",
+        "default": true,
+        "description": "If false, do not send Authorization header even when localLlmApiKey is set"
       },
       "localLlmFallback": {
         "type": "boolean",
@@ -911,6 +942,21 @@
       "advanced": true,
       "placeholder": "8"
     },
+    "embeddingFallbackEnabled": {
+      "label": "Embedding Fallback",
+      "help": "Use semantic embeddings when QMD is unavailable or no results are found"
+    },
+    "embeddingFallbackProvider": {
+      "label": "Embedding Provider",
+      "advanced": true,
+      "placeholder": "auto"
+    },
+    "qmdPath": {
+      "label": "QMD Path",
+      "advanced": true,
+      "placeholder": "/opt/homebrew/bin/qmd",
+      "help": "Optional absolute path to qmd binary for environments with unstable PATH/bun shims"
+    },
     "memoryDir": {
       "label": "Memory Directory",
       "advanced": true,
@@ -1121,6 +1167,23 @@
       "advanced": true,
       "placeholder": "local-model",
       "help": "Model identifier for local LLM requests"
+    },
+    "localLlmApiKey": {
+      "label": "Local LLM API Key",
+      "advanced": true,
+      "sensitive": true,
+      "placeholder": "sk-...",
+      "help": "Optional API key for authenticated OpenAI-compatible endpoints"
+    },
+    "localLlmHeaders": {
+      "label": "Local LLM Headers",
+      "advanced": true,
+      "help": "Optional extra headers for provider-specific routing/auth"
+    },
+    "localLlmAuthHeader": {
+      "label": "Send Auth Header",
+      "advanced": true,
+      "help": "When false, do not send Authorization header even if localLlmApiKey is set"
     },
     "localLlmFallback": {
       "label": "Local LLM Fallback",
