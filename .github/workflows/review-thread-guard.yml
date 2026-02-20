@@ -16,7 +16,6 @@ permissions:
 
 jobs:
   unresolved-review-threads:
-    if: github.event.pull_request?.draft != true
     runs-on: ubuntu-latest
     steps:
       - name: Fail on unresolved review threads
@@ -34,6 +33,16 @@ jobs:
             const pr = Number(candidate);
             if (!pr || Number.isNaN(pr)) {
               core.setFailed("Unable to determine pull request number for review-thread guard.");
+              return;
+            }
+
+            const prMeta = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: pr,
+            });
+            if (prMeta.data.draft === true) {
+              core.notice("Skipping unresolved review-thread gate for draft PR.");
               return;
             }
 
