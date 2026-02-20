@@ -7,8 +7,6 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
-  pull_request_review_thread:
-    types: [resolved, unresolved]
 
 permissions:
   contents: read
