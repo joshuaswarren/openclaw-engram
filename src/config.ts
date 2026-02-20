@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { PluginConfig, PrincipalRule, ReasoningEffort, TriggerMode } from "./types.js";
+import { log } from "./logger.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   process.env.HOME ?? "~",
@@ -23,6 +24,34 @@ function resolveEnvVars(value: string): string {
     }
     return envValue;
   });
+}
+
+function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "env"): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    log.warn(`ignoring invalid openaiBaseUrl from ${source}: not a valid URL`);
+    return undefined;
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    log.warn(
+      `ignoring openaiBaseUrl from ${source}: unsupported URL scheme (${parsed.protocol.replace(":", "")})`,
+    );
+    return undefined;
+  }
+
+  if (parsed.protocol === "http:") {
+    log.warn(`openaiBaseUrl from ${source} is using insecure http; prefer https`);
+  }
+
+  // Avoid duplicate slash behavior in downstream baseURL path joins.
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
@@ -119,8 +148,16 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
     : undefined;
 
+  let baseUrl: string | undefined;
+  if (typeof cfg.openaiBaseUrl === "string" && cfg.openaiBaseUrl.length > 0) {
+    baseUrl = normalizeOpenaiBaseUrl(resolveEnvVars(cfg.openaiBaseUrl), "config");
+  } else {
+    baseUrl = normalizeOpenaiBaseUrl(process.env.OPENAI_BASE_URL, "env");
+  }
+
   return {
     openaiApiKey: apiKey,
+    openaiBaseUrl: baseUrl,
     model,
     reasoningEffort,
     triggerMode,

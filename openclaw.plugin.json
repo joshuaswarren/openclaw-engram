@@ -9,6 +9,10 @@
         "type": "string",
         "description": "OpenAI API key (or set OPENAI_API_KEY env var)"
       },
+      "openaiBaseUrl": {
+        "type": "string",
+        "description": "Override the OpenAI API base URL for OpenAI-compatible providers (Scryr, Together, OpenRouter, etc.)"
+      },
       "model": {
         "type": "string",
         "default": "gpt-5.2",
@@ -884,6 +888,12 @@
       "sensitive": true,
       "placeholder": "sk-...",
       "help": "API key for OpenAI (or use ${OPENAI_API_KEY})"
+    },
+    "openaiBaseUrl": {
+      "label": "OpenAI Base URL",
+      "advanced": true,
+      "placeholder": "https://api.openai.com/v1",
+      "help": "Override for OpenAI-compatible providers (Scryr, Together, OpenRouter, etc.)"
     },
     "model": {
       "label": "Extraction Model",

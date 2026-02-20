@@ -41,6 +41,7 @@ export const SPECULATIVE_TTL_DAYS = 30;
 
 export interface PluginConfig {
   openaiApiKey: string | undefined;
+  openaiBaseUrl: string | undefined;
   model: string;
   reasoningEffort: ReasoningEffort;
   triggerMode: TriggerMode;
