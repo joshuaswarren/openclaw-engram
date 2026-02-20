@@ -182,7 +182,9 @@ class QmdDaemonSession {
         // "Server already initialized" (HTTP 400) means the daemon is running
         // and already has an active session — treat this as success
         if (initRes.status === 400) {
-          const body = await initRes.json().catch(() => null);
+          const body = await initRes
+            .json()
+            .catch(() => null) as { error?: { message?: string } } | null;
           if (body?.error?.message?.includes("already initialized")) {
             log.debug("QMD daemon: server already initialized, reusing");
             // Keep or assign a placeholder session ID so isActive() returns true
@@ -241,7 +243,10 @@ class QmdDaemonSession {
         throw new Error(`daemon tools/call ${name} returned ${res.status}`);
       }
 
-      const body = await res.json();
+      const body = await res.json() as {
+        error?: unknown;
+        result?: unknown;
+      };
       if (body.error) {
         throw new Error(`daemon tools/call ${name}: ${JSON.stringify(body.error)}`);
       }

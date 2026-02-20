@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { registerTools } from "../src/tools.js";
 
 /**
  * Regression test for: memory_store not triggering QMD sync after write.
@@ -35,28 +36,90 @@ test("QmdClient.update() passes collection flag to qmd subprocess", async () => 
   );
 });
 
-test("memory_store tool triggers QMD sync after writing", async () => {
-  // Verify the tools source calls qmd update+embed after writeMemory
-  const { readFileSync } = await import("node:fs");
-  const { resolve } = await import("node:path");
+test("memory_store queues orchestrator-maintained QMD sync after write", async () => {
+  type RegisteredTool = {
+    name: string;
+    execute: (
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+    ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+  };
+  const tools = new Map<string, RegisteredTool>();
+  const api = {
+    registerTool(
+      spec: {
+        name: string;
+        label: string;
+        description: string;
+        parameters: unknown;
+        execute: (
+          toolCallId: string,
+          params: Record<string, unknown>,
+          signal?: AbortSignal,
+        ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+      },
+      _options: { name: string },
+    ) {
+      tools.set(spec.name, { name: spec.name, execute: spec.execute });
+    },
+  };
 
-  const toolsSource = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "tools.ts"),
-    "utf-8",
-  );
+  const writeCalls: Array<{ category: string; content: string }> = [];
+  let maintenanceRequests = 0;
+  const orchestrator = {
+    config: {
+      defaultNamespace: "default",
+      sharedNamespace: "shared",
+      feedbackEnabled: false,
+      namespacesEnabled: false,
+    },
+    getStorage: async () => ({
+      writeMemory: async (category: string, content: string) => {
+        writeCalls.push({ category, content });
+        return "fact-test-1";
+      },
+    }),
+    requestQmdMaintenanceForTool: (reason: string) => {
+      assert.equal(reason, "memory_store");
+      maintenanceRequests += 1;
+    },
+    qmd: {
+      search: async () => [],
+      searchGlobal: async () => [],
+    },
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    recordMemoryFeedback: async () => {},
+    storage: {
+      readProfile: async () => "",
+      readIdentity: async () => "",
+      resolveQuestion: async () => false,
+      listQuestions: async () => [],
+      getMemoryById: async () => null,
+    },
+    summarizeNow: async () => undefined,
+    runConversationIndexUpdate: async () => ({ indexedSessions: 0, indexedChunks: 0, embeddedRuns: 0 }),
+    sharedContext: null,
+    compoundingEngine: null,
+  };
 
-  // Find the memory_store section and verify it calls qmd sync after writeMemory
-  const storeSection = toolsSource.slice(
-    toolsSource.indexOf("memory_store"),
-    toolsSource.indexOf("memory_promote"),
-  );
+  registerTools(api as any, orchestrator as any);
 
-  assert.ok(
-    storeSection.includes("orchestrator.qmd.update()"),
-    "memory_store should call orchestrator.qmd.update() after writing",
-  );
-  assert.ok(
-    storeSection.includes(".embed()"),
-    "memory_store should call embed() after update to index new memories",
-  );
+  const memoryStore = tools.get("memory_store");
+  assert.ok(memoryStore, "memory_store tool should be registered");
+
+  const out = await memoryStore!.execute("tc-1", {
+    content: "Store this durable memory",
+  });
+
+  assert.equal(writeCalls.length, 1);
+  assert.deepEqual(writeCalls[0], {
+    category: "fact",
+    content: "Store this durable memory",
+  });
+  assert.equal(maintenanceRequests, 1);
+  assert.match(out.content[0].text, /Memory stored: fact-test-1/);
 });

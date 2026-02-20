@@ -1052,6 +1052,19 @@ export class Orchestrator {
     }, this.config.qmdMaintenanceDebounceMs);
   }
 
+  /**
+   * Public entrypoint for tool-driven QMD maintenance requests.
+   * Routes through existing debounced/singleflight maintenance controls.
+   */
+  requestQmdMaintenanceForTool(reason: string): void {
+    try {
+      this.requestQmdMaintenance();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`qmd maintenance request failed (${reason}): ${msg}`);
+    }
+  }
+
   private async runQmdMaintenance(): Promise<void> {
     if (this.qmdMaintenanceInFlight) return;
     if (!this.qmdMaintenancePending) return;

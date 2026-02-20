@@ -366,8 +366,8 @@ Best for:
           },
         );
 
-        // Fire-and-forget: sync QMD index so new memory is searchable
-        orchestrator.qmd.update().then(() => orchestrator.qmd.embed()).catch(() => {});
+        // Queue debounced QMD maintenance via orchestrator guardrails so new memory becomes searchable.
+        orchestrator.requestQmdMaintenanceForTool("memory_store");
 
         return toolResult(`Memory stored: ${id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`);
       },
