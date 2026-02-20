@@ -330,7 +330,7 @@ QMD supports hybrid search combining BM25 and vector embeddings with reranking.
 
 ```bash
 # Install from npm (records install provenance in openclaw.json.plugins.installs)
-openclaw plugins install openclaw-engram --pin
+openclaw plugins install @joshuaswarren/openclaw-engram --pin
 ```
 
 Then enable and configure in `openclaw.json`:

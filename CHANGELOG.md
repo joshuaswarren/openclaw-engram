@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - npm-first distribution + release automation:
-  - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps patch version, tags, creates GitHub release, and publishes to npm (when `NPM_TOKEN` is configured).
+  - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps patch version, tags, creates GitHub release, and publishes to npm.
   - Package publish metadata in `package.json`: `engines.node`, `prepack`, and `publishConfig` (`access: public`, `provenance: true`).
 - Contributor onboarding and contribution governance docs:
   - New `CONTRIBUTING.md` with standards for issues/PRs, testing, changelog policy, and AI-assisted contributions.
@@ -59,9 +59,9 @@ All notable changes to this project will be documented in this file.
   - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, create a local release commit with version bump (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
   - Release workflow concurrency no longer cancels in-progress runs, avoiding partial side effects (tag/commit pushed) from interrupted releases.
-  - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset, while scoping `NODE_AUTH_TOKEN` only to the publish step.
+  - npm publish now uses npm trusted publishing (OIDC via GitHub Actions) instead of `NPM_TOKEN` secrets.
   - Added rerun-stable idempotency: tags now include `source-main-sha` metadata and reruns reuse the same tag/version for the same source commit instead of incrementing patch again.
-  - npm publish now also skips when the computed `openclaw-engram@version` already exists on npm.
+  - npm publish now also skips when the computed package name + version (read from `package.json`) already exists on npm.
   - Release publish now checks out the tagged source commit before npm publish (and reinstalls dependencies) so reruns publish from the exact tagged versioned source.
   - Next-version tag discovery now ignores non-`vX.Y.Z` tags to avoid malformed version parsing when non-standard tags exist.
   - Rerun tag matching now inspects each annotated tag object (`git cat-file`) instead of line-based parsing, so multiline tag annotations are matched reliably.
@@ -70,7 +70,8 @@ All notable changes to this project will be documented in this file.
   - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
   - CI and release workflows now use Node `22.12.0`.
   - Contributing guide now documents Node `>=22.12.0` for local development.
-- Installation docs now lead with `openclaw plugins install openclaw-engram --pin` and move git clone/build to a developer-only path.
+- Installation docs now lead with `openclaw plugins install @joshuaswarren/openclaw-engram --pin` and move git clone/build to a developer-only path.
+- npm package name is now scoped to `@joshuaswarren/openclaw-engram` for user-scoped publishing.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
 - Extractions with no durable outputs skip persistence/log churn paths.
 

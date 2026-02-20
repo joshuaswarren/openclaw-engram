@@ -26,7 +26,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22.12.0'
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
           cache: npm
 
       - name: Sync with latest main before validation
@@ -117,17 +118,12 @@ jobs:
       - name: Install dependencies for tagged source
         run: npm ci
 
-      - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (trusted publishing)
         run: |
           VERSION="${{ steps.version.outputs.new_version }}"
-          if npm view "openclaw-engram@${VERSION}" version >/dev/null 2>&1; then
-            echo "::notice title=NPM publish skipped::openclaw-engram@${VERSION} is already published."
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice title=NPM publish skipped::${PACKAGE_NAME}@${VERSION} is already published."
             exit 0
           fi
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::warning title=NPM publish skipped::Set repository secret NPM_TOKEN to publish openclaw-engram to npm."
-            exit 0
-          fi
-          npm publish --provenance --access public
+          npm publish --access public
