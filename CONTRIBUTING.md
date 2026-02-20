@@ -24,6 +24,14 @@ npm test
 npm run build
 ```
 
+## Install path for users
+
+Use npm install via OpenClaw as the primary install path in docs:
+
+```bash
+openclaw plugins install openclaw-engram --pin
+```
+
 ## PR quality bar
 
 A good PR should:
@@ -66,6 +74,13 @@ Please ensure:
 - Maintainers may request changes for scope, safety, tests, and documentation.
 - PRs require passing checks and at least one maintainer approval.
 - Significant changes may be merged in follow-up slices to reduce risk.
+
+## Release process
+
+- Merges to `main` trigger an automated release workflow.
+- The workflow validates (`check-types`, `test`, `build`), bumps a patch version, tags `vX.Y.Z`, creates a GitHub release, and publishes to npm.
+- Configure repository secret `NPM_TOKEN` (npm automation token) for publish.
+- If `NPM_TOKEN` is missing, release creation still runs but npm publish is skipped.
 
 ## Good first contributions
 
