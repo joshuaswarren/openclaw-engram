@@ -119,8 +119,16 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
     : undefined;
 
+  let baseUrl: string | undefined;
+  if (typeof cfg.openaiBaseUrl === "string" && cfg.openaiBaseUrl.length > 0) {
+    baseUrl = resolveEnvVars(cfg.openaiBaseUrl);
+  } else {
+    baseUrl = process.env.OPENAI_BASE_URL;
+  }
+
   return {
     openaiApiKey: apiKey,
+    openaiBaseUrl: baseUrl,
     model,
     reasoningEffort,
     triggerMode,

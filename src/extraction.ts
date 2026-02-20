@@ -40,7 +40,10 @@ export class ExtractionEngine {
     modelRegistry?: ModelRegistry,
   ) {
     if (config.openaiApiKey) {
-      this.client = new OpenAI({ apiKey: config.openaiApiKey });
+      this.client = new OpenAI({
+        apiKey: config.openaiApiKey,
+        ...(config.openaiBaseUrl ? { baseURL: config.openaiBaseUrl } : {}),
+      });
     } else {
       this.client = null;
       log.warn("no OpenAI API key — extraction/consolidation disabled (retrieval still works)");
