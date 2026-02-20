@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Contributor onboarding and contribution governance docs:
   - New `CONTRIBUTING.md` with standards for issues/PRs, testing, changelog policy, and AI-assisted contributions.
+  - New `CONTRIBUTORS.md` with contributor recognition, including the first community contributors.
   - New GitHub issue templates for bug reports and feature requests.
   - New pull request template with validation and risk checklist.
 - Changelog/release process automation:

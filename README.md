@@ -830,6 +830,7 @@ We welcome both issues and pull requests, including AI-assisted contributions.
 - Submit PRs: keep scope focused, include tests, and update the changelog
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines, review expectations, and changelog policy.
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for contributor recognition.
 
 **Important:** This is a public repository. Never commit personal data, API keys, memory content, or user-specific configuration. See [CLAUDE.md](CLAUDE.md) and [SECURITY.md](SECURITY.md).
 
