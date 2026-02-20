@@ -20,9 +20,9 @@ jobs:
         uses: actions/github-script@v7
         env:
           REQUIRED_AI_REVIEWER_GROUPS: >-
-            kiloconnect[bot]|kilo[bot],
-            codex[bot]|openai-codex[bot]|codex-reviewer[bot],
-            cursor-bugbot[bot]|cursor[bot]
+            kiloconnect[bot]|kilo[bot]|kiloconnect|kilo,
+            codex[bot]|openai-codex[bot]|codex-reviewer[bot]|chatgpt-codex-connector,
+            cursor-bugbot[bot]|cursor[bot]|cursor-bugbot|cursor
         with:
           script: |
             const owner = context.repo.owner;
@@ -49,11 +49,24 @@ jobs:
               per_page: 100,
             });
 
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: Number(pr),
+              per_page: 100,
+            });
+
+            // Treat either a formal PR review or a PR issue comment as valid AI review activity.
             const latestByUser = new Map();
             for (const review of reviews) {
               const login = review.user?.login?.toLowerCase();
               if (!login) continue;
               latestByUser.set(login, review.state);
+            }
+            for (const comment of issueComments) {
+              const login = comment.user?.login?.toLowerCase();
+              if (!login) continue;
+              if (!latestByUser.has(login)) latestByUser.set(login, "COMMENTED");
             }
 
             const present = [];
