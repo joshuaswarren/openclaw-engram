@@ -86,7 +86,11 @@ EOF
           echo "new_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           npm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
           git add package.json package-lock.json
-          git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
+          if git diff --cached --quiet; then
+            echo "::notice title=Release commit skipped::Version already matches v${NEXT_VERSION}; no package files changed."
+          else
+            git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
+          fi
 
       - name: Create version tag on release commit
         if: steps.version.outputs.tag_exists != 'true'
