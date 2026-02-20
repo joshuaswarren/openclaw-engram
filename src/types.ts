@@ -52,6 +52,8 @@ export interface PluginConfig {
   qmdEnabled: boolean;
   qmdCollection: string;
   qmdMaxResults: number;
+  embeddingFallbackEnabled: boolean;
+  embeddingFallbackProvider: "auto" | "openai" | "local";
   /** Optional absolute path to qmd binary. If unset, PATH/fallback discovery is used. */
   qmdPath?: string;
   memoryDir: string;
@@ -252,6 +254,21 @@ export interface PluginConfig {
   factArchivalMaxAccessCount: number;
   /** Tags that protect a fact from archival regardless of other criteria. */
   factArchivalProtectedCategories: string[];
+}
+
+export interface BootstrapOptions {
+  dryRun?: boolean;
+  sessionsDir?: string;
+  limit?: number;
+  since?: Date;
+}
+
+export interface BootstrapResult {
+  sessionsScanned: number;
+  turnsProcessed: number;
+  highSignalTurns: number;
+  memoriesCreated: number;
+  skipped: number;
 }
 
 export interface PrincipalRule {

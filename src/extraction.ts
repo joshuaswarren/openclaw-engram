@@ -26,6 +26,7 @@ import type {
 } from "./types.js";
 import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
+import { sanitizeMemoryContent } from "./sanitize.js";
 
 export class ExtractionEngine {
   private client: OpenAI | null;
@@ -57,6 +58,29 @@ export class ExtractionEngine {
     } catch {
       // Never throw — broken subscriber must not crash extraction
     }
+  }
+
+  private sanitizeExtractionResult(result: ExtractionResult): ExtractionResult {
+    const facts = result.facts.map((fact) => {
+      const sanitized = sanitizeMemoryContent(fact.content);
+      if (!sanitized.clean) {
+        log.warn(`extraction fact sanitized; violations=${sanitized.violations.join(", ")}`);
+      }
+      return { ...fact, content: sanitized.text };
+    });
+    return { ...result, facts };
+  }
+
+  private sanitizeConsolidationResult(result: ConsolidationResult): ConsolidationResult {
+    const items = result.items.map((item) => {
+      if (!item.updatedContent) return item;
+      const sanitized = sanitizeMemoryContent(item.updatedContent);
+      if (!sanitized.clean) {
+        log.warn(`consolidation item sanitized (${item.existingId}); violations=${sanitized.violations.join(", ")}`);
+      }
+      return { ...item, updatedContent: sanitized.text };
+    });
+    return { ...result, items };
   }
 
   private async parseWithGatewayFallback<T>(
@@ -108,7 +132,7 @@ export class ExtractionEngine {
           const durationMs = Date.now() - startTime;
           this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "extraction", durationMs });
           log.debug(`extraction: used local LLM — ${localResult.facts.length} facts, ${localResult.entities.length} entities`);
-          return localResult;
+          return this.sanitizeExtractionResult(localResult);
         }
         // Local failed, fall back if allowed
         if (!this.config.localLlmFallback) {
@@ -150,11 +174,11 @@ export class ExtractionEngine {
         log.debug(
           `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback`,
         );
-        return {
+        return this.sanitizeExtractionResult({
           ...result,
           questions: result.questions ?? [],
           identityReflection: result.identityReflection ?? undefined,
-        } as ExtractionResult;
+        } as ExtractionResult);
       }
 
       log.warn("extraction fallback returned no parsed output");
@@ -503,7 +527,7 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
           const durationMs = Date.now() - cStartTime;
           this.emit({ kind: "llm_end", traceId: cTraceId, model: this.config.localLlmModel, operation: "consolidation", durationMs });
           log.debug(`consolidation: used local LLM — ${localResult.items.length} decisions`);
-          return localResult;
+          return this.sanitizeConsolidationResult(localResult);
         }
         if (!this.config.localLlmFallback) {
           log.warn("consolidation: local LLM failed and fallback disabled");
@@ -558,7 +582,7 @@ Consolidate the new memories against existing ones.`,
     );
     if (fallbackResult) {
       log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
-      return {
+      return this.sanitizeConsolidationResult({
         items: fallbackResult.items.map((item) => ({
           ...item,
           mergeWith: item.mergeWith ?? undefined,
@@ -566,7 +590,7 @@ Consolidate the new memories against existing ones.`,
         })),
         profileUpdates: fallbackResult.profileUpdates,
         entityUpdates: fallbackResult.entityUpdates,
-      };
+      });
     }
 
     // Fall back to OpenAI API
@@ -626,7 +650,7 @@ ${newList}`,
         log.debug(
           `consolidation: ${response.output_parsed.items.length} decisions`,
         );
-        return response.output_parsed as ConsolidationResult;
+        return this.sanitizeConsolidationResult(response.output_parsed as ConsolidationResult);
       }
 
       log.warn("consolidation returned no parsed output");

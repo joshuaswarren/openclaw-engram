@@ -142,6 +142,13 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram",
     qmdMaxResults:
       typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
+    embeddingFallbackEnabled: cfg.embeddingFallbackEnabled !== false,
+    embeddingFallbackProvider:
+      cfg.embeddingFallbackProvider === "openai"
+        ? "openai"
+        : cfg.embeddingFallbackProvider === "local"
+          ? "local"
+          : "auto",
     qmdPath:
       typeof cfg.qmdPath === "string" && cfg.qmdPath.length > 0
         ? cfg.qmdPath

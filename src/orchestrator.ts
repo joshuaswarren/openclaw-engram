@@ -21,6 +21,8 @@ import { NegativeExampleStore } from "./negative.js";
 import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
+import { EmbeddingFallback } from "./embedding-fallback.js";
+import { BootstrapEngine } from "./bootstrap.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -35,6 +37,8 @@ import { SharedContextManager } from "./shared-context/manager.js";
 import { CompoundingEngine } from "./compounding/engine.js";
 import type {
   AccessTrackingEntry,
+  BootstrapOptions,
+  BootstrapResult,
   BufferTurn,
   ExtractionResult,
   MemoryLink,
@@ -58,6 +62,7 @@ export class Orchestrator {
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
   readonly lastRecall: LastRecallStore;
+  readonly embeddingFallback: EmbeddingFallback;
   private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
@@ -128,6 +133,7 @@ export class Orchestrator {
     this.relevance = new RelevanceStore(config.memoryDir);
     this.negatives = new NegativeExampleStore(config.memoryDir);
     this.lastRecall = new LastRecallStore(config.memoryDir);
+    this.embeddingFallback = new EmbeddingFallback(config);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
@@ -277,6 +283,26 @@ export class Orchestrator {
         }
         await writeFile(fp, existing + block, "utf-8");
       }
+    }
+  }
+
+  async runBootstrap(options: BootstrapOptions): Promise<BootstrapResult> {
+    const engine = new BootstrapEngine(this.config, this);
+    return engine.run(options);
+  }
+
+  async runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }> {
+    return this.runConsolidation();
+  }
+
+  async waitForExtractionIdle(timeoutMs: number = 60_000): Promise<void> {
+    const started = Date.now();
+    while (this.queueProcessing || this.extractionQueue.length > 0) {
+      if (Date.now() - started > timeoutMs) {
+        log.warn(`waitForExtractionIdle timed out after ${timeoutMs}ms`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
 
@@ -604,6 +630,22 @@ export class Orchestrator {
         }
 
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
+      } else {
+        const embeddingResults = await this.searchEmbeddingFallback(prompt, this.config.qmdMaxResults);
+        const scoped = this.config.namespacesEnabled
+          ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
+          : embeddingResults;
+        if (scoped.length > 0) {
+          const memoryIds = this.extractMemoryIdsFromResults(scoped);
+          this.trackMemoryAccess(memoryIds);
+          if (sessionKey) {
+            const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+            this.lastRecall
+              .record({ sessionKey, query: prompt, memoryIds: unique })
+              .catch((err) => log.debug(`last recall record failed: ${err}`));
+          }
+          sections.push(this.formatQmdResults("Relevant Memories", scoped));
+        }
       }
 
       if (globalResults.length > 0) {
@@ -631,36 +673,52 @@ export class Orchestrator {
         );
       }
     } else if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
-      // Fallback: read recent memories directly
-      const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
-      if (memories.length > 0) {
-        // Filter out non-active memories
-        const activeMemories = memories.filter(
-          (m) => !m.frontmatter.status || m.frontmatter.status === "active",
-        );
-        const recent = activeMemories
-          .sort(
-            (a, b) =>
-              new Date(b.frontmatter.updated).getTime() -
-              new Date(a.frontmatter.updated).getTime(),
-          )
-          .slice(0, 10);
-
-        // Track access for these memories
-        const memoryIds = recent.map((m) => m.frontmatter.id);
+      // Fallback: embeddings first, then recency-only.
+      const embeddingResults = await this.searchEmbeddingFallback(prompt, this.config.qmdMaxResults);
+      const scoped = this.config.namespacesEnabled
+        ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
+        : embeddingResults;
+      if (scoped.length > 0) {
+        const memoryIds = this.extractMemoryIdsFromResults(scoped);
         this.trackMemoryAccess(memoryIds);
-
         if (sessionKey) {
           const unique = Array.from(new Set(memoryIds)).slice(0, 40);
           this.lastRecall
             .record({ sessionKey, query: prompt, memoryIds: unique })
             .catch((err) => log.debug(`last recall record failed: ${err}`));
         }
+        sections.push(this.formatQmdResults("Relevant Memories", scoped));
+      } else {
+        const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
+        if (memories.length > 0) {
+          // Filter out non-active memories
+          const activeMemories = memories.filter(
+            (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+          );
+          const recent = activeMemories
+            .sort(
+              (a, b) =>
+                new Date(b.frontmatter.updated).getTime() -
+                new Date(a.frontmatter.updated).getTime(),
+            )
+            .slice(0, 10);
 
-        const lines = recent.map(
-          (m) => `- [${m.frontmatter.category}] ${m.content}`,
-        );
-        sections.push(`## Recent Memories\n\n${lines.join("\n")}`);
+          // Track access for these memories
+          const memoryIds = recent.map((m) => m.frontmatter.id);
+          this.trackMemoryAccess(memoryIds);
+
+          if (sessionKey) {
+            const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+            this.lastRecall
+              .record({ sessionKey, query: prompt, memoryIds: unique })
+              .catch((err) => log.debug(`last recall record failed: ${err}`));
+          }
+
+          const lines = recent.map(
+            (m) => `- [${m.frontmatter.category}] ${m.content}`,
+          );
+          sections.push(`## Recent Memories\n\n${lines.join("\n")}`);
+        }
       }
 
       if (isDisagreementPrompt(prompt)) {
@@ -1182,9 +1240,14 @@ export class Orchestrator {
 
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
+          await this.indexPersistedMemory(storage, parentId);
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
             this.contentHashIndex.add(fact.content);
+          }
+
+          for (const chunk of chunkResult.chunks) {
+            await this.indexPersistedMemory(storage, `${parentId}-chunk-${chunk.index}`);
           }
           continue; // Skip the normal write below
         }
@@ -1226,6 +1289,7 @@ export class Orchestrator {
         links: links.length > 0 ? links : undefined,
       });
       persistedIds.push(memoryId);
+      await this.indexPersistedMemory(storage, memoryId);
       // Register in content-hash index after successful write
       if (this.contentHashIndex) {
         this.contentHashIndex.add(fact.content);
@@ -1317,11 +1381,21 @@ export class Orchestrator {
     return persistedIds;
   }
 
+  private async indexPersistedMemory(storage: StorageManager, memoryId: string): Promise<void> {
+    if (!this.config.embeddingFallbackEnabled) return;
+    if (!(await this.embeddingFallback.isAvailable())) return;
+    const memory = await storage.getMemoryById(memoryId);
+    if (!memory) return;
+    await this.embeddingFallback.indexFile(memoryId, memory.content, memory.path);
+  }
+
   /** IDs of facts persisted in the last extraction */
   private lastPersistedIds: string[] = [];
 
-  private async runConsolidation(): Promise<void> {
+  private async runConsolidation(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }> {
     log.info("running consolidation pass");
+    let merged = 0;
+    let invalidated = 0;
 
     // Flush access tracking buffer first
     if (this.accessTrackingBuffer.size > 0) {
@@ -1329,7 +1403,9 @@ export class Orchestrator {
     }
 
     const allMemories = await this.storage.readAllMemories();
-    if (allMemories.length < 5) return;
+    if (allMemories.length < 5) {
+      return { memoriesProcessed: allMemories.length, merged, invalidated };
+    }
 
     const recent = allMemories
       .sort(
@@ -1352,13 +1428,17 @@ export class Orchestrator {
     for (const item of result.items) {
       switch (item.action) {
         case "INVALIDATE":
-          await this.storage.invalidateMemory(item.existingId);
+          if (await this.storage.invalidateMemory(item.existingId)) {
+            invalidated += 1;
+            await this.embeddingFallback.removeFromIndex(item.existingId);
+          }
           break;
         case "UPDATE":
           if (item.updatedContent) {
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               lineage: [item.existingId],
             });
+            await this.indexPersistedMemory(this.storage, item.existingId);
           }
           break;
         case "MERGE":
@@ -1367,7 +1447,12 @@ export class Orchestrator {
               supersedes: item.mergeWith,
               lineage: [item.existingId, item.mergeWith],
             });
-            await this.storage.invalidateMemory(item.mergeWith);
+            await this.indexPersistedMemory(this.storage, item.existingId);
+            if (await this.storage.invalidateMemory(item.mergeWith)) {
+              invalidated += 1;
+              merged += 1;
+              await this.embeddingFallback.removeFromIndex(item.mergeWith);
+            }
           }
           break;
       }
@@ -1483,6 +1568,7 @@ export class Orchestrator {
     await this.storage.saveMeta(meta);
 
     log.info("consolidation complete");
+    return { memoriesProcessed: allMemories.length, merged, invalidated };
   }
 
   /**
@@ -1527,6 +1613,7 @@ export class Orchestrator {
         if (this.contentHashIndex) {
           this.contentHashIndex.remove(memory.content);
         }
+        await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
         archivedCount++;
       }
     }
@@ -1697,6 +1784,27 @@ export class Orchestrator {
       return `[${i + 1}] ${r.path} (score: ${r.score.toFixed(3)})\n${snippet}`;
     });
     return `## ${title}\n\n${lines.join("\n\n")}`;
+  }
+
+  private async searchEmbeddingFallback(query: string, limit: number): Promise<QmdSearchResult[]> {
+    if (!this.config.embeddingFallbackEnabled) return [];
+    if (!(await this.embeddingFallback.isAvailable())) return [];
+    const hits = await this.embeddingFallback.search(query, limit);
+    if (hits.length === 0) return [];
+
+    const results: QmdSearchResult[] = [];
+    for (const hit of hits) {
+      const fullPath = path.isAbsolute(hit.path) ? hit.path : path.join(this.config.memoryDir, hit.path);
+      const memory = await this.storage.readMemoryByPath(fullPath);
+      if (!memory) continue;
+      results.push({
+        docid: hit.id,
+        path: fullPath,
+        score: hit.score,
+        snippet: memory.content.slice(0, 400).replace(/\n/g, " "),
+      });
+    }
+    return results;
   }
 
   // ---------------------------------------------------------------------------

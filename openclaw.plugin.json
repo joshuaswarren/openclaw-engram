@@ -66,6 +66,17 @@
         "default": 8,
         "description": "Max QMD results per search"
       },
+      "embeddingFallbackEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable embedding-based semantic recall fallback when QMD is unavailable or returns no matches"
+      },
+      "embeddingFallbackProvider": {
+        "type": "string",
+        "enum": ["auto", "openai", "local"],
+        "default": "auto",
+        "description": "Embedding provider selection for semantic fallback"
+      },
       "qmdPath": {
         "type": "string",
         "description": "Optional absolute path to qmd binary (bypasses PATH/fallback discovery)"
@@ -920,6 +931,15 @@
       "label": "QMD Max Results",
       "advanced": true,
       "placeholder": "8"
+    },
+    "embeddingFallbackEnabled": {
+      "label": "Embedding Fallback",
+      "help": "Use semantic embeddings when QMD is unavailable or no results are found"
+    },
+    "embeddingFallbackProvider": {
+      "label": "Embedding Provider",
+      "advanced": true,
+      "placeholder": "auto"
     },
     "qmdPath": {
       "label": "QMD Path",
