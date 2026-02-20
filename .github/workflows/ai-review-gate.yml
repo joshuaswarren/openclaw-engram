@@ -21,7 +21,7 @@ jobs:
         env:
           REQUIRED_AI_REVIEWER_GROUPS: >-
             kiloconnect[bot]|kilo[bot]|kiloconnect|kilo,
-            codex[bot]|openai-codex[bot]|codex-reviewer[bot]|chatgpt-codex-connector,
+            codex[bot]|openai-codex[bot]|codex-reviewer[bot]|chatgpt-codex-connector|chatgpt-codex-connector[bot],
             cursor-bugbot[bot]|cursor[bot]|cursor-bugbot|cursor
         with:
           script: |
