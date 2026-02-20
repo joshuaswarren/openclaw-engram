@@ -64,6 +64,7 @@ All notable changes to this project will be documented in this file.
   - npm publish now also skips when the computed `openclaw-engram@version` already exists on npm.
   - Release publish now checks out the tagged source commit before npm publish (and reinstalls dependencies) so reruns publish from the exact tagged versioned source.
   - Next-version tag discovery now ignores non-`vX.Y.Z` tags to avoid malformed version parsing when non-standard tags exist.
+  - Rerun tag matching now inspects each annotated tag object (`git cat-file`) instead of line-based parsing, so multiline tag annotations are matched reliably.
 - Node version alignment with OpenClaw:
   - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
   - CI and release workflows now use Node `22.12.0`.

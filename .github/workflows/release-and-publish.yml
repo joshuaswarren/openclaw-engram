@@ -54,8 +54,14 @@ jobs:
           SOURCE_MAIN_SHA=$(git rev-parse HEAD)
           echo "source_main_sha=${SOURCE_MAIN_SHA}" >> "$GITHUB_OUTPUT"
 
-          EXISTING_TAG=$(git for-each-ref refs/tags --format='%(refname:short)|%(contents)' \
-            | awk -F'|' -v sha="${SOURCE_MAIN_SHA}" '$1 ~ /^v/ && $2 ~ ("source-main-sha: " sha) { print $1; exit }')
+          EXISTING_TAG=""
+          while IFS= read -r tag; do
+            [ -z "${tag}" ] && continue
+            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}"; then
+              EXISTING_TAG="${tag}"
+              break
+            fi
+          done < <(git for-each-ref refs/tags --format='%(refname:short)' | grep -E '^v')
           if [ -n "${EXISTING_TAG}" ]; then
             echo "tag_exists=true" >> "$GITHUB_OUTPUT"
             echo "tag_name=${EXISTING_TAG}" >> "$GITHUB_OUTPUT"
