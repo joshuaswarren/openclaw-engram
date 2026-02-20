@@ -29,4 +29,4 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
 
       - name: Scan repository files
-        run: gitleaks detect --source . --no-git --redact --exit-code 1
+        run: gitleaks detect --source . --no-git --exclude-path .git --redact --exit-code 1
