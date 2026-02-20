@@ -56,10 +56,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Release automation hardening:
-  - `release-and-publish` now syncs to latest `origin/main` before validation, then bumps version with `--no-git-tag-version`, commits, and creates the `vX.Y.Z` tag on that release commit before push (avoids detached/misaligned tags during race windows while ensuring validated code is what gets released).
+  - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, apply version locally without committing, create/push only the release tag, then create GitHub release and publish to npm.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
   - Release workflow concurrency no longer cancels in-progress runs, avoiding partial side effects (tag/commit pushed) from interrupted releases.
   - npm publish now gates on token presence within shell logic, warning and skipping publish when `NPM_TOKEN` is unset, while scoping `NODE_AUTH_TOKEN` only to the publish step.
+  - Added idempotency guard: if the target release tag already exists on origin, release/publish steps are skipped.
 - Node version alignment with OpenClaw:
   - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
   - CI and release workflows now use Node `22.12.0`.

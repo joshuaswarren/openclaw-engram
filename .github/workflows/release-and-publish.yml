@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   release:
-    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release):')
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,22 +48,42 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump patch version (no tag yet)
+      - name: Compute next patch version from tags
         id: version
         run: |
-          npm version patch --no-git-tag-version
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          git add package.json package-lock.json
-          git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n 1 || true)
+          if [ -z "${LATEST_TAG}" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+          BASE_VERSION="${LATEST_TAG#v}"
+          IFS=. read -r MAJOR MINOR PATCH <<EOF
+${BASE_VERSION}
+EOF
+          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "base_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "new_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          npm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
 
-      - name: Create version tag on release commit
+      - name: Stop if tag already exists
+        id: tag_check
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.version.outputs.new_version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.version.outputs.new_version }} already exists on origin; skipping release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create version tag on current main commit
+        if: steps.tag_check.outputs.exists != 'true'
         run: git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
 
-      - name: Push release commit and tag
-        run: git push origin HEAD:main --follow-tags
+      - name: Push release tag
+        if: steps.tag_check.outputs.exists != 'true'
+        run: git push origin "refs/tags/v${{ steps.version.outputs.new_version }}"
 
       - name: Create GitHub release
+        if: steps.tag_check.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.new_version }}
@@ -71,6 +91,7 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to npm
+        if: steps.tag_check.outputs.exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
