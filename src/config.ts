@@ -142,6 +142,17 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram",
     qmdMaxResults:
       typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
+    embeddingFallbackEnabled: cfg.embeddingFallbackEnabled !== false,
+    embeddingFallbackProvider:
+      cfg.embeddingFallbackProvider === "openai"
+        ? "openai"
+        : cfg.embeddingFallbackProvider === "local"
+          ? "local"
+          : "auto",
+    qmdPath:
+      typeof cfg.qmdPath === "string" && cfg.qmdPath.length > 0
+        ? cfg.qmdPath
+        : undefined,
     memoryDir,
     debug: cfg.debug === true,
     identityEnabled: cfg.identityEnabled !== false,
@@ -296,6 +307,19 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.localLlmModel === "string" && cfg.localLlmModel.length > 0
         ? cfg.localLlmModel
         : "local-model",
+    localLlmApiKey:
+      typeof cfg.localLlmApiKey === "string" && cfg.localLlmApiKey.length > 0
+        ? resolveEnvVars(cfg.localLlmApiKey)
+        : undefined,
+    localLlmHeaders:
+      cfg.localLlmHeaders && typeof cfg.localLlmHeaders === "object" && !Array.isArray(cfg.localLlmHeaders)
+        ? Object.fromEntries(
+            Object.entries(cfg.localLlmHeaders as Record<string, unknown>)
+              .filter(([, value]) => typeof value === "string")
+              .map(([key, value]) => [key, String(value)]),
+          )
+        : undefined,
+    localLlmAuthHeader: cfg.localLlmAuthHeader !== false,
     localLlmFallback: cfg.localLlmFallback !== false, // default: true
     localLlmHomeDir:
       typeof cfg.localLlmHomeDir === "string" && cfg.localLlmHomeDir.length > 0

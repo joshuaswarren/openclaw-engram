@@ -21,11 +21,15 @@ In `openclaw.json`:
           "localLlmEnabled": true,
           "localLlmUrl": "http://127.0.0.1:1234/v1",
           "localLlmModel": "qwen3-coder-30b-a3b-instruct-mlx@4bit",
+          "localLlmApiKey": "${LOCAL_LLM_API_KEY}",
+          "localLlmHeaders": { "X-Endpoint-Role": "engram" },
+          "localLlmAuthHeader": true,
           "localLlmFallback": true,
           "localLlmHomeDir": "~",
           "localLmsCliPath": "~/.cache/lm-studio/bin/lms",
           "localLmsBinDir": "~/.cache/lm-studio/bin",
           "localLlmMaxContext": 4096,
+          "qmdPath": "/opt/homebrew/bin/qmd",
 
           "rerankEnabled": true,
           "rerankProvider": "local",
@@ -40,6 +44,11 @@ In `openclaw.json`:
 
 Service env override (optional):
 - `OPENCLAW_ENGRAM_CONFIG_PATH=/absolute/path/to/openclaw.json`
+
+Third-party OpenAI-compatible extraction endpoints:
+- Set `localLlmEnabled: true` and point `localLlmUrl` at the provider base URL.
+- If auth is required, set `localLlmApiKey` (and optional `localLlmHeaders`).
+- Keep `localLlmFallback: true` so extraction/consolidation/profile/identity flows fail over to the gateway model chain.
 
 ## 1b) File Hygiene (Avoid Silent Truncation)
 
@@ -209,6 +218,7 @@ Reliability / load:
   - `consolidationRequireNonZeroExtraction: true`
   - `consolidationMinIntervalMs: 600000`
 - QMD maintenance off the hot path:
+  - `qmdPath: "/absolute/path/to/qmd"` (set explicitly when PATH/bun shims are unstable)
   - `qmdMaintenanceEnabled: true`
   - `qmdMaintenanceDebounceMs: 30000`
   - `qmdUpdateTimeoutMs: 90000`

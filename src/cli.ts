@@ -344,6 +344,62 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("bootstrap")
+        .description("Scan transcript history and seed memory from high-signal past turns")
+        .option("--dry-run", "Scan and report without writing memories")
+        .option("--sessions-dir <path>", "Override transcript sessions directory")
+        .option("--limit <number>", "Maximum sessions to process")
+        .option("--since <date>", "Only process turns after date (YYYY-MM-DD or ISO)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const dryRun = options.dryRun === true;
+          const sessionsDir = options.sessionsDir ? String(options.sessionsDir) : undefined;
+          const limitRaw = options.limit ? Number(options.limit) : undefined;
+          const limit = typeof limitRaw === "number" && Number.isFinite(limitRaw) && limitRaw > 0
+            ? Math.floor(limitRaw)
+            : undefined;
+
+          let since: Date | undefined;
+          if (options.since) {
+            const parsed = new Date(String(options.since));
+            if (Number.isNaN(parsed.getTime())) {
+              console.log(`Invalid --since value: ${String(options.since)}`);
+              return;
+            }
+            since = parsed;
+          }
+
+          console.log("Running bootstrap scan...");
+          const result = await orchestrator.runBootstrap({
+            dryRun,
+            sessionsDir,
+            limit,
+            since,
+          });
+          console.log(
+            `Bootstrap complete. sessions=${result.sessionsScanned}, turns=${result.turnsProcessed}, highSignal=${result.highSignalTurns}, created=${result.memoriesCreated}, skipped=${result.skipped}`,
+          );
+        });
+
+      cmd
+        .command("consolidate")
+        .description("Run memory consolidation immediately")
+        .option("--verbose", "Show detailed consolidation stats")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const verbose = options.verbose === true;
+          console.log("Running consolidation...");
+          const stats = await orchestrator.runConsolidationNow();
+          if (verbose) {
+            console.log(
+              `Consolidation complete. memoriesProcessed=${stats.memoriesProcessed}, merged=${stats.merged}, invalidated=${stats.invalidated}`,
+            );
+          } else {
+            console.log(`Consolidation complete. merged=${stats.merged}, invalidated=${stats.invalidated}`);
+          }
+        });
+
+      cmd
         .command("questions")
         .description("List open questions from memory extraction")
         .option("-a, --all", "Show all questions including resolved")

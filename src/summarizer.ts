@@ -227,7 +227,7 @@ Respond with valid JSON matching this schema:
             { role: "system", content: "Output valid JSON only." },
             { role: "user", content: sys + "\n\n" + truncated },
           ],
-          { temperature: 0.2, maxTokens: contextSizes.maxOutputTokens },
+          { temperature: 0.2, maxTokens: contextSizes.maxOutputTokens, operation: "hourly_summary_extended" },
         );
         if (response?.content) {
           const content = response.content.trim();
@@ -309,7 +309,7 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are a conversation summarization system. Output valid JSON only." },
         { role: "user", content: fullPrompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens },
+      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "hourly_summary" },
     );
 
     if (!response?.content) {

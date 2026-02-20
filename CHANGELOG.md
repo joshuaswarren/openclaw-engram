@@ -44,6 +44,23 @@ All notable changes to this project will be documented in this file.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
 - Extractions with no durable outputs skip persistence/log churn paths.
 
+## [7.2.1] - 2026-02-19
+
+### Added
+- Third-party OpenAI-compatible extraction endpoint support settings:
+  - `localLlmApiKey`, `localLlmHeaders`, `localLlmAuthHeader`
+  - `qmdPath` override for explicit QMD binary pathing
+- Plugin schema + UI hints for the settings above in `openclaw.plugin.json`.
+- Regression tests for local LLM abort handling/retry behavior.
+
+### Changed
+- Local LLM requests now include operation-aware diagnostics (`op=...`) in timeout/error logs for faster incident triage.
+- Extraction/profile/identity/consolidation/hourly-summary/entity-summary local calls now pass explicit operation names for attributed logs.
+
+### Fixed
+- Local LLM abort timeouts are now treated as transient: retry with backoff and do not mark local endpoint unavailable immediately.
+- Added gateway fallback paths for consolidation/profile/identity JSON parsing when local LLM fails, reducing dropped maintenance passes.
+
 ## [2.2.2] - 2026-02-10
 
 ### Added
