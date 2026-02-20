@@ -17,6 +17,8 @@ Thanks for contributing. We welcome both issues and pull requests from humans an
 
 ## Development setup
 
+Requires Node.js `>=22.12.0` (aligned with OpenClaw engine support).
+
 ```bash
 npm ci
 npm run check-types

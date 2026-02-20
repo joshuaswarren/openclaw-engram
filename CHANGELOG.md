@@ -55,6 +55,13 @@ All notable changes to this project will be documented in this file.
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 
 ### Changed
+- Release automation hardening:
+  - `release-and-publish` now rebases the release commit onto the latest `origin/main` immediately before push, reducing non-fast-forward failures during close-together merges.
+  - Release workflow concurrency now cancels in-progress runs in the same group to reduce overlapping release races.
+- Node version alignment with OpenClaw:
+  - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
+  - CI and release workflows now use Node `22.12.0`.
+  - Contributing guide now documents Node `>=22.12.0` for local development.
 - Installation docs now lead with `openclaw plugins install openclaw-engram --pin` and move git clone/build to a developer-only path.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
 - Extractions with no durable outputs skip persistence/log churn paths.

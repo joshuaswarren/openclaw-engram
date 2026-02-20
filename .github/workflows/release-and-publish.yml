@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: release-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   release:
@@ -26,7 +26,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22.12.0'
           cache: npm
 
       - name: Install dependencies
@@ -54,6 +54,11 @@ jobs:
           npm version patch -m "chore(release): %s [skip ci]"
           NEW_VERSION=$(node -p "require('./package.json').version")
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rebase release commit on latest main
+        run: |
+          git fetch origin main
+          git rebase origin/main
 
       - name: Push release commit and tag
         run: git push origin HEAD:main --follow-tags
