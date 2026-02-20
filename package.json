@@ -31,6 +31,9 @@
     "url": "https://github.com/joshuaswarren/openclaw-engram/issues"
   },
   "author": "Joshua Warren",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "dist/index.js",
   "exports": {
     ".": {
@@ -62,7 +65,12 @@
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "test": "tsx --test",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

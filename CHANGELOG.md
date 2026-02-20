@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- npm-first distribution + release automation:
+  - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps patch version, tags, creates GitHub release, and publishes to npm (when `NPM_TOKEN` is configured).
+  - Package publish metadata in `package.json`: `engines.node`, `prepack`, and `publishConfig` (`access: public`, `provenance: true`).
 - Contributor onboarding and contribution governance docs:
   - New `CONTRIBUTING.md` with standards for issues/PRs, testing, changelog policy, and AI-assisted contributions.
   - New `CONTRIBUTORS.md` with contributor recognition, including the first community contributors.
@@ -52,6 +55,7 @@ All notable changes to this project will be documented in this file.
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 
 ### Changed
+- Installation docs now lead with `openclaw plugins install openclaw-engram --pin` and move git clone/build to a developer-only path.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
 - Extractions with no durable outputs skip persistence/log churn paths.
 

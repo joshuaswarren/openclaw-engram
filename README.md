@@ -323,26 +323,17 @@ QMD supports hybrid search combining BM25 and vector embeddings with reranking.
 ### Prerequisites
 
 - [OpenClaw](https://github.com/openclaw/openclaw) gateway
-- Node.js 20+
 - An OpenAI API key (for extraction; retrieval works without one)
 - [QMD](https://github.com/tobi/qmd) (optional, for hybrid search)
 
-### Install
+### Quick Start (Recommended: npm via OpenClaw)
 
 ```bash
-# Clone into the OpenClaw extensions directory
-git clone https://github.com/joshuaswarren/openclaw-engram.git \
-  ~/.openclaw/extensions/openclaw-engram
-
-# Install dependencies and build
-cd ~/.openclaw/extensions/openclaw-engram
-npm install
-npm run build
+# Install from npm (records install provenance in openclaw.json.plugins.installs)
+openclaw plugins install openclaw-engram --pin
 ```
 
-### Enable in OpenClaw
-
-Add to your `openclaw.json`:
+Then enable and configure in `openclaw.json`:
 
 ```jsonc
 {
@@ -361,6 +352,27 @@ Add to your `openclaw.json`:
     }
   }
 }
+```
+
+Reload the gateway:
+
+```bash
+kill -USR1 $(pgrep openclaw-gateway)
+```
+
+### Developer Install (from Git)
+
+Use this only if you are actively developing the plugin.
+
+```bash
+# Clone into the OpenClaw extensions directory
+git clone https://github.com/joshuaswarren/openclaw-engram.git \
+  ~/.openclaw/extensions/openclaw-engram
+
+# Install dependencies and build
+cd ~/.openclaw/extensions/openclaw-engram
+npm ci
+npm run build
 ```
 
 ### Set Up QMD Collection (Optional)
