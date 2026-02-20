@@ -1,0 +1,79 @@
+name: AI Review Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, review_requested, review_request_removed]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ai-reviewers:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require AI review bot activity
+        uses: actions/github-script@v7
+        env:
+          REQUIRED_AI_REVIEWER_GROUPS: >-
+            kiloconnect[bot]|kilo[bot],
+            codex[bot]|openai-codex[bot]|codex-reviewer[bot],
+            cursor-bugbot[bot]|cursor[bot]
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pr = context.payload.pull_request?.number ?? context.payload.review?.pull_request_url?.split('/').pop();
+            if (!pr) core.setFailed('Unable to determine pull request number.');
+
+            const groupsRaw = process.env.REQUIRED_AI_REVIEWER_GROUPS || '';
+            const groups = groupsRaw
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean)
+              .map(group => group.split('|').map(x => x.trim().toLowerCase()).filter(Boolean));
+
+            if (groups.length === 0) {
+              core.setFailed('No required AI reviewer groups configured.');
+              return;
+            }
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: Number(pr),
+              per_page: 100,
+            });
+
+            const latestByUser = new Map();
+            for (const review of reviews) {
+              const login = review.user?.login?.toLowerCase();
+              if (!login) continue;
+              latestByUser.set(login, review.state);
+            }
+
+            const present = [];
+            const missing = [];
+
+            for (const group of groups) {
+              const matched = group.find(alias => latestByUser.has(alias));
+              if (matched) {
+                present.push({ group, matched, state: latestByUser.get(matched) });
+              } else {
+                missing.push(group);
+              }
+            }
+
+            core.info(`Found review activity from: ${present.map(p => `${p.matched}(${p.state})`).join(', ') || 'none'}`);
+
+            if (missing.length > 0) {
+              const missingText = missing.map(group => group.join(' OR ')).join('; ');
+              core.setFailed(`Missing required AI reviews from: ${missingText}`);
+              return;
+            }
+
+            core.notice('All required AI reviewer groups have review activity on this PR.');

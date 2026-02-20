@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- GitHub Actions quality and security checks for pull requests:
+  - `CI` (typecheck, tests, build on Node 22)
+  - `Dependency Review` (blocks high+ severity dependency risks)
+  - `Secret Scan` (Gitleaks on PRs and main pushes)
+  - `CodeQL` analysis (PR + weekly schedule)
+- `AI Review Gate` workflow requiring review activity from KiloConnect, Codex, and Cursor Bugbot bot groups before merge.
 - v2.3 portability:
   - CLI: `openclaw engram export|import|backup` (json/md/sqlite bundles)
   - Format autodetection on import (`--format auto`)
