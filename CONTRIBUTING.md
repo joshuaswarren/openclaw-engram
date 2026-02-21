@@ -44,6 +44,10 @@ A good PR should:
 - Update docs for user-facing/config changes
 - Update `CHANGELOG.md` (see changelog policy below)
 
+For retrieval/planner/cache/config changes, run the mandatory hardening gate:
+
+- `docs/ops/pr-review-hardening-playbook.md`
+
 ## Changelog policy
 
 This repository uses `CHANGELOG.md` as the public source of release notes.
@@ -76,6 +80,11 @@ Please ensure:
 - Maintainers may request changes for scope, safety, tests, and documentation.
 - PRs require passing checks and at least one maintainer approval.
 - Significant changes may be merged in follow-up slices to reduce risk.
+- For logic changes in retrieval/planner/caching, reviewers should verify:
+  - flag symmetry (`enabled=false` disables write+read effects)
+  - zero semantics (`0` is never coerced to `1`)
+  - cap-after-filter behavior
+  - cache coherence across instances/concurrency
 
 ## Release process
 

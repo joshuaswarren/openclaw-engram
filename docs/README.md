@@ -17,6 +17,8 @@ This is the start of a full docs overhaul. Use this map as the canonical entrypo
 
 ## Operations
 - `import-export.md` - backup/export/import workflows
+- `ops/pr-review-hardening-playbook.md` - mandatory pre-push review hardening checklist
+- `ops/rca-pr11-review-churn-2026-02-21.md` - postmortem + lessons from PR #11 review churn
 
 ## Plans / Roadmaps
 - `plans/2026-02-21-engram-memory-os-roadmap.md` - v8 major roadmap (memory OS architecture)

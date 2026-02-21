@@ -4,6 +4,13 @@
 
 This plugin gives OpenClaw agents long-term memory that persists across conversations.
 
+## PR Hardening Rule (All Agents)
+
+If you touch retrieval/planner/cache/config logic, you must run the hardening gate in:
+`docs/ops/pr-review-hardening-playbook.md`
+
+This is mandatory before claiming a PR is review-clean.
+
 Think of it like a personal assistant who:
 - Remembers everything you've told them
 - Learns your preferences and patterns

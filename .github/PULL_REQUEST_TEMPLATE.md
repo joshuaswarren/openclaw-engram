@@ -16,6 +16,7 @@
 - [ ] `npm test`
 - [ ] `npm run build`
 - [ ] Added/updated tests for behavior changes
+- [ ] For retrieval/planner/cache/config changes: ran `docs/ops/pr-review-hardening-playbook.md`
 
 ## Changelog
 
@@ -27,6 +28,9 @@
 - [ ] No secrets/tokens added
 - [ ] Backwards compatibility considered
 - [ ] Migration/config impact documented (if applicable)
+- [ ] Zero-value semantics validated (`0` limits stay disabled, never coerced)
+- [ ] Flag symmetry validated (`enabled=false` disables both write and read-path effects)
+- [ ] Cache invalidation/coherency reviewed (cross-instance + concurrent updates)
 
 ## Notes for reviewers
 
