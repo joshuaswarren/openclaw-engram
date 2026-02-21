@@ -308,3 +308,33 @@ test("qmd fetch tops up when artifact-heavy window underfills non-artifact budge
   assert.equal(results.every((r: any) => !r.path.includes("/artifacts/")), true);
   assert.equal(qmdCalls.length >= 2, true);
 });
+
+test("qmd top-up returns best partial results after bounded attempts", async () => {
+  const memoryDir = tmpDir("engram-qmd-topup-partial");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  const qmdCalls: number[] = [];
+  const mkResult = (path: string, score: number) => ({
+    docid: path,
+    path,
+    snippet: path,
+    score,
+  });
+
+  (orchestrator as any).qmd = {
+    hybridSearch: async (_query: string, _collection: any, maxResults: number) => {
+      qmdCalls.push(maxResults);
+      const artifacts = Array.from({ length: maxResults }, (_, i) =>
+        mkResult(`/tmp/memory/artifacts/${i + 1}.md`, 1 - i * 0.0001),
+      );
+      return [...artifacts, mkResult("/tmp/memory/facts/partial.md", 0.25)];
+    },
+  };
+
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 300, 30);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.path, "/tmp/memory/facts/partial.md");
+  assert.equal(qmdCalls.length, 4);
+});

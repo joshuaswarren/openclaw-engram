@@ -11,8 +11,15 @@ fi
 
 STRICT_MODE="${CURSOR_PREPUSH_STRICT:-0}"
 
-if ! command -v cursor-agent >/dev/null 2>&1; then
-  echo "[cursor-review] skipped (cursor-agent not installed)"
+CURSOR_BIN=""
+if command -v agent >/dev/null 2>&1; then
+  CURSOR_BIN="agent"
+elif command -v cursor-agent >/dev/null 2>&1; then
+  CURSOR_BIN="cursor-agent"
+fi
+
+if [[ -z "$CURSOR_BIN" ]]; then
+  echo "[cursor-review] skipped (agent/cursor-agent not installed)"
   if [[ "$STRICT_MODE" == "1" ]]; then
     exit 1
   fi
@@ -92,12 +99,12 @@ elif command -v gtimeout >/dev/null 2>&1; then
 fi
 
 if [[ ${#timeout_cmd[@]} -gt 0 ]]; then
-  echo "[cursor-review] running cursor-agent --model $CURSOR_MODEL (timeout=${CURSOR_TIMEOUT_SECONDS}s)"
+  echo "[cursor-review] running $CURSOR_BIN --model $CURSOR_MODEL (timeout=${CURSOR_TIMEOUT_SECONDS}s)"
 else
-  echo "[cursor-review] running cursor-agent --model $CURSOR_MODEL (no timeout command found)"
+  echo "[cursor-review] running $CURSOR_BIN --model $CURSOR_MODEL (no timeout command found)"
 fi
 
-if ! "${timeout_cmd[@]}" cursor-agent --print --output-format text --model "$CURSOR_MODEL" "$(cat "$PROMPT_FILE")" >"$OUTPUT_FILE" 2>"$ERROR_FILE"; then
+if ! "${timeout_cmd[@]}" "$CURSOR_BIN" --print --output-format text --model "$CURSOR_MODEL" "$(cat "$PROMPT_FILE")" >"$OUTPUT_FILE" 2>"$ERROR_FILE"; then
   rc=$?
   if [[ "$rc" == "124" ]] || [[ "$rc" == "137" ]]; then
     echo "[cursor-review] timed out after ${CURSOR_TIMEOUT_SECONDS}s; skipping"

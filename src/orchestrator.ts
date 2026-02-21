@@ -687,6 +687,7 @@ export class Orchestrator {
     let fetchLimit = computeArtifactCandidateFetchLimit(targetCount);
     const maxFetchLimit = Math.min(800, Math.max(fetchLimit, targetCount * 8));
     const MAX_ATTEMPTS = 4;
+    let bestFiltered: MemoryFile[] = [];
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const rawResults = await storage.searchArtifacts(prompt, fetchLimit);
@@ -717,6 +718,9 @@ export class Orchestrator {
       }
 
       if (filtered.length >= targetCount) return filtered.slice(0, targetCount);
+      if (filtered.length > bestFiltered.length) {
+        bestFiltered = filtered;
+      }
       if (rawResults.length === 0) return filtered;
       if (rawResults.length < fetchLimit && filtered.length > 0) return filtered;
       if (fetchLimit >= maxFetchLimit) return filtered;
@@ -725,7 +729,7 @@ export class Orchestrator {
       fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
     }
 
-    return [];
+    return bestFiltered;
   }
 
   private async recallArtifactsAcrossNamespaces(
@@ -750,6 +754,7 @@ export class Orchestrator {
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
     const maxFetchLimit = Math.min(800, Math.max(fetchLimit, qmdFetchLimit * 8));
     const MAX_ATTEMPTS = 4;
+    let bestFiltered: QmdSearchResult[] = [];
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const memoryResults = await this.qmd.hybridSearch(
@@ -767,6 +772,9 @@ export class Orchestrator {
       if (filteredResults.length >= qmdFetchLimit) {
         return filteredResults.slice(0, qmdFetchLimit);
       }
+      if (filteredResults.length > bestFiltered.length) {
+        bestFiltered = filteredResults;
+      }
       if (memoryResults.length === 0) {
         return filteredResults;
       }
@@ -781,7 +789,7 @@ export class Orchestrator {
       fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
     }
 
-    return [];
+    return bestFiltered;
   }
 
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
