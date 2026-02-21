@@ -762,11 +762,13 @@ export class StorageManager {
 
     const sanitized = sanitizeMemoryContent(quote);
     const filePath = path.join(dir, `${id}.md`);
+    const priorWriteVersion = this.getArtifactWriteVersion();
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
     const writeVersion = this.bumpArtifactWriteVersion();
     if (
       this.artifactIndexCache &&
-      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS
+      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS &&
+      this.artifactIndexCache.writeVersion === priorWriteVersion
     ) {
       this.artifactIndexCache.memories.push({
         path: filePath,

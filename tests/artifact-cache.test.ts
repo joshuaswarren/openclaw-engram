@@ -62,3 +62,26 @@ test("artifact cache invalidates across storage instances for same memoryDir", a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("artifact write-through does not mask cross-instance writes", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-cache-mask-"));
+  try {
+    const writer = new StorageManager(dir);
+    const reader = new StorageManager(dir);
+    await writer.ensureDirectories();
+
+    await writer.writeArtifact("first seed artifact", { tags: ["seed"] });
+    await reader.searchArtifacts("first seed", 10); // warm reader cache
+
+    // External write from another instance after reader cache is warm.
+    await writer.writeArtifact("second external artifact", { tags: ["external"] });
+
+    // Reader local write should not preserve a stale cache snapshot that misses external writes.
+    await reader.writeArtifact("third local artifact", { tags: ["local"] });
+
+    const external = await reader.searchArtifacts("second external", 10);
+    assert.equal(external.some((m) => m.content.includes("second external artifact")), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

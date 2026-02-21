@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  pull-requests: read
 
 concurrency:
   group: release-main
@@ -49,7 +50,55 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Compute next patch version from tags
+      - name: Resolve bump type from merged PR labels
+        id: bump
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.sha;
+
+            let bumpType = "patch";
+            let prNumber = "";
+            let labels = [];
+
+            try {
+              const prs = await github.request(
+                "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls",
+                {
+                  owner,
+                  repo,
+                  commit_sha: sha,
+                  mediaType: { previews: ["groot"] },
+                }
+              );
+
+              const mergedPr = prs.data.find((pr) => pr.merged_at) ?? null;
+              if (mergedPr) {
+                prNumber = String(mergedPr.number);
+                labels = (mergedPr.labels ?? [])
+                  .map((l) => String(l.name || "").toLowerCase())
+                  .filter(Boolean);
+              }
+            } catch (error) {
+              core.warning(`Could not resolve merged PR labels for ${sha}: ${error}`);
+            }
+
+            if (labels.includes("major") || labels.includes("breaking-change")) {
+              bumpType = "major";
+            } else if (labels.includes("feature") || labels.includes("enhancement")) {
+              bumpType = "minor";
+            }
+
+            core.info(
+              `Release bump resolved: ${bumpType} (sha=${sha}${prNumber ? `, pr=#${prNumber}` : ""}${labels.length ? `, labels=${labels.join(",")}` : ""})`
+            );
+            core.setOutput("bump_type", bumpType);
+            core.setOutput("pr_number", prNumber);
+            core.setOutput("pr_labels_csv", labels.join(","));
+
+      - name: Compute next version from tags
         id: version
         run: |
           SOURCE_MAIN_SHA=$(git rev-parse HEAD)
@@ -81,8 +130,20 @@ jobs:
           REST="${BASE_VERSION#*.}"
           MINOR="${REST%%.*}"
           PATCH="${REST##*.}"
-          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          BUMP_TYPE="${{ steps.bump.outputs.bump_type }}"
+          case "${BUMP_TYPE}" in
+            major)
+              NEXT_VERSION="$((MAJOR + 1)).0.0"
+              ;;
+            minor)
+              NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0"
+              ;;
+            *)
+              NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              ;;
+          esac
           echo "base_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "bump_type=${BUMP_TYPE}" >> "$GITHUB_OUTPUT"
           echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           echo "tag_name=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "new_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
