@@ -373,9 +373,10 @@ export class Orchestrator {
     );
     // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
     const q = this.conversationQmd ?? this.qmd;
+    const usingPrimaryQmdClient = q === this.qmd;
     const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
     let embedded = false;
-    if (q.isAvailable()) {
+    if ((!usingPrimaryQmdClient || this.config.qmdEnabled) && q.isAvailable()) {
       await q.update();
       if (shouldEmbed) {
         await q.embed();
@@ -451,9 +452,9 @@ export class Orchestrator {
       }
     }
 
-    // Keep outer recall timeout above backend subprocess query timeout (30s) so
-    // degraded QMD paths can still fall through to embedding/recency fallback.
-    const RECALL_TIMEOUT_MS = 45_000;
+    // Keep outer recall timeout above worst-case serialized hybrid search:
+    // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
+    const RECALL_TIMEOUT_MS = 75_000;
     return Promise.race([
       this.recallInternal(prompt, sessionKey),
       new Promise<string>((_, reject) =>

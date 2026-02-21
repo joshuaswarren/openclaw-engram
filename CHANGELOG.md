@@ -74,7 +74,7 @@ All notable changes to this project will be documented in this file.
 - npm package name is now scoped to `@joshuaswarren/openclaw-engram` for user-scoped publishing.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
 - Extractions with no durable outputs skip persistence/log churn paths.
-- Recall now keeps fail-open headroom under backend slowness: the hard recall guard is reduced from 60s to 45s (still above QMD 30s search timeout) to lower stall risk without preempting fallback assembly.
+- Recall now keeps fail-open headroom under backend slowness: the hard recall guard is reduced from 60s to 75s to stay above serialized QMD hybrid-search worst cases (~60s) and avoid preempting fallback assembly.
 
 ### Fixed
 - Runtime hardening for missing QMD collections:
@@ -85,6 +85,7 @@ All notable changes to this project will be documented in this file.
 - Recall timeout/failure logs are now throttled to reduce repeated warning spam during backend incidents.
 - Recall-failure suppression counters now reset after idle windows so warning suffixes do not include stale counts.
 - Conversation-index maintenance and recall paths now use conversation index availability directly (not the primary `qmdEnabled` flag), preserving conversation features when primary memory collection is disabled.
+- Conversation-index maintenance now only bypasses `qmdEnabled` when using the dedicated conversation QMD client; if it falls back to primary QMD client, it still respects primary `qmdEnabled`.
 
 ## [7.2.1] - 2026-02-19
 
