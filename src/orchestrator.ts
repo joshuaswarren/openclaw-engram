@@ -90,6 +90,7 @@ export class Orchestrator {
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
   private lastRecallFailureLogAtMs = 0;
+  private lastRecallFailureAtMs = 0;
   private suppressedRecallFailures = 0;
 
   // Initialization gate: recall() awaits this before proceeding
@@ -198,6 +199,8 @@ export class Orchestrator {
           );
         } else if (collectionState === "unknown") {
           log.warn("QMD collection check unavailable; keeping QMD retrieval enabled for fail-open behavior");
+        } else if (collectionState === "skipped") {
+          log.debug("QMD collection check skipped in daemon-only mode");
         }
       } else {
         log.warn(`QMD: not available ${this.qmd.debugStatus()}`);
@@ -220,6 +223,8 @@ export class Orchestrator {
           log.warn(
             "Conversation index collection check unavailable; keeping conversation semantic recall enabled for fail-open behavior",
           );
+        } else if (collectionState === "skipped") {
+          log.debug("Conversation index collection check skipped in daemon-only mode");
         }
       } else {
         log.warn(`Conversation index QMD: not available ${this.conversationQmd.debugStatus()}`);
@@ -370,7 +375,7 @@ export class Orchestrator {
     const q = this.conversationQmd ?? this.qmd;
     const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
     let embedded = false;
-    if (this.config.qmdEnabled && q.isAvailable()) {
+    if (q.isAvailable()) {
       await q.update();
       if (shouldEmbed) {
         await q.embed();
@@ -446,8 +451,9 @@ export class Orchestrator {
       }
     }
 
-    // Keep recall fail-open and bounded to avoid long agent stalls when retrieval backends are slow.
-    const RECALL_TIMEOUT_MS = 30_000;
+    // Keep outer recall timeout above backend subprocess query timeout (30s) so
+    // degraded QMD paths can still fall through to embedding/recency fallback.
+    const RECALL_TIMEOUT_MS = 45_000;
     return Promise.race([
       this.recallInternal(prompt, sessionKey),
       new Promise<string>((_, reject) =>
@@ -463,6 +469,11 @@ export class Orchestrator {
     const now = Date.now();
     const errorMsg = err instanceof Error ? err.message : String(err);
     const LOG_WINDOW_MS = 60_000;
+    const idleSinceLastFailureMs = now - this.lastRecallFailureAtMs;
+    this.lastRecallFailureAtMs = now;
+    if (idleSinceLastFailureMs >= LOG_WINDOW_MS) {
+      this.suppressedRecallFailures = 0;
+    }
 
     if (now - this.lastRecallFailureLogAtMs >= LOG_WINDOW_MS) {
       const suffix =
@@ -852,7 +863,6 @@ export class Orchestrator {
     const convT0 = Date.now();
     if (
       this.config.conversationIndexEnabled &&
-      this.config.qmdEnabled &&
       this.conversationQmd &&
       this.conversationQmd.isAvailable()
     ) {

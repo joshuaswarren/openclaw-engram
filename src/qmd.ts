@@ -819,10 +819,10 @@ export class QmdClient {
     }
   }
 
-  async ensureCollection(memoryDir: string): Promise<"present" | "missing" | "unknown"> {
+  async ensureCollection(memoryDir: string): Promise<"present" | "missing" | "unknown" | "skipped"> {
     if (this.available === false && !this.daemonAvailable) return "unknown";
     // If only daemon is available (no CLI), skip collection check
-    if (this.available === false) return "unknown";
+    if (this.available === false) return "skipped";
     try {
       const { stdout } = await runQmd(
         ["collection", "list"],
