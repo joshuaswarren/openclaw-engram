@@ -618,14 +618,14 @@ export class Orchestrator {
       : recallMode === "minimal"
       ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
       : this.config.qmdMaxResults;
-    const qmdFetchLimit = Math.max(
-      recallResultLimit,
-      Math.min(200, recallResultLimit + Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)),
-    );
-    const embeddingFetchLimit = Math.max(
-      recallResultLimit,
-      Math.min(200, recallResultLimit + Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)),
-    );
+    const recallHeadroom = this.config.verbatimArtifactsEnabled
+      ? Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)
+      : 12;
+    const computedFetchLimit = recallResultLimit === 0
+      ? 0
+      : Math.max(recallResultLimit, Math.min(200, recallResultLimit + recallHeadroom));
+    const qmdFetchLimit = computedFetchLimit;
+    const embeddingFetchLimit = computedFetchLimit;
 
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
