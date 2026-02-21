@@ -586,7 +586,7 @@ export class Orchestrator {
       : "full";
     timings.recallPlan = recallMode;
     const recallResultLimit = recallMode === "minimal"
-      ? Math.max(1, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
+      ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
       : this.config.qmdMaxResults;
 
     const principal = resolvePrincipal(sessionKey, this.config);
@@ -694,6 +694,10 @@ export class Orchestrator {
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
       if (recallMode === "no_recall") {
         timings.qmd = "skip(plan=no_recall)";
+        return null;
+      }
+      if (recallResultLimit <= 0) {
+        timings.qmd = "skip(limit=0)";
         return null;
       }
       if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
@@ -874,6 +878,7 @@ export class Orchestrator {
         );
       }
     } else if (
+      recallResultLimit > 0 &&
       recallMode !== "no_recall" &&
       (!this.config.qmdEnabled || !this.qmd.isAvailable())
     ) {
