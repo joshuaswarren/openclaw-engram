@@ -11,7 +11,7 @@ const GOAL_PATTERNS: Array<{ re: RegExp; goal: string }> = [
 const ACTION_PATTERNS: Array<{ re: RegExp; action: string }> = [
   { re: /\b(review(?:s|ed|ing)?|audit(?:s|ed|ing)?|inspect(?:s|ed|ing)?|check(?:s|ed|ing)?)\b/i, action: "review" },
   { re: /\b(plan(?:s|ned|ning)?|design(?:s|ed|ing)?|brainstorm(?:s|ed|ing)?|spec(?:s)?)\b/i, action: "plan" },
-  { re: /\b(implement(?:s|ed|ing)?|build(?:s|ing)?|code(?:s|d|ing)?|patch(?:es|ed|ing)?|fix(?:es|ed|ing)?)\b/i, action: "execute" },
+  { re: /\b(implement(?:s|ed|ing)?|build(?:s|ing)?|built|code(?:s|d|ing)?|patch(?:es|ed|ing)?|fix(?:es|ed|ing)?)\b/i, action: "execute" },
   { re: /\b(summarize|recap|what happened|timeline)\b/i, action: "summarize" },
   { re: /\b(decid(?:e|es|ed|ing)|decision(?:s)?|cho(?:ose|oses|osing)|chose|chosen)\b/i, action: "decide" },
 ];

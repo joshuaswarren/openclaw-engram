@@ -46,3 +46,8 @@ test("inferIntentFromText recognizes decision/chose variants for decide action",
   const fromChose = inferIntentFromText("We chose this approach for rollout");
   assert.equal(fromChose.actionType, "decide");
 });
+
+test("inferIntentFromText recognizes built as execute action", () => {
+  const inferred = inferIntentFromText("We built the channel-specific recall patch yesterday");
+  assert.equal(inferred.actionType, "execute");
+});
