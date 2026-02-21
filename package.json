@@ -64,6 +64,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
+    "check-config-contract": "tsx scripts/validate-config-contract.ts",
     "test": "tsx --test",
     "preflight": "bash scripts/pr-preflight.sh full",
     "preflight:quick": "bash scripts/pr-preflight.sh quick",

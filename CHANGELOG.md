@@ -63,6 +63,7 @@ All notable changes to this project will be documented in this file.
   - `scripts/install-git-hooks.sh`
   - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
   - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.
+  - New `scripts/validate-config-contract.ts` + `npm run check-config-contract` to enforce config-key contract parity across `PluginConfig`, `parseConfig()`, and `openclaw.plugin.json`, and to catch unknown keys in `PluginConfig`-contextual object literals.
 
 ### Changed
 - Extraction persistence now infers and stores intent metadata per memory/chunk, enabling intent-compatible recall boosts when enabled.

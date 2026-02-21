@@ -12,6 +12,7 @@ run() {
 
 # Core mandatory gate from docs/ops/pr-review-hardening-playbook.md
 run npm run check-types
+run npm run check-config-contract
 
 if [[ "$MODE" == "quick" ]]; then
   run npm test -- tests/intent.test.ts
