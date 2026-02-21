@@ -16,6 +16,7 @@ run npm run check-config-contract
 
 if [[ "$MODE" == "quick" ]]; then
   run npm test -- tests/intent.test.ts
+  run npm test -- tests/runtime-input-guards.test.ts
   run npm test -- tests/artifact-recall-limit.test.ts
   run npm test -- tests/recall-no-recall-short-circuit.test.ts
   run npm test -- tests/orchestrator-path-filter.test.ts

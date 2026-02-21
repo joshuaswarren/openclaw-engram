@@ -51,3 +51,15 @@ test("inferIntentFromText recognizes built as execute action", () => {
   const inferred = inferIntentFromText("We built the channel-specific recall patch yesterday");
   assert.equal(inferred.actionType, "execute");
 });
+
+test("runtime guards tolerate nullish/non-string inputs", () => {
+  assert.doesNotThrow(() => planRecallMode(undefined as unknown as string));
+  assert.doesNotThrow(() => planRecallMode(null as unknown as string));
+  assert.equal(planRecallMode(undefined as unknown as string), "no_recall");
+  assert.equal(planRecallMode(null as unknown as string), "no_recall");
+
+  assert.doesNotThrow(() => inferIntentFromText(undefined as unknown as string));
+  assert.doesNotThrow(() => inferIntentFromText(null as unknown as string));
+  assert.equal(inferIntentFromText(undefined as unknown as string).goal, "unknown");
+  assert.equal(inferIntentFromText(null as unknown as string).actionType, "unknown");
+});

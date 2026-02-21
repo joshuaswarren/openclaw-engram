@@ -70,6 +70,7 @@ All notable changes to this project will be documented in this file.
 - Recall assembly now supports optional artifact section injection and planner-driven QMD result caps in minimal mode.
 - `no_recall` now short-circuits before preamble fetches (shared context/profile/knowledge index), avoiding unnecessary reads and injection on acknowledgement turns.
 - Artifact recall now honors minimal planner caps via `computeArtifactRecallLimit(...)`, preventing artifact injection from exceeding minimal-mode recall budgets.
+- Intent planner/inference now safely handle non-string/nullish runtime inputs without throwing, and quick preflight includes `tests/runtime-input-guards.test.ts` as a higher-level runtime-hardening guard.
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:

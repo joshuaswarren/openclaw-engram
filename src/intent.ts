@@ -24,11 +24,16 @@ const ENTITY_PATTERNS: Array<{ re: RegExp; entityType: string }> = [
   { re: /\b(doc|readme|docs|changelog)\b/i, entityType: "docs" },
 ];
 
+function normalizeTextInput(input: unknown): string {
+  return typeof input === "string" ? input : "";
+}
+
 export function inferIntentFromText(text: string): MemoryIntent {
-  const goal = GOAL_PATTERNS.find((p) => p.re.test(text))?.goal ?? "unknown";
-  const actionType = ACTION_PATTERNS.find((p) => p.re.test(text))?.action ?? "unknown";
+  const safeText = normalizeTextInput(text);
+  const goal = GOAL_PATTERNS.find((p) => p.re.test(safeText))?.goal ?? "unknown";
+  const actionType = ACTION_PATTERNS.find((p) => p.re.test(safeText))?.action ?? "unknown";
   const entityTypes = Array.from(
-    new Set(ENTITY_PATTERNS.filter((p) => p.re.test(text)).map((p) => p.entityType)),
+    new Set(ENTITY_PATTERNS.filter((p) => p.re.test(safeText)).map((p) => p.entityType)),
   );
 
   return {
@@ -75,7 +80,7 @@ export function intentCompatibilityScore(queryIntent: MemoryIntent, memoryIntent
 }
 
 export function planRecallMode(prompt: string): RecallPlanMode {
-  const p = prompt.trim();
+  const p = normalizeTextInput(prompt).trim();
   let ackCandidate = p;
   while (ackCandidate.length > 0) {
     const ch = ackCandidate.charCodeAt(ackCandidate.length - 1);
