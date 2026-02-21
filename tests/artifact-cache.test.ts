@@ -85,3 +85,29 @@ test("artifact write-through does not mask cross-instance writes", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("artifact cache rebuild retries on concurrent write and avoids torn results", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-cache-retry-"));
+  try {
+    const storage = new StorageManager(dir);
+    const writer = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    await storage.writeArtifact("seed artifact for scan", { tags: ["seed"] });
+
+    const originalReadMemoryByPath = (storage as any).readMemoryByPath.bind(storage);
+    let injected = false;
+    (storage as any).readMemoryByPath = async (...args: any[]) => {
+      if (!injected) {
+        injected = true;
+        await writer.writeArtifact("concurrent retry artifact", { tags: ["retry"] });
+      }
+      return originalReadMemoryByPath(...args);
+    };
+
+    const hits = await storage.searchArtifacts("concurrent retry", 10);
+    assert.equal(hits.some((m) => m.content.includes("concurrent retry artifact")), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

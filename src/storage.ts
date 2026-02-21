@@ -812,36 +812,44 @@ export class StorageManager {
       return this.artifactIndexCache.memories;
     }
 
-    const versionBefore = this.getArtifactWriteVersion();
-    const artifacts: MemoryFile[] = [];
-    const readDir = async (dir: string) => {
-      try {
-        const entries = await readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            await readDir(fullPath);
-            continue;
+    const scanArtifacts = async (): Promise<MemoryFile[]> => {
+      const artifacts: MemoryFile[] = [];
+      const readDir = async (dir: string) => {
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              await readDir(fullPath);
+              continue;
+            }
+            if (!entry.name.endsWith(".md")) continue;
+            const memory = await this.readMemoryByPath(fullPath);
+            if (!memory) continue;
+            artifacts.push(memory);
           }
-          if (!entry.name.endsWith(".md")) continue;
-          const memory = await this.readMemoryByPath(fullPath);
-          if (!memory) continue;
-          artifacts.push(memory);
+        } catch {
+          // Directory doesn't exist yet
         }
-      } catch {
-        // Directory doesn't exist yet
-      }
+      };
+      await readDir(this.artifactsDir);
+      return artifacts;
     };
 
-    await readDir(this.artifactsDir);
-    const versionAfter = this.getArtifactWriteVersion();
-    if (versionAfter !== versionBefore) {
-      // A write landed during rebuild; don't publish a stale cache snapshot.
-      this.artifactIndexCache = null;
-      return artifacts;
+    const MAX_REBUILD_RETRIES = 2;
+    for (let attempt = 0; attempt <= MAX_REBUILD_RETRIES; attempt += 1) {
+      const versionBefore = this.getArtifactWriteVersion();
+      const artifacts = await scanArtifacts();
+      const versionAfter = this.getArtifactWriteVersion();
+      if (versionAfter === versionBefore) {
+        this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now(), writeVersion: versionAfter };
+        return artifacts;
+      }
     }
-    this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now(), writeVersion: versionAfter };
-    return artifacts;
+
+    // Highly concurrent writer churn; keep cache invalid so next read retries a clean rebuild.
+    this.artifactIndexCache = null;
+    return [];
   }
 
   async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
