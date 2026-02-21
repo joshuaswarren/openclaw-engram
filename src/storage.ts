@@ -1,4 +1,5 @@
 import { readdir, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
+import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
@@ -575,24 +576,56 @@ export class StorageManager {
 
   constructor(private readonly baseDir: string) {}
 
+  private versionFilePath(kind: "memory-status" | "artifact-write"): string {
+    const fileName =
+      kind === "memory-status" ? ".memory-status-version.log" : ".artifact-write-version.log";
+    return path.join(this.stateDir, fileName);
+  }
+
+  private bumpSharedVersion(
+    kind: "memory-status" | "artifact-write",
+    fallbackMap: Map<string, number>,
+  ): number {
+    const filePath = this.versionFilePath(kind);
+    try {
+      mkdirSync(this.stateDir, { recursive: true });
+      appendFileSync(filePath, "x");
+      const next = statSync(filePath).size;
+      fallbackMap.set(this.baseDir, next);
+      return next;
+    } catch {
+      const next = (fallbackMap.get(this.baseDir) ?? 0) + 1;
+      fallbackMap.set(this.baseDir, next);
+      return next;
+    }
+  }
+
+  private readSharedVersion(
+    kind: "memory-status" | "artifact-write",
+    fallbackMap: Map<string, number>,
+  ): number {
+    const filePath = this.versionFilePath(kind);
+    try {
+      return statSync(filePath).size;
+    } catch {
+      return fallbackMap.get(this.baseDir) ?? 0;
+    }
+  }
+
   private bumpMemoryStatusVersion(): void {
-    const current = StorageManager.memoryStatusVersionByDir.get(this.baseDir) ?? 0;
-    StorageManager.memoryStatusVersionByDir.set(this.baseDir, current + 1);
+    this.bumpSharedVersion("memory-status", StorageManager.memoryStatusVersionByDir);
   }
 
   getMemoryStatusVersion(): number {
-    return StorageManager.memoryStatusVersionByDir.get(this.baseDir) ?? 0;
+    return this.readSharedVersion("memory-status", StorageManager.memoryStatusVersionByDir);
   }
 
   private bumpArtifactWriteVersion(): number {
-    const current = StorageManager.artifactWriteVersionByDir.get(this.baseDir) ?? 0;
-    const next = current + 1;
-    StorageManager.artifactWriteVersionByDir.set(this.baseDir, next);
-    return next;
+    return this.bumpSharedVersion("artifact-write", StorageManager.artifactWriteVersionByDir);
   }
 
   private getArtifactWriteVersion(): number {
-    return StorageManager.artifactWriteVersionByDir.get(this.baseDir) ?? 0;
+    return this.readSharedVersion("artifact-write", StorageManager.artifactWriteVersionByDir);
   }
 
   private get factsDir(): string {
