@@ -75,6 +75,7 @@ export function computeArtifactRecallLimit(
   recallResultLimit: number,
   verbatimArtifactsMaxRecall: number,
 ): number {
+  if (recallMode === "no_recall") return 0;
   const base = Math.max(0, verbatimArtifactsMaxRecall);
   if (recallMode === "minimal") {
     return Math.min(base, Math.max(0, recallResultLimit));

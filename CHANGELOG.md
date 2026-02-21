@@ -74,6 +74,9 @@ All notable changes to this project will be documented in this file.
 - Artifact recall/search hardening:
   - Artifact candidate fetch is now bounded (`computeArtifactCandidateFetchLimit`) instead of unbounded full-corpus requests.
   - Artifact token matching now uses token/boundary-aware scoring (not raw substring includes), reducing acronym false positives.
+- Planner/intent hardening:
+  - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
+  - Summarize action intent matching now includes conjugations (`summarized`, `summarizing`, `recapped`, `recapping`).
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:

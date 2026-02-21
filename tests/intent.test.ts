@@ -52,6 +52,14 @@ test("inferIntentFromText recognizes built as execute action", () => {
   assert.equal(inferred.actionType, "execute");
 });
 
+test("inferIntentFromText recognizes summarize/recap conjugations", () => {
+  const summarized = inferIntentFromText("She summarized the outage notes");
+  assert.equal(summarized.actionType, "summarize");
+
+  const recapped = inferIntentFromText("We recapped the timeline at standup");
+  assert.equal(recapped.actionType, "summarize");
+});
+
 test("runtime guards tolerate nullish/non-string inputs", () => {
   assert.doesNotThrow(() => planRecallMode(undefined as unknown as string));
   assert.doesNotThrow(() => planRecallMode(null as unknown as string));

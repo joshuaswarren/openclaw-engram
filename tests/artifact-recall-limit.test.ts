@@ -11,6 +11,7 @@ test("artifact recall limit is capped in minimal mode", () => {
 test("artifact recall limit is unchanged outside minimal mode", () => {
   assert.equal(computeArtifactRecallLimit("full", 1, 5), 5);
   assert.equal(computeArtifactRecallLimit("graph_mode", 2, 4), 4);
+  assert.equal(computeArtifactRecallLimit("no_recall", 0, 5), 0);
 });
 
 test("artifact candidate fetch limit uses bounded headroom", () => {
