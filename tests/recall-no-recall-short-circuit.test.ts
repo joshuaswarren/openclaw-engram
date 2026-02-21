@@ -137,16 +137,12 @@ function baseConfig(memoryDir: string): PluginConfig {
     compoundingInjectEnabled: false,
     recallPlannerEnabled: true,
     recallPlannerMaxQmdResultsMinimal: 1,
-    recallIntentGoalWeight: 0.5,
-    recallIntentActionWeight: 0.3,
-    recallIntentEntityWeight: 0.2,
     intentRoutingEnabled: false,
     intentRoutingBoost: 0.25,
     verbatimArtifactsEnabled: false,
     verbatimArtifactsMinConfidence: 0.8,
-    verbatimArtifactsCategories: ["decision", "commitment", "correction", "principle"],
+    verbatimArtifactCategories: ["decision", "commitment", "correction", "principle"],
     verbatimArtifactsMaxRecall: 5,
-    verbatimArtifactsMaxChars: 280,
   };
 }
 

@@ -17,6 +17,30 @@ function loadTsConfig(tsconfigPath: string): ts.ParsedCommandLine {
   return ts.parseJsonConfigFileContent(configFile.config, ts.sys, path.dirname(tsconfigPath));
 }
 
+function collectTsFiles(dirPath: string): string[] {
+  if (!fs.existsSync(dirPath)) return [];
+  const out: string[] = [];
+  const stack = [dirPath];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (
+        entry.isFile() &&
+        full.endsWith(".ts") &&
+        !full.endsWith(".d.ts")
+      ) {
+        out.push(full);
+      }
+    }
+  }
+  return out;
+}
+
 function getPluginConfigKeys(source: ts.SourceFile): Set<string> {
   for (const stmt of source.statements) {
     if (!ts.isInterfaceDeclaration(stmt) || stmt.name.text !== "PluginConfig") continue;
@@ -116,8 +140,14 @@ function main() {
   const repoRoot = process.cwd();
   const tsconfigPath = path.join(repoRoot, "tsconfig.json");
   const parsed = loadTsConfig(tsconfigPath);
+  const rootNames = Array.from(
+    new Set([
+      ...parsed.fileNames,
+      ...collectTsFiles(path.join(repoRoot, "tests")),
+    ]),
+  );
   const program = ts.createProgram({
-    rootNames: parsed.fileNames,
+    rootNames,
     options: parsed.options,
   });
   const checker = program.getTypeChecker();
