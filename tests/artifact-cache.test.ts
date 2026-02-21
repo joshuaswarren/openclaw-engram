@@ -43,6 +43,23 @@ test("artifact search matches short acronym tokens", async () => {
   }
 });
 
+test("artifact search uses token boundaries to avoid substring false positives", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-token-boundary-"));
+  const storage = new StorageManager(dir);
+  try {
+    await storage.ensureDirectories();
+    await storage.writeArtifact("Decision log with improve notes", { tags: ["decision"] });
+    await storage.writeArtifact("CI pipeline failed on PR for DB migration", { tags: ["ci", "pr", "db"] });
+
+    const hits = await storage.searchArtifacts("CI PR DB", 10);
+    const contents = hits.map((h) => h.content);
+    assert.equal(contents.some((c) => c.includes("Decision log with improve notes")), false);
+    assert.equal(contents.some((c) => c.includes("CI pipeline failed on PR for DB migration")), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("artifact cache invalidates across storage instances for same memoryDir", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-cache-shared-"));
   try {

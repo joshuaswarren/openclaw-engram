@@ -58,6 +58,15 @@ const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "with",
 ]);
 
+function tokenizeArtifactSearchText(input: string): string[] {
+  return input
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2)
+    .filter((t) => !ARTIFACT_SEARCH_STOPWORDS.has(t));
+}
+
 function serializeFrontmatter(fm: MemoryFrontmatter): string {
   const lines = [
     "---",
@@ -853,19 +862,16 @@ export class StorageManager {
   }
 
   async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
-    const tokens = query
-      .toLowerCase()
-      .split(/[^a-z0-9]+/i)
-      .map((t) => t.trim())
-      .filter((t) => t.length >= 2)
-      .filter((t) => !ARTIFACT_SEARCH_STOPWORDS.has(t));
+    const tokens = tokenizeArtifactSearchText(query);
     if (tokens.length === 0) return [];
 
     const artifacts = await this.readAllArtifactsCached();
     const hits: Array<{ score: number; memory: MemoryFile }> = [];
     for (const memory of artifacts) {
-      const haystack = `${memory.content} ${(memory.frontmatter.tags ?? []).join(" ")}`.toLowerCase();
-      const score = tokens.reduce((sum, t) => sum + (haystack.includes(t) ? 1 : 0), 0);
+      const indexedTokens = new Set(
+        tokenizeArtifactSearchText(`${memory.content} ${(memory.frontmatter.tags ?? []).join(" ")}`),
+      );
+      const score = tokens.reduce((sum, t) => sum + (indexedTokens.has(t) ? 1 : 0), 0);
       if (score > 0) {
         hits.push({ score, memory });
       }

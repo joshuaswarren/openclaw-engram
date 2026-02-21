@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeArtifactRecallLimit } from "../src/orchestrator.ts";
+import { computeArtifactCandidateFetchLimit, computeArtifactRecallLimit } from "../src/orchestrator.ts";
 
 test("artifact recall limit is capped in minimal mode", () => {
   assert.equal(computeArtifactRecallLimit("minimal", 1, 5), 1);
@@ -11,4 +11,11 @@ test("artifact recall limit is capped in minimal mode", () => {
 test("artifact recall limit is unchanged outside minimal mode", () => {
   assert.equal(computeArtifactRecallLimit("full", 1, 5), 5);
   assert.equal(computeArtifactRecallLimit("graph_mode", 2, 4), 4);
+});
+
+test("artifact candidate fetch limit uses bounded headroom", () => {
+  assert.equal(computeArtifactCandidateFetchLimit(0), 0);
+  assert.equal(computeArtifactCandidateFetchLimit(1), 9);
+  assert.equal(computeArtifactCandidateFetchLimit(5), 25);
+  assert.equal(computeArtifactCandidateFetchLimit(100), 200);
 });

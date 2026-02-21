@@ -82,6 +82,13 @@ export function computeArtifactRecallLimit(
   return base;
 }
 
+export function computeArtifactCandidateFetchLimit(targetCount: number): number {
+  const cappedTarget = Math.max(0, targetCount);
+  if (cappedTarget === 0) return 0;
+  const headroom = Math.max(8, cappedTarget * 4);
+  return Math.min(200, cappedTarget + headroom);
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -712,7 +719,8 @@ export class Orchestrator {
         timings.artifacts = "skip(limit=0)";
         return [];
       }
-      const rawResults = await profileStorage.searchArtifacts(prompt, Number.MAX_SAFE_INTEGER);
+      const artifactFetchLimit = computeArtifactCandidateFetchLimit(targetCount);
+      const rawResults = await profileStorage.searchArtifacts(prompt, artifactFetchLimit);
       const sourceIds = Array.from(
         new Set(
           rawResults
