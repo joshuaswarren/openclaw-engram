@@ -128,3 +128,23 @@ test("artifact cache rebuild retries on concurrent write and avoids torn results
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("artifact cache rebuild returns latest best-effort results under persistent churn", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-cache-best-effort-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    await storage.writeArtifact("best effort artifact", { tags: ["best-effort"] });
+
+    let versionCounter = 0;
+    (storage as any).getArtifactWriteVersion = () => {
+      versionCounter += 1;
+      return versionCounter;
+    };
+
+    const hits = await storage.searchArtifacts("best effort", 10);
+    assert.equal(hits.some((m) => m.content.includes("best effort artifact")), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

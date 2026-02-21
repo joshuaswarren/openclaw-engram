@@ -846,10 +846,12 @@ export class StorageManager {
     };
 
     const MAX_REBUILD_RETRIES = 2;
+    let latestArtifacts: MemoryFile[] = [];
     for (let attempt = 0; attempt <= MAX_REBUILD_RETRIES; attempt += 1) {
       const versionBefore = this.getArtifactWriteVersion();
       const artifacts = await scanArtifacts();
       const versionAfter = this.getArtifactWriteVersion();
+      latestArtifacts = artifacts;
       if (versionAfter === versionBefore) {
         this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now(), writeVersion: versionAfter };
         return artifacts;
@@ -857,8 +859,9 @@ export class StorageManager {
     }
 
     // Highly concurrent writer churn; keep cache invalid so next read retries a clean rebuild.
+    // Return best-effort latest scan instead of an empty set to avoid dropping recall entirely.
     this.artifactIndexCache = null;
-    return [];
+    return latestArtifacts;
   }
 
   async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
