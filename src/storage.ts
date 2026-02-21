@@ -568,8 +568,9 @@ export function serializeEntityFile(entity: EntityFile): string {
 export class StorageManager {
   private knowledgeIndexCache: { result: string; builtAt: number } | null = null;
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
-  private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number } | null = null;
+  private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number; writeVersion: number } | null = null;
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
+  private artifactWriteVersion = 0;
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
 
   constructor(private readonly baseDir: string) {}
@@ -581,6 +582,11 @@ export class StorageManager {
 
   getMemoryStatusVersion(): number {
     return StorageManager.memoryStatusVersionByDir.get(this.baseDir) ?? 0;
+  }
+
+  private bumpArtifactWriteVersion(): number {
+    this.artifactWriteVersion += 1;
+    return this.artifactWriteVersion;
   }
 
   private get factsDir(): string {
@@ -751,6 +757,7 @@ export class StorageManager {
     const sanitized = sanitizeMemoryContent(quote);
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    const writeVersion = this.bumpArtifactWriteVersion();
     if (
       this.artifactIndexCache &&
       Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS
@@ -760,6 +767,7 @@ export class StorageManager {
         frontmatter: fm,
         content: sanitized.text,
       });
+      this.artifactIndexCache.writeVersion = writeVersion;
     } else {
       this.artifactIndexCache = null;
     }
@@ -769,11 +777,13 @@ export class StorageManager {
   private async readAllArtifactsCached(): Promise<MemoryFile[]> {
     if (
       this.artifactIndexCache &&
-      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS
+      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS &&
+      this.artifactIndexCache.writeVersion === this.artifactWriteVersion
     ) {
       return this.artifactIndexCache.memories;
     }
 
+    const versionBefore = this.artifactWriteVersion;
     const artifacts: MemoryFile[] = [];
     const readDir = async (dir: string) => {
       try {
@@ -795,7 +805,13 @@ export class StorageManager {
     };
 
     await readDir(this.artifactsDir);
-    this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now() };
+    const versionAfter = this.artifactWriteVersion;
+    if (versionAfter !== versionBefore) {
+      // A write landed during rebuild; don't publish a stale cache snapshot.
+      this.artifactIndexCache = null;
+      return artifacts;
+    }
+    this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now(), writeVersion: versionAfter };
     return artifacts;
   }
 
