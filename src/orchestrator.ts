@@ -649,7 +649,11 @@ export class Orchestrator {
       if (!this.config.verbatimArtifactsEnabled) return [];
       if (recallMode === "no_recall") return [];
       const t0 = Date.now();
-      const targetCount = Math.max(1, this.config.verbatimArtifactsMaxRecall);
+      const targetCount = Math.max(0, this.config.verbatimArtifactsMaxRecall);
+      if (targetCount <= 0) {
+        timings.artifacts = "skip(limit=0)";
+        return [];
+      }
       const searchCount = Math.max(100, targetCount);
       const rawResults = await profileStorage.searchArtifacts(
         prompt,
