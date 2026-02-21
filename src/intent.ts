@@ -76,7 +76,13 @@ export function intentCompatibilityScore(queryIntent: MemoryIntent, memoryIntent
 
 export function planRecallMode(prompt: string): RecallPlanMode {
   const p = prompt.trim();
-  const ackCandidate = p.replace(/[.!?]+$/g, "").trim();
+  let ackCandidate = p;
+  while (ackCandidate.length > 0) {
+    const ch = ackCandidate.charCodeAt(ackCandidate.length - 1);
+    if (ch !== 33 && ch !== 46 && ch !== 63) break; // ! . ?
+    ackCandidate = ackCandidate.slice(0, -1);
+  }
+  ackCandidate = ackCandidate.trim();
   if (p.length === 0) return "no_recall";
 
   if (/\b(timeline|sequence|history|what happened|chain of events|root cause)\b/i.test(p)) {
