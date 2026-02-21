@@ -58,10 +58,16 @@ All notable changes to this project will be documented in this file.
 - Path override knobs for non-committed local installs:
   - Config: `localLlmHomeDir`, `localLmsCliPath`, `localLmsBinDir`
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
+- Local guardrail automation scripts and git hooks:
+  - `scripts/pr-preflight.sh` (`quick` and `full` modes)
+  - `scripts/install-git-hooks.sh`
+  - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
 
 ### Changed
 - Extraction persistence now infers and stores intent metadata per memory/chunk, enabling intent-compatible recall boosts when enabled.
 - Recall assembly now supports optional artifact section injection and planner-driven QMD result caps in minimal mode.
+- Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
+- `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:
   - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, create a local release commit with version bump (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.

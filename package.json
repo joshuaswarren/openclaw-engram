@@ -65,6 +65,9 @@
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "test": "tsx --test",
+    "preflight": "bash scripts/pr-preflight.sh full",
+    "preflight:quick": "bash scripts/pr-preflight.sh quick",
+    "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
     "prepack": "npm run build"
   },

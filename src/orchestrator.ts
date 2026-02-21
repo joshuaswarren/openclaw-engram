@@ -879,12 +879,16 @@ export class Orchestrator {
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       } else {
         const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
-        const scoped = filterRecallCandidates(embeddingResults, {
+        const scopedCandidates = filterRecallCandidates(embeddingResults, {
           namespacesEnabled: this.config.namespacesEnabled,
           recallNamespaces,
           resolveNamespace: (p) => this.namespaceFromPath(p),
-          limit: recallResultLimit,
+          limit: embeddingFetchLimit,
         });
+        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
+          0,
+          recallResultLimit,
+        );
         if (scoped.length > 0) {
           const memoryIds = this.extractMemoryIdsFromResults(scoped);
           this.trackMemoryAccess(memoryIds);
@@ -929,12 +933,16 @@ export class Orchestrator {
     ) {
       // Fallback: embeddings first, then recency-only.
       const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
-      const scoped = filterRecallCandidates(embeddingResults, {
+      const scopedCandidates = filterRecallCandidates(embeddingResults, {
         namespacesEnabled: this.config.namespacesEnabled,
         recallNamespaces,
         resolveNamespace: (p) => this.namespaceFromPath(p),
-        limit: recallResultLimit,
+        limit: embeddingFetchLimit,
       });
+      const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
+        0,
+        recallResultLimit,
+      );
       if (scoped.length > 0) {
         const memoryIds = this.extractMemoryIdsFromResults(scoped);
         this.trackMemoryAccess(memoryIds);

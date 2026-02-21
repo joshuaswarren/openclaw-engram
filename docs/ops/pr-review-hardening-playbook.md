@@ -81,6 +81,11 @@ Run this before every push:
 4. Self-review staged diff for invariant classes below
 5. Add/adjust tests for each new invariant touched
 
+Repository automation:
+- `npm run hooks:install` configures git hooks that enforce this gate locally.
+- `pre-commit` runs `npm run preflight:quick`
+- `pre-push` runs `npm run preflight`
+
 ## Invariant Classes (must be checked)
 
 1. Flag symmetry:

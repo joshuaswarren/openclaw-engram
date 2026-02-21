@@ -26,6 +26,16 @@ npm test
 npm run build
 ```
 
+Install local guard hooks (recommended):
+
+```bash
+npm run hooks:install
+```
+
+This enables:
+- `pre-commit`: `npm run preflight:quick`
+- `pre-push`: `npm run preflight`
+
 ## Install path for users
 
 Use npm install via OpenClaw as the primary install path in docs:
