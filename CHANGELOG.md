@@ -96,6 +96,7 @@ All notable changes to this project will be documented in this file.
   - Cursor headless review was moved off mandatory pre-push execution; use `npm run review:cursor` explicitly before push.
   - Added `CURSOR_PREPUSH_STRICT=1` for maintainers who want manual Cursor review to fail-fast if Cursor is unavailable/timed out/unparseable.
   - Cursor headless review now supports `agent` (preferred) and `cursor-agent` command names.
+  - Cursor headless review now invokes documented print mode (`-p`) for non-interactive CLI behavior.
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:

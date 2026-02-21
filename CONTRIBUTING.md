@@ -40,6 +40,7 @@ Cursor headless review behavior (`npm run review:cursor`):
 - Runs only if `agent` (preferred) or `cursor-agent` is installed and callable.
 - Auto-skips (non-failing) when Cursor CLI is unavailable/unconfigured.
 - Returns non-zero when it reports findings in strict finding format.
+- Uses documented print mode (`-p`) with `--output-format text` in non-interactive flow.
 - Override knobs:
   - `CURSOR_PREPUSH_MODEL=<model>` to pick model (default: `auto`).
   - `CURSOR_PREPUSH_BASE_REF=<ref>` to change diff base (default: `origin/main`).

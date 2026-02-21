@@ -104,7 +104,7 @@ else
   echo "[cursor-review] running $CURSOR_BIN --model $CURSOR_MODEL (no timeout command found)"
 fi
 
-if ! "${timeout_cmd[@]}" "$CURSOR_BIN" --print --output-format text --model "$CURSOR_MODEL" "$(cat "$PROMPT_FILE")" >"$OUTPUT_FILE" 2>"$ERROR_FILE"; then
+if ! "${timeout_cmd[@]}" "$CURSOR_BIN" -p --trust --output-format text --model "$CURSOR_MODEL" "$(cat "$PROMPT_FILE")" >"$OUTPUT_FILE" 2>"$ERROR_FILE"; then
   rc=$?
   if [[ "$rc" == "124" ]] || [[ "$rc" == "137" ]]; then
     echo "[cursor-review] timed out after ${CURSOR_TIMEOUT_SECONDS}s; skipping"

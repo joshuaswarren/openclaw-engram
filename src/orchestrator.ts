@@ -750,6 +750,11 @@ export class Orchestrator {
     prompt: string,
     qmdFetchLimit: number,
     qmdHybridFetchLimit: number,
+    options: {
+      namespacesEnabled: boolean;
+      recallNamespaces: string[];
+      resolveNamespace: (path: string) => string;
+    },
   ): Promise<QmdSearchResult[]> {
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
     const maxFetchLimit = Math.min(800, Math.max(fetchLimit, qmdFetchLimit * 8));
@@ -763,9 +768,9 @@ export class Orchestrator {
         fetchLimit,
       );
       const filteredResults = filterRecallCandidates(memoryResults, {
-        namespacesEnabled: false,
-        recallNamespaces: [],
-        resolveNamespace: () => "",
+        namespacesEnabled: options.namespacesEnabled,
+        recallNamespaces: options.recallNamespaces,
+        resolveNamespace: options.resolveNamespace,
         limit: fetchLimit,
       });
 
@@ -922,6 +927,11 @@ export class Orchestrator {
         prompt,
         qmdFetchLimit,
         qmdHybridFetchLimit,
+        {
+          namespacesEnabled: this.config.namespacesEnabled,
+          recallNamespaces,
+          resolveNamespace: (p) => this.namespaceFromPath(p),
+        },
       );
 
       timings.qmd = `${Date.now() - t0}ms`;

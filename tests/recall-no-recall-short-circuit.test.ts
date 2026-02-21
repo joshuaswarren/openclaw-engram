@@ -303,7 +303,11 @@ test("qmd fetch tops up when artifact-heavy window underfills non-artifact budge
     },
   };
 
-  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 3, 8);
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 3, 8, {
+    namespacesEnabled: false,
+    recallNamespaces: [],
+    resolveNamespace: () => "default",
+  });
   assert.equal(results.length, 3);
   assert.equal(results.every((r: any) => !r.path.includes("/artifacts/")), true);
   assert.equal(qmdCalls.length >= 2, true);
@@ -333,8 +337,60 @@ test("qmd top-up returns best partial results after bounded attempts", async () 
     },
   };
 
-  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 300, 30);
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 300, 30, {
+    namespacesEnabled: false,
+    recallNamespaces: [],
+    resolveNamespace: () => "default",
+  });
   assert.equal(results.length, 1);
   assert.equal(results[0]?.path, "/tmp/memory/facts/partial.md");
   assert.equal(qmdCalls.length, 4);
+});
+
+test("qmd top-up applies namespace filtering before cap", async () => {
+  const memoryDir = tmpDir("engram-qmd-topup-namespace");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  const mkResult = (path: string, score: number) => ({
+    docid: path,
+    path,
+    snippet: path,
+    score,
+  });
+
+  (orchestrator as any).qmd = {
+    hybridSearch: async (_query: string, _collection: any, maxResults: number) => {
+      if (maxResults <= 8) {
+        return [
+          mkResult("/tmp/memory/other/facts/a.md", 1.0),
+          mkResult("/tmp/memory/other/facts/b.md", 0.99),
+          mkResult("/tmp/memory/other/facts/c.md", 0.98),
+          mkResult("/tmp/memory/other/facts/d.md", 0.975),
+          mkResult("/tmp/memory/other/facts/e.md", 0.974),
+          mkResult("/tmp/memory/other/facts/f.md", 0.973),
+          mkResult("/tmp/memory/default/facts/1.md", 0.97),
+          mkResult("/tmp/memory/default/facts/2.md", 0.96),
+        ];
+      }
+      return [
+        mkResult("/tmp/memory/other/facts/a.md", 1.0),
+        mkResult("/tmp/memory/other/facts/b.md", 0.99),
+        mkResult("/tmp/memory/other/facts/c.md", 0.98),
+        mkResult("/tmp/memory/default/facts/1.md", 0.97),
+        mkResult("/tmp/memory/default/facts/2.md", 0.96),
+        mkResult("/tmp/memory/default/facts/3.md", 0.95),
+      ];
+    },
+  };
+
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 3, 8, {
+    namespacesEnabled: true,
+    recallNamespaces: ["default"],
+    resolveNamespace: (path: string) => (path.includes("/default/") ? "default" : "other"),
+  });
+
+  assert.equal(results.length, 3);
+  assert.equal(results.every((r: any) => r.path.includes("/default/")), true);
 });
