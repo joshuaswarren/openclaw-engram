@@ -60,6 +60,7 @@ All notable changes to this project will be documented in this file.
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 - Local guardrail automation scripts and git hooks:
   - `scripts/pr-preflight.sh` (`quick` and `full` modes)
+  - `scripts/cursor-prepush-review.sh` optional Cursor headless bug scan during pre-push (auto-skips when `cursor-agent` is unavailable).
   - `scripts/install-git-hooks.sh`
   - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
   - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.

@@ -34,7 +34,16 @@ npm run hooks:install
 
 This enables:
 - `pre-commit`: `npm run preflight:quick`
-- `pre-push`: `npm run preflight`
+- `pre-push`: `npm run preflight` + optional Cursor headless bug scan (`scripts/cursor-prepush-review.sh`)
+
+Cursor pre-push scan behavior:
+- Auto-runs only if `cursor-agent` is installed and callable.
+- Auto-skips (non-failing) when Cursor CLI is unavailable/unconfigured.
+- Fails push when it reports findings in strict finding format.
+- Override knobs:
+  - `SKIP_CURSOR_PREPUSH=1` to skip Cursor scan for a push.
+  - `CURSOR_PREPUSH_MODEL=<model>` to pick model (default: `auto`).
+  - `CURSOR_PREPUSH_BASE_REF=<ref>` to change diff base (default: `origin/main`).
 
 ## Install path for users
 
