@@ -78,6 +78,7 @@ All notable changes to this project will be documented in this file.
   - Artifact cache rebuilds under sustained write churn now return latest best-effort scan results (without caching torn snapshots) instead of returning an empty set.
   - Artifact writes now reject unsafe sanitized content (fail-closed) to preserve verbatim anchor integrity.
   - Artifact recall now searches across all readable recall namespaces (not only self namespace), with round-robin merge + regression tests.
+  - Artifact namespace merge no longer exits early on duplicate-only offsets; it now continues until lists are exhausted, with a regression for duplicate-offset continuity.
 - Planner/intent hardening:
   - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
   - `computeArtifactRecallLimit` now also honors zero global recall caps in `full`/`graph_mode` (`recallResultLimit=0` yields zero artifact injection).

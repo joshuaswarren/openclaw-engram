@@ -92,3 +92,37 @@ test("mergeArtifactRecallCandidates round-robins namespace lists", () => {
     ["ns1-a", "ns2-a", "ns1-b", "ns2-b"],
   );
 });
+
+test("mergeArtifactRecallCandidates continues past duplicate-only offsets", () => {
+  const mk = (id: string, content: string) => ({
+    path: `/tmp/memory/artifacts/${id}.md`,
+    content,
+    frontmatter: {
+      id,
+      category: "fact",
+      created: "2026-02-21T00:00:00.000Z",
+      updated: "2026-02-21T00:00:00.000Z",
+      source: "artifact",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: [],
+    },
+  });
+
+  const x = mk("x", "same");
+  const y = mk("y", "y");
+  const z = mk("z", "z");
+
+  const merged = mergeArtifactRecallCandidates(
+    [
+      [x],
+      [y, x, z],
+    ],
+    3,
+  );
+
+  assert.deepEqual(
+    merged.map((m) => m.frontmatter.id),
+    ["x", "y", "z"],
+  );
+});

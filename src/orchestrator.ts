@@ -116,18 +116,18 @@ export function mergeArtifactRecallCandidates(
   const seen = new Set<string>();
   let offset = 0;
   while (out.length < cappedLimit) {
-    let progressed = false;
+    let hasAnyCandidateAtOffset = false;
     for (const list of candidatesByNamespace) {
       if (offset >= list.length) continue;
+      hasAnyCandidateAtOffset = true;
       const item = list[offset];
       const dedupeKey = `${item.frontmatter.id}:${item.frontmatter.sourceMemoryId ?? ""}:${item.content}`;
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
       out.push(item);
-      progressed = true;
       if (out.length >= cappedLimit) break;
     }
-    if (!progressed) break;
+    if (!hasAnyCandidateAtOffset) break;
     offset += 1;
   }
   return out;
