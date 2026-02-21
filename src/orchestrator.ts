@@ -71,6 +71,14 @@ export class Orchestrator {
   private readonly threading: ThreadingManager;
   private readonly rerankCache = new RerankCache();
   private contentHashIndex: ContentHashIndex | null = null;
+  private readonly artifactSourceStatusCache = new WeakMap<
+    StorageManager,
+    {
+      loadedAtMs: number;
+      statuses: Map<string, "active" | "superseded" | "archived">;
+    }
+  >();
+  private static readonly ARTIFACT_STATUS_CACHE_TTL_MS = 60_000;
 
   // Access tracking buffer (Phase 1A)
   // Maps memoryId -> {count, lastAccessed} for batched updates
@@ -151,6 +159,45 @@ export class Orchestrator {
     this.initPromise = new Promise<void>((resolve) => {
       this.resolveInit = resolve;
     });
+  }
+
+  private async resolveArtifactSourceStatuses(
+    storage: StorageManager,
+    sourceIds: string[],
+  ): Promise<Map<string, "active" | "superseded" | "archived" | "missing" | "unknown">> {
+    const now = Date.now();
+    const cached = this.artifactSourceStatusCache.get(storage);
+    const isFresh =
+      cached !== undefined &&
+      now - cached.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS;
+
+    let snapshot = cached;
+    if (!isFresh) {
+      const allMemories = await storage.readAllMemories();
+      snapshot = {
+        loadedAtMs: now,
+        statuses: new Map(
+          allMemories.map((m) => [
+            m.frontmatter.id,
+            (m.frontmatter.status ?? "active") as "active" | "superseded" | "archived",
+          ]),
+        ),
+      };
+      this.artifactSourceStatusCache.set(storage, snapshot);
+    }
+
+    const statuses = new Map<string, "active" | "superseded" | "archived" | "missing" | "unknown">();
+    for (const id of sourceIds) {
+      const status = snapshot?.statuses.get(id);
+      if (status) {
+        statuses.set(id, status);
+      } else {
+        // When serving from cache, unknown IDs may simply be newly-written memories.
+        // Treat as unknown (not missing) to avoid false-negative filtering.
+        statuses.set(id, isFresh ? "unknown" : "missing");
+      }
+    }
+    return statuses;
   }
 
   async initialize(): Promise<void> {
@@ -590,14 +637,10 @@ export class Orchestrator {
             .filter((id): id is string => typeof id === "string" && id.length > 0),
         ),
       );
-      const sourceStatus = new Map<string, "active" | "superseded" | "archived" | "missing">();
-      if (sourceIds.length > 0) {
-        const allMemories = await profileStorage.readAllMemories();
-        const byId = new Map(allMemories.map((m) => [m.frontmatter.id, m.frontmatter.status ?? "active"]));
-        for (const id of sourceIds) {
-          sourceStatus.set(id, byId.get(id) ?? "missing");
-        }
-      }
+      const sourceStatus =
+        sourceIds.length > 0
+          ? await this.resolveArtifactSourceStatuses(profileStorage, sourceIds)
+          : new Map<string, "active" | "superseded" | "archived" | "missing" | "unknown">();
 
       const results: MemoryFile[] = [];
       for (const artifact of rawResults) {
@@ -606,8 +649,8 @@ export class Orchestrator {
           results.push(artifact);
           continue;
         }
-        const status = sourceStatus.get(sourceId) ?? "missing";
-        if (status !== "active") continue;
+        const status = sourceStatus.get(sourceId) ?? "unknown";
+        if (status === "superseded" || status === "archived" || status === "missing") continue;
         results.push(artifact);
       }
       timings.artifacts = `${Date.now() - t0}ms`;
