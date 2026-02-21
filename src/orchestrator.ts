@@ -80,7 +80,7 @@ export class Orchestrator {
     {
       loadedAtMs: number;
       statusVersion: number;
-      statuses: Map<string, "active" | "superseded" | "archived">;
+      statuses: Map<string, "active" | "superseded" | "archived" | "missing">;
     }
   >();
   private static readonly ARTIFACT_STATUS_CACHE_TTL_MS = 60_000;
@@ -197,7 +197,7 @@ export class Orchestrator {
         statuses: new Map(
           allMemories.map((m) => [
             m.frontmatter.id,
-            (m.frontmatter.status ?? "active") as "active" | "superseded" | "archived",
+            (m.frontmatter.status ?? "active") as "active" | "superseded" | "archived" | "missing",
           ]),
         ),
       };
@@ -213,6 +213,14 @@ export class Orchestrator {
       const hasUnknownSourceIds = sourceIds.some((id) => !snapshot?.statuses.has(id));
       if (hasUnknownSourceIds) {
         snapshot = await rebuildSnapshot();
+      }
+    }
+
+    // Persist negative lookups in the cached snapshot so stale source IDs do not
+    // trigger repeated full snapshot rebuilds on every matching recall.
+    for (const id of sourceIds) {
+      if (!snapshot?.statuses.has(id)) {
+        snapshot?.statuses.set(id, "missing");
       }
     }
 
