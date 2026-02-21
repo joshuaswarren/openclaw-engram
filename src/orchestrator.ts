@@ -654,37 +654,75 @@ export class Orchestrator {
         timings.artifacts = "skip(limit=0)";
         return [];
       }
-      const searchCount = Math.max(100, targetCount);
-      const rawResults = await profileStorage.searchArtifacts(
-        prompt,
-        searchCount,
-      );
-
-      const sourceIds = Array.from(
-        new Set(
-          rawResults
-            .map((a) => a.frontmatter.sourceMemoryId)
-            .filter((id): id is string => typeof id === "string" && id.length > 0),
-        ),
-      );
-      const sourceStatus =
-        sourceIds.length > 0
-          ? await this.resolveArtifactSourceStatuses(profileStorage, sourceIds)
-          : new Map<string, "active" | "superseded" | "archived" | "missing">();
-
+      const candidateWindows = [Math.max(100, targetCount), 250, 500, 1000, 2500, 5000];
       const results: MemoryFile[] = [];
-      for (const artifact of rawResults) {
-        const sourceId = artifact.frontmatter.sourceMemoryId;
-        if (!sourceId) {
+      let exhausted = false;
+
+      for (const window of candidateWindows) {
+        const rawResults = await profileStorage.searchArtifacts(prompt, window);
+
+        const sourceIds = Array.from(
+          new Set(
+            rawResults
+              .map((a) => a.frontmatter.sourceMemoryId)
+              .filter((id): id is string => typeof id === "string" && id.length > 0),
+          ),
+        );
+        const sourceStatus =
+          sourceIds.length > 0
+            ? await this.resolveArtifactSourceStatuses(profileStorage, sourceIds)
+            : new Map<string, "active" | "superseded" | "archived" | "missing">();
+
+        results.length = 0;
+        for (const artifact of rawResults) {
+          const sourceId = artifact.frontmatter.sourceMemoryId;
+          if (!sourceId) {
+            results.push(artifact);
+            if (results.length >= targetCount) break;
+            continue;
+          }
+          const status = sourceStatus.get(sourceId) ?? "missing";
+          if (status !== "active") continue;
           results.push(artifact);
           if (results.length >= targetCount) break;
-          continue;
         }
-        const status = sourceStatus.get(sourceId) ?? "missing";
-        if (status !== "active") continue;
-        results.push(artifact);
+
         if (results.length >= targetCount) break;
+        if (rawResults.length < window) {
+          exhausted = true;
+          break;
+        }
       }
+
+      if (!exhausted && results.length < targetCount) {
+        const rawResults = await profileStorage.searchArtifacts(prompt, Number.MAX_SAFE_INTEGER);
+        const sourceIds = Array.from(
+          new Set(
+            rawResults
+              .map((a) => a.frontmatter.sourceMemoryId)
+              .filter((id): id is string => typeof id === "string" && id.length > 0),
+          ),
+        );
+        const sourceStatus =
+          sourceIds.length > 0
+            ? await this.resolveArtifactSourceStatuses(profileStorage, sourceIds)
+            : new Map<string, "active" | "superseded" | "archived" | "missing">();
+
+        results.length = 0;
+        for (const artifact of rawResults) {
+          const sourceId = artifact.frontmatter.sourceMemoryId;
+          if (!sourceId) {
+            results.push(artifact);
+            if (results.length >= targetCount) break;
+            continue;
+          }
+          const status = sourceStatus.get(sourceId) ?? "missing";
+          if (status !== "active") continue;
+          results.push(artifact);
+          if (results.length >= targetCount) break;
+        }
+      }
+
       timings.artifacts = `${Date.now() - t0}ms`;
       return results;
     })();
