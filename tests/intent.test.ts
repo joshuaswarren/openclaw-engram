@@ -16,3 +16,7 @@ test("planRecallMode defaults non-ack prompts to full recall", () => {
   assert.equal(planRecallMode("What decisions did we make about the API?"), "full");
 });
 
+test("planRecallMode returns minimal for short operational directives", () => {
+  assert.equal(planRecallMode("Check gateway status"), "minimal");
+  assert.equal(planRecallMode("Reload the gateway"), "minimal");
+});

@@ -82,16 +82,29 @@ export function planRecallMode(prompt: string): RecallPlanMode {
     return "graph_mode";
   }
 
-  if (/\b(previous|earlier|remember|last time|did we|what did we decide|context)\b/i.test(p)) {
-    return "full";
-  }
-
   // Reserve no_recall for low-information acknowledgements; avoid broad regressions.
   if (
     p.length <= 18 &&
     /^(ok|okay|kk|thanks|thx|got it|sounds good|yep|yes|nope|no|done|cool|works)$/i.test(p)
   ) {
     return "no_recall";
+  }
+
+  // Full recall for prompts that are explicitly memory-seeking or analytical questions.
+  if (
+    /\b(previous|earlier|remember|last time|did we|what did we decide|context|summarize|summary|recap|key points|decision)\b/i.test(p) ||
+    /\?$/.test(p) ||
+    /^(what|why|how|when|where|who|which)\b/i.test(p.toLowerCase())
+  ) {
+    return "full";
+  }
+
+  // Minimal for short, non-question operational directives to keep latency/tokens down.
+  if (
+    p.length <= 100 &&
+    /^(check|reload|restart|run|verify|show|status|sync|update|open|close|set|enable|disable|fix|patch)\b/i.test(p)
+  ) {
+    return "minimal";
   }
 
   return "full";
