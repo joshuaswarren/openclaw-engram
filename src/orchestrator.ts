@@ -599,6 +599,10 @@ export class Orchestrator {
     const recallResultLimit = recallMode === "minimal"
       ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
       : this.config.qmdMaxResults;
+    const qmdFetchLimit = Math.max(
+      recallResultLimit,
+      Math.min(200, recallResultLimit + Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)),
+    );
 
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
@@ -723,7 +727,7 @@ export class Orchestrator {
       const memoryResults = await this.qmd.hybridSearch(
         prompt,
         undefined,
-        recallResultLimit,
+        qmdFetchLimit,
       );
 
       timings.qmd = `${Date.now() - t0}ms`;
@@ -833,6 +837,8 @@ export class Orchestrator {
       if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
         log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
       }
+
+      memoryResults = memoryResults.slice(0, recallResultLimit);
 
       if (memoryResults.length > 0) {
         // Track access for these memories

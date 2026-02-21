@@ -33,3 +33,11 @@ test("inferIntentFromText detects decide/plan conjugations", () => {
   assert.equal(inferred.actionType, "plan");
   assert.equal(inferred.goal, "plan");
 });
+
+test("inferIntentFromText recognizes decision/chose variants for decide action", () => {
+  const fromDecision = inferIntentFromText("Final decision: choose the safer rollout");
+  assert.equal(fromDecision.actionType, "decide");
+
+  const fromChose = inferIntentFromText("We chose this approach for rollout");
+  assert.equal(fromChose.actionType, "decide");
+});

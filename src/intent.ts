@@ -13,7 +13,7 @@ const ACTION_PATTERNS: Array<{ re: RegExp; action: string }> = [
   { re: /\b(plan(?:s|ned|ning)?|design(?:s|ed|ing)?|brainstorm(?:s|ed|ing)?|spec(?:s)?)\b/i, action: "plan" },
   { re: /\b(implement(?:s|ed|ing)?|build(?:s|ing)?|code(?:s|d|ing)?|patch(?:es|ed|ing)?|fix(?:es|ed|ing)?)\b/i, action: "execute" },
   { re: /\b(summarize|recap|what happened|timeline)\b/i, action: "summarize" },
-  { re: /\b(decid(?:e|es|ed|ing|ion|ions)|cho(?:ose|oses|ose|osen|osing))\b/i, action: "decide" },
+  { re: /\b(decid(?:e|es|ed|ing)|decision(?:s)?|cho(?:ose|oses|osing)|chose|chosen)\b/i, action: "decide" },
 ];
 
 const ENTITY_PATTERNS: Array<{ re: RegExp; entityType: string }> = [
