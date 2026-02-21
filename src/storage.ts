@@ -570,7 +570,7 @@ export class StorageManager {
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
   private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number; writeVersion: number } | null = null;
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
-  private artifactWriteVersion = 0;
+  private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
 
   constructor(private readonly baseDir: string) {}
@@ -585,8 +585,14 @@ export class StorageManager {
   }
 
   private bumpArtifactWriteVersion(): number {
-    this.artifactWriteVersion += 1;
-    return this.artifactWriteVersion;
+    const current = StorageManager.artifactWriteVersionByDir.get(this.baseDir) ?? 0;
+    const next = current + 1;
+    StorageManager.artifactWriteVersionByDir.set(this.baseDir, next);
+    return next;
+  }
+
+  private getArtifactWriteVersion(): number {
+    return StorageManager.artifactWriteVersionByDir.get(this.baseDir) ?? 0;
   }
 
   private get factsDir(): string {
@@ -778,12 +784,12 @@ export class StorageManager {
     if (
       this.artifactIndexCache &&
       Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS &&
-      this.artifactIndexCache.writeVersion === this.artifactWriteVersion
+      this.artifactIndexCache.writeVersion === this.getArtifactWriteVersion()
     ) {
       return this.artifactIndexCache.memories;
     }
 
-    const versionBefore = this.artifactWriteVersion;
+    const versionBefore = this.getArtifactWriteVersion();
     const artifacts: MemoryFile[] = [];
     const readDir = async (dir: string) => {
       try {
@@ -805,7 +811,7 @@ export class StorageManager {
     };
 
     await readDir(this.artifactsDir);
-    const versionAfter = this.artifactWriteVersion;
+    const versionAfter = this.getArtifactWriteVersion();
     if (versionAfter !== versionBefore) {
       // A write landed during rebuild; don't publish a stale cache snapshot.
       this.artifactIndexCache = null;

@@ -42,3 +42,23 @@ test("artifact search matches short acronym tokens", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("artifact cache invalidates across storage instances for same memoryDir", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-cache-shared-"));
+  try {
+    const writer = new StorageManager(dir);
+    const reader = new StorageManager(dir);
+    await writer.ensureDirectories();
+
+    await writer.writeArtifact("first shared artifact", { tags: ["shared"] });
+    const first = await reader.searchArtifacts("first shared", 10);
+    assert.equal(first.some((m) => m.content.includes("first shared artifact")), true);
+
+    // Warm reader cache, then write from writer instance.
+    await writer.writeArtifact("second shared artifact", { tags: ["shared"] });
+    const second = await reader.searchArtifacts("second shared", 10);
+    assert.equal(second.some((m) => m.content.includes("second shared artifact")), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -49,6 +49,10 @@ import type {
   RecallPlanMode,
 } from "./types.js";
 
+export function isArtifactMemoryPath(filePath: string): boolean {
+  return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -782,6 +786,8 @@ export class Orchestrator {
           recallNamespaces.includes(this.namespaceFromPath(r.path)),
         );
       }
+      // Artifacts are injected through dedicated verbatim recall flow only.
+      memoryResults = memoryResults.filter((r) => !isArtifactMemoryPath(r.path));
 
       // Apply recency and access count boosting
       memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, prompt);
@@ -837,9 +843,10 @@ export class Orchestrator {
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       } else {
         const embeddingResults = await this.searchEmbeddingFallback(prompt, recallResultLimit);
-        const scoped = this.config.namespacesEnabled
+        const scopedByNamespace = this.config.namespacesEnabled
           ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
           : embeddingResults;
+        const scoped = scopedByNamespace.filter((r) => !isArtifactMemoryPath(r.path));
         if (scoped.length > 0) {
           const memoryIds = this.extractMemoryIdsFromResults(scoped);
           this.trackMemoryAccess(memoryIds);
@@ -884,9 +891,10 @@ export class Orchestrator {
     ) {
       // Fallback: embeddings first, then recency-only.
       const embeddingResults = await this.searchEmbeddingFallback(prompt, recallResultLimit);
-      const scoped = this.config.namespacesEnabled
+      const scopedByNamespace = this.config.namespacesEnabled
         ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
         : embeddingResults;
+      const scoped = scopedByNamespace.filter((r) => !isArtifactMemoryPath(r.path));
       if (scoped.length > 0) {
         const memoryIds = this.extractMemoryIdsFromResults(scoped);
         this.trackMemoryAccess(memoryIds);
