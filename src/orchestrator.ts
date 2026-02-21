@@ -578,10 +578,22 @@ export class Orchestrator {
       if (!this.config.verbatimArtifactsEnabled) return [];
       if (recallMode === "no_recall") return [];
       const t0 = Date.now();
-      const results = await profileStorage.searchArtifacts(
+      const rawResults = await profileStorage.searchArtifacts(
         prompt,
         Math.max(1, this.config.verbatimArtifactsMaxRecall),
       );
+      const results: MemoryFile[] = [];
+      for (const artifact of rawResults) {
+        const sourceId = artifact.frontmatter.sourceMemoryId;
+        if (!sourceId) {
+          results.push(artifact);
+          continue;
+        }
+        const source = await profileStorage.getMemoryById(sourceId);
+        if (!source) continue;
+        if (source.frontmatter.status && source.frontmatter.status !== "active") continue;
+        results.push(artifact);
+      }
       timings.artifacts = `${Date.now() - t0}ms`;
       return results;
     })();
@@ -643,7 +655,8 @@ export class Orchestrator {
     if (artifacts.length > 0) {
       const lines = artifacts.map((a) => {
         const artifactType = a.frontmatter.artifactType ?? "fact";
-        const created = a.frontmatter.created.slice(0, 19).replace("T", " ");
+        const createdRaw = typeof a.frontmatter.created === "string" ? a.frontmatter.created : "";
+        const created = createdRaw ? createdRaw.slice(0, 19).replace("T", " ") : "unknown-time";
         return `- [${artifactType}] "${this.truncateArtifactForRecall(a.content)}" (${created})`;
       });
       sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
