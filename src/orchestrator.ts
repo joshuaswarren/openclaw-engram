@@ -53,6 +53,23 @@ export function isArtifactMemoryPath(filePath: string): boolean {
   return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
 }
 
+export function filterRecallCandidates(
+  candidates: QmdSearchResult[],
+  options: {
+    namespacesEnabled: boolean;
+    recallNamespaces: string[];
+    resolveNamespace: (path: string) => string;
+    limit: number;
+  },
+): QmdSearchResult[] {
+  const scopedByNamespace = options.namespacesEnabled
+    ? candidates.filter((r) => options.recallNamespaces.includes(options.resolveNamespace(r.path)))
+    : candidates;
+  return scopedByNamespace
+    .filter((r) => !isArtifactMemoryPath(r.path))
+    .slice(0, Math.max(0, options.limit));
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -603,6 +620,10 @@ export class Orchestrator {
       recallResultLimit,
       Math.min(200, recallResultLimit + Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)),
     );
+    const embeddingFetchLimit = Math.max(
+      recallResultLimit,
+      Math.min(200, recallResultLimit + Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)),
+    );
 
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
@@ -855,11 +876,13 @@ export class Orchestrator {
 
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       } else {
-        const embeddingResults = await this.searchEmbeddingFallback(prompt, recallResultLimit);
-        const scopedByNamespace = this.config.namespacesEnabled
-          ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
-          : embeddingResults;
-        const scoped = scopedByNamespace.filter((r) => !isArtifactMemoryPath(r.path));
+        const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+        const scoped = filterRecallCandidates(embeddingResults, {
+          namespacesEnabled: this.config.namespacesEnabled,
+          recallNamespaces,
+          resolveNamespace: (p) => this.namespaceFromPath(p),
+          limit: recallResultLimit,
+        });
         if (scoped.length > 0) {
           const memoryIds = this.extractMemoryIdsFromResults(scoped);
           this.trackMemoryAccess(memoryIds);
@@ -903,11 +926,13 @@ export class Orchestrator {
       (!this.config.qmdEnabled || !this.qmd.isAvailable())
     ) {
       // Fallback: embeddings first, then recency-only.
-      const embeddingResults = await this.searchEmbeddingFallback(prompt, recallResultLimit);
-      const scopedByNamespace = this.config.namespacesEnabled
-        ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
-        : embeddingResults;
-      const scoped = scopedByNamespace.filter((r) => !isArtifactMemoryPath(r.path));
+      const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+      const scoped = filterRecallCandidates(embeddingResults, {
+        namespacesEnabled: this.config.namespacesEnabled,
+        recallNamespaces,
+        resolveNamespace: (p) => this.namespaceFromPath(p),
+        limit: recallResultLimit,
+      });
       if (scoped.length > 0) {
         const memoryIds = this.extractMemoryIdsFromResults(scoped);
         this.trackMemoryAccess(memoryIds);
