@@ -430,6 +430,7 @@ tail -f ~/.openclaw/logs/gateway.log
 All settings are defined in `openclaw.json` under `plugins.entries.openclaw-engram.config`:
 
 For a full v2.3-v5 setup (including cron and QMD conversation-index collections) and tuning guidance, see:
+- `docs/README.md` (docs map, v8 reorg entrypoint)
 - `docs/setup-config-tuning.md`
 - `docs/import-export.md`
 - `docs/context-retention.md`
@@ -503,6 +504,21 @@ Example config:
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
 | `qmdMaxResults` | `8` | Max QMD results per search |
 | `qmdPath` | `(auto)` | Optional absolute path to `qmd` binary (bypasses PATH discovery) |
+
+### v8.0 Phase 1 (Experimental, Token-Budget Focused)
+
+All options below are safe to leave disabled initially; enable incrementally.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `recallPlannerEnabled` | `true` | Lightweight retrieve-vs-think gating (`no_recall`/`minimal`/`full`/`graph_mode`) |
+| `recallPlannerMaxQmdResultsMinimal` | `4` | QMD cap when planner selects `minimal` |
+| `intentRoutingEnabled` | `false` | Write intent metadata (goal/action/entityTypes) and boost compatible recalls |
+| `intentRoutingBoost` | `0.12` | Maximum additive score boost from intent compatibility |
+| `verbatimArtifactsEnabled` | `false` | Persist quote-first artifact anchors for high-confidence extracted memories |
+| `verbatimArtifactsMinConfidence` | `0.8` | Minimum extraction confidence for artifact writes |
+| `verbatimArtifactsMaxRecall` | `5` | Maximum artifact anchors injected per recall |
+| `verbatimArtifactCategories` | `["decision","correction","principle","commitment"]` | Categories eligible for artifact extraction |
 
 ### Local / OpenAI-Compatible Endpoint Settings
 

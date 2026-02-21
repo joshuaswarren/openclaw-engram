@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- v8.0 phase 1 experimental memory-os capabilities (all behind config flags):
+  - Recall planner (`recallPlannerEnabled`) to choose `no_recall` / `minimal` / `full` / `graph_mode`.
+  - Intent-grounded memory routing metadata (`intentGoal`, `intentActionType`, `intentEntityTypes`) with configurable ranking boost.
+  - Verbatim artifact persistence + recall injection (`memoryDir/artifacts/**`) for quote-first anchors.
+  - New docs entrypoint: `docs/README.md` for the docs reorganization rollout.
 - npm-first distribution + release automation:
   - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps patch version, tags, creates GitHub release, and publishes to npm.
   - Package publish metadata in `package.json`: `engines.node`, `prepack`, and `publishConfig` (`access: public`, `provenance: true`).
@@ -55,6 +60,8 @@ All notable changes to this project will be documented in this file.
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 
 ### Changed
+- Extraction persistence now infers and stores intent metadata per memory/chunk, enabling intent-compatible recall boosts when enabled.
+- Recall assembly now supports optional artifact section injection and planner-driven QMD result caps in minimal mode.
 - Release automation hardening:
   - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, create a local release commit with version bump (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.

@@ -80,6 +80,14 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
     }
   }
+  if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
+  if (fm.intentActionType) lines.push(`intentActionType: ${fm.intentActionType}`);
+  if (fm.intentEntityTypes && fm.intentEntityTypes.length > 0) {
+    lines.push(`intentEntityTypes: [${fm.intentEntityTypes.map((t) => `"${t}"`).join(", ")}]`);
+  }
+  if (fm.artifactType) lines.push(`artifactType: ${fm.artifactType}`);
+  if (fm.sourceMemoryId) lines.push(`sourceMemoryId: ${fm.sourceMemoryId}`);
+  if (fm.sourceTurnId) lines.push(`sourceTurnId: ${fm.sourceTurnId}`);
   lines.push("---");
   return lines.join("\n");
 }
@@ -107,6 +115,16 @@ function parseFrontmatter(
   const tagMatch = tagsStr.match(/\[(.*)]/);
   if (tagMatch) {
     tags = tagMatch[1]
+      .split(",")
+      .map((t) => t.trim().replace(/^"|"$/g, ""))
+      .filter(Boolean);
+  }
+
+  let intentEntityTypes: string[] | undefined;
+  const intentEntityTypesStr = fm.intentEntityTypes ?? "";
+  const intentEntityTypesMatch = intentEntityTypesStr.match(/\[(.*)]/);
+  if (intentEntityTypesMatch) {
+    intentEntityTypes = intentEntityTypesMatch[1]
       .split(",")
       .map((t) => t.trim().replace(/^"|"$/g, ""))
       .filter(Boolean);
@@ -188,6 +206,12 @@ function parseFrontmatter(
       chunkIndex: fm.chunkIndex ? parseInt(fm.chunkIndex, 10) : undefined,
       chunkTotal: fm.chunkTotal ? parseInt(fm.chunkTotal, 10) : undefined,
       // Links are parsed separately below
+      intentGoal: fm.intentGoal || undefined,
+      intentActionType: fm.intentActionType || undefined,
+      intentEntityTypes: intentEntityTypes && intentEntityTypes.length > 0 ? intentEntityTypes : undefined,
+      artifactType: (fm.artifactType as MemoryFrontmatter["artifactType"]) || undefined,
+      sourceMemoryId: fm.sourceMemoryId || undefined,
+      sourceTurnId: fm.sourceTurnId || undefined,
     },
     content,
   };
@@ -532,6 +556,9 @@ export class StorageManager {
   private get questionsDir(): string {
     return path.join(this.baseDir, "questions");
   }
+  private get artifactsDir(): string {
+    return path.join(this.baseDir, "artifacts");
+  }
   private get profilePath(): string {
     return path.join(this.baseDir, "profile.md");
   }
@@ -563,6 +590,7 @@ export class StorageManager {
     await mkdir(this.entitiesDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
     await mkdir(this.questionsDir, { recursive: true });
+    await mkdir(this.artifactsDir, { recursive: true });
     await mkdir(path.join(this.baseDir, "config"), { recursive: true });
   }
 
@@ -578,6 +606,12 @@ export class StorageManager {
       lineage?: string[];
       importance?: ImportanceScore;
       links?: MemoryLink[];
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
+      artifactType?: MemoryFrontmatter["artifactType"];
+      sourceMemoryId?: string;
+      sourceTurnId?: string;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -609,6 +643,12 @@ export class StorageManager {
       lineage: options.lineage,
       importance: options.importance,
       links: options.links,
+      intentGoal: options.intentGoal,
+      intentActionType: options.intentActionType,
+      intentEntityTypes: options.intentEntityTypes,
+      artifactType: options.artifactType,
+      sourceMemoryId: options.sourceMemoryId,
+      sourceTurnId: options.sourceTurnId,
     };
 
     const sanitized = sanitizeMemoryContent(content);
@@ -627,6 +667,85 @@ export class StorageManager {
     await writeFile(filePath, fileContent, "utf-8");
     log.debug(`wrote memory ${id} to ${filePath}`);
     return id;
+  }
+
+  async writeArtifact(
+    quote: string,
+    options: {
+      tags?: string[];
+      confidence?: number;
+      artifactType?: MemoryFrontmatter["artifactType"];
+      sourceMemoryId?: string;
+      sourceTurnId?: string;
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
+    } = {},
+  ): Promise<string> {
+    await this.ensureDirectories();
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    const dir = path.join(this.artifactsDir, day);
+    await mkdir(dir, { recursive: true });
+
+    const id = `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const fm: MemoryFrontmatter = {
+      id,
+      category: "fact",
+      created: now.toISOString(),
+      updated: now.toISOString(),
+      source: "artifact",
+      confidence: options.confidence ?? 0.9,
+      confidenceTier: confidenceTier(options.confidence ?? 0.9),
+      tags: options.tags ?? [],
+      artifactType: options.artifactType ?? "fact",
+      sourceMemoryId: options.sourceMemoryId,
+      sourceTurnId: options.sourceTurnId,
+      intentGoal: options.intentGoal,
+      intentActionType: options.intentActionType,
+      intentEntityTypes: options.intentEntityTypes,
+    };
+
+    const sanitized = sanitizeMemoryContent(quote);
+    const filePath = path.join(dir, `${id}.md`);
+    await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    return id;
+  }
+
+  async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
+    const tokens = query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      .filter((t) => t.length > 2);
+    if (tokens.length === 0) return [];
+
+    const hits: Array<{ score: number; memory: MemoryFile }> = [];
+    const readDir = async (dir: string) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await readDir(fullPath);
+            continue;
+          }
+          if (!entry.name.endsWith(".md")) continue;
+          const memory = await this.readMemoryByPath(fullPath);
+          if (!memory) continue;
+          const haystack = `${memory.content} ${(memory.frontmatter.tags ?? []).join(" ")}`.toLowerCase();
+          const score = tokens.reduce((sum, t) => sum + (haystack.includes(t) ? 1 : 0), 0);
+          if (score > 0) {
+            hits.push({ score, memory });
+          }
+        }
+      } catch {
+        // no-op
+      }
+    };
+
+    await readDir(this.artifactsDir);
+    hits.sort((a, b) => b.score - a.score);
+    return hits.slice(0, maxResults).map((h) => h.memory);
   }
 
   async writeEntity(
@@ -1749,6 +1868,9 @@ export class StorageManager {
       entityRef?: string;
       source?: string;
       importance?: ImportanceScore;
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -1772,6 +1894,9 @@ export class StorageManager {
       parentId,
       chunkIndex,
       chunkTotal,
+      intentGoal: options.intentGoal,
+      intentActionType: options.intentActionType,
+      intentEntityTypes: options.intentEntityTypes,
     };
 
     const sanitized = sanitizeMemoryContent(content);

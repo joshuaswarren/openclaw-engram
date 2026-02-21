@@ -56,6 +56,18 @@ function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "e
 
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
+const VALID_MEMORY_CATEGORIES = new Set([
+  "fact",
+  "preference",
+  "correction",
+  "entity",
+  "decision",
+  "relationship",
+  "principle",
+  "commitment",
+  "moment",
+  "skill",
+]);
 
 export function parseConfig(raw: unknown): PluginConfig {
   const cfg =
@@ -505,5 +517,27 @@ export function parseConfig(raw: unknown): PluginConfig {
     factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
       : ["commitment", "preference", "decision", "principle"],
+    // v8.0 phase 1
+    recallPlannerEnabled: cfg.recallPlannerEnabled !== false,
+    recallPlannerMaxQmdResultsMinimal:
+      typeof cfg.recallPlannerMaxQmdResultsMinimal === "number"
+        ? cfg.recallPlannerMaxQmdResultsMinimal
+        : 4,
+    intentRoutingEnabled: cfg.intentRoutingEnabled === true,
+    intentRoutingBoost:
+      typeof cfg.intentRoutingBoost === "number" ? cfg.intentRoutingBoost : 0.12,
+    verbatimArtifactsEnabled: cfg.verbatimArtifactsEnabled === true,
+    verbatimArtifactsMinConfidence:
+      typeof cfg.verbatimArtifactsMinConfidence === "number"
+        ? cfg.verbatimArtifactsMinConfidence
+        : 0.8,
+    verbatimArtifactsMaxRecall:
+      typeof cfg.verbatimArtifactsMaxRecall === "number" ? cfg.verbatimArtifactsMaxRecall : 5,
+    verbatimArtifactCategories: Array.isArray(cfg.verbatimArtifactCategories)
+      ? (cfg.verbatimArtifactCategories as any[]).filter(
+          (c): c is PluginConfig["verbatimArtifactCategories"][number] =>
+            typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
+        )
+      : ["decision", "correction", "principle", "commitment"],
   };
 }

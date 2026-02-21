@@ -23,6 +23,7 @@ import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
+import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -45,6 +46,7 @@ import type {
   MemoryFile,
   PluginConfig,
   QmdSearchResult,
+  RecallPlanMode,
 } from "./types.js";
 
 export class Orchestrator {
@@ -495,6 +497,10 @@ export class Orchestrator {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
     const sections: string[] = [];
+    const recallMode: RecallPlanMode = this.config.recallPlannerEnabled
+      ? planRecallMode(prompt)
+      : "full";
+    timings.recallPlan = recallMode;
 
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
@@ -551,6 +557,19 @@ export class Orchestrator {
       }
     })();
 
+    // 1c. Verbatim artifacts (v8.0 phase 1)
+    const artifactsPromise = (async (): Promise<MemoryFile[]> => {
+      if (!this.config.verbatimArtifactsEnabled) return [];
+      if (recallMode === "no_recall") return [];
+      const t0 = Date.now();
+      const results = await profileStorage.searchArtifacts(
+        prompt,
+        Math.max(1, this.config.verbatimArtifactsMaxRecall),
+      );
+      timings.artifacts = `${Date.now() - t0}ms`;
+      return results;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -558,12 +577,19 @@ export class Orchestrator {
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
+      if (recallMode === "no_recall") {
+        timings.qmd = "skip(plan=no_recall)";
+        return null;
+      }
       if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
         timings.qmd = "skip";
         log.debug(`QMD skip: qmdEnabled=${this.config.qmdEnabled} ${this.qmd.debugStatus()}`);
         return null;
       }
       const t0 = Date.now();
+      const qmdLimit = recallMode === "minimal"
+        ? Math.max(1, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
+        : this.config.qmdMaxResults;
 
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
@@ -571,7 +597,7 @@ export class Orchestrator {
       const memoryResults = await this.qmd.hybridSearch(
         prompt,
         undefined,
-        this.config.qmdMaxResults,
+        qmdLimit,
       );
 
       timings.qmd = `${Date.now() - t0}ms`;
@@ -579,10 +605,11 @@ export class Orchestrator {
     })();
 
     // --- Wait for all parallel work ---
-    const [sharedCtx, profile, kiResult, qmdResult] = await Promise.all([
+    const [sharedCtx, profile, kiResult, artifacts, qmdResult] = await Promise.all([
       sharedContextPromise,
       profilePromise,
       knowledgeIndexPromise,
+      artifactsPromise,
       qmdPromise,
     ]);
 
@@ -598,6 +625,16 @@ export class Orchestrator {
     if (kiResult?.result) {
       sections.push(kiResult.result);
       log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+    }
+
+    // 1c. Verbatim artifacts (quote-first anchors)
+    if (artifacts.length > 0) {
+      const lines = artifacts.map((a) => {
+        const artifactType = a.frontmatter.artifactType ?? "fact";
+        const created = a.frontmatter.created.slice(0, 19).replace("T", " ");
+        return `- [${artifactType}] "${a.content}" (${created})`;
+      });
+      sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
     }
 
     // 2. QMD results — post-process and format
@@ -631,7 +668,7 @@ export class Orchestrator {
       }
 
       // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces);
+      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, prompt);
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
@@ -1266,6 +1303,7 @@ export class Orchestrator {
 
       // Score importance using local heuristics (Phase 1B)
       const importance = scoreImportance(fact.content, fact.category, fact.tags);
+      const inferredIntent = inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`);
 
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
@@ -1279,6 +1317,9 @@ export class Orchestrator {
             entityRef: fact.entityRef,
             source: "extraction",
             importance,
+            intentGoal: inferredIntent.goal,
+            intentActionType: inferredIntent.actionType,
+            intentEntityTypes: inferredIntent.entityTypes,
           });
 
           // Write individual chunks with parent reference
@@ -1298,6 +1339,9 @@ export class Orchestrator {
                 entityRef: fact.entityRef,
                 source: "chunking",
                 importance: chunkImportance,
+                intentGoal: inferredIntent.goal,
+                intentActionType: inferredIntent.actionType,
+                intentEntityTypes: inferredIntent.entityTypes,
               },
             );
           }
@@ -1351,9 +1395,32 @@ export class Orchestrator {
         importance,
         supersedes,
         links: links.length > 0 ? links : undefined,
+        intentGoal: inferredIntent.goal,
+        intentActionType: inferredIntent.actionType,
+        intentEntityTypes: inferredIntent.entityTypes,
       });
       persistedIds.push(memoryId);
       await this.indexPersistedMemory(storage, memoryId);
+      if (
+        this.config.verbatimArtifactsEnabled &&
+        this.config.verbatimArtifactCategories.includes(fact.category) &&
+        fact.confidence >= this.config.verbatimArtifactsMinConfidence
+      ) {
+        await storage.writeArtifact(fact.content, {
+          confidence: fact.confidence,
+          tags: [...fact.tags, "artifact"],
+          artifactType:
+            fact.category === "decision" ? "decision" :
+            fact.category === "commitment" ? "commitment" :
+            fact.category === "correction" ? "correction" :
+            fact.category === "principle" ? "constraint" :
+            "fact",
+          sourceMemoryId: memoryId,
+          intentGoal: inferredIntent.goal,
+          intentActionType: inferredIntent.actionType,
+          intentEntityTypes: inferredIntent.entityTypes,
+        });
+      }
       // Register in content-hash index after successful write
       if (this.contentHashIndex) {
         this.contentHashIndex.add(fact.content);
@@ -1954,6 +2021,7 @@ export class Orchestrator {
   private async boostSearchResults(
     results: QmdSearchResult[],
     _recallNamespaces: string[],
+    prompt?: string,
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
@@ -1967,6 +2035,10 @@ export class Orchestrator {
         if (mem) memoryByPath.set(r.path, mem);
       }),
     );
+
+    const queryIntent = this.config.intentRoutingEnabled && prompt
+      ? inferIntentFromText(prompt)
+      : null;
 
     // Calculate boosted scores
     const boosted = results.map((r) => {
@@ -2020,6 +2092,19 @@ export class Orchestrator {
               cap: this.config.negativeExamplesPenaltyCap,
             });
           }
+        }
+
+        if (
+          queryIntent &&
+          memory.frontmatter.intentGoal &&
+          memory.frontmatter.intentActionType
+        ) {
+          const compatibility = intentCompatibilityScore(queryIntent, {
+            goal: memory.frontmatter.intentGoal,
+            actionType: memory.frontmatter.intentActionType,
+            entityTypes: memory.frontmatter.intentEntityTypes ?? [],
+          });
+          score += compatibility * this.config.intentRoutingBoost;
         }
       }
 

@@ -102,6 +102,30 @@ Recommended starting config:
 }
 ```
 
+## 2b) v8.0 Phase 1 (Experimental, Cost-Aware)
+
+Start conservative and enable one flag at a time:
+
+```jsonc
+{
+  "recallPlannerEnabled": true,
+  "recallPlannerMaxQmdResultsMinimal": 4,
+
+  "intentRoutingEnabled": false,
+  "intentRoutingBoost": 0.12,
+
+  "verbatimArtifactsEnabled": false,
+  "verbatimArtifactsMinConfidence": 0.8,
+  "verbatimArtifactsMaxRecall": 5,
+  "verbatimArtifactCategories": ["decision", "correction", "principle", "commitment"]
+}
+```
+
+Recommended rollout:
+- Week 1: enable only `recallPlannerEnabled`.
+- Week 2: enable `verbatimArtifactsEnabled` and watch token usage/quality.
+- Week 3: enable `intentRoutingEnabled` and compare retrieval relevance before/after.
+
 QMD collection (`~/.config/qmd/index.yml`):
 
 ```yaml
