@@ -15,6 +15,7 @@ run npm run check-types
 
 if [[ "$MODE" == "quick" ]]; then
   run npm test -- tests/intent.test.ts
+  run npm test -- tests/recall-no-recall-short-circuit.test.ts
   run npm test -- tests/orchestrator-path-filter.test.ts
   run npm test -- tests/artifact-cache.test.ts
 else

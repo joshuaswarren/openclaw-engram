@@ -62,10 +62,12 @@ All notable changes to this project will be documented in this file.
   - `scripts/pr-preflight.sh` (`quick` and `full` modes)
   - `scripts/install-git-hooks.sh`
   - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
+  - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.
 
 ### Changed
 - Extraction persistence now infers and stores intent metadata per memory/chunk, enabling intent-compatible recall boosts when enabled.
 - Recall assembly now supports optional artifact section injection and planner-driven QMD result caps in minimal mode.
+- `no_recall` now short-circuits before preamble fetches (shared context/profile/knowledge index), avoiding unnecessary reads and injection on acknowledgement turns.
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:

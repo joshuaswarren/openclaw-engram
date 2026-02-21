@@ -627,6 +627,11 @@ export class Orchestrator {
     const qmdFetchLimit = computedFetchLimit;
     const embeddingFetchLimit = computedFetchLimit;
 
+    if (recallMode === "no_recall") {
+      timings.total = `${Date.now() - recallStart}ms`;
+      return "";
+    }
+
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
     const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
@@ -685,7 +690,6 @@ export class Orchestrator {
     // 1c. Verbatim artifacts (v8.0 phase 1)
     const artifactsPromise = (async (): Promise<MemoryFile[]> => {
       if (!this.config.verbatimArtifactsEnabled) return [];
-      if (recallMode === "no_recall") return [];
       const t0 = Date.now();
       const targetCount = Math.max(0, this.config.verbatimArtifactsMaxRecall);
       if (targetCount <= 0) {
@@ -730,10 +734,6 @@ export class Orchestrator {
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
-      if (recallMode === "no_recall") {
-        timings.qmd = "skip(plan=no_recall)";
-        return null;
-      }
       if (recallResultLimit <= 0) {
         timings.qmd = "skip(limit=0)";
         return null;
@@ -926,11 +926,7 @@ export class Orchestrator {
           ].join("\n"),
         );
       }
-    } else if (
-      recallResultLimit > 0 &&
-      recallMode !== "no_recall" &&
-      (!this.config.qmdEnabled || !this.qmd.isAvailable())
-    ) {
+    } else if (recallResultLimit > 0 && (!this.config.qmdEnabled || !this.qmd.isAvailable())) {
       // Fallback: embeddings first, then recency-only.
       const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
       const scopedCandidates = filterRecallCandidates(embeddingResults, {
@@ -1004,7 +1000,7 @@ export class Orchestrator {
     // 3. TRANSCRIPT INJECTION (NEW)
     const transcriptT0 = Date.now();
     log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
-    if (this.config.transcriptEnabled && recallMode !== "no_recall") {
+    if (this.config.transcriptEnabled) {
       // Try checkpoint first (post-compaction recovery)
       let checkpointInjected = false;
       if (this.config.checkpointEnabled) {
@@ -1052,7 +1048,7 @@ export class Orchestrator {
 
     // 4. HOURLY SUMMARIES INJECTION (NEW)
     const summariesT0 = Date.now();
-    if (this.config.hourlySummariesEnabled && sessionKey && recallMode !== "no_recall") {
+    if (this.config.hourlySummariesEnabled && sessionKey) {
       const summaries = await this.summarizer.readRecent(
         sessionKey,
         this.config.summaryRecallHours
@@ -1078,8 +1074,7 @@ export class Orchestrator {
     if (
       this.config.conversationIndexEnabled &&
       this.conversationQmd &&
-      this.conversationQmd.isAvailable() &&
-      recallMode !== "no_recall"
+      this.conversationQmd.isAvailable()
     ) {
       const startedAtMs = Date.now();
       const timeoutMs = Math.max(200, this.config.conversationRecallTimeoutMs);
@@ -1118,7 +1113,7 @@ export class Orchestrator {
     timings.convRecall = `${Date.now() - convT0}ms`;
 
     // 4.75. Compounding injection (v5.0, optional)
-    if (this.compounding && this.config.compoundingInjectEnabled && recallMode !== "no_recall") {
+    if (this.compounding && this.config.compoundingInjectEnabled) {
       const mistakes = await this.compounding.readMistakes();
       if (mistakes && Array.isArray(mistakes.patterns) && mistakes.patterns.length > 0) {
         const lines: string[] = [
@@ -1132,7 +1127,7 @@ export class Orchestrator {
     }
 
     // 5. Inject most relevant question (if enabled) (existing)
-    if (this.config.injectQuestions && recallMode !== "no_recall") {
+    if (this.config.injectQuestions) {
       const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
       if (questions.length > 0) {
         // Find the most relevant question to the current prompt
