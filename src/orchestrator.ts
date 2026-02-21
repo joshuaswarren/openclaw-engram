@@ -582,6 +582,23 @@ export class Orchestrator {
         prompt,
         Math.max(1, this.config.verbatimArtifactsMaxRecall),
       );
+
+      const sourceIds = Array.from(
+        new Set(
+          rawResults
+            .map((a) => a.frontmatter.sourceMemoryId)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      );
+      const sourceStatus = new Map<string, "active" | "superseded" | "archived" | "missing">();
+      if (sourceIds.length > 0) {
+        const allMemories = await profileStorage.readAllMemories();
+        const byId = new Map(allMemories.map((m) => [m.frontmatter.id, m.frontmatter.status ?? "active"]));
+        for (const id of sourceIds) {
+          sourceStatus.set(id, byId.get(id) ?? "missing");
+        }
+      }
+
       const results: MemoryFile[] = [];
       for (const artifact of rawResults) {
         const sourceId = artifact.frontmatter.sourceMemoryId;
@@ -589,9 +606,8 @@ export class Orchestrator {
           results.push(artifact);
           continue;
         }
-        const source = await profileStorage.getMemoryById(sourceId);
-        if (!source) continue;
-        if (source.frontmatter.status && source.frontmatter.status !== "active") continue;
+        const status = sourceStatus.get(sourceId) ?? "missing";
+        if (status !== "active") continue;
         results.push(artifact);
       }
       timings.artifacts = `${Date.now() - t0}ms`;
@@ -984,7 +1000,7 @@ export class Orchestrator {
     }
 
     // 5. Inject most relevant question (if enabled) (existing)
-    if (this.config.injectQuestions) {
+    if (this.config.injectQuestions && recallMode !== "no_recall") {
       const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
       if (questions.length > 0) {
         // Find the most relevant question to the current prompt

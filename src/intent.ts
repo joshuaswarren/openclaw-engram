@@ -50,8 +50,20 @@ export function intentCompatibilityScore(queryIntent: MemoryIntent, memoryIntent
   if (!queryHasSignal || !memoryHasSignal) return 0;
 
   let score = 0;
-  if (queryIntent.goal === memoryIntent.goal) score += 0.5;
-  if (queryIntent.actionType === memoryIntent.actionType) score += 0.3;
+  if (
+    queryIntent.goal !== "unknown" &&
+    memoryIntent.goal !== "unknown" &&
+    queryIntent.goal === memoryIntent.goal
+  ) {
+    score += 0.5;
+  }
+  if (
+    queryIntent.actionType !== "unknown" &&
+    memoryIntent.actionType !== "unknown" &&
+    queryIntent.actionType === memoryIntent.actionType
+  ) {
+    score += 0.3;
+  }
 
   const overlap = queryIntent.entityTypes.filter((et) => memoryIntent.entityTypes.includes(et)).length;
   if (overlap > 0) {
