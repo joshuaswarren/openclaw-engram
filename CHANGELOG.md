@@ -77,6 +77,9 @@ All notable changes to this project will be documented in this file.
 - Planner/intent hardening:
   - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
   - Summarize action intent matching now includes conjugations (`summarized`, `summarizing`, `recapped`, `recapping`).
+- Artifact source-status snapshot hardening:
+  - Status snapshot rebuild now uses a bounded stabilization loop and only caches when version-before/version-after match.
+  - Added quick-preflight regression coverage in `tests/artifact-status-snapshot.test.ts` to guard against caching torn snapshots during write churn.
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:

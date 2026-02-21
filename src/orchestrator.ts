@@ -216,29 +216,39 @@ export class Orchestrator {
       snapshot.statusVersion === currentStatusVersion;
 
     const rebuildSnapshot = async () => {
-      let versionBefore = storage.getMemoryStatusVersion();
-      let allMemories = await storage.readAllMemories();
-      let versionAfter = storage.getMemoryStatusVersion();
+      const MAX_STABLE_READ_ATTEMPTS = 3;
+      let latestStatuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
+      let latestVersionAfter = storage.getMemoryStatusVersion();
 
-      // If status changed during snapshot read, refresh once to avoid a torn snapshot.
-      if (versionAfter !== versionBefore) {
-        versionBefore = storage.getMemoryStatusVersion();
-        allMemories = await storage.readAllMemories();
-        versionAfter = storage.getMemoryStatusVersion();
-      }
-
-      const rebuilt = {
-        loadedAtMs: Date.now(),
-        statusVersion: versionAfter,
-        statuses: new Map(
+      for (let attempt = 0; attempt < MAX_STABLE_READ_ATTEMPTS; attempt += 1) {
+        const versionBefore = storage.getMemoryStatusVersion();
+        const allMemories = await storage.readAllMemories();
+        const versionAfter = storage.getMemoryStatusVersion();
+        latestVersionAfter = versionAfter;
+        latestStatuses = new Map(
           allMemories.map((m) => [
             m.frontmatter.id,
             (m.frontmatter.status ?? "active") as "active" | "superseded" | "archived" | "missing",
           ]),
-        ),
+        );
+
+        if (versionAfter === versionBefore) {
+          const rebuilt = {
+            loadedAtMs: Date.now(),
+            statusVersion: versionAfter,
+            statuses: latestStatuses,
+          };
+          this.artifactSourceStatusCache.set(storage, rebuilt);
+          return rebuilt;
+        }
+      }
+
+      // Sustained write churn: return latest read without caching a potentially torn snapshot.
+      return {
+        loadedAtMs: Date.now(),
+        statusVersion: latestVersionAfter,
+        statuses: latestStatuses,
       };
-      this.artifactSourceStatusCache.set(storage, rebuilt);
-      return rebuilt;
     };
 
     if (!isFresh) {
