@@ -41,3 +41,23 @@ test("StorageManager bumps memory status version on status-changing operations",
   }
 });
 
+test("StorageManager status version is shared across instances for same memoryDir", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-status-version-shared-"));
+  try {
+    const writer = new StorageManager(dir);
+    const reader = new StorageManager(dir);
+    await writer.ensureDirectories();
+
+    assert.equal(writer.getMemoryStatusVersion(), 0);
+    assert.equal(reader.getMemoryStatusVersion(), 0);
+
+    const id1 = await writer.writeMemory("fact", "shared one", { source: "test" });
+    const id2 = await writer.writeMemory("fact", "shared two", { source: "test" });
+    await writer.supersedeMemory(id1, id2, "shared status update");
+
+    assert.equal(writer.getMemoryStatusVersion() > 0, true);
+    assert.equal(reader.getMemoryStatusVersion(), writer.getMemoryStatusVersion());
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

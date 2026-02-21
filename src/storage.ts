@@ -570,16 +570,17 @@ export class StorageManager {
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
   private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number } | null = null;
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
-  private memoryStatusVersion = 0;
+  private static readonly memoryStatusVersionByDir = new Map<string, number>();
 
   constructor(private readonly baseDir: string) {}
 
   private bumpMemoryStatusVersion(): void {
-    this.memoryStatusVersion += 1;
+    const current = StorageManager.memoryStatusVersionByDir.get(this.baseDir) ?? 0;
+    StorageManager.memoryStatusVersionByDir.set(this.baseDir, current + 1);
   }
 
   getMemoryStatusVersion(): number {
-    return this.memoryStatusVersion;
+    return StorageManager.memoryStatusVersionByDir.get(this.baseDir) ?? 0;
   }
 
   private get factsDir(): string {
