@@ -57,9 +57,32 @@ Output format (strict):
 EOF
 
 CURSOR_MODEL="${CURSOR_PREPUSH_MODEL:-auto}"
-echo "[cursor-review] running cursor-agent --model $CURSOR_MODEL"
+CURSOR_TIMEOUT_SECONDS_RAW="${CURSOR_PREPUSH_TIMEOUT_SECONDS:-300}"
+if [[ "$CURSOR_TIMEOUT_SECONDS_RAW" =~ ^[0-9]+$ ]] && [[ "$CURSOR_TIMEOUT_SECONDS_RAW" -gt 0 ]]; then
+  CURSOR_TIMEOUT_SECONDS="$CURSOR_TIMEOUT_SECONDS_RAW"
+else
+  CURSOR_TIMEOUT_SECONDS="300"
+fi
 
-if ! cursor-agent --print --output-format text --model "$CURSOR_MODEL" "$(cat "$PROMPT_FILE")" >"$OUTPUT_FILE" 2>"$ERROR_FILE"; then
+timeout_cmd=()
+if command -v timeout >/dev/null 2>&1; then
+  timeout_cmd=(timeout "$CURSOR_TIMEOUT_SECONDS")
+elif command -v gtimeout >/dev/null 2>&1; then
+  timeout_cmd=(gtimeout "$CURSOR_TIMEOUT_SECONDS")
+fi
+
+if [[ ${#timeout_cmd[@]} -gt 0 ]]; then
+  echo "[cursor-review] running cursor-agent --model $CURSOR_MODEL (timeout=${CURSOR_TIMEOUT_SECONDS}s)"
+else
+  echo "[cursor-review] running cursor-agent --model $CURSOR_MODEL (no timeout command found)"
+fi
+
+if ! "${timeout_cmd[@]}" cursor-agent --print --output-format text --model "$CURSOR_MODEL" "$(cat "$PROMPT_FILE")" >"$OUTPUT_FILE" 2>"$ERROR_FILE"; then
+  rc=$?
+  if [[ "$rc" == "124" ]] || [[ "$rc" == "137" ]]; then
+    echo "[cursor-review] timed out after ${CURSOR_TIMEOUT_SECONDS}s; skipping"
+    exit 0
+  fi
   echo "[cursor-review] unavailable (command failed); skipping"
   if [[ -s "$ERROR_FILE" ]]; then
     sed 's/^/[cursor-review] /' "$ERROR_FILE"

@@ -44,6 +44,7 @@ Cursor pre-push scan behavior:
   - `SKIP_CURSOR_PREPUSH=1` to skip Cursor scan for a push.
   - `CURSOR_PREPUSH_MODEL=<model>` to pick model (default: `auto`).
   - `CURSOR_PREPUSH_BASE_REF=<ref>` to change diff base (default: `origin/main`).
+  - `CURSOR_PREPUSH_TIMEOUT_SECONDS=<seconds>` to control headless review timeout (default: `300`).
 
 ## Install path for users
 

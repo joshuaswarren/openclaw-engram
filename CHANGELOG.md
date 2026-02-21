@@ -61,6 +61,7 @@ All notable changes to this project will be documented in this file.
 - Local guardrail automation scripts and git hooks:
   - `scripts/pr-preflight.sh` (`quick` and `full` modes)
   - `scripts/cursor-prepush-review.sh` optional Cursor headless bug scan during pre-push (auto-skips when `cursor-agent` is unavailable).
+  - Cursor pre-push scan now uses a configurable timeout (`CURSOR_PREPUSH_TIMEOUT_SECONDS`, default `300`) with cross-platform timeout command support.
   - `scripts/install-git-hooks.sh`
   - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
   - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.
