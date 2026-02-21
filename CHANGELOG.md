@@ -74,6 +74,7 @@ All notable changes to this project will be documented in this file.
 - Artifact recall/search hardening:
   - Artifact candidate fetch is now bounded (`computeArtifactCandidateFetchLimit`) instead of unbounded full-corpus requests.
   - Artifact token matching now uses token/boundary-aware scoring (not raw substring includes), reducing acronym false positives.
+  - QMD recall now overscans only when artifacts are enabled, filters artifact paths before re-applying the QMD cap, and adds tests to prevent artifact-heavy top-N starvation of normal memories.
 - Planner/intent hardening:
   - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
   - Summarize action intent matching now includes conjugations (`summarized`, `summarizing`, `recapped`, `recapping`).

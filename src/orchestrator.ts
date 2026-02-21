@@ -90,6 +90,20 @@ export function computeArtifactCandidateFetchLimit(targetCount: number): number 
   return Math.min(200, cappedTarget + headroom);
 }
 
+export function computeQmdHybridFetchLimit(
+  recallFetchLimit: number,
+  artifactsEnabled: boolean,
+  maxArtifactRecall: number,
+): number {
+  const cappedRecallLimit = Math.max(0, recallFetchLimit);
+  if (cappedRecallLimit === 0) return 0;
+  if (!artifactsEnabled) return cappedRecallLimit;
+  // Overscan when artifacts are enabled, then filter artifact paths before
+  // re-applying the recall cap to avoid artifact-dominated top-N starvation.
+  const artifactHeadroom = Math.max(20, Math.max(0, maxArtifactRecall) * 8);
+  return Math.min(400, cappedRecallLimit + artifactHeadroom);
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -655,6 +669,11 @@ export class Orchestrator {
       ? 0
       : Math.max(recallResultLimit, Math.min(200, recallResultLimit + recallHeadroom));
     const qmdFetchLimit = computedFetchLimit;
+    const qmdHybridFetchLimit = computeQmdHybridFetchLimit(
+      qmdFetchLimit,
+      this.config.verbatimArtifactsEnabled,
+      this.config.verbatimArtifactsMaxRecall,
+    );
     const embeddingFetchLimit = computedFetchLimit;
 
     if (recallMode === "no_recall") {
@@ -785,11 +804,19 @@ export class Orchestrator {
       const memoryResults = await this.qmd.hybridSearch(
         prompt,
         undefined,
-        qmdFetchLimit,
+        qmdHybridFetchLimit,
       );
+      // Filter artifacts before re-applying the QMD recall cap so artifact-heavy
+      // top-ranked hits do not consume the entire candidate window.
+      const filteredResults = filterRecallCandidates(memoryResults, {
+        namespacesEnabled: false,
+        recallNamespaces: [],
+        resolveNamespace: () => "",
+        limit: qmdFetchLimit,
+      });
 
       timings.qmd = `${Date.now() - t0}ms`;
-      return { memoryResultsLists: [memoryResults], globalResults: [] };
+      return { memoryResultsLists: [filteredResults], globalResults: [] };
     })();
 
     // --- Wait for all parallel work ---
