@@ -167,14 +167,14 @@ export class Orchestrator {
   ): Promise<Map<string, "active" | "superseded" | "archived" | "missing">> {
     const now = Date.now();
     const cached = this.artifactSourceStatusCache.get(storage);
-    const isFresh =
-      cached !== undefined &&
-      now - cached.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS;
-
     let snapshot = cached;
-    if (!isFresh) {
+    const isFresh =
+      snapshot !== undefined &&
+      now - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS;
+
+    const rebuildSnapshot = async () => {
       const allMemories = await storage.readAllMemories();
-      snapshot = {
+      const rebuilt = {
         loadedAtMs: now,
         statuses: new Map(
           allMemories.map((m) => [
@@ -183,7 +183,19 @@ export class Orchestrator {
           ]),
         ),
       };
-      this.artifactSourceStatusCache.set(storage, snapshot);
+      this.artifactSourceStatusCache.set(storage, rebuilt);
+      return rebuilt;
+    };
+
+    if (!isFresh) {
+      snapshot = await rebuildSnapshot();
+    } else {
+      // Warm cache may miss brand-new sourceMemoryId values created after snapshot build.
+      // Refresh once on-demand when unseen IDs are requested.
+      const hasUnknownSourceIds = sourceIds.some((id) => !snapshot?.statuses.has(id));
+      if (hasUnknownSourceIds) {
+        snapshot = await rebuildSnapshot();
+      }
     }
 
     const statuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
