@@ -70,6 +70,18 @@ export function filterRecallCandidates(
     .slice(0, Math.max(0, options.limit));
 }
 
+export function computeArtifactRecallLimit(
+  recallMode: RecallPlanMode,
+  recallResultLimit: number,
+  verbatimArtifactsMaxRecall: number,
+): number {
+  const base = Math.max(0, verbatimArtifactsMaxRecall);
+  if (recallMode === "minimal") {
+    return Math.min(base, Math.max(0, recallResultLimit));
+  }
+  return base;
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -691,7 +703,11 @@ export class Orchestrator {
     const artifactsPromise = (async (): Promise<MemoryFile[]> => {
       if (!this.config.verbatimArtifactsEnabled) return [];
       const t0 = Date.now();
-      const targetCount = Math.max(0, this.config.verbatimArtifactsMaxRecall);
+      const targetCount = computeArtifactRecallLimit(
+        recallMode,
+        recallResultLimit,
+        this.config.verbatimArtifactsMaxRecall,
+      );
       if (targetCount <= 0) {
         timings.artifacts = "skip(limit=0)";
         return [];
