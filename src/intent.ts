@@ -94,5 +94,5 @@ export function planRecallMode(prompt: string): RecallPlanMode {
     return "no_recall";
   }
 
-  return "minimal";
+  return "full";
 }

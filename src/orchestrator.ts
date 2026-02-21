@@ -1424,7 +1424,9 @@ export class Orchestrator {
 
       // Score importance using local heuristics (Phase 1B)
       const importance = scoreImportance(fact.content, fact.category, fact.tags);
-      const inferredIntent = inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`);
+      const inferredIntent = this.config.intentRoutingEnabled
+        ? inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`)
+        : null;
 
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
@@ -1438,9 +1440,9 @@ export class Orchestrator {
             entityRef: fact.entityRef,
             source: "extraction",
             importance,
-            intentGoal: inferredIntent.goal,
-            intentActionType: inferredIntent.actionType,
-            intentEntityTypes: inferredIntent.entityTypes,
+            intentGoal: inferredIntent?.goal,
+            intentActionType: inferredIntent?.actionType,
+            intentEntityTypes: inferredIntent?.entityTypes,
           });
 
           // Write individual chunks with parent reference
@@ -1460,9 +1462,9 @@ export class Orchestrator {
                 entityRef: fact.entityRef,
                 source: "chunking",
                 importance: chunkImportance,
-                intentGoal: inferredIntent.goal,
-                intentActionType: inferredIntent.actionType,
-                intentEntityTypes: inferredIntent.entityTypes,
+                intentGoal: inferredIntent?.goal,
+                intentActionType: inferredIntent?.actionType,
+                intentEntityTypes: inferredIntent?.entityTypes,
               },
             );
           }
@@ -1488,9 +1490,9 @@ export class Orchestrator {
               tags: [...fact.tags, "artifact", "chunked-parent"],
               artifactType: this.artifactTypeForCategory(fact.category),
               sourceMemoryId: parentId,
-              intentGoal: inferredIntent.goal,
-              intentActionType: inferredIntent.actionType,
-              intentEntityTypes: inferredIntent.entityTypes,
+              intentGoal: inferredIntent?.goal,
+              intentActionType: inferredIntent?.actionType,
+              intentEntityTypes: inferredIntent?.entityTypes,
             });
           }
           continue; // Skip the normal write below
@@ -1531,9 +1533,9 @@ export class Orchestrator {
         importance,
         supersedes,
         links: links.length > 0 ? links : undefined,
-        intentGoal: inferredIntent.goal,
-        intentActionType: inferredIntent.actionType,
-        intentEntityTypes: inferredIntent.entityTypes,
+        intentGoal: inferredIntent?.goal,
+        intentActionType: inferredIntent?.actionType,
+        intentEntityTypes: inferredIntent?.entityTypes,
       });
       persistedIds.push(memoryId);
       await this.indexPersistedMemory(storage, memoryId);
@@ -1547,9 +1549,9 @@ export class Orchestrator {
           tags: [...fact.tags, "artifact"],
           artifactType: this.artifactTypeForCategory(fact.category),
           sourceMemoryId: memoryId,
-          intentGoal: inferredIntent.goal,
-          intentActionType: inferredIntent.actionType,
-          intentEntityTypes: inferredIntent.entityTypes,
+          intentGoal: inferredIntent?.goal,
+          intentActionType: inferredIntent?.actionType,
+          intentEntityTypes: inferredIntent?.entityTypes,
         });
       }
       // Register in content-hash index after successful write
