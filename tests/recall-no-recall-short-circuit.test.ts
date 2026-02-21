@@ -143,7 +143,7 @@ function baseConfig(memoryDir: string): PluginConfig {
     intentRoutingEnabled: false,
     intentRoutingBoost: 0.25,
     verbatimArtifactsEnabled: false,
-    verbatimArtifactsMinConfidenceTier: "inferred",
+    verbatimArtifactsMinConfidence: 0.8,
     verbatimArtifactsCategories: ["decision", "commitment", "correction", "principle"],
     verbatimArtifactsMaxRecall: 5,
     verbatimArtifactsMaxChars: 280,
