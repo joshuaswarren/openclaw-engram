@@ -170,13 +170,12 @@ export class Orchestrator {
     storage: StorageManager,
     sourceIds: string[],
   ): Promise<Map<string, "active" | "superseded" | "archived" | "missing">> {
-    const now = Date.now();
     const currentStatusVersion = storage.getMemoryStatusVersion();
     const cached = this.artifactSourceStatusCache.get(storage);
     let snapshot = cached;
     const isFresh =
       snapshot !== undefined &&
-      now - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS &&
+      Date.now() - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS &&
       snapshot.statusVersion === currentStatusVersion;
 
     const rebuildSnapshot = async () => {
@@ -192,7 +191,7 @@ export class Orchestrator {
       }
 
       const rebuilt = {
-        loadedAtMs: now,
+        loadedAtMs: Date.now(),
         statusVersion: versionAfter,
         statuses: new Map(
           allMemories.map((m) => [

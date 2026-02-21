@@ -1,19 +1,19 @@
 import type { MemoryIntent, RecallPlanMode } from "./types.js";
 
 const GOAL_PATTERNS: Array<{ re: RegExp; goal: string }> = [
-  { re: /\b(debug|fix|error|incident|outage|failure)\b/i, goal: "stabilize" },
-  { re: /\b(deploy|release|ship|publish)\b/i, goal: "release" },
-  { re: /\b(plan|roadmap|strategy|design)\b/i, goal: "plan" },
-  { re: /\b(review|audit|security|hardening)\b/i, goal: "review" },
+  { re: /\b(debug(?:s|ged|ging)?|fix(?:es|ed|ing)?|error(?:s)?|incident(?:s)?|outage(?:s)?|failure(?:s)?)\b/i, goal: "stabilize" },
+  { re: /\b(deploy(?:s|ed|ing)?|release(?:s|d|ing)?|ship(?:s|ped|ping)?|publish(?:es|ed|ing)?)\b/i, goal: "release" },
+  { re: /\b(plan(?:s|ned|ning)?|roadmap(?:s)?|strateg(?:y|ies)|design(?:s|ed|ing)?)\b/i, goal: "plan" },
+  { re: /\b(review(?:s|ed|ing)?|audit(?:s|ed|ing)?|security|hardening)\b/i, goal: "review" },
   { re: /\b(sales|deal|customer|client|prospect)\b/i, goal: "close_deal" },
 ];
 
 const ACTION_PATTERNS: Array<{ re: RegExp; action: string }> = [
-  { re: /\b(review|audit|inspect|check)\b/i, action: "review" },
-  { re: /\b(plan|design|brainstorm|spec)\b/i, action: "plan" },
-  { re: /\b(implement|build|code|patch|fix)\b/i, action: "execute" },
+  { re: /\b(review(?:s|ed|ing)?|audit(?:s|ed|ing)?|inspect(?:s|ed|ing)?|check(?:s|ed|ing)?)\b/i, action: "review" },
+  { re: /\b(plan(?:s|ned|ning)?|design(?:s|ed|ing)?|brainstorm(?:s|ed|ing)?|spec(?:s)?)\b/i, action: "plan" },
+  { re: /\b(implement(?:s|ed|ing)?|build(?:s|ing)?|code(?:s|d|ing)?|patch(?:es|ed|ing)?|fix(?:es|ed|ing)?)\b/i, action: "execute" },
   { re: /\b(summarize|recap|what happened|timeline)\b/i, action: "summarize" },
-  { re: /\b(decide|decision|choose)\b/i, action: "decide" },
+  { re: /\b(decid(?:e|es|ed|ing|ion|ions)|cho(?:ose|oses|ose|osen|osing))\b/i, action: "decide" },
 ];
 
 const ENTITY_PATTERNS: Array<{ re: RegExp; entityType: string }> = [

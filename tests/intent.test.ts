@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planRecallMode } from "../src/intent.ts";
+import { inferIntentFromText, planRecallMode } from "../src/intent.ts";
 
 test("planRecallMode keeps acknowledgements in no_recall", () => {
   assert.equal(planRecallMode("ok"), "no_recall");
@@ -19,4 +19,17 @@ test("planRecallMode defaults non-ack prompts to full recall", () => {
 test("planRecallMode returns minimal for short operational directives", () => {
   assert.equal(planRecallMode("Check gateway status"), "minimal");
   assert.equal(planRecallMode("Reload the gateway"), "minimal");
+});
+
+test("inferIntentFromText matches common verb conjugations", () => {
+  const inferred = inferIntentFromText("We reviewed and fixed the deploy failures");
+  assert.equal(inferred.goal, "stabilize");
+  assert.equal(inferred.actionType, "review");
+  assert.equal(inferred.entityTypes.includes("repo"), false);
+});
+
+test("inferIntentFromText detects decide/plan conjugations", () => {
+  const inferred = inferIntentFromText("We decided on planning changes to the roadmap");
+  assert.equal(inferred.actionType, "plan");
+  assert.equal(inferred.goal, "plan");
 });
