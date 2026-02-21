@@ -613,7 +613,9 @@ export class Orchestrator {
       ? planRecallMode(prompt)
       : "full";
     timings.recallPlan = recallMode;
-    const recallResultLimit = recallMode === "minimal"
+    const recallResultLimit = recallMode === "no_recall"
+      ? 0
+      : recallMode === "minimal"
       ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
       : this.config.qmdMaxResults;
     const qmdFetchLimit = Math.max(
