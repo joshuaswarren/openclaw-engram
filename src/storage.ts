@@ -538,6 +538,8 @@ export function serializeEntityFile(entity: EntityFile): string {
 export class StorageManager {
   private knowledgeIndexCache: { result: string; builtAt: number } | null = null;
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
+  private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number } | null = null;
+  private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
 
   constructor(private readonly baseDir: string) {}
 
@@ -709,17 +711,30 @@ export class StorageManager {
     const sanitized = sanitizeMemoryContent(quote);
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    if (
+      this.artifactIndexCache &&
+      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS
+    ) {
+      this.artifactIndexCache.memories.push({
+        path: filePath,
+        frontmatter: fm,
+        content: sanitized.text,
+      });
+    } else {
+      this.artifactIndexCache = null;
+    }
     return id;
   }
 
-  async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
-    const tokens = query
-      .toLowerCase()
-      .split(/[^a-z0-9]+/i)
-      .filter((t) => t.length > 2);
-    if (tokens.length === 0) return [];
+  private async readAllArtifactsCached(): Promise<MemoryFile[]> {
+    if (
+      this.artifactIndexCache &&
+      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS
+    ) {
+      return this.artifactIndexCache.memories;
+    }
 
-    const hits: Array<{ score: number; memory: MemoryFile }> = [];
+    const artifacts: MemoryFile[] = [];
     const readDir = async (dir: string) => {
       try {
         const entries = await readdir(dir, { withFileTypes: true });
@@ -732,18 +747,34 @@ export class StorageManager {
           if (!entry.name.endsWith(".md")) continue;
           const memory = await this.readMemoryByPath(fullPath);
           if (!memory) continue;
-          const haystack = `${memory.content} ${(memory.frontmatter.tags ?? []).join(" ")}`.toLowerCase();
-          const score = tokens.reduce((sum, t) => sum + (haystack.includes(t) ? 1 : 0), 0);
-          if (score > 0) {
-            hits.push({ score, memory });
-          }
+          artifacts.push(memory);
         }
       } catch {
-        // no-op
+        // Directory doesn't exist yet
       }
     };
 
     await readDir(this.artifactsDir);
+    this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now() };
+    return artifacts;
+  }
+
+  async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
+    const tokens = query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      .filter((t) => t.length > 2);
+    if (tokens.length === 0) return [];
+
+    const artifacts = await this.readAllArtifactsCached();
+    const hits: Array<{ score: number; memory: MemoryFile }> = [];
+    for (const memory of artifacts) {
+      const haystack = `${memory.content} ${(memory.frontmatter.tags ?? []).join(" ")}`.toLowerCase();
+      const score = tokens.reduce((sum, t) => sum + (haystack.includes(t) ? 1 : 0), 0);
+      if (score > 0) {
+        hits.push({ score, memory });
+      }
+    }
     hits.sort((a, b) => b.score - a.score);
     return hits.slice(0, maxResults).map((h) => h.memory);
   }
