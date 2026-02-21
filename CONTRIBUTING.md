@@ -85,6 +85,10 @@ Please ensure:
   - zero semantics (`0` is never coerced to `1`)
   - cap-after-filter behavior
   - cache coherence across instances/concurrency
+  - fallback parity (same policy constraints as primary and fallback paths)
+  - artifact isolation (`artifacts/` excluded from generic memory recall path)
+  - planner mode reachability (`no_recall`, `minimal`, `full`, `graph_mode`)
+  - heuristic robustness (intent patterns cover common language variants)
 
 ## Release process
 

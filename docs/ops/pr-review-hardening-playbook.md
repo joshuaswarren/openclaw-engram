@@ -2,6 +2,9 @@
 
 Use this for any PR that touches behavior, performance, safety, or compatibility.
 
+Reference patterns:
+`docs/ops/plugin-engineering-patterns.md`
+
 ## Why this exists
 
 PR #11 showed a repeated pattern: fixing one review comment introduced or exposed adjacent regressions. This playbook defines a reusable pre-push gate so changes land cleanly with fewer follow-up commits.
@@ -101,6 +104,19 @@ Avoid duplicated filtering logic branches that can drift.
 6. Reachability:
 Every documented mode/flag path must be reachable in runtime logic and covered by tests.
 
+7. Fallback parity:
+Primary and fallback retrieval paths must apply equivalent policy constraints.
+
+8. Recall pipeline ordering:
+Retrieve headroom -> filter -> rerank/boost -> cap -> format.
+Never apply final cap before policy/path/status filtering.
+
+9. Heuristic robustness:
+Regex/heuristic classifiers must support common language variants and avoid malformed stems.
+
+10. TTL correctness:
+Cache `loadedAt` timestamps must represent completion time of cache rebuild, not start time.
+
 ## Required Tests for These Changes
 
 When relevant, add tests for:
@@ -110,6 +126,9 @@ When relevant, add tests for:
 - cache invalidation across instances
 - concurrent write during cache rebuild
 - post-filter cap fill behavior
+- fallback path policy parity
+- artifact path isolation from generic memory recall
+- intent variant coverage (`decision`, `decided`, `chose`, `chosen`, etc.)
 
 ## PR Batch Strategy
 

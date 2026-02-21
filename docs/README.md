@@ -18,6 +18,7 @@ This is the start of a full docs overhaul. Use this map as the canonical entrypo
 ## Operations
 - `import-export.md` - backup/export/import workflows
 - `ops/pr-review-hardening-playbook.md` - mandatory pre-push review hardening checklist
+- `ops/plugin-engineering-patterns.md` - generalized engineering patterns for retrieval/intent/cache changes
 - `ops/rca-pr11-review-churn-2026-02-21.md` - postmortem + lessons from PR #11 review churn
 
 ## Plans / Roadmaps
