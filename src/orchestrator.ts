@@ -501,6 +501,9 @@ export class Orchestrator {
       ? planRecallMode(prompt)
       : "full";
     timings.recallPlan = recallMode;
+    const recallResultLimit = recallMode === "minimal"
+      ? Math.max(1, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
+      : this.config.qmdMaxResults;
 
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
@@ -587,17 +590,13 @@ export class Orchestrator {
         return null;
       }
       const t0 = Date.now();
-      const qmdLimit = recallMode === "minimal"
-        ? Math.max(1, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
-        : this.config.qmdMaxResults;
-
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
       const memoryResults = await this.qmd.hybridSearch(
         prompt,
         undefined,
-        qmdLimit,
+        recallResultLimit,
       );
 
       timings.qmd = `${Date.now() - t0}ms`;
@@ -720,7 +719,7 @@ export class Orchestrator {
 
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       } else {
-        const embeddingResults = await this.searchEmbeddingFallback(prompt, this.config.qmdMaxResults);
+        const embeddingResults = await this.searchEmbeddingFallback(prompt, recallResultLimit);
         const scoped = this.config.namespacesEnabled
           ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
           : embeddingResults;
@@ -761,9 +760,12 @@ export class Orchestrator {
           ].join("\n"),
         );
       }
-    } else if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
+    } else if (
+      recallMode !== "no_recall" &&
+      (!this.config.qmdEnabled || !this.qmd.isAvailable())
+    ) {
       // Fallback: embeddings first, then recency-only.
-      const embeddingResults = await this.searchEmbeddingFallback(prompt, this.config.qmdMaxResults);
+      const embeddingResults = await this.searchEmbeddingFallback(prompt, recallResultLimit);
       const scoped = this.config.namespacesEnabled
         ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
         : embeddingResults;
@@ -790,7 +792,7 @@ export class Orchestrator {
                 new Date(b.frontmatter.updated).getTime() -
                 new Date(a.frontmatter.updated).getTime(),
             )
-            .slice(0, 10);
+            .slice(0, recallResultLimit);
 
           // Track access for these memories
           const memoryIds = recent.map((m) => m.frontmatter.id);
@@ -828,7 +830,7 @@ export class Orchestrator {
     // 3. TRANSCRIPT INJECTION (NEW)
     const transcriptT0 = Date.now();
     log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
-    if (this.config.transcriptEnabled) {
+    if (this.config.transcriptEnabled && recallMode !== "no_recall") {
       // Try checkpoint first (post-compaction recovery)
       let checkpointInjected = false;
       if (this.config.checkpointEnabled) {
@@ -876,7 +878,7 @@ export class Orchestrator {
 
     // 4. HOURLY SUMMARIES INJECTION (NEW)
     const summariesT0 = Date.now();
-    if (this.config.hourlySummariesEnabled && sessionKey) {
+    if (this.config.hourlySummariesEnabled && sessionKey && recallMode !== "no_recall") {
       const summaries = await this.summarizer.readRecent(
         sessionKey,
         this.config.summaryRecallHours
@@ -902,7 +904,8 @@ export class Orchestrator {
     if (
       this.config.conversationIndexEnabled &&
       this.conversationQmd &&
-      this.conversationQmd.isAvailable()
+      this.conversationQmd.isAvailable() &&
+      recallMode !== "no_recall"
     ) {
       const startedAtMs = Date.now();
       const timeoutMs = Math.max(200, this.config.conversationRecallTimeoutMs);
@@ -941,7 +944,7 @@ export class Orchestrator {
     timings.convRecall = `${Date.now() - convT0}ms`;
 
     // 4.75. Compounding injection (v5.0, optional)
-    if (this.compounding && this.config.compoundingInjectEnabled) {
+    if (this.compounding && this.config.compoundingInjectEnabled && recallMode !== "no_recall") {
       const mistakes = await this.compounding.readMistakes();
       if (mistakes && Array.isArray(mistakes.patterns) && mistakes.patterns.length > 0) {
         const lines: string[] = [
@@ -1356,6 +1359,26 @@ export class Orchestrator {
 
           for (const chunk of chunkResult.chunks) {
             await this.indexPersistedMemory(storage, `${parentId}-chunk-${chunk.index}`);
+          }
+          if (
+            this.config.verbatimArtifactsEnabled &&
+            this.config.verbatimArtifactCategories.includes(fact.category) &&
+            fact.confidence >= this.config.verbatimArtifactsMinConfidence
+          ) {
+            await storage.writeArtifact(fact.content, {
+              confidence: fact.confidence,
+              tags: [...fact.tags, "artifact", "chunked-parent"],
+              artifactType:
+                fact.category === "decision" ? "decision" :
+                fact.category === "commitment" ? "commitment" :
+                fact.category === "correction" ? "correction" :
+                fact.category === "principle" ? "constraint" :
+                "fact",
+              sourceMemoryId: parentId,
+              intentGoal: inferredIntent.goal,
+              intentActionType: inferredIntent.actionType,
+              intentEntityTypes: inferredIntent.entityTypes,
+            });
           }
           continue; // Skip the normal write below
         }
