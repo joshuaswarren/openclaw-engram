@@ -164,7 +164,7 @@ export class Orchestrator {
   private async resolveArtifactSourceStatuses(
     storage: StorageManager,
     sourceIds: string[],
-  ): Promise<Map<string, "active" | "superseded" | "archived" | "missing" | "unknown">> {
+  ): Promise<Map<string, "active" | "superseded" | "archived" | "missing">> {
     const now = Date.now();
     const cached = this.artifactSourceStatusCache.get(storage);
     const isFresh =
@@ -186,15 +186,13 @@ export class Orchestrator {
       this.artifactSourceStatusCache.set(storage, snapshot);
     }
 
-    const statuses = new Map<string, "active" | "superseded" | "archived" | "missing" | "unknown">();
+    const statuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
     for (const id of sourceIds) {
       const status = snapshot?.statuses.get(id);
       if (status) {
         statuses.set(id, status);
       } else {
-        // When serving from cache, unknown IDs may simply be newly-written memories.
-        // Treat as unknown (not missing) to avoid false-negative filtering.
-        statuses.set(id, isFresh ? "unknown" : "missing");
+        statuses.set(id, "missing");
       }
     }
     return statuses;
@@ -640,7 +638,7 @@ export class Orchestrator {
       const sourceStatus =
         sourceIds.length > 0
           ? await this.resolveArtifactSourceStatuses(profileStorage, sourceIds)
-          : new Map<string, "active" | "superseded" | "archived" | "missing" | "unknown">();
+          : new Map<string, "active" | "superseded" | "archived" | "missing">();
 
       const results: MemoryFile[] = [];
       for (const artifact of rawResults) {
@@ -649,8 +647,8 @@ export class Orchestrator {
           results.push(artifact);
           continue;
         }
-        const status = sourceStatus.get(sourceId) ?? "unknown";
-        if (status === "superseded" || status === "archived" || status === "missing") continue;
+        const status = sourceStatus.get(sourceId) ?? "missing";
+        if (status !== "active") continue;
         results.push(artifact);
       }
       timings.artifacts = `${Date.now() - t0}ms`;
