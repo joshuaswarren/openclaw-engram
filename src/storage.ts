@@ -27,6 +27,36 @@ import type {
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
 
+const ARTIFACT_SEARCH_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "i",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "this",
+  "to",
+  "was",
+  "were",
+  "with",
+]);
+
 function serializeFrontmatter(fm: MemoryFrontmatter): string {
   const lines = [
     "---",
@@ -763,7 +793,9 @@ export class StorageManager {
     const tokens = query
       .toLowerCase()
       .split(/[^a-z0-9]+/i)
-      .filter((t) => t.length > 2);
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 2)
+      .filter((t) => !ARTIFACT_SEARCH_STOPWORDS.has(t));
     if (tokens.length === 0) return [];
 
     const artifacts = await this.readAllArtifactsCached();

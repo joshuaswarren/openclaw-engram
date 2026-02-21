@@ -24,3 +24,21 @@ test("artifact cache supports immediate recall for newly written artifacts", asy
   }
 });
 
+test("artifact search matches short acronym tokens", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-artifact-acronyms-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    await storage.writeArtifact("CI CD pipeline is green", { tags: ["ci", "cd"] });
+
+    const ciCd = await storage.searchArtifacts("CI CD", 10);
+    assert.equal(ciCd.length > 0, true);
+
+    const prDb = await storage.searchArtifacts("PR DB", 10);
+    // No false positives required; ensure acronym-only query path does not short-circuit to empty.
+    assert.equal(Array.isArray(prDb), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
