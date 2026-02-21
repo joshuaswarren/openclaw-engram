@@ -76,6 +76,7 @@ export function intentCompatibilityScore(queryIntent: MemoryIntent, memoryIntent
 
 export function planRecallMode(prompt: string): RecallPlanMode {
   const p = prompt.trim();
+  const ackCandidate = p.replace(/[.!?]+$/g, "").trim();
   if (p.length === 0) return "no_recall";
 
   if (/\b(timeline|sequence|history|what happened|chain of events|root cause)\b/i.test(p)) {
@@ -85,7 +86,7 @@ export function planRecallMode(prompt: string): RecallPlanMode {
   // Reserve no_recall for low-information acknowledgements; avoid broad regressions.
   if (
     p.length <= 18 &&
-    /^(ok|okay|kk|thanks|thx|got it|sounds good|yep|yes|nope|no|done|cool|works)$/i.test(p)
+    /^(ok|okay|kk|thanks|thx|got it|sounds good|yep|yes|nope|no|done|cool|works)$/i.test(ackCandidate)
   ) {
     return "no_recall";
   }
