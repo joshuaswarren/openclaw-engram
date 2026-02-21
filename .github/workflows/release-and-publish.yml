@@ -36,6 +36,11 @@ jobs:
           git fetch origin main
           git checkout -B main origin/main
 
+      - name: Capture release source SHA
+        id: source_sha
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
         run: npm ci
 
@@ -57,7 +62,7 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const sha = context.sha;
+            const sha = "${{ steps.source_sha.outputs.sha }}";
 
             let bumpType = "patch";
             let prNumber = "";
