@@ -819,10 +819,10 @@ export class QmdClient {
     }
   }
 
-  async ensureCollection(memoryDir: string): Promise<boolean> {
-    if (this.available === false && !this.daemonAvailable) return false;
+  async ensureCollection(memoryDir: string): Promise<"present" | "missing" | "unknown" | "skipped"> {
+    if (this.available === false && !this.daemonAvailable) return "unknown";
     // If only daemon is available (no CLI), skip collection check
-    if (this.available === false) return true;
+    if (this.available === false) return "skipped";
     try {
       const { stdout } = await runQmd(
         ["collection", "list"],
@@ -835,16 +835,21 @@ export class QmdClient {
         "m",
       );
       if (collectionRegex.test(stdout)) {
-        return true;
+        return "present";
       }
-    } catch {
-      // collection list command failed
+    } catch (err) {
+      // Treat command/probe failures as unknown so callers do not disable features
+      // permanently after a transient CLI or daemon hiccup.
+      log.debug(
+        `QMD collection check unavailable for "${this.collection}" (will not disable features): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return "unknown";
     }
 
     log.info(
       `QMD collection "${this.collection}" not found. ` +
         `Add it to ~/.config/qmd/index.yml pointing at ${memoryDir}`,
     );
-    return false;
+    return "missing";
   }
 }

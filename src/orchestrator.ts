@@ -89,6 +89,9 @@ export class Orchestrator {
   private lastQmdEmbedAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
+  private lastRecallFailureLogAtMs = 0;
+  private lastRecallFailureAtMs = 0;
+  private suppressedRecallFailures = 0;
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -188,7 +191,17 @@ export class Orchestrator {
       if (available) {
         const mode = this.qmd.isDaemonMode() ? "daemon" : "subprocess";
         log.info(`QMD: available (mode: ${mode}) ${this.qmd.debugStatus()}`);
-        await this.qmd.ensureCollection(this.config.memoryDir);
+        const collectionState = await this.qmd.ensureCollection(this.config.memoryDir);
+        if (collectionState === "missing") {
+          this.config.qmdEnabled = false;
+          log.warn(
+            "QMD collection missing for Engram memory store; disabling QMD retrieval for this runtime (fallback retrieval remains enabled)",
+          );
+        } else if (collectionState === "unknown") {
+          log.warn("QMD collection check unavailable; keeping QMD retrieval enabled for fail-open behavior");
+        } else if (collectionState === "skipped") {
+          log.debug("QMD collection check skipped in daemon-only mode");
+        }
       } else {
         log.warn(`QMD: not available ${this.qmd.debugStatus()}`);
       }
@@ -198,9 +211,21 @@ export class Orchestrator {
       const available = await this.conversationQmd.probe();
       if (available) {
         log.info(`Conversation index QMD: available ${this.conversationQmd.debugStatus()}`);
-        await this.conversationQmd.ensureCollection(
+        const collectionState = await this.conversationQmd.ensureCollection(
           path.join(this.config.memoryDir, "conversation-index"),
         );
+        if (collectionState === "missing") {
+          this.config.conversationIndexEnabled = false;
+          log.warn(
+            "Conversation index collection missing; disabling conversation semantic recall for this runtime",
+          );
+        } else if (collectionState === "unknown") {
+          log.warn(
+            "Conversation index collection check unavailable; keeping conversation semantic recall enabled for fail-open behavior",
+          );
+        } else if (collectionState === "skipped") {
+          log.debug("Conversation index collection check skipped in daemon-only mode");
+        }
       } else {
         log.warn(`Conversation index QMD: not available ${this.conversationQmd.debugStatus()}`);
       }
@@ -348,9 +373,10 @@ export class Orchestrator {
     );
     // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
     const q = this.conversationQmd ?? this.qmd;
+    const usingPrimaryQmdClient = q === this.qmd;
     const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
     let embedded = false;
-    if (this.config.qmdEnabled && q.isAvailable()) {
+    if ((!usingPrimaryQmdClient || this.config.qmdEnabled) && q.isAvailable()) {
       await q.update();
       if (shouldEmbed) {
         await q.embed();
@@ -426,17 +452,43 @@ export class Orchestrator {
       }
     }
 
-    // Wrap recall logic with a 60-second timeout to prevent agent hangs
-    const RECALL_TIMEOUT_MS = 60_000;
+    // Keep outer recall timeout above worst-case serialized hybrid search:
+    // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
+    const RECALL_TIMEOUT_MS = 75_000;
     return Promise.race([
       this.recallInternal(prompt, sessionKey),
       new Promise<string>((_, reject) =>
         setTimeout(() => reject(new Error("recall timeout")), RECALL_TIMEOUT_MS)
       ),
     ]).catch((err) => {
-      log.warn(`recall timed out or failed: ${err}`);
+      this.logRecallFailure(err);
       return ""; // Return empty context on timeout/error
     });
+  }
+
+  private logRecallFailure(err: unknown): void {
+    const now = Date.now();
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const LOG_WINDOW_MS = 60_000;
+    const idleSinceLastFailureMs = now - this.lastRecallFailureAtMs;
+    this.lastRecallFailureAtMs = now;
+    if (idleSinceLastFailureMs >= LOG_WINDOW_MS) {
+      this.suppressedRecallFailures = 0;
+    }
+
+    if (now - this.lastRecallFailureLogAtMs >= LOG_WINDOW_MS) {
+      const suffix =
+        this.suppressedRecallFailures > 0
+          ? ` (suppressed ${this.suppressedRecallFailures} similar failures in last minute)`
+          : "";
+      log.warn(`recall timed out or failed: ${errorMsg}${suffix}`);
+      this.lastRecallFailureLogAtMs = now;
+      this.suppressedRecallFailures = 0;
+      return;
+    }
+
+    this.suppressedRecallFailures += 1;
+    log.debug(`recall timed out or failed (suppressed): ${errorMsg}`);
   }
 
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
@@ -812,7 +864,6 @@ export class Orchestrator {
     const convT0 = Date.now();
     if (
       this.config.conversationIndexEnabled &&
-      this.config.qmdEnabled &&
       this.conversationQmd &&
       this.conversationQmd.isAvailable()
     ) {
