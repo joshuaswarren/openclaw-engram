@@ -765,10 +765,14 @@ export class StorageManager {
     const priorWriteVersion = this.getArtifactWriteVersion();
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
     const writeVersion = this.bumpArtifactWriteVersion();
+    // Only apply local write-through when this write is contiguous with the cache version.
+    // If another instance wrote during our writeFile window, invalidate to force rebuild.
+    const noInterveningWrites = writeVersion === priorWriteVersion + 1;
     if (
       this.artifactIndexCache &&
       Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS &&
-      this.artifactIndexCache.writeVersion === priorWriteVersion
+      this.artifactIndexCache.writeVersion === priorWriteVersion &&
+      noInterveningWrites
     ) {
       this.artifactIndexCache.memories.push({
         path: filePath,
