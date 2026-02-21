@@ -79,7 +79,11 @@ export function planRecallMode(prompt: string): RecallPlanMode {
   let ackCandidate = p;
   while (ackCandidate.length > 0) {
     const ch = ackCandidate.charCodeAt(ackCandidate.length - 1);
-    if (ch !== 33 && ch !== 46 && ch !== 63) break; // ! . ?
+    const isDigit = ch >= 48 && ch <= 57;
+    const isUpper = ch >= 65 && ch <= 90;
+    const isLower = ch >= 97 && ch <= 122;
+    // Strip any trailing non-alphanumeric noise (punctuation/emojis/symbols).
+    if (isDigit || isUpper || isLower) break;
     ackCandidate = ackCandidate.slice(0, -1);
   }
   ackCandidate = ackCandidate.trim();

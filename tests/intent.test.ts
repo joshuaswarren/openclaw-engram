@@ -7,6 +7,9 @@ test("planRecallMode keeps acknowledgements in no_recall", () => {
   assert.equal(planRecallMode("thanks"), "no_recall");
   assert.equal(planRecallMode("ok."), "no_recall");
   assert.equal(planRecallMode("thanks!"), "no_recall");
+  assert.equal(planRecallMode("ok,"), "no_recall");
+  assert.equal(planRecallMode("thanks:"), "no_recall");
+  assert.equal(planRecallMode("got it :)"), "no_recall");
 });
 
 test("planRecallMode uses graph_mode for timeline/history prompts", () => {
