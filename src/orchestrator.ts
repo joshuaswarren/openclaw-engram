@@ -75,6 +75,7 @@ export class Orchestrator {
     StorageManager,
     {
       loadedAtMs: number;
+      statusVersion: number;
       statuses: Map<string, "active" | "superseded" | "archived">;
     }
   >();
@@ -166,16 +167,29 @@ export class Orchestrator {
     sourceIds: string[],
   ): Promise<Map<string, "active" | "superseded" | "archived" | "missing">> {
     const now = Date.now();
+    const currentStatusVersion = storage.getMemoryStatusVersion();
     const cached = this.artifactSourceStatusCache.get(storage);
     let snapshot = cached;
     const isFresh =
       snapshot !== undefined &&
-      now - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS;
+      now - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS &&
+      snapshot.statusVersion === currentStatusVersion;
 
     const rebuildSnapshot = async () => {
-      const allMemories = await storage.readAllMemories();
+      let versionBefore = storage.getMemoryStatusVersion();
+      let allMemories = await storage.readAllMemories();
+      let versionAfter = storage.getMemoryStatusVersion();
+
+      // If status changed during snapshot read, refresh once to avoid a torn snapshot.
+      if (versionAfter !== versionBefore) {
+        versionBefore = storage.getMemoryStatusVersion();
+        allMemories = await storage.readAllMemories();
+        versionAfter = storage.getMemoryStatusVersion();
+      }
+
       const rebuilt = {
         loadedAtMs: now,
+        statusVersion: versionAfter,
         statuses: new Map(
           allMemories.map((m) => [
             m.frontmatter.id,
@@ -635,9 +649,11 @@ export class Orchestrator {
       if (!this.config.verbatimArtifactsEnabled) return [];
       if (recallMode === "no_recall") return [];
       const t0 = Date.now();
+      const targetCount = Math.max(1, this.config.verbatimArtifactsMaxRecall);
+      const searchCount = Math.max(100, targetCount);
       const rawResults = await profileStorage.searchArtifacts(
         prompt,
-        Math.max(1, this.config.verbatimArtifactsMaxRecall),
+        searchCount,
       );
 
       const sourceIds = Array.from(
@@ -657,11 +673,13 @@ export class Orchestrator {
         const sourceId = artifact.frontmatter.sourceMemoryId;
         if (!sourceId) {
           results.push(artifact);
+          if (results.length >= targetCount) break;
           continue;
         }
         const status = sourceStatus.get(sourceId) ?? "missing";
         if (status !== "active") continue;
         results.push(artifact);
+        if (results.length >= targetCount) break;
       }
       timings.artifacts = `${Date.now() - t0}ms`;
       return results;

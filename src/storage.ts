@@ -570,8 +570,17 @@ export class StorageManager {
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
   private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number } | null = null;
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
+  private memoryStatusVersion = 0;
 
   constructor(private readonly baseDir: string) {}
+
+  private bumpMemoryStatusVersion(): void {
+    this.memoryStatusVersion += 1;
+  }
+
+  getMemoryStatusVersion(): number {
+    return this.memoryStatusVersion;
+  }
 
   private get factsDir(): string {
     return path.join(this.baseDir, "facts");
@@ -1029,6 +1038,7 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
       return destPath;
@@ -1127,6 +1137,7 @@ export class StorageManager {
 
     try {
       await unlink(memory.path);
+      this.bumpMemoryStatusVersion();
       log.debug(`invalidated memory ${id}`);
       return true;
     } catch {
@@ -1182,6 +1193,10 @@ export class StorageManager {
           // Ignore
         }
       }
+    }
+
+    if (cleaned > 0) {
+      this.bumpMemoryStatusVersion();
     }
 
     return cleaned;
@@ -1860,6 +1875,10 @@ export class StorageManager {
       }
     }
 
+    if (cleaned > 0) {
+      this.bumpMemoryStatusVersion();
+    }
+
     return cleaned;
   }
 
@@ -2021,6 +2040,7 @@ export class StorageManager {
 
     try {
       await writeFile(oldMemory.path, fileContent, "utf-8");
+      this.bumpMemoryStatusVersion();
       log.debug(`superseded memory ${oldMemoryId} by ${newMemoryId}: ${reason}`);
 
       // Also write a correction entry for the audit trail
@@ -2108,6 +2128,7 @@ export class StorageManager {
     }
 
     if (archived > 0) {
+      this.bumpMemoryStatusVersion();
       log.debug(`archived ${archived} memories for summary ${summaryId}`);
     }
     return archived;
