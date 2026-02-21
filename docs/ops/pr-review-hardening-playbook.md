@@ -84,7 +84,8 @@ Run this before every push:
 Repository automation:
 - `npm run hooks:install` configures git hooks that enforce this gate locally.
 - `pre-commit` runs `npm run preflight:quick`
-- `pre-push` runs `npm run preflight` and then `scripts/cursor-prepush-review.sh` when `cursor-agent` is available.
+- `pre-push` runs `npm run preflight`
+- Optional AI pre-push signal: run `npm run review:cursor` manually before pushing.
 
 ## Invariant Classes (must be checked)
 

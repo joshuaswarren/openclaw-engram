@@ -678,48 +678,110 @@ export class Orchestrator {
     return `${text.slice(0, maxChars - 1)}…`;
   }
 
+  private async fetchActiveArtifactsForNamespace(
+    namespace: string,
+    prompt: string,
+    targetCount: number,
+  ): Promise<MemoryFile[]> {
+    const storage = await this.storageRouter.storageFor(namespace);
+    let fetchLimit = computeArtifactCandidateFetchLimit(targetCount);
+    const maxFetchLimit = Math.min(800, Math.max(fetchLimit, targetCount * 8));
+    const MAX_ATTEMPTS = 4;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const rawResults = await storage.searchArtifacts(prompt, fetchLimit);
+      const sourceIds = Array.from(
+        new Set(
+          rawResults
+            .map((a) => a.frontmatter.sourceMemoryId)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      );
+      const sourceStatus =
+        sourceIds.length > 0
+          ? await this.resolveArtifactSourceStatuses(storage, sourceIds)
+          : new Map<string, "active" | "superseded" | "archived" | "missing">();
+
+      const filtered: MemoryFile[] = [];
+      for (const artifact of rawResults) {
+        const sourceId = artifact.frontmatter.sourceMemoryId;
+        if (!sourceId) {
+          filtered.push(artifact);
+          if (filtered.length >= targetCount) break;
+          continue;
+        }
+        const status = sourceStatus.get(sourceId) ?? "missing";
+        if (status !== "active") continue;
+        filtered.push(artifact);
+        if (filtered.length >= targetCount) break;
+      }
+
+      if (filtered.length >= targetCount) return filtered.slice(0, targetCount);
+      if (rawResults.length === 0) return filtered;
+      if (rawResults.length < fetchLimit && filtered.length > 0) return filtered;
+      if (fetchLimit >= maxFetchLimit) return filtered;
+
+      const growth = Math.max(targetCount * 2, 12);
+      fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
+    }
+
+    return [];
+  }
+
   private async recallArtifactsAcrossNamespaces(
     prompt: string,
     recallNamespaces: string[],
     targetCount: number,
   ): Promise<MemoryFile[]> {
     if (targetCount <= 0) return [];
-    const artifactFetchLimit = computeArtifactCandidateFetchLimit(targetCount);
     const namespaces = Array.from(new Set(recallNamespaces));
     const filteredByNamespace = await Promise.all(
-      namespaces.map(async (namespace): Promise<MemoryFile[]> => {
-        const storage = await this.storageRouter.storageFor(namespace);
-        const rawResults = await storage.searchArtifacts(prompt, artifactFetchLimit);
-        const sourceIds = Array.from(
-          new Set(
-            rawResults
-              .map((a) => a.frontmatter.sourceMemoryId)
-              .filter((id): id is string => typeof id === "string" && id.length > 0),
-          ),
-        );
-        const sourceStatus =
-          sourceIds.length > 0
-            ? await this.resolveArtifactSourceStatuses(storage, sourceIds)
-            : new Map<string, "active" | "superseded" | "archived" | "missing">();
-
-        const filtered: MemoryFile[] = [];
-        for (const artifact of rawResults) {
-          const sourceId = artifact.frontmatter.sourceMemoryId;
-          if (!sourceId) {
-            filtered.push(artifact);
-            if (filtered.length >= targetCount) break;
-            continue;
-          }
-          const status = sourceStatus.get(sourceId) ?? "missing";
-          if (status !== "active") continue;
-          filtered.push(artifact);
-          if (filtered.length >= targetCount) break;
-        }
-        return filtered;
-      }),
+      namespaces.map((namespace) => this.fetchActiveArtifactsForNamespace(namespace, prompt, targetCount)),
     );
 
     return mergeArtifactRecallCandidates(filteredByNamespace, targetCount);
+  }
+
+  private async fetchQmdMemoryResultsWithArtifactTopUp(
+    prompt: string,
+    qmdFetchLimit: number,
+    qmdHybridFetchLimit: number,
+  ): Promise<QmdSearchResult[]> {
+    let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
+    const maxFetchLimit = Math.min(800, Math.max(fetchLimit, qmdFetchLimit * 8));
+    const MAX_ATTEMPTS = 4;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const memoryResults = await this.qmd.hybridSearch(
+        prompt,
+        undefined,
+        fetchLimit,
+      );
+      const filteredResults = filterRecallCandidates(memoryResults, {
+        namespacesEnabled: false,
+        recallNamespaces: [],
+        resolveNamespace: () => "",
+        limit: fetchLimit,
+      });
+
+      if (filteredResults.length >= qmdFetchLimit) {
+        return filteredResults.slice(0, qmdFetchLimit);
+      }
+      if (memoryResults.length === 0) {
+        return filteredResults;
+      }
+      if (memoryResults.length < fetchLimit && filteredResults.length > 0) {
+        return filteredResults;
+      }
+      if (fetchLimit >= maxFetchLimit) {
+        return filteredResults;
+      }
+
+      const growth = Math.max(20, Math.floor(fetchLimit / 2));
+      fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
+    }
+
+    return [];
   }
 
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
@@ -848,19 +910,11 @@ export class Orchestrator {
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
-      const memoryResults = await this.qmd.hybridSearch(
+      const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
         prompt,
-        undefined,
+        qmdFetchLimit,
         qmdHybridFetchLimit,
       );
-      // Filter artifacts before re-applying the QMD recall cap so artifact-heavy
-      // top-ranked hits do not consume the entire candidate window.
-      const filteredResults = filterRecallCandidates(memoryResults, {
-        namespacesEnabled: false,
-        recallNamespaces: [],
-        resolveNamespace: () => "",
-        limit: qmdFetchLimit,
-      });
 
       timings.qmd = `${Date.now() - t0}ms`;
       return { memoryResultsLists: [filteredResults], globalResults: [] };

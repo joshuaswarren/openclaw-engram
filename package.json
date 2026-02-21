@@ -68,6 +68,7 @@
     "test": "tsx --test",
     "preflight": "bash scripts/pr-preflight.sh full",
     "preflight:quick": "bash scripts/pr-preflight.sh quick",
+    "review:cursor": "bash scripts/cursor-prepush-review.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
     "prepack": "npm run build"

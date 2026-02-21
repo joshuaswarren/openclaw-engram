@@ -213,3 +213,98 @@ test("artifact recall searches all readable namespaces", async () => {
   assert.equal(touched.includes("shared"), true);
   assert.equal(artifacts.some((a: any) => a.content.includes("shared quote anchor")), true);
 });
+
+test("artifact recall tops up namespace fetch when stale sources are filtered", async () => {
+  const memoryDir = tmpDir("engram-artifact-topup");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  const calls: number[] = [];
+  const mkArtifact = (id: string, sourceMemoryId?: string) => ({
+    path: `/tmp/memory/artifacts/${id}.md`,
+    content: id,
+    frontmatter: {
+      id,
+      category: "fact",
+      created: "2026-02-21T00:00:00.000Z",
+      updated: "2026-02-21T00:00:00.000Z",
+      source: "artifact",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: [],
+      sourceMemoryId,
+    },
+  });
+
+  (orchestrator as any).storageRouter = {
+    storageFor: async () => ({
+      searchArtifacts: async (_query: string, maxResults: number) => {
+        calls.push(maxResults);
+        if (maxResults <= 10) {
+          return Array.from({ length: maxResults }, (_, i) =>
+            mkArtifact(`stale-${i + 1}`, `s${i + 1}`),
+          );
+        }
+        return [
+          mkArtifact("stale-1", "s1"),
+          mkArtifact("stale-2", "s2"),
+          mkArtifact("active-1", "a1"),
+          mkArtifact("active-2", "a2"),
+        ];
+      },
+    }),
+  };
+  (orchestrator as any).resolveArtifactSourceStatuses = async (_storage: any, ids: string[]) => {
+    const map = new Map<string, "active" | "superseded" | "archived" | "missing">();
+    for (const id of ids) {
+      if (id.startsWith("a")) map.set(id, "active");
+      else map.set(id, "superseded");
+    }
+    return map;
+  };
+
+  const results = await (orchestrator as any).fetchActiveArtifactsForNamespace("default", "artifact", 2);
+  assert.equal(results.length, 2);
+  assert.equal(results.every((m: any) => m.frontmatter.sourceMemoryId?.startsWith("a")), true);
+  assert.equal(calls.length >= 2, true);
+});
+
+test("qmd fetch tops up when artifact-heavy window underfills non-artifact budget", async () => {
+  const memoryDir = tmpDir("engram-qmd-topup");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  const qmdCalls: number[] = [];
+  const mkResult = (path: string, score: number) => ({
+    docid: path,
+    path,
+    snippet: path,
+    score,
+  });
+
+  (orchestrator as any).qmd = {
+    hybridSearch: async (_query: string, _collection: any, maxResults: number) => {
+      qmdCalls.push(maxResults);
+      if (maxResults <= 8) {
+        return Array.from({ length: maxResults }, (_, i) =>
+          mkResult(`/tmp/memory/artifacts/${String.fromCharCode(97 + i)}.md`, 1 - i * 0.001),
+        );
+      }
+      return [
+        mkResult("/tmp/memory/artifacts/a.md", 1.0),
+        mkResult("/tmp/memory/artifacts/b.md", 0.99),
+        mkResult("/tmp/memory/artifacts/c.md", 0.98),
+        mkResult("/tmp/memory/facts/1.md", 0.97),
+        mkResult("/tmp/memory/facts/2.md", 0.96),
+        mkResult("/tmp/memory/facts/3.md", 0.95),
+      ];
+    },
+  };
+
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 3, 8);
+  assert.equal(results.length, 3);
+  assert.equal(results.every((r: any) => !r.path.includes("/artifacts/")), true);
+  assert.equal(qmdCalls.length >= 2, true);
+});

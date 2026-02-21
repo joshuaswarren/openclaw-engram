@@ -27,6 +27,18 @@ if [[ -z "$CHANGED_FILES" ]]; then
   exit 0
 fi
 
+MAX_DIFF_CHARS_RAW="${CURSOR_PREPUSH_MAX_DIFF_CHARS:-120000}"
+if [[ "$MAX_DIFF_CHARS_RAW" =~ ^[0-9]+$ ]] && [[ "$MAX_DIFF_CHARS_RAW" -gt 0 ]]; then
+  MAX_DIFF_CHARS="$MAX_DIFF_CHARS_RAW"
+else
+  MAX_DIFF_CHARS="120000"
+fi
+
+DIFF_TEXT="$(git diff --no-color --unified=3 "$BASE_SHA"...HEAD)"
+if [[ ${#DIFF_TEXT} -gt "$MAX_DIFF_CHARS" ]]; then
+  DIFF_TEXT="${DIFF_TEXT:0:$MAX_DIFF_CHARS}"$'\n'"[diff truncated at ${MAX_DIFF_CHARS} chars]"
+fi
+
 PROMPT_FILE="$(mktemp)"
 OUTPUT_FILE="$(mktemp)"
 ERROR_FILE="$(mktemp)"
@@ -45,9 +57,12 @@ Head commit: $(git rev-parse HEAD)
 Changed files:
 $CHANGED_FILES
 
-Use repository context and git history as needed.
+Unified diff:
+$DIFF_TEXT
+
 Focus on bug-finding only (logic errors, regressions, runtime failures, security issues, data loss, race conditions, broken assumptions).
 Do not report style, naming, formatting, or optional refactors.
+Do not run shell commands, tools, or ask follow-up questions; answer only from the provided diff/context.
 
 Output format (strict):
 - If no issues: output exactly "NO_ISSUES_FOUND"

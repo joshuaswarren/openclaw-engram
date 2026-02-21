@@ -60,8 +60,9 @@ All notable changes to this project will be documented in this file.
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
 - Local guardrail automation scripts and git hooks:
   - `scripts/pr-preflight.sh` (`quick` and `full` modes)
-  - `scripts/cursor-prepush-review.sh` optional Cursor headless bug scan during pre-push (auto-skips when `cursor-agent` is unavailable).
+  - `scripts/cursor-prepush-review.sh` optional Cursor headless bug scan (manual via `npm run review:cursor`; auto-skips when `cursor-agent` is unavailable).
   - Cursor pre-push scan now uses a configurable timeout (`CURSOR_PREPUSH_TIMEOUT_SECONDS`, default `300`) with cross-platform timeout command support.
+  - Cursor pre-push prompt now includes unified diff context directly (bounded by `CURSOR_PREPUSH_MAX_DIFF_CHARS`) and explicitly forbids tool/shell use for more stable headless reviews.
   - `scripts/install-git-hooks.sh`
   - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
   - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.
@@ -88,6 +89,11 @@ All notable changes to this project will be documented in this file.
 - Artifact source-status snapshot hardening:
   - Status snapshot rebuild now uses a bounded stabilization loop and only caches when version-before/version-after match.
   - Added quick-preflight regression coverage in `tests/artifact-status-snapshot.test.ts` to guard against caching torn snapshots during write churn.
+- Recall top-up hardening:
+  - Artifact recall now retries with expanded candidate windows when source-status filtering underfills target results.
+  - QMD recall now retries with expanded candidate windows when artifact-path filtering underfills normal-memory budgets.
+- Git hook ergonomics:
+  - Cursor headless review was moved off mandatory pre-push execution; use `npm run review:cursor` explicitly before push.
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:
