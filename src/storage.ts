@@ -795,27 +795,11 @@ export class StorageManager {
 
     const sanitized = sanitizeMemoryContent(quote);
     const filePath = path.join(dir, `${id}.md`);
-    const priorWriteVersion = this.getArtifactWriteVersion();
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
-    const writeVersion = this.bumpArtifactWriteVersion();
-    // Only apply local write-through when this write is contiguous with the cache version.
-    // If another instance wrote during our writeFile window, invalidate to force rebuild.
-    const noInterveningWrites = writeVersion === priorWriteVersion + 1;
-    if (
-      this.artifactIndexCache &&
-      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS &&
-      this.artifactIndexCache.writeVersion === priorWriteVersion &&
-      noInterveningWrites
-    ) {
-      this.artifactIndexCache.memories.push({
-        path: filePath,
-        frontmatter: fm,
-        content: sanitized.text,
-      });
-      this.artifactIndexCache.writeVersion = writeVersion;
-    } else {
-      this.artifactIndexCache = null;
-    }
+    this.bumpArtifactWriteVersion();
+    // Always invalidate on write. This avoids stale mixed snapshots when multiple
+    // processes share the same memoryDir and write concurrently.
+    this.artifactIndexCache = null;
     return id;
   }
 
