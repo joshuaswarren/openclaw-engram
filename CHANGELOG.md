@@ -94,6 +94,7 @@ All notable changes to this project will be documented in this file.
   - QMD recall now retries with expanded candidate windows when artifact-path filtering underfills normal-memory budgets.
 - Git hook ergonomics:
   - Cursor headless review was moved off mandatory pre-push execution; use `npm run review:cursor` explicitly before push.
+  - Added `CURSOR_PREPUSH_STRICT=1` for maintainers who want manual Cursor review to fail-fast if Cursor is unavailable/timed out/unparseable.
 - Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:

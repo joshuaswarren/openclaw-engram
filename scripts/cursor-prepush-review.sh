@@ -9,8 +9,13 @@ if [[ "${SKIP_CURSOR_PREPUSH:-0}" == "1" ]]; then
   exit 0
 fi
 
+STRICT_MODE="${CURSOR_PREPUSH_STRICT:-0}"
+
 if ! command -v cursor-agent >/dev/null 2>&1; then
   echo "[cursor-review] skipped (cursor-agent not installed)"
+  if [[ "$STRICT_MODE" == "1" ]]; then
+    exit 1
+  fi
   exit 0
 fi
 
@@ -96,11 +101,17 @@ if ! "${timeout_cmd[@]}" cursor-agent --print --output-format text --model "$CUR
   rc=$?
   if [[ "$rc" == "124" ]] || [[ "$rc" == "137" ]]; then
     echo "[cursor-review] timed out after ${CURSOR_TIMEOUT_SECONDS}s; skipping"
+    if [[ "$STRICT_MODE" == "1" ]]; then
+      exit 1
+    fi
     exit 0
   fi
   echo "[cursor-review] unavailable (command failed); skipping"
   if [[ -s "$ERROR_FILE" ]]; then
     sed 's/^/[cursor-review] /' "$ERROR_FILE"
+  fi
+  if [[ "$STRICT_MODE" == "1" ]]; then
+    exit 1
   fi
   exit 0
 fi
@@ -119,4 +130,7 @@ fi
 
 echo "[cursor-review] unparseable response; treating as advisory and continuing"
 sed 's/^/[cursor-review] /' "$OUTPUT_FILE"
+if [[ "$STRICT_MODE" == "1" ]]; then
+  exit 1
+fi
 exit 0

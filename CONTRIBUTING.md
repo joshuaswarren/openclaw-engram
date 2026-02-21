@@ -45,6 +45,7 @@ Cursor headless review behavior (`npm run review:cursor`):
   - `CURSOR_PREPUSH_BASE_REF=<ref>` to change diff base (default: `origin/main`).
   - `CURSOR_PREPUSH_TIMEOUT_SECONDS=<seconds>` to control headless review timeout (default: `300`).
   - `CURSOR_PREPUSH_MAX_DIFF_CHARS=<chars>` to cap diff included in prompt (default: `120000`).
+  - `CURSOR_PREPUSH_STRICT=1` to fail when Cursor is unavailable/timed-out/unparseable (recommended for maintainers running manual pre-push review).
 
 ## Install path for users
 
