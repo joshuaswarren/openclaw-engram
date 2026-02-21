@@ -803,6 +803,10 @@ export class StorageManager {
     };
 
     const sanitized = sanitizeMemoryContent(quote);
+    if (!sanitized.clean) {
+      log.warn(`artifact content rejected for ${id}; violations=${sanitized.violations.join(", ")}`);
+      return "";
+    }
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
     this.bumpArtifactWriteVersion();

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeQmdHybridFetchLimit, filterRecallCandidates, isArtifactMemoryPath } from "../src/orchestrator.ts";
+import {
+  computeQmdHybridFetchLimit,
+  filterRecallCandidates,
+  isArtifactMemoryPath,
+  mergeArtifactRecallCandidates,
+} from "../src/orchestrator.ts";
 
 test("isArtifactMemoryPath matches artifact directory paths", () => {
   assert.equal(isArtifactMemoryPath("/tmp/memory/artifacts/2026-02-21/a.md"), true);
@@ -55,5 +60,35 @@ test("artifact filtering is applied before QMD cap", () => {
   assert.deepEqual(
     filtered.map((r) => r.path),
     ["/tmp/memory/facts/3.md", "/tmp/memory/facts/4.md"],
+  );
+});
+
+test("mergeArtifactRecallCandidates round-robins namespace lists", () => {
+  const mk = (id: string, content: string) => ({
+    path: `/tmp/memory/artifacts/${id}.md`,
+    content,
+    frontmatter: {
+      id,
+      category: "fact",
+      created: "2026-02-21T00:00:00.000Z",
+      updated: "2026-02-21T00:00:00.000Z",
+      source: "artifact",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: [],
+    },
+  });
+
+  const merged = mergeArtifactRecallCandidates(
+    [
+      [mk("ns1-a", "a1"), mk("ns1-b", "b1")],
+      [mk("ns2-a", "a2"), mk("ns2-b", "b2")],
+    ],
+    4,
+  );
+
+  assert.deepEqual(
+    merged.map((m) => m.frontmatter.id),
+    ["ns1-a", "ns2-a", "ns1-b", "ns2-b"],
   );
 });

@@ -164,3 +164,52 @@ test("recallInternal short-circuits no_recall before preamble reads", async () =
   assert.equal(out, "");
   assert.equal(storageRouterTouched, false);
 });
+
+test("artifact recall searches all readable namespaces", async () => {
+  const memoryDir = tmpDir("engram-artifact-ns");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  cfg.namespacesEnabled = true;
+  cfg.defaultNamespace = "default";
+  cfg.sharedNamespace = "shared";
+  cfg.defaultRecallNamespaces = ["self", "shared"];
+  cfg.verbatimArtifactsEnabled = true;
+
+  const orchestrator = new Orchestrator(cfg);
+  const touched: string[] = [];
+  const mkArtifact = (id: string, content: string) => ({
+    path: `/tmp/memory/artifacts/${id}.md`,
+    content,
+    frontmatter: {
+      id,
+      category: "fact",
+      created: "2026-02-21T00:00:00.000Z",
+      updated: "2026-02-21T00:00:00.000Z",
+      source: "artifact",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: [],
+    },
+  });
+
+  (orchestrator as any).storageRouter = {
+    storageFor: async (namespace: string) => {
+      touched.push(namespace);
+      return {
+        searchArtifacts: async () =>
+          namespace === "shared" ? [mkArtifact("shared-artifact", "shared quote anchor")] : [],
+      };
+    },
+  };
+  (orchestrator as any).resolveArtifactSourceStatuses = async () => new Map();
+
+  const artifacts = await (orchestrator as any).recallArtifactsAcrossNamespaces(
+    "shared quote",
+    ["default", "shared"],
+    5,
+  );
+
+  assert.equal(touched.includes("default"), true);
+  assert.equal(touched.includes("shared"), true);
+  assert.equal(artifacts.some((a: any) => a.content.includes("shared quote anchor")), true);
+});

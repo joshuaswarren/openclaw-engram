@@ -76,6 +76,8 @@ All notable changes to this project will be documented in this file.
   - Artifact token matching now uses token/boundary-aware scoring (not raw substring includes), reducing acronym false positives.
   - QMD recall now overscans only when artifacts are enabled, filters artifact paths before re-applying the QMD cap, and adds tests to prevent artifact-heavy top-N starvation of normal memories.
   - Artifact cache rebuilds under sustained write churn now return latest best-effort scan results (without caching torn snapshots) instead of returning an empty set.
+  - Artifact writes now reject unsafe sanitized content (fail-closed) to preserve verbatim anchor integrity.
+  - Artifact recall now searches across all readable recall namespaces (not only self namespace), with round-robin merge + regression tests.
 - Planner/intent hardening:
   - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
   - `computeArtifactRecallLimit` now also honors zero global recall caps in `full`/`graph_mode` (`recallResultLimit=0` yields zero artifact injection).

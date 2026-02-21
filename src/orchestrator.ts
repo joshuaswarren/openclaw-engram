@@ -105,6 +105,34 @@ export function computeQmdHybridFetchLimit(
   return Math.min(400, cappedRecallLimit + artifactHeadroom);
 }
 
+export function mergeArtifactRecallCandidates(
+  candidatesByNamespace: MemoryFile[][],
+  limit: number,
+): MemoryFile[] {
+  const cappedLimit = Math.max(0, limit);
+  if (cappedLimit === 0) return [];
+
+  const out: MemoryFile[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+  while (out.length < cappedLimit) {
+    let progressed = false;
+    for (const list of candidatesByNamespace) {
+      if (offset >= list.length) continue;
+      const item = list[offset];
+      const dedupeKey = `${item.frontmatter.id}:${item.frontmatter.sourceMemoryId ?? ""}:${item.content}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      out.push(item);
+      progressed = true;
+      if (out.length >= cappedLimit) break;
+    }
+    if (!progressed) break;
+    offset += 1;
+  }
+  return out;
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -650,6 +678,50 @@ export class Orchestrator {
     return `${text.slice(0, maxChars - 1)}…`;
   }
 
+  private async recallArtifactsAcrossNamespaces(
+    prompt: string,
+    recallNamespaces: string[],
+    targetCount: number,
+  ): Promise<MemoryFile[]> {
+    if (targetCount <= 0) return [];
+    const artifactFetchLimit = computeArtifactCandidateFetchLimit(targetCount);
+    const namespaces = Array.from(new Set(recallNamespaces));
+    const filteredByNamespace = await Promise.all(
+      namespaces.map(async (namespace): Promise<MemoryFile[]> => {
+        const storage = await this.storageRouter.storageFor(namespace);
+        const rawResults = await storage.searchArtifacts(prompt, artifactFetchLimit);
+        const sourceIds = Array.from(
+          new Set(
+            rawResults
+              .map((a) => a.frontmatter.sourceMemoryId)
+              .filter((id): id is string => typeof id === "string" && id.length > 0),
+          ),
+        );
+        const sourceStatus =
+          sourceIds.length > 0
+            ? await this.resolveArtifactSourceStatuses(storage, sourceIds)
+            : new Map<string, "active" | "superseded" | "archived" | "missing">();
+
+        const filtered: MemoryFile[] = [];
+        for (const artifact of rawResults) {
+          const sourceId = artifact.frontmatter.sourceMemoryId;
+          if (!sourceId) {
+            filtered.push(artifact);
+            if (filtered.length >= targetCount) break;
+            continue;
+          }
+          const status = sourceStatus.get(sourceId) ?? "missing";
+          if (status !== "active") continue;
+          filtered.push(artifact);
+          if (filtered.length >= targetCount) break;
+        }
+        return filtered;
+      }),
+    );
+
+    return mergeArtifactRecallCandidates(filteredByNamespace, targetCount);
+  }
+
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
@@ -750,33 +822,7 @@ export class Orchestrator {
         timings.artifacts = "skip(limit=0)";
         return [];
       }
-      const artifactFetchLimit = computeArtifactCandidateFetchLimit(targetCount);
-      const rawResults = await profileStorage.searchArtifacts(prompt, artifactFetchLimit);
-      const sourceIds = Array.from(
-        new Set(
-          rawResults
-            .map((a) => a.frontmatter.sourceMemoryId)
-            .filter((id): id is string => typeof id === "string" && id.length > 0),
-        ),
-      );
-      const sourceStatus =
-        sourceIds.length > 0
-          ? await this.resolveArtifactSourceStatuses(profileStorage, sourceIds)
-          : new Map<string, "active" | "superseded" | "archived" | "missing">();
-
-      const results: MemoryFile[] = [];
-      for (const artifact of rawResults) {
-        const sourceId = artifact.frontmatter.sourceMemoryId;
-        if (!sourceId) {
-          results.push(artifact);
-          if (results.length >= targetCount) break;
-          continue;
-        }
-        const status = sourceStatus.get(sourceId) ?? "missing";
-        if (status !== "active") continue;
-        results.push(artifact);
-        if (results.length >= targetCount) break;
-      }
+      const results = await this.recallArtifactsAcrossNamespaces(prompt, recallNamespaces, targetCount);
 
       timings.artifacts = `${Date.now() - t0}ms`;
       return results;
