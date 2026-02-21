@@ -78,6 +78,7 @@ All notable changes to this project will be documented in this file.
   - Artifact cache rebuilds under sustained write churn now return latest best-effort scan results (without caching torn snapshots) instead of returning an empty set.
 - Planner/intent hardening:
   - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
+  - `computeArtifactRecallLimit` now also honors zero global recall caps in `full`/`graph_mode` (`recallResultLimit=0` yields zero artifact injection).
   - Summarize action intent matching now includes conjugations (`summarized`, `summarizing`, `recapped`, `recapping`).
 - Artifact source-status snapshot hardening:
   - Status snapshot rebuild now uses a bounded stabilization loop and only caches when version-before/version-after match.
