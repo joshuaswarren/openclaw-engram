@@ -493,6 +493,19 @@ export class Orchestrator {
     log.debug(`recall timed out or failed (suppressed): ${errorMsg}`);
   }
 
+  private artifactTypeForCategory(category: string): "decision" | "constraint" | "todo" | "definition" | "commitment" | "correction" | "fact" {
+    if (category === "decision") return "decision";
+    if (category === "commitment") return "commitment";
+    if (category === "correction") return "correction";
+    if (category === "principle") return "constraint";
+    return "fact";
+  }
+
+  private truncateArtifactForRecall(text: string, maxChars = 280): string {
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars - 1)}…`;
+  }
+
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
@@ -631,7 +644,7 @@ export class Orchestrator {
       const lines = artifacts.map((a) => {
         const artifactType = a.frontmatter.artifactType ?? "fact";
         const created = a.frontmatter.created.slice(0, 19).replace("T", " ");
-        return `- [${artifactType}] "${a.content}" (${created})`;
+        return `- [${artifactType}] "${this.truncateArtifactForRecall(a.content)}" (${created})`;
       });
       sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
     }
@@ -1368,12 +1381,7 @@ export class Orchestrator {
             await storage.writeArtifact(fact.content, {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
-              artifactType:
-                fact.category === "decision" ? "decision" :
-                fact.category === "commitment" ? "commitment" :
-                fact.category === "correction" ? "correction" :
-                fact.category === "principle" ? "constraint" :
-                "fact",
+              artifactType: this.artifactTypeForCategory(fact.category),
               sourceMemoryId: parentId,
               intentGoal: inferredIntent.goal,
               intentActionType: inferredIntent.actionType,
@@ -1432,12 +1440,7 @@ export class Orchestrator {
         await storage.writeArtifact(fact.content, {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
-          artifactType:
-            fact.category === "decision" ? "decision" :
-            fact.category === "commitment" ? "commitment" :
-            fact.category === "correction" ? "correction" :
-            fact.category === "principle" ? "constraint" :
-            "fact",
+          artifactType: this.artifactTypeForCategory(fact.category),
           sourceMemoryId: memoryId,
           intentGoal: inferredIntent.goal,
           intentActionType: inferredIntent.actionType,

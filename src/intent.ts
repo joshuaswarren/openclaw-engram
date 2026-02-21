@@ -25,8 +25,8 @@ const ENTITY_PATTERNS: Array<{ re: RegExp; entityType: string }> = [
 ];
 
 export function inferIntentFromText(text: string): MemoryIntent {
-  const goal = GOAL_PATTERNS.find((p) => p.re.test(text))?.goal ?? "general";
-  const actionType = ACTION_PATTERNS.find((p) => p.re.test(text))?.action ?? "execute";
+  const goal = GOAL_PATTERNS.find((p) => p.re.test(text))?.goal ?? "unknown";
+  const actionType = ACTION_PATTERNS.find((p) => p.re.test(text))?.action ?? "unknown";
   const entityTypes = Array.from(
     new Set(ENTITY_PATTERNS.filter((p) => p.re.test(text)).map((p) => p.entityType)),
   );
@@ -39,6 +39,16 @@ export function inferIntentFromText(text: string): MemoryIntent {
 }
 
 export function intentCompatibilityScore(queryIntent: MemoryIntent, memoryIntent: MemoryIntent): number {
+  const queryHasSignal =
+    queryIntent.goal !== "unknown" ||
+    queryIntent.actionType !== "unknown" ||
+    queryIntent.entityTypes.length > 0;
+  const memoryHasSignal =
+    memoryIntent.goal !== "unknown" ||
+    memoryIntent.actionType !== "unknown" ||
+    memoryIntent.entityTypes.length > 0;
+  if (!queryHasSignal || !memoryHasSignal) return 0;
+
   let score = 0;
   if (queryIntent.goal === memoryIntent.goal) score += 0.5;
   if (queryIntent.actionType === memoryIntent.actionType) score += 0.3;
@@ -64,7 +74,11 @@ export function planRecallMode(prompt: string): RecallPlanMode {
     return "full";
   }
 
-  if (p.length < 24 && !/[?]/.test(p)) {
+  // Reserve no_recall for low-information acknowledgements; avoid broad regressions.
+  if (
+    p.length <= 18 &&
+    /^(ok|okay|kk|thanks|thx|got it|sounds good|yep|yes|nope|no|done|cool|works)$/i.test(p)
+  ) {
     return "no_recall";
   }
 
