@@ -1048,7 +1048,7 @@ export class Orchestrator {
     }
 
     // 1e. TMT node (temporal memory tree, v8.2)
-    if (this.config.temporalMemoryTreeEnabled && recallMode !== "minimal") {
+    if (this.config.temporalMemoryTreeEnabled && recallMode !== "minimal" && (recallMode as RecallPlanMode) !== "no_recall") {
       const tmtNode = await this.tmtBuilder.getMostRelevantNode();
       if (tmtNode) {
         const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);

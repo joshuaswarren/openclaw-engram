@@ -200,20 +200,26 @@ export class TmtBuilder {
       }
       if (!shouldBuild) continue;
 
-      // Collect hour-node summaries for this day first; fall back to raw content
-      const hourSummaries: string[] = [];
-      for (let h = 0; h < 24; h++) {
-        const hourStr = String(h).padStart(2, "0");
-        const hPath = hourNodePath(this.baseDir, date, hourStr);
+      // Per-hour: use hour node summary if available, raw content otherwise
+      const inputs: string[] = [];
+      const hourToEntries = new Map<string, MemoryEntry[]>();
+      for (const e of entries) {
+        const h = parseIsoHour(e.created);
+        if (!hourToEntries.has(h)) hourToEntries.set(h, []);
+        hourToEntries.get(h)!.push(e);
+      }
+      for (const [h, hourEntries] of hourToEntries) {
+        const hPath = hourNodePath(this.baseDir, date, h);
         if (fs.existsSync(hPath)) {
           try {
             const hContent = await readFile(hPath, "utf8");
             const hSummary = hContent.replace(/^---[\s\S]*?---\n\n?/, "").trim();
-            if (hSummary) hourSummaries.push(hSummary);
-          } catch { /* skip */ }
+            if (hSummary) { inputs.push(hSummary); continue; }
+          } catch { /* fall through to raw content */ }
         }
+        inputs.push(...hourEntries.map((e) => e.content));
       }
-      const inputs = hourSummaries.length > 0 ? hourSummaries : entries.map((e) => e.content);
+      if (inputs.length === 0) inputs.push(...entries.map((e) => e.content));
 
       let summary: string;
       try {
@@ -276,7 +282,7 @@ export class TmtBuilder {
 
         const daySummaries: string[] = [];
         for (const dateDir of dateDirs) {
-          const w = isoWeekKey(new Date(dateDir));
+          const w = isoWeekKey(new Date(dateDir + "T00:00:00Z"));
           if (w !== week) continue;
           const dayPath = dayNodePath(this.baseDir, dateDir);
           if (fs.existsSync(dayPath)) {
@@ -352,6 +358,20 @@ export class TmtBuilder {
       if (weekSummaries.length === 0) return;
 
       const nodePath = personaNodePath(this.baseDir);
+
+      // Skip rebuild if persona node already reflects current week data
+      let shouldBuild = !fs.existsSync(nodePath);
+      if (!shouldBuild) {
+        try {
+          const existing = await readFile(nodePath, "utf8");
+          const countMatch = existing.match(/memoryCount: (\d+)/);
+          if (!countMatch || parseInt(countMatch[1], 10) !== totalCount) {
+            shouldBuild = true;
+          }
+        } catch { shouldBuild = true; }
+      }
+      if (!shouldBuild) return;
+
       const summary = await summarize(weekSummaries, "persona");
 
       const now = new Date().toISOString();
