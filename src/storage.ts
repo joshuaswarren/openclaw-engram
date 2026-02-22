@@ -128,6 +128,8 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.artifactType) lines.push(`artifactType: ${fm.artifactType}`);
   if (fm.sourceMemoryId) lines.push(`sourceMemoryId: ${fm.sourceMemoryId}`);
   if (fm.sourceTurnId) lines.push(`sourceTurnId: ${fm.sourceTurnId}`);
+  // v8.0 Phase 2B: HiMem episode/note classification
+  if (fm.memoryKind) lines.push(`memoryKind: ${fm.memoryKind}`);
   lines.push("---");
   return lines.join("\n");
 }
@@ -252,6 +254,8 @@ function parseFrontmatter(
       artifactType: (fm.artifactType as MemoryFrontmatter["artifactType"]) || undefined,
       sourceMemoryId: fm.sourceMemoryId || undefined,
       sourceTurnId: fm.sourceTurnId || undefined,
+      // v8.0 Phase 2B: HiMem episode/note classification
+      memoryKind: (fm.memoryKind as MemoryFrontmatter["memoryKind"]) || undefined,
     },
     content,
   };
@@ -713,6 +717,7 @@ export class StorageManager {
       artifactType?: MemoryFrontmatter["artifactType"];
       sourceMemoryId?: string;
       sourceTurnId?: string;
+      memoryKind?: MemoryFrontmatter["memoryKind"];
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -750,6 +755,7 @@ export class StorageManager {
       artifactType: options.artifactType,
       sourceMemoryId: options.sourceMemoryId,
       sourceTurnId: options.sourceTurnId,
+      memoryKind: options.memoryKind,
     };
 
     const sanitized = sanitizeMemoryContent(content);

@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- v8.0 phase 2B experimental Episode/Note dual store (HiMem, all behind config flags, default off):
+  - **Episode/Note classification** (`episodeNoteModeEnabled`): each extracted memory is tagged with `memoryKind: episode` (time-specific event) or `memoryKind: note` (stable belief, preference, decision, constraint). Uses heuristic signals (temporal language, stable-belief keywords, category).
+  - **Reconsolidation flag** (`episodeNoteReconsolidationEnabled`): reserved for future conflicting-note merging.
+  - New config: `episodeNoteModeEnabled`, `episodeNoteReconsolidationEnabled`.
 - v8.0 phase 2A experimental Memory Boxes + Trace Weaving (all behind config flags, default off):
   - **Memory Boxes** (`memoryBoxesEnabled`): groups extracted memories into topic-bounded windows stored in `memory/boxes/YYYY-MM-DD/box-<id>.md`. Boxes seal on topic shift, time gap, or max-memory count.
   - **Trace Weaving** (`traceWeaverEnabled`): assigns a shared `traceId` to boxes that repeatedly revisit the same topic cluster, enabling cross-session topic continuity.

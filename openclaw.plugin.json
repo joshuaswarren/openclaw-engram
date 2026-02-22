@@ -302,6 +302,16 @@
         "default": 3,
         "description": "Number of recent days of boxes to inject during recall."
       },
+      "episodeNoteModeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable HiMem episode/note classification (v8.0 Phase 2B). Tags each extracted memory as 'episode' (time-specific event) or 'note' (stable belief/preference). Disabled by default."
+      },
+      "episodeNoteReconsolidationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When episodeNoteModeEnabled, run reconsolidation to supersede conflicting notes. Disabled by default."
+      },
       "queryExpansionEnabled": {
         "type": "boolean",
         "default": false,

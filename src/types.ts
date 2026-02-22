@@ -280,6 +280,11 @@ export interface PluginConfig {
   traceWeaverOverlapThreshold: number;
   /** Number of recent days of boxes to inject during recall */
   boxRecallDays: number;
+  // v8.0 Phase 2B: Episode/Note dual store (HiMem)
+  /** Classify extracted memories as episode or note and tag with memoryKind */
+  episodeNoteModeEnabled: boolean;
+  /** Run reconsolidation to supersede conflicting notes when episodeNoteModeEnabled */
+  episodeNoteReconsolidationEnabled: boolean;
 }
 
 export interface BootstrapOptions {
@@ -396,6 +401,9 @@ export interface MemoryFrontmatter {
   artifactType?: "decision" | "constraint" | "todo" | "definition" | "commitment" | "correction" | "fact";
   sourceMemoryId?: string;
   sourceTurnId?: string;
+  // v8.0 Phase 2B: HiMem episode/note classification
+  /** episode = time-specific event; note = stable belief/preference/decision */
+  memoryKind?: "episode" | "note";
 }
 
 /** Memory link relationship types */

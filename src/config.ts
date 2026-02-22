@@ -554,5 +554,8 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.traceWeaverOverlapThreshold === "number" ? cfg.traceWeaverOverlapThreshold : 0.4,
     boxRecallDays:
       typeof cfg.boxRecallDays === "number" ? cfg.boxRecallDays : 3,
+    // v8.0 Phase 2B: Episode/Note dual store (HiMem)
+    episodeNoteModeEnabled: cfg.episodeNoteModeEnabled === true,
+    episodeNoteReconsolidationEnabled: cfg.episodeNoteReconsolidationEnabled === true,
   };
 }
