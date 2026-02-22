@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file.
   - New config flag `graphRecallEnabled` (default `false`) to explicitly opt into graph recall planner mode.
   - New `resolveEffectiveRecallMode()` guard in recall orchestration: `graph_mode` is only active when both `graphRecallEnabled` and `multiGraphMemoryEnabled` are enabled; otherwise behavior degrades to baseline `full` recall.
   - Added planner/config tests for graph-mode gating and opt-in parsing behavior.
+- v8.2 PR 19B (graph-recall integration slice):
+  - Added graph-mode recall expansion in `recallInternal`: when planner selects `graph_mode`, QMD seeds are expanded via `GraphIndex.spreadingActivation(...)`, merged/deduped with QMD candidates, then fed through existing boost/rerank/cap stages.
+  - Added `state/last_graph_recall.json` trace output capturing graph recall mode, query hash/length, namespace scope, seed paths, and expanded candidates for explainability/debugging.
+  - Added helper/test coverage for graph candidate merge semantics and storage-relative graph path resolution.
+  - Added integration coverage asserting graph-mode recall writes a snapshot.
 
 ### Docs
 - Updated v8.2 and v8.3 implementation plans to split large releases into smaller PR slices (A-D) for safer review and rollout.
