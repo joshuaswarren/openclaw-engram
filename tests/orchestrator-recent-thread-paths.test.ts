@@ -58,3 +58,21 @@ test("resolveRecentThreadMemoryPaths drops unknown IDs instead of fabricating fa
 
   assert.deepEqual(recent, ["corrections/correction-b.md"]);
 });
+
+test("resolveRecentThreadMemoryPaths returns [] when maxRecent is 0", () => {
+  const storageDir = "/tmp/memory";
+  const allMems: MemoryFile[] = [
+    makeMemory("/tmp/memory/facts/2026-02-22/fact-a.md", "fact-a"),
+    makeMemory("/tmp/memory/corrections/correction-b.md", "correction-b"),
+  ];
+
+  const recent = resolveRecentThreadMemoryPaths({
+    threadEpisodeIds: ["fact-a", "correction-b"],
+    currentMemoryId: "current-id",
+    allMemsForGraph: allMems,
+    storageDir,
+    maxRecent: 0,
+  });
+
+  assert.deepEqual(recent, []);
+});

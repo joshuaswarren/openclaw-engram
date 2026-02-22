@@ -173,7 +173,8 @@ export function resolveRecentThreadMemoryPaths(options: {
   maxRecent: number;
 }): string[] {
   const allMems = options.allMemsForGraph ?? [];
-  if (allMems.length === 0 || options.threadEpisodeIds.length === 0) return [];
+  const maxRecent = Math.max(0, options.maxRecent);
+  if (allMems.length === 0 || options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
 
   const pathById = new Map<string, string>();
   for (const mem of allMems) {
@@ -184,7 +185,7 @@ export function resolveRecentThreadMemoryPaths(options: {
 
   return options.threadEpisodeIds
     .filter((id) => id !== options.currentMemoryId)
-    .slice(-Math.max(0, options.maxRecent))
+    .slice(-maxRecent)
     .map((id) => pathById.get(id))
     .filter((p): p is string => typeof p === "string" && p.length > 0);
 }
