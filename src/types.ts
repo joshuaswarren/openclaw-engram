@@ -288,6 +288,14 @@ export interface PluginConfig {
   queryAwareIndexingEnabled: boolean;
   /** Max candidate paths returned from index prefilter (0 = no cap) */
   queryAwareIndexingMaxCandidates: number;
+  // v8.2 multi-graph memory (PR 18)
+  multiGraphMemoryEnabled: boolean;
+  entityGraphEnabled: boolean;
+  timeGraphEnabled: boolean;
+  causalGraphEnabled: boolean;
+  maxGraphTraversalSteps: number;
+  graphActivationDecay: number;
+  maxEntityGraphEdgesPerMemory: number;
   // v8.2: Temporal Memory Tree
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;

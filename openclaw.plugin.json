@@ -317,6 +317,41 @@
         "default": 200,
         "description": "Max candidate paths returned from index prefilter before scoring (0 = no cap)."
       },
+      "multiGraphMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable multi-graph memory (entity, time, causal edges). Default false."
+      },
+      "entityGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Build entity co-reference graph (requires multiGraphMemoryEnabled). Default true."
+      },
+      "timeGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Build temporal sequence graph within threads (requires multiGraphMemoryEnabled). Default true."
+      },
+      "causalGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Build causal inference graph from heuristic phrases (requires multiGraphMemoryEnabled). Default true."
+      },
+      "maxGraphTraversalSteps": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum BFS hops during spreading activation. Default 3."
+      },
+      "graphActivationDecay": {
+        "type": "number",
+        "default": 0.7,
+        "description": "Per-hop activation decay factor (0-1). Default 0.7."
+      },
+      "maxEntityGraphEdgesPerMemory": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum entity graph edges written per memory write. Default 10."
+      },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
         "default": false,

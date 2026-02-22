@@ -38,6 +38,7 @@ import {
   recencyWindowFromPrompt,
   extractTagsFromPrompt,
 } from "./temporal-index.js";
+import { GraphIndex } from "./graph.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -164,6 +165,88 @@ export function mergeArtifactRecallCandidates(
   return out;
 }
 
+export function resolveRecentThreadMemoryPaths(options: {
+  threadEpisodeIds: string[];
+  currentMemoryId: string;
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  pathById?: Map<string, string>;
+  storageDir: string;
+  maxRecent: number;
+}): string[] {
+  const maxRecent = Math.max(0, options.maxRecent);
+  if (options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
+  const pathById = options.pathById ?? buildMemoryPathById(options.allMemsForGraph, options.storageDir);
+  if (pathById.size === 0) return [];
+
+  return options.threadEpisodeIds
+    .filter((id) => id !== options.currentMemoryId)
+    .slice(-maxRecent)
+    .map((id) => pathById.get(id))
+    .filter((p): p is string => typeof p === "string" && p.length > 0);
+}
+
+export function buildMemoryPathById(
+  allMemsForGraph: MemoryFile[] | null | undefined,
+  storageDir: string,
+): Map<string, string> {
+  const pathById = new Map<string, string>();
+  for (const mem of allMemsForGraph ?? []) {
+    const id = mem.frontmatter.id;
+    if (!id) continue;
+    pathById.set(id, path.relative(storageDir, mem.path));
+  }
+  return pathById;
+}
+
+export function appendMemoryToGraphContext(options: {
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  storageDir: string;
+  memoryRelPath: string;
+  memoryId: string;
+  category: MemoryFile["frontmatter"]["category"];
+  content: string;
+  entityRef: string | undefined;
+}): void {
+  if (!Array.isArray(options.allMemsForGraph)) return;
+
+  const nowIso = new Date().toISOString();
+  options.allMemsForGraph.push({
+    path: path.join(options.storageDir, options.memoryRelPath),
+    content: options.content,
+    frontmatter: {
+      id: options.memoryId,
+      category: options.category,
+      created: nowIso,
+      updated: nowIso,
+      source: "extraction",
+      confidence: 0.8,
+      confidenceTier: "implied",
+      tags: [],
+      entityRef: options.entityRef,
+      status: "active",
+    },
+  });
+}
+
+export function resolvePersistedMemoryRelativePath(options: {
+  memoryId: string;
+  pathById: Map<string, string>;
+  category: string;
+}): string {
+  const persisted = options.pathById.get(options.memoryId);
+  if (persisted) return persisted;
+  if (options.category === "correction") {
+    return path.join("corrections", `${options.memoryId}.md`);
+  }
+  const idParts = options.memoryId.split("-");
+  const maybeTimestamp = Number(idParts[1]);
+  if (Number.isFinite(maybeTimestamp) && maybeTimestamp > 0) {
+    const day = new Date(maybeTimestamp).toISOString().slice(0, 10);
+    return path.join("facts", day, `${options.memoryId}.md`);
+  }
+  return path.join("facts", `${options.memoryId}.md`);
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -184,6 +267,8 @@ export class Orchestrator {
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
+  /** v8.2: Per-namespace multi-graph memory indexes (entity/time/causal edges) */
+  private readonly graphIndexes = new Map<string, GraphIndex>();
   /** Per-namespace BoxBuilders, keyed by the namespace root directory path. */
   private readonly boxBuilders = new Map<string, BoxBuilder>();
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
@@ -1585,7 +1670,18 @@ export class Orchestrator {
       return;
     }
 
-    const persistedIds = await this.persistExtraction(result, storage);
+    let threadIdForExtraction: string | null = null;
+    if (this.config.threadingEnabled && turns.length > 0) {
+      const lastTurn = turns[turns.length - 1];
+      try {
+        threadIdForExtraction = await this.threading.processTurn(lastTurn, []);
+      } catch (err) {
+        // Fail-open: threading errors must not block memory persistence.
+        log.warn("[threading] processTurn failed before persistence (non-fatal)", err);
+      }
+    }
+
+    const persistedIds = await this.persistExtraction(result, storage, threadIdForExtraction);
     await this.buffer.clearAfterExtraction();
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -1603,14 +1699,24 @@ export class Orchestrator {
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }
 
-    // Process threading if enabled (Phase 3B)
-    if (this.config.threadingEnabled && turns.length > 0) {
-      const lastTurn = turns[turns.length - 1];
-      const threadId = await this.threading.processTurn(lastTurn, persistedIds);
+    // Batch-append persisted IDs so non-fact memories (entities/questions) are
+    // always attached to the thread.
+    if (
+      this.config.threadingEnabled &&
+      threadIdForExtraction &&
+      persistedIds.length > 0
+    ) {
+      try {
+        await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);
+      } catch (err) {
+        log.warn("[threading] appendEpisodeIds failed after persistence (non-fatal)", err);
+      }
+    }
 
-      // Update thread title with conversation content
+    // Thread title update for the already-established thread context.
+    if (this.config.threadingEnabled && threadIdForExtraction) {
       const conversationContent = turns.map((t) => t.content).join(" ");
-      await this.threading.updateThreadTitle(threadId, conversationContent);
+      await this.threading.updateThreadTitle(threadIdForExtraction, conversationContent);
     }
 
     // Check if consolidation is needed (debounced + non-zero gated).
@@ -1703,7 +1809,11 @@ export class Orchestrator {
     }
   }
 
-  private async persistExtraction(result: ExtractionResult, storage: StorageManager): Promise<string[]> {
+  private async persistExtraction(
+    result: ExtractionResult,
+    storage: StorageManager,
+    threadIdForExtraction?: string | null,
+  ): Promise<string[]> {
     const persistedIds: string[] = [];
     let dedupedCount = 0;
 
@@ -1746,6 +1856,26 @@ export class Orchestrator {
           `questions ${questions.length}/${result.questions.length}, profile ${profileUpdates.length}/${result.profileUpdates.length})`,
       );
     }
+
+    // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
+    let allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null = null;
+    const memoryPathById = new Map<string, string>();
+    if (this.config.multiGraphMemoryEnabled) {
+      try {
+        allMemsForGraph = await storage.readAllMemories();
+        for (const [id, relPath] of buildMemoryPathById(allMemsForGraph, storage.dir)) {
+          memoryPathById.set(id, relPath);
+        }
+      } catch { /* fail-open */ }
+    }
+    let threadEpisodeIdsForGraph: string[] | undefined;
+    if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
+      try {
+        const thread = await this.threading.loadThread(threadIdForExtraction);
+        threadEpisodeIdsForGraph = thread?.episodeIds ? [...thread.episodeIds] : [];
+      } catch { /* fail-open */ }
+    }
+    let previousPersistedRelPath: string | undefined;
 
     for (const fact of facts) {
       if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
@@ -1823,6 +1953,9 @@ export class Orchestrator {
 
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
+          if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
+            threadEpisodeIdsForGraph.push(parentId);
+          }
           await this.indexPersistedMemory(storage, parentId);
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
@@ -1851,6 +1984,41 @@ export class Orchestrator {
               intentActionType: inferredIntent?.actionType,
               intentEntityTypes: inferredIntent?.entityTypes,
             });
+          }
+          // v8.2: graph edge building for chunked memories
+          if (this.config.multiGraphMemoryEnabled) {
+            try {
+              const entityRef =
+                typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+              const parentRelPath = resolvePersistedMemoryRelativePath({
+                memoryId: parentId,
+                pathById: memoryPathById,
+                category: fact.category,
+              });
+              memoryPathById.set(parentId, parentRelPath);
+              appendMemoryToGraphContext({
+                allMemsForGraph,
+                storageDir: storage.dir,
+                memoryRelPath: parentRelPath,
+                memoryId: parentId,
+                category: fact.category,
+                content: fact.content ?? "",
+                entityRef,
+              });
+              await this.buildGraphEdge(
+                storage,
+                parentRelPath,
+                entityRef,
+                parentId,
+                fact.content ?? "",
+                allMemsForGraph,
+                memoryPathById,
+                threadIdForExtraction ?? undefined,
+                threadEpisodeIdsForGraph,
+                previousPersistedRelPath,
+              );
+              previousPersistedRelPath = parentRelPath;
+            } catch { /* fail-open */ }
           }
           continue; // Skip the normal write below
         }
@@ -1911,7 +2079,45 @@ export class Orchestrator {
         memoryKind,
       });
       persistedIds.push(memoryId);
+      if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
+        threadEpisodeIdsForGraph.push(memoryId);
+      }
       await this.indexPersistedMemory(storage, memoryId);
+      // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
+      if (this.config.multiGraphMemoryEnabled) {
+        try {
+          const entityRef =
+            typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+          const memoryRelPath = resolvePersistedMemoryRelativePath({
+            memoryId,
+            pathById: memoryPathById,
+            category: fact.category,
+          });
+          memoryPathById.set(memoryId, memoryRelPath);
+          appendMemoryToGraphContext({
+            allMemsForGraph,
+            storageDir: storage.dir,
+            memoryRelPath: memoryRelPath,
+            memoryId,
+            category: fact.category,
+            content: fact.content ?? "",
+            entityRef,
+          });
+          await this.buildGraphEdge(
+            storage,
+            memoryRelPath,
+            entityRef,
+            memoryId,
+            fact.content ?? "",
+            allMemsForGraph,
+            memoryPathById,
+            threadIdForExtraction ?? undefined,
+            threadEpisodeIdsForGraph,
+            previousPersistedRelPath,
+          );
+          previousPersistedRelPath = memoryRelPath;
+        } catch { /* fail-open */ }
+      }
       if (
         this.config.verbatimArtifactsEnabled &&
         this.config.verbatimArtifactCategories.includes(fact.category) &&
@@ -1990,7 +2196,8 @@ export class Orchestrator {
 
     // Persist questions
     for (const q of questions) {
-      await storage.writeQuestion(q.question, q.context, q.priority);
+      const id = await storage.writeQuestion(q.question, q.context, q.priority);
+      if (id) persistedIds.push(id);
     }
 
     // Persist identity reflection
@@ -2029,6 +2236,72 @@ export class Orchestrator {
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) return;
     await this.embeddingFallback.indexFile(memoryId, memory.content, memory.path);
+  }
+
+  /**
+   * Build a graph edge for a persisted memory (v8.2).
+   * Shared helper used by both the chunked and non-chunked write paths to avoid duplication.
+   * Fail-open: caller wraps in try/catch.
+   */
+  private async buildGraphEdge(
+    storage: StorageManager,
+    memoryRelPath: string,
+    entityRef: string | undefined,
+    memoryId: string,
+    factContent: string,
+    allMemsForGraph: import("./types.js").MemoryFile[] | null | undefined,
+    memoryPathById: Map<string, string>,
+    threadIdForEdge: string | undefined,
+    threadEpisodeIdsForGraph: string[] | undefined,
+    fallbackCausalPredecessor: string | undefined,
+  ): Promise<void> {
+    // Entity siblings: other memories sharing the same entityRef
+    const entitySiblings: string[] = [];
+    if (entityRef) {
+      try {
+        const allMems = allMemsForGraph ?? [];
+        for (const m of allMems) {
+          if (m.frontmatter.entityRef === entityRef) {
+            const rel = path.relative(storage.dir, m.path);
+            if (rel !== memoryRelPath) entitySiblings.push(rel);
+          }
+        }
+      } catch { /* fail-open */ }
+    }
+    // Recent thread memories for time graph
+    const recentInThread: string[] = [];
+    if (threadIdForEdge && threadEpisodeIdsForGraph?.length) {
+      try {
+        recentInThread.push(...resolveRecentThreadMemoryPaths({
+          threadEpisodeIds: threadEpisodeIdsForGraph,
+          currentMemoryId: memoryId,
+          allMemsForGraph,
+          pathById: memoryPathById,
+          storageDir: storage.dir,
+          maxRecent: 3,
+        }));
+      } catch { /* fail-open */ }
+    }
+    const causalPredecessor = recentInThread[recentInThread.length - 1] ?? fallbackCausalPredecessor;
+    await this.graphIndexFor(storage).onMemoryWritten({
+      memoryPath: memoryRelPath,
+      entityRef,
+      content: factContent,
+      created: new Date().toISOString(),
+      threadId: threadIdForEdge,
+      recentInThread,
+      entitySiblings,
+      causalPredecessor,
+    });
+  }
+
+  private graphIndexFor(storage: StorageManager): GraphIndex {
+    const key = storage.dir;
+    const existing = this.graphIndexes.get(key);
+    if (existing) return existing;
+    const created = new GraphIndex(key, this.config);
+    this.graphIndexes.set(key, created);
+    return created;
   }
 
   /**

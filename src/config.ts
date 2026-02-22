@@ -562,6 +562,21 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.queryAwareIndexingMaxCandidates === "number"
         ? Math.max(0, cfg.queryAwareIndexingMaxCandidates) // clamp: negative treated as 0 (no cap)
         : 200,
+    // v8.2: Multi-graph memory (PR 18)
+    multiGraphMemoryEnabled: cfg.multiGraphMemoryEnabled === true,
+    entityGraphEnabled: cfg.entityGraphEnabled !== false,
+    timeGraphEnabled: cfg.timeGraphEnabled !== false,
+    causalGraphEnabled: cfg.causalGraphEnabled !== false,
+    maxGraphTraversalSteps:
+      typeof cfg.maxGraphTraversalSteps === "number" ? Math.max(0, cfg.maxGraphTraversalSteps) : 3,
+    graphActivationDecay:
+      typeof cfg.graphActivationDecay === "number"
+        ? Math.min(1, Math.max(0, cfg.graphActivationDecay))
+        : 0.7,
+    maxEntityGraphEdgesPerMemory:
+      typeof cfg.maxEntityGraphEdgesPerMemory === "number"
+        ? Math.max(0, cfg.maxEntityGraphEdgesPerMemory)
+        : 10,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
     tmtHourlyMinMemories:
