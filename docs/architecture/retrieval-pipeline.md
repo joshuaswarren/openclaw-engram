@@ -24,8 +24,8 @@ before_agent_start
 ┌─────────────────────────────────┐
 │  3. Candidate generation        │
 │  a. Artifact anchors (v8.0)     │  high-trust verbatim memories first
-│  b. QMD hybrid search           │  BM25 + vector + reranker
-│  c. Embedding fallback          │  semantic search when QMD unavailable
+│  b. QMD hybrid search           │  BM25 + vector subprocess calls in parallel
+│  c. Embedding fallback          │  when QMD unavailable or returns empty results
 │  d. Namespace filter (v3.0)     │  filter to allowed namespaces
 └──────────────┬──────────────────┘
                ▼
@@ -45,7 +45,8 @@ before_agent_start
                ▼
 ┌─────────────────────────────────┐
 │  6. Context assembly            │
-│  1. Profile                     │  behavioral context (prepended first)
+│  0. Shared context (opt-in)     │  cross-agent shared context (if enabled)
+│  1. Profile                     │  behavioral context
 │  2. Knowledge Index             │  entity/topic index (default-on)
 │  3. Artifacts (v8.0)            │  high-confidence anchors
 │  4. Memory boxes                │  recent topic windows
@@ -73,7 +74,7 @@ Config: `recallPlannerEnabled` (default `true`).
 
 ## QMD Hybrid Search
 
-Engram's `QmdClient` runs hybrid BM25 + vector search. It tries the QMD MCP daemon first (`qmdDaemonEnabled`, default `true`); if the daemon is unavailable, it falls back to direct subprocess execution.
+Recall uses `QmdClient.hybridSearch()`, which runs BM25 and vector searches as parallel subprocess calls and merges results. The MCP daemon (`qmdDaemonEnabled`) is used in background operations (consolidation, dedup) but not in the primary recall path.
 
 - `qmdCollection` specifies which QMD collection to search.
 - `qmdMaxResults` caps the number of candidates returned.
@@ -90,6 +91,7 @@ When `intentRoutingEnabled` is on, extraction captures `intent.goal`, `intent.ac
 ## Context Token Budget
 
 All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) before injection. Sections are assembled in this order:
+0. Shared context (if enabled)
 1. Profile
 2. Knowledge Index (entity/topic index; default-on)
 3. Artifacts
