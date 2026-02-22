@@ -29,6 +29,7 @@ import { classifyMemoryKind } from "./himem.js";
 import {
   indexMemoriesBatch,
   indexMemory,
+  clearIndexes,
   indexesExist,
   deindexMemory,
   queryByDateRange,
@@ -2034,6 +2035,11 @@ export class Orchestrator {
         }
       }
       if (entries.length > 0) {
+        // On full rebuild, clear both indexes first so stale paths in any
+        // surviving index file don't persist after the rebuild.
+        if (needsFullRebuild) {
+          clearIndexes(this.config.memoryDir);
+        }
         indexMemoriesBatch(this.config.memoryDir, entries);
         if (needsFullRebuild) {
           log.info(`temporal-index: bootstrapped from ${entries.length} active memories`);

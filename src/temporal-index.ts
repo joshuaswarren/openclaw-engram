@@ -194,6 +194,21 @@ export function deindexMemory(
 }
 
 /**
+ * Reset both index files to empty state.
+ * Called before a full-corpus rebuild so stale paths in any surviving index
+ * file do not persist after the rebuild completes.
+ */
+export function clearIndexes(memoryDir: string): void {
+  try {
+    ensureStateDir(memoryDir);
+    writeJsonAtomic(temporalIndexPath(memoryDir), { version: INDEX_VERSION, dates: {} });
+    writeJsonAtomic(tagIndexPath(memoryDir), { version: INDEX_VERSION, tags: {} });
+  } catch {
+    // Fail silently — indexes are advisory only
+  }
+}
+
+/**
  * Returns true when both index files exist on disk.
  * Used to detect first-time enablement so callers can trigger a full rebuild.
  */
