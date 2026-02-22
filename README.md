@@ -40,7 +40,7 @@ kill -USR1 $(pgrep openclaw-gateway)
 ## How It Works
 
 1. **Signal scan** — Fast local regex classifies each turn (<10 ms, no API call).
-2. **Smart buffer** — High-signal turns extract immediately; others batch.
+2. **Smart buffer** — high-signal turns extract immediately; others batch.
 3. **Extraction** — One LLM call produces typed memories with confidence scores.
 4. **Storage** — Plain markdown + YAML frontmatter files; no database.
 5. **Retrieval** — QMD hybrid search injects relevant context before each agent session.
