@@ -81,7 +81,27 @@ function writeJsonSafe(filePath: string, data: unknown): void {
   }
 }
 
+/**
+ * Atomic write: write to a `.tmp` sibling then rename so readers never
+ * observe a partially-written file.  Falls back to direct write on error.
+ */
+function writeJsonAtomic(filePath: string, data: unknown): void {
+  const tmp = `${filePath}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+    fs.renameSync(tmp, filePath);
+  } catch {
+    // Attempt direct write as fallback; indexes are advisory only
+    writeJsonSafe(filePath, data);
+    try { fs.unlinkSync(tmp); } catch { /* ignore stale tmp */ }
+  }
+}
+
 function isoDateFromTimestamp(isoString: string): string {
+  if (typeof isoString !== "string" || isoString.length < 10) {
+    // Malformed frontmatter — fall back to today so the memory is still indexed
+    return new Date().toISOString().slice(0, 10);
+  }
   return isoString.slice(0, 10); // YYYY-MM-DD
 }
 
@@ -174,6 +194,21 @@ export function deindexMemory(
 }
 
 /**
+ * Returns true when both index files exist on disk.
+ * Used to detect first-time enablement so callers can trigger a full rebuild.
+ */
+export function indexesExist(memoryDir: string): boolean {
+  try {
+    return (
+      fs.existsSync(temporalIndexPath(memoryDir)) &&
+      fs.existsSync(tagIndexPath(memoryDir))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Batch-add multiple memories to both indexes in a single read-modify-write cycle.
  * More efficient than calling indexMemory() per file when adding many at once.
  */
@@ -201,8 +236,8 @@ export function indexMemoriesBatch(
       }
     }
 
-    writeJsonSafe(tPath, tIndex);
-    writeJsonSafe(gPath, gIndex);
+    writeJsonAtomic(tPath, tIndex);
+    writeJsonAtomic(gPath, gIndex);
   } catch {
     // Fail silently
   }

@@ -28,6 +28,7 @@ import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import {
   indexMemoriesBatch,
+  indexesExist,
   queryByDateRange,
   queryByTags,
   isTemporalQuery,
@@ -1993,12 +1994,22 @@ export class Orchestrator {
     if (!this.config.queryAwareIndexingEnabled) return;
     if (persistedIds.length === 0) return;
     try {
-      // Read the corpus once and build a lookup by ID to avoid N full-corpus scans.
-      const idSet = new Set(persistedIds);
+      // Read the corpus once to avoid N separate full-corpus scans.
       const allMemories = await storage.readAllMemories();
+
+      // On first enablement the index files don't exist yet — rebuild from the
+      // full corpus so historical memories are immediately searchable.
+      const needsFullRebuild = !indexesExist(this.config.memoryDir);
+      const pool = needsFullRebuild
+        ? allMemories
+        : (() => {
+            const idSet = new Set(persistedIds);
+            return allMemories.filter((m) => idSet.has(m.frontmatter.id));
+          })();
+
       const entries: Array<{ path: string; createdAt: string; tags: string[] }> = [];
-      for (const mem of allMemories) {
-        if (idSet.has(mem.frontmatter.id) && mem.path && mem.frontmatter?.created) {
+      for (const mem of pool) {
+        if (mem.path && mem.frontmatter?.created) {
           entries.push({
             path: mem.path,
             createdAt: mem.frontmatter.created,
@@ -2008,6 +2019,9 @@ export class Orchestrator {
       }
       if (entries.length > 0) {
         indexMemoriesBatch(this.config.memoryDir, entries);
+        if (needsFullRebuild) {
+          log.info(`temporal-index: bootstrapped from ${entries.length} existing memories`);
+        }
       }
     } catch (err) {
       log.debug(`temporal-index update failed (non-fatal): ${err}`);
