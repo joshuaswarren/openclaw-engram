@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+### Added
+- v8.2 PR 19A (planner-gating slice):
+  - New config flag `graphRecallEnabled` (default `false`) to explicitly opt into graph recall planner mode.
+  - New `resolveEffectiveRecallMode()` guard in recall orchestration: `graph_mode` is only active when both `graphRecallEnabled` and `multiGraphMemoryEnabled` are enabled; otherwise behavior degrades to baseline `full` recall.
+  - Added planner/config tests for graph-mode gating and opt-in parsing behavior.
+
+### Docs
+- Updated v8.2 and v8.3 implementation plans to split large releases into smaller PR slices (A-D) for safer review and rollout.
+
 ## [8.2.0-pr18] — v8.2 PR 18: Multi-Graph Memory
 
 ### Added
