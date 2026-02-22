@@ -2,7 +2,7 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
 import type { MemoryCategory } from "./types.js";
-import { indexMemory } from "./temporal-index.js";
+import { indexMemory, indexesExist } from "./temporal-index.js";
 
 interface ToolApi {
   registerTool(
@@ -367,10 +367,12 @@ Best for:
           },
         );
 
-        // Update temporal + tag indexes for the explicit store (v8.1),
-        // since memory_store bypasses the extraction path that normally
-        // triggers updateTemporalTagIndexes.
-        if (orchestrator.config.queryAwareIndexingEnabled) {
+        // Update temporal + tag indexes for the explicit store (v8.1).
+        // Only do an incremental update when indexes already exist; if they
+        // don't exist yet the next extraction's updateTemporalTagIndexes will
+        // trigger a full corpus bootstrap — writing a partial index here would
+        // permanently prevent that bootstrap from running.
+        if (orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
           const mem = await storage.getMemoryById(id).catch(() => null);
           if (mem?.path && mem.frontmatter?.created) {
             indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
@@ -448,7 +450,9 @@ Best for:
         });
 
         // Update temporal + tag indexes for the promoted copy (v8.1).
-        if (orchestrator.config.queryAwareIndexingEnabled) {
+        // Same guard as memory_store: skip if indexes don't exist yet to avoid
+        // blocking the full corpus bootstrap on the next extraction.
+        if (orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
           const promoted = await dst.getMemoryById(newId).catch(() => null);
           if (promoted?.path && promoted.frontmatter?.created) {
             indexMemory(orchestrator.config.memoryDir, promoted.path, promoted.frontmatter.created, promoted.frontmatter.tags ?? []);
