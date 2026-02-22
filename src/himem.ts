@@ -67,10 +67,11 @@ const NOTE_CATEGORIES = new Set([
   "standard",
   "belief",
   "decision",
+  "principle",   // durable operating rules emitted by extraction
 ]);
 
 /** Category names that strongly suggest an episode */
-const EPISODE_CATEGORIES = new Set(["event", "action", "observation", "issue", "bug", "incident"]);
+const EPISODE_CATEGORIES = new Set(["event", "action", "observation", "issue", "bug", "incident", "moment"]);
 
 /** Tag values that signal a stable belief */
 const NOTE_TAGS = new Set(["preference", "constraint", "goal", "habit", "policy", "belief"]);
