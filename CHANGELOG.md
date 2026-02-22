@@ -6,7 +6,6 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
-<<<<<<< feature/v8.2-pr18-graph
 ## [8.2.0-pr18] — v8.2 PR 18: Multi-Graph Memory
 
 ### Added
@@ -18,7 +17,7 @@ All notable changes to this project will be documented in this file.
   - **Spreading activation** (`GraphIndex.spreadingActivation`): SYNAPSE-inspired BFS traversal from seed nodes across all enabled graph types with configurable per-hop decay. Ready for use by PR 19 (graph recall mode).
   - All graph writes are fail-open: any error is caught and logged; memory writes succeed regardless.
   - New config: `multiGraphMemoryEnabled`, `entityGraphEnabled`, `timeGraphEnabled`, `causalGraphEnabled`, `maxGraphTraversalSteps` (default 3), `graphActivationDecay` (default 0.7), `maxEntityGraphEdgesPerMemory` (default 10).
-=======
+
 ## [8.2.0-pr17] — v8.2 PR 17: Temporal Memory Tree
 
 ### Added
@@ -32,7 +31,6 @@ All notable changes to this project will be documented in this file.
   - Uses existing `LocalLlmClient` for summarisation via a callback — no additional API cost by default.
   - All node writes are fail-open: errors are caught and logged; consolidation and recall continue regardless.
   - New config: `temporalMemoryTreeEnabled` (default `false`), `tmtHourlyMinMemories` (default `3`), `tmtSummaryMaxTokens` (default `300`).
->>>>>>> main
 
 ## [8.1.1-ai-readiness] — AI Readiness Improvements (PR #19)
 

@@ -317,7 +317,6 @@
         "default": 200,
         "description": "Max candidate paths returned from index prefilter before scoring (0 = no cap)."
       },
-<<<<<<< feature/v8.2-pr18-graph
       "multiGraphMemoryEnabled": {
         "type": "boolean",
         "default": false,
@@ -352,7 +351,7 @@
         "type": "number",
         "default": 10,
         "description": "Maximum entity graph edges written per memory write. Default 10."
-=======
+      },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
         "default": false,
@@ -367,7 +366,6 @@
         "type": "number",
         "default": 300,
         "description": "Max tokens for each TMT summary node. Default: 300."
->>>>>>> main
       },
       "queryExpansionEnabled": {
         "type": "boolean",
