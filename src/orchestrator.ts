@@ -1571,6 +1571,12 @@ export class Orchestrator {
       return;
     }
 
+    let threadIdForExtraction: string | null = null;
+    if (this.config.threadingEnabled && turns.length > 0) {
+      const lastTurn = turns[turns.length - 1];
+      threadIdForExtraction = await this.threading.processTurn(lastTurn, []);
+    }
+
     const persistedIds = await this.persistExtraction(result, storage);
     await this.buffer.clearAfterExtraction();
 
@@ -1589,14 +1595,13 @@ export class Orchestrator {
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }
 
-    // Process threading if enabled (Phase 3B)
-    if (this.config.threadingEnabled && turns.length > 0) {
-      const lastTurn = turns[turns.length - 1];
-      const threadId = await this.threading.processTurn(lastTurn, persistedIds);
-
-      // Update thread title with conversation content
+    // Attach persisted memories to the already-established thread context.
+    if (this.config.threadingEnabled && threadIdForExtraction) {
+      if (persistedIds.length > 0) {
+        await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);
+      }
       const conversationContent = turns.map((t) => t.content).join(" ");
-      await this.threading.updateThreadTitle(threadId, conversationContent);
+      await this.threading.updateThreadTitle(threadIdForExtraction, conversationContent);
     }
 
     // Check if consolidation is needed (debounced + non-zero gated).
