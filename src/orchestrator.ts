@@ -155,6 +155,43 @@ export function computeQmdHybridFetchLimit(
   return Math.min(400, cappedRecallLimit + artifactHeadroom);
 }
 
+export function mergeGraphExpandedResults(
+  primary: QmdSearchResult[],
+  expanded: QmdSearchResult[],
+): QmdSearchResult[] {
+  if (expanded.length === 0) return primary;
+  const mergedByPath = new Map<string, QmdSearchResult>();
+  for (const item of [...primary, ...expanded]) {
+    const prev = mergedByPath.get(item.path);
+    if (!prev) {
+      mergedByPath.set(item.path, item);
+      continue;
+    }
+    const better = item.score > prev.score ? item : prev;
+    const snippet = prev.snippet || item.snippet;
+    mergedByPath.set(item.path, { ...better, snippet });
+  }
+  return Array.from(mergedByPath.values());
+}
+
+export function graphPathRelativeToStorage(storageDir: string, candidatePath: string): string | null {
+  const absolutePath = path.isAbsolute(candidatePath)
+    ? candidatePath
+    : path.resolve(storageDir, candidatePath);
+  const rel = path.relative(storageDir, absolutePath);
+  if (!rel || rel === ".") return null;
+  if (rel.startsWith("..")) return null;
+  return rel.split(path.sep).join("/");
+}
+
+function graphActivationScoreToRecallScore(score: number): number {
+  const bounded = Number.isFinite(score) && score > 0 ? score : 0;
+  // Keep graph-expanded candidates in the same rough score range as QMD
+  // without overpowering direct retrieval hits.
+  const normalized = bounded / (1 + bounded);
+  return Math.max(0.05, Math.min(0.95, normalized));
+}
+
 export function mergeArtifactRecallCandidates(
   candidatesByNamespace: MemoryFile[][],
   limit: number,
@@ -960,6 +997,109 @@ export class Orchestrator {
     return bestFiltered;
   }
 
+  private async expandResultsViaGraph(options: {
+    memoryResults: QmdSearchResult[];
+    recallNamespaces: string[];
+    recallResultLimit: number;
+  }): Promise<{
+    merged: QmdSearchResult[];
+    seedPaths: string[];
+    expandedPaths: Array<{ path: string; score: number; namespace: string }>;
+  }> {
+    const byNamespace = new Map<string, QmdSearchResult[]>();
+    for (const result of options.memoryResults) {
+      const ns = this.namespaceFromPath(result.path);
+      if (!options.recallNamespaces.includes(ns)) continue;
+      const existing = byNamespace.get(ns);
+      if (existing) {
+        existing.push(result);
+      } else {
+        byNamespace.set(ns, [result]);
+      }
+    }
+
+    const perNamespaceSeedCap = Math.max(3, options.recallResultLimit);
+    const perNamespaceExpandedCap = Math.max(8, options.recallResultLimit * 2);
+    const seedPaths: string[] = [];
+    const expandedPaths: Array<{ path: string; score: number; namespace: string }> = [];
+    const expandedResults: QmdSearchResult[] = [];
+
+    for (const [namespace, nsResults] of byNamespace.entries()) {
+      const storage = await this.storageRouter.storageFor(namespace);
+      const seedRelativePaths = nsResults
+        .slice(0, perNamespaceSeedCap)
+        .map((result) => graphPathRelativeToStorage(storage.dir, result.path))
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      if (seedRelativePaths.length === 0) continue;
+
+      seedPaths.push(...seedRelativePaths.map((rel) => path.join(storage.dir, rel)));
+      const seedSet = new Set(seedRelativePaths);
+      const expanded = await this.graphIndexFor(storage).spreadingActivation(
+        seedRelativePaths,
+        this.config.maxGraphTraversalSteps,
+      );
+      if (expanded.length === 0) continue;
+
+      for (const candidate of expanded.slice(0, perNamespaceExpandedCap)) {
+        if (seedSet.has(candidate.path)) continue;
+        const memoryPath = path.resolve(storage.dir, candidate.path);
+        const memory = await storage.readMemoryByPath(memoryPath);
+        if (!memory) continue;
+        if (isArtifactMemoryPath(memory.path)) continue;
+        if (memory.frontmatter.status && memory.frontmatter.status !== "active") continue;
+
+        const snippet = memory.content.slice(0, 400);
+        const score = graphActivationScoreToRecallScore(candidate.score);
+        expandedResults.push({
+          docid: memory.frontmatter.id,
+          path: memory.path,
+          snippet,
+          score,
+        });
+        expandedPaths.push({
+          path: memory.path,
+          score,
+          namespace,
+        });
+      }
+    }
+
+    return {
+      merged: mergeGraphExpandedResults(options.memoryResults, expandedResults),
+      seedPaths,
+      expandedPaths,
+    };
+  }
+
+  private async recordLastGraphRecallSnapshot(options: {
+    storage: StorageManager;
+    prompt: string;
+    recallMode: RecallPlanMode;
+    recallNamespaces: string[];
+    seedPaths: string[];
+    expandedPaths: Array<{ path: string; score: number; namespace: string }>;
+  }): Promise<void> {
+    try {
+      const snapshotPath = path.join(options.storage.dir, "state", "last_graph_recall.json");
+      await mkdir(path.dirname(snapshotPath), { recursive: true });
+      const now = new Date().toISOString();
+      const payload = {
+        recordedAt: now,
+        mode: options.recallMode,
+        queryHash: createHash("sha256").update(options.prompt).digest("hex"),
+        queryLength: options.prompt.length,
+        namespaces: options.recallNamespaces,
+        seedCount: options.seedPaths.length,
+        expandedCount: options.expandedPaths.length,
+        seeds: options.seedPaths,
+        expanded: options.expandedPaths,
+      };
+      await writeFile(snapshotPath, JSON.stringify(payload, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`last graph recall write failed: ${err}`);
+    }
+  }
+
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
@@ -1193,6 +1333,27 @@ export class Orchestrator {
       }
       // Artifacts are injected through dedicated verbatim recall flow only.
       memoryResults = memoryResults.filter((r) => !isArtifactMemoryPath(r.path));
+
+      if (recallMode === "graph_mode") {
+        const {
+          merged,
+          seedPaths,
+          expandedPaths,
+        } = await this.expandResultsViaGraph({
+          memoryResults,
+          recallNamespaces,
+          recallResultLimit,
+        });
+        memoryResults = merged;
+        await this.recordLastGraphRecallSnapshot({
+          storage: profileStorage,
+          prompt,
+          recallMode,
+          recallNamespaces,
+          seedPaths,
+          expandedPaths,
+        });
+      }
 
       // Apply recency and access count boosting
       memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, prompt);
