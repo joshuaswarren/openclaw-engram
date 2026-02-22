@@ -1221,7 +1221,7 @@ export class Orchestrator {
           const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
             docid: m.frontmatter.id,
             path: m.path,
-            snippet: m.content.slice(0, 200),
+            snippet: m.content,
             score: 1.0 - i / Math.max(recentSorted.length, 1),
           }));
           const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt, preloadedMap))
