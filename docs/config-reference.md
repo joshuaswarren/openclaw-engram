@@ -78,6 +78,13 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `intentRoutingEnabled` | `false` | Write intent metadata; boost compatible recalls |
 | `intentRoutingBoost` | `0.12` | Max additive score boost from intent compatibility |
 
+## v8.1 Temporal + Tag Indexes
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `queryAwareIndexingEnabled` | `false` | Build and maintain temporal (`state/index_time.json`) and tag (`state/index_tags.json`) indexes after each extraction. Enables score boosts for temporal queries and `#tag` tokens at recall time. |
+| `queryAwareIndexingMaxCandidates` | `200` | Max candidate paths from the index prefilter (0 = no cap). |
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |

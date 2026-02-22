@@ -556,5 +556,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.boxRecallDays === "number" ? cfg.boxRecallDays : 3,
     // v8.0 Phase 2B: Episode/Note dual store (HiMem)
     episodeNoteModeEnabled: cfg.episodeNoteModeEnabled === true,
+    // v8.1: Temporal + Tag Indexes (SwiftMem-inspired)
+    queryAwareIndexingEnabled: cfg.queryAwareIndexingEnabled === true,
+    queryAwareIndexingMaxCandidates:
+      typeof cfg.queryAwareIndexingMaxCandidates === "number"
+        ? cfg.queryAwareIndexingMaxCandidates
+        : 200,
   };
 }

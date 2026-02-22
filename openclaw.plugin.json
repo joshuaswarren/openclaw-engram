@@ -307,6 +307,16 @@
         "default": false,
         "description": "Enable HiMem episode/note classification (v8.0 Phase 2B). Tags each extracted memory as 'episode' (time-specific event) or 'note' (stable belief/preference). Disabled by default."
       },
+      "queryAwareIndexingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable temporal and tag indexes (v8.1). Maintains state/index_time.json and state/index_tags.json for fast prefiltering. At recall time, temporal queries and #tag tokens receive a small score boost from the index. Disabled by default."
+      },
+      "queryAwareIndexingMaxCandidates": {
+        "type": "number",
+        "default": 200,
+        "description": "Max candidate paths returned from index prefilter before scoring (0 = no cap)."
+      },
       "queryExpansionEnabled": {
         "type": "boolean",
         "default": false,

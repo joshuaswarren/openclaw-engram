@@ -34,6 +34,8 @@ before_agent_start
 │  - Recency boost (default-on)   │
 │  - Importance weight            │
 │  - Intent compatibility (v8.0)  │
+│  - Temporal index boost (v8.1)  │  score boost for time-matching memories
+│  - Tag index boost (v8.1)       │  score boost for #tag-matching memories
 │  - Access frequency boost       │
 │  - Negative example penalty     │
 │  - Namespace / artifact filter  │
@@ -116,5 +118,6 @@ With namespaces enabled, retrieval filters candidates to allowed namespaces (loc
 | `intentRoutingEnabled` | `false` | Intent-compatible recall boost |
 | `verbatimArtifactsEnabled` | `false` | Inject artifact anchors first |
 | `rerankEnabled` | `false` | LLM reranking pass over QMD/embedding results |
+| `queryAwareIndexingEnabled` | `false` | Temporal + tag index boost at scoring (v8.1) |
 
 → Full settings: [Config Reference](../config-reference.md)

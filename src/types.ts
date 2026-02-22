@@ -283,6 +283,11 @@ export interface PluginConfig {
   // v8.0 Phase 2B: Episode/Note dual store (HiMem)
   /** Classify extracted memories as episode or note and tag with memoryKind */
   episodeNoteModeEnabled: boolean;
+  // v8.1 Temporal + Tag Indexes (SwiftMem-inspired)
+  /** Build and maintain temporal (state/index_time.json) and tag (state/index_tags.json) indexes */
+  queryAwareIndexingEnabled: boolean;
+  /** Max candidate paths returned from index prefilter (0 = no cap) */
+  queryAwareIndexingMaxCandidates: number;
 }
 
 export interface BootstrapOptions {

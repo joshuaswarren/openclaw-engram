@@ -26,6 +26,14 @@ import { BootstrapEngine } from "./bootstrap.js";
 import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
+import {
+  indexMemoriesBatch,
+  queryByDateRange,
+  queryByTags,
+  isTemporalQuery,
+  recencyWindowFromPrompt,
+  extractTagsFromPrompt,
+} from "./temporal-index.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -1955,6 +1963,11 @@ export class Orchestrator {
       `persisted: ${facts.length - dedupedCount} facts${dedupSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
     );
 
+    // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open
+    this.updateTemporalTagIndexes(storage, persistedIds).catch((err) =>
+      log.debug(`temporal-index update error (non-fatal): ${err}`),
+    );
+
     // Return the persisted fact IDs for threading
     return persistedIds;
   }
@@ -1965,6 +1978,44 @@ export class Orchestrator {
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) return;
     await this.embeddingFallback.indexFile(memoryId, memory.content, memory.path);
+  }
+
+  /**
+   * Batch-update temporal and tag indexes after extraction (v8.1).
+   * Reads each persisted memory's path + frontmatter and adds them to
+   * state/index_time.json and state/index_tags.json.
+   * Fail-open: any error is logged but does not abort extraction.
+   */
+  private async updateTemporalTagIndexes(
+    storage: StorageManager,
+    persistedIds: string[],
+  ): Promise<void> {
+    if (!this.config.queryAwareIndexingEnabled) return;
+    if (persistedIds.length === 0) return;
+    try {
+      const entries: Array<{ path: string; createdAt: string; tags: string[] }> = [];
+      await Promise.all(
+        persistedIds.map(async (id) => {
+          try {
+            const mem = await storage.getMemoryById(id);
+            if (mem?.path && mem.frontmatter?.created) {
+              entries.push({
+                path: mem.path,
+                createdAt: mem.frontmatter.created,
+                tags: mem.frontmatter.tags ?? [],
+              });
+            }
+          } catch {
+            // Ignore individual read errors
+          }
+        }),
+      );
+      if (entries.length > 0) {
+        indexMemoriesBatch(this.config.memoryDir, entries);
+      }
+    } catch (err) {
+      log.debug(`temporal-index update failed (non-fatal): ${err}`);
+    }
   }
 
   /** IDs of facts persisted in the last extraction */
@@ -2487,6 +2538,21 @@ export class Orchestrator {
       ? inferIntentFromText(prompt)
       : null;
 
+    // v8.1: Temporal + Tag prefilter candidate set
+    // Build path sets from fast on-disk indexes (synchronous reads, fail-open).
+    let temporalCandidates: Set<string> | null = null;
+    let tagCandidates: Set<string> | null = null;
+    if (this.config.queryAwareIndexingEnabled && prompt) {
+      if (isTemporalQuery(prompt)) {
+        const fromDate = recencyWindowFromPrompt(prompt, now);
+        temporalCandidates = queryByDateRange(this.config.memoryDir, fromDate);
+      }
+      const promptTags = extractTagsFromPrompt(prompt);
+      if (promptTags.length > 0) {
+        tagCandidates = queryByTags(this.config.memoryDir, promptTags);
+      }
+    }
+
     // Calculate boosted scores
     const boosted = results.map((r) => {
       const memory = memoryByPath.get(r.path);
@@ -2552,6 +2618,17 @@ export class Orchestrator {
             entityTypes: memory.frontmatter.intentEntityTypes ?? [],
           });
           score += compatibility * this.config.intentRoutingBoost;
+        }
+
+        // v8.1: Temporal + Tag index boost
+        // Results that match the detected temporal window or tag query get a small additive boost.
+        if (this.config.queryAwareIndexingEnabled && r.path) {
+          if (temporalCandidates?.has(r.path)) {
+            score += 0.08; // Temporal match boost (fixed, non-configurable)
+          }
+          if (tagCandidates?.has(r.path)) {
+            score += 0.06; // Tag match boost
+          }
         }
       }
 
