@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 20A (lifecycle data-model slice):
+  - Added optional lifecycle policy frontmatter fields to `MemoryFrontmatter`: `lifecycleState`, `verificationState`, `policyClass`, `lastValidatedAt`, `decayScore`, and `heatScore`.
+  - Extended memory frontmatter serialization/parsing to persist and restore lifecycle metadata, including zero-valued score fields.
+  - Added storage lifecycle round-trip tests for parse/serialize behavior and legacy compatibility when lifecycle fields are absent.
 - v8.2 PR 19A (planner-gating slice):
   - New config flag `graphRecallEnabled` (default `false`) to explicitly opt into graph recall planner mode.
   - New `resolveEffectiveRecallMode()` guard in recall orchestration: `graph_mode` is only active when both `graphRecallEnabled` and `multiGraphMemoryEnabled` are enabled; otherwise behavior degrades to baseline `full` recall.
