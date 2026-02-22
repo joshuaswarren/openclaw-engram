@@ -12,7 +12,6 @@
  * Design constraints:
  * - Must be fail-open (any error returns empty / unfiltered)
  * - Reads/writes are batched per extraction run
- * - Index is rebuilt from scratch if it falls behind > indexRebuildThresholdDays
  * - Both indexes are plain JSON; no external dependencies
  */
 
