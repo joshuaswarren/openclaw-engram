@@ -110,21 +110,33 @@ test("resolvePersistedMemoryRelativePath prefers persisted path over fallback", 
   const resolved = resolvePersistedMemoryRelativePath({
     memoryId,
     pathById,
-    fallbackRelativePath: "facts/2026-02-22/fact-123.md",
+    category: "fact",
   });
 
   assert.equal(resolved, relPath);
 });
 
 test("resolvePersistedMemoryRelativePath falls back when memory ID is missing", () => {
-  const fallback = "facts/2026-02-22/fact-999.md";
+  const ts = Date.parse("2026-02-22T12:00:00.000Z");
+  const memoryId = `fact-${ts}-9999`;
   const resolved = resolvePersistedMemoryRelativePath({
-    memoryId: "fact-999",
+    memoryId,
     pathById: new Map(),
-    fallbackRelativePath: fallback,
+    category: "fact",
   });
 
-  assert.equal(resolved, fallback);
+  assert.equal(resolved, `facts/2026-02-22/${memoryId}.md`);
+});
+
+test("resolvePersistedMemoryRelativePath uses corrections directory for correction category", () => {
+  const memoryId = "correction-1763850000000-zzzz";
+  const resolved = resolvePersistedMemoryRelativePath({
+    memoryId,
+    pathById: new Map(),
+    category: "correction",
+  });
+
+  assert.equal(resolved, `corrections/${memoryId}.md`);
 });
 
 test("appendMemoryToGraphContext adds newly written memory for same-run graph linking", () => {

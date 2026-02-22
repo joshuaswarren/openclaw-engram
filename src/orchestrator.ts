@@ -231,9 +231,20 @@ export function appendMemoryToGraphContext(options: {
 export function resolvePersistedMemoryRelativePath(options: {
   memoryId: string;
   pathById: Map<string, string>;
-  fallbackRelativePath: string;
+  category: string;
 }): string {
-  return options.pathById.get(options.memoryId) ?? options.fallbackRelativePath;
+  const persisted = options.pathById.get(options.memoryId);
+  if (persisted) return persisted;
+  if (options.category === "correction") {
+    return path.join("corrections", `${options.memoryId}.md`);
+  }
+  const idParts = options.memoryId.split("-");
+  const maybeTimestamp = Number(idParts[1]);
+  if (Number.isFinite(maybeTimestamp) && maybeTimestamp > 0) {
+    const day = new Date(maybeTimestamp).toISOString().slice(0, 10);
+    return path.join("facts", day, `${options.memoryId}.md`);
+  }
+  return path.join("facts", `${options.memoryId}.md`);
 }
 
 export class Orchestrator {
@@ -1689,8 +1700,7 @@ export class Orchestrator {
     }
 
     // Batch-append persisted IDs so non-fact memories (entities/questions) are
-    // always attached to the thread. In graph mode this complements per-fact
-    // appends used for in-extraction edge construction.
+    // always attached to the thread.
     if (
       this.config.threadingEnabled &&
       threadIdForExtraction &&
@@ -1943,15 +1953,8 @@ export class Orchestrator {
 
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
-          if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
-            try {
-              await this.threading.appendEpisodeIds(threadIdForExtraction, [parentId]);
-            } catch (err) {
-              log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
-            }
-            if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
-              threadEpisodeIdsForGraph.push(parentId);
-            }
+          if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
+            threadEpisodeIdsForGraph.push(parentId);
           }
           await this.indexPersistedMemory(storage, parentId);
           // Register chunked content in hash index too
@@ -1987,14 +1990,10 @@ export class Orchestrator {
             try {
               const entityRef =
                 typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
-              const parentWriteDay = new Date().toISOString().slice(0, 10);
-              const fallbackParentRelPath = fact.category === "correction"
-                ? path.join("corrections", `${parentId}.md`)
-                : path.join("facts", parentWriteDay, `${parentId}.md`);
               const parentRelPath = resolvePersistedMemoryRelativePath({
                 memoryId: parentId,
                 pathById: memoryPathById,
-                fallbackRelativePath: fallbackParentRelPath,
+                category: fact.category,
               });
               memoryPathById.set(parentId, parentRelPath);
               appendMemoryToGraphContext({
@@ -2080,15 +2079,8 @@ export class Orchestrator {
         memoryKind,
       });
       persistedIds.push(memoryId);
-      if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
-        try {
-          await this.threading.appendEpisodeIds(threadIdForExtraction, [memoryId]);
-        } catch (err) {
-          log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
-        }
-        if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
-          threadEpisodeIdsForGraph.push(memoryId);
-        }
+      if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
+        threadEpisodeIdsForGraph.push(memoryId);
       }
       await this.indexPersistedMemory(storage, memoryId);
       // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
@@ -2096,14 +2088,10 @@ export class Orchestrator {
         try {
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
-          const memoryWriteDay = new Date().toISOString().slice(0, 10);
-          const fallbackMemoryRelPath = fact.category === "correction"
-            ? path.join("corrections", `${memoryId}.md`)
-            : path.join("facts", memoryWriteDay, `${memoryId}.md`);
           const memoryRelPath = resolvePersistedMemoryRelativePath({
             memoryId,
             pathById: memoryPathById,
-            fallbackRelativePath: fallbackMemoryRelPath,
+            category: fact.category,
           });
           memoryPathById.set(memoryId, memoryRelPath);
           appendMemoryToGraphContext({
