@@ -1970,12 +1970,12 @@ export class Orchestrator {
               const fallbackParentRelPath = fact.category === "correction"
                 ? path.join("corrections", `${parentId}.md`)
                 : path.join("facts", parentWriteDay, `${parentId}.md`);
-              memoryPathById.set(parentId, fallbackParentRelPath);
               const parentRelPath = resolvePersistedMemoryRelativePath({
                 memoryId: parentId,
                 pathById: memoryPathById,
                 fallbackRelativePath: fallbackParentRelPath,
               });
+              memoryPathById.set(parentId, parentRelPath);
               appendMemoryToGraphContext({
                 allMemsForGraph,
                 storageDir: storage.dir,
@@ -2072,12 +2072,12 @@ export class Orchestrator {
           const fallbackMemoryRelPath = fact.category === "correction"
             ? path.join("corrections", `${memoryId}.md`)
             : path.join("facts", memoryWriteDay, `${memoryId}.md`);
-          memoryPathById.set(memoryId, fallbackMemoryRelPath);
           const memoryRelPath = resolvePersistedMemoryRelativePath({
             memoryId,
             pathById: memoryPathById,
             fallbackRelativePath: fallbackMemoryRelPath,
           });
+          memoryPathById.set(memoryId, memoryRelPath);
           appendMemoryToGraphContext({
             allMemsForGraph,
             storageDir: storage.dir,

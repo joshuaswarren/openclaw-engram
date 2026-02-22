@@ -245,7 +245,7 @@ export class GraphIndex {
       }
 
       const seedSet = new Set(seeds);
-      const scores = new Map<string, number>(); // candidate path → best activation score
+      const scores = new Map<string, number>(); // candidate path → accumulated activation score
       const visited = new Set<string>(seeds);
 
       // BFS queue: [nodePath, hop]
@@ -262,7 +262,7 @@ export class GraphIndex {
 
           if (!seedSet.has(neighbor)) {
             const existing = scores.get(neighbor) ?? 0;
-            if (score > existing) scores.set(neighbor, score);
+            scores.set(neighbor, existing + score);
           }
 
           if (!visited.has(neighbor)) {

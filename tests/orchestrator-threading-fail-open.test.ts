@@ -50,3 +50,12 @@ test("persisted path resolution does not call getMemoryById in per-fact write fl
   assert.match(helperSource, /pathById:\s*Map<string,\s*string>/);
   assert.doesNotMatch(helperSource, /getMemoryById\(/);
 });
+
+test("persisted path resolution is not short-circuited by set-before-resolve", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.doesNotMatch(
+    source,
+    /memoryPathById\.set\([^)]*\);\s*const (?:parentRelPath|memoryRelPath) = resolvePersistedMemoryRelativePath\(/m,
+    "pathById should not be seeded with fallback immediately before resolvePersistedMemoryRelativePath",
+  );
+});

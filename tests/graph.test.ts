@@ -211,6 +211,22 @@ describe("GraphIndex.spreadingActivation", () => {
     }
   });
 
+  it("accumulates activation from multiple incoming edges", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "engram-sa-sum-"));
+    try {
+      const gi = new GraphIndex(dir, cfg);
+      await appendEdge(dir, { from: "A.md", to: "C.md", type: "entity", weight: 1.0, label: "e", ts: new Date().toISOString() });
+      await appendEdge(dir, { from: "B.md", to: "C.md", type: "entity", weight: 1.0, label: "e", ts: new Date().toISOString() });
+      const results = await gi.spreadingActivation(["A.md", "B.md"], 1);
+      const c = results.find((r) => r.path === "C.md");
+      assert.ok(c, "expected C.md in activation results");
+      // Each seed contributes 0.7 at hop 1, so total should be 1.4
+      assert.ok(Math.abs((c?.score ?? 0) - 1.4) < 0.001, `expected 1.4 got ${c?.score}`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("returns [] when feature disabled", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "engram-sa-off-"));
     try {
