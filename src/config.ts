@@ -562,5 +562,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.queryAwareIndexingMaxCandidates === "number"
         ? Math.max(0, cfg.queryAwareIndexingMaxCandidates) // clamp: negative treated as 0 (no cap)
         : 200,
+    // v8.2: Temporal Memory Tree
+    temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
+    tmtHourlyMinMemories:
+      typeof cfg.tmtHourlyMinMemories === "number" ? cfg.tmtHourlyMinMemories : 3,
+    tmtSummaryMaxTokens:
+      typeof cfg.tmtSummaryMaxTokens === "number" ? cfg.tmtSummaryMaxTokens : 300,
   };
 }
