@@ -146,7 +146,7 @@ export function indexMemory(
     const tIndex = readJsonSafe<TemporalIndex>(tPath, { version: INDEX_VERSION, dates: {} });
     const dateKey = isoDateFromTimestamp(createdAt);
     addPathToSet(tIndex.dates, dateKey, memoryPath);
-    writeJsonSafe(tPath, tIndex);
+    writeJsonAtomic(tPath, tIndex);
 
     // Tag index
     const gPath = tagIndexPath(memoryDir);
@@ -156,7 +156,7 @@ export function indexMemory(
         addPathToSet(gIndex.tags, tag.toLowerCase(), memoryPath);
       }
     }
-    writeJsonSafe(gPath, gIndex);
+    writeJsonAtomic(gPath, gIndex);
   } catch {
     // Fail silently
   }
@@ -178,7 +178,7 @@ export function deindexMemory(
     const tIndex = readJsonSafe<TemporalIndex>(tPath, { version: INDEX_VERSION, dates: {} });
     const dateKey = isoDateFromTimestamp(createdAt);
     removePathFromSet(tIndex.dates, dateKey, memoryPath);
-    writeJsonSafe(tPath, tIndex);
+    writeJsonAtomic(tPath, tIndex);
 
     const gPath = tagIndexPath(memoryDir);
     const gIndex = readJsonSafe<TagIndex>(gPath, { version: INDEX_VERSION, tags: {} });
@@ -187,7 +187,7 @@ export function deindexMemory(
         removePathFromSet(gIndex.tags, tag.toLowerCase(), memoryPath);
       }
     }
-    writeJsonSafe(gPath, gIndex);
+    writeJsonAtomic(gPath, gIndex);
   } catch {
     // Fail silently
   }
@@ -360,7 +360,8 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
     } else {
       const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
       if (hrMatch) {
-        daysBack = 1;
+        // Convert hours to days (ceiling); at least 1 day window
+        daysBack = Math.max(1, Math.ceil(parseInt(hrMatch[1], 10) / 24));
       }
     }
   }
