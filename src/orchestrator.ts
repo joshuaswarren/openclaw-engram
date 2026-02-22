@@ -25,6 +25,7 @@ import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
+import { classifyMemoryKind } from "./himem.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -1733,6 +1734,11 @@ export class Orchestrator {
         const chunkResult = chunkContent(fact.content, chunkingConfig);
 
         if (chunkResult.chunked && chunkResult.chunks.length > 1) {
+          // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
+          const memoryKind = this.config.episodeNoteModeEnabled
+            ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+            : undefined;
+
           // Write the parent memory first (with full content for reference)
           const parentId = await storage.writeMemory(fact.category, fact.content, {
             confidence: fact.confidence,
@@ -1743,6 +1749,7 @@ export class Orchestrator {
             intentGoal: inferredIntent?.goal,
             intentActionType: inferredIntent?.actionType,
             intentEntityTypes: inferredIntent?.entityTypes,
+            memoryKind,
           });
 
           // Write individual chunks with parent reference
@@ -1765,6 +1772,7 @@ export class Orchestrator {
                 intentGoal: inferredIntent?.goal,
                 intentActionType: inferredIntent?.actionType,
                 intentEntityTypes: inferredIntent?.entityTypes,
+                memoryKind,
               },
             );
           }
@@ -1824,6 +1832,11 @@ export class Orchestrator {
         }
       }
 
+      // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
+      const memoryKind = this.config.episodeNoteModeEnabled
+        ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+        : undefined;
+
       // Normal write (no chunking)
       const memoryId = await storage.writeMemory(fact.category, fact.content, {
         confidence: fact.confidence,
@@ -1836,6 +1849,7 @@ export class Orchestrator {
         intentGoal: inferredIntent?.goal,
         intentActionType: inferredIntent?.actionType,
         intentEntityTypes: inferredIntent?.entityTypes,
+        memoryKind,
       });
       persistedIds.push(memoryId);
       await this.indexPersistedMemory(storage, memoryId);
