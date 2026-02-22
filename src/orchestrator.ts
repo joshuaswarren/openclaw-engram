@@ -28,7 +28,6 @@ import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import {
   indexMemoriesBatch,
-  indexMemory,
   clearIndexes,
   indexesExist,
   deindexMemory,
@@ -2146,45 +2145,23 @@ export class Orchestrator {
         }
         case "UPDATE":
           if (item.updatedContent) {
-            // Read old state before update so we can remove stale tag associations
-            const preUpdate = this.config.queryAwareIndexingEnabled
-              ? (memoryLookup?.get(item.existingId) ?? null)
-              : null;
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               lineage: [item.existingId],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
-            if (this.config.queryAwareIndexingEnabled) {
-              if (preUpdate?.path && preUpdate.frontmatter?.created) {
-                deindexMemory(this.config.memoryDir, preUpdate.path, preUpdate.frontmatter.created, preUpdate.frontmatter.tags ?? []);
-              }
-              const updated = await this.storage.getMemoryById(item.existingId).catch(() => null);
-              if (updated?.path && updated.frontmatter?.created) {
-                indexMemory(this.config.memoryDir, updated.path, updated.frontmatter.created, updated.frontmatter.tags ?? []);
-              }
-            }
+            // updateMemory() only changes content/updated/lineage — path, created, and tags
+            // are preserved, so the temporal/tag index entry is already correct; no reindex needed.
           }
           break;
         case "MERGE":
           if (item.updatedContent && item.mergeWith) {
-            // Read old state before update so we can remove stale tag associations
-            const preMerge = this.config.queryAwareIndexingEnabled
-              ? (memoryLookup?.get(item.existingId) ?? null)
-              : null;
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               supersedes: item.mergeWith,
               lineage: [item.existingId, item.mergeWith],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
-            if (this.config.queryAwareIndexingEnabled) {
-              if (preMerge?.path && preMerge.frontmatter?.created) {
-                deindexMemory(this.config.memoryDir, preMerge.path, preMerge.frontmatter.created, preMerge.frontmatter.tags ?? []);
-              }
-              const mergedSurvivor = await this.storage.getMemoryById(item.existingId).catch(() => null);
-              if (mergedSurvivor?.path && mergedSurvivor.frontmatter?.created) {
-                indexMemory(this.config.memoryDir, mergedSurvivor.path, mergedSurvivor.frontmatter.created, mergedSurvivor.frontmatter.tags ?? []);
-              }
-            }
+            // updateMemory() only changes content/updated/supersedes/lineage — path, created, and tags
+            // are preserved, so the temporal/tag index entry for the survivor is already correct.
             // Capture before invalidation for index cleanup
             const toMergeInvalidate = this.config.queryAwareIndexingEnabled
               ? (memoryLookup?.get(item.mergeWith) ?? null)
