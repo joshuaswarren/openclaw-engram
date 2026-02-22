@@ -1203,16 +1203,16 @@ export class Orchestrator {
           const activeMemories = memories.filter(
             (m) => !m.frontmatter.status || m.frontmatter.status === "active",
           );
-          // Sort by recency, then pass through boostSearchResults so temporal/tag
+          // Convert all active memories to QmdSearchResult with recency-based
+          // baseline score, then pass through boostSearchResults so temporal/tag
           // boosts apply consistently with the primary QMD retrieval path.
+          // Cap AFTER boosting so boosted-but-recency-ranked memories can surface.
           const recentSorted = activeMemories
             .sort(
               (a, b) =>
                 new Date(b.frontmatter.updated).getTime() -
                 new Date(a.frontmatter.updated).getTime(),
-            )
-            .slice(0, recallResultLimit);
-          // Convert to QmdSearchResult with recency-based baseline score
+            );
           const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
             docid: m.frontmatter.id,
             path: m.path,
@@ -1220,7 +1220,8 @@ export class Orchestrator {
             score: 1.0 - i / Math.max(recentSorted.length, 1),
           }));
           const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt))
-            .sort((a, b) => b.score - a.score);
+            .sort((a, b) => b.score - a.score)
+            .slice(0, recallResultLimit);
 
           // Track access for these memories
           const memoryIds = recent.map((r) => r.docid).filter(Boolean);
