@@ -28,6 +28,19 @@ test("mergeGraphExpandedResults deduplicates by path and keeps better score", ()
   assert.equal(byPath.get("/tmp/facts/c.md")?.docid, "c");
 });
 
+test("mergeGraphExpandedResults still deduplicates when expanded list is empty", () => {
+  const primary = [
+    { docid: "a1", path: "/tmp/facts/a.md", snippet: "", score: 0.4 },
+    { docid: "a2", path: "/tmp/facts/a.md", snippet: "seed A", score: 0.9 },
+    { docid: "b1", path: "/tmp/facts/b.md", snippet: "seed B", score: 0.3 },
+  ];
+  const merged = mergeGraphExpandedResults(primary, []);
+  assert.equal(merged.length, 2);
+  const byPath = new Map(merged.map((m) => [m.path, m]));
+  assert.equal(byPath.get("/tmp/facts/a.md")?.score, 0.9);
+  assert.equal(byPath.get("/tmp/facts/a.md")?.snippet, "seed A");
+});
+
 test("graphPathRelativeToStorage resolves in-scope paths and rejects out-of-scope paths", () => {
   const storageDir = "/tmp/memory/default";
   assert.equal(

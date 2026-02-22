@@ -159,7 +159,6 @@ export function mergeGraphExpandedResults(
   primary: QmdSearchResult[],
   expanded: QmdSearchResult[],
 ): QmdSearchResult[] {
-  if (expanded.length === 0) return primary;
   const mergedByPath = new Map<string, QmdSearchResult>();
   for (const item of [...primary, ...expanded]) {
     const prev = mergedByPath.get(item.path);
