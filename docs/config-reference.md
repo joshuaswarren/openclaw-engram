@@ -24,6 +24,20 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `highSignalPatterns` | `[]` | Additional regex patterns for immediate extraction |
 | `consolidateEveryN` | `3` | Run consolidation every N extractions |
 
+## Extraction Guardrails
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `extractionDedupeEnabled` | `true` | Skip extraction if the same buffer was already extracted recently |
+| `extractionDedupeWindowMs` | `300000` | Dedup window in milliseconds (default 5 minutes) |
+| `extractionMinChars` | `40` | Minimum buffer character count to trigger extraction |
+| `extractionMinUserTurns` | `1` | Minimum user turns in buffer before extraction |
+| `extractionMaxTurnChars` | `4000` | Truncate each turn to this many chars before sending to LLM |
+| `extractionMaxFactsPerRun` | `12` | Cap on facts extracted per LLM call |
+| `extractionMaxEntitiesPerRun` | `6` | Cap on entities extracted per LLM call |
+| `extractionMaxQuestionsPerRun` | `3` | Cap on curiosity questions generated per LLM call |
+| `extractionMaxProfileUpdatesPerRun` | `4` | Cap on profile update statements per LLM call |
+
 ## Retrieval
 
 | Setting | Default | Description |

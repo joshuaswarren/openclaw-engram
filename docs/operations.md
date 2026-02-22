@@ -104,7 +104,7 @@ Engram can optionally lint and rotate large workspace files that are bootstrappe
 
 ```bash
 # Full restart (fires gateway_start hook — required for config changes)
-launchctl kickstart -k gui/501/ai.openclaw.gateway
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 
 # Hot reload (does NOT fire gateway_start)
 kill -USR1 $(pgrep openclaw-gateway)
