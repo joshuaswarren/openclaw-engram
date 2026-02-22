@@ -29,6 +29,7 @@ import { classifyMemoryKind } from "./himem.js";
 import {
   indexMemoriesBatch,
   indexesExist,
+  deindexMemory,
   queryByDateRange,
   queryByTags,
   isTemporalQuery,
@@ -2066,12 +2067,25 @@ export class Orchestrator {
 
     for (const item of result.items) {
       switch (item.action) {
-        case "INVALIDATE":
+        case "INVALIDATE": {
+          // Capture path/frontmatter before invalidation for index cleanup
+          const toInvalidate = this.config.queryAwareIndexingEnabled
+            ? await this.storage.getMemoryById(item.existingId).catch(() => null)
+            : null;
           if (await this.storage.invalidateMemory(item.existingId)) {
             invalidated += 1;
             await this.embeddingFallback.removeFromIndex(item.existingId);
+            if (toInvalidate?.path && toInvalidate.frontmatter?.created) {
+              deindexMemory(
+                this.config.memoryDir,
+                toInvalidate.path,
+                toInvalidate.frontmatter.created,
+                toInvalidate.frontmatter.tags ?? [],
+              );
+            }
           }
           break;
+        }
         case "UPDATE":
           if (item.updatedContent) {
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
@@ -2087,10 +2101,22 @@ export class Orchestrator {
               lineage: [item.existingId, item.mergeWith],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
+            // Capture before invalidation for index cleanup
+            const toMergeInvalidate = this.config.queryAwareIndexingEnabled
+              ? await this.storage.getMemoryById(item.mergeWith).catch(() => null)
+              : null;
             if (await this.storage.invalidateMemory(item.mergeWith)) {
               invalidated += 1;
               merged += 1;
               await this.embeddingFallback.removeFromIndex(item.mergeWith);
+              if (toMergeInvalidate?.path && toMergeInvalidate.frontmatter?.created) {
+                deindexMemory(
+                  this.config.memoryDir,
+                  toMergeInvalidate.path,
+                  toMergeInvalidate.frontmatter.created,
+                  toMergeInvalidate.frontmatter.tags ?? [],
+                );
+              }
             }
           }
           break;
@@ -2253,6 +2279,14 @@ export class Orchestrator {
           this.contentHashIndex.remove(memory.content);
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
+        if (this.config.queryAwareIndexingEnabled && memory.path && memory.frontmatter?.created) {
+          deindexMemory(
+            this.config.memoryDir,
+            memory.path,
+            memory.frontmatter.created,
+            memory.frontmatter.tags ?? [],
+          );
+        }
         archivedCount++;
       }
     }

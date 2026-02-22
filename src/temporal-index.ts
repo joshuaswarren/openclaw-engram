@@ -342,9 +342,9 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
   let daysBack = 7; // default
 
   if (/\btoday\b/.test(p) || /\bthis morning\b/.test(p)) {
-    daysBack = 1;
+    daysBack = 0; // fromDate = today → window [today, today]
   } else if (/\byesterday\b/.test(p) || /\blast night\b/.test(p)) {
-    daysBack = 2;
+    daysBack = 1; // fromDate = yesterday → window [yesterday, today]
   } else if (/\bthis week\b/.test(p)) {
     daysBack = 7;
   } else if (/\blast week\b/.test(p)) {
@@ -356,7 +356,7 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
   } else {
     const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
     if (numMatch) {
-      daysBack = Math.min(365, parseInt(numMatch[1], 10) + 1);
+      daysBack = Math.min(365, parseInt(numMatch[1], 10)); // no off-by-one: "3 days ago" → 3
     } else {
       const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
       if (hrMatch) {
