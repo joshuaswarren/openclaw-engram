@@ -562,5 +562,13 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.queryAwareIndexingMaxCandidates === "number"
         ? Math.max(0, cfg.queryAwareIndexingMaxCandidates) // clamp: negative treated as 0 (no cap)
         : 200,
+    // v8.2: Multi-graph memory (PR 18)
+    multiGraphMemoryEnabled: false,
+    entityGraphEnabled: true,
+    timeGraphEnabled: true,
+    causalGraphEnabled: true,
+    maxGraphTraversalSteps: 3,
+    graphActivationDecay: 0.7,
+    maxEntityGraphEdgesPerMemory: 10,
   };
 }
