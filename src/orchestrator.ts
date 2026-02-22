@@ -1203,16 +1203,27 @@ export class Orchestrator {
           const activeMemories = memories.filter(
             (m) => !m.frontmatter.status || m.frontmatter.status === "active",
           );
-          const recent = activeMemories
+          // Sort by recency, then pass through boostSearchResults so temporal/tag
+          // boosts apply consistently with the primary QMD retrieval path.
+          const recentSorted = activeMemories
             .sort(
               (a, b) =>
                 new Date(b.frontmatter.updated).getTime() -
                 new Date(a.frontmatter.updated).getTime(),
             )
             .slice(0, recallResultLimit);
+          // Convert to QmdSearchResult with recency-based baseline score
+          const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
+            docid: m.frontmatter.id,
+            path: m.path,
+            snippet: m.content.slice(0, 200),
+            score: 1.0 - i / Math.max(recentSorted.length, 1),
+          }));
+          const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt))
+            .sort((a, b) => b.score - a.score);
 
           // Track access for these memories
-          const memoryIds = recent.map((m) => m.frontmatter.id);
+          const memoryIds = recent.map((r) => r.docid).filter(Boolean);
           this.trackMemoryAccess(memoryIds);
 
           if (sessionKey) {
@@ -1222,10 +1233,7 @@ export class Orchestrator {
               .catch((err) => log.debug(`last recall record failed: ${err}`));
           }
 
-          const lines = recent.map(
-            (m) => `- [${m.frontmatter.category}] ${m.content}`,
-          );
-          sections.push(`## Recent Memories\n\n${lines.join("\n")}`);
+          sections.push(this.formatQmdResults("Recent Memories", recent));
         }
       }
 
@@ -2088,12 +2096,18 @@ export class Orchestrator {
     const profile = await this.storage.readProfile();
     const result = await this.extraction.consolidate(recent, older, profile);
 
+    // Build a lookup map from the already-loaded corpus to avoid repeated
+    // readAllMemories() scans inside getMemoryById for pre-action deindex reads.
+    const memoryLookup = this.config.queryAwareIndexingEnabled
+      ? new Map(allMemories.map((m) => [m.frontmatter.id, m]))
+      : null;
+
     for (const item of result.items) {
       switch (item.action) {
         case "INVALIDATE": {
           // Capture path/frontmatter before invalidation for index cleanup
           const toInvalidate = this.config.queryAwareIndexingEnabled
-            ? await this.storage.getMemoryById(item.existingId).catch(() => null)
+            ? (memoryLookup?.get(item.existingId) ?? null)
             : null;
           if (await this.storage.invalidateMemory(item.existingId)) {
             invalidated += 1;
@@ -2113,7 +2127,7 @@ export class Orchestrator {
           if (item.updatedContent) {
             // Read old state before update so we can remove stale tag associations
             const preUpdate = this.config.queryAwareIndexingEnabled
-              ? await this.storage.getMemoryById(item.existingId).catch(() => null)
+              ? (memoryLookup?.get(item.existingId) ?? null)
               : null;
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               lineage: [item.existingId],
@@ -2134,7 +2148,7 @@ export class Orchestrator {
           if (item.updatedContent && item.mergeWith) {
             // Read old state before update so we can remove stale tag associations
             const preMerge = this.config.queryAwareIndexingEnabled
-              ? await this.storage.getMemoryById(item.existingId).catch(() => null)
+              ? (memoryLookup?.get(item.existingId) ?? null)
               : null;
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               supersedes: item.mergeWith,
@@ -2152,7 +2166,7 @@ export class Orchestrator {
             }
             // Capture before invalidation for index cleanup
             const toMergeInvalidate = this.config.queryAwareIndexingEnabled
-              ? await this.storage.getMemoryById(item.mergeWith).catch(() => null)
+              ? (memoryLookup?.get(item.mergeWith) ?? null)
               : null;
             if (await this.storage.invalidateMemory(item.mergeWith)) {
               invalidated += 1;
