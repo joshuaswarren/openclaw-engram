@@ -1846,50 +1846,16 @@ export class Orchestrator {
               intentEntityTypes: inferredIntent?.entityTypes,
             });
           }
-          // v8.2: graph edge building for chunked memories (same logic as non-chunked path)
+          // v8.2: graph edge building for chunked memories
           if (this.config.multiGraphMemoryEnabled) {
             try {
               const entityRef =
                 typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
               const today = new Date().toISOString().slice(0, 10);
-              const parentRelPath = path.join("facts", today, `${parentId}.md`);
-              const entitySiblings: string[] = [];
-              if (entityRef) {
-                try {
-                  const allMems = allMemsForGraph ?? [];
-                  for (const m of allMems) {
-                    if (m.frontmatter.entityRef === entityRef) {
-                      const rel = path.relative(storage.dir, m.path);
-                      if (rel !== parentRelPath) entitySiblings.push(rel);
-                    }
-                  }
-                } catch { /* fail-open */ }
-              }
-              const threadId = this.threading.getCurrentThreadId() ?? undefined;
-              const recentInThread: string[] = [];
-              if (threadId) {
-                try {
-                  const thread = await this.threading.loadThread(threadId);
-                  if (thread?.episodeIds?.length) {
-                    recentInThread.push(
-                      ...thread.episodeIds
-                        .filter((id: string) => id !== parentId)
-                        .slice(-3)
-                        .map((id: string) => path.join("facts", id)),
-                    );
-                  }
-                } catch { /* fail-open */ }
-              }
-              await this.graphIndex.onMemoryWritten({
-                memoryPath: parentRelPath,
-                entityRef,
-                content: fact.content ?? "",
-                created: new Date().toISOString(),
-                threadId,
-                recentInThread,
-                entitySiblings,
-                causalPredecessor: recentInThread[recentInThread.length - 1],
-              });
+              const parentRelPath = fact.category === "correction"
+                ? path.join("corrections", `${parentId}.md`)
+                : path.join("facts", today, `${parentId}.md`);
+              await this.buildGraphEdge(storage, parentRelPath, entityRef, parentId, fact.content ?? "", allMemsForGraph);
             } catch { /* fail-open */ }
           }
           continue; // Skip the normal write below
@@ -1958,46 +1924,10 @@ export class Orchestrator {
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
           const today = new Date().toISOString().slice(0, 10);
-          const memoryRelPath = path.join("facts", today, `${memoryId}.md`);
-          // Entity siblings: other memories sharing the same entityRef
-          const entitySiblings: string[] = [];
-          if (entityRef) {
-            try {
-              const allMems = allMemsForGraph ?? [];
-              for (const m of allMems) {
-                if (m.frontmatter.entityRef === entityRef) {
-                  const rel = path.relative(storage.dir, m.path);
-                  if (rel !== memoryRelPath) entitySiblings.push(rel);
-                }
-              }
-            } catch { /* fail-open */ }
-          }
-          // Recent thread memories for time graph
-          const threadId = this.threading.getCurrentThreadId() ?? undefined;
-          const recentInThread: string[] = [];
-          if (threadId) {
-            try {
-              const thread = await this.threading.loadThread(threadId);
-              if (thread?.episodeIds?.length) {
-                recentInThread.push(
-                  ...thread.episodeIds
-                    .filter((id: string) => id !== memoryId)
-                    .slice(-3)
-                    .map((id: string) => path.join("facts", id)),
-                );
-              }
-            } catch { /* fail-open */ }
-          }
-          await this.graphIndex.onMemoryWritten({
-            memoryPath: memoryRelPath,
-            entityRef,
-            content: fact.content ?? "",
-            created: new Date().toISOString(),
-            threadId,
-            recentInThread,
-            entitySiblings,
-            causalPredecessor: recentInThread[recentInThread.length - 1],
-          });
+          const memoryRelPath = fact.category === "correction"
+            ? path.join("corrections", `${memoryId}.md`)
+            : path.join("facts", today, `${memoryId}.md`);
+          await this.buildGraphEdge(storage, memoryRelPath, entityRef, memoryId, fact.content ?? "", allMemsForGraph);
         } catch { /* fail-open */ }
       }
       if (
@@ -2117,6 +2047,60 @@ export class Orchestrator {
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) return;
     await this.embeddingFallback.indexFile(memoryId, memory.content, memory.path);
+  }
+
+  /**
+   * Build a graph edge for a persisted memory (v8.2).
+   * Shared helper used by both the chunked and non-chunked write paths to avoid duplication.
+   * Fail-open: caller wraps in try/catch.
+   */
+  private async buildGraphEdge(
+    storage: StorageManager,
+    memoryRelPath: string,
+    entityRef: string | undefined,
+    memoryId: string,
+    factContent: string,
+    allMemsForGraph: import("./types.js").MemoryFile[] | null | undefined,
+  ): Promise<void> {
+    // Entity siblings: other memories sharing the same entityRef
+    const entitySiblings: string[] = [];
+    if (entityRef) {
+      try {
+        const allMems = allMemsForGraph ?? [];
+        for (const m of allMems) {
+          if (m.frontmatter.entityRef === entityRef) {
+            const rel = path.relative(storage.dir, m.path);
+            if (rel !== memoryRelPath) entitySiblings.push(rel);
+          }
+        }
+      } catch { /* fail-open */ }
+    }
+    // Recent thread memories for time graph
+    const threadId = this.threading.getCurrentThreadId() ?? undefined;
+    const recentInThread: string[] = [];
+    if (threadId) {
+      try {
+        const thread = await this.threading.loadThread(threadId);
+        if (thread?.episodeIds?.length) {
+          recentInThread.push(
+            ...thread.episodeIds
+              .filter((id: string) => id !== memoryId)
+              .slice(-3)
+              .map((id: string) => path.join("facts", id)),
+          );
+        }
+      } catch { /* fail-open */ }
+    }
+    await this.graphIndex.onMemoryWritten({
+      memoryPath: memoryRelPath,
+      entityRef,
+      content: factContent,
+      created: new Date().toISOString(),
+      threadId,
+      recentInThread,
+      entitySiblings,
+      causalPredecessor: recentInThread[recentInThread.length - 1],
+    });
   }
 
   /**
