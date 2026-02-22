@@ -45,6 +45,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `boxTopicShiftThreshold` | `0.35` | Topic overlap below this seals the box |
 | `boxMaxMemories` | `50` | Max memories before forced seal |
 | `traceWeaverLookbackDays` | `7` | Days to look back for matching traces |
+| `traceWeaverOverlapThreshold` | `0.4` | Minimum topic overlap to join an existing trace |
+| `boxRecallDays` | `3` | Days of boxes to inject into recall context |
 | `episodeNoteModeEnabled` | `false` | Classify memories as `episode` or `note` |
 | `verbatimArtifactsEnabled` | `false` | Store high-confidence memories as verbatim anchors |
 | `verbatimArtifactsMinConfidence` | `0.8` | Minimum confidence for artifact writes |
@@ -96,16 +98,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `recencyWeight` | `0.2` | Recency weight in retrieval ranking (0–1) |
 | `boostAccessCount` | `true` | Boost frequently accessed memories in ranking |
 | `slowLogEnabled` | `false` | Log slow operations |
-| `slowLogThresholdMs` | `2000` | Threshold for slow log entries |
-
-## v2.3+ Import / Export
-
-See [import-export.md](import-export.md).
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `exportEnabled` | `true` | Enable export CLI commands |
-| `backupRetentionDays` | `14` | Days to retain automatic backups |
+| `slowLogThresholdMs` | `30000` | Threshold for slow log entries (ms) |
 
 ## v2.4 Context Retention
 
@@ -201,4 +194,4 @@ See [compounding.md](compounding.md).
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `summarizationEnabled` | `false` | Summarize old memories when count exceeds threshold |
-| `summarizationThreshold` | `1000` | Memory count that triggers summarization |
+| `summarizationTriggerCount` | `1000` | Memory count that triggers summarization |
