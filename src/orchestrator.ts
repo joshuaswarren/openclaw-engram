@@ -24,6 +24,7 @@ import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
+import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -51,6 +52,23 @@ import type {
 
 export function isArtifactMemoryPath(filePath: string): boolean {
   return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
+}
+
+export function deriveTopicsFromExtraction(result: ExtractionResult): string[] {
+  const topics = new Set<string>();
+  for (const fact of result.facts ?? []) {
+    for (const tag of fact.tags ?? []) {
+      if (tag && tag.length >= 2) topics.add(tag.toLowerCase());
+    }
+    if (fact.entityRef) topics.add(fact.entityRef.toLowerCase());
+    if (fact.category) topics.add(fact.category);
+  }
+  for (const entity of (result as any).entities ?? []) {
+    if (typeof entity.name === "string" && entity.name.length >= 2) {
+      topics.add(entity.name.toLowerCase());
+    }
+  }
+  return [...topics].slice(0, 16);
 }
 
 export function filterRecallCandidates(
@@ -153,6 +171,8 @@ export class Orchestrator {
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
+  /** Per-namespace BoxBuilders, keyed by the namespace root directory path. */
+  private readonly boxBuilders = new Map<string, BoxBuilder>();
   private readonly rerankCache = new RerankCache();
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
@@ -239,11 +259,29 @@ export class Orchestrator {
       path.join(config.memoryDir, "threads"),
       config.threadingGapMinutes,
     );
+    // BoxBuilders are created per-namespace on first use in runExtraction().
 
     // Create init gate — recall() will await this before proceeding
     this.initPromise = new Promise<void>((resolve) => {
       this.resolveInit = resolve;
     });
+  }
+
+  /** Get or create a BoxBuilder for the given namespace storage root (namespace-isolated). */
+  private boxBuilderFor(storage: StorageManager): BoxBuilder {
+    const dir = storage.dir;
+    if (!this.boxBuilders.has(dir)) {
+      this.boxBuilders.set(dir, new BoxBuilder(dir, {
+        memoryBoxesEnabled: this.config.memoryBoxesEnabled,
+        traceWeaverEnabled: this.config.traceWeaverEnabled,
+        boxTopicShiftThreshold: this.config.boxTopicShiftThreshold,
+        boxTimeGapMs: this.config.boxTimeGapMs,
+        boxMaxMemories: this.config.boxMaxMemories,
+        traceWeaverLookbackDays: this.config.traceWeaverLookbackDays,
+        traceWeaverOverlapThreshold: this.config.traceWeaverOverlapThreshold,
+      }));
+    }
+    return this.boxBuilders.get(dir)!;
   }
 
   private async resolveArtifactSourceStatuses(
@@ -972,6 +1010,21 @@ export class Orchestrator {
       sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
     }
 
+    // 1d. Memory Boxes (topic continuity windows, v8.0 Phase 2A)
+    if (this.config.memoryBoxesEnabled && this.config.boxRecallDays > 0) {
+      const recentBoxes = await this.boxBuilderFor(profileStorage)
+        .readRecentBoxes(this.config.boxRecallDays)
+        .catch(() => []);
+      if (recentBoxes.length > 0) {
+        const boxLines = recentBoxes.slice(0, 5).map((b: BoxFrontmatter) => {
+          const sealedDate = b.sealedAt ? b.sealedAt.slice(0, 16).replace("T", " ") : "?";
+          const traceNote = b.traceId ? ` [trace: ${b.traceId.slice(0, 12)}]` : "";
+          return `- [${sealedDate}${traceNote}] Topics: ${b.topics.join(", ")} (${b.memoryIds.length} memories)`;
+        });
+        sections.push(`## Recent Topic Windows\n\n${boxLines.join("\n")}`);
+      }
+    }
+
     // 2. QMD results — post-process and format
     if (qmdResult) {
       const t0 = Date.now();
@@ -1489,6 +1542,21 @@ export class Orchestrator {
 
     const persistedIds = await this.persistExtraction(result, storage);
     await this.buffer.clearAfterExtraction();
+
+    // Build memory box from this extraction (v8.0 Phase 2A)
+    // Topics are derived from the current extraction's facts and entities only —
+    // not from readAllMemories() — so box topics accurately reflect the current
+    // session window and the call is free of expensive full-corpus I/O.
+    if (this.config.memoryBoxesEnabled && persistedIds.length > 0) {
+      const extractionTopics = deriveTopicsFromExtraction(result);
+      await this.boxBuilderFor(storage)
+        .onExtraction({
+          topics: extractionTopics,
+          memoryIds: persistedIds,
+          timestamp: new Date().toISOString(),
+        })
+        .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
+    }
 
     // Process threading if enabled (Phase 3B)
     if (this.config.threadingEnabled && turns.length > 0) {

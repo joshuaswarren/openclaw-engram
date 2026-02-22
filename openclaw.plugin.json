@@ -262,6 +262,46 @@
         "default": ["decision", "correction", "principle", "commitment"],
         "description": "Memory categories eligible for artifact extraction."
       },
+      "memoryBoxesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Memory Boxes (v8.0 Phase 2A). Groups memories into topic-bounded windows. Disabled by default."
+      },
+      "boxTopicShiftThreshold": {
+        "type": "number",
+        "default": 0.35,
+        "description": "Jaccard overlap threshold below which a topic shift seals the current box (0–1)."
+      },
+      "boxTimeGapMs": {
+        "type": "number",
+        "default": 1800000,
+        "description": "Time gap in milliseconds before an open box is sealed (default 30 min)."
+      },
+      "boxMaxMemories": {
+        "type": "number",
+        "default": 50,
+        "description": "Maximum memories per box before forced seal."
+      },
+      "traceWeaverEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Trace Weaving (v8.0 Phase 2A). Links recurring topic boxes with a shared traceId."
+      },
+      "traceWeaverLookbackDays": {
+        "type": "number",
+        "default": 7,
+        "description": "Days back to search for trace links."
+      },
+      "traceWeaverOverlapThreshold": {
+        "type": "number",
+        "default": 0.4,
+        "description": "Minimum Jaccard topic overlap to assign the same traceId (0–1)."
+      },
+      "boxRecallDays": {
+        "type": "number",
+        "default": 3,
+        "description": "Number of recent days of boxes to inject during recall."
+      },
       "queryExpansionEnabled": {
         "type": "boolean",
         "default": false,
