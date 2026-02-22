@@ -59,3 +59,12 @@ test("persisted path resolution is not short-circuited by set-before-resolve", (
     "pathById should not be seeded with fallback immediately before resolvePersistedMemoryRelativePath",
   );
 });
+
+test("buildGraphEdge forwards fallback causal predecessor when thread context is absent", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.match(
+    source,
+    /const causalPredecessor = recentInThread\[recentInThread\.length - 1\] \?\? fallbackCausalPredecessor;/,
+    "expected causal predecessor to fall back to same-extraction ordering when no thread history is available",
+  );
+});

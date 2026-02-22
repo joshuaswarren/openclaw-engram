@@ -169,19 +169,14 @@ export function resolveRecentThreadMemoryPaths(options: {
   threadEpisodeIds: string[];
   currentMemoryId: string;
   allMemsForGraph: MemoryFile[] | null | undefined;
+  pathById?: Map<string, string>;
   storageDir: string;
   maxRecent: number;
 }): string[] {
-  const allMems = options.allMemsForGraph ?? [];
   const maxRecent = Math.max(0, options.maxRecent);
-  if (allMems.length === 0 || options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
-
-  const pathById = new Map<string, string>();
-  for (const mem of allMems) {
-    const id = mem.frontmatter.id;
-    if (!id) continue;
-    pathById.set(id, path.relative(options.storageDir, mem.path));
-  }
+  if (options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
+  const pathById = options.pathById ?? buildMemoryPathById(options.allMemsForGraph, options.storageDir);
+  if (pathById.size === 0) return [];
 
   return options.threadEpisodeIds
     .filter((id) => id !== options.currentMemoryId)
@@ -1848,6 +1843,7 @@ export class Orchestrator {
         }
       } catch { /* fail-open */ }
     }
+    let previousPersistedRelPath: string | undefined;
 
     for (const fact of facts) {
       if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
@@ -1992,8 +1988,11 @@ export class Orchestrator {
                 parentId,
                 fact.content ?? "",
                 allMemsForGraph,
+                memoryPathById,
                 threadIdForExtraction ?? undefined,
+                previousPersistedRelPath,
               );
+              previousPersistedRelPath = parentRelPath;
             } catch { /* fail-open */ }
           }
           continue; // Skip the normal write below
@@ -2094,8 +2093,11 @@ export class Orchestrator {
             memoryId,
             fact.content ?? "",
             allMemsForGraph,
+            memoryPathById,
             threadIdForExtraction ?? undefined,
+            previousPersistedRelPath,
           );
+          previousPersistedRelPath = memoryRelPath;
         } catch { /* fail-open */ }
       }
       if (
@@ -2229,7 +2231,9 @@ export class Orchestrator {
     memoryId: string,
     factContent: string,
     allMemsForGraph: import("./types.js").MemoryFile[] | null | undefined,
+    memoryPathById: Map<string, string>,
     threadIdForEdge: string | undefined,
+    fallbackCausalPredecessor: string | undefined,
   ): Promise<void> {
     // Entity siblings: other memories sharing the same entityRef
     const entitySiblings: string[] = [];
@@ -2254,12 +2258,14 @@ export class Orchestrator {
             threadEpisodeIds: thread.episodeIds,
             currentMemoryId: memoryId,
             allMemsForGraph,
+            pathById: memoryPathById,
             storageDir: storage.dir,
             maxRecent: 3,
           }));
         }
       } catch { /* fail-open */ }
     }
+    const causalPredecessor = recentInThread[recentInThread.length - 1] ?? fallbackCausalPredecessor;
     await this.graphIndexFor(storage).onMemoryWritten({
       memoryPath: memoryRelPath,
       entityRef,
@@ -2268,7 +2274,7 @@ export class Orchestrator {
       threadId: threadIdForEdge,
       recentInThread,
       entitySiblings,
-      causalPredecessor: recentInThread[recentInThread.length - 1],
+      causalPredecessor,
     });
   }
 

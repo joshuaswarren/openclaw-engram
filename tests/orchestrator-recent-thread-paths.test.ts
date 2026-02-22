@@ -82,6 +82,23 @@ test("resolveRecentThreadMemoryPaths returns [] when maxRecent is 0", () => {
   assert.deepEqual(recent, []);
 });
 
+test("resolveRecentThreadMemoryPaths can use prebuilt path map without rescanning memories", () => {
+  const pathById = new Map<string, string>([
+    ["fact-a", "facts/2026-02-22/fact-a.md"],
+    ["correction-b", "corrections/correction-b.md"],
+  ]);
+  const recent = resolveRecentThreadMemoryPaths({
+    threadEpisodeIds: ["fact-a", "correction-b"],
+    currentMemoryId: "current-id",
+    allMemsForGraph: null,
+    pathById,
+    storageDir: "/tmp/memory",
+    maxRecent: 2,
+  });
+
+  assert.deepEqual(recent, ["facts/2026-02-22/fact-a.md", "corrections/correction-b.md"]);
+});
+
 test("resolvePersistedMemoryRelativePath prefers persisted path over fallback", () => {
   const memoryId = "fact-123";
   const storageDir = "/tmp/memory";
