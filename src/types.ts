@@ -288,6 +288,10 @@ export interface PluginConfig {
   queryAwareIndexingEnabled: boolean;
   /** Max candidate paths returned from index prefilter (0 = no cap) */
   queryAwareIndexingMaxCandidates: number;
+  // v8.2: Temporal Memory Tree
+  temporalMemoryTreeEnabled: boolean;
+  tmtHourlyMinMemories: number;
+  tmtSummaryMaxTokens: number;
 }
 
 export interface BootstrapOptions {
