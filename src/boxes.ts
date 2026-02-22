@@ -50,6 +50,8 @@ interface TraceIndex {
   boxToTrace: Record<string, string>;
   /** traceId → canonical topic fingerprint for matching */
   traceTopics: Record<string, string[]>;
+  /** traceId → ISO timestamp of last box added (for lookback filtering) */
+  traceLastSeen: Record<string, string>;
 }
 
 export interface BoxBuilderConfig {
@@ -203,15 +205,22 @@ export class BoxBuilder {
   private async loadTraceIndex(): Promise<TraceIndex> {
     try {
       const raw = await readFile(this.tracesPath, "utf-8");
-      return JSON.parse(raw) as TraceIndex;
+      const parsed = JSON.parse(raw) as TraceIndex;
+      // Backfill missing field for indexes written before this field was added
+      parsed.traceLastSeen ??= {};
+      return parsed;
     } catch {
-      return { traces: {}, boxToTrace: {}, traceTopics: {} };
+      return { traces: {}, boxToTrace: {}, traceTopics: {}, traceLastSeen: {} };
     }
   }
 
   private async saveTraceIndex(idx: TraceIndex): Promise<void> {
-    await mkdir(this.stateDir, { recursive: true });
-    await writeFile(this.tracesPath, JSON.stringify(idx, null, 2), "utf-8");
+    try {
+      await mkdir(this.stateDir, { recursive: true });
+      await writeFile(this.tracesPath, JSON.stringify(idx, null, 2), "utf-8");
+    } catch (err) {
+      log.warn(`[engram/boxes] Failed to save trace index: ${(err as Error).message}`);
+    }
   }
 
   // ── Core logic ────────────────────────────────────────────────────────────
@@ -240,7 +249,9 @@ export class BoxBuilder {
         this.openBox.memoryIds.length + event.memoryIds.length > this.cfg.boxMaxMemories;
 
       if (tooManyMemories) {
-        // Add current batch then seal
+        // Merge topics and add current batch then seal
+        const topicSet = new Set([...this.openBox.topics, ...newTopics]);
+        this.openBox.topics = [...topicSet];
         this.openBox.memoryIds.push(...event.memoryIds);
         await this.sealCurrent("max_memories");
       } else if (topicShifted) {
@@ -337,11 +348,16 @@ export class BoxBuilder {
   private async resolveTrace(boxId: string, topics: string[]): Promise<string> {
     const idx = await this.loadTraceIndex();
 
-    // Look for existing trace with sufficient topic overlap
+    // Filter to traces active within the lookback window
+    const lookbackMs = this.cfg.traceWeaverLookbackDays * 24 * 60 * 60 * 1000;
+    const cutoff = new Date(Date.now() - lookbackMs);
+
     let bestTraceId: string | undefined;
     let bestScore = 0;
 
     for (const [tid, traceTopics] of Object.entries(idx.traceTopics)) {
+      const lastSeen = idx.traceLastSeen[tid];
+      if (lastSeen && new Date(lastSeen) < cutoff) continue; // outside lookback window
       const score = topicOverlapScore(topics, traceTopics);
       if (score >= this.cfg.traceWeaverOverlapThreshold && score > bestScore) {
         bestScore = score;
@@ -350,11 +366,13 @@ export class BoxBuilder {
     }
 
     const traceId = bestTraceId ?? makeTraceId(topics);
+    const now = new Date().toISOString();
 
     // Update trace index
     if (!idx.traces[traceId]) idx.traces[traceId] = [];
     idx.traces[traceId].push(boxId);
     idx.boxToTrace[boxId] = traceId;
+    idx.traceLastSeen[traceId] = now;
 
     // Update canonical topics for this trace (merge)
     if (idx.traceTopics[traceId]) {
@@ -398,6 +416,8 @@ export class BoxBuilder {
     };
 
     await walkDir(this.boxBaseDir);
+    // Sort newest-first so slice(0, N) gives the most recent boxes
+    boxes.sort((a, b) => new Date(b.sealedAt).getTime() - new Date(a.sealedAt).getTime());
     return boxes;
   }
 }

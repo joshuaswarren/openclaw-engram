@@ -28,7 +28,7 @@ test("topicOverlapScore returns 0.0 for disjoint sets", () => {
   assert.equal(score, 0.0);
 });
 
-test("topicOverlapScore returns 0.5 for half-overlap", () => {
+test("topicOverlapScore returns partial score for partial overlap", () => {
   const score = topicOverlapScore(["a", "b", "c", "d"], ["b", "c", "x", "y"]);
   // intersection = {b, c} = 2, union = {a,b,c,d,x,y} = 6 → 2/6 ≈ 0.333
   assert.ok(score > 0 && score < 1, `expected partial overlap, got ${score}`);
