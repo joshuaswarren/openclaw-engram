@@ -44,6 +44,20 @@ test("persistExtraction gates per-memory thread appends behind multiGraphMemoryE
   );
 });
 
+test("in-memory thread episode context updates even if appendEpisodeIds fails", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.match(
+    source,
+    /try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[memoryId\]\);\s*\}\s*catch[\s\S]*?\}\s*if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(memoryId\)\) \{\s*threadEpisodeIdsForGraph\.push\(memoryId\);\s*\}/m,
+    "memoryId should be added to in-memory thread context outside appendEpisodeIds try/catch",
+  );
+  assert.match(
+    source,
+    /try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[parentId\]\);\s*\}\s*catch[\s\S]*?\}\s*if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(parentId\)\) \{\s*threadEpisodeIdsForGraph\.push\(parentId\);\s*\}/m,
+    "parentId should be added to in-memory thread context outside appendEpisodeIds try/catch",
+  );
+});
+
 test("buildGraphEdge does not read global current thread ID", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
 

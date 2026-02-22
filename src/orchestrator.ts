@@ -1946,11 +1946,11 @@ export class Orchestrator {
           if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
             try {
               await this.threading.appendEpisodeIds(threadIdForExtraction, [parentId]);
-              if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
-                threadEpisodeIdsForGraph.push(parentId);
-              }
             } catch (err) {
               log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
+            }
+            if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
+              threadEpisodeIdsForGraph.push(parentId);
             }
           }
           await this.indexPersistedMemory(storage, parentId);
@@ -2083,11 +2083,11 @@ export class Orchestrator {
       if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
         try {
           await this.threading.appendEpisodeIds(threadIdForExtraction, [memoryId]);
-          if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
-            threadEpisodeIdsForGraph.push(memoryId);
-          }
         } catch (err) {
           log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
+        }
+        if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
+          threadEpisodeIdsForGraph.push(memoryId);
         }
       }
       await this.indexPersistedMemory(storage, memoryId);
