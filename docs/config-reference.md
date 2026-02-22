@@ -7,6 +7,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `openaiApiKey` | `(env fallback)` | OpenAI API key or `${ENV_VAR}` reference |
+| `openaiBaseUrl` | `(env fallback)` | Override OpenAI API base URL (e.g. for proxies or compatible endpoints); falls back to `OPENAI_BASE_URL` env var |
 | `model` | `gpt-5.2` | OpenAI model for extraction and consolidation |
 | `reasoningEffort` | `low` | `none`, `low`, `medium`, `high` |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |

@@ -31,7 +31,7 @@ before_agent_start
                ▼
 ┌─────────────────────────────────┐
 │  4. Scoring & filtering         │
-│  - Recency boost (opt-in)       │
+│  - Recency boost (default-on)   │
 │  - Importance weight            │
 │  - Intent compatibility (v8.0)  │
 │  - Access frequency boost       │
