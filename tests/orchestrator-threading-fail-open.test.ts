@@ -83,3 +83,12 @@ test("buildGraphEdge forwards fallback causal predecessor when thread context is
     "expected causal predecessor to fall back to same-extraction ordering when no thread history is available",
   );
 });
+
+test("persistExtraction includes written question IDs in persistedIds", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.match(
+    source,
+    /const id = await storage\.writeQuestion\(q\.question,\s*q\.context,\s*q\.priority\);\s*if \(id\) persistedIds\.push\(id\);/m,
+    "question IDs should be added to persistedIds so thread batch append can include them",
+  );
+});

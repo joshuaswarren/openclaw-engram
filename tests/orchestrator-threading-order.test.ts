@@ -17,12 +17,12 @@ test("runExtraction establishes thread context before persistExtraction", () => 
   );
 });
 
-test("runExtraction batch-appends persisted IDs only when graphing is disabled", () => {
+test("runExtraction batch-appends persisted IDs after persistExtraction", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
 
   assert.match(
     source,
-    /if\s*\(\s*this\.config\.threadingEnabled\s*&&\s*!this\.config\.multiGraphMemoryEnabled\s*&&\s*threadIdForExtraction\s*&&\s*persistedIds\.length > 0[\s\S]*?await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*persistedIds\);/m,
-    "runExtraction should batch-append once after persistence when graphing is disabled",
+    /if\s*\(\s*this\.config\.threadingEnabled\s*&&\s*threadIdForExtraction\s*&&\s*persistedIds\.length > 0[\s\S]*?await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*persistedIds\);/m,
+    "runExtraction should batch-append persisted IDs after persistence for thread completeness",
   );
 });

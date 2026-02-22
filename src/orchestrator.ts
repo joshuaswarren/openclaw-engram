@@ -1688,10 +1688,11 @@ export class Orchestrator {
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }
 
-    // When graphing is disabled, batch-append once to avoid per-fact thread I/O.
+    // Batch-append persisted IDs so non-fact memories (entities/questions) are
+    // always attached to the thread. In graph mode this complements per-fact
+    // appends used for in-extraction edge construction.
     if (
       this.config.threadingEnabled &&
-      !this.config.multiGraphMemoryEnabled &&
       threadIdForExtraction &&
       persistedIds.length > 0
     ) {
@@ -2192,7 +2193,8 @@ export class Orchestrator {
 
     // Persist questions
     for (const q of questions) {
-      await storage.writeQuestion(q.question, q.context, q.priority);
+      const id = await storage.writeQuestion(q.question, q.context, q.priority);
+      if (id) persistedIds.push(id);
     }
 
     // Persist identity reflection
