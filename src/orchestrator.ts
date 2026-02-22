@@ -1308,20 +1308,7 @@ export class Orchestrator {
       const { memoryResultsLists, globalResults } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
-      const mergedByPath = new Map<string, QmdSearchResult>();
-      for (const list of memoryResultsLists) {
-        for (const r of list) {
-          const prev = mergedByPath.get(r.path);
-          if (!prev) {
-            mergedByPath.set(r.path, r);
-            continue;
-          }
-          const better = r.score > prev.score ? r : prev;
-          const snippet = prev.snippet || r.snippet;
-          mergedByPath.set(r.path, { ...better, snippet });
-        }
-      }
-      const memoryResultsRaw = Array.from(mergedByPath.values());
+      const memoryResultsRaw = mergeGraphExpandedResults(memoryResultsLists.flat(), []);
 
       let memoryResults = memoryResultsRaw;
 
