@@ -38,6 +38,9 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `qmdDaemonRecheckIntervalMs` | `60000` | Interval to re-probe daemon availability after failure |
 | `embeddingFallbackEnabled` | `true` | Use embedding search when QMD is unavailable |
 | `embeddingFallbackProvider` | `auto` | `auto`, `openai`, or `local` — selects embedding API for fallback |
+| `knowledgeIndexEnabled` | `true` | Inject entity/topic index into recall context |
+| `knowledgeIndexMaxEntities` | `40` | Max entities included in the knowledge index |
+| `knowledgeIndexMaxChars` | `4000` | Max characters of knowledge index injected |
 
 ## v8.0 Memory OS
 
@@ -114,6 +117,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `checkpointTurns` | `15` | Number of recent turns included in checkpoint context |
 | `transcriptEnabled` | `true` | Save conversation transcripts to disk |
 | `transcriptRetentionDays` | `7` | Days to retain saved transcripts |
+| `transcriptSkipChannelTypes` | `["cron"]` | Channel types whose transcripts are not saved |
 | `hourlySummariesEnabled` | `true` | Generate hourly summaries of conversation activity |
 | `hourlySummaryCronAutoRegister` | `false` | Auto-register hourly summary cron job on gateway start |
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |
