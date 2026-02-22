@@ -1207,19 +1207,24 @@ export class Orchestrator {
           // baseline score, then pass through boostSearchResults so temporal/tag
           // boosts apply consistently with the primary QMD retrieval path.
           // Cap AFTER boosting so boosted-but-recency-ranked memories can surface.
+          // Pass a pre-populated memoryByPath so boostSearchResults skips redundant
+          // disk reads for files already loaded by readAllMemoriesForNamespaces.
           const recentSorted = activeMemories
             .sort(
               (a, b) =>
                 new Date(b.frontmatter.updated).getTime() -
                 new Date(a.frontmatter.updated).getTime(),
             );
+          const preloadedMap = new Map<string, MemoryFile>(
+            activeMemories.filter((m) => m.path).map((m) => [m.path, m]),
+          );
           const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
             docid: m.frontmatter.id,
             path: m.path,
             snippet: m.content.slice(0, 200),
             score: 1.0 - i / Math.max(recentSorted.length, 1),
           }));
-          const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt))
+          const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt, preloadedMap))
             .sort((a, b) => b.score - a.score)
             .slice(0, recallResultLimit);
 
@@ -1808,7 +1813,10 @@ export class Orchestrator {
 
           for (const chunk of chunkResult.chunks) {
             const chunkId = `${parentId}-chunk-${chunk.index}`;
-            persistedIds.push(chunkId);
+            // Do NOT push chunkId into persistedIds — chunk IDs must not leak
+            // into boxBuilder.onExtraction() or threading.processTurn(), which
+            // only expect canonical parent memory IDs.  Call indexPersistedMemory
+            // directly for embedding-fallback sync of each chunk document.
             await this.indexPersistedMemory(storage, chunkId);
           }
           if (
@@ -2648,11 +2656,16 @@ export class Orchestrator {
     results: QmdSearchResult[],
     _recallNamespaces: string[],
     prompt?: string,
+    preloadedMemoryMap?: Map<string, MemoryFile>,
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
     const now = Date.now();
-    const memoryByPath = new Map<string, MemoryFile>();
+    // Seed with any pre-loaded memories (e.g. from the recency fallback path)
+    // to avoid redundant disk reads for files already in memory.
+    const memoryByPath: Map<string, MemoryFile> = preloadedMemoryMap
+      ? new Map(preloadedMemoryMap)
+      : new Map();
 
     // Determine temporal/tag query params before I/O (pure computation).
     const resultPaths = new Set(results.map((r) => r.path).filter(Boolean) as string[]);
@@ -2665,7 +2678,7 @@ export class Orchestrator {
       promptTags = extractTagsFromPrompt(prompt);
     }
 
-    // Run all file I/O in parallel: memory files + index files (async, non-blocking).
+    // Run all file I/O in parallel: memory files not yet preloaded + index files.
     const [, rawTemporal, rawTags] = await Promise.all([
       Promise.all(
         results.map(async (r) => {

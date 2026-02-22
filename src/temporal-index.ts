@@ -18,13 +18,6 @@
 import * as fs from "fs";
 import * as path from "path";
 
-export interface TemporalIndexEntry {
-  /** ISO date string YYYY-MM-DD */
-  date: string;
-  /** Absolute paths to memory files created on that date */
-  paths: string[];
-}
-
 export interface TemporalIndex {
   /** version bumped when schema changes */
   version: number;
