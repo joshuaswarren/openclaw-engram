@@ -46,11 +46,12 @@ before_agent_start
 ┌─────────────────────────────────┐
 │  6. Context assembly            │
 │  1. Profile                     │  behavioral context (prepended first)
-│  2. Artifacts (v8.0)            │  high-confidence anchors
-│  3. Memory boxes                │  recent topic windows
-│  4. Notes + memories            │  search results
-│  5. Checkpoint / transcripts    │  working context recovery
-│  6. Hourly summaries            │  recent activity digest
+│  2. Knowledge Index             │  entity/topic index (default-on)
+│  3. Artifacts (v8.0)            │  high-confidence anchors
+│  4. Memory boxes                │  recent topic windows
+│  5. Notes + memories            │  search results
+│  6. Checkpoint / transcripts    │  working context recovery
+│  7. Hourly summaries            │  recent activity digest
 └──────────────┬──────────────────┘
                ▼
          inject into system prompt
@@ -90,11 +91,12 @@ When `intentRoutingEnabled` is on, extraction captures `intent.goal`, `intent.ac
 
 All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) before injection. Sections are assembled in this order:
 1. Profile
-2. Artifacts
-3. Memory boxes
-4. Notes + search results
-5. Checkpoint / working context recovery
-6. Hourly summaries
+2. Knowledge Index (entity/topic index; default-on)
+3. Artifacts
+4. Memory boxes
+5. Notes + search results
+6. Checkpoint / working context recovery
+7. Hourly summaries
 
 ## Namespace Routing (v3.0)
 
