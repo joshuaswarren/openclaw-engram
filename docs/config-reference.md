@@ -109,6 +109,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `checkpointEnabled` | `true` | Save a working-context checkpoint after each turn for recovery |
+| `checkpointTurns` | `15` | Number of recent turns included in checkpoint context |
 | `transcriptEnabled` | `true` | Save conversation transcripts to disk |
 | `transcriptRetentionDays` | `7` | Days to retain saved transcripts |
 | `hourlySummariesEnabled` | `true` | Generate hourly summaries of conversation activity |

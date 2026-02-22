@@ -49,6 +49,8 @@ before_agent_start
 │  2. Artifacts (v8.0)            │  high-confidence anchors
 │  3. Memory boxes                │  recent topic windows
 │  4. Notes + memories            │  search results
+│  5. Checkpoint / transcripts    │  working context recovery
+│  6. Hourly summaries            │  recent activity digest
 └──────────────┬──────────────────┘
                ▼
          inject into system prompt
@@ -91,6 +93,8 @@ All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) befor
 2. Artifacts
 3. Memory boxes
 4. Notes + search results
+5. Checkpoint / working context recovery
+6. Hourly summaries
 
 ## Namespace Routing (v3.0)
 
