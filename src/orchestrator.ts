@@ -1733,6 +1733,14 @@ export class Orchestrator {
       );
     }
 
+    // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
+    let allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null = null;
+    if (this.config.multiGraphMemoryEnabled) {
+      try {
+        allMemsForGraph = await storage.readAllMemories();
+      } catch { /* fail-open */ }
+    }
+
     for (const fact of facts) {
       if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
         continue;
@@ -1838,6 +1846,52 @@ export class Orchestrator {
               intentEntityTypes: inferredIntent?.entityTypes,
             });
           }
+          // v8.2: graph edge building for chunked memories (same logic as non-chunked path)
+          if (this.config.multiGraphMemoryEnabled) {
+            try {
+              const entityRef =
+                typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+              const today = new Date().toISOString().slice(0, 10);
+              const parentRelPath = path.join("facts", today, `${parentId}.md`);
+              const entitySiblings: string[] = [];
+              if (entityRef) {
+                try {
+                  const allMems = allMemsForGraph ?? [];
+                  for (const m of allMems) {
+                    if (m.frontmatter.entityRef === entityRef) {
+                      const rel = path.relative(storage.dir, m.path);
+                      if (rel !== parentRelPath) entitySiblings.push(rel);
+                    }
+                  }
+                } catch { /* fail-open */ }
+              }
+              const threadId = this.threading.getCurrentThreadId() ?? undefined;
+              const recentInThread: string[] = [];
+              if (threadId) {
+                try {
+                  const thread = await this.threading.loadThread(threadId);
+                  if (thread?.episodeIds?.length) {
+                    recentInThread.push(
+                      ...thread.episodeIds
+                        .filter((id: string) => id !== parentId)
+                        .slice(-3)
+                        .map((id: string) => path.join("facts", id)),
+                    );
+                  }
+                } catch { /* fail-open */ }
+              }
+              await this.graphIndex.onMemoryWritten({
+                memoryPath: parentRelPath,
+                entityRef,
+                content: fact.content ?? "",
+                created: new Date().toISOString(),
+                threadId,
+                recentInThread,
+                entitySiblings,
+                causalPredecessor: recentInThread[recentInThread.length - 1],
+              });
+            } catch { /* fail-open */ }
+          }
           continue; // Skip the normal write below
         }
       }
@@ -1903,15 +1957,17 @@ export class Orchestrator {
         try {
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+          const today = new Date().toISOString().slice(0, 10);
+          const memoryRelPath = path.join("facts", today, `${memoryId}.md`);
           // Entity siblings: other memories sharing the same entityRef
           const entitySiblings: string[] = [];
           if (entityRef) {
             try {
-              const allMems = await storage.readAllMemories();
+              const allMems = allMemsForGraph ?? [];
               for (const m of allMems) {
                 if (m.frontmatter.entityRef === entityRef) {
                   const rel = path.relative(storage.dir, m.path);
-                  if (rel !== memoryId) entitySiblings.push(rel);
+                  if (rel !== memoryRelPath) entitySiblings.push(rel);
                 }
               }
             } catch { /* fail-open */ }
@@ -1933,7 +1989,7 @@ export class Orchestrator {
             } catch { /* fail-open */ }
           }
           await this.graphIndex.onMemoryWritten({
-            memoryPath: path.join("facts", memoryId),
+            memoryPath: memoryRelPath,
             entityRef,
             content: fact.content ?? "",
             created: new Date().toISOString(),
