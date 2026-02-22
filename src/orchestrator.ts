@@ -1508,7 +1508,6 @@ export class Orchestrator {
             "",
             "The user may be disputing an answer. To debug whether retrieval misled the response:",
             "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
-            "- If graph recall is enabled, use `memory_graph_explain_last_recall` to inspect seed/expanded graph paths.",
             "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
             "",
             "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
