@@ -2063,16 +2063,18 @@ export class Orchestrator {
           });
         }
       }
-      if (entries.length > 0) {
-        // On full rebuild, clear both indexes first so stale paths in any
-        // surviving index file don't persist after the rebuild.
-        if (needsFullRebuild) {
-          clearIndexes(this.config.memoryDir);
+      if (needsFullRebuild) {
+        // Always write empty indexes on full rebuild — even when the active pool
+        // is empty (e.g. store contains only archived/superseded entries).
+        // This marks bootstrap completion so indexesExist() returns true and
+        // subsequent extractions skip the full-corpus scan.
+        clearIndexes(this.config.memoryDir);
+        if (entries.length > 0) {
+          indexMemoriesBatch(this.config.memoryDir, entries);
         }
+        log.info(`temporal-index: bootstrapped from ${entries.length} active memories`);
+      } else if (entries.length > 0) {
         indexMemoriesBatch(this.config.memoryDir, entries);
-        if (needsFullRebuild) {
-          log.info(`temporal-index: bootstrapped from ${entries.length} active memories`);
-        }
       }
     } catch (err) {
       log.debug(`temporal-index update failed (non-fatal): ${err}`);
