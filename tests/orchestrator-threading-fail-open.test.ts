@@ -13,48 +13,52 @@ test("runExtraction handles pre-persist threading errors fail-open", () => {
   );
 });
 
-test("persistExtraction appends each new memory ID to the active thread before graph edge construction", () => {
+test("persistExtraction updates in-memory thread episode IDs before graph edge construction", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
 
-  const appendIdx = source.indexOf("await this.threading.appendEpisodeIds(threadIdForExtraction, [memoryId]);");
+  const appendIdx = source.indexOf("threadEpisodeIdsForGraph.push(memoryId);");
   const buildIdx = source.search(
     /await this\.buildGraphEdge\(\s*storage,\s*memoryRelPath,\s*entityRef,\s*memoryId/m,
   );
 
-  assert.notEqual(appendIdx, -1, "expected appendEpisodeIds call for non-chunked memory writes");
+  assert.notEqual(
+    appendIdx,
+    -1,
+    "expected in-memory threadEpisodeIdsForGraph update for non-chunked memory writes",
+  );
   assert.notEqual(buildIdx, -1, "expected buildGraphEdge call for non-chunked memory writes");
   assert.ok(
     appendIdx < buildIdx,
-    "appendEpisodeIds should execute before buildGraphEdge so same-batch memories can form time/causal edges",
+    "threadEpisodeIdsForGraph should update before buildGraphEdge so same-batch memories can form time/causal edges",
   );
 });
 
-test("persistExtraction gates per-memory thread appends behind multiGraphMemoryEnabled", () => {
+test("persistExtraction avoids per-memory thread file writes", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
 
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /if\s*\(\s*this\.config\.multiGraphMemoryEnabled\s*&&\s*threadIdForExtraction\s*\)\s*\{\s*try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[memoryId\]\);/m,
-    "non-chunked per-memory append should only run when graphing is enabled",
+    /await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[memoryId\]\);/,
+    "non-chunked writes should not perform per-fact thread file writes",
   );
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /if\s*\(\s*this\.config\.multiGraphMemoryEnabled\s*&&\s*threadIdForExtraction\s*\)\s*\{\s*try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[parentId\]\);/m,
-    "chunked parent per-memory append should only run when graphing is enabled",
+    /await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[parentId\]\);/,
+    "chunked parent writes should not perform per-fact thread file writes",
   );
 });
 
-test("in-memory thread episode context updates even if appendEpisodeIds fails", () => {
+test("in-memory thread episode context updates for chunked and non-chunked writes", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
   assert.match(
     source,
-    /try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[memoryId\]\);\s*\}\s*catch[\s\S]*?\}\s*if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(memoryId\)\) \{\s*threadEpisodeIdsForGraph\.push\(memoryId\);\s*\}/m,
-    "memoryId should be added to in-memory thread context outside appendEpisodeIds try/catch",
+    /if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(memoryId\)\) \{\s*threadEpisodeIdsForGraph\.push\(memoryId\);\s*\}/m,
+    "memoryId should be added to in-memory thread context during persistence",
   );
   assert.match(
     source,
-    /try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[parentId\]\);\s*\}\s*catch[\s\S]*?\}\s*if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(parentId\)\) \{\s*threadEpisodeIdsForGraph\.push\(parentId\);\s*\}/m,
-    "parentId should be added to in-memory thread context outside appendEpisodeIds try/catch",
+    /if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(parentId\)\) \{\s*threadEpisodeIdsForGraph\.push\(parentId\);\s*\}/m,
+    "parentId should be added to in-memory thread context during persistence",
   );
 });
 
