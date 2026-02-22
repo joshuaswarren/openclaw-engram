@@ -67,7 +67,10 @@ const NOTE_CATEGORIES = new Set([
   "standard",
   "belief",
   "decision",
-  "principle",   // durable operating rules emitted by extraction
+  "principle",     // durable operating rules emitted by extraction
+  "commitment",    // deadlines/promises — stable obligations
+  "relationship",  // durable facts about people/entities
+  "skill",         // capabilities — stable knowledge
 ]);
 
 /** Category names that strongly suggest an episode */
