@@ -2,7 +2,7 @@
 
 ## System Design
 
-Engram is a **local-first, plugin-based memory system** that runs inside the OpenClaw gateway. All data stays on disk as plain markdown files. Outbound API calls occur for: (1) LLM extraction/consolidation, and (2) embedding fallback recall when QMD is unavailable and an OpenAI key is present.
+Engram is a **local-first, plugin-based memory system** that runs inside the OpenClaw gateway. All data stays on disk as plain markdown files. Outbound API calls occur for: (1) LLM extraction/consolidation, (2) embedding fallback recall when QMD is unavailable and an OpenAI key is present, and (3) hourly summaries when enabled (`hourlySummariesEnabled`, default on).
 
 ### Three-Phase Flow
 
