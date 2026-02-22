@@ -13,20 +13,21 @@ export type MemoryKind = "episode" | "note";
 
 /**
  * Keywords that signal a stable belief/preference/constraint.
- * If any appear in the content, lean toward "note".
+ * Includes present and past tense to catch extraction phrasing like
+ * "user preferred X" or "team needed Y".
  */
 const NOTE_SIGNALS = [
-  /\bprefers?\b/i,
-  /\bwants?\b/i,
-  /\bneeds?\b/i,
+  /\bprefer(?:red|s|ring)?\b/i,
+  /\bwant(?:ed|s|ing)?\b/i,
+  /\bneed(?:ed|s|ing)?\b/i,
   /\balways\b/i,
   /\bnever\b/i,
   /\bmust\b/i,
   /\bshould\b/i,
   /\bgoal\b/i,
-  /\bdecid(?:ed|es|e)\b/i,
+  /\bdecid(?:ed|es|e|ing)\b/i,
   /\bpolic(?:y|ies)\b/i,
-  /\brequir(?:es?|ement)\b/i,
+  /\brequir(?:ed|es?|ement|ing)\b/i,
   /\bconstraint\b/i,
   /\bstandard\b/i,
   /\bconvention\b/i,
@@ -34,14 +35,15 @@ const NOTE_SIGNALS = [
 
 /**
  * Keywords that signal a time-specific event/action.
- * If any appear in the content, lean toward "episode".
+ * Intentionally narrow: only unambiguous temporal markers.
+ * Note: "just" is excluded — it too often means "merely/only" rather than "a moment ago".
  */
 const EPISODE_SIGNALS = [
   /\byesterday\b/i,
   /\btoday\b/i,
   /\blast\s+(?:week|month|year|Tuesday|Wednesday|Thursday|Friday|Monday|Sunday|Saturday)\b/i,
   /\bon\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i,
-  /\b(?:just|recently|earlier|this morning|this afternoon)\b/i,
+  /\b(?:recently|earlier|this morning|this afternoon)\b/i,
   /\bdeployed\b/i,
   /\bpushed\b/i,
   /\bfixed\b/i,
@@ -93,31 +95,28 @@ export function classifyMemoryKind(
   const lowerContent = content.toLowerCase();
   const lowerCategory = category.toLowerCase();
 
-  // Temporal episode signals take top priority — explicit time refs override category
+  // 1. Temporal episode signals — highest priority (unambiguous time references override all)
   for (const re of EPISODE_SIGNALS) {
     if (re.test(lowerContent)) return "episode";
   }
 
-  // Tag-level episode signals (e.g. "bug", "deploy", "merge")
-  for (const tag of tags) {
-    if (EPISODE_TAGS.has(tag.toLowerCase())) return "episode";
-  }
-
-  // Category-level override (strong signals, but below temporal content markers)
+  // 2. Category-level override — strong semantic signal from extraction
   if (NOTE_CATEGORIES.has(lowerCategory)) return "note";
   if (EPISODE_CATEGORIES.has(lowerCategory)) return "episode";
 
-  // Tag-level note signals (e.g. "preference", "goal")
+  // 3. Tag-level signals — lower priority than category (categories win over noisy tags)
   for (const tag of tags) {
-    if (NOTE_TAGS.has(tag.toLowerCase())) return "note";
+    const lowerTag = tag.toLowerCase();
+    if (NOTE_TAGS.has(lowerTag)) return "note";
+    if (EPISODE_TAGS.has(lowerTag)) return "episode";
   }
 
-  // Non-temporal note signals in content
+  // 4. Non-temporal note signals in content
   for (const re of NOTE_SIGNALS) {
     if (re.test(lowerContent)) return "note";
   }
 
-  // Default: episode (preserves fidelity, safer to not promote to stable note)
+  // 5. Default: episode (preserves fidelity, safer to not promote to stable note)
   return "episode";
 }
 
