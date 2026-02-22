@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+## [8.2.0-pr18] — v8.2 PR 18: Multi-Graph Memory
+
+### Added
+- Multi-graph memory (MAGMA/SYNAPSE-inspired, behind `multiGraphMemoryEnabled`, default off):
+  - New `src/graph.ts`: maintains three typed edge graphs — entity co-reference (`entity.jsonl`), temporal sequence (`time.jsonl`), and causal inference (`causal.jsonl`) — stored under `memory/state/graphs/`.
+  - **Entity graph**: edges written during `persistExtraction` when a new memory shares an `entityRef` with existing memories (capped at `maxEntityGraphEdgesPerMemory`, default 10).
+  - **Time graph**: edges written between consecutive memories within the same conversation thread.
+  - **Causal graph**: edges written when new memory content contains causal signal phrases (`because`, `therefore`, `led to`, `as a result`, `caused`, `because of`).
+  - **Spreading activation** (`GraphIndex.spreadingActivation`): SYNAPSE-inspired BFS traversal from seed nodes across all enabled graph types with configurable per-hop decay. Ready for use by PR 19 (graph recall mode).
+  - All graph writes are fail-open: any error is caught and logged; memory writes succeed regardless.
+  - New config: `multiGraphMemoryEnabled`, `entityGraphEnabled`, `timeGraphEnabled`, `causalGraphEnabled`, `maxGraphTraversalSteps` (default 3), `graphActivationDecay` (default 0.7), `maxEntityGraphEdgesPerMemory` (default 10).
+
 ## [8.1.1-ai-readiness] — AI Readiness Improvements (PR #19)
 
 ### Added
