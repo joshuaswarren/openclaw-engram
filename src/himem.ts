@@ -24,13 +24,13 @@ const NOTE_SIGNALS = [
   /\bnever\b/i,
   /\bmust\b/i,
   /\bshould\b/i,
-  /\bgoal\b/i,
+  /\bgoals?\b/i,
   /\bdecid(?:ed|es|e|ing)\b/i,
   /\bpolic(?:y|ies)\b/i,
-  /\brequir(?:ed|es?|ement|ing)\b/i,
-  /\bconstraint\b/i,
-  /\bstandard\b/i,
-  /\bconvention\b/i,
+  /\brequir(?:ed|es?|ements?|ing)\b/i,
+  /\bconstraints?\b/i,
+  /\bstandards?\b/i,
+  /\bconventions?\b/i,
 ];
 
 /**
