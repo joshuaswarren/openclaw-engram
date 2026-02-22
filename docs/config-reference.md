@@ -41,10 +41,10 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `recallPlannerMaxQmdResultsMinimal` | `4` | QMD cap in `minimal` recall mode |
 | `memoryBoxesEnabled` | `false` | Enable Memory Box topic-windowed grouping |
 | `traceWeaverEnabled` | `false` | Link recurring-topic boxes into named traces |
-| `memoryBoxTimeGapHours` | `4` | Hours of inactivity that seal an open box |
-| `memoryBoxTopicThreshold` | `0.5` | Topic overlap below this seals the box |
-| `maxMemoriesPerBox` | `20` | Max memories before forced seal |
-| `traceWeaverLookbackDays` | `30` | Days to look back for matching traces |
+| `boxTimeGapMs` | `1800000` | Milliseconds of inactivity that seal an open box (default 30 min) |
+| `boxTopicShiftThreshold` | `0.35` | Topic overlap below this seals the box |
+| `boxMaxMemories` | `50` | Max memories before forced seal |
+| `traceWeaverLookbackDays` | `7` | Days to look back for matching traces |
 | `episodeNoteModeEnabled` | `false` | Classify memories as `episode` or `note` |
 | `verbatimArtifactsEnabled` | `false` | Store high-confidence memories as verbatim anchors |
 | `verbatimArtifactsMinConfidence` | `0.8` | Minimum confidence for artifact writes |
@@ -93,9 +93,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `rerankCacheTtlMs` | `3600000` | Rerank cache TTL (ms) |
 | `feedbackEnabled` | `false` | Enable `memory_feedback` tool and ranking bias |
 | `negativeExamplesEnabled` | `false` | Track and penalize not-useful recalls |
-| `recencyBoostEnabled` | `false` | Boost recently written memories |
-| `recencyBoostWeight` | `0.2` | Recency weight (0–1) |
-| `recencyBoostHalfLifeDays` | `7` | Exponential decay half-life |
+| `recencyWeight` | `0.2` | Recency weight in retrieval ranking (0–1) |
+| `boostAccessCount` | `true` | Boost frequently accessed memories in ranking |
 | `slowLogEnabled` | `false` | Log slow operations |
 | `slowLogThresholdMs` | `2000` | Threshold for slow log entries |
 
@@ -127,7 +126,7 @@ See [namespaces.md](namespaces.md).
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `namespacesEnabled` | `false` | Enable multi-agent namespace isolation |
-| `defaultNamespace` | `local` | Namespace for this agent's private memories |
+| `defaultNamespace` | `default` | Namespace for this agent's private memories |
 | `sharedNamespace` | `shared` | Namespace for promoted shared memories |
 | `namespacePolicies` | `{}` | Per-namespace read/write policies |
 

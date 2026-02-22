@@ -109,9 +109,9 @@ BoxBuilder: open box exists for T?
    NO  → create new open box
         │
  Seal conditions:
-   - Topic overlap drops below threshold (default 0.5)
-   - Time gap since last memory exceeds traceWeaverLookbackDays
-   - Memory count exceeds maxMemoriesPerBox
+   - Topic overlap drops below boxTopicShiftThreshold (default 0.35)
+   - Inactivity exceeds boxTimeGapMs (default 30 minutes)
+   - Memory count exceeds boxMaxMemories (default 50)
         │
         ▼
  Sealed box written to boxes/YYYY-MM-DD/box-<id>.md
