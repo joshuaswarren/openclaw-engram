@@ -45,10 +45,10 @@ before_agent_start
                ▼
 ┌─────────────────────────────────┐
 │  6. Context assembly            │
-│  1. Artifacts (v8.0)            │  highest priority anchors
-│  2. Profile                     │  behavioral context
-│  3. Notes + stable memories     │  durable beliefs
-│  4. Episodes / boxes            │  narrative continuity
+│  1. Profile                     │  behavioral context (prepended first)
+│  2. Artifacts (v8.0)            │  high-confidence anchors
+│  3. Memory boxes                │  recent topic windows
+│  4. Notes + memories            │  search results
 └──────────────┬──────────────────┘
                ▼
          inject into system prompt
@@ -86,11 +86,11 @@ When `intentRoutingEnabled` is on, extraction captures `intent.goal`, `intent.ac
 
 ## Context Token Budget
 
-All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) before injection. Assembly order ensures the highest-value content is kept when the budget is tight:
-1. Artifacts
-2. Profile
-3. Notes
-4. Episodes / boxes
+All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) before injection. Sections are assembled in this order:
+1. Profile
+2. Artifacts
+3. Memory boxes
+4. Notes + search results
 
 ## Namespace Routing (v3.0)
 

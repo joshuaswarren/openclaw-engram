@@ -32,6 +32,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
 | `qmdMaxResults` | `8` | Max QMD results per search |
 | `qmdPath` | `(auto)` | Absolute path to `qmd` binary (bypasses PATH) |
+| `embeddingFallbackEnabled` | `true` | Use embedding search when QMD is unavailable |
+| `embeddingFallbackProvider` | `auto` | `auto`, `openai`, or `local` — selects embedding API for fallback |
 
 ## v8.0 Memory OS
 
