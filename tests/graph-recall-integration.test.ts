@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import {
   Orchestrator,
@@ -118,4 +118,79 @@ test("recallInternal writes graph recall snapshot in graph_mode", async () => {
   assert.equal(snapshot.mode, "graph_mode");
   assert.equal(snapshot.seedCount, 1);
   assert.equal(snapshot.expandedCount, 1);
+});
+
+test("getLastGraphRecallSnapshot reads persisted snapshot", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-graph-recall-read-"));
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+  });
+  const orchestrator = new Orchestrator(cfg);
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "state", "last_graph_recall.json"),
+    JSON.stringify(
+      {
+        recordedAt: "2026-02-22T00:00:00.000Z",
+        mode: "graph_mode",
+        queryHash: "abc123",
+        queryLength: 42,
+        namespaces: ["default"],
+        seedCount: 1,
+        expandedCount: 1,
+        seeds: ["/tmp/memory/default/facts/a.md"],
+        expanded: [{ path: "/tmp/memory/default/facts/b.md", score: 0.7, namespace: "default" }],
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+
+  const snapshot = await orchestrator.getLastGraphRecallSnapshot();
+  assert.ok(snapshot);
+  assert.equal(snapshot!.mode, "graph_mode");
+  assert.equal(snapshot!.seedCount, 1);
+  assert.equal(snapshot!.expandedCount, 1);
+  assert.equal(snapshot!.expanded[0]?.namespace, "default");
+});
+
+test("explainLastGraphRecall returns human-readable graph explanation", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-graph-recall-explain-"));
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+  });
+  const orchestrator = new Orchestrator(cfg);
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "state", "last_graph_recall.json"),
+    JSON.stringify(
+      {
+        recordedAt: "2026-02-22T00:00:00.000Z",
+        mode: "graph_mode",
+        queryHash: "abc123",
+        queryLength: 42,
+        namespaces: ["default"],
+        seedCount: 1,
+        expandedCount: 2,
+        seeds: ["/tmp/memory/default/facts/a.md"],
+        expanded: [
+          { path: "/tmp/memory/default/facts/b.md", score: 0.7, namespace: "default" },
+          { path: "/tmp/memory/default/facts/c.md", score: 0.6, namespace: "default" },
+        ],
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+
+  const explanation = await orchestrator.explainLastGraphRecall({ maxExpanded: 1 });
+  assert.match(explanation, /Last Graph Recall/);
+  assert.match(explanation, /Mode: graph_mode/);
+  assert.match(explanation, /showing 1/);
 });

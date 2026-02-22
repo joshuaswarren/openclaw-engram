@@ -64,6 +64,18 @@ import type {
   RecallPlanMode,
 } from "./types.js";
 
+export interface GraphRecallSnapshot {
+  recordedAt: string;
+  mode: RecallPlanMode | string;
+  queryHash: string;
+  queryLength: number;
+  namespaces: string[];
+  seedCount: number;
+  expandedCount: number;
+  seeds: string[];
+  expanded: Array<{ path: string; score: number; namespace: string }>;
+}
+
 export function isArtifactMemoryPath(filePath: string): boolean {
   return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
 }
@@ -707,6 +719,64 @@ export class Orchestrator {
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
+  }
+
+  async getLastGraphRecallSnapshot(namespace?: string): Promise<GraphRecallSnapshot | null> {
+    const storage = await this.getStorage(namespace);
+    const snapshotPath = path.join(storage.dir, "state", "last_graph_recall.json");
+    try {
+      const raw = await readFile(snapshotPath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<GraphRecallSnapshot>;
+      if (!parsed || typeof parsed !== "object") return null;
+      return {
+        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        mode: typeof parsed.mode === "string" ? parsed.mode : "full",
+        queryHash: typeof parsed.queryHash === "string" ? parsed.queryHash : "",
+        queryLength: typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
+        namespaces: Array.isArray(parsed.namespaces)
+          ? parsed.namespaces.filter((v): v is string => typeof v === "string")
+          : [],
+        seedCount: typeof parsed.seedCount === "number" ? parsed.seedCount : 0,
+        expandedCount: typeof parsed.expandedCount === "number" ? parsed.expandedCount : 0,
+        seeds: Array.isArray(parsed.seeds)
+          ? parsed.seeds.filter((v): v is string => typeof v === "string")
+          : [],
+        expanded: Array.isArray(parsed.expanded)
+          ? parsed.expanded
+            .filter((v): v is { path: string; score: number; namespace: string } =>
+              !!v &&
+              typeof v === "object" &&
+              typeof (v as { path?: unknown }).path === "string" &&
+              typeof (v as { score?: unknown }).score === "number" &&
+              typeof (v as { namespace?: unknown }).namespace === "string",
+            )
+          : [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async explainLastGraphRecall(options?: {
+    namespace?: string;
+    maxExpanded?: number;
+  }): Promise<string> {
+    const snapshot = await this.getLastGraphRecallSnapshot(options?.namespace);
+    if (!snapshot) return "No graph-recall snapshot found yet.";
+    const maxExpanded = Math.max(1, Math.min(50, options?.maxExpanded ?? 10));
+    const expanded = snapshot.expanded.slice(0, maxExpanded);
+    return [
+      "## Last Graph Recall",
+      "",
+      `Recorded at: ${snapshot.recordedAt || "unknown"}`,
+      `Mode: ${snapshot.mode}`,
+      `Query hash: ${snapshot.queryHash || "unknown"} (len=${snapshot.queryLength})`,
+      `Namespaces: ${snapshot.namespaces.length > 0 ? snapshot.namespaces.join(", ") : "none"}`,
+      `Seed paths (${snapshot.seedCount}):`,
+      ...snapshot.seeds.map((p) => `- ${p}`),
+      `Expanded paths (${snapshot.expandedCount}, showing ${expanded.length}):`,
+      ...expanded.map((e) => `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace})`),
+    ].join("\n");
   }
 
   async updateConversationIndex(
@@ -1521,6 +1591,7 @@ export class Orchestrator {
             "",
             "The user may be disputing an answer. To debug whether retrieval misled the response:",
             "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+            "- If graph recall is enabled, use `memory_graph_explain_last_recall` to inspect seed/expanded graph paths.",
             "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
             "",
             "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",

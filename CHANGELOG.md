@@ -16,6 +16,11 @@ All notable changes to this project will be documented in this file.
   - Added `state/last_graph_recall.json` trace output capturing graph recall mode, query hash/length, namespace scope, seed paths, and expanded candidates for explainability/debugging.
   - Added helper/test coverage for graph candidate merge semantics and storage-relative graph path resolution.
   - Added integration coverage asserting graph-mode recall writes a snapshot.
+- v8.2 PR 19C (graph explainability slice):
+  - Added `memory_graph_explain_last_recall` tool to inspect the latest graph-recall snapshot (seed paths + expanded candidates).
+  - Added orchestrator APIs `getLastGraphRecallSnapshot()` and `explainLastGraphRecall()` for stable snapshot parsing and operator-friendly explain output.
+  - Updated retrieval dispute helper hints to include graph-recall explainability guidance.
+  - Added tests for snapshot read + explain formatting behavior.
 
 ### Docs
 - Updated v8.2 and v8.3 implementation plans to split large releases into smaller PR slices (A-D) for safer review and rollout.
