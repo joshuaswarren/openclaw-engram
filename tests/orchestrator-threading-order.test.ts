@@ -17,12 +17,12 @@ test("runExtraction establishes thread context before persistExtraction", () => 
   );
 });
 
-test("runExtraction does not re-append all persisted IDs after persistExtraction", () => {
+test("runExtraction batch-appends persisted IDs only when graphing is disabled", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
 
-  assert.equal(
-    source.includes("await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);"),
-    false,
-    "episode IDs should be appended during each write before graph edge construction, not batched after persistence",
+  assert.match(
+    source,
+    /if\s*\(\s*this\.config\.threadingEnabled\s*&&\s*!this\.config\.multiGraphMemoryEnabled\s*&&\s*threadIdForExtraction\s*&&\s*persistedIds\.length > 0[\s\S]*?await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*persistedIds\);/m,
+    "runExtraction should batch-append once after persistence when graphing is disabled",
   );
 });

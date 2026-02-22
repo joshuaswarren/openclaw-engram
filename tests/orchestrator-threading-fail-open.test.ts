@@ -29,6 +29,21 @@ test("persistExtraction appends each new memory ID to the active thread before g
   );
 });
 
+test("persistExtraction gates per-memory thread appends behind multiGraphMemoryEnabled", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+
+  assert.match(
+    source,
+    /if\s*\(\s*this\.config\.multiGraphMemoryEnabled\s*&&\s*threadIdForExtraction\s*\)\s*\{\s*try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[memoryId\]\);/m,
+    "non-chunked per-memory append should only run when graphing is enabled",
+  );
+  assert.match(
+    source,
+    /if\s*\(\s*this\.config\.multiGraphMemoryEnabled\s*&&\s*threadIdForExtraction\s*\)\s*\{\s*try\s*\{\s*await this\.threading\.appendEpisodeIds\(threadIdForExtraction,\s*\[parentId\]\);/m,
+    "chunked parent per-memory append should only run when graphing is enabled",
+  );
+});
+
 test("buildGraphEdge does not read global current thread ID", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
 

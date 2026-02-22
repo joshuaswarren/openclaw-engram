@@ -1688,6 +1688,20 @@ export class Orchestrator {
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }
 
+    // When graphing is disabled, batch-append once to avoid per-fact thread I/O.
+    if (
+      this.config.threadingEnabled &&
+      !this.config.multiGraphMemoryEnabled &&
+      threadIdForExtraction &&
+      persistedIds.length > 0
+    ) {
+      try {
+        await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);
+      } catch (err) {
+        log.warn("[threading] appendEpisodeIds failed after persistence (non-fatal)", err);
+      }
+    }
+
     // Thread title update for the already-established thread context.
     if (this.config.threadingEnabled && threadIdForExtraction) {
       const conversationContent = turns.map((t) => t.content).join(" ");
@@ -1921,7 +1935,7 @@ export class Orchestrator {
 
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
-          if (threadIdForExtraction) {
+          if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
             try {
               await this.threading.appendEpisodeIds(threadIdForExtraction, [parentId]);
             } catch (err) {
@@ -2054,7 +2068,7 @@ export class Orchestrator {
         memoryKind,
       });
       persistedIds.push(memoryId);
-      if (threadIdForExtraction) {
+      if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
         try {
           await this.threading.appendEpisodeIds(threadIdForExtraction, [memoryId]);
         } catch (err) {
