@@ -107,7 +107,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |
 | `hourlySummariesIncludeToolStats` | `false` | Include tool usage stats in summaries |
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
-| `conversationIndexQmdCollection` | `(unset)` | QMD collection for conversation index |
+| `conversationIndexQmdCollection` | `openclaw-engram-conversations` | QMD collection for conversation index |
 | `conversationRecallTopK` | `3` | Top-K relevant transcript chunks to inject |
 | `conversationIndexMinUpdateIntervalMs` | `900000` | Min interval between index updates |
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |
@@ -131,7 +131,7 @@ See [shared-context.md](shared-context.md).
 |---------|---------|-------------|
 | `sharedContextEnabled` | `false` | Enable shared cross-agent context |
 | `sharedContextDir` | `(unset)` | Directory for shared context files |
-| `sharedContextMaxInjectChars` | `2000` | Max chars injected from shared context |
+| `sharedContextMaxInjectChars` | `4000` | Max chars injected from shared context |
 
 ## v5.0 Compounding
 
@@ -169,19 +169,12 @@ See [compounding.md](compounding.md).
 | `fileHygiene.archiveDir` | `.engram-archive` | Archive directory name |
 | `fileHygiene.runMinIntervalMs` | `300000` | Min interval between hygiene runs |
 
-## Importance Scoring
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `importanceScoringEnabled` | `false` | Local heuristic importance scoring |
-| `importanceScoreWeightInRetrieval` | `0.15` | Importance weight in retrieval ranking |
-
 ## Access Tracking
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `accessTrackingEnabled` | `false` | Track access frequency per memory |
-| `accessBoostWeight` | `0.1` | Weight of access frequency in ranking |
+| `accessTrackingEnabled` | `true` | Track access frequency per memory |
+| `boostAccessCount` | `true` | Boost frequently accessed memories in ranking |
 
 ## Memory Linking
 
