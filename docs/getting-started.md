@@ -33,10 +33,10 @@ Add to `openclaw.json` under `plugins.entries.openclaw-engram.config`:
 }
 ```
 
-All other settings have sensible defaults. Reload the gateway:
+All other settings have sensible defaults. Config changes require a full gateway restart (hot reload via `SIGUSR1` does not fire `gateway_start`):
 
 ```bash
-kill -USR1 $(pgrep openclaw-gateway)
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 ```
 
 Verify startup:
