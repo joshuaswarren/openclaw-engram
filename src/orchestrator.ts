@@ -32,8 +32,8 @@ import {
   clearIndexes,
   indexesExist,
   deindexMemory,
-  queryByDateRange,
-  queryByTags,
+  queryByDateRangeAsync,
+  queryByTagsAsync,
   isTemporalQuery,
   recencyWindowFromPrompt,
   extractTagsFromPrompt,
@@ -1844,6 +1844,16 @@ export class Orchestrator {
             strength: contradiction.confidence,
             reason: contradiction.reason,
           });
+          // Deindex the superseded memory so stale paths don't remain in
+          // index_time.json / index_tags.json after the incremental update.
+          if (this.config.queryAwareIndexingEnabled && contradiction.supersededPath) {
+            deindexMemory(
+              this.config.memoryDir,
+              contradiction.supersededPath,
+              contradiction.supersededCreated,
+              contradiction.supersededTags,
+            );
+          }
         }
       }
 
@@ -2642,27 +2652,45 @@ export class Orchestrator {
     if (results.length === 0) return results;
 
     const now = Date.now();
-    // Only read memory files referenced in QMD results (not all 15,000+).
     const memoryByPath = new Map<string, MemoryFile>();
-    await Promise.all(
-      results.map(async (r) => {
-        if (!r.path || memoryByPath.has(r.path)) return;
-        const mem = await this.storage.readMemoryByPath(r.path);
-        if (mem) memoryByPath.set(r.path, mem);
-      }),
-    );
+
+    // Determine temporal/tag query params before I/O (pure computation).
+    const resultPaths = new Set(results.map((r) => r.path).filter(Boolean) as string[]);
+    let temporalFromDate: string | null = null;
+    let promptTags: string[] = [];
+    if (this.config.queryAwareIndexingEnabled && prompt) {
+      if (isTemporalQuery(prompt)) {
+        temporalFromDate = recencyWindowFromPrompt(prompt, now);
+      }
+      promptTags = extractTagsFromPrompt(prompt);
+    }
+
+    // Run all file I/O in parallel: memory files + index files (async, non-blocking).
+    const [, rawTemporal, rawTags] = await Promise.all([
+      Promise.all(
+        results.map(async (r) => {
+          if (!r.path || memoryByPath.has(r.path)) return;
+          const mem = await this.storage.readMemoryByPath(r.path);
+          if (mem) memoryByPath.set(r.path, mem);
+        }),
+      ),
+      temporalFromDate !== null
+        ? queryByDateRangeAsync(this.config.memoryDir, temporalFromDate)
+        : Promise.resolve<Set<string> | null>(null),
+      promptTags.length > 0
+        ? queryByTagsAsync(this.config.memoryDir, promptTags)
+        : Promise.resolve<Set<string> | null>(null),
+    ]);
 
     const queryIntent = this.config.intentRoutingEnabled && prompt
       ? inferIntentFromText(prompt)
       : null;
 
     // v8.1: Temporal + Tag prefilter candidate set
-    // Build path sets from fast on-disk indexes (synchronous reads, fail-open).
     // Scope to result paths first so cross-namespace paths don't consume the cap.
     let temporalCandidates: Set<string> | null = null;
     let tagCandidates: Set<string> | null = null;
     if (this.config.queryAwareIndexingEnabled && prompt) {
-      const resultPaths = new Set(results.map((r) => r.path).filter(Boolean) as string[]);
       const maxCandidates = this.config.queryAwareIndexingMaxCandidates;
       const capSet = (s: Set<string> | null): Set<string> | null => {
         if (!s) return null;
@@ -2671,13 +2699,11 @@ export class Orchestrator {
         if (maxCandidates === 0 || scoped.size <= maxCandidates) return scoped.size > 0 ? scoped : null;
         return new Set(Array.from(scoped).slice(0, maxCandidates));
       };
-      if (isTemporalQuery(prompt)) {
-        const fromDate = recencyWindowFromPrompt(prompt, now);
-        temporalCandidates = capSet(queryByDateRange(this.config.memoryDir, fromDate));
+      if (temporalFromDate !== null) {
+        temporalCandidates = capSet(rawTemporal);
       }
-      const promptTags = extractTagsFromPrompt(prompt);
       if (promptTags.length > 0) {
-        tagCandidates = capSet(queryByTags(this.config.memoryDir, promptTags));
+        tagCandidates = capSet(rawTags);
       }
     }
 
@@ -2809,7 +2835,7 @@ export class Orchestrator {
   private async checkForContradiction(
     content: string,
     category: string,
-  ): Promise<{ supersededId: string; confidence: number; reason: string } | null> {
+  ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
     if (!this.qmd.isAvailable()) return null;
 
     // Search for similar memories
@@ -2863,6 +2889,9 @@ export class Orchestrator {
               supersededId: existingMemory.frontmatter.id,
               confidence: verification.confidence,
               reason: verification.reasoning,
+              supersededPath: existingMemory.path,
+              supersededCreated: existingMemory.frontmatter.created,
+              supersededTags: existingMemory.frontmatter.tags ?? [],
             };
           }
         }

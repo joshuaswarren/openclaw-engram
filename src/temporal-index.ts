@@ -293,6 +293,46 @@ export function queryByDateRange(
 }
 
 /**
+ * Async version of queryByDateRange — uses non-blocking fs.promises.readFile.
+ * Prefer this in async scoring paths (e.g. boostSearchResults) to avoid
+ * blocking the Node.js event loop when index files are large.
+ */
+export async function queryByDateRangeAsync(
+  memoryDir: string,
+  fromDate: string,
+  toDate?: string,
+): Promise<Set<string> | null> {
+  try {
+    const tPath = temporalIndexPath(memoryDir);
+    let raw: string;
+    try {
+      raw = await fs.promises.readFile(tPath, "utf8");
+    } catch {
+      return null; // File missing or unreadable
+    }
+    let tIndex: TemporalIndex;
+    try {
+      tIndex = JSON.parse(raw) as TemporalIndex;
+    } catch {
+      tIndex = { version: INDEX_VERSION, dates: {} };
+    }
+    const end = toDate ?? new Date().toISOString().slice(0, 10);
+
+    const results = new Set<string>();
+    for (const [date, paths] of Object.entries(tIndex.dates)) {
+      if (date >= fromDate && date <= end) {
+        for (const p of paths) {
+          results.add(p);
+        }
+      }
+    }
+    return results;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Query the tag index for memory paths matching any of the given tags.
  *
  * @param memoryDir Root memory directory
@@ -306,6 +346,44 @@ export function queryByTags(memoryDir: string, tags: string[]): Set<string> | nu
     if (!fs.existsSync(gPath)) return null;
 
     const gIndex = readJsonSafe<TagIndex>(gPath, { version: INDEX_VERSION, tags: {} });
+
+    const results = new Set<string>();
+    for (const tag of tags) {
+      const key = tag.toLowerCase();
+      const paths = gIndex.tags[key] ?? [];
+      for (const p of paths) {
+        results.add(p);
+      }
+    }
+    return results.size > 0 ? results : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Async version of queryByTags — uses non-blocking fs.promises.readFile.
+ * Prefer this in async scoring paths to avoid blocking the Node.js event loop.
+ */
+export async function queryByTagsAsync(
+  memoryDir: string,
+  tags: string[],
+): Promise<Set<string> | null> {
+  if (tags.length === 0) return null;
+  try {
+    const gPath = tagIndexPath(memoryDir);
+    let raw: string;
+    try {
+      raw = await fs.promises.readFile(gPath, "utf8");
+    } catch {
+      return null; // File missing or unreadable
+    }
+    let gIndex: TagIndex;
+    try {
+      gIndex = JSON.parse(raw) as TagIndex;
+    } catch {
+      gIndex = { version: INDEX_VERSION, tags: {} };
+    }
 
     const results = new Set<string>();
     for (const tag of tags) {
