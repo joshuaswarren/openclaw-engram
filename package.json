@@ -63,9 +63,12 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
     "test": "tsx --test",
+    "test:coverage": "c8 --config .c8rc.json tsx --test",
     "preflight": "bash scripts/pr-preflight.sh full",
     "preflight:quick": "bash scripts/pr-preflight.sh quick",
     "review:cursor": "bash scripts/cursor-prepush-review.sh",
