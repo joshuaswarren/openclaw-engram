@@ -353,6 +353,9 @@ export interface BufferState {
 
 /** Memory status for lifecycle management */
 export type MemoryStatus = "active" | "superseded" | "archived";
+export type LifecycleState = "candidate" | "validated" | "active" | "stale" | "archived";
+export type VerificationState = "unverified" | "user_confirmed" | "system_inferred" | "disputed";
+export type PolicyClass = "ephemeral" | "durable" | "protected";
 
 /** Importance level tiers */
 export type ImportanceLevel = "critical" | "high" | "normal" | "low" | "trivial";
@@ -392,6 +395,18 @@ export interface MemoryFrontmatter {
   supersededAt?: string;
   /** Timestamp when archived */
   archivedAt?: string;
+  /** Policy-driven lifecycle state used for retrieval eligibility/ranking. */
+  lifecycleState?: LifecycleState;
+  /** Verification provenance used by lifecycle policy. */
+  verificationState?: VerificationState;
+  /** Policy class used by lifecycle guardrails. */
+  policyClass?: PolicyClass;
+  /** Last lifecycle validation timestamp (ISO 8601). */
+  lastValidatedAt?: string;
+  /** Lifecycle decay score in [0,1]. */
+  decayScore?: number;
+  /** Lifecycle heat score in [0,1]. */
+  heatScore?: number;
   // Access tracking (Phase 1A)
   /** Number of times this memory has been retrieved */
   accessCount?: number;

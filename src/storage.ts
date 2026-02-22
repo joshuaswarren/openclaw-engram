@@ -18,6 +18,9 @@ import type {
   MemoryFile,
   MemoryFrontmatter,
   MemoryLink,
+  LifecycleState,
+  VerificationState,
+  PolicyClass,
   MemoryStatus,
   MemorySummary,
   MetaState,
@@ -90,6 +93,13 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.supersededBy) lines.push(`supersededBy: ${fm.supersededBy}`);
   if (fm.supersededAt) lines.push(`supersededAt: ${fm.supersededAt}`);
   if (fm.archivedAt) lines.push(`archivedAt: ${fm.archivedAt}`);
+  // Lifecycle policy fields
+  if (fm.lifecycleState) lines.push(`lifecycleState: ${fm.lifecycleState}`);
+  if (fm.verificationState) lines.push(`verificationState: ${fm.verificationState}`);
+  if (fm.policyClass) lines.push(`policyClass: ${fm.policyClass}`);
+  if (fm.lastValidatedAt) lines.push(`lastValidatedAt: ${fm.lastValidatedAt}`);
+  if (fm.decayScore !== undefined) lines.push(`decayScore: ${fm.decayScore}`);
+  if (fm.heatScore !== undefined) lines.push(`heatScore: ${fm.heatScore}`);
   // Access tracking
   if (fm.accessCount !== undefined && fm.accessCount > 0) {
     lines.push(`accessCount: ${fm.accessCount}`);
@@ -187,6 +197,8 @@ function parseFrontmatter(
 
   // Parse accessCount
   const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;
+  const decayScore = fm.decayScore !== undefined ? parseFloat(fm.decayScore) : undefined;
+  const heatScore = fm.heatScore !== undefined ? parseFloat(fm.heatScore) : undefined;
 
   // Parse importance
   let importance: ImportanceScore | undefined;
@@ -238,6 +250,12 @@ function parseFrontmatter(
       supersededBy: fm.supersededBy || undefined,
       supersededAt: fm.supersededAt || undefined,
       archivedAt: fm.archivedAt || undefined,
+      lifecycleState: (fm.lifecycleState as LifecycleState) || undefined,
+      verificationState: (fm.verificationState as VerificationState) || undefined,
+      policyClass: (fm.policyClass as PolicyClass) || undefined,
+      lastValidatedAt: fm.lastValidatedAt || undefined,
+      decayScore: Number.isFinite(decayScore) ? decayScore : undefined,
+      heatScore: Number.isFinite(heatScore) ? heatScore : undefined,
       // Access tracking
       accessCount: accessCount && accessCount > 0 ? accessCount : undefined,
       lastAccessed: fm.lastAccessed || undefined,
