@@ -92,7 +92,7 @@ export function parseIsoHour(iso: string): string {
 
 // Returns ISO week key: YYYY-WW
 export function isoWeekKey(date: Date): string {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -148,10 +148,26 @@ export class TmtBuilder {
       const [date, hour] = key.split("::");
       const nodePath = hourNodePath(this.baseDir, date, hour);
 
-      // Skip if already built
-      if (fs.existsSync(nodePath)) continue;
+      // Rebuild if missing or if more memories arrived for this hour
+      let shouldBuild = !fs.existsSync(nodePath);
+      if (!shouldBuild) {
+        try {
+          const existing = await readFile(nodePath, "utf8");
+          const countMatch = existing.match(/memoryCount: (\d+)/);
+          if (countMatch && parseInt(countMatch[1], 10) < entries.length) {
+            shouldBuild = true; // more memories now — rebuild
+          }
+        } catch { shouldBuild = true; }
+      }
+      if (!shouldBuild) continue;
 
-      const summary = await summarize(entries.map((e) => e.content), "hour");
+      let summary: string;
+      try {
+        summary = await summarize(entries.map((e) => e.content), "hour");
+      } catch (err) {
+        console.warn(`[engram] tmt: hour node summarize failed for ${key} (ignored): ${err}`);
+        continue;
+      }
       const sortedCreated = entries.map((e) => e.created).sort();
       const fm: TmtNodeFrontmatter = {
         level: "hour",
@@ -190,12 +206,33 @@ export class TmtBuilder {
       }
       if (!shouldBuild) continue;
 
-      const summary = await summarize(entries.map((e) => e.content), "day");
+      // Collect hour-node summaries for this day first; fall back to raw content
+      const hourSummaries: string[] = [];
+      for (let h = 0; h < 24; h++) {
+        const hourStr = String(h).padStart(2, "0");
+        const hPath = hourNodePath(this.baseDir, date, hourStr);
+        if (fs.existsSync(hPath)) {
+          try {
+            const hContent = await readFile(hPath, "utf8");
+            const hSummary = hContent.replace(/^---[\s\S]*?---\n\n?/, "").trim();
+            if (hSummary) hourSummaries.push(hSummary);
+          } catch { /* skip */ }
+        }
+      }
+      const inputs = hourSummaries.length > 0 ? hourSummaries : entries.map((e) => e.content);
+
+      let summary: string;
+      try {
+        summary = await summarize(inputs, "day");
+      } catch (err) {
+        console.warn(`[engram] tmt: day node summarize failed for ${date} (ignored): ${err}`);
+        continue;
+      }
       const sortedCreated = entries.map((e) => e.created).sort();
       const fm: TmtNodeFrontmatter = {
         level: "day",
-        periodStart: `${date}T00:00:00.000Z`,
-        periodEnd: `${date}T23:59:59.999Z`,
+        periodStart: sortedCreated[0],
+        periodEnd: sortedCreated[sortedCreated.length - 1],
         memoryCount: entries.length,
         sourceIds: entries.map((e) => e.id),
         builtAt: new Date().toISOString(),
@@ -297,11 +334,24 @@ export class TmtBuilder {
       if (weekFiles.length === 0) return;
 
       const weekSummaries: string[] = [];
+      let totalCount = 0;
+      let earliestStart: string | undefined;
+      let latestEnd: string | undefined;
       for (const f of weekFiles) {
         try {
           const content = await readFile(path.join(dir, f), "utf8");
           const summary = content.replace(/^---[\s\S]*?---\n\n?/, "").trim();
           if (summary) weekSummaries.push(summary);
+          const countMatch = content.match(/memoryCount: (\d+)/);
+          if (countMatch) totalCount += parseInt(countMatch[1], 10);
+          const startMatch = content.match(/periodStart: "([^"]+)"/);
+          const endMatch = content.match(/periodEnd: "([^"]+)"/);
+          if (startMatch) {
+            if (!earliestStart || startMatch[1] < earliestStart) earliestStart = startMatch[1];
+          }
+          if (endMatch) {
+            if (!latestEnd || endMatch[1] > latestEnd) latestEnd = endMatch[1];
+          }
         } catch { /* skip */ }
       }
 
@@ -310,21 +360,11 @@ export class TmtBuilder {
       const nodePath = personaNodePath(this.baseDir);
       const summary = await summarize(weekSummaries, "persona");
 
-      // Count total memories referenced across included week nodes
-      let totalCount = 0;
-      for (const f of weekFiles) {
-        try {
-          const content = await readFile(path.join(dir, f), "utf8");
-          const countMatch = content.match(/memoryCount: (\d+)/);
-          if (countMatch) totalCount += parseInt(countMatch[1], 10);
-        } catch { /* skip */ }
-      }
-
       const now = new Date().toISOString();
       const fm: TmtNodeFrontmatter = {
         level: "persona",
-        periodStart: now,
-        periodEnd: now,
+        periodStart: earliestStart ?? now,
+        periodEnd: latestEnd ?? now,
         memoryCount: totalCount,
         sourceIds: [],
         builtAt: now,
@@ -337,7 +377,7 @@ export class TmtBuilder {
 
   /**
    * Return the summary text of the most relevant TMT node for a given prompt.
-   * Preference: day node for today > most recent day node > most recent hour node.
+   * Preference: day node for today > most recent day node.
    * Returns null if no nodes exist or feature is disabled.
    */
   async getMostRelevantNode(): Promise<{ level: TmtLevel; summary: string } | null> {

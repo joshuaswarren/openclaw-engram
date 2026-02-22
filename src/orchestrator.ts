@@ -2341,7 +2341,7 @@ export class Orchestrator {
             {
               temperature: 0.3,
               maxTokens: this.config.tmtSummaryMaxTokens,
-              operation: "entity_summary",
+              operation: "tmt_summary",
             },
           );
           return response?.content?.trim() ?? texts.slice(0, 3).join(" ");
