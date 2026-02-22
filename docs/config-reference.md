@@ -158,7 +158,7 @@ See [compounding.md](compounding.md).
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `fileHygiene.enabled` | `false` | Enable file hygiene features |
-| `fileHygiene.lintEnabled` | `false` | Warn on oversized workspace files |
+| `fileHygiene.lintEnabled` | `true` | Warn on oversized workspace files (when hygiene is enabled) |
 | `fileHygiene.lintPaths` | `[]` | Files to monitor (relative to workspaceDir) |
 | `fileHygiene.lintBudgetBytes` | `20000` | Budget threshold for warnings |
 | `fileHygiene.lintWarnRatio` | `0.8` | Warn at this fraction of budget |

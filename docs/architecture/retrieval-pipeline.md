@@ -70,11 +70,11 @@ Config: `recallPlannerEnabled` (default `true`).
 
 ## QMD Hybrid Search
 
-QMD's `query` command runs BM25 + vector + built-in reranking in a single call. This is the recommended search path.
+Engram's `QmdClient.hybridSearch()` runs BM25 and vector searches as separate subprocess calls and merges results. This avoids QMD's HTTP daemon in favor of direct subprocess execution for reliability.
 
-- Do NOT also enable `rerankEnabled` when using QMD — it causes redundant double reranking.
 - `qmdCollection` specifies which QMD collection to search.
-- `qmdMaxResults` caps the number of results.
+- `qmdMaxResults` caps the number of candidates returned.
+- Optional `rerankEnabled` runs an additional LLM reranking pass over the merged candidates. This adds latency — enable only if QMD's built-in scoring is insufficient.
 
 ## Artifact Anchors (v8.0)
 
