@@ -32,6 +32,9 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
 | `qmdMaxResults` | `8` | Max QMD results per search |
 | `qmdPath` | `(auto)` | Absolute path to `qmd` binary (bypasses PATH) |
+| `qmdDaemonEnabled` | `true` | Use QMD MCP daemon for search (falls back to subprocess) |
+| `qmdDaemonUrl` | `http://localhost:8181/mcp` | QMD daemon MCP endpoint URL |
+| `qmdDaemonRecheckIntervalMs` | `60000` | Interval to re-probe daemon availability after failure |
 | `embeddingFallbackEnabled` | `true` | Use embedding search when QMD is unavailable |
 | `embeddingFallbackProvider` | `auto` | `auto`, `openai`, or `local` — selects embedding API for fallback |
 

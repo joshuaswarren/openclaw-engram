@@ -70,7 +70,7 @@ Config: `recallPlannerEnabled` (default `true`).
 
 ## QMD Hybrid Search
 
-Engram's `QmdClient.hybridSearch()` runs BM25 and vector searches as separate subprocess calls and merges results. This avoids QMD's HTTP daemon in favor of direct subprocess execution for reliability.
+Engram's `QmdClient` runs hybrid BM25 + vector search. It tries the QMD MCP daemon first (`qmdDaemonEnabled`, default `true`); if the daemon is unavailable, it falls back to direct subprocess execution.
 
 - `qmdCollection` specifies which QMD collection to search.
 - `qmdMaxResults` caps the number of candidates returned.
