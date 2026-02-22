@@ -165,6 +165,30 @@ export function mergeArtifactRecallCandidates(
   return out;
 }
 
+export function resolveRecentThreadMemoryPaths(options: {
+  threadEpisodeIds: string[];
+  currentMemoryId: string;
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  storageDir: string;
+  maxRecent: number;
+}): string[] {
+  const allMems = options.allMemsForGraph ?? [];
+  if (allMems.length === 0 || options.threadEpisodeIds.length === 0) return [];
+
+  const pathById = new Map<string, string>();
+  for (const mem of allMems) {
+    const id = mem.frontmatter.id;
+    if (!id) continue;
+    pathById.set(id, path.relative(options.storageDir, mem.path));
+  }
+
+  return options.threadEpisodeIds
+    .filter((id) => id !== options.currentMemoryId)
+    .slice(-Math.max(0, options.maxRecent))
+    .map((id) => pathById.get(id))
+    .filter((p): p is string => typeof p === "string" && p.length > 0);
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -2101,12 +2125,13 @@ export class Orchestrator {
       try {
         const thread = await this.threading.loadThread(threadId);
         if (thread?.episodeIds?.length) {
-          recentInThread.push(
-            ...thread.episodeIds
-              .filter((id: string) => id !== memoryId)
-              .slice(-3)
-              .map((id: string) => path.join("facts", id)),
-          );
+          recentInThread.push(...resolveRecentThreadMemoryPaths({
+            threadEpisodeIds: thread.episodeIds,
+            currentMemoryId: memoryId,
+            allMemsForGraph,
+            storageDir: storage.dir,
+            maxRecent: 3,
+          }));
         }
       } catch { /* fail-open */ }
     }
