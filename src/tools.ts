@@ -199,6 +199,42 @@ Best for:
 
   api.registerTool(
     {
+      name: "memory_graph_explain_last_recall",
+      label: "Explain Graph Recall",
+      description:
+        "Inspect the last graph-mode recall expansion snapshot (seed paths + expanded candidates) to explain why graph memories were included.",
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Optional namespace to inspect. Defaults to defaultNamespace.",
+          }),
+        ),
+        maxExpanded: Type.Optional(
+          Type.Number({
+            description: "Maximum expanded paths to show (default: 10, max: 50).",
+            minimum: 1,
+            maximum: 50,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { namespace, maxExpanded } = params as {
+          namespace?: string;
+          maxExpanded?: number;
+        };
+        const text = await orchestrator.explainLastGraphRecall({
+          namespace,
+          maxExpanded,
+        });
+        return toolResult(text);
+      },
+    },
+    { name: "memory_graph_explain_last_recall" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_feedback_last_recall",
       label: "Feedback Last Recall",
       description:
