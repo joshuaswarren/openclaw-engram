@@ -352,7 +352,7 @@ export function extractTagsFromPrompt(prompt: string): string[] {
  * Used to decide whether to activate the temporal prefilter.
  */
 export function isTemporalQuery(prompt: string): boolean {
-  return /\b(today|yesterday|this week|last week|this month|last month|recent|lately|just now|earlier today|this morning|last night|\d+ days? ago|\d+ hours? ago)\b/i.test(
+  return /\b(today|yesterday|this week|last week|this month|last month|recent(?:ly)?|lately|just now|earlier today|this morning|last night|\d+ days? ago|\d+ hours? ago)\b/i.test(
     prompt,
   );
 }
