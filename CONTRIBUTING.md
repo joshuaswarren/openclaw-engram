@@ -26,6 +26,28 @@ npm test
 npm run build
 ```
 
+Install local guard hooks (recommended):
+
+```bash
+npm run hooks:install
+```
+
+This enables:
+- `pre-commit`: `npm run preflight:quick`
+- `pre-push`: `npm run preflight`
+
+Cursor headless review behavior (`npm run review:cursor`):
+- Runs only if `agent` (preferred) or `cursor-agent` is installed and callable.
+- Auto-skips (non-failing) when Cursor CLI is unavailable/unconfigured.
+- Returns non-zero when it reports findings in strict finding format.
+- Uses documented print mode (`-p`) with `--output-format text` in non-interactive flow.
+- Override knobs:
+  - `CURSOR_PREPUSH_MODEL=<model>` to pick model (default: `auto`).
+  - `CURSOR_PREPUSH_BASE_REF=<ref>` to change diff base (default: `origin/main`).
+  - `CURSOR_PREPUSH_TIMEOUT_SECONDS=<seconds>` to control headless review timeout (default: `300`).
+  - `CURSOR_PREPUSH_MAX_DIFF_CHARS=<chars>` to cap diff included in prompt (default: `120000`).
+  - `CURSOR_PREPUSH_STRICT=1` to fail when Cursor is unavailable/timed-out/unparseable (recommended for maintainers running manual pre-push review).
+
 ## Install path for users
 
 Use npm install via OpenClaw as the primary install path in docs:
@@ -43,6 +65,10 @@ A good PR should:
 - Avoid unrelated refactors in the same PR
 - Update docs for user-facing/config changes
 - Update `CHANGELOG.md` (see changelog policy below)
+
+For retrieval/planner/cache/config changes, run the mandatory hardening gate:
+
+- `docs/ops/pr-review-hardening-playbook.md`
 
 ## Changelog policy
 
@@ -76,6 +102,15 @@ Please ensure:
 - Maintainers may request changes for scope, safety, tests, and documentation.
 - PRs require passing checks and at least one maintainer approval.
 - Significant changes may be merged in follow-up slices to reduce risk.
+- For logic changes in retrieval/planner/caching, reviewers should verify:
+  - flag symmetry (`enabled=false` disables write+read effects)
+  - zero semantics (`0` is never coerced to `1`)
+  - cap-after-filter behavior
+  - cache coherence across instances/concurrency
+  - fallback parity (same policy constraints as primary and fallback paths)
+  - artifact isolation (`artifacts/` excluded from generic memory recall path)
+  - planner mode reachability (`no_recall`, `minimal`, `full`, `graph_mode`)
+  - heuristic robustness (intent patterns cover common language variants)
 
 ## Release process
 

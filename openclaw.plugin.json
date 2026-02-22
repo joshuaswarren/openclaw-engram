@@ -218,6 +218,50 @@
         "default": true,
         "description": "Boost frequently accessed memories in search results"
       },
+      "recallPlannerEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Use lightweight retrieve-vs-think planning to avoid unnecessary recall work."
+      },
+      "recallPlannerMaxQmdResultsMinimal": {
+        "type": "number",
+        "default": 4,
+        "description": "QMD cap used when recall planner selects minimal mode."
+      },
+      "intentRoutingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Attach intent metadata to memories and boost compatible memories at recall."
+      },
+      "intentRoutingBoost": {
+        "type": "number",
+        "default": 0.12,
+        "description": "Maximum score boost applied for intent-compatible memory matches."
+      },
+      "verbatimArtifactsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Write quote-first artifact anchors during extraction and include them in recall."
+      },
+      "verbatimArtifactsMinConfidence": {
+        "type": "number",
+        "default": 0.8,
+        "description": "Minimum extraction confidence required before writing an artifact."
+      },
+      "verbatimArtifactsMaxRecall": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum artifact anchors injected per recall."
+      },
+      "verbatimArtifactCategories": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"]
+        },
+        "default": ["decision", "correction", "principle", "commitment"],
+        "description": "Memory categories eligible for artifact extraction."
+      },
       "queryExpansionEnabled": {
         "type": "boolean",
         "default": false,

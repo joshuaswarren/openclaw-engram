@@ -64,7 +64,12 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
+    "check-config-contract": "tsx scripts/validate-config-contract.ts",
     "test": "tsx --test",
+    "preflight": "bash scripts/pr-preflight.sh full",
+    "preflight:quick": "bash scripts/pr-preflight.sh quick",
+    "review:cursor": "bash scripts/cursor-prepush-review.sh",
+    "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
     "prepack": "npm run build"
   },

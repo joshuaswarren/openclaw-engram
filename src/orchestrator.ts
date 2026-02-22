@@ -23,6 +23,7 @@ import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
+import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -45,7 +46,92 @@ import type {
   MemoryFile,
   PluginConfig,
   QmdSearchResult,
+  RecallPlanMode,
 } from "./types.js";
+
+export function isArtifactMemoryPath(filePath: string): boolean {
+  return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
+}
+
+export function filterRecallCandidates(
+  candidates: QmdSearchResult[],
+  options: {
+    namespacesEnabled: boolean;
+    recallNamespaces: string[];
+    resolveNamespace: (path: string) => string;
+    limit: number;
+  },
+): QmdSearchResult[] {
+  const scopedByNamespace = options.namespacesEnabled
+    ? candidates.filter((r) => options.recallNamespaces.includes(options.resolveNamespace(r.path)))
+    : candidates;
+  return scopedByNamespace
+    .filter((r) => !isArtifactMemoryPath(r.path))
+    .slice(0, Math.max(0, options.limit));
+}
+
+export function computeArtifactRecallLimit(
+  recallMode: RecallPlanMode,
+  recallResultLimit: number,
+  verbatimArtifactsMaxRecall: number,
+): number {
+  if (recallMode === "no_recall") return 0;
+  if (Math.max(0, recallResultLimit) === 0) return 0;
+  const base = Math.max(0, verbatimArtifactsMaxRecall);
+  if (recallMode === "minimal") {
+    return Math.min(base, Math.max(0, recallResultLimit));
+  }
+  return base;
+}
+
+export function computeArtifactCandidateFetchLimit(targetCount: number): number {
+  const cappedTarget = Math.max(0, targetCount);
+  if (cappedTarget === 0) return 0;
+  const headroom = Math.max(8, cappedTarget * 4);
+  return Math.min(200, cappedTarget + headroom);
+}
+
+export function computeQmdHybridFetchLimit(
+  recallFetchLimit: number,
+  artifactsEnabled: boolean,
+  maxArtifactRecall: number,
+): number {
+  const cappedRecallLimit = Math.max(0, recallFetchLimit);
+  if (cappedRecallLimit === 0) return 0;
+  if (!artifactsEnabled) return cappedRecallLimit;
+  // Overscan when artifacts are enabled, then filter artifact paths before
+  // re-applying the recall cap to avoid artifact-dominated top-N starvation.
+  const artifactHeadroom = Math.max(20, Math.max(0, maxArtifactRecall) * 8);
+  return Math.min(400, cappedRecallLimit + artifactHeadroom);
+}
+
+export function mergeArtifactRecallCandidates(
+  candidatesByNamespace: MemoryFile[][],
+  limit: number,
+): MemoryFile[] {
+  const cappedLimit = Math.max(0, limit);
+  if (cappedLimit === 0) return [];
+
+  const out: MemoryFile[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+  while (out.length < cappedLimit) {
+    let hasAnyCandidateAtOffset = false;
+    for (const list of candidatesByNamespace) {
+      if (offset >= list.length) continue;
+      hasAnyCandidateAtOffset = true;
+      const item = list[offset];
+      const dedupeKey = `${item.frontmatter.id}:${item.frontmatter.sourceMemoryId ?? ""}:${item.content}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      out.push(item);
+      if (out.length >= cappedLimit) break;
+    }
+    if (!hasAnyCandidateAtOffset) break;
+    offset += 1;
+  }
+  return out;
+}
 
 export class Orchestrator {
   readonly storage: StorageManager;
@@ -69,6 +155,15 @@ export class Orchestrator {
   private readonly threading: ThreadingManager;
   private readonly rerankCache = new RerankCache();
   private contentHashIndex: ContentHashIndex | null = null;
+  private readonly artifactSourceStatusCache = new WeakMap<
+    StorageManager,
+    {
+      loadedAtMs: number;
+      statusVersion: number;
+      statuses: Map<string, "active" | "superseded" | "archived" | "missing">;
+    }
+  >();
+  private static readonly ARTIFACT_STATUS_CACHE_TTL_MS = 60_000;
 
   // Access tracking buffer (Phase 1A)
   // Maps memoryId -> {count, lastAccessed} for batched updates
@@ -149,6 +244,85 @@ export class Orchestrator {
     this.initPromise = new Promise<void>((resolve) => {
       this.resolveInit = resolve;
     });
+  }
+
+  private async resolveArtifactSourceStatuses(
+    storage: StorageManager,
+    sourceIds: string[],
+  ): Promise<Map<string, "active" | "superseded" | "archived" | "missing">> {
+    const currentStatusVersion = storage.getMemoryStatusVersion();
+    const cached = this.artifactSourceStatusCache.get(storage);
+    let snapshot = cached;
+    const isFresh =
+      snapshot !== undefined &&
+      Date.now() - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS &&
+      snapshot.statusVersion === currentStatusVersion;
+
+    const rebuildSnapshot = async () => {
+      const MAX_STABLE_READ_ATTEMPTS = 3;
+      let latestStatuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
+      let latestVersionAfter = storage.getMemoryStatusVersion();
+
+      for (let attempt = 0; attempt < MAX_STABLE_READ_ATTEMPTS; attempt += 1) {
+        const versionBefore = storage.getMemoryStatusVersion();
+        const allMemories = await storage.readAllMemories();
+        const versionAfter = storage.getMemoryStatusVersion();
+        latestVersionAfter = versionAfter;
+        latestStatuses = new Map(
+          allMemories.map((m) => [
+            m.frontmatter.id,
+            (m.frontmatter.status ?? "active") as "active" | "superseded" | "archived" | "missing",
+          ]),
+        );
+
+        if (versionAfter === versionBefore) {
+          const rebuilt = {
+            loadedAtMs: Date.now(),
+            statusVersion: versionAfter,
+            statuses: latestStatuses,
+          };
+          this.artifactSourceStatusCache.set(storage, rebuilt);
+          return rebuilt;
+        }
+      }
+
+      // Sustained write churn: return latest read without caching a potentially torn snapshot.
+      return {
+        loadedAtMs: Date.now(),
+        statusVersion: latestVersionAfter,
+        statuses: latestStatuses,
+      };
+    };
+
+    if (!isFresh) {
+      snapshot = await rebuildSnapshot();
+    } else {
+      // Warm cache may miss brand-new sourceMemoryId values created after snapshot build.
+      // Refresh once on-demand when unseen IDs are requested.
+      const hasUnknownSourceIds = sourceIds.some((id) => !snapshot?.statuses.has(id));
+      if (hasUnknownSourceIds) {
+        snapshot = await rebuildSnapshot();
+      }
+    }
+
+    // Persist negative lookups in the cached snapshot so stale source IDs do not
+    // trigger repeated full snapshot rebuilds on every matching recall.
+    for (const id of sourceIds) {
+      if (!snapshot?.statuses.has(id)) {
+        snapshot?.statuses.set(id, "missing");
+      }
+    }
+
+    const statuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
+    for (const id of sourceIds) {
+      const status = snapshot?.statuses.get(id);
+      if (status) {
+        statuses.set(id, status);
+      } else {
+        statuses.set(id, "missing");
+      }
+    }
+    return statuses;
   }
 
   async initialize(): Promise<void> {
@@ -491,10 +665,169 @@ export class Orchestrator {
     log.debug(`recall timed out or failed (suppressed): ${errorMsg}`);
   }
 
+  private artifactTypeForCategory(category: string): "decision" | "constraint" | "todo" | "definition" | "commitment" | "correction" | "fact" {
+    if (category === "decision") return "decision";
+    if (category === "commitment") return "commitment";
+    if (category === "correction") return "correction";
+    if (category === "principle") return "constraint";
+    return "fact";
+  }
+
+  private truncateArtifactForRecall(text: string, maxChars = 280): string {
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars - 1)}…`;
+  }
+
+  private async fetchActiveArtifactsForNamespace(
+    namespace: string,
+    prompt: string,
+    targetCount: number,
+  ): Promise<MemoryFile[]> {
+    const storage = await this.storageRouter.storageFor(namespace);
+    let fetchLimit = computeArtifactCandidateFetchLimit(targetCount);
+    const maxFetchLimit = Math.min(800, Math.max(fetchLimit, targetCount * 8));
+    const MAX_ATTEMPTS = 4;
+    let bestFiltered: MemoryFile[] = [];
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const rawResults = await storage.searchArtifacts(prompt, fetchLimit);
+      const sourceIds = Array.from(
+        new Set(
+          rawResults
+            .map((a) => a.frontmatter.sourceMemoryId)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      );
+      const sourceStatus =
+        sourceIds.length > 0
+          ? await this.resolveArtifactSourceStatuses(storage, sourceIds)
+          : new Map<string, "active" | "superseded" | "archived" | "missing">();
+
+      const filtered: MemoryFile[] = [];
+      for (const artifact of rawResults) {
+        const sourceId = artifact.frontmatter.sourceMemoryId;
+        if (!sourceId) {
+          filtered.push(artifact);
+          if (filtered.length >= targetCount) break;
+          continue;
+        }
+        const status = sourceStatus.get(sourceId) ?? "missing";
+        if (status !== "active") continue;
+        filtered.push(artifact);
+        if (filtered.length >= targetCount) break;
+      }
+
+      if (filtered.length >= targetCount) return filtered.slice(0, targetCount);
+      if (filtered.length > bestFiltered.length) {
+        bestFiltered = filtered;
+      }
+      if (rawResults.length === 0) return filtered;
+      if (rawResults.length < fetchLimit && filtered.length > 0) return filtered;
+      if (fetchLimit >= maxFetchLimit) return filtered;
+
+      const growth = Math.max(targetCount * 2, 12);
+      fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
+    }
+
+    return bestFiltered;
+  }
+
+  private async recallArtifactsAcrossNamespaces(
+    prompt: string,
+    recallNamespaces: string[],
+    targetCount: number,
+  ): Promise<MemoryFile[]> {
+    if (targetCount <= 0) return [];
+    const namespaces = Array.from(new Set(recallNamespaces));
+    const filteredByNamespace = await Promise.all(
+      namespaces.map((namespace) => this.fetchActiveArtifactsForNamespace(namespace, prompt, targetCount)),
+    );
+
+    return mergeArtifactRecallCandidates(filteredByNamespace, targetCount);
+  }
+
+  private async fetchQmdMemoryResultsWithArtifactTopUp(
+    prompt: string,
+    qmdFetchLimit: number,
+    qmdHybridFetchLimit: number,
+    options: {
+      namespacesEnabled: boolean;
+      recallNamespaces: string[];
+      resolveNamespace: (path: string) => string;
+    },
+  ): Promise<QmdSearchResult[]> {
+    let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
+    const maxFetchLimit = Math.min(800, Math.max(fetchLimit, qmdFetchLimit * 8));
+    const MAX_ATTEMPTS = 4;
+    let bestFiltered: QmdSearchResult[] = [];
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const memoryResults = await this.qmd.hybridSearch(
+        prompt,
+        undefined,
+        fetchLimit,
+      );
+      const filteredResults = filterRecallCandidates(memoryResults, {
+        namespacesEnabled: options.namespacesEnabled,
+        recallNamespaces: options.recallNamespaces,
+        resolveNamespace: options.resolveNamespace,
+        limit: fetchLimit,
+      });
+
+      if (filteredResults.length >= qmdFetchLimit) {
+        return filteredResults.slice(0, qmdFetchLimit);
+      }
+      if (filteredResults.length > bestFiltered.length) {
+        bestFiltered = filteredResults;
+      }
+      if (memoryResults.length === 0) {
+        return filteredResults;
+      }
+      if (memoryResults.length < fetchLimit && filteredResults.length > 0) {
+        return filteredResults;
+      }
+      if (fetchLimit >= maxFetchLimit) {
+        return filteredResults;
+      }
+
+      const growth = Math.max(20, Math.floor(fetchLimit / 2));
+      fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
+    }
+
+    return bestFiltered;
+  }
+
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
     const sections: string[] = [];
+    const recallMode: RecallPlanMode = this.config.recallPlannerEnabled
+      ? planRecallMode(prompt)
+      : "full";
+    timings.recallPlan = recallMode;
+    const recallResultLimit = recallMode === "no_recall"
+      ? 0
+      : recallMode === "minimal"
+      ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
+      : this.config.qmdMaxResults;
+    const recallHeadroom = this.config.verbatimArtifactsEnabled
+      ? Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)
+      : 12;
+    const computedFetchLimit = recallResultLimit === 0
+      ? 0
+      : Math.max(recallResultLimit, Math.min(200, recallResultLimit + recallHeadroom));
+    const qmdFetchLimit = computedFetchLimit;
+    const qmdHybridFetchLimit = computeQmdHybridFetchLimit(
+      qmdFetchLimit,
+      this.config.verbatimArtifactsEnabled,
+      this.config.verbatimArtifactsMaxRecall,
+    );
+    const embeddingFetchLimit = computedFetchLimit;
+
+    if (recallMode === "no_recall") {
+      timings.total = `${Date.now() - recallStart}ms`;
+      return "";
+    }
 
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
@@ -551,6 +884,25 @@ export class Orchestrator {
       }
     })();
 
+    // 1c. Verbatim artifacts (v8.0 phase 1)
+    const artifactsPromise = (async (): Promise<MemoryFile[]> => {
+      if (!this.config.verbatimArtifactsEnabled) return [];
+      const t0 = Date.now();
+      const targetCount = computeArtifactRecallLimit(
+        recallMode,
+        recallResultLimit,
+        this.config.verbatimArtifactsMaxRecall,
+      );
+      if (targetCount <= 0) {
+        timings.artifacts = "skip(limit=0)";
+        return [];
+      }
+      const results = await this.recallArtifactsAcrossNamespaces(prompt, recallNamespaces, targetCount);
+
+      timings.artifacts = `${Date.now() - t0}ms`;
+      return results;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -558,31 +910,40 @@ export class Orchestrator {
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
+      if (recallResultLimit <= 0) {
+        timings.qmd = "skip(limit=0)";
+        return null;
+      }
       if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
         timings.qmd = "skip";
         log.debug(`QMD skip: qmdEnabled=${this.config.qmdEnabled} ${this.qmd.debugStatus()}`);
         return null;
       }
       const t0 = Date.now();
-
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
-      const memoryResults = await this.qmd.hybridSearch(
+      const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
         prompt,
-        undefined,
-        this.config.qmdMaxResults,
+        qmdFetchLimit,
+        qmdHybridFetchLimit,
+        {
+          namespacesEnabled: this.config.namespacesEnabled,
+          recallNamespaces,
+          resolveNamespace: (p) => this.namespaceFromPath(p),
+        },
       );
 
       timings.qmd = `${Date.now() - t0}ms`;
-      return { memoryResultsLists: [memoryResults], globalResults: [] };
+      return { memoryResultsLists: [filteredResults], globalResults: [] };
     })();
 
     // --- Wait for all parallel work ---
-    const [sharedCtx, profile, kiResult, qmdResult] = await Promise.all([
+    const [sharedCtx, profile, kiResult, artifacts, qmdResult] = await Promise.all([
       sharedContextPromise,
       profilePromise,
       knowledgeIndexPromise,
+      artifactsPromise,
       qmdPromise,
     ]);
 
@@ -598,6 +959,17 @@ export class Orchestrator {
     if (kiResult?.result) {
       sections.push(kiResult.result);
       log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+    }
+
+    // 1c. Verbatim artifacts (quote-first anchors)
+    if (artifacts.length > 0) {
+      const lines = artifacts.map((a) => {
+        const artifactType = a.frontmatter.artifactType ?? "fact";
+        const createdRaw = typeof a.frontmatter.created === "string" ? a.frontmatter.created : "";
+        const created = createdRaw ? createdRaw.slice(0, 19).replace("T", " ") : "unknown-time";
+        return `- [${artifactType}] "${this.truncateArtifactForRecall(a.content)}" (${created})`;
+      });
+      sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
     }
 
     // 2. QMD results — post-process and format
@@ -629,9 +1001,11 @@ export class Orchestrator {
           recallNamespaces.includes(this.namespaceFromPath(r.path)),
         );
       }
+      // Artifacts are injected through dedicated verbatim recall flow only.
+      memoryResults = memoryResults.filter((r) => !isArtifactMemoryPath(r.path));
 
       // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces);
+      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, prompt);
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
@@ -668,6 +1042,8 @@ export class Orchestrator {
         log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
       }
 
+      memoryResults = memoryResults.slice(0, recallResultLimit);
+
       if (memoryResults.length > 0) {
         // Track access for these memories
         const memoryIds = this.extractMemoryIdsFromResults(memoryResults);
@@ -683,10 +1059,17 @@ export class Orchestrator {
 
         sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
       } else {
-        const embeddingResults = await this.searchEmbeddingFallback(prompt, this.config.qmdMaxResults);
-        const scoped = this.config.namespacesEnabled
-          ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
-          : embeddingResults;
+        const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+        const scopedCandidates = filterRecallCandidates(embeddingResults, {
+          namespacesEnabled: this.config.namespacesEnabled,
+          recallNamespaces,
+          resolveNamespace: (p) => this.namespaceFromPath(p),
+          limit: embeddingFetchLimit,
+        });
+        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
+          0,
+          recallResultLimit,
+        );
         if (scoped.length > 0) {
           const memoryIds = this.extractMemoryIdsFromResults(scoped);
           this.trackMemoryAccess(memoryIds);
@@ -724,12 +1107,19 @@ export class Orchestrator {
           ].join("\n"),
         );
       }
-    } else if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
+    } else if (recallResultLimit > 0 && (!this.config.qmdEnabled || !this.qmd.isAvailable())) {
       // Fallback: embeddings first, then recency-only.
-      const embeddingResults = await this.searchEmbeddingFallback(prompt, this.config.qmdMaxResults);
-      const scoped = this.config.namespacesEnabled
-        ? embeddingResults.filter((r) => recallNamespaces.includes(this.namespaceFromPath(r.path)))
-        : embeddingResults;
+      const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+      const scopedCandidates = filterRecallCandidates(embeddingResults, {
+        namespacesEnabled: this.config.namespacesEnabled,
+        recallNamespaces,
+        resolveNamespace: (p) => this.namespaceFromPath(p),
+        limit: embeddingFetchLimit,
+      });
+      const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
+        0,
+        recallResultLimit,
+      );
       if (scoped.length > 0) {
         const memoryIds = this.extractMemoryIdsFromResults(scoped);
         this.trackMemoryAccess(memoryIds);
@@ -753,7 +1143,7 @@ export class Orchestrator {
                 new Date(b.frontmatter.updated).getTime() -
                 new Date(a.frontmatter.updated).getTime(),
             )
-            .slice(0, 10);
+            .slice(0, recallResultLimit);
 
           // Track access for these memories
           const memoryIds = recent.map((m) => m.frontmatter.id);
@@ -1266,6 +1656,9 @@ export class Orchestrator {
 
       // Score importance using local heuristics (Phase 1B)
       const importance = scoreImportance(fact.content, fact.category, fact.tags);
+      const inferredIntent = this.config.intentRoutingEnabled
+        ? inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`)
+        : null;
 
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
@@ -1279,6 +1672,9 @@ export class Orchestrator {
             entityRef: fact.entityRef,
             source: "extraction",
             importance,
+            intentGoal: inferredIntent?.goal,
+            intentActionType: inferredIntent?.actionType,
+            intentEntityTypes: inferredIntent?.entityTypes,
           });
 
           // Write individual chunks with parent reference
@@ -1298,6 +1694,9 @@ export class Orchestrator {
                 entityRef: fact.entityRef,
                 source: "chunking",
                 importance: chunkImportance,
+                intentGoal: inferredIntent?.goal,
+                intentActionType: inferredIntent?.actionType,
+                intentEntityTypes: inferredIntent?.entityTypes,
               },
             );
           }
@@ -1312,6 +1711,21 @@ export class Orchestrator {
 
           for (const chunk of chunkResult.chunks) {
             await this.indexPersistedMemory(storage, `${parentId}-chunk-${chunk.index}`);
+          }
+          if (
+            this.config.verbatimArtifactsEnabled &&
+            this.config.verbatimArtifactCategories.includes(fact.category) &&
+            fact.confidence >= this.config.verbatimArtifactsMinConfidence
+          ) {
+            await storage.writeArtifact(fact.content, {
+              confidence: fact.confidence,
+              tags: [...fact.tags, "artifact", "chunked-parent"],
+              artifactType: this.artifactTypeForCategory(fact.category),
+              sourceMemoryId: parentId,
+              intentGoal: inferredIntent?.goal,
+              intentActionType: inferredIntent?.actionType,
+              intentEntityTypes: inferredIntent?.entityTypes,
+            });
           }
           continue; // Skip the normal write below
         }
@@ -1351,9 +1765,27 @@ export class Orchestrator {
         importance,
         supersedes,
         links: links.length > 0 ? links : undefined,
+        intentGoal: inferredIntent?.goal,
+        intentActionType: inferredIntent?.actionType,
+        intentEntityTypes: inferredIntent?.entityTypes,
       });
       persistedIds.push(memoryId);
       await this.indexPersistedMemory(storage, memoryId);
+      if (
+        this.config.verbatimArtifactsEnabled &&
+        this.config.verbatimArtifactCategories.includes(fact.category) &&
+        fact.confidence >= this.config.verbatimArtifactsMinConfidence
+      ) {
+        await storage.writeArtifact(fact.content, {
+          confidence: fact.confidence,
+          tags: [...fact.tags, "artifact"],
+          artifactType: this.artifactTypeForCategory(fact.category),
+          sourceMemoryId: memoryId,
+          intentGoal: inferredIntent?.goal,
+          intentActionType: inferredIntent?.actionType,
+          intentEntityTypes: inferredIntent?.entityTypes,
+        });
+      }
       // Register in content-hash index after successful write
       if (this.contentHashIndex) {
         this.contentHashIndex.add(fact.content);
@@ -1954,6 +2386,7 @@ export class Orchestrator {
   private async boostSearchResults(
     results: QmdSearchResult[],
     _recallNamespaces: string[],
+    prompt?: string,
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
@@ -1967,6 +2400,10 @@ export class Orchestrator {
         if (mem) memoryByPath.set(r.path, mem);
       }),
     );
+
+    const queryIntent = this.config.intentRoutingEnabled && prompt
+      ? inferIntentFromText(prompt)
+      : null;
 
     // Calculate boosted scores
     const boosted = results.map((r) => {
@@ -2020,6 +2457,19 @@ export class Orchestrator {
               cap: this.config.negativeExamplesPenaltyCap,
             });
           }
+        }
+
+        if (
+          queryIntent &&
+          memory.frontmatter.intentGoal &&
+          memory.frontmatter.intentActionType
+        ) {
+          const compatibility = intentCompatibilityScore(queryIntent, {
+            goal: memory.frontmatter.intentGoal,
+            actionType: memory.frontmatter.intentActionType,
+            entityTypes: memory.frontmatter.intentEntityTypes ?? [],
+          });
+          score += compatibility * this.config.intentRoutingBoost;
         }
       }
 

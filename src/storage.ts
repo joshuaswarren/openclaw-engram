@@ -1,4 +1,5 @@
 import { readdir, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
+import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
@@ -26,6 +27,45 @@ import type {
   FileHygieneConfig,
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
+
+const ARTIFACT_SEARCH_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "i",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "this",
+  "to",
+  "was",
+  "were",
+  "with",
+]);
+
+function tokenizeArtifactSearchText(input: string): string[] {
+  return input
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2)
+    .filter((t) => !ARTIFACT_SEARCH_STOPWORDS.has(t));
+}
 
 function serializeFrontmatter(fm: MemoryFrontmatter): string {
   const lines = [
@@ -80,6 +120,14 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
     }
   }
+  if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
+  if (fm.intentActionType) lines.push(`intentActionType: ${fm.intentActionType}`);
+  if (fm.intentEntityTypes && fm.intentEntityTypes.length > 0) {
+    lines.push(`intentEntityTypes: [${fm.intentEntityTypes.map((t) => `"${t}"`).join(", ")}]`);
+  }
+  if (fm.artifactType) lines.push(`artifactType: ${fm.artifactType}`);
+  if (fm.sourceMemoryId) lines.push(`sourceMemoryId: ${fm.sourceMemoryId}`);
+  if (fm.sourceTurnId) lines.push(`sourceTurnId: ${fm.sourceTurnId}`);
   lines.push("---");
   return lines.join("\n");
 }
@@ -107,6 +155,16 @@ function parseFrontmatter(
   const tagMatch = tagsStr.match(/\[(.*)]/);
   if (tagMatch) {
     tags = tagMatch[1]
+      .split(",")
+      .map((t) => t.trim().replace(/^"|"$/g, ""))
+      .filter(Boolean);
+  }
+
+  let intentEntityTypes: string[] | undefined;
+  const intentEntityTypesStr = fm.intentEntityTypes ?? "";
+  const intentEntityTypesMatch = intentEntityTypesStr.match(/\[(.*)]/);
+  if (intentEntityTypesMatch) {
+    intentEntityTypes = intentEntityTypesMatch[1]
       .split(",")
       .map((t) => t.trim().replace(/^"|"$/g, ""))
       .filter(Boolean);
@@ -188,6 +246,12 @@ function parseFrontmatter(
       chunkIndex: fm.chunkIndex ? parseInt(fm.chunkIndex, 10) : undefined,
       chunkTotal: fm.chunkTotal ? parseInt(fm.chunkTotal, 10) : undefined,
       // Links are parsed separately below
+      intentGoal: fm.intentGoal || undefined,
+      intentActionType: fm.intentActionType || undefined,
+      intentEntityTypes: intentEntityTypes && intentEntityTypes.length > 0 ? intentEntityTypes : undefined,
+      artifactType: (fm.artifactType as MemoryFrontmatter["artifactType"]) || undefined,
+      sourceMemoryId: fm.sourceMemoryId || undefined,
+      sourceTurnId: fm.sourceTurnId || undefined,
     },
     content,
   };
@@ -514,8 +578,64 @@ export function serializeEntityFile(entity: EntityFile): string {
 export class StorageManager {
   private knowledgeIndexCache: { result: string; builtAt: number } | null = null;
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
+  private artifactIndexCache: { memories: MemoryFile[]; loadedAtMs: number; writeVersion: number } | null = null;
+  private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
+  private static readonly artifactWriteVersionByDir = new Map<string, number>();
+  private static readonly memoryStatusVersionByDir = new Map<string, number>();
 
   constructor(private readonly baseDir: string) {}
+
+  private versionFilePath(kind: "memory-status" | "artifact-write"): string {
+    const fileName =
+      kind === "memory-status" ? ".memory-status-version.log" : ".artifact-write-version.log";
+    return path.join(this.stateDir, fileName);
+  }
+
+  private bumpSharedVersion(
+    kind: "memory-status" | "artifact-write",
+    fallbackMap: Map<string, number>,
+  ): number {
+    const filePath = this.versionFilePath(kind);
+    try {
+      mkdirSync(this.stateDir, { recursive: true });
+      appendFileSync(filePath, "x");
+      const next = statSync(filePath).size;
+      fallbackMap.set(this.baseDir, next);
+      return next;
+    } catch {
+      const next = (fallbackMap.get(this.baseDir) ?? 0) + 1;
+      fallbackMap.set(this.baseDir, next);
+      return next;
+    }
+  }
+
+  private readSharedVersion(
+    kind: "memory-status" | "artifact-write",
+    fallbackMap: Map<string, number>,
+  ): number {
+    const filePath = this.versionFilePath(kind);
+    try {
+      return statSync(filePath).size;
+    } catch {
+      return fallbackMap.get(this.baseDir) ?? 0;
+    }
+  }
+
+  private bumpMemoryStatusVersion(): void {
+    this.bumpSharedVersion("memory-status", StorageManager.memoryStatusVersionByDir);
+  }
+
+  getMemoryStatusVersion(): number {
+    return this.readSharedVersion("memory-status", StorageManager.memoryStatusVersionByDir);
+  }
+
+  private bumpArtifactWriteVersion(): number {
+    return this.bumpSharedVersion("artifact-write", StorageManager.artifactWriteVersionByDir);
+  }
+
+  private getArtifactWriteVersion(): number {
+    return this.readSharedVersion("artifact-write", StorageManager.artifactWriteVersionByDir);
+  }
 
   private get factsDir(): string {
     return path.join(this.baseDir, "facts");
@@ -531,6 +651,9 @@ export class StorageManager {
   }
   private get questionsDir(): string {
     return path.join(this.baseDir, "questions");
+  }
+  private get artifactsDir(): string {
+    return path.join(this.baseDir, "artifacts");
   }
   private get profilePath(): string {
     return path.join(this.baseDir, "profile.md");
@@ -563,6 +686,7 @@ export class StorageManager {
     await mkdir(this.entitiesDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
     await mkdir(this.questionsDir, { recursive: true });
+    await mkdir(this.artifactsDir, { recursive: true });
     await mkdir(path.join(this.baseDir, "config"), { recursive: true });
   }
 
@@ -578,6 +702,12 @@ export class StorageManager {
       lineage?: string[];
       importance?: ImportanceScore;
       links?: MemoryLink[];
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
+      artifactType?: MemoryFrontmatter["artifactType"];
+      sourceMemoryId?: string;
+      sourceTurnId?: string;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -609,6 +739,12 @@ export class StorageManager {
       lineage: options.lineage,
       importance: options.importance,
       links: options.links,
+      intentGoal: options.intentGoal,
+      intentActionType: options.intentActionType,
+      intentEntityTypes: options.intentEntityTypes,
+      artifactType: options.artifactType,
+      sourceMemoryId: options.sourceMemoryId,
+      sourceTurnId: options.sourceTurnId,
     };
 
     const sanitized = sanitizeMemoryContent(content);
@@ -627,6 +763,128 @@ export class StorageManager {
     await writeFile(filePath, fileContent, "utf-8");
     log.debug(`wrote memory ${id} to ${filePath}`);
     return id;
+  }
+
+  async writeArtifact(
+    quote: string,
+    options: {
+      tags?: string[];
+      confidence?: number;
+      artifactType?: MemoryFrontmatter["artifactType"];
+      sourceMemoryId?: string;
+      sourceTurnId?: string;
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
+    } = {},
+  ): Promise<string> {
+    await this.ensureDirectories();
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    const dir = path.join(this.artifactsDir, day);
+    await mkdir(dir, { recursive: true });
+
+    const id = `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const fm: MemoryFrontmatter = {
+      id,
+      category: "fact",
+      created: now.toISOString(),
+      updated: now.toISOString(),
+      source: "artifact",
+      confidence: options.confidence ?? 0.9,
+      confidenceTier: confidenceTier(options.confidence ?? 0.9),
+      tags: options.tags ?? [],
+      artifactType: options.artifactType ?? "fact",
+      sourceMemoryId: options.sourceMemoryId,
+      sourceTurnId: options.sourceTurnId,
+      intentGoal: options.intentGoal,
+      intentActionType: options.intentActionType,
+      intentEntityTypes: options.intentEntityTypes,
+    };
+
+    const sanitized = sanitizeMemoryContent(quote);
+    if (!sanitized.clean) {
+      log.warn(`artifact content rejected for ${id}; violations=${sanitized.violations.join(", ")}`);
+      return "";
+    }
+    const filePath = path.join(dir, `${id}.md`);
+    await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    this.bumpArtifactWriteVersion();
+    // Always invalidate on write. This avoids stale mixed snapshots when multiple
+    // processes share the same memoryDir and write concurrently.
+    this.artifactIndexCache = null;
+    return id;
+  }
+
+  private async readAllArtifactsCached(): Promise<MemoryFile[]> {
+    if (
+      this.artifactIndexCache &&
+      Date.now() - this.artifactIndexCache.loadedAtMs <= StorageManager.ARTIFACT_INDEX_CACHE_TTL_MS &&
+      this.artifactIndexCache.writeVersion === this.getArtifactWriteVersion()
+    ) {
+      return this.artifactIndexCache.memories;
+    }
+
+    const scanArtifacts = async (): Promise<MemoryFile[]> => {
+      const artifacts: MemoryFile[] = [];
+      const readDir = async (dir: string) => {
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              await readDir(fullPath);
+              continue;
+            }
+            if (!entry.name.endsWith(".md")) continue;
+            const memory = await this.readMemoryByPath(fullPath);
+            if (!memory) continue;
+            artifacts.push(memory);
+          }
+        } catch {
+          // Directory doesn't exist yet
+        }
+      };
+      await readDir(this.artifactsDir);
+      return artifacts;
+    };
+
+    const MAX_REBUILD_RETRIES = 2;
+    let latestArtifacts: MemoryFile[] = [];
+    for (let attempt = 0; attempt <= MAX_REBUILD_RETRIES; attempt += 1) {
+      const versionBefore = this.getArtifactWriteVersion();
+      const artifacts = await scanArtifacts();
+      const versionAfter = this.getArtifactWriteVersion();
+      latestArtifacts = artifacts;
+      if (versionAfter === versionBefore) {
+        this.artifactIndexCache = { memories: artifacts, loadedAtMs: Date.now(), writeVersion: versionAfter };
+        return artifacts;
+      }
+    }
+
+    // Highly concurrent writer churn; keep cache invalid so next read retries a clean rebuild.
+    // Return best-effort latest scan instead of an empty set to avoid dropping recall entirely.
+    this.artifactIndexCache = null;
+    return latestArtifacts;
+  }
+
+  async searchArtifacts(query: string, maxResults: number): Promise<MemoryFile[]> {
+    const tokens = tokenizeArtifactSearchText(query);
+    if (tokens.length === 0) return [];
+
+    const artifacts = await this.readAllArtifactsCached();
+    const hits: Array<{ score: number; memory: MemoryFile }> = [];
+    for (const memory of artifacts) {
+      const indexedTokens = new Set(
+        tokenizeArtifactSearchText(`${memory.content} ${(memory.frontmatter.tags ?? []).join(" ")}`),
+      );
+      const score = tokens.reduce((sum, t) => sum + (indexedTokens.has(t) ? 1 : 0), 0);
+      if (score > 0) {
+        hits.push({ score, memory });
+      }
+    }
+    hits.sort((a, b) => b.score - a.score);
+    return hits.slice(0, maxResults).map((h) => h.memory);
   }
 
   async writeEntity(
@@ -847,6 +1105,7 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
       return destPath;
@@ -945,6 +1204,7 @@ export class StorageManager {
 
     try {
       await unlink(memory.path);
+      this.bumpMemoryStatusVersion();
       log.debug(`invalidated memory ${id}`);
       return true;
     } catch {
@@ -1000,6 +1260,10 @@ export class StorageManager {
           // Ignore
         }
       }
+    }
+
+    if (cleaned > 0) {
+      this.bumpMemoryStatusVersion();
     }
 
     return cleaned;
@@ -1678,6 +1942,10 @@ export class StorageManager {
       }
     }
 
+    if (cleaned > 0) {
+      this.bumpMemoryStatusVersion();
+    }
+
     return cleaned;
   }
 
@@ -1749,6 +2017,9 @@ export class StorageManager {
       entityRef?: string;
       source?: string;
       importance?: ImportanceScore;
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -1772,6 +2043,9 @@ export class StorageManager {
       parentId,
       chunkIndex,
       chunkTotal,
+      intentGoal: options.intentGoal,
+      intentActionType: options.intentActionType,
+      intentEntityTypes: options.intentEntityTypes,
     };
 
     const sanitized = sanitizeMemoryContent(content);
@@ -1833,6 +2107,7 @@ export class StorageManager {
 
     try {
       await writeFile(oldMemory.path, fileContent, "utf-8");
+      this.bumpMemoryStatusVersion();
       log.debug(`superseded memory ${oldMemoryId} by ${newMemoryId}: ${reason}`);
 
       // Also write a correction entry for the audit trail
@@ -1920,6 +2195,7 @@ export class StorageManager {
     }
 
     if (archived > 0) {
+      this.bumpMemoryStatusVersion();
       log.debug(`archived ${archived} memories for summary ${summaryId}`);
     }
     return archived;

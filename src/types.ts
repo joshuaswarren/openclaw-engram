@@ -5,6 +5,7 @@ export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "
 export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "SKIP";
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
+export type RecallPlanMode = "no_recall" | "minimal" | "full" | "graph_mode";
 
 export interface FileHygieneConfig {
   enabled: boolean;
@@ -255,6 +256,15 @@ export interface PluginConfig {
   factArchivalMaxAccessCount: number;
   /** Tags that protect a fact from archival regardless of other criteria. */
   factArchivalProtectedCategories: string[];
+  // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts
+  recallPlannerEnabled: boolean;
+  recallPlannerMaxQmdResultsMinimal: number;
+  intentRoutingEnabled: boolean;
+  intentRoutingBoost: number;
+  verbatimArtifactsEnabled: boolean;
+  verbatimArtifactsMinConfidence: number;
+  verbatimArtifactsMaxRecall: number;
+  verbatimArtifactCategories: MemoryCategory[];
 }
 
 export interface BootstrapOptions {
@@ -363,6 +373,14 @@ export interface MemoryFrontmatter {
   // Memory Linking (Phase 3A)
   /** Links to other memories */
   links?: MemoryLink[];
+  // Intent-grounded memory routing (v8.0 phase 1)
+  intentGoal?: string;
+  intentActionType?: string;
+  intentEntityTypes?: string[];
+  // Verbatim artifact lineage (v8.0 phase 1)
+  artifactType?: "decision" | "constraint" | "todo" | "definition" | "commitment" | "correction" | "fact";
+  sourceMemoryId?: string;
+  sourceTurnId?: string;
 }
 
 /** Memory link relationship types */
@@ -418,6 +436,12 @@ export interface ExtractedFact {
   confidence: number;
   tags: string[];
   entityRef?: string;
+}
+
+export interface MemoryIntent {
+  goal: string;
+  actionType: string;
+  entityTypes: string[];
 }
 
 export interface ExtractedQuestion {

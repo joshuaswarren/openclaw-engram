@@ -4,6 +4,63 @@
 
 This plugin gives OpenClaw agents long-term memory that persists across conversations.
 
+## PR Hardening Rule (All Agents)
+
+If you touch retrieval/planner/cache/config logic, you must run the hardening gate in:
+`docs/ops/pr-review-hardening-playbook.md`
+
+This is mandatory before claiming a PR is review-clean.
+
+## Retrieval/Intent/Cache Guardrails (All Agents)
+
+Treat these as non-negotiable engineering constraints for this plugin:
+
+1. Recall pipeline order is a contract:
+   - retrieve candidate headroom
+   - apply policy filters (namespace/status/path/type)
+   - rerank/boost
+   - cap to user-facing budget
+   - format and inject
+   Never cap before final filtering for the section users consume.
+
+2. Artifact isolation:
+   Artifacts must flow only through the dedicated verbatim-artifact path.
+   Generic QMD/embedding memory recall must exclude `artifacts/` paths.
+
+3. Planner mode semantics:
+   `no_recall`, `minimal`, `full`, and `graph_mode` are behavioral contracts.
+   - each mode must be reachable
+   - `no_recall` must gate all fallback paths
+   - `minimal` must actually cap retrieval size
+
+4. Config is runtime API:
+   `enabled=false` and `0` limits are compatibility guarantees, not hints.
+   Never coerce `0` to non-zero. Keep write-time/read-time behavior symmetric.
+
+5. Intent heuristics must be morphology-aware and precedence-tested:
+   Regex-based intent extraction must handle common conjugations/variants and avoid accidental mismatches.
+   Add tests for representative natural language variants, not only base forms.
+
+6. Cache invariants:
+   - cache versions must be shared per memory directory when multiple instances can read/write
+   - cache timestamps must reflect rebuild completion time
+   - cache must persist negative lookups where useful (e.g., missing IDs) to avoid rebuild loops
+   - concurrent writes during rebuild must not publish stale snapshots
+
+7. Fallback parity:
+   Any retrieval-policy rule applied in primary search must be mirrored in fallback search paths.
+
+## Mandatory Test Updates For Subsystem Changes
+
+If you change `src/orchestrator.ts`, `src/storage.ts`, or `src/intent.ts`, include/adjust tests for all impacted invariants:
+
+- planner reachability and gating
+- zero-limit semantics
+- cap-after-filter behavior
+- artifact-path isolation
+- cache coherence across instances and concurrent writes
+- heuristic variant coverage (intent phrases/conjugations)
+
 Think of it like a personal assistant who:
 - Remembers everything you've told them
 - Learns your preferences and patterns

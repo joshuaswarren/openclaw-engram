@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- v8.0 phase 1 experimental memory-os capabilities (all behind config flags):
+  - Recall planner (`recallPlannerEnabled`) to choose `no_recall` / `minimal` / `full` / `graph_mode`.
+  - Intent-grounded memory routing metadata (`intentGoal`, `intentActionType`, `intentEntityTypes`) with configurable ranking boost.
+  - Verbatim artifact persistence + recall injection (`memoryDir/artifacts/**`) for quote-first anchors.
+  - New docs entrypoint: `docs/README.md` for the docs reorganization rollout.
 - npm-first distribution + release automation:
   - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps patch version, tags, creates GitHub release, and publishes to npm.
   - Package publish metadata in `package.json`: `engines.node`, `prepack`, and `publishConfig` (`access: public`, `provenance: true`).
@@ -53,8 +58,47 @@ All notable changes to this project will be documented in this file.
 - Path override knobs for non-committed local installs:
   - Config: `localLlmHomeDir`, `localLmsCliPath`, `localLmsBinDir`
   - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
+- Local guardrail automation scripts and git hooks:
+  - `scripts/pr-preflight.sh` (`quick` and `full` modes)
+  - `scripts/cursor-prepush-review.sh` optional Cursor headless bug scan (manual via `npm run review:cursor`; auto-skips when `cursor-agent` is unavailable).
+  - Cursor pre-push scan now uses a configurable timeout (`CURSOR_PREPUSH_TIMEOUT_SECONDS`, default `300`) with cross-platform timeout command support.
+  - Cursor pre-push prompt now includes unified diff context directly (bounded by `CURSOR_PREPUSH_MAX_DIFF_CHARS`) and explicitly forbids tool/shell use for more stable headless reviews.
+  - `scripts/install-git-hooks.sh`
+  - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
+  - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.
+  - New `scripts/validate-config-contract.ts` + `npm run check-config-contract` to enforce config-key contract parity across `PluginConfig`, `parseConfig()`, and `openclaw.plugin.json`, and to catch unknown keys in `PluginConfig`-contextual object literals.
 
 ### Changed
+- Extraction persistence now infers and stores intent metadata per memory/chunk, enabling intent-compatible recall boosts when enabled.
+- Recall assembly now supports optional artifact section injection and planner-driven QMD result caps in minimal mode.
+- `no_recall` now short-circuits before preamble fetches (shared context/profile/knowledge index), avoiding unnecessary reads and injection on acknowledgement turns.
+- Artifact recall now honors minimal planner caps via `computeArtifactRecallLimit(...)`, preventing artifact injection from exceeding minimal-mode recall budgets.
+- Intent planner/inference now safely handle non-string/nullish runtime inputs without throwing, and quick preflight includes `tests/runtime-input-guards.test.ts` as a higher-level runtime-hardening guard.
+- Artifact recall/search hardening:
+  - Artifact candidate fetch is now bounded (`computeArtifactCandidateFetchLimit`) instead of unbounded full-corpus requests.
+  - Artifact token matching now uses token/boundary-aware scoring (not raw substring includes), reducing acronym false positives.
+  - QMD recall now overscans only when artifacts are enabled, filters artifact paths before re-applying the QMD cap, and adds tests to prevent artifact-heavy top-N starvation of normal memories.
+  - Artifact cache rebuilds under sustained write churn now return latest best-effort scan results (without caching torn snapshots) instead of returning an empty set.
+  - Artifact writes now reject unsafe sanitized content (fail-closed) to preserve verbatim anchor integrity.
+  - Artifact recall now searches across all readable recall namespaces (not only self namespace), with round-robin merge + regression tests.
+  - Artifact namespace merge no longer exits early on duplicate-only offsets; it now continues until lists are exhausted, with a regression for duplicate-offset continuity.
+- Planner/intent hardening:
+  - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
+  - `computeArtifactRecallLimit` now also honors zero global recall caps in `full`/`graph_mode` (`recallResultLimit=0` yields zero artifact injection).
+  - Summarize action intent matching now includes conjugations (`summarized`, `summarizing`, `recapped`, `recapping`).
+- Artifact source-status snapshot hardening:
+  - Status snapshot rebuild now uses a bounded stabilization loop and only caches when version-before/version-after match.
+  - Added quick-preflight regression coverage in `tests/artifact-status-snapshot.test.ts` to guard against caching torn snapshots during write churn.
+- Recall top-up hardening:
+  - Artifact recall now retries with expanded candidate windows when source-status filtering underfills target results.
+  - QMD recall now retries with expanded candidate windows when artifact-path filtering underfills normal-memory budgets.
+- Git hook ergonomics:
+  - Cursor headless review was moved off mandatory pre-push execution; use `npm run review:cursor` explicitly before push.
+  - Added `CURSOR_PREPUSH_STRICT=1` for maintainers who want manual Cursor review to fail-fast if Cursor is unavailable/timed out/unparseable.
+  - Cursor headless review now supports `agent` (preferred) and `cursor-agent` command names.
+  - Cursor headless review now invokes documented print mode (`-p`) for non-interactive CLI behavior.
+- Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
+- `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:
   - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, create a local release commit with version bump (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
   - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
