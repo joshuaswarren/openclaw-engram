@@ -585,6 +585,11 @@ export class StorageManager {
 
   constructor(private readonly baseDir: string) {}
 
+  /** The root directory of this storage instance. */
+  get dir(): string {
+    return this.baseDir;
+  }
+
   private versionFilePath(kind: "memory-status" | "artifact-write"): string {
     const fileName =
       kind === "memory-status" ? ".memory-status-version.log" : ".artifact-write-version.log";

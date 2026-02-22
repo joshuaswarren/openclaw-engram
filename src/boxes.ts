@@ -234,7 +234,7 @@ export class BoxBuilder {
       const lastActivity = new Date(this.openBox.lastActivityAt).getTime();
       const timeGapMs = nowMs - lastActivity;
       const overlap = topicOverlapScore(this.openBox.topics, newTopics);
-      const topicShifted = newTopics.length > 0 && overlap < (1 - this.cfg.boxTopicShiftThreshold);
+      const topicShifted = newTopics.length > 0 && overlap < this.cfg.boxTopicShiftThreshold;
       const timeExpired = timeGapMs >= this.cfg.boxTimeGapMs;
       const tooManyMemories =
         this.openBox.memoryIds.length + event.memoryIds.length > this.cfg.boxMaxMemories;

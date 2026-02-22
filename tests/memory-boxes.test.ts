@@ -131,7 +131,7 @@ test("BoxBuilder does not seal when same topics continue", async () => {
     const builder = new BoxBuilder(dir, {
       memoryBoxesEnabled: true,
       traceWeaverEnabled: false,
-      boxTopicShiftThreshold: 0.8,
+      boxTopicShiftThreshold: 0.5, // topics with ~67% overlap should not seal (0.667 > 0.5)
       boxTimeGapMs: 60 * 60 * 1000,
       boxMaxMemories: 100,
       traceWeaverLookbackDays: 7,
