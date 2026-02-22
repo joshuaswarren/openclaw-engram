@@ -133,7 +133,7 @@ See [namespaces.md](namespaces.md).
 | `namespacesEnabled` | `false` | Enable multi-agent namespace isolation |
 | `defaultNamespace` | `default` | Namespace for this agent's private memories |
 | `sharedNamespace` | `shared` | Namespace for promoted shared memories |
-| `namespacePolicies` | `{}` | Per-namespace read/write policies |
+| `namespacePolicies` | `[]` | Array of per-namespace read/write policy objects |
 
 ## v4.0 Shared Context
 

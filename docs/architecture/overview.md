@@ -109,8 +109,6 @@ QMD supports hybrid search combining BM25 and vector embeddings with reranking.
 | `tags` | Semantic tags from extraction |
 | `entityRef` | Link to entity file (if applicable) |
 | `parentId` | Source memory ID (for chunks and consolidation lineage) |
-| `traceId` | Memory Box trace link (v8.0) |
-| `boxId` | Containing Memory Box ID (v8.0) |
 | `intentGoal` | Intent goal string (v8.0 intent routing) |
 | `intentActionType` | Intent action type (v8.0 intent routing) |
 | `intentEntityTypes` | Intent entity types array (v8.0 intent routing) |
