@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+## [8.1.1-ai-readiness] — AI Readiness Improvements (PR #19)
+
+### Added
+- `.env.example` with documented environment variable placeholders
+- `.editorconfig` for consistent cross-editor formatting
+- `.nvmrc` and `.node-version` pinning Node to 22
+- `biome.json` for lint/format tooling integration
+- `eslint.config.js` for editor ESLint integration (ignores `dist/`, primary gate remains `tsc --noEmit`)
+- `Makefile` with `make test`, `make build`, `make check` targets
+- `.cursorignore` to exclude generated/build artifacts from Cursor indexing
+- `llms.txt` — machine-readable project summary for AI assistants
+- `src/AGENTS.md` — source-level guide for AI agents working on the codebase
+- `.agents/` directory with per-agent context and reusable skills (`run-tests`, `add-config-property`)
+- `prompts/extraction.prompt.md` and `prompts/consolidation.prompt.md` — documented LLM prompt templates
+- `docs/ARCHITECTURE.md`, `docs/tech-stack.md`, `docs/CONVENTIONS.md`, `docs/api.md`, `docs/requirements/README.md`
+- `tests/fixtures/` directory with synthetic test fixtures
+
 ## [8.1.0] - 2026-02-22
 
 > Plan codename: **v8.1 — Intent + Temporal Indexing** (PR #15)
