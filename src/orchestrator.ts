@@ -1798,7 +1798,9 @@ export class Orchestrator {
           }
 
           for (const chunk of chunkResult.chunks) {
-            await this.indexPersistedMemory(storage, `${parentId}-chunk-${chunk.index}`);
+            const chunkId = `${parentId}-chunk-${chunk.index}`;
+            persistedIds.push(chunkId);
+            await this.indexPersistedMemory(storage, chunkId);
           }
           if (
             this.config.verbatimArtifactsEnabled &&
@@ -2109,11 +2111,18 @@ export class Orchestrator {
         }
         case "UPDATE":
           if (item.updatedContent) {
+            // Read old state before update so we can remove stale tag associations
+            const preUpdate = this.config.queryAwareIndexingEnabled
+              ? await this.storage.getMemoryById(item.existingId).catch(() => null)
+              : null;
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               lineage: [item.existingId],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
             if (this.config.queryAwareIndexingEnabled) {
+              if (preUpdate?.path && preUpdate.frontmatter?.created) {
+                deindexMemory(this.config.memoryDir, preUpdate.path, preUpdate.frontmatter.created, preUpdate.frontmatter.tags ?? []);
+              }
               const updated = await this.storage.getMemoryById(item.existingId).catch(() => null);
               if (updated?.path && updated.frontmatter?.created) {
                 indexMemory(this.config.memoryDir, updated.path, updated.frontmatter.created, updated.frontmatter.tags ?? []);
@@ -2123,12 +2132,19 @@ export class Orchestrator {
           break;
         case "MERGE":
           if (item.updatedContent && item.mergeWith) {
+            // Read old state before update so we can remove stale tag associations
+            const preMerge = this.config.queryAwareIndexingEnabled
+              ? await this.storage.getMemoryById(item.existingId).catch(() => null)
+              : null;
             await this.storage.updateMemory(item.existingId, item.updatedContent, {
               supersedes: item.mergeWith,
               lineage: [item.existingId, item.mergeWith],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
             if (this.config.queryAwareIndexingEnabled) {
+              if (preMerge?.path && preMerge.frontmatter?.created) {
+                deindexMemory(this.config.memoryDir, preMerge.path, preMerge.frontmatter.created, preMerge.frontmatter.tags ?? []);
+              }
               const mergedSurvivor = await this.storage.getMemoryById(item.existingId).catch(() => null);
               if (mergedSurvivor?.path && mergedSurvivor.frontmatter?.created) {
                 indexMemory(this.config.memoryDir, mergedSurvivor.path, mergedSurvivor.frontmatter.created, mergedSurvivor.frontmatter.tags ?? []);
@@ -2627,14 +2643,18 @@ export class Orchestrator {
 
     // v8.1: Temporal + Tag prefilter candidate set
     // Build path sets from fast on-disk indexes (synchronous reads, fail-open).
+    // Scope to result paths first so cross-namespace paths don't consume the cap.
     let temporalCandidates: Set<string> | null = null;
     let tagCandidates: Set<string> | null = null;
     if (this.config.queryAwareIndexingEnabled && prompt) {
+      const resultPaths = new Set(results.map((r) => r.path).filter(Boolean) as string[]);
       const maxCandidates = this.config.queryAwareIndexingMaxCandidates;
       const capSet = (s: Set<string> | null): Set<string> | null => {
-        if (!s || maxCandidates === 0 || s.size <= maxCandidates) return s;
-        const arr = Array.from(s);
-        return new Set(arr.slice(0, maxCandidates));
+        if (!s) return null;
+        // Intersect with result paths first so out-of-scope paths don't exhaust the budget
+        const scoped = new Set(Array.from(s).filter((p) => resultPaths.has(p)));
+        if (maxCandidates === 0 || scoped.size <= maxCandidates) return scoped.size > 0 ? scoped : null;
+        return new Set(Array.from(scoped).slice(0, maxCandidates));
       };
       if (isTemporalQuery(prompt)) {
         const fromDate = recencyWindowFromPrompt(prompt, now);
