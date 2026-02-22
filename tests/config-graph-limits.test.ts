@@ -23,3 +23,11 @@ test("parseConfig clamps negative graph limits to zero", () => {
   assert.equal(cfg.maxGraphTraversalSteps, 0);
   assert.equal(cfg.maxEntityGraphEdgesPerMemory, 0);
 });
+
+test("parseConfig keeps graphRecallEnabled opt-in", () => {
+  const defaults = parseConfig({ openaiApiKey: "sk-test" });
+  const enabled = parseConfig({ openaiApiKey: "sk-test", graphRecallEnabled: true });
+
+  assert.equal(defaults.graphRecallEnabled, false);
+  assert.equal(enabled.graphRecallEnabled, true);
+});

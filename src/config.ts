@@ -564,6 +564,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 200,
     // v8.2: Multi-graph memory (PR 18)
     multiGraphMemoryEnabled: cfg.multiGraphMemoryEnabled === true,
+    graphRecallEnabled: cfg.graphRecallEnabled === true,
     entityGraphEnabled: cfg.entityGraphEnabled !== false,
     timeGraphEnabled: cfg.timeGraphEnabled !== false,
     causalGraphEnabled: cfg.causalGraphEnabled !== false,

@@ -322,6 +322,11 @@
         "default": false,
         "description": "Enable multi-graph memory (entity, time, causal edges). Default false."
       },
+      "graphRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable graph recall planner mode (`graph_mode`). Requires multiGraphMemoryEnabled. Default false."
+      },
       "entityGraphEnabled": {
         "type": "boolean",
         "default": true,
