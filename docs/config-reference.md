@@ -31,7 +31,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `maxMemoryTokens` | `2000` | Token cap for injected memory context |
 | `qmdEnabled` | `true` | Use QMD for hybrid search |
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
-| `qmdMaxResults` | `8` | Max QMD results per search |
+| `qmdMaxResults` | `8` | Final result cap after over-scanning and ranking (fetch size may be larger) |
 | `qmdPath` | `(auto)` | Absolute path to `qmd` binary (bypasses PATH) |
 | `qmdDaemonEnabled` | `true` | Use QMD MCP daemon for search (falls back to subprocess) |
 | `qmdDaemonUrl` | `http://localhost:8181/mcp` | QMD daemon MCP endpoint URL |
