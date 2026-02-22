@@ -81,7 +81,10 @@ updated: 2026-02-05T12:00:00.000Z
 source: extraction
 confidence: 0.85
 confidenceTier: implied
-importance: 0.6
+importanceScore: 0.6
+importanceLevel: normal
+importanceReasons: ["entity reference", "tool usage"]
+importanceKeywords: ["qmd", "search", "hybrid"]
 tags: ["tools", "preferences"]
 entityRef: tool-qmd
 ---
