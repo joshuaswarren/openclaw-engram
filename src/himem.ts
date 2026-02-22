@@ -71,6 +71,8 @@ const NOTE_CATEGORIES = new Set([
   "commitment",    // deadlines/promises — stable obligations
   "relationship",  // durable facts about people/entities
   "skill",         // capabilities — stable knowledge
+  "correction",    // user corrections — durable override of prior belief
+  "entity",        // stable facts about people, projects, tools, etc.
 ]);
 
 /** Category names that strongly suggest an episode */
