@@ -125,7 +125,8 @@ export class TmtBuilder {
       await mkdir(tmtDir(this.baseDir), { recursive: true });
       await this.buildHourNodes(memories, summarize);
       await this.buildDayNodes(memories, summarize);
-      // Week and persona are built lazily on day rollup — deferred until Task 4
+      await this.buildWeekNodes(memories, summarize);
+      await this.buildPersonaNode(summarize);
     } catch (err) {
       console.warn(`[engram] tmt: rebuild failed (ignored): ${err}`);
     }
@@ -201,6 +202,136 @@ export class TmtBuilder {
       };
       await mkdir(path.dirname(nodePath), { recursive: true });
       await writeFile(nodePath, serialiseTmtNode(fm, summary), "utf8");
+    }
+  }
+
+  /**
+   * Build or update week-level nodes from the day nodes already on disk.
+   * Groups memories by ISO week; for each week that has a day node but no
+   * (or stale) week node, reads day node summaries and builds a week node.
+   * Fail-open: errors per week are caught and skipped.
+   */
+  private async buildWeekNodes(memories: MemoryEntry[], summarize: SummarizeFn): Promise<void> {
+    // Determine which ISO weeks appear in this memory batch
+    const weekToEntries = new Map<string, MemoryEntry[]>();
+    for (const m of memories) {
+      const week = isoWeekKey(new Date(m.created));
+      if (!weekToEntries.has(week)) weekToEntries.set(week, []);
+      weekToEntries.get(week)!.push(m);
+    }
+
+    for (const [week, entries] of weekToEntries) {
+      const nodePath = weekNodePath(this.baseDir, week);
+
+      // Rebuild if missing or if memory count grew
+      let shouldBuild = !fs.existsSync(nodePath);
+      if (!shouldBuild) {
+        try {
+          const existing = await readFile(nodePath, "utf8");
+          const countMatch = existing.match(/memoryCount: (\d+)/);
+          if (countMatch && parseInt(countMatch[1], 10) < entries.length) {
+            shouldBuild = true;
+          }
+        } catch { shouldBuild = true; }
+      }
+      if (!shouldBuild) continue;
+
+      try {
+        // Collect day-node summaries for days that fall in this week
+        const dir = tmtDir(this.baseDir);
+        let allDirs: string[] = [];
+        try { allDirs = await readdir(dir); } catch { continue; }
+        const dateDirs = allDirs.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+
+        const daySummaries: string[] = [];
+        for (const dateDir of dateDirs) {
+          const w = isoWeekKey(new Date(dateDir));
+          if (w !== week) continue;
+          const dayPath = dayNodePath(this.baseDir, dateDir);
+          if (fs.existsSync(dayPath)) {
+            try {
+              const content = await readFile(dayPath, "utf8");
+              const summary = content.replace(/^---[\s\S]*?---\n\n?/, "").trim();
+              if (summary) daySummaries.push(summary);
+            } catch { /* skip */ }
+          }
+        }
+
+        // Fall back to raw memory content if no day summaries available
+        const inputs = daySummaries.length > 0 ? daySummaries : entries.map((e) => e.content);
+        const summary = await summarize(inputs, "week");
+        const sortedCreated = entries.map((e) => e.created).sort();
+        const fm: TmtNodeFrontmatter = {
+          level: "week",
+          periodStart: sortedCreated[0],
+          periodEnd: sortedCreated[sortedCreated.length - 1],
+          memoryCount: entries.length,
+          sourceIds: entries.map((e) => e.id),
+          builtAt: new Date().toISOString(),
+        };
+        await mkdir(path.dirname(nodePath), { recursive: true });
+        await writeFile(nodePath, serialiseTmtNode(fm, summary), "utf8");
+      } catch (err) {
+        console.warn(`[engram] tmt: week node build failed for ${week} (ignored): ${err}`);
+      }
+    }
+  }
+
+  /**
+   * Build or update the persona node from the most recent week-level summaries.
+   * Reads up to 4 recent week nodes and synthesizes a persona-level narrative.
+   * Fail-open: skips silently if no week nodes exist or summarize fails.
+   */
+  private async buildPersonaNode(summarize: SummarizeFn): Promise<void> {
+    try {
+      const dir = tmtDir(this.baseDir);
+      let allFiles: string[] = [];
+      try { allFiles = await readdir(dir); } catch { return; }
+
+      const weekFiles = allFiles
+        .filter((f) => /^week-\d{4}-\d{2}\.md$/.test(f))
+        .sort()
+        .reverse()
+        .slice(0, 4); // Use at most 4 recent weeks
+
+      if (weekFiles.length === 0) return;
+
+      const weekSummaries: string[] = [];
+      for (const f of weekFiles) {
+        try {
+          const content = await readFile(path.join(dir, f), "utf8");
+          const summary = content.replace(/^---[\s\S]*?---\n\n?/, "").trim();
+          if (summary) weekSummaries.push(summary);
+        } catch { /* skip */ }
+      }
+
+      if (weekSummaries.length === 0) return;
+
+      const nodePath = personaNodePath(this.baseDir);
+      const summary = await summarize(weekSummaries, "persona");
+
+      // Count total memories referenced across included week nodes
+      let totalCount = 0;
+      for (const f of weekFiles) {
+        try {
+          const content = await readFile(path.join(dir, f), "utf8");
+          const countMatch = content.match(/memoryCount: (\d+)/);
+          if (countMatch) totalCount += parseInt(countMatch[1], 10);
+        } catch { /* skip */ }
+      }
+
+      const now = new Date().toISOString();
+      const fm: TmtNodeFrontmatter = {
+        level: "persona",
+        periodStart: now,
+        periodEnd: now,
+        memoryCount: totalCount,
+        sourceIds: [],
+        builtAt: now,
+      };
+      await writeFile(nodePath, serialiseTmtNode(fm, summary), "utf8");
+    } catch (err) {
+      console.warn(`[engram] tmt: persona node build failed (ignored): ${err}`);
     }
   }
 

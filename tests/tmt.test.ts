@@ -200,3 +200,63 @@ test("TmtBuilder: disabled → getMostRelevantNode returns null", async () => {
     assert.equal(node, null);
   } finally { await cleanup(dir); }
 });
+
+// ── Week + Persona rollup ─────────────────────────────────────────────────────
+
+test("TmtBuilder: builds week node when memories share an ISO week", async () => {
+  const dir = await makeTmp();
+  try {
+    const { TmtBuilder, weekNodePath, isoWeekKey } = await import("../src/tmt.js");
+    const builder = new TmtBuilder(dir, defaultCfg);
+    // Use a fixed past date so the week key is stable
+    const date = "2026-02-22";
+    const entries = makeEntries(5, date, 9);
+    await builder.maybeRebuildNodes(entries, mockSummarize);
+
+    const week = isoWeekKey(new Date(date));
+    const nodePath = weekNodePath(dir, week);
+    const { existsSync } = await import("node:fs");
+    assert.ok(existsSync(nodePath), `week node should be written at ${nodePath}`);
+    const content = await (await import("node:fs/promises")).readFile(nodePath, "utf8");
+    assert.ok(content.includes("level: week"), "week node should have level: week");
+    assert.ok(content.includes("memoryCount: 5"), "week node should reflect memory count");
+  } finally { await cleanup(dir); }
+});
+
+test("TmtBuilder: week node is rebuilt when memory count increases", async () => {
+  const dir = await makeTmp();
+  try {
+    const { TmtBuilder, weekNodePath, isoWeekKey } = await import("../src/tmt.js");
+    const date = "2026-02-22";
+    const week = isoWeekKey(new Date(date));
+
+    const builder = new TmtBuilder(dir, defaultCfg);
+    await builder.maybeRebuildNodes(makeEntries(3, date, 9), mockSummarize);
+
+    const nodePath = weekNodePath(dir, week);
+    const first = await (await import("node:fs/promises")).readFile(nodePath, "utf8");
+    assert.ok(first.includes("memoryCount: 3"));
+
+    // Add 2 more memories and rebuild
+    await builder.maybeRebuildNodes(makeEntries(5, date, 9), mockSummarize);
+    const second = await (await import("node:fs/promises")).readFile(nodePath, "utf8");
+    assert.ok(second.includes("memoryCount: 5"), "week node should be rebuilt with updated count");
+  } finally { await cleanup(dir); }
+});
+
+test("TmtBuilder: builds persona node when week nodes exist", async () => {
+  const dir = await makeTmp();
+  try {
+    const { TmtBuilder, personaNodePath } = await import("../src/tmt.js");
+    const builder = new TmtBuilder(dir, defaultCfg);
+    const date = "2026-02-22";
+    const entries = makeEntries(5, date, 9);
+    await builder.maybeRebuildNodes(entries, mockSummarize);
+
+    const nodePath = personaNodePath(dir);
+    const { existsSync } = await import("node:fs");
+    assert.ok(existsSync(nodePath), "persona node should be written");
+    const content = await (await import("node:fs/promises")).readFile(nodePath, "utf8");
+    assert.ok(content.includes("level: persona"), "persona node should have level: persona");
+  } finally { await cleanup(dir); }
+});
