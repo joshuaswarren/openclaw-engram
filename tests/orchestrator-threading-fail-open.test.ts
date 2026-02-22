@@ -54,6 +54,21 @@ test("buildGraphEdge does not read global current thread ID", () => {
   );
 });
 
+test("buildGraphEdge does not reload thread file per memory write", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+
+  assert.doesNotMatch(
+    source,
+    /await this\.threading\.loadThread\(threadIdForEdge\)/,
+    "buildGraphEdge should use in-memory thread episode IDs and avoid per-fact thread reloads",
+  );
+  assert.match(
+    source,
+    /threadEpisodeIdsForGraph:\s*string\[\]\s*\|\s*undefined/,
+    "buildGraphEdge should accept in-memory thread episode IDs",
+  );
+});
+
 test("persisted path resolution does not call getMemoryById in per-fact write flow", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
   const helperMatch = source.match(

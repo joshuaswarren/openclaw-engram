@@ -1858,6 +1858,13 @@ export class Orchestrator {
         }
       } catch { /* fail-open */ }
     }
+    let threadEpisodeIdsForGraph: string[] | undefined;
+    if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
+      try {
+        const thread = await this.threading.loadThread(threadIdForExtraction);
+        threadEpisodeIdsForGraph = thread?.episodeIds ? [...thread.episodeIds] : [];
+      } catch { /* fail-open */ }
+    }
     let previousPersistedRelPath: string | undefined;
 
     for (const fact of facts) {
@@ -1939,6 +1946,9 @@ export class Orchestrator {
           if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
             try {
               await this.threading.appendEpisodeIds(threadIdForExtraction, [parentId]);
+              if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
+                threadEpisodeIdsForGraph.push(parentId);
+              }
             } catch (err) {
               log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
             }
@@ -2005,6 +2015,7 @@ export class Orchestrator {
                 allMemsForGraph,
                 memoryPathById,
                 threadIdForExtraction ?? undefined,
+                threadEpisodeIdsForGraph,
                 previousPersistedRelPath,
               );
               previousPersistedRelPath = parentRelPath;
@@ -2072,6 +2083,9 @@ export class Orchestrator {
       if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
         try {
           await this.threading.appendEpisodeIds(threadIdForExtraction, [memoryId]);
+          if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
+            threadEpisodeIdsForGraph.push(memoryId);
+          }
         } catch (err) {
           log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
         }
@@ -2110,6 +2124,7 @@ export class Orchestrator {
             allMemsForGraph,
             memoryPathById,
             threadIdForExtraction ?? undefined,
+            threadEpisodeIdsForGraph,
             previousPersistedRelPath,
           );
           previousPersistedRelPath = memoryRelPath;
@@ -2249,6 +2264,7 @@ export class Orchestrator {
     allMemsForGraph: import("./types.js").MemoryFile[] | null | undefined,
     memoryPathById: Map<string, string>,
     threadIdForEdge: string | undefined,
+    threadEpisodeIdsForGraph: string[] | undefined,
     fallbackCausalPredecessor: string | undefined,
   ): Promise<void> {
     // Entity siblings: other memories sharing the same entityRef
@@ -2266,19 +2282,16 @@ export class Orchestrator {
     }
     // Recent thread memories for time graph
     const recentInThread: string[] = [];
-    if (threadIdForEdge) {
+    if (threadIdForEdge && threadEpisodeIdsForGraph?.length) {
       try {
-        const thread = await this.threading.loadThread(threadIdForEdge);
-        if (thread?.episodeIds?.length) {
-          recentInThread.push(...resolveRecentThreadMemoryPaths({
-            threadEpisodeIds: thread.episodeIds,
-            currentMemoryId: memoryId,
-            allMemsForGraph,
-            pathById: memoryPathById,
-            storageDir: storage.dir,
-            maxRecent: 3,
-          }));
-        }
+        recentInThread.push(...resolveRecentThreadMemoryPaths({
+          threadEpisodeIds: threadEpisodeIdsForGraph,
+          currentMemoryId: memoryId,
+          allMemsForGraph,
+          pathById: memoryPathById,
+          storageDir: storage.dir,
+          maxRecent: 3,
+        }));
       } catch { /* fail-open */ }
     }
     const causalPredecessor = recentInThread[recentInThread.length - 1] ?? fallbackCausalPredecessor;
