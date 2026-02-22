@@ -1993,16 +1993,20 @@ export class Orchestrator {
     persistedIds: string[],
   ): Promise<void> {
     if (!this.config.queryAwareIndexingEnabled) return;
-    if (persistedIds.length === 0) return;
+    // Check for missing indexes BEFORE the early-return so first-time enablement
+    // can bootstrap the full corpus even when this extraction turn persisted nothing.
+    const needsFullRebuild = !indexesExist(this.config.memoryDir);
+    if (!needsFullRebuild && persistedIds.length === 0) return;
     try {
       // Read the corpus once to avoid N separate full-corpus scans.
       const allMemories = await storage.readAllMemories();
 
-      // On first enablement the index files don't exist yet — rebuild from the
-      // full corpus so historical memories are immediately searchable.
-      const needsFullRebuild = !indexesExist(this.config.memoryDir);
+      // Bootstrap: index only active (non-archived, non-superseded) memories.
+      // Incremental: index only the newly persisted IDs.
+      const isActive = (m: { frontmatter: { status?: string } }) =>
+        !m.frontmatter.status || m.frontmatter.status === "active";
       const pool = needsFullRebuild
-        ? allMemories
+        ? allMemories.filter(isActive)
         : (() => {
             const idSet = new Set(persistedIds);
             return allMemories.filter((m) => idSet.has(m.frontmatter.id));
@@ -2021,7 +2025,7 @@ export class Orchestrator {
       if (entries.length > 0) {
         indexMemoriesBatch(this.config.memoryDir, entries);
         if (needsFullRebuild) {
-          log.info(`temporal-index: bootstrapped from ${entries.length} existing memories`);
+          log.info(`temporal-index: bootstrapped from ${entries.length} active memories`);
         }
       }
     } catch (err) {
