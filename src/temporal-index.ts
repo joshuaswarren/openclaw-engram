@@ -320,11 +320,11 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
   } else if (/\blast month\b/.test(p)) {
     daysBack = 62;
   } else {
-    const numMatch = p.match(/(\d+)\s*days?\s*ago/);
+    const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
     if (numMatch) {
       daysBack = Math.min(365, parseInt(numMatch[1], 10) + 1);
     } else {
-      const hrMatch = p.match(/(\d+)\s*hours?\s*ago/);
+      const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
       if (hrMatch) {
         daysBack = 1;
       }

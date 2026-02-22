@@ -1993,23 +1993,19 @@ export class Orchestrator {
     if (!this.config.queryAwareIndexingEnabled) return;
     if (persistedIds.length === 0) return;
     try {
+      // Read the corpus once and build a lookup by ID to avoid N full-corpus scans.
+      const idSet = new Set(persistedIds);
+      const allMemories = await storage.readAllMemories();
       const entries: Array<{ path: string; createdAt: string; tags: string[] }> = [];
-      await Promise.all(
-        persistedIds.map(async (id) => {
-          try {
-            const mem = await storage.getMemoryById(id);
-            if (mem?.path && mem.frontmatter?.created) {
-              entries.push({
-                path: mem.path,
-                createdAt: mem.frontmatter.created,
-                tags: mem.frontmatter.tags ?? [],
-              });
-            }
-          } catch {
-            // Ignore individual read errors
-          }
-        }),
-      );
+      for (const mem of allMemories) {
+        if (idSet.has(mem.frontmatter.id) && mem.path && mem.frontmatter?.created) {
+          entries.push({
+            path: mem.path,
+            createdAt: mem.frontmatter.created,
+            tags: mem.frontmatter.tags ?? [],
+          });
+        }
+      }
       if (entries.length > 0) {
         indexMemoriesBatch(this.config.memoryDir, entries);
       }
@@ -2543,13 +2539,19 @@ export class Orchestrator {
     let temporalCandidates: Set<string> | null = null;
     let tagCandidates: Set<string> | null = null;
     if (this.config.queryAwareIndexingEnabled && prompt) {
+      const maxCandidates = this.config.queryAwareIndexingMaxCandidates;
+      const capSet = (s: Set<string> | null): Set<string> | null => {
+        if (!s || maxCandidates === 0 || s.size <= maxCandidates) return s;
+        const arr = Array.from(s);
+        return new Set(arr.slice(0, maxCandidates));
+      };
       if (isTemporalQuery(prompt)) {
         const fromDate = recencyWindowFromPrompt(prompt, now);
-        temporalCandidates = queryByDateRange(this.config.memoryDir, fromDate);
+        temporalCandidates = capSet(queryByDateRange(this.config.memoryDir, fromDate));
       }
       const promptTags = extractTagsFromPrompt(prompt);
       if (promptTags.length > 0) {
-        tagCandidates = queryByTags(this.config.memoryDir, promptTags);
+        tagCandidates = capSet(queryByTags(this.config.memoryDir, promptTags));
       }
     }
 
