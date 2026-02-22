@@ -4,13 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+<!-- New items go here before they're released -->
+
+## [8.1.0] - 2026-02-22
+
+> Plan codename: **v8.1 — Intent + Temporal Indexing** (PR #15)
+
 ### Added
-- v8.1 query-aware indexing (SwiftMem-inspired, behind `queryAwareIndexingEnabled`, default off):
+- Query-aware indexing (SwiftMem-inspired, behind `queryAwareIndexingEnabled`, default off):
   - New `src/temporal-index.ts`: maintains `state/index_time.json` (date buckets → memory paths) and `state/index_tags.json` (frontmatter tags → memory paths) after each extraction.
   - Adaptive retrieval prefilter: temporal queries receive a +0.08 score boost; `#tag` tokens in the prompt receive a +0.06 score boost. Additive and fail-open — index absence never breaks recall.
   - Batch indexing runs fire-and-forget after extraction to avoid blocking the write path.
   - New config: `queryAwareIndexingEnabled`, `queryAwareIndexingMaxCandidates`.
-- v8.0 phase 2C Docs IA overhaul foundation:
+
+## [8.0.3] - 2026-02-22
+
+> Plan codename: **v8.0 Phase 2C — Docs IA Overhaul** (PR #14)
+
+### Added
+- Docs IA overhaul foundation:
   - Rewrote `README.md` to be short (value prop, quick install, 5-minute setup, docs table).
   - New `docs/getting-started.md` — install, QMD setup, 5-minute config, verification.
   - New `docs/operations.md` — backup/export, CLI, hourly summaries, file hygiene, logs.
@@ -19,139 +31,95 @@ All notable changes to this project will be documented in this file.
   - New `docs/architecture/retrieval-pipeline.md` — full retrieval pipeline diagram and stage descriptions.
   - New `docs/architecture/memory-lifecycle.md` — write path, consolidation, expiry, dedup, box lifecycle, HiMem.
   - Updated `docs/README.md` to reflect the new IA with links to all new docs.
-- v8.0 phase 2B experimental Episode/Note dual store (HiMem, all behind config flags, default off):
+
+## [8.0.2] - 2026-02-22
+
+> Plan codename: **v8.0 Phase 2B — Episode/Note Dual Store (HiMem)** (PR #13)
+
+### Added
+- Experimental Episode/Note dual store (HiMem, all behind config flags, default off):
   - **Episode/Note classification** (`episodeNoteModeEnabled`): each extracted memory is tagged with `memoryKind: episode` (time-specific event) or `memoryKind: note` (stable belief, preference, decision, constraint). Uses heuristic signals (temporal language, stable-belief keywords, tags, category).
   - New config: `episodeNoteModeEnabled`.
-- v8.0 phase 2A experimental Memory Boxes + Trace Weaving (all behind config flags, default off):
+
+## [8.0.1] - 2026-02-22
+
+> Plan codename: **v8.0 Phase 2A — Memory Boxes + Trace Weaving** (PR #12)
+
+### Added
+- Experimental Memory Boxes + Trace Weaving (all behind config flags, default off):
   - **Memory Boxes** (`memoryBoxesEnabled`): groups extracted memories into topic-bounded windows stored in `memory/boxes/YYYY-MM-DD/box-<id>.md`. Boxes seal on topic shift, time gap, or max-memory count.
   - **Trace Weaving** (`traceWeaverEnabled`): assigns a shared `traceId` to boxes that repeatedly revisit the same topic cluster, enabling cross-session topic continuity.
   - Recall injection: recent topic windows appear as `## Recent Topic Windows` section after verbatim artifacts when `memoryBoxesEnabled=true`.
   - New config: `boxTopicShiftThreshold`, `boxTimeGapMs`, `boxMaxMemories`, `traceWeaverLookbackDays`, `traceWeaverOverlapThreshold`, `boxRecallDays`.
-- v8.0 phase 1 experimental memory-os capabilities (all behind config flags):
+
+## [8.0.0] - 2026-02-22
+
+> Plan codename: **v8.0 Phase 1 — Memory OS Core** (PR #11)
+
+### Added
+- Experimental memory-os capabilities (all behind config flags, default off):
   - Recall planner (`recallPlannerEnabled`) to choose `no_recall` / `minimal` / `full` / `graph_mode`.
   - Intent-grounded memory routing metadata (`intentGoal`, `intentActionType`, `intentEntityTypes`) with configurable ranking boost.
   - Verbatim artifact persistence + recall injection (`memoryDir/artifacts/**`) for quote-first anchors.
   - New docs entrypoint: `docs/README.md` for the docs reorganization rollout.
 - npm-first distribution + release automation:
-  - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps patch version, tags, creates GitHub release, and publishes to npm.
+  - New `Release and Publish` workflow (`.github/workflows/release-and-publish.yml`) that runs on `main` merges, verifies quality gates, bumps version, tags, creates GitHub release, and publishes to npm.
   - Package publish metadata in `package.json`: `engines.node`, `prepack`, and `publishConfig` (`access: public`, `provenance: true`).
+  - npm package name scoped to `@joshuaswarren/openclaw-engram`.
 - Contributor onboarding and contribution governance docs:
   - New `CONTRIBUTING.md` with standards for issues/PRs, testing, changelog policy, and AI-assisted contributions.
-  - New `CONTRIBUTORS.md` with contributor recognition, including the first community contributors.
+  - New `CONTRIBUTORS.md` with contributor recognition.
   - New GitHub issue templates for bug reports and feature requests.
   - New pull request template with validation and risk checklist.
 - Changelog/release process automation:
   - `Changelog Guard` workflow requiring `CHANGELOG.md` updates for source/config/plugin changes (with `skip-changelog` maintainer bypass label).
   - `Release Drafter` workflow + config for automated draft release notes from merged PRs.
-  - `Release Drafter` now also runs on `pull_request_target` so autolabeler rules apply during PR review.
   - `Review Thread Guard` workflow that fails PR checks when active review threads are unresolved.
   - Release Drafter autolabeling adjusted so `src/**` changes no longer auto-label as `feature` (avoids accidental minor version bumps for fixes/refactors).
 - GitHub Actions quality and security checks for pull requests:
-  - `CI` (typecheck, tests, build on Node 22)
+  - `CI` (typecheck, tests, build on Node 22/24)
   - `Dependency Review` (blocks high+ severity dependency risks)
   - `Secret Scan` (Gitleaks on PRs and main pushes)
   - `CodeQL` analysis (PR + weekly schedule)
 - `AI Review Gate` workflow requiring review activity from KiloConnect, Codex, and Cursor Bugbot bot groups before merge.
-- v2.3 portability:
-  - CLI: `openclaw engram export|import|backup` (json/md/sqlite bundles)
-  - Format autodetection on import (`--format auto`)
-  - Namespace-aware CLI surface (`--namespace <ns>`) when namespaces are enabled
-- v2.4 context retention hardening:
-  - Optional structured hourly summaries (`hourlySummariesExtendedEnabled`)
-  - Optional tool usage stats capture for summaries (`hourlySummariesIncludeToolStats`)
-  - Optional conversation chunk indexing + semantic recall injection (`conversationIndexEnabled`)
-  - Tool: `conversation_index_update`
-- v3.0 multi-agent memory (namespaces):
-  - Principal resolution from `sessionKey`
-  - Namespace-scoped profile storage (when enabled)
-  - Tool: `memory_promote`
-- v4.0 cross-agent shared intelligence (shared-context):
-  - Shared-context injection (priorities + latest roundtable)
-  - Tools: `shared_context_write_output`, `shared_priorities_append`, `shared_feedback_record`, `shared_context_curate_daily`
-- v5.0 compounding engine:
-  - Weekly synthesis output + mistakes file
-  - Tool: `compounding_weekly_synthesize`
-- Reliability guardrails (P0/P1):
-  - Extraction dedupe window + minimum extraction thresholds
-  - Per-run extraction caps (facts/entities/questions/profile updates)
-  - Consolidation cooldown + non-zero gating
-  - Debounced/singleflight QMD maintenance worker
-  - Local LLM resilience knobs (bounded 5xx retries, 400 trip threshold + cooldown)
-- Path override knobs for non-committed local installs:
-  - Config: `localLlmHomeDir`, `localLmsCliPath`, `localLmsBinDir`
-  - Env: `OPENCLAW_ENGRAM_CONFIG_PATH` (fallback `OPENCLAW_CONFIG_PATH`) for bootstrap config path
-- Local guardrail automation scripts and git hooks:
-  - `scripts/pr-preflight.sh` (`quick` and `full` modes)
-  - `scripts/cursor-prepush-review.sh` optional Cursor headless bug scan (manual via `npm run review:cursor`; auto-skips when `cursor-agent` is unavailable).
-  - Cursor pre-push scan now uses a configurable timeout (`CURSOR_PREPUSH_TIMEOUT_SECONDS`, default `300`) with cross-platform timeout command support.
-  - Cursor pre-push prompt now includes unified diff context directly (bounded by `CURSOR_PREPUSH_MAX_DIFF_CHARS`) and explicitly forbids tool/shell use for more stable headless reviews.
-  - `scripts/install-git-hooks.sh`
-  - Repo-managed `.githooks/pre-commit` and `.githooks/pre-push`
-  - New quick gate test `tests/recall-no-recall-short-circuit.test.ts` to fail locally if `no_recall` regresses into preamble/storage fetches.
-  - New `scripts/validate-config-contract.ts` + `npm run check-config-contract` to enforce config-key contract parity across `PluginConfig`, `parseConfig()`, and `openclaw.plugin.json`, and to catch unknown keys in `PluginConfig`-contextual object literals.
 
 ### Changed
 - Extraction persistence now infers and stores intent metadata per memory/chunk, enabling intent-compatible recall boosts when enabled.
 - Recall assembly now supports optional artifact section injection and planner-driven QMD result caps in minimal mode.
 - `no_recall` now short-circuits before preamble fetches (shared context/profile/knowledge index), avoiding unnecessary reads and injection on acknowledgement turns.
-- Artifact recall now honors minimal planner caps via `computeArtifactRecallLimit(...)`, preventing artifact injection from exceeding minimal-mode recall budgets.
-- Intent planner/inference now safely handle non-string/nullish runtime inputs without throwing, and quick preflight includes `tests/runtime-input-guards.test.ts` as a higher-level runtime-hardening guard.
-- Artifact recall/search hardening:
-  - Artifact candidate fetch is now bounded (`computeArtifactCandidateFetchLimit`) instead of unbounded full-corpus requests.
-  - Artifact token matching now uses token/boundary-aware scoring (not raw substring includes), reducing acronym false positives.
-  - QMD recall now overscans only when artifacts are enabled, filters artifact paths before re-applying the QMD cap, and adds tests to prevent artifact-heavy top-N starvation of normal memories.
-  - Artifact cache rebuilds under sustained write churn now return latest best-effort scan results (without caching torn snapshots) instead of returning an empty set.
-  - Artifact writes now reject unsafe sanitized content (fail-closed) to preserve verbatim anchor integrity.
-  - Artifact recall now searches across all readable recall namespaces (not only self namespace), with round-robin merge + regression tests.
-  - Artifact namespace merge no longer exits early on duplicate-only offsets; it now continues until lists are exhausted, with a regression for duplicate-offset continuity.
-- Planner/intent hardening:
-  - `computeArtifactRecallLimit` now explicitly returns `0` for `no_recall`.
-  - `computeArtifactRecallLimit` now also honors zero global recall caps in `full`/`graph_mode` (`recallResultLimit=0` yields zero artifact injection).
-  - Summarize action intent matching now includes conjugations (`summarized`, `summarizing`, `recapped`, `recapping`).
-- Artifact source-status snapshot hardening:
-  - Status snapshot rebuild now uses a bounded stabilization loop and only caches when version-before/version-after match.
-  - Added quick-preflight regression coverage in `tests/artifact-status-snapshot.test.ts` to guard against caching torn snapshots during write churn.
-- Recall top-up hardening:
-  - Artifact recall now retries with expanded candidate windows when source-status filtering underfills target results.
-  - QMD recall now retries with expanded candidate windows when artifact-path filtering underfills normal-memory budgets.
-- Git hook ergonomics:
-  - Cursor headless review was moved off mandatory pre-push execution; use `npm run review:cursor` explicitly before push.
-  - Added `CURSOR_PREPUSH_STRICT=1` for maintainers who want manual Cursor review to fail-fast if Cursor is unavailable/timed out/unparseable.
-  - Cursor headless review now supports `agent` (preferred) and `cursor-agent` command names.
-  - Cursor headless review now invokes documented print mode (`-p`) for non-interactive CLI behavior.
-- Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall before final capping.
+- Artifact recall now honors minimal planner caps via `computeArtifactRecallLimit(...)`.
+- Intent planner/inference now safely handle non-string/nullish runtime inputs without throwing.
+- Embedding fallback recall paths now apply the same `boostSearchResults` ranking stage as primary QMD recall.
 - `no_recall` planner mode now hard-sets `recallResultLimit=0` for stronger path-safety invariants.
 - Release automation hardening:
-  - `release-and-publish` now uses a protected-branch-safe flow: sync + validate latest `origin/main`, compute next patch version from tags, create a local release commit with version bump (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
-  - Release tags are now created as annotated tags to ensure `git push --follow-tags` reliably publishes them.
-  - Release workflow concurrency no longer cancels in-progress runs, avoiding partial side effects (tag/commit pushed) from interrupted releases.
-  - npm publish now uses npm trusted publishing (OIDC via GitHub Actions) instead of `NPM_TOKEN` secrets.
-  - Added rerun-stable idempotency: tags now include `source-main-sha` metadata and reruns reuse the same tag/version for the same source commit instead of incrementing patch again.
-  - npm publish now also skips when the computed package name + version (read from `package.json`) already exists on npm.
-  - Release publish now checks out the tagged source commit before npm publish (and reinstalls dependencies) so reruns publish from the exact tagged versioned source.
-  - Next-version tag discovery now ignores non-`vX.Y.Z` tags to avoid malformed version parsing when non-standard tags exist.
-  - Rerun tag matching now inspects each annotated tag object (`git cat-file`) instead of line-based parsing, so multiline tag annotations are matched reliably.
-  - Replaced heredoc-based semver split in release workflow with shell parameter expansion to avoid GitHub workflow parser failures on merge-triggered runs.
-- Node version alignment with OpenClaw:
-  - `package.json` `engines.node` is now `>=22.12.0` (was `>=20`).
-  - CI and release workflows now use Node `22.12.0`.
-  - Contributing guide now documents Node `>=22.12.0` for local development.
-- Installation docs now lead with `openclaw plugins install @joshuaswarren/openclaw-engram --pin` and move git clone/build to a developer-only path.
-- npm package name is now scoped to `@joshuaswarren/openclaw-engram` for user-scoped publishing.
-- `agent_end` ingestion now ignores non-`user`/`assistant` message roles for extraction to avoid tool-output memory churn.
-- Extractions with no durable outputs skip persistence/log churn paths.
-- Recall now keeps fail-open headroom under backend slowness: the hard recall guard is reduced from 60s to 75s to stay above serialized QMD hybrid-search worst cases (~60s) and avoid preempting fallback assembly.
+  - Protected-branch-safe flow: sync + validate latest `origin/main`, compute next version from tags, create a local release commit (not pushed to `main`), tag that commit, push only the release tag, then create GitHub release and publish to npm.
+  - Release tags are annotated tags; annotated tags include `source-main-sha` metadata for idempotency.
+  - npm publish uses npm trusted publishing (OIDC via GitHub Actions) instead of `NPM_TOKEN` secrets.
+  - Next-version tag discovery ignores non-`vX.Y.Z` tags to avoid malformed version parsing.
+- Node version alignment with OpenClaw: `engines.node` is now `>=22.12.0`.
+- Installation docs now lead with `openclaw plugins install @joshuaswarren/openclaw-engram --pin`.
+- `agent_end` ingestion now ignores non-`user`/`assistant` message roles.
+- Recall keeps fail-open headroom: hard recall guard reduced to 75s to stay above QMD worst cases.
 
 ### Fixed
-- Runtime hardening for missing QMD collections:
-  - If the primary Engram collection is confirmed missing, Engram disables QMD retrieval for the current runtime and continues with fallback retrieval modes.
-  - If the conversation-index collection is confirmed missing, Engram disables conversation semantic recall for the current runtime.
-  - Transient collection-check command failures are treated as `unknown` and do not disable retrieval features.
-  - Daemon-only mode now reports collection-check state as `skipped` (not `unknown`) to avoid warning noise.
-- Recall timeout/failure logs are now throttled to reduce repeated warning spam during backend incidents.
-- Recall-failure suppression counters now reset after idle windows so warning suffixes do not include stale counts.
-- Conversation-index maintenance and recall paths now use conversation index availability directly (not the primary `qmdEnabled` flag), preserving conversation features when primary memory collection is disabled.
-- Conversation-index maintenance now only bypasses `qmdEnabled` when using the dedicated conversation QMD client; if it falls back to primary QMD client, it still respects primary `qmdEnabled`.
+- Runtime hardening for missing QMD collections: disables retrieval features when collections are confirmed absent, treats transient failures as `unknown`.
+- Recall timeout/failure logs throttled to reduce warning spam.
+- Conversation-index paths now use their own availability flag independent of primary `qmdEnabled`.
+
+## [7.2.4] - 2026-02-21
+
+### Fixed
+- Fail-open recall improvements + missing QMD collection guards.
+
+## [7.2.3] - 2026-02-20
+
+### Added
+- npm package scoped to `@joshuaswarren/openclaw-engram`; trusted OIDC publishing configured.
+
+## [7.2.2] - 2026-02-20
+
+### Fixed
+- Release pipeline workflow parser failure; version split uses shell parameter expansion.
 
 ## [7.2.1] - 2026-02-19
 
@@ -170,35 +138,6 @@ All notable changes to this project will be documented in this file.
 - Local LLM abort timeouts are now treated as transient: retry with backoff and do not mark local endpoint unavailable immediately.
 - Added gateway fallback paths for consolidation/profile/identity JSON parsing when local LLM fails, reducing dropped maintenance passes.
 
-## [2.2.2] - 2026-02-10
-
-### Added
-- Negative examples (retrieved-but-not-useful) feedback loop (opt-in):
-  - Config: `negativeExamplesEnabled`, `negativeExamplesPenaltyPerHit`, `negativeExamplesPenaltyCap`
-  - Storage: `memoryDir/state/negative_examples.json`
-- Last recall snapshot + impression log for debugging/feedback workflows:
-  - Storage: `memoryDir/state/last_recall.json`, `memoryDir/state/recall_impressions.jsonl`
-  - Tools: `memory_last_recall`, `memory_feedback_last_recall`
-
-### Changed
-- Signal scan now treats phrases like "that's not right" / "why did you say that" as high-signal (more likely to extract corrections).
-
-## [2.2.3] - 2026-02-10
-
-### Added
-- Disagreement heuristic (suggestion-only): when the user pushes back ("that's not right", "why did you say that"), Engram injects a short helper section encouraging use of `memory_last_recall` and (optionally) `memory_feedback_last_recall`.
-
-### Changed
-- No auto-marking: this heuristic never records negative examples automatically.
-
-## [2.2.4] - 2026-02-11
-
-### Fixed
-- Prevented background extraction crashes when local LLM entity output omits or malforms `entities[].facts` (defensive sanitation + persistence hardening).
-
-### Changed
-- Hourly summary cron auto-registration (when used) now targets `sessionTarget: "isolated"` with `payload.kind: "agentTurn"` instead of `main/toolCall` (which can be rejected by cron validation in some installs).
-
 ## [2.3.0] - 2026-02-13
 
 ### Added
@@ -210,9 +149,35 @@ All notable changes to this project will be documented in this file.
 ## [2.2.5] - 2026-02-13
 
 ### Fixed
-- Reduced background extraction crashes by defensively skipping malformed entity payloads (no `toLowerCase` on undefined).
-- Improved structured JSON extraction from LLM outputs when responses contain multiple JSON blocks (example + real answer).
-- Reduced QMD update/embed flakiness by serializing QMD CLI calls within the process and retrying on transient SQLite lock errors (logs also truncate huge stderr output).
+- Reduced background extraction crashes by defensively skipping malformed entity payloads.
+- Improved structured JSON extraction from LLM outputs when responses contain multiple JSON blocks.
+- Reduced QMD update/embed flakiness by serializing QMD CLI calls within the process and retrying on transient SQLite lock errors.
+
+## [2.2.4] - 2026-02-11
+
+### Fixed
+- Prevented background extraction crashes when local LLM entity output omits or malforms `entities[].facts`.
+
+### Changed
+- Hourly summary cron auto-registration now targets `sessionTarget: "isolated"` with `payload.kind: "agentTurn"`.
+
+## [2.2.3] - 2026-02-10
+
+### Added
+- Disagreement heuristic (suggestion-only): when the user pushes back, Engram injects a short helper section encouraging use of `memory_last_recall` and (optionally) `memory_feedback_last_recall`. Never records negative examples automatically.
+
+## [2.2.2] - 2026-02-10
+
+### Added
+- Negative examples (retrieved-but-not-useful) feedback loop (opt-in):
+  - Config: `negativeExamplesEnabled`, `negativeExamplesPenaltyPerHit`, `negativeExamplesPenaltyCap`
+  - Storage: `memoryDir/state/negative_examples.json`
+- Last recall snapshot + impression log for debugging/feedback workflows:
+  - Storage: `memoryDir/state/last_recall.json`, `memoryDir/state/recall_impressions.jsonl`
+  - Tools: `memory_last_recall`, `memory_feedback_last_recall`
+
+### Changed
+- Signal scan now treats phrases like "that's not right" / "why did you say that" as high-signal.
 
 ## [2.2.1] - 2026-02-10
 
@@ -231,8 +196,8 @@ All notable changes to this project will be documented in this file.
 ## [2.1.0] - 2026-02-10
 
 ### Added
-- Configurable local LLM hard timeout (`localLlmTimeoutMs`, default 180000ms) to prevent stalls.
-- Optional slow query logging (`slowLogEnabled`, `slowLogThresholdMs`) for local LLM + QMD operations (metadata only; never logs content).
+- Configurable local LLM hard timeout (`localLlmTimeoutMs`, default 180000ms).
+- Optional slow query logging (`slowLogEnabled`, `slowLogThresholdMs`) for local LLM + QMD operations.
 
 ### Changed
 - Reduced default log verbosity for local LLM model listings.
@@ -264,49 +229,33 @@ All notable changes to this project will be documented in this file.
 - **Status Field**: New `status` field for lifecycle management
   - Values: `active` (default), `superseded`, `archived`
   - Non-active memories filtered from default retrieval
-- CLI: `engram access` - Show top accessed memories with stats
-- CLI: `engram flush-access` - Manually flush access tracking buffer
-- CLI: `engram importance` - Show importance distribution and top memories
+- CLI: `engram access`, `engram flush-access`, `engram importance`
 - **Automatic Chunking (Phase 2A)**: Sentence-boundary chunking for long memories
   - New frontmatter fields: `parentId`, `chunkIndex`, `chunkTotal`
-  - Sentence-boundary splitting preserves coherent thoughts
   - Configurable target tokens (default 200) and overlap (default 2 sentences)
-  - Skip chunking for short memories (< 150 tokens)
-  - Each chunk scored separately for importance
   - Disabled by default, enable with `chunkingEnabled: true`
-- CLI: `engram chunks` - Show chunking statistics and orphaned chunks
+- CLI: `engram chunks`
 - **Contradiction Detection (Phase 2B)**: LLM-verified contradiction resolution
-  - QMD similarity search finds candidates (fast, cheap)
-  - LLM verifies actual contradiction (prevents false positives)
   - Auto-resolve when confidence > 0.9 (configurable)
   - Full audit trail via `status: superseded` and correction entries
   - Disabled by default, enable with `contradictionDetectionEnabled: true`
 - **Memory Linking (Phase 3A)**: Build knowledge graph between memories
   - Link types: follows, references, contradicts, supports, related
-  - LLM suggests links during extraction
-  - Links stored in frontmatter for graph traversal
   - Disabled by default, enable with `memoryLinkingEnabled: true`
 - **Conversation Threading (Phase 3B)**: Group memories into threads
   - Auto-detect thread boundaries (session change or 30min gap)
-  - Auto-generate thread titles from top keywords
-  - Track episode IDs and linked threads
   - Threads stored in `threads/` directory
   - Disabled by default, enable with `threadingEnabled: true`
-- CLI: `engram threads` - List conversation threads
+- CLI: `engram threads`
 - **Memory Summarization (Phase 4A)**: Compress old memories into summaries
   - Triggered when memory count exceeds threshold (default 1000)
-  - Keeps recent memories uncompressed (default 300)
-  - Protects important memories (by importance score, tags, entityRef)
-  - Archives source memories (status: archived), not deleted
+  - Archives source memories (`status: archived`)
   - Summaries stored in `summaries/` directory
   - Disabled by default, enable with `summarizationEnabled: true`
 - **Topic Extraction (Phase 4B)**: TF-IDF topic analysis
-  - Extracts top topics from memory corpus
-  - Runs during consolidation (batch process)
   - Topics stored in `state/topics.json`
   - Enabled by default
-- CLI: `engram topics` - Show extracted topics
-- CLI: `engram summaries` - Show memory summaries
+- CLI: `engram topics`, `engram summaries`
 
 ### Changed
 - Retrieval now filters out non-active memories by default

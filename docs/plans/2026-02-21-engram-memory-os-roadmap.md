@@ -53,14 +53,13 @@ The roadmap implements all requested paper concepts, grouped by the capability t
 
 ## 2) Major Release Structure
 
-### Release A: `v8.0` (Memory OS Core)
-- Memory Boxes + Trace Weaving
-- Episode/Note dual store
-- Verbatim Artifacts
-- Recall Planner v1 (retrieve-vs-think-lite)
-- Docs IA overhaul foundation
+### Release A: `v8.0` (Memory OS Core) — **shipped as npm v8.0.0–v8.0.3**
+- Memory Boxes + Trace Weaving (v8.0.1, PR #12)
+- Episode/Note dual store (v8.0.2, PR #13)
+- Verbatim Artifacts + Recall Planner v1 (v8.0.0, PR #11)
+- Docs IA overhaul foundation (v8.0.3, PR #14)
 
-### Release B: `v8.1` (Intent + Temporal Indexing)
+### Release B: `v8.1` (Intent + Temporal Indexing) — **shipped as npm v8.1.0 (PR #15, was initially tagged v8.0.4)**
 - Intent-indexed retrieval (goal/action/entity types)
 - Temporal index + semantic tag DAG
 - Adaptive retrieval pipeline (prefilter -> hybrid -> rerank)
