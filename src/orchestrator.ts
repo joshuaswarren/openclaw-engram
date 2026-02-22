@@ -190,6 +190,57 @@ export function resolveRecentThreadMemoryPaths(options: {
     .filter((p): p is string => typeof p === "string" && p.length > 0);
 }
 
+export function buildMemoryPathById(
+  allMemsForGraph: MemoryFile[] | null | undefined,
+  storageDir: string,
+): Map<string, string> {
+  const pathById = new Map<string, string>();
+  for (const mem of allMemsForGraph ?? []) {
+    const id = mem.frontmatter.id;
+    if (!id) continue;
+    pathById.set(id, path.relative(storageDir, mem.path));
+  }
+  return pathById;
+}
+
+export function appendMemoryToGraphContext(options: {
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  storageDir: string;
+  memoryRelPath: string;
+  memoryId: string;
+  category: MemoryFile["frontmatter"]["category"];
+  content: string;
+  entityRef: string | undefined;
+}): void {
+  if (!Array.isArray(options.allMemsForGraph)) return;
+
+  const nowIso = new Date().toISOString();
+  options.allMemsForGraph.push({
+    path: path.join(options.storageDir, options.memoryRelPath),
+    content: options.content,
+    frontmatter: {
+      id: options.memoryId,
+      category: options.category,
+      created: nowIso,
+      updated: nowIso,
+      source: "extraction",
+      confidence: 0.8,
+      confidenceTier: "implied",
+      tags: [],
+      entityRef: options.entityRef,
+      status: "active",
+    },
+  });
+}
+
+export function resolvePersistedMemoryRelativePath(options: {
+  memoryId: string;
+  pathById: Map<string, string>;
+  fallbackRelativePath: string;
+}): string {
+  return options.pathById.get(options.memoryId) ?? options.fallbackRelativePath;
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -210,8 +261,8 @@ export class Orchestrator {
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
-  /** v8.2: Multi-graph memory index (entity/time/causal edges) */
-  private readonly graphIndex: GraphIndex;
+  /** v8.2: Per-namespace multi-graph memory indexes (entity/time/causal edges) */
+  private readonly graphIndexes = new Map<string, GraphIndex>();
   /** Per-namespace BoxBuilders, keyed by the namespace root directory path. */
   private readonly boxBuilders = new Map<string, BoxBuilder>();
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
@@ -302,8 +353,6 @@ export class Orchestrator {
       path.join(config.memoryDir, "threads"),
       config.threadingGapMinutes,
     );
-    // v8.2: Multi-graph memory (fail-open, disabled by default)
-    this.graphIndex = new GraphIndex(config.memoryDir, config);
     // BoxBuilders are created per-namespace on first use in runExtraction().
 
     // Temporal Memory Tree (v8.2) — lazy build during consolidation
@@ -1618,10 +1667,15 @@ export class Orchestrator {
     let threadIdForExtraction: string | null = null;
     if (this.config.threadingEnabled && turns.length > 0) {
       const lastTurn = turns[turns.length - 1];
-      threadIdForExtraction = await this.threading.processTurn(lastTurn, []);
+      try {
+        threadIdForExtraction = await this.threading.processTurn(lastTurn, []);
+      } catch (err) {
+        // Fail-open: threading errors must not block memory persistence.
+        log.warn("[threading] processTurn failed before persistence (non-fatal)", err);
+      }
     }
 
-    const persistedIds = await this.persistExtraction(result, storage);
+    const persistedIds = await this.persistExtraction(result, storage, threadIdForExtraction);
     await this.buffer.clearAfterExtraction();
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -1639,11 +1693,8 @@ export class Orchestrator {
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }
 
-    // Attach persisted memories to the already-established thread context.
+    // Thread title update for the already-established thread context.
     if (this.config.threadingEnabled && threadIdForExtraction) {
-      if (persistedIds.length > 0) {
-        await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);
-      }
       const conversationContent = turns.map((t) => t.content).join(" ");
       await this.threading.updateThreadTitle(threadIdForExtraction, conversationContent);
     }
@@ -1738,7 +1789,11 @@ export class Orchestrator {
     }
   }
 
-  private async persistExtraction(result: ExtractionResult, storage: StorageManager): Promise<string[]> {
+  private async persistExtraction(
+    result: ExtractionResult,
+    storage: StorageManager,
+    threadIdForExtraction?: string | null,
+  ): Promise<string[]> {
     const persistedIds: string[] = [];
     let dedupedCount = 0;
 
@@ -1784,9 +1839,13 @@ export class Orchestrator {
 
     // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
     let allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null = null;
+    const memoryPathById = new Map<string, string>();
     if (this.config.multiGraphMemoryEnabled) {
       try {
         allMemsForGraph = await storage.readAllMemories();
+        for (const [id, relPath] of buildMemoryPathById(allMemsForGraph, storage.dir)) {
+          memoryPathById.set(id, relPath);
+        }
       } catch { /* fail-open */ }
     }
 
@@ -1866,6 +1925,13 @@ export class Orchestrator {
 
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
+          if (threadIdForExtraction) {
+            try {
+              await this.threading.appendEpisodeIds(threadIdForExtraction, [parentId]);
+            } catch (err) {
+              log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
+            }
+          }
           await this.indexPersistedMemory(storage, parentId);
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
@@ -1900,11 +1966,34 @@ export class Orchestrator {
             try {
               const entityRef =
                 typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
-              const today = new Date().toISOString().slice(0, 10);
-              const parentRelPath = fact.category === "correction"
+              const parentWriteDay = new Date().toISOString().slice(0, 10);
+              const fallbackParentRelPath = fact.category === "correction"
                 ? path.join("corrections", `${parentId}.md`)
-                : path.join("facts", today, `${parentId}.md`);
-              await this.buildGraphEdge(storage, parentRelPath, entityRef, parentId, fact.content ?? "", allMemsForGraph);
+                : path.join("facts", parentWriteDay, `${parentId}.md`);
+              memoryPathById.set(parentId, fallbackParentRelPath);
+              const parentRelPath = resolvePersistedMemoryRelativePath({
+                memoryId: parentId,
+                pathById: memoryPathById,
+                fallbackRelativePath: fallbackParentRelPath,
+              });
+              appendMemoryToGraphContext({
+                allMemsForGraph,
+                storageDir: storage.dir,
+                memoryRelPath: parentRelPath,
+                memoryId: parentId,
+                category: fact.category,
+                content: fact.content ?? "",
+                entityRef,
+              });
+              await this.buildGraphEdge(
+                storage,
+                parentRelPath,
+                entityRef,
+                parentId,
+                fact.content ?? "",
+                allMemsForGraph,
+                threadIdForExtraction ?? undefined,
+              );
             } catch { /* fail-open */ }
           }
           continue; // Skip the normal write below
@@ -1966,17 +2055,47 @@ export class Orchestrator {
         memoryKind,
       });
       persistedIds.push(memoryId);
+      if (threadIdForExtraction) {
+        try {
+          await this.threading.appendEpisodeIds(threadIdForExtraction, [memoryId]);
+        } catch (err) {
+          log.warn("[threading] appendEpisodeIds failed during persistence (non-fatal)", err);
+        }
+      }
       await this.indexPersistedMemory(storage, memoryId);
       // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
       if (this.config.multiGraphMemoryEnabled) {
         try {
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
-          const today = new Date().toISOString().slice(0, 10);
-          const memoryRelPath = fact.category === "correction"
+          const memoryWriteDay = new Date().toISOString().slice(0, 10);
+          const fallbackMemoryRelPath = fact.category === "correction"
             ? path.join("corrections", `${memoryId}.md`)
-            : path.join("facts", today, `${memoryId}.md`);
-          await this.buildGraphEdge(storage, memoryRelPath, entityRef, memoryId, fact.content ?? "", allMemsForGraph);
+            : path.join("facts", memoryWriteDay, `${memoryId}.md`);
+          memoryPathById.set(memoryId, fallbackMemoryRelPath);
+          const memoryRelPath = resolvePersistedMemoryRelativePath({
+            memoryId,
+            pathById: memoryPathById,
+            fallbackRelativePath: fallbackMemoryRelPath,
+          });
+          appendMemoryToGraphContext({
+            allMemsForGraph,
+            storageDir: storage.dir,
+            memoryRelPath: memoryRelPath,
+            memoryId,
+            category: fact.category,
+            content: fact.content ?? "",
+            entityRef,
+          });
+          await this.buildGraphEdge(
+            storage,
+            memoryRelPath,
+            entityRef,
+            memoryId,
+            fact.content ?? "",
+            allMemsForGraph,
+            threadIdForExtraction ?? undefined,
+          );
         } catch { /* fail-open */ }
       }
       if (
@@ -2110,6 +2229,7 @@ export class Orchestrator {
     memoryId: string,
     factContent: string,
     allMemsForGraph: import("./types.js").MemoryFile[] | null | undefined,
+    threadIdForEdge: string | undefined,
   ): Promise<void> {
     // Entity siblings: other memories sharing the same entityRef
     const entitySiblings: string[] = [];
@@ -2125,11 +2245,10 @@ export class Orchestrator {
       } catch { /* fail-open */ }
     }
     // Recent thread memories for time graph
-    const threadId = this.threading.getCurrentThreadId() ?? undefined;
     const recentInThread: string[] = [];
-    if (threadId) {
+    if (threadIdForEdge) {
       try {
-        const thread = await this.threading.loadThread(threadId);
+        const thread = await this.threading.loadThread(threadIdForEdge);
         if (thread?.episodeIds?.length) {
           recentInThread.push(...resolveRecentThreadMemoryPaths({
             threadEpisodeIds: thread.episodeIds,
@@ -2141,16 +2260,25 @@ export class Orchestrator {
         }
       } catch { /* fail-open */ }
     }
-    await this.graphIndex.onMemoryWritten({
+    await this.graphIndexFor(storage).onMemoryWritten({
       memoryPath: memoryRelPath,
       entityRef,
       content: factContent,
       created: new Date().toISOString(),
-      threadId,
+      threadId: threadIdForEdge,
       recentInThread,
       entitySiblings,
       causalPredecessor: recentInThread[recentInThread.length - 1],
     });
+  }
+
+  private graphIndexFor(storage: StorageManager): GraphIndex {
+    const key = storage.dir;
+    const existing = this.graphIndexes.get(key);
+    if (existing) return existing;
+    const created = new GraphIndex(key, this.config);
+    this.graphIndexes.set(key, created);
+    return created;
   }
 
   /**

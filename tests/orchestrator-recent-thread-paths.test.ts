@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveRecentThreadMemoryPaths } from "../src/orchestrator.js";
+import {
+  appendMemoryToGraphContext,
+  buildMemoryPathById,
+  resolvePersistedMemoryRelativePath,
+  resolveRecentThreadMemoryPaths,
+} from "../src/orchestrator.js";
 import type { MemoryFile } from "../src/types.js";
 
 function makeMemory(path: string, id: string): MemoryFile {
@@ -75,4 +80,64 @@ test("resolveRecentThreadMemoryPaths returns [] when maxRecent is 0", () => {
   });
 
   assert.deepEqual(recent, []);
+});
+
+test("resolvePersistedMemoryRelativePath prefers persisted path over fallback", () => {
+  const memoryId = "fact-123";
+  const storageDir = "/tmp/memory";
+  const relPath = "facts/2026-02-21/fact-123.md";
+  const pathById = buildMemoryPathById(
+    [makeMemory(`/tmp/memory/${relPath}`, memoryId)],
+    storageDir,
+  );
+  const resolved = resolvePersistedMemoryRelativePath({
+    memoryId,
+    pathById,
+    fallbackRelativePath: "facts/2026-02-22/fact-123.md",
+  });
+
+  assert.equal(resolved, relPath);
+});
+
+test("resolvePersistedMemoryRelativePath falls back when memory ID is missing", () => {
+  const fallback = "facts/2026-02-22/fact-999.md";
+  const resolved = resolvePersistedMemoryRelativePath({
+    memoryId: "fact-999",
+    pathById: new Map(),
+    fallbackRelativePath: fallback,
+  });
+
+  assert.equal(resolved, fallback);
+});
+
+test("appendMemoryToGraphContext adds newly written memory for same-run graph linking", () => {
+  const allMems: MemoryFile[] = [];
+  appendMemoryToGraphContext({
+    allMemsForGraph: allMems,
+    storageDir: "/tmp/memory",
+    memoryRelPath: "facts/2026-02-22/fact-a.md",
+    memoryId: "fact-a",
+    category: "fact",
+    content: "alpha",
+    entityRef: "project-openclaw",
+  });
+
+  assert.equal(allMems.length, 1);
+  assert.equal(allMems[0].path, "/tmp/memory/facts/2026-02-22/fact-a.md");
+  assert.equal(allMems[0].frontmatter.id, "fact-a");
+  assert.equal(allMems[0].frontmatter.entityRef, "project-openclaw");
+});
+
+test("appendMemoryToGraphContext is no-op when graph context list is unavailable", () => {
+  assert.doesNotThrow(() => {
+    appendMemoryToGraphContext({
+      allMemsForGraph: null,
+      storageDir: "/tmp/memory",
+      memoryRelPath: "facts/2026-02-22/fact-a.md",
+      memoryId: "fact-a",
+      category: "fact",
+      content: "alpha",
+      entityRef: "project-openclaw",
+    });
+  });
 });

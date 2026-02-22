@@ -568,14 +568,14 @@ export function parseConfig(raw: unknown): PluginConfig {
     timeGraphEnabled: cfg.timeGraphEnabled !== false,
     causalGraphEnabled: cfg.causalGraphEnabled !== false,
     maxGraphTraversalSteps:
-      typeof cfg.maxGraphTraversalSteps === "number" ? Math.max(1, cfg.maxGraphTraversalSteps) : 3,
+      typeof cfg.maxGraphTraversalSteps === "number" ? Math.max(0, cfg.maxGraphTraversalSteps) : 3,
     graphActivationDecay:
       typeof cfg.graphActivationDecay === "number"
         ? Math.min(1, Math.max(0, cfg.graphActivationDecay))
         : 0.7,
     maxEntityGraphEdgesPerMemory:
       typeof cfg.maxEntityGraphEdgesPerMemory === "number"
-        ? Math.max(1, cfg.maxEntityGraphEdgesPerMemory)
+        ? Math.max(0, cfg.maxEntityGraphEdgesPerMemory)
         : 10,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
