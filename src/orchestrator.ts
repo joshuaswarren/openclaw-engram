@@ -24,6 +24,7 @@ import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
+import { BoxBuilder } from "./boxes.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -153,6 +154,7 @@ export class Orchestrator {
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
+  private readonly boxBuilder: BoxBuilder;
   private readonly rerankCache = new RerankCache();
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
@@ -239,6 +241,15 @@ export class Orchestrator {
       path.join(config.memoryDir, "threads"),
       config.threadingGapMinutes,
     );
+    this.boxBuilder = new BoxBuilder(config.memoryDir, {
+      memoryBoxesEnabled: config.memoryBoxesEnabled,
+      traceWeaverEnabled: config.traceWeaverEnabled,
+      boxTopicShiftThreshold: config.boxTopicShiftThreshold,
+      boxTimeGapMs: config.boxTimeGapMs,
+      boxMaxMemories: config.boxMaxMemories,
+      traceWeaverLookbackDays: config.traceWeaverLookbackDays,
+      traceWeaverOverlapThreshold: config.traceWeaverOverlapThreshold,
+    });
 
     // Create init gate — recall() will await this before proceeding
     this.initPromise = new Promise<void>((resolve) => {
@@ -972,6 +983,21 @@ export class Orchestrator {
       sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
     }
 
+    // 1d. Memory Boxes (topic continuity windows, v8.0 Phase 2A)
+    if (this.config.memoryBoxesEnabled && this.config.boxRecallDays > 0) {
+      const recentBoxes = await this.boxBuilder
+        .readRecentBoxes(this.config.boxRecallDays)
+        .catch(() => []);
+      if (recentBoxes.length > 0) {
+        const boxLines = recentBoxes.slice(0, 5).map((b) => {
+          const sealedDate = b.sealedAt ? b.sealedAt.slice(0, 16).replace("T", " ") : "?";
+          const traceNote = b.traceId ? ` [trace: ${b.traceId.slice(0, 12)}]` : "";
+          return `- [${sealedDate}${traceNote}] Topics: ${b.topics.join(", ")} (${b.memoryIds.length} memories)`;
+        });
+        sections.push(`## Recent Topic Windows\n\n${boxLines.join("\n")}`);
+      }
+    }
+
     // 2. QMD results — post-process and format
     if (qmdResult) {
       const t0 = Date.now();
@@ -1489,6 +1515,20 @@ export class Orchestrator {
 
     const persistedIds = await this.persistExtraction(result, storage);
     await this.buffer.clearAfterExtraction();
+
+    // Build memory box from this extraction (v8.0 Phase 2A)
+    if (this.config.memoryBoxesEnabled && persistedIds.length > 0) {
+      const allMemories = await storage.readAllMemories();
+      const extractionTopics = extractTopics(allMemories, Math.min(8, this.config.topicExtractionTopN || 10))
+        .map((t) => t.term);
+      await this.boxBuilder
+        .onExtraction({
+          topics: extractionTopics,
+          memoryIds: persistedIds,
+          timestamp: new Date().toISOString(),
+        })
+        .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
+    }
 
     // Process threading if enabled (Phase 3B)
     if (this.config.threadingEnabled && turns.length > 0) {

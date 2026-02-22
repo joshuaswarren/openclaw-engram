@@ -539,5 +539,20 @@ export function parseConfig(raw: unknown): PluginConfig {
             typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
         )
       : ["decision", "correction", "principle", "commitment"],
+    // v8.0 Phase 2A: Memory Boxes + Trace Weaving
+    memoryBoxesEnabled: cfg.memoryBoxesEnabled === true,
+    boxTopicShiftThreshold:
+      typeof cfg.boxTopicShiftThreshold === "number" ? cfg.boxTopicShiftThreshold : 0.35,
+    boxTimeGapMs:
+      typeof cfg.boxTimeGapMs === "number" ? cfg.boxTimeGapMs : 30 * 60 * 1000,
+    boxMaxMemories:
+      typeof cfg.boxMaxMemories === "number" ? cfg.boxMaxMemories : 50,
+    traceWeaverEnabled: cfg.traceWeaverEnabled === true,
+    traceWeaverLookbackDays:
+      typeof cfg.traceWeaverLookbackDays === "number" ? cfg.traceWeaverLookbackDays : 7,
+    traceWeaverOverlapThreshold:
+      typeof cfg.traceWeaverOverlapThreshold === "number" ? cfg.traceWeaverOverlapThreshold : 0.4,
+    boxRecallDays:
+      typeof cfg.boxRecallDays === "number" ? cfg.boxRecallDays : 3,
   };
 }

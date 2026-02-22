@@ -265,6 +265,21 @@ export interface PluginConfig {
   verbatimArtifactsMinConfidence: number;
   verbatimArtifactsMaxRecall: number;
   verbatimArtifactCategories: MemoryCategory[];
+  // v8.0 Phase 2A: Memory Boxes + Trace Weaving
+  memoryBoxesEnabled: boolean;
+  /** Jaccard overlap threshold below which a topic shift triggers box sealing (0-1, default 0.35) */
+  boxTopicShiftThreshold: number;
+  /** Time gap in ms before an open box is sealed (default 30 min) */
+  boxTimeGapMs: number;
+  /** Max memories per box before forced seal */
+  boxMaxMemories: number;
+  traceWeaverEnabled: boolean;
+  /** Days back to search for trace links */
+  traceWeaverLookbackDays: number;
+  /** Minimum Jaccard overlap to assign the same traceId (0-1, default 0.4) */
+  traceWeaverOverlapThreshold: number;
+  /** Number of recent days of boxes to inject during recall */
+  boxRecallDays: number;
 }
 
 export interface BootstrapOptions {
