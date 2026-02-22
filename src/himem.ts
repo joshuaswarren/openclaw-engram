@@ -110,12 +110,17 @@ export function classifyMemoryKind(
   if (NOTE_CATEGORIES.has(lowerCategory)) return "note";
   if (EPISODE_CATEGORIES.has(lowerCategory)) return "episode";
 
-  // 3. Tag-level signals — lower priority than category (categories win over noisy tags)
+  // 3. Tag-level signals — lower priority than category; note tags win over episode tags
+  //    to avoid non-deterministic results when tag order varies across LLM runs.
+  let tagMatchesNote = false;
+  let tagMatchesEpisode = false;
   for (const tag of tags) {
     const lowerTag = tag.toLowerCase();
-    if (NOTE_TAGS.has(lowerTag)) return "note";
-    if (EPISODE_TAGS.has(lowerTag)) return "episode";
+    if (NOTE_TAGS.has(lowerTag)) tagMatchesNote = true;
+    if (EPISODE_TAGS.has(lowerTag)) tagMatchesEpisode = true;
   }
+  if (tagMatchesNote) return "note";
+  if (tagMatchesEpisode) return "episode";
 
   // 4. Non-temporal note signals in content
   for (const re of NOTE_SIGNALS) {
