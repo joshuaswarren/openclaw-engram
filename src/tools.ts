@@ -2,6 +2,7 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
 import type { MemoryCategory } from "./types.js";
+import { indexMemory } from "./temporal-index.js";
 
 interface ToolApi {
   registerTool(
@@ -366,6 +367,16 @@ Best for:
           },
         );
 
+        // Update temporal + tag indexes for the explicit store (v8.1),
+        // since memory_store bypasses the extraction path that normally
+        // triggers updateTemporalTagIndexes.
+        if (orchestrator.config.queryAwareIndexingEnabled) {
+          const mem = await storage.getMemoryById(id).catch(() => null);
+          if (mem?.path && mem.frontmatter?.created) {
+            indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
+          }
+        }
+
         // Queue debounced QMD maintenance via orchestrator guardrails so new memory becomes searchable.
         orchestrator.requestQmdMaintenanceForTool("memory_store");
 
@@ -435,6 +446,14 @@ Best for:
           supersedes: mem.frontmatter.supersedes,
           links: mem.frontmatter.links,
         });
+
+        // Update temporal + tag indexes for the promoted copy (v8.1).
+        if (orchestrator.config.queryAwareIndexingEnabled) {
+          const promoted = await dst.getMemoryById(newId).catch(() => null);
+          if (promoted?.path && promoted.frontmatter?.created) {
+            indexMemory(orchestrator.config.memoryDir, promoted.path, promoted.frontmatter.created, promoted.frontmatter.tags ?? []);
+          }
+        }
 
         return toolResult(`Promoted ${srcNs}:${memoryId} → ${dstNs}:${newId}`);
       },
