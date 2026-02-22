@@ -1999,7 +1999,17 @@ export class Orchestrator {
     if (!needsFullRebuild && persistedIds.length === 0) return;
     try {
       // Read the corpus once to avoid N separate full-corpus scans.
-      const allMemories = await storage.readAllMemories();
+      // On full rebuild with namespaces enabled, span all configured namespaces so
+      // memories written to other namespaces before the index existed are also captured.
+      const allMemories = needsFullRebuild && this.config.namespacesEnabled
+        ? await this.readAllMemoriesForNamespaces(
+            Array.from(new Set<string>([
+              this.config.defaultNamespace,
+              this.config.sharedNamespace,
+              ...this.config.namespacePolicies.map((p) => p.name),
+            ])),
+          )
+        : await storage.readAllMemories();
 
       // Bootstrap: index only active (non-archived, non-superseded) memories.
       // Incremental: index only the newly persisted IDs.
@@ -2185,15 +2195,25 @@ export class Orchestrator {
     }
 
     // Clean expired commitments
-    const cleaned = await this.storage.cleanExpiredCommitments(this.config.commitmentDecayDays);
-    if (cleaned > 0) {
-      log.info(`cleaned ${cleaned} expired commitments`);
+    const deletedCommitments = await this.storage.cleanExpiredCommitments(this.config.commitmentDecayDays);
+    if (deletedCommitments.length > 0) {
+      log.info(`cleaned ${deletedCommitments.length} expired commitments`);
+      if (this.config.queryAwareIndexingEnabled) {
+        for (const m of deletedCommitments) {
+          deindexMemory(this.config.memoryDir, m.path, m.frontmatter.created, m.frontmatter.tags ?? []);
+        }
+      }
     }
 
     // Clean memories past their TTL (speculative memories auto-expire)
-    const ttlCleaned = await this.storage.cleanExpiredTTL();
-    if (ttlCleaned > 0) {
-      log.info(`cleaned ${ttlCleaned} TTL-expired memories`);
+    const deletedTTL = await this.storage.cleanExpiredTTL();
+    if (deletedTTL.length > 0) {
+      log.info(`cleaned ${deletedTTL.length} TTL-expired memories`);
+      if (this.config.queryAwareIndexingEnabled) {
+        for (const m of deletedTTL) {
+          deindexMemory(this.config.memoryDir, m.path, m.frontmatter.created, m.frontmatter.tags ?? []);
+        }
+      }
     }
 
     // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/

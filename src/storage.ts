@@ -1254,10 +1254,10 @@ export class StorageManager {
   }
 
   /** Remove memories past their TTL expiresAt date */
-  async cleanExpiredTTL(): Promise<number> {
+  async cleanExpiredTTL(): Promise<MemoryFile[]> {
     const memories = await this.readAllMemories();
     const now = Date.now();
-    let cleaned = 0;
+    const deleted: MemoryFile[] = [];
 
     for (const m of memories) {
       if (!m.frontmatter.expiresAt) continue;
@@ -1265,7 +1265,7 @@ export class StorageManager {
       if (expiresAt < now) {
         try {
           await unlink(m.path);
-          cleaned++;
+          deleted.push(m);
           log.debug(`cleaned expired memory ${m.frontmatter.id} (TTL expired)`);
         } catch {
           // Ignore
@@ -1273,11 +1273,11 @@ export class StorageManager {
       }
     }
 
-    if (cleaned > 0) {
+    if (deleted.length > 0) {
       this.bumpMemoryStatusVersion();
     }
 
-    return cleaned;
+    return deleted;
   }
 
   async loadBuffer(): Promise<BufferState> {
@@ -1926,10 +1926,10 @@ export class StorageManager {
     return merged;
   }
 
-  async cleanExpiredCommitments(decayDays: number): Promise<number> {
+  async cleanExpiredCommitments(decayDays: number): Promise<MemoryFile[]> {
     const memories = await this.readAllMemories();
     const cutoff = Date.now() - decayDays * 24 * 60 * 60 * 1000;
-    let cleaned = 0;
+    const deleted: MemoryFile[] = [];
 
     for (const m of memories) {
       if (m.frontmatter.category !== "commitment") continue;
@@ -1945,7 +1945,7 @@ export class StorageManager {
         // Remove the file
         try {
           await unlink(m.path);
-          cleaned++;
+          deleted.push(m);
           log.debug(`cleaned expired commitment ${m.frontmatter.id}`);
         } catch {
           // Ignore
@@ -1953,11 +1953,11 @@ export class StorageManager {
       }
     }
 
-    if (cleaned > 0) {
+    if (deleted.length > 0) {
       this.bumpMemoryStatusVersion();
     }
 
-    return cleaned;
+    return deleted;
   }
 
   // ---------------------------------------------------------------------------
