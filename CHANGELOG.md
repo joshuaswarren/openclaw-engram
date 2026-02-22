@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- v8.0 phase 2C Docs IA overhaul foundation:
+  - Rewrote `README.md` to be short (value prop, quick install, 5-minute setup, docs table).
+  - New `docs/getting-started.md` — install, QMD setup, 5-minute config, verification.
+  - New `docs/operations.md` — backup/export, CLI, hourly summaries, file hygiene, logs.
+  - New `docs/config-reference.md` — single source of truth for all config flags and defaults.
+  - New `docs/architecture/overview.md` — system design, components, storage layout, frontmatter schema.
+  - New `docs/architecture/retrieval-pipeline.md` — full retrieval pipeline diagram and stage descriptions.
+  - New `docs/architecture/memory-lifecycle.md` — write path, consolidation, expiry, dedup, box lifecycle, HiMem.
+  - Updated `docs/README.md` to reflect the new IA with links to all new docs.
 - v8.0 phase 2B experimental Episode/Note dual store (HiMem, all behind config flags, default off):
   - **Episode/Note classification** (`episodeNoteModeEnabled`): each extracted memory is tagged with `memoryKind: episode` (time-specific event) or `memoryKind: note` (stable belief, preference, decision, constraint). Uses heuristic signals (temporal language, stable-belief keywords, tags, category).
   - New config: `episodeNoteModeEnabled`.

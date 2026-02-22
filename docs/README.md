@@ -1,31 +1,31 @@
-# Engram Docs Map (v8 Reorg Start)
-
-This is the start of a full docs overhaul. Use this map as the canonical entrypoint.
+# Engram Docs
 
 ## Getting Started
-- `../README.md` - install, quick config, tool list
-- `setup-config-tuning.md` - production tuning, QMD, local LLM setup
 
-## Retrieval & Memory Behavior
-- `advanced-retrieval.md` - retrieval controls (rerank/query expansion/feedback)
-- `context-retention.md` - transcript retention, summaries, semantic recall
-- `namespaces.md` - multi-agent namespace isolation
+- [Getting Started](getting-started.md) — Install, QMD setup, 5-minute config, verification
+- [Config Reference](config-reference.md) — Every setting, default, and description
 
-## Intelligence Layers
-- `shared-context.md` - shared cross-agent context
-- `compounding.md` - weekly synthesis and mistakes compounding
+## Architecture
+
+- [Overview](architecture/overview.md) — System design, components, storage layout
+- [Retrieval Pipeline](architecture/retrieval-pipeline.md) — How recall works end-to-end
+- [Memory Lifecycle](architecture/memory-lifecycle.md) — Write, consolidation, expiry
 
 ## Operations
-- `import-export.md` - backup/export/import workflows
-- `ops/pr-review-hardening-playbook.md` - mandatory pre-push review hardening checklist
-- `ops/plugin-engineering-patterns.md` - generalized engineering patterns for retrieval/intent/cache changes
-- `ops/rca-pr11-review-churn-2026-02-21.md` - postmortem + lessons from PR #11 review churn
+
+- [Operations](operations.md) — Backup, export, hourly summaries, CLI, logs
+- [Import / Export](import-export.md) — Portable backups and migration
+- [ops/pr-review-hardening-playbook.md](ops/pr-review-hardening-playbook.md) — Pre-push review checklist
+- [ops/plugin-engineering-patterns.md](ops/plugin-engineering-patterns.md) — Engineering patterns for retrieval/intent/cache
+
+## Feature Guides
+
+- [Advanced Retrieval](advanced-retrieval.md) — Reranking, query expansion, feedback loop
+- [Context Retention](context-retention.md) — Transcript indexing, hourly summaries
+- [Namespaces](namespaces.md) — Multi-agent memory isolation (v3.0)
+- [Shared Context](shared-context.md) — Cross-agent shared intelligence (v4.0)
+- [Compounding](compounding.md) — Weekly synthesis and mistake learning (v5.0)
 
 ## Plans / Roadmaps
-- `plans/2026-02-21-engram-memory-os-roadmap.md` - v8 major roadmap (memory OS architecture)
 
-## Planned Structure (next PR phases)
-- `docs/guide/` for user guides and setup paths
-- `docs/reference/` for config/tool schema reference
-- `docs/architecture/` for retrieval/write pipeline internals
-- `docs/ops/` for runbooks, failure modes, and hardening
+- [v8 Memory OS Roadmap](plans/2026-02-21-engram-memory-os-roadmap.md) — Major roadmap
