@@ -116,6 +116,24 @@ export function computeArtifactRecallLimit(
   return base;
 }
 
+export function resolveEffectiveRecallMode(options: {
+  plannerEnabled: boolean;
+  graphRecallEnabled: boolean;
+  multiGraphMemoryEnabled: boolean;
+  prompt: string;
+}): RecallPlanMode {
+  const plannedMode: RecallPlanMode = options.plannerEnabled
+    ? planRecallMode(options.prompt)
+    : "full";
+  if (
+    plannedMode === "graph_mode" &&
+    (!options.graphRecallEnabled || !options.multiGraphMemoryEnabled)
+  ) {
+    return "full";
+  }
+  return plannedMode;
+}
+
 export function computeArtifactCandidateFetchLimit(targetCount: number): number {
   const cappedTarget = Math.max(0, targetCount);
   if (cappedTarget === 0) return 0;
@@ -946,9 +964,12 @@ export class Orchestrator {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
     const sections: string[] = [];
-    const recallMode: RecallPlanMode = this.config.recallPlannerEnabled
-      ? planRecallMode(prompt)
-      : "full";
+    const recallMode: RecallPlanMode = resolveEffectiveRecallMode({
+      plannerEnabled: this.config.recallPlannerEnabled,
+      graphRecallEnabled: this.config.graphRecallEnabled,
+      multiGraphMemoryEnabled: this.config.multiGraphMemoryEnabled,
+      prompt,
+    });
     timings.recallPlan = recallMode;
     const recallResultLimit = recallMode === "no_recall"
       ? 0

@@ -290,6 +290,8 @@ export interface PluginConfig {
   queryAwareIndexingMaxCandidates: number;
   // v8.2 multi-graph memory (PR 18)
   multiGraphMemoryEnabled: boolean;
+  // v8.2 PR 19A: graph recall planner gating
+  graphRecallEnabled: boolean;
   entityGraphEnabled: boolean;
   timeGraphEnabled: boolean;
   causalGraphEnabled: boolean;

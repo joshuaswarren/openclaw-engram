@@ -68,11 +68,21 @@ The roadmap implements all requested paper concepts, grouped by the capability t
 - Temporal Memory Tree
 - Multi-graph memory (entity/time/causal/semantic)
 - Graph recall mode + explainability tool
+- Recommended delivery split:
+  - PR 19A: planner + `graph_mode` gating only
+  - PR 19B: spreading-activation retrieval integration
+  - PR 19C: explainability tools + snapshot state
+  - PR 19D: hardening + rollout docs
 
 ### Release D: `v8.3` (Proactive + Policy Learning)
 - Proactive extraction self-questioning
 - Compression guideline optimizer
 - Memory actions telemetry and policy tuning loop
+- Recommended delivery split:
+  - PR 20A: lifecycle data model + config
+  - PR 20B: lifecycle engine module
+  - PR 20C: consolidation wiring + lifecycle metrics
+  - PR 20D: retrieval policy integration + docs
 
 ## 3) Data Model Changes
 
@@ -331,4 +341,3 @@ The roadmap implements all requested paper concepts, grouped by the capability t
 ### Days 61-90
 - Ship TMT + graph retrieval (shadow mode first).
 - Enable conservative defaults and publish migration guide.
-
