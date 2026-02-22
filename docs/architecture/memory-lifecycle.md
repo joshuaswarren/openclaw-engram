@@ -85,7 +85,7 @@ Memories with `confidenceTier: speculative` (confidence < 0.40) auto-expire afte
 
 ### Commitment Decay
 
-Commitments (deadlines, promises) are removed after `commitmentDecayDays` (default 90) unless refreshed.
+Commitments marked as resolved (`fulfilled` or `expired`) are removed after `commitmentDecayDays` (default 90). Unresolved/active commitments are not automatically purged.
 
 ### Fact Archival (v6.0)
 

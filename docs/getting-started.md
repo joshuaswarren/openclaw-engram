@@ -48,7 +48,7 @@ grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -5
 
 ## Set Up QMD (Recommended)
 
-QMD provides hybrid BM25 + vector + reranking search. Without it, Engram falls back to direct file reads.
+QMD provides hybrid BM25 + vector + reranking search. Without it, Engram falls back to semantic embedding search (using your OpenAI key when available) and then recency-ordered file reads.
 
 Add to `~/.config/qmd/index.yml`:
 

@@ -25,8 +25,8 @@ before_agent_start
 │  3. Candidate generation        │
 │  a. Artifact anchors (v8.0)     │  high-trust verbatim memories first
 │  b. QMD hybrid search           │  BM25 + vector + reranker
-│  c. Namespace merge (v3.0)      │  local + shared namespaces
-│  d. Query expansion (opt-in)    │  deterministic BM25 expansions
+│  c. Embedding fallback          │  semantic search when QMD unavailable
+│  d. Namespace filter (v3.0)     │  filter to allowed namespaces
 └──────────────┬──────────────────┘
                ▼
 ┌─────────────────────────────────┐
@@ -94,7 +94,7 @@ All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) befor
 
 ## Namespace Routing (v3.0)
 
-With namespaces enabled, search runs against both the local namespace and the shared namespace. Results are merged via round-robin to preserve representation from each namespace. See [Namespaces](../namespaces.md).
+With namespaces enabled, retrieval filters candidates to allowed namespaces (local and shared) and returns results in score order. See [Namespaces](../namespaces.md).
 
 ## Configuration Quick Reference
 
@@ -107,7 +107,6 @@ With namespaces enabled, search runs against both the local namespace and the sh
 | `qmdMaxResults` | `8` | Max QMD candidates |
 | `intentRoutingEnabled` | `false` | Intent-compatible recall boost |
 | `verbatimArtifactsEnabled` | `false` | Inject artifact anchors first |
-| `queryExpansionEnabled` | `false` | Deterministic BM25 expansions |
 | `rerankEnabled` | `false` | LLM reranking (don't use with QMD) |
 
 → Full settings: [Config Reference](../config-reference.md)
