@@ -105,26 +105,3 @@ export function classifyMemoryKind(
   return "episode";
 }
 
-/**
- * Add `memoryKind` field to a markdown frontmatter string.
- * If `memoryKind` is already present, replaces it.
- *
- * @param frontmatterBlock - The YAML block between the first --- delimiters (without ---)
- * @param kind             - "episode" | "note"
- */
-export function injectMemoryKind(frontmatterBlock: string, kind: MemoryKind): string {
-  if (/^memoryKind:/m.test(frontmatterBlock)) {
-    return frontmatterBlock.replace(/^memoryKind:.*/m, `memoryKind: ${kind}`);
-  }
-  return frontmatterBlock + `\nmemoryKind: ${kind}`;
-}
-
-/**
- * Parse the `memoryKind` field from a raw memory file.
- * Returns undefined if not present.
- */
-export function parseMemoryKind(rawContent: string): MemoryKind | undefined {
-  const match = rawContent.match(/^memoryKind:\s*(episode|note)\s*$/m);
-  if (!match) return undefined;
-  return match[1] as MemoryKind;
-}
