@@ -341,7 +341,7 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
   const p = prompt.toLowerCase();
   let daysBack = 7; // default
 
-  if (/\btoday\b/.test(p) || /\bthis morning\b/.test(p)) {
+  if (/\btoday\b/.test(p) || /\bthis morning\b/.test(p) || /\bjust now\b/.test(p) || /\bearlier today\b/.test(p)) {
     daysBack = 0; // fromDate = today → window [today, today]
   } else if (/\byesterday\b/.test(p) || /\blast night\b/.test(p)) {
     daysBack = 1; // fromDate = yesterday → window [yesterday, today]

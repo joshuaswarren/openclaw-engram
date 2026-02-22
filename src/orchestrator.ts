@@ -28,6 +28,7 @@ import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import {
   indexMemoriesBatch,
+  indexMemory,
   indexesExist,
   deindexMemory,
   queryByDateRange,
@@ -2106,6 +2107,12 @@ export class Orchestrator {
               lineage: [item.existingId],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
+            if (this.config.queryAwareIndexingEnabled) {
+              const updated = await this.storage.getMemoryById(item.existingId).catch(() => null);
+              if (updated?.path && updated.frontmatter?.created) {
+                indexMemory(this.config.memoryDir, updated.path, updated.frontmatter.created, updated.frontmatter.tags ?? []);
+              }
+            }
           }
           break;
         case "MERGE":
@@ -2115,6 +2122,12 @@ export class Orchestrator {
               lineage: [item.existingId, item.mergeWith],
             });
             await this.indexPersistedMemory(this.storage, item.existingId);
+            if (this.config.queryAwareIndexingEnabled) {
+              const mergedSurvivor = await this.storage.getMemoryById(item.existingId).catch(() => null);
+              if (mergedSurvivor?.path && mergedSurvivor.frontmatter?.created) {
+                indexMemory(this.config.memoryDir, mergedSurvivor.path, mergedSurvivor.frontmatter.created, mergedSurvivor.frontmatter.tags ?? []);
+              }
+            }
             // Capture before invalidation for index cleanup
             const toMergeInvalidate = this.config.queryAwareIndexingEnabled
               ? await this.storage.getMemoryById(item.mergeWith).catch(() => null)
