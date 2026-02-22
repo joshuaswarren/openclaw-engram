@@ -104,6 +104,10 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `transcriptEnabled` | `true` | Save conversation transcripts to disk |
+| `transcriptRetentionDays` | `7` | Days to retain saved transcripts |
+| `hourlySummariesEnabled` | `true` | Generate hourly summaries of conversation activity |
+| `hourlySummaryCronAutoRegister` | `false` | Auto-register hourly summary cron job on gateway start |
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |
 | `hourlySummariesIncludeToolStats` | `false` | Include tool usage stats in summaries |
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
@@ -159,11 +163,11 @@ See [compounding.md](compounding.md).
 |---------|---------|-------------|
 | `fileHygiene.enabled` | `false` | Enable file hygiene features |
 | `fileHygiene.lintEnabled` | `true` | Warn on oversized workspace files (when hygiene is enabled) |
-| `fileHygiene.lintPaths` | `[]` | Files to monitor (relative to workspaceDir) |
+| `fileHygiene.lintPaths` | `["IDENTITY.md","MEMORY.md"]` | Files to monitor (relative to workspaceDir) |
 | `fileHygiene.lintBudgetBytes` | `20000` | Budget threshold for warnings |
 | `fileHygiene.lintWarnRatio` | `0.8` | Warn at this fraction of budget |
 | `fileHygiene.rotateEnabled` | `false` | Rotate oversized files into archive |
-| `fileHygiene.rotatePaths` | `[]` | Files to rotate |
+| `fileHygiene.rotatePaths` | `["IDENTITY.md"]` | Files to rotate |
 | `fileHygiene.rotateMaxBytes` | `18000` | Max size before rotation |
 | `fileHygiene.rotateKeepTailChars` | `2000` | Chars to keep as tail excerpt after rotation |
 | `fileHygiene.archiveDir` | `.engram-archive` | Archive directory name |

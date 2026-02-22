@@ -64,7 +64,7 @@ Periodically:          Extract  → LLM call to extract + store new memories
     ├── meta.json               # Extraction count, timestamps, totals
     ├── topics.json             # Extracted topics (v1.2)
     ├── fact-hashes.txt         # Content-hash dedup index (v6.0)
-    └── trace-index.json        # Trace Weaver index (v8.0)
+    └── traces.json             # Trace Weaver index (v8.0)
 ```
 
 ## Memory File Format
