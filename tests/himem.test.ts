@@ -99,6 +99,46 @@ test("classifyMemoryKind: 'said' / 'mentioned' present but not primary actor →
   assert.equal(kind, "episode");
 });
 
+// ── NOTE_SIGNALS content check (neutral category) ─────────────────────────
+// These tests use category="fact" (not in NOTE_CATEGORIES or EPISODE_CATEGORIES)
+// to exercise the content-signal code path rather than the category override.
+
+test("NOTE_SIGNALS: 'prefers' in content with neutral category → note", () => {
+  const kind = classifyMemoryKind(
+    "The team prefers TypeScript for all new projects.",
+    [],
+    "fact",
+  );
+  assert.equal(kind, "note");
+});
+
+test("NOTE_SIGNALS: 'always' in content with neutral category → note", () => {
+  const kind = classifyMemoryKind(
+    "The user always runs tests before committing.",
+    [],
+    "fact",
+  );
+  assert.equal(kind, "note");
+});
+
+test("NOTE_SIGNALS: past tense 'preferred' in content with neutral category → note", () => {
+  const kind = classifyMemoryKind(
+    "The user preferred dark mode in all editors.",
+    [],
+    "fact",
+  );
+  assert.equal(kind, "note");
+});
+
+test("NOTE_SIGNALS: 'needed' in content with neutral category → note", () => {
+  const kind = classifyMemoryKind(
+    "The system needed SSO for all enterprise customers.",
+    [],
+    "fact",
+  );
+  assert.equal(kind, "note");
+});
+
 // ── MemoryKind type safety ─────────────────────────────────────────────────
 
 test("classifyMemoryKind returns only 'episode' or 'note'", () => {
