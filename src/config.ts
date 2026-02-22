@@ -560,7 +560,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     queryAwareIndexingEnabled: cfg.queryAwareIndexingEnabled === true,
     queryAwareIndexingMaxCandidates:
       typeof cfg.queryAwareIndexingMaxCandidates === "number"
-        ? cfg.queryAwareIndexingMaxCandidates
+        ? Math.max(0, cfg.queryAwareIndexingMaxCandidates) // clamp: negative treated as 0 (no cap)
         : 200,
   };
 }

@@ -92,7 +92,9 @@ function writeJsonAtomic(filePath: string, data: unknown): void {
 
 function isoDateFromTimestamp(isoString: string): string {
   if (typeof isoString !== "string" || isoString.length < 10) {
-    // Malformed frontmatter — fall back to today so the memory is still indexed
+    // Malformed frontmatter — fall back to today so the memory is still indexed.
+    // Log a warning to surface data-quality issues without aborting the write.
+    console.warn(`[engram] temporal-index: malformed timestamp "${isoString}", falling back to today`);
     return new Date().toISOString().slice(0, 10);
   }
   return isoString.slice(0, 10); // YYYY-MM-DD
@@ -394,7 +396,7 @@ export async function queryByTagsAsync(
 
 /**
  * Extract tags from a prompt for tag-based prefiltering.
- * Looks for hashtag-style tokens (#foo) and parenthesized tag references.
+ * Looks for hashtag-style tokens (#foo).
  * Returns lowercase, deduplicated list.
  */
 export function extractTagsFromPrompt(prompt: string): string[] {
