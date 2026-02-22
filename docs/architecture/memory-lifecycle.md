@@ -75,7 +75,7 @@ Consolidation
 | `superseded` | Replaced by a newer memory; still on disk |
 | `archived` | Moved to `archive/`; excluded from QMD queries |
 
-Memories are **never deleted** — superseded and archived entries remain on disk for audit purposes.
+Memories in `superseded` or `archived` status remain on disk. However, **speculative TTL expiry** and **commitment decay** physically delete files via `unlink` — these entries are not retained.
 
 ## Expiry and Archival
 

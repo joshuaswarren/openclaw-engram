@@ -98,7 +98,10 @@ QMD supports hybrid search combining BM25 and vector embeddings with reranking.
 | `memoryKind` | `episode` or `note` (v8.0 HiMem; only when `episodeNoteModeEnabled`) |
 | `confidence` | 0.0–1.0 from extraction |
 | `confidenceTier` | `explicit`, `implied`, `inferred`, `speculative` |
-| `importance` | 0.0–1.0 from local heuristic scorer |
+| `importanceScore` | 0.0–1.0 from local heuristic scorer |
+| `importanceLevel` | `critical`, `high`, `normal`, `low`, `trivial` |
+| `importanceReasons` | Array of reason strings explaining the score |
+| `importanceKeywords` | Array of salient keywords extracted for search |
 | `status` | `active`, `superseded`, `archived` |
 | `tags` | Semantic tags from extraction |
 | `entityRef` | Link to entity file (if applicable) |

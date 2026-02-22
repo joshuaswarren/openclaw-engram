@@ -116,8 +116,8 @@ kill -USR1 $(pgrep openclaw-gateway)
 # Watch gateway logs for engram activity
 grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -50 -f
 
-# Slow query log (if slowLogEnabled)
-cat ~/.openclaw/workspace/memory/local/state/slow.log
+# Slow operations appear in gateway logs as warnings (if slowLogEnabled)
+grep -i 'slow\|latency' ~/.openclaw/logs/gateway.log | tail -20
 ```
 
 ## Memory Store Maintenance
