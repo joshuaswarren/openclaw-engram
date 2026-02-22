@@ -577,5 +577,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.maxEntityGraphEdgesPerMemory === "number"
         ? Math.max(1, cfg.maxEntityGraphEdgesPerMemory)
         : 10,
+    // v8.2: Temporal Memory Tree
+    temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
+    tmtHourlyMinMemories:
+      typeof cfg.tmtHourlyMinMemories === "number" ? cfg.tmtHourlyMinMemories : 3,
+    tmtSummaryMaxTokens:
+      typeof cfg.tmtSummaryMaxTokens === "number" ? cfg.tmtSummaryMaxTokens : 300,
   };
 }

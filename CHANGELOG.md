@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+<<<<<<< feature/v8.2-pr18-graph
 ## [8.2.0-pr18] — v8.2 PR 18: Multi-Graph Memory
 
 ### Added
@@ -17,6 +18,21 @@ All notable changes to this project will be documented in this file.
   - **Spreading activation** (`GraphIndex.spreadingActivation`): SYNAPSE-inspired BFS traversal from seed nodes across all enabled graph types with configurable per-hop decay. Ready for use by PR 19 (graph recall mode).
   - All graph writes are fail-open: any error is caught and logged; memory writes succeed regardless.
   - New config: `multiGraphMemoryEnabled`, `entityGraphEnabled`, `timeGraphEnabled`, `causalGraphEnabled`, `maxGraphTraversalSteps` (default 3), `graphActivationDecay` (default 0.7), `maxEntityGraphEdgesPerMemory` (default 10).
+=======
+## [8.2.0-pr17] — v8.2 PR 17: Temporal Memory Tree
+
+### Added
+- Temporal Memory Tree (TiMem-inspired, behind `temporalMemoryTreeEnabled`, default off):
+  - New `src/tmt.ts`: builds a hierarchy of summarised memory nodes — hour → day → week → persona — stored under `memory/tmt/` as markdown files with YAML frontmatter.
+  - **Hour nodes** (`tmt/YYYY-MM-DD/hour-HH.md`): consolidated when `>= tmtHourlyMinMemories` new memories exist for that hour.
+  - **Day nodes** (`tmt/YYYY-MM-DD/day.md`): built/updated from hour nodes during daily consolidation.
+  - **Week nodes** (`tmt/week-YYYY-WW.md`): rolled up from day nodes when the ISO week turns.
+  - **Persona node** (`tmt/persona.md`): synthesised from the 4 most recent week-node summaries.
+  - **Recall injection**: the most temporally relevant TMT node is injected between Memory Boxes and QMD results when `temporalMemoryTreeEnabled=true`. Injection is skipped on `no_recall`/`minimal` planner modes.
+  - Uses existing `LocalLlmClient` for summarisation via a callback — no additional API cost by default.
+  - All node writes are fail-open: errors are caught and logged; consolidation and recall continue regardless.
+  - New config: `temporalMemoryTreeEnabled` (default `false`), `tmtHourlyMinMemories` (default `3`), `tmtSummaryMaxTokens` (default `300`).
+>>>>>>> main
 
 ## [8.1.1-ai-readiness] — AI Readiness Improvements (PR #19)
 
