@@ -1,0 +1,64 @@
+# openclaw-engram
+
+> Local-first memory plugin for OpenClaw. Gives AI agents persistent, searchable long-term memory using LLM-powered extraction, plain markdown storage, and hybrid search.
+
+## What it does
+
+Engram hooks into the OpenClaw gateway to:
+
+1. **Recall** relevant memories before each agent session and inject them into the system prompt.
+2. **Buffer** conversation turns after each agent response.
+3. **Extract** facts, preferences, decisions, and entities periodically via a single LLM call.
+4. **Consolidate** memories periodically: merge duplicates, resolve contradictions, expire stale entries.
+5. **Store** everything as plain markdown files with YAML frontmatter — no external database.
+
+## Key files
+
+- `src/orchestrator.ts` — coordinates all phases; main integration point
+- `src/storage.ts` — reads and writes memory files
+- `src/extraction.ts` — LLM extraction engine (OpenAI Responses API)
+- `src/retrieval.ts` — recall pipeline: filter → rerank → cap → format
+- `src/qmd.ts` — hybrid search client wrapping the `qmd` CLI
+- `src/config.ts` — config parsing with defaults
+- `src/types.ts` — TypeScript interfaces for all memory types
+- `openclaw.plugin.json` — plugin manifest and config schema
+
+## Memory categories
+
+`fact`, `preference`, `correction`, `entity`, `decision`, `relationship`, `principle`, `commitment`, `moment`, `skill`
+
+## Configuration
+
+Key options in `openclaw.json`:
+
+```jsonc
+{
+  "plugins": {
+    "openclaw-engram": {
+      "openaiApiKey": "${OPENAI_API_KEY}",
+      "memoryDir": "~/.openclaw/workspace/memory/local",
+      "qmdEnabled": true,
+      "consolidateEveryN": 10,
+      "maxMemoryTokens": 2000
+    }
+  }
+}
+```
+
+Full reference: [docs/config-reference.md](docs/config-reference.md)
+
+## Docs
+
+- [Getting Started](docs/getting-started.md)
+- [Architecture Overview](docs/architecture/overview.md)
+- [Config Reference](docs/config-reference.md)
+- [Operations Guide](docs/operations.md)
+- [Import / Export](docs/import-export.md)
+- [Namespaces](docs/namespaces.md)
+
+## Requirements
+
+- Node.js ≥ 22.12.0
+- OpenClaw gateway
+- OpenAI API key (for extraction; retrieval works without it)
+- `qmd` CLI (optional but recommended for hybrid search)

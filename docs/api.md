@@ -1,0 +1,100 @@
+# API Reference
+
+## Agent Tools
+
+These tools are registered with the OpenClaw gateway and are callable by agents.
+
+### `memory_search`
+
+Search memories by semantic similarity.
+
+**Parameters:**
+- `query` (string, required) — The search query.
+- `limit` (number, optional, default: 10) — Max results to return.
+- `category` (string, optional) — Filter by memory category.
+- `namespace` (string, optional) — Filter by namespace.
+
+**Returns:** Array of matching memories with scores, paths, and content snippets.
+
+---
+
+### `memory_store`
+
+Manually store a memory without going through the extraction pipeline.
+
+**Parameters:**
+- `content` (string, required) — The memory content.
+- `category` (string, required) — One of: `fact`, `preference`, `correction`, `entity`, `decision`, `relationship`, `principle`, `commitment`, `moment`, `skill`.
+- `confidence` (number, optional, default: 0.9) — Confidence score 0–1.
+- `tags` (string[], optional) — Tags to attach.
+
+**Returns:** The stored memory's ID and file path.
+
+---
+
+### `memory_profile`
+
+Retrieve the current behavioral profile.
+
+**Parameters:** None.
+
+**Returns:** The contents of `profile.md`.
+
+---
+
+### `memory_entities`
+
+List all tracked entities.
+
+**Parameters:**
+- `type` (string, optional) — Filter by entity type (person, company, project, place).
+
+**Returns:** Array of entity summaries with names, types, and fact counts.
+
+---
+
+### `memory_promote`
+
+Promote a memory to a shared namespace so other agents can access it.
+
+**Parameters:**
+- `memoryId` (string, required) — The ID of the memory to promote.
+- `targetNamespace` (string, optional, default: `shared`) — Destination namespace.
+
+**Returns:** The new path in the shared namespace.
+
+---
+
+### `memory_feedback`
+
+Record explicit feedback on a recalled memory.
+
+**Parameters:**
+- `memoryId` (string, required) — The ID of the memory.
+- `signal` (string, required) — One of: `thumbs_up`, `thumbs_down`.
+- `note` (string, optional) — Optional explanation.
+
+**Returns:** Confirmation with updated memory status.
+
+---
+
+## CLI Commands
+
+Run via `openclaw engram <command>`:
+
+| Command | Description |
+|---------|-------------|
+| `flush` | Force-flush the buffer and run extraction now |
+| `search <query>` | Search memories from the terminal |
+| `stats` | Show memory counts, buffer state, and QMD status |
+| `export [--format json\|sqlite\|md]` | Export all memories to a portable file |
+| `import <file>` | Import memories from a portable file |
+| `purge` | Delete all memories (requires confirmation) |
+
+## Plugin Hooks
+
+| Hook | When it fires | What Engram does |
+|------|--------------|-----------------|
+| `gateway_start` | Gateway process starts | Initialize storage, probe QMD, load buffer |
+| `before_agent_start` | Before each agent session | Recall relevant memories, inject into system prompt |
+| `agent_end` | After each agent turn | Buffer the turn, maybe trigger extraction |

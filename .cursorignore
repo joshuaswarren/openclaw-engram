@@ -1,0 +1,26 @@
+# Directories that contain user memory data — never index for AI context.
+# These paths exist only at runtime on the user's machine, not in this repo.
+facts/
+entities/
+corrections/
+questions/
+state/
+summaries/
+artifacts/
+profile.md
+IDENTITY.md
+
+# Build output
+dist/
+*.map
+
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+
+# OS artefacts
+.DS_Store
+Thumbs.db

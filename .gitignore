@@ -8,6 +8,7 @@ node_modules/
 # Environment
 .env
 .env.*
+!.env.example
 
 # Editor
 .idea/
@@ -26,3 +27,6 @@ state/
 # Auto-generated claude-mem context files (contain session-specific data)
 src/CLAUDE.md
 scripts/CLAUDE.md
+
+# Git worktrees
+.worktrees/
