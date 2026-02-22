@@ -34,16 +34,28 @@ const NOTE_SIGNALS = [
 ];
 
 /**
- * Keywords that signal a time-specific event/action.
- * Intentionally narrow: only unambiguous temporal markers.
- * Note: "just" is excluded — it too often means "merely/only" rather than "a moment ago".
+ * Unambiguous date/time markers — checked at step 1 (highest priority) before
+ * category overrides.  Only include signals that cannot appear in stable-belief
+ * sentences (e.g. "today I prefer…" is contrived; "yesterday" in a preference
+ * is almost always a past event).
+ *
+ * Note: "just" excluded — it too often means "merely/only".
  */
-const EPISODE_SIGNALS = [
+const TEMPORAL_SIGNALS = [
   /\byesterday\b/i,
   /\btoday\b/i,
-  /\blast\s+(?:week|month|year|Tuesday|Wednesday|Thursday|Friday|Monday|Sunday|Saturday)\b/i,
+  /\blast\s+(?:week|month|year|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i,
   /\bon\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i,
   /\b(?:recently|earlier|this morning|this afternoon)\b/i,
+];
+
+/**
+ * Past-tense action verbs that suggest an episodic memory.
+ * Checked AFTER category overrides (step 3.5) to avoid misclassifying
+ * stable-knowledge sentences like "User mentioned they always prefer X"
+ * where category="preference" should win over the verb "mentioned".
+ */
+const VERB_EPISODE_SIGNALS = [
   /\bdeployed\b/i,
   /\bpushed\b/i,
   /\bfixed\b/i,
@@ -101,8 +113,10 @@ export function classifyMemoryKind(
   const lowerContent = content.toLowerCase();
   const lowerCategory = category.toLowerCase();
 
-  // 1. Temporal episode signals — highest priority (unambiguous time references override all)
-  for (const re of EPISODE_SIGNALS) {
+  // 1. True temporal markers — unambiguous date/time references override everything.
+  //    These are safe at highest priority because genuine date/time phrases cannot
+  //    appear in a stable-belief sentence without making it episodic.
+  for (const re of TEMPORAL_SIGNALS) {
     if (re.test(lowerContent)) return "episode";
   }
 
@@ -121,6 +135,13 @@ export function classifyMemoryKind(
   }
   if (tagMatchesNote) return "note";
   if (tagMatchesEpisode) return "episode";
+
+  // 3.5. Verb-based episode signals — run after category so that stable categories
+  //      (preference, principle, etc.) are not overridden by common narrative verbs
+  //      like "mentioned" or "said" (e.g. "User mentioned they always prefer X").
+  for (const re of VERB_EPISODE_SIGNALS) {
+    if (re.test(lowerContent)) return "episode";
+  }
 
   // 4. Non-temporal note signals in content
   for (const re of NOTE_SIGNALS) {
