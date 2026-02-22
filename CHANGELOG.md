@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- v8.1 query-aware indexing (SwiftMem-inspired, behind `queryAwareIndexingEnabled`, default off):
+  - New `src/temporal-index.ts`: maintains `state/index_time.json` (date buckets → memory paths) and `state/index_tags.json` (frontmatter tags → memory paths) after each extraction.
+  - Adaptive retrieval prefilter: temporal queries receive a +0.08 score boost; `#tag` tokens in the prompt receive a +0.06 score boost. Additive and fail-open — index absence never breaks recall.
+  - Batch indexing runs fire-and-forget after extraction to avoid blocking the write path.
+  - New config: `queryAwareIndexingEnabled`, `queryAwareIndexingMaxCandidates`.
 - v8.0 phase 2C Docs IA overhaul foundation:
   - Rewrote `README.md` to be short (value prop, quick install, 5-minute setup, docs table).
   - New `docs/getting-started.md` — install, QMD setup, 5-minute config, verification.
