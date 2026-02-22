@@ -1,7 +1,7 @@
 # GraphRAG Evaluation for `openclaw-engram`
 
 Date: 2026-02-22
-Repo evaluated: `/Users/joshuawarren/src/openclaw-engram`
+Repo evaluated: `openclaw-engram`
 
 ## Executive Summary
 
