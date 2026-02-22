@@ -1772,6 +1772,7 @@ export class Orchestrator {
                 intentGoal: inferredIntent?.goal,
                 intentActionType: inferredIntent?.actionType,
                 intentEntityTypes: inferredIntent?.entityTypes,
+                memoryKind,
               },
             );
           }

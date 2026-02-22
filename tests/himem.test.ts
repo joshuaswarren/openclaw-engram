@@ -5,23 +5,11 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import path from "node:path";
-import os from "node:os";
-import { mkdtemp, rm } from "node:fs/promises";
 
 import {
   classifyMemoryKind,
   type MemoryKind,
 } from "../src/himem.js";
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-async function makeTmp(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), "engram-himem-test-"));
-}
-async function cleanup(dir: string): Promise<void> {
-  await rm(dir, { recursive: true, force: true });
-}
 
 // ── classifyMemoryKind ─────────────────────────────────────────────────────
 

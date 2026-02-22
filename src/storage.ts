@@ -2031,6 +2031,7 @@ export class StorageManager {
       intentGoal?: string;
       intentActionType?: string;
       intentEntityTypes?: string[];
+      memoryKind?: MemoryFrontmatter["memoryKind"];
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -2057,6 +2058,7 @@ export class StorageManager {
       intentGoal: options.intentGoal,
       intentActionType: options.intentActionType,
       intentEntityTypes: options.intentEntityTypes,
+      memoryKind: options.memoryKind,
     };
 
     const sanitized = sanitizeMemoryContent(content);
