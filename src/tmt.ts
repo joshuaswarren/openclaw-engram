@@ -25,12 +25,6 @@ export interface TmtNodeFrontmatter {
   builtAt: string;     // ISO date-time
 }
 
-export interface TmtNode {
-  frontmatter: TmtNodeFrontmatter;
-  summary: string;
-  filePath: string;
-}
-
 export interface TmtConfig {
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;   // default 3
@@ -154,7 +148,7 @@ export class TmtBuilder {
         try {
           const existing = await readFile(nodePath, "utf8");
           const countMatch = existing.match(/memoryCount: (\d+)/);
-          if (countMatch && parseInt(countMatch[1], 10) < entries.length) {
+          if (!countMatch || parseInt(countMatch[1], 10) < entries.length) {
             shouldBuild = true; // more memories now — rebuild
           }
         } catch { shouldBuild = true; }
@@ -199,7 +193,7 @@ export class TmtBuilder {
         try {
           const existing = await readFile(nodePath, "utf8");
           const countMatch = existing.match(/memoryCount: (\d+)/);
-          if (countMatch && parseInt(countMatch[1], 10) < entries.length) {
+          if (!countMatch || parseInt(countMatch[1], 10) < entries.length) {
             shouldBuild = true; // more memories now — rebuild
           }
         } catch { shouldBuild = true; }
@@ -266,7 +260,7 @@ export class TmtBuilder {
         try {
           const existing = await readFile(nodePath, "utf8");
           const countMatch = existing.match(/memoryCount: (\d+)/);
-          if (countMatch && parseInt(countMatch[1], 10) < entries.length) {
+          if (!countMatch || parseInt(countMatch[1], 10) < entries.length) {
             shouldBuild = true;
           }
         } catch { shouldBuild = true; }

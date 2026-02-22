@@ -1048,10 +1048,12 @@ export class Orchestrator {
     }
 
     // 1e. TMT node (temporal memory tree, v8.2)
-    const tmtNode = await this.tmtBuilder.getMostRelevantNode();
-    if (tmtNode) {
-      const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
-      sections.push(`## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
+    if (this.config.temporalMemoryTreeEnabled && recallMode !== "minimal") {
+      const tmtNode = await this.tmtBuilder.getMostRelevantNode();
+      if (tmtNode) {
+        const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
+        sections.push(`## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
+      }
     }
 
     // 2. QMD results — post-process and format
@@ -2344,7 +2346,7 @@ export class Orchestrator {
               operation: "tmt_summary",
             },
           );
-          return response?.content?.trim() ?? texts.slice(0, 3).join(" ");
+          return response?.content?.trim() || texts.slice(0, 3).join(" ");
         });
       } catch (err) {
         log.warn(`tmt: consolidation hook failed (ignored): ${err}`);
