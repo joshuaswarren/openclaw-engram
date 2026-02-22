@@ -70,12 +70,18 @@ const NOTE_CATEGORIES = new Set([
 /** Category names that strongly suggest an episode */
 const EPISODE_CATEGORIES = new Set(["event", "action", "observation", "issue", "bug", "incident"]);
 
+/** Tag values that signal a stable belief */
+const NOTE_TAGS = new Set(["preference", "constraint", "goal", "habit", "policy", "belief"]);
+
+/** Tag values that signal a time-specific event */
+const EPISODE_TAGS = new Set(["bug", "fix", "deploy", "incident", "release", "merge", "event"]);
+
 /**
  * Classify a memory fact as "episode" (time-specific event) or "note"
  * (stable belief/preference/decision).
  *
  * @param content   - The memory's text content
- * @param tags      - Tags from extraction
+ * @param tags      - Tags from extraction (checked for episode/note signals)
  * @param category  - Category from extraction
  * @returns "episode" | "note"
  */
@@ -92,11 +98,21 @@ export function classifyMemoryKind(
     if (re.test(lowerContent)) return "episode";
   }
 
+  // Tag-level episode signals (e.g. "bug", "deploy", "merge")
+  for (const tag of tags) {
+    if (EPISODE_TAGS.has(tag.toLowerCase())) return "episode";
+  }
+
   // Category-level override (strong signals, but below temporal content markers)
   if (NOTE_CATEGORIES.has(lowerCategory)) return "note";
   if (EPISODE_CATEGORIES.has(lowerCategory)) return "episode";
 
-  // Non-temporal note signals
+  // Tag-level note signals (e.g. "preference", "goal")
+  for (const tag of tags) {
+    if (NOTE_TAGS.has(tag.toLowerCase())) return "note";
+  }
+
+  // Non-temporal note signals in content
   for (const re of NOTE_SIGNALS) {
     if (re.test(lowerContent)) return "note";
   }
