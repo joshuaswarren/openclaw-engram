@@ -120,6 +120,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `transcriptSkipChannelTypes` | `["cron"]` | Channel types whose transcripts are not saved |
 | `transcriptRecallHours` | `12` | Hours of transcript history to include in recall context |
 | `maxTranscriptTurns` | `50` | Max turns of transcript context to inject |
+| `maxTranscriptTokens` | `1000` | Token budget cap for transcript recall formatting |
 | `hourlySummariesEnabled` | `true` | Generate hourly summaries of conversation activity |
 | `hourlySummaryCronAutoRegister` | `false` | Auto-register hourly summary cron job on gateway start |
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |

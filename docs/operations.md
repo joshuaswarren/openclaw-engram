@@ -114,7 +114,7 @@ kill -USR1 $(pgrep openclaw-gateway)
 
 ```bash
 # Watch gateway logs for engram activity
-grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -50 -f
+tail -f ~/.openclaw/logs/gateway.log | grep '\[engram\]'
 
 # Slow operations appear in gateway logs as warnings (if slowLogEnabled)
 grep -i 'slow\|latency' ~/.openclaw/logs/gateway.log | tail -20
