@@ -26,6 +26,7 @@ import { BootstrapEngine } from "./bootstrap.js";
 import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
+import { TmtBuilder } from "./tmt.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -164,6 +165,31 @@ export function mergeArtifactRecallCandidates(
   return out;
 }
 
+export function resolveRecentThreadMemoryPaths(options: {
+  threadEpisodeIds: string[];
+  currentMemoryId: string;
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  storageDir: string;
+  maxRecent: number;
+}): string[] {
+  const allMems = options.allMemsForGraph ?? [];
+  const maxRecent = Math.max(0, options.maxRecent);
+  if (allMems.length === 0 || options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
+
+  const pathById = new Map<string, string>();
+  for (const mem of allMems) {
+    const id = mem.frontmatter.id;
+    if (!id) continue;
+    pathById.set(id, path.relative(options.storageDir, mem.path));
+  }
+
+  return options.threadEpisodeIds
+    .filter((id) => id !== options.currentMemoryId)
+    .slice(-maxRecent)
+    .map((id) => pathById.get(id))
+    .filter((p): p is string => typeof p === "string" && p.length > 0);
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -188,6 +214,8 @@ export class Orchestrator {
   private readonly graphIndex: GraphIndex;
   /** Per-namespace BoxBuilders, keyed by the namespace root directory path. */
   private readonly boxBuilders = new Map<string, BoxBuilder>();
+  /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
+  private readonly tmtBuilder: TmtBuilder;
   private readonly rerankCache = new RerankCache();
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
@@ -277,6 +305,13 @@ export class Orchestrator {
     // v8.2: Multi-graph memory (fail-open, disabled by default)
     this.graphIndex = new GraphIndex(config.memoryDir, config);
     // BoxBuilders are created per-namespace on first use in runExtraction().
+
+    // Temporal Memory Tree (v8.2) — lazy build during consolidation
+    this.tmtBuilder = new TmtBuilder(config.memoryDir, {
+      temporalMemoryTreeEnabled: config.temporalMemoryTreeEnabled,
+      tmtHourlyMinMemories: config.tmtHourlyMinMemories,
+      tmtSummaryMaxTokens: config.tmtSummaryMaxTokens,
+    });
 
     // Create init gate — recall() will await this before proceeding
     this.initPromise = new Promise<void>((resolve) => {
@@ -1039,6 +1074,15 @@ export class Orchestrator {
           return `- [${sealedDate}${traceNote}] Topics: ${b.topics.join(", ")} (${b.memoryIds.length} memories)`;
         });
         sections.push(`## Recent Topic Windows\n\n${boxLines.join("\n")}`);
+      }
+    }
+
+    // 1e. TMT node (temporal memory tree, v8.2)
+    if (this.config.temporalMemoryTreeEnabled && recallMode !== "minimal" && (recallMode as RecallPlanMode) !== "no_recall") {
+      const tmtNode = await this.tmtBuilder.getMostRelevantNode();
+      if (tmtNode) {
+        const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
+        sections.push(`## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
       }
     }
 
@@ -2087,12 +2131,13 @@ export class Orchestrator {
       try {
         const thread = await this.threading.loadThread(threadId);
         if (thread?.episodeIds?.length) {
-          recentInThread.push(
-            ...thread.episodeIds
-              .filter((id: string) => id !== memoryId)
-              .slice(-3)
-              .map((id: string) => path.join("facts", id)),
-          );
+          recentInThread.push(...resolveRecentThreadMemoryPaths({
+            threadEpisodeIds: thread.episodeIds,
+            currentMemoryId: memoryId,
+            allMemsForGraph,
+            storageDir: storage.dir,
+            maxRecent: 3,
+          }));
         }
       } catch { /* fail-open */ }
     }
@@ -2398,6 +2443,37 @@ export class Orchestrator {
     const meta = await this.storage.loadMeta();
     meta.lastConsolidationAt = new Date().toISOString();
     await this.storage.saveMeta(meta);
+
+    // Temporal Memory Tree (v8.2) — rebuild nodes from all memories, fail-open
+    if (this.config.temporalMemoryTreeEnabled) {
+      try {
+        const tmtEntries = allMemories
+          .filter((m) => m.frontmatter.status !== "superseded" && m.frontmatter.status !== "archived")
+          .map((m) => ({
+            path: m.path,
+            id: m.frontmatter.id,
+            created: m.frontmatter.created,
+            content: m.content,
+          }));
+        await this.tmtBuilder.maybeRebuildNodes(tmtEntries, async (texts, level) => {
+          const prompt = `You are a memory archivist. Summarize the following ${level}-level memories into 3–5 sentences, preserving key facts, decisions, and preferences.\n\n${texts.map((t, i) => `[${i + 1}] ${t}`).join("\n\n")}`;
+          const response = await this.localLlm.chatCompletion(
+            [
+              { role: "system", content: "Respond with a 3–5 sentence narrative summary. No JSON, just plain prose." },
+              { role: "user", content: prompt },
+            ],
+            {
+              temperature: 0.3,
+              maxTokens: this.config.tmtSummaryMaxTokens,
+              operation: "tmt_summary",
+            },
+          );
+          return response?.content?.trim() || texts.slice(0, 3).join(" ");
+        });
+      } catch (err) {
+        log.warn(`tmt: consolidation hook failed (ignored): ${err}`);
+      }
+    }
 
     log.info("consolidation complete");
     return { memoriesProcessed: allMemories.length, merged, invalidated };

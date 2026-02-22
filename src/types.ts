@@ -296,6 +296,10 @@ export interface PluginConfig {
   maxGraphTraversalSteps: number;
   graphActivationDecay: number;
   maxEntityGraphEdgesPerMemory: number;
+  // v8.2: Temporal Memory Tree
+  temporalMemoryTreeEnabled: boolean;
+  tmtHourlyMinMemories: number;
+  tmtSummaryMaxTokens: number;
 }
 
 export interface BootstrapOptions {

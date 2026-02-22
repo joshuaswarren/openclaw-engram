@@ -352,6 +352,21 @@
         "default": 10,
         "description": "Maximum entity graph edges written per memory write. Default 10."
       },
+      "temporalMemoryTreeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Build a hierarchical memory summary tree (hour/day/week/persona nodes). Default: false."
+      },
+      "tmtHourlyMinMemories": {
+        "type": "number",
+        "default": 3,
+        "description": "Minimum new memories in an hour to trigger an hour-level TMT node. Default: 3."
+      },
+      "tmtSummaryMaxTokens": {
+        "type": "number",
+        "default": 300,
+        "description": "Max tokens for each TMT summary node. Default: 300."
+      },
       "queryExpansionEnabled": {
         "type": "boolean",
         "default": false,
