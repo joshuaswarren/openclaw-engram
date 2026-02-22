@@ -93,7 +93,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `queryExpansionEnabled` | `false` | Heuristic query expansion (no LLM calls) |
 | `queryExpansionMaxQueries` | `4` | Max expanded queries including original |
 | `queryExpansionMinTokenLen` | `3` | Minimum token length for expansion |
-| `rerankEnabled` | `false` | LLM reranking (do not use with QMD) |
+| `rerankEnabled` | `false` | LLM reranking pass over QMD/embedding results |
 | `rerankProvider` | `local` | `local` only in v2.2 |
 | `rerankMaxCandidates` | `20` | Max candidates sent to reranker |
 | `rerankTimeoutMs` | `8000` | Rerank timeout (ms) |
@@ -121,6 +121,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
 | `conversationIndexQmdCollection` | `openclaw-engram-conversations` | QMD collection for conversation index |
 | `conversationRecallTopK` | `3` | Top-K relevant transcript chunks to inject |
+| `conversationRecallMaxChars` | `2500` | Max characters of conversation context to inject |
+| `conversationRecallTimeoutMs` | `800` | Timeout for conversation recall (ms) |
 | `conversationIndexMinUpdateIntervalMs` | `900000` | Min interval between index updates |
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |
 

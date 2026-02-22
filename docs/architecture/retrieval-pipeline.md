@@ -113,6 +113,6 @@ With namespaces enabled, retrieval filters candidates to allowed namespaces (loc
 | `qmdMaxResults` | `8` | Max QMD candidates |
 | `intentRoutingEnabled` | `false` | Intent-compatible recall boost |
 | `verbatimArtifactsEnabled` | `false` | Inject artifact anchors first |
-| `rerankEnabled` | `false` | LLM reranking (don't use with QMD) |
+| `rerankEnabled` | `false` | LLM reranking pass over QMD/embedding results |
 
 → Full settings: [Config Reference](../config-reference.md)
