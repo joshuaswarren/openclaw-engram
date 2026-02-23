@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+### Changed
+- PR #33 stability pass:
+  - Fixed `buildRecallQueryPolicy` to preserve raw non-cron prompts (no whitespace normalization) when cron recall policy is not active.
+  - Replaced cron prompt bullet/numbered-line regex scoring with deterministic parsing to avoid regex-risk findings on untrusted input.
+  - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
+
 ### Added
 - v8.3 PR 21D (guideline learning + docs hardening slice):
   - Added consolidation-integrated, fail-open compression guideline learning pass behind `compressionGuidelineLearningEnabled`.

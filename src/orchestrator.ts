@@ -24,6 +24,7 @@ import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
+import { buildRecallQueryPolicy } from "./recall-query-policy.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
@@ -187,6 +188,14 @@ export function filterRecallCandidates(
   return scopedByNamespace
     .filter((r) => !isArtifactMemoryPath(r.path))
     .slice(0, Math.max(0, options.limit));
+}
+
+function tokenizeRecallQuery(prompt: string): string[] {
+  return prompt
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
 }
 
 function hasLifecycleMetadata(frontmatter: MemoryFrontmatter): boolean {
@@ -520,6 +529,7 @@ export class Orchestrator {
         thresholdMs: config.slowLogThresholdMs,
       },
       updateTimeoutMs: config.qmdUpdateTimeoutMs,
+      updateMinIntervalMs: config.qmdUpdateMinIntervalMs,
       qmdPath: config.qmdPath,
       daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
       daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
@@ -535,6 +545,7 @@ export class Orchestrator {
                 thresholdMs: config.slowLogThresholdMs,
               },
               updateTimeoutMs: config.qmdUpdateTimeoutMs,
+              updateMinIntervalMs: config.qmdUpdateMinIntervalMs,
               qmdPath: config.qmdPath,
               daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
               daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
@@ -1181,17 +1192,37 @@ export class Orchestrator {
       namespacesEnabled: boolean;
       recallNamespaces: string[];
       resolveNamespace: (path: string) => string;
+      collection?: string;
     },
   ): Promise<QmdSearchResult[]> {
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
     const maxFetchLimit = Math.min(800, Math.max(fetchLimit, qmdFetchLimit * 8));
     const MAX_ATTEMPTS = 4;
     let bestFiltered: QmdSearchResult[] = [];
+    let queryFallbackAttempted = false;
+
+    const runQueryFallback = async (): Promise<QmdSearchResult[]> => {
+      if (queryFallbackAttempted) return [];
+      queryFallbackAttempted = true;
+      const queryResults = await this.qmd.search(prompt, options.collection, fetchLimit);
+      const filteredQueryResults = filterRecallCandidates(queryResults, {
+        namespacesEnabled: options.namespacesEnabled,
+        recallNamespaces: options.recallNamespaces,
+        resolveNamespace: options.resolveNamespace,
+        limit: fetchLimit,
+      });
+      if (filteredQueryResults.length > 0) {
+        log.debug(
+          `QMD query fallback returned ${filteredQueryResults.length} candidates after hybrid underfilled`,
+        );
+      }
+      return filteredQueryResults;
+    };
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const memoryResults = await this.qmd.hybridSearch(
         prompt,
-        undefined,
+        options.collection,
         fetchLimit,
       );
       const filteredResults = filterRecallCandidates(memoryResults, {
@@ -1208,17 +1239,28 @@ export class Orchestrator {
         bestFiltered = filteredResults;
       }
       if (memoryResults.length === 0) {
+        const queryFallback = await runQueryFallback();
+        if (queryFallback.length > 0) {
+          return queryFallback.slice(0, qmdFetchLimit);
+        }
         return filteredResults;
       }
       if (memoryResults.length < fetchLimit && filteredResults.length > 0) {
         return filteredResults;
       }
       if (fetchLimit >= maxFetchLimit) {
-        return filteredResults;
+        break;
       }
 
       const growth = Math.max(20, Math.floor(fetchLimit / 2));
       fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
+    }
+
+    if (bestFiltered.length === 0) {
+      const queryFallback = await runQueryFallback();
+      if (queryFallback.length > 0) {
+        return queryFallback.slice(0, qmdFetchLimit);
+      }
     }
 
     return bestFiltered;
@@ -1331,6 +1373,14 @@ export class Orchestrator {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
     const sections: string[] = [];
+    const queryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
+      cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+      cronRecallNormalizedQueryMaxChars: this.config.cronRecallNormalizedQueryMaxChars,
+      cronRecallInstructionHeavyTokenCap: this.config.cronRecallInstructionHeavyTokenCap,
+      cronConversationRecallMode: this.config.cronConversationRecallMode,
+    });
+    const retrievalQuery = queryPolicy.retrievalQuery || prompt;
+    timings.queryPolicy = `${queryPolicy.promptShape}/${queryPolicy.retrievalBudgetMode}${queryPolicy.skipConversationRecall ? "/skip-conv" : ""}`;
     const recallMode: RecallPlanMode = resolveEffectiveRecallMode({
       plannerEnabled: this.config.recallPlannerEnabled,
       graphRecallEnabled: this.config.graphRecallEnabled,
@@ -1338,11 +1388,19 @@ export class Orchestrator {
       prompt,
     });
     timings.recallPlan = recallMode;
-    const recallResultLimit = recallMode === "no_recall"
+    const plannerRecallResultLimit = recallMode === "no_recall"
       ? 0
       : recallMode === "minimal"
       ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
       : this.config.qmdMaxResults;
+    const policyMinimalLimit = Math.max(
+      0,
+      Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal),
+    );
+    const recallResultLimit =
+      recallMode !== "no_recall" && queryPolicy.retrievalBudgetMode === "minimal"
+        ? Math.min(plannerRecallResultLimit, policyMinimalLimit)
+        : plannerRecallResultLimit;
     const recallHeadroom = this.config.verbatimArtifactsEnabled
       ? Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)
       : 12;
@@ -1430,7 +1488,11 @@ export class Orchestrator {
         timings.artifacts = "skip(limit=0)";
         return [];
       }
-      const results = await this.recallArtifactsAcrossNamespaces(prompt, recallNamespaces, targetCount);
+      const results = await this.recallArtifactsAcrossNamespaces(
+        retrievalQuery,
+        recallNamespaces,
+        targetCount,
+      );
 
       timings.artifacts = `${Date.now() - t0}ms`;
       return results;
@@ -1457,7 +1519,7 @@ export class Orchestrator {
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
       const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
-        prompt,
+        retrievalQuery,
         qmdFetchLimit,
         qmdHybridFetchLimit,
         {
@@ -1561,7 +1623,7 @@ export class Orchestrator {
         memoryResults = merged;
         await this.recordLastGraphRecallSnapshot({
           storage: profileStorage,
-          prompt,
+          prompt: retrievalQuery,
           recallMode,
           recallNamespaces,
           seedPaths,
@@ -1570,12 +1632,12 @@ export class Orchestrator {
       }
 
       // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, prompt);
+      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, retrievalQuery);
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
         const ranked = await rerankLocalOrNoop({
-          query: prompt,
+          query: retrievalQuery,
           candidates: memoryResults.slice(0, this.config.rerankMaxCandidates).map((r) => ({
             id: r.path,
             snippet: r.snippet || r.path,
@@ -1610,41 +1672,48 @@ export class Orchestrator {
       memoryResults = memoryResults.slice(0, recallResultLimit);
 
       if (memoryResults.length > 0) {
-        // Track access for these memories
-        const memoryIds = this.extractMemoryIdsFromResults(memoryResults);
-        this.trackMemoryAccess(memoryIds);
-
-        // Record last recall snapshot + impression log for feedback loops.
-        if (sessionKey) {
-          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-          this.lastRecall
-            .record({ sessionKey, query: prompt, memoryIds: unique })
-            .catch((err) => log.debug(`last recall record failed: ${err}`));
-        }
-
-        sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
+        this.publishRecallResults({
+          title: "Relevant Memories",
+          results: memoryResults,
+          sections,
+          retrievalQuery,
+          sessionKey,
+        });
       } else {
-        const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+        const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
         const scopedCandidates = filterRecallCandidates(embeddingResults, {
           namespacesEnabled: this.config.namespacesEnabled,
           recallNamespaces,
           resolveNamespace: (p) => this.namespaceFromPath(p),
           limit: embeddingFetchLimit,
         });
-        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
+        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, retrievalQuery)).slice(
           0,
           recallResultLimit,
         );
         if (scoped.length > 0) {
-          const memoryIds = this.extractMemoryIdsFromResults(scoped);
-          this.trackMemoryAccess(memoryIds);
-          if (sessionKey) {
-            const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-            this.lastRecall
-              .record({ sessionKey, query: prompt, memoryIds: unique })
-              .catch((err) => log.debug(`last recall record failed: ${err}`));
+          this.publishRecallResults({
+            title: "Relevant Memories",
+            results: scoped,
+            sections,
+            retrievalQuery,
+            sessionKey,
+          });
+        } else {
+          const longTerm = await this.applyColdFallbackPipeline({
+            prompt: retrievalQuery,
+            recallNamespaces,
+            recallResultLimit,
+          });
+          if (longTerm.length > 0) {
+            this.publishRecallResults({
+              title: "Long-Term Memories (Fallback)",
+              results: longTerm,
+              sections,
+              retrievalQuery,
+              sessionKey,
+            });
           }
-          sections.push(this.formatQmdResults("Relevant Memories", scoped));
         }
       }
 
@@ -1674,27 +1743,26 @@ export class Orchestrator {
       }
     } else if (recallResultLimit > 0 && (!this.config.qmdEnabled || !this.qmd.isAvailable())) {
       // Fallback: embeddings first, then recency-only.
-      const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+      const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
       const scopedCandidates = filterRecallCandidates(embeddingResults, {
         namespacesEnabled: this.config.namespacesEnabled,
         recallNamespaces,
         resolveNamespace: (p) => this.namespaceFromPath(p),
         limit: embeddingFetchLimit,
       });
-      const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
-        0,
-        recallResultLimit,
-      );
+      const scoped = (await this.boostSearchResults(
+        scopedCandidates,
+        recallNamespaces,
+        retrievalQuery,
+      )).slice(0, recallResultLimit);
       if (scoped.length > 0) {
-        const memoryIds = this.extractMemoryIdsFromResults(scoped);
-        this.trackMemoryAccess(memoryIds);
-        if (sessionKey) {
-          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-          this.lastRecall
-            .record({ sessionKey, query: prompt, memoryIds: unique })
-            .catch((err) => log.debug(`last recall record failed: ${err}`));
-        }
-        sections.push(this.formatQmdResults("Relevant Memories", scoped));
+        this.publishRecallResults({
+          title: "Relevant Memories",
+          results: scoped,
+          sections,
+          retrievalQuery,
+          sessionKey,
+        });
       } else {
         const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
@@ -1723,22 +1791,54 @@ export class Orchestrator {
             snippet: m.content,
             score: 1.0 - i / Math.max(recentSorted.length, 1),
           }));
-          const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt, preloadedMap))
+          const recent = (await this.boostSearchResults(
+            recentAsResults,
+            recallNamespaces,
+            retrievalQuery,
+            preloadedMap,
+          ))
             .sort((a, b) => b.score - a.score)
             .slice(0, recallResultLimit);
 
-          // Track access for these memories
-          const memoryIds = recent.map((r) => r.docid).filter(Boolean);
-          this.trackMemoryAccess(memoryIds);
-
-          if (sessionKey) {
-            const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-            this.lastRecall
-              .record({ sessionKey, query: prompt, memoryIds: unique })
-              .catch((err) => log.debug(`last recall record failed: ${err}`));
+          if (recent.length > 0) {
+            this.publishRecallResults({
+              title: "Recent Memories",
+              results: recent,
+              sections,
+              retrievalQuery,
+              sessionKey,
+            });
+          } else {
+            const longTerm = await this.applyColdFallbackPipeline({
+              prompt: retrievalQuery,
+              recallNamespaces,
+              recallResultLimit,
+            });
+            if (longTerm.length > 0) {
+              this.publishRecallResults({
+                title: "Long-Term Memories (Fallback)",
+                results: longTerm,
+                sections,
+                retrievalQuery,
+                sessionKey,
+              });
+            }
           }
-
-          sections.push(this.formatQmdResults("Recent Memories", recent));
+        } else {
+          const longTerm = await this.applyColdFallbackPipeline({
+            prompt: retrievalQuery,
+            recallNamespaces,
+            recallResultLimit,
+          });
+          if (longTerm.length > 0) {
+            this.publishRecallResults({
+              title: "Long-Term Memories (Fallback)",
+              results: longTerm,
+              sections,
+              retrievalQuery,
+              sessionKey,
+            });
+          }
         }
       }
 
@@ -1834,6 +1934,7 @@ export class Orchestrator {
     const convT0 = Date.now();
     if (
       this.config.conversationIndexEnabled &&
+      !queryPolicy.skipConversationRecall &&
       this.conversationQmd &&
       this.conversationQmd.isAvailable()
     ) {
@@ -1843,7 +1944,7 @@ export class Orchestrator {
       const maxChars = Math.max(400, this.config.conversationRecallMaxChars);
 
       const results = (await Promise.race([
-        this.conversationQmd.search(prompt, undefined, topK),
+        this.conversationQmd.search(retrievalQuery, undefined, topK),
         new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
       ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
 
@@ -3363,6 +3464,26 @@ export class Orchestrator {
     return `## ${title}\n\n${lines.join("\n\n")}`;
   }
 
+  private publishRecallResults(options: {
+    title: string;
+    results: QmdSearchResult[];
+    sections: string[];
+    retrievalQuery: string;
+    sessionKey: string | undefined;
+  }): void {
+    const memoryIds = this.extractMemoryIdsFromResults(options.results);
+    this.trackMemoryAccess(memoryIds);
+
+    if (options.sessionKey) {
+      const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+      this.lastRecall
+        .record({ sessionKey: options.sessionKey, query: options.retrievalQuery, memoryIds: unique })
+        .catch((err) => log.debug(`last recall record failed: ${err}`));
+    }
+
+    options.sections.push(this.formatQmdResults(options.title, options.results));
+  }
+
   private async searchEmbeddingFallback(query: string, limit: number): Promise<QmdSearchResult[]> {
     if (!this.config.embeddingFallbackEnabled) return [];
     if (!(await this.embeddingFallback.isAvailable())) return [];
@@ -3382,6 +3503,145 @@ export class Orchestrator {
       });
     }
     return results;
+  }
+
+  /**
+   * Long-term fallback retrieval.
+   * Searches archived memories only, and is invoked only when hot recall returns zero hits.
+   */
+  private async searchLongTermArchiveFallback(
+    prompt: string,
+    recallNamespaces: string[],
+    limit: number,
+  ): Promise<QmdSearchResult[]> {
+    const cappedLimit = Math.max(0, limit);
+    if (cappedLimit === 0) return [];
+
+    const tokens = Array.from(new Set(tokenizeRecallQuery(prompt)));
+    if (tokens.length === 0) return [];
+
+    const archivedMemories = await this.readArchivedMemoriesForNamespaces(recallNamespaces);
+    if (archivedMemories.length === 0) return [];
+
+    const scored: QmdSearchResult[] = [];
+    for (const memory of archivedMemories) {
+      const haystack = [
+        memory.content,
+        memory.frontmatter.category,
+        ...(memory.frontmatter.tags ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      let hits = 0;
+      for (const token of tokens) {
+        if (haystack.includes(token)) hits += 1;
+      }
+      if (hits === 0) continue;
+      const normalized = hits / tokens.length;
+      scored.push({
+        docid: memory.frontmatter.id,
+        path: memory.path,
+        score: normalized,
+        snippet: memory.content.slice(0, 400).replace(/\n/g, " "),
+      });
+    }
+
+    return scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, cappedLimit);
+  }
+
+  private async applyColdFallbackPipeline(options: {
+    prompt: string;
+    recallNamespaces: string[];
+    recallResultLimit: number;
+  }): Promise<QmdSearchResult[]> {
+    const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
+    const coldCollection = this.config.qmdColdCollection ?? "openclaw-engram-cold";
+    const coldMaxResults = this.config.qmdColdMaxResults ?? this.config.qmdMaxResults;
+
+    let longTerm: QmdSearchResult[] = [];
+    if (coldQmdEnabled && this.config.qmdEnabled && this.qmd.isAvailable()) {
+      const coldFetchLimit = Math.max(
+        0,
+        Math.min(options.recallResultLimit, Math.max(0, coldMaxResults)),
+      );
+      if (coldFetchLimit > 0) {
+        const coldHybridLimit = computeQmdHybridFetchLimit(
+          coldFetchLimit,
+          false,
+          0,
+        );
+        longTerm = await this.fetchQmdMemoryResultsWithArtifactTopUp(
+          options.prompt,
+          coldFetchLimit,
+          coldHybridLimit,
+          {
+            namespacesEnabled: this.config.namespacesEnabled,
+            recallNamespaces: options.recallNamespaces,
+            resolveNamespace: (p) => this.namespaceFromPath(p),
+            collection: coldCollection,
+          },
+        );
+        if (longTerm.length > 0) {
+          log.debug(`cold-tier recall source=cold-qmd collection=${coldCollection} hits=${longTerm.length}`);
+        }
+      }
+    }
+    if (longTerm.length === 0) {
+      longTerm = await this.searchLongTermArchiveFallback(
+        options.prompt,
+        options.recallNamespaces,
+        options.recallResultLimit,
+      );
+      if (longTerm.length > 0) {
+        log.debug("cold-tier recall source=archive-scan");
+      }
+    }
+    if (longTerm.length === 0) return [];
+
+    let results = await this.boostSearchResults(
+      longTerm,
+      options.recallNamespaces,
+      options.prompt,
+      undefined,
+      { allowLifecycleFiltered: true },
+    );
+
+    if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
+      const ranked = await rerankLocalOrNoop({
+        query: options.prompt,
+        candidates: results.slice(0, this.config.rerankMaxCandidates).map((r) => ({
+          id: r.path,
+          snippet: r.snippet || r.path,
+        })),
+        local: this.localLlm,
+        enabled: true,
+        timeoutMs: this.config.rerankTimeoutMs,
+        maxCandidates: this.config.rerankMaxCandidates,
+        cache: this.rerankCache,
+        cacheEnabled: this.config.rerankCacheEnabled,
+        cacheTtlMs: this.config.rerankCacheTtlMs,
+      });
+      if (ranked && ranked.length > 0) {
+        const byPath = new Map(results.map((r) => [r.path, r]));
+        const reordered: QmdSearchResult[] = [];
+        for (const p of ranked) {
+          const it = byPath.get(p);
+          if (it) reordered.push(it);
+        }
+        const rankedSet = new Set(ranked);
+        for (const r of results) {
+          if (!rankedSet.has(r.path)) reordered.push(r);
+        }
+        results = reordered;
+      }
+    }
+    if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
+      log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
+    }
+
+    return results.slice(0, options.recallResultLimit);
   }
 
   // ---------------------------------------------------------------------------
@@ -3469,6 +3729,9 @@ export class Orchestrator {
     _recallNamespaces: string[],
     prompt?: string,
     preloadedMemoryMap?: Map<string, MemoryFile>,
+    options?: {
+      allowLifecycleFiltered?: boolean;
+    },
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
@@ -3540,6 +3803,7 @@ export class Orchestrator {
 
       if (memory) {
         if (
+          options?.allowLifecycleFiltered !== true &&
           shouldFilterLifecycleRecallCandidate(memory.frontmatter, {
             lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
             lifecycleFilterStaleEnabled: this.config.lifecycleFilterStaleEnabled,
@@ -3813,6 +4077,17 @@ export class Orchestrator {
       uniq.map(async (ns) => {
         const sm = await this.storageRouter.storageFor(ns);
         return sm.readAllMemories();
+      }),
+    );
+    return lists.flat();
+  }
+
+  private async readArchivedMemoriesForNamespaces(namespaces: string[]): Promise<MemoryFile[]> {
+    const uniq = Array.from(new Set(namespaces.filter(Boolean)));
+    const lists = await Promise.all(
+      uniq.map(async (ns) => {
+        const sm = await this.storageRouter.storageFor(ns);
+        return sm.readArchivedMemories();
       }),
     );
     return lists.flat();

@@ -6,6 +6,8 @@ export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "S
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
 export type RecallPlanMode = "no_recall" | "minimal" | "full" | "graph_mode";
+export type CronRecallMode = "all" | "none" | "allowlist";
+export type CronConversationRecallMode = "auto" | "always" | "never";
 
 export interface FileHygieneConfig {
   enabled: boolean;
@@ -54,6 +56,9 @@ export interface PluginConfig {
   qmdEnabled: boolean;
   qmdCollection: string;
   qmdMaxResults: number;
+  qmdColdTierEnabled?: boolean;
+  qmdColdCollection?: string;
+  qmdColdMaxResults?: number;
   embeddingFallbackEnabled: boolean;
   embeddingFallbackProvider: "auto" | "openai" | "local";
   /** Optional absolute path to qmd binary. If unset, PATH/fallback discovery is used. */
@@ -194,6 +199,7 @@ export interface PluginConfig {
   qmdAutoEmbedEnabled: boolean;
   qmdEmbedMinIntervalMs: number;
   qmdUpdateTimeoutMs: number;
+  qmdUpdateMinIntervalMs: number;
   // Local LLM resilience
   localLlmRetry5xxCount: number;
   localLlmRetryBackoffMs: number;
@@ -210,6 +216,12 @@ export interface PluginConfig {
   principalFromSessionKeyRules: PrincipalRule[];
   namespacePolicies: NamespacePolicy[];
   defaultRecallNamespaces: Array<"self" | "shared">;
+  cronRecallMode: CronRecallMode;
+  cronRecallAllowlist: string[];
+  cronRecallPolicyEnabled: boolean;
+  cronRecallNormalizedQueryMaxChars: number;
+  cronRecallInstructionHeavyTokenCap: number;
+  cronConversationRecallMode: CronConversationRecallMode;
   autoPromoteToSharedEnabled: boolean;
   autoPromoteToSharedCategories: Array<"correction" | "decision" | "preference">;
   autoPromoteMinConfidenceTier: ConfidenceTier;

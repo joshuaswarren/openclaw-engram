@@ -78,6 +78,38 @@ Enable extended summaries:
 }
 ```
 
+## Cron Recall Policy
+
+Engram supports cron-specific recall policy so you can keep high-frequency automation jobs cheap while still enabling memory context for selected cron sessions.
+
+```jsonc
+{
+  "cronRecallMode": "allowlist",
+  "cronRecallAllowlist": [
+    "*:cron:deckard-morning-briefing:*",
+    "*:cron:deckard-evening-reflection:*"
+  ],
+  "cronRecallPolicyEnabled": true,
+  "cronRecallNormalizedQueryMaxChars": 480,
+  "cronRecallInstructionHeavyTokenCap": 36,
+  "cronConversationRecallMode": "auto"
+}
+```
+
+Modes:
+- `all`: all cron sessions can use recall.
+- `none`: all cron sessions skip recall.
+- `allowlist`: only cron session keys matching wildcard patterns (`*`) can use recall.
+
+Query stability controls:
+- `cronRecallPolicyEnabled`: normalizes cron retrieval queries (especially large instruction-heavy prompts).
+- `cronRecallNormalizedQueryMaxChars`: caps normalized query length.
+- `cronRecallInstructionHeavyTokenCap`: caps compacted-token query size for instruction-heavy prompts.
+- `cronConversationRecallMode`: `auto` skips conversation semantic recall only for instruction-heavy cron prompts, `always` keeps it enabled for all cron prompts, `never` always skips it.
+
+Pattern tip:
+- Session keys include `:cron:<job-id>:`. Match by job id for stability, for example `*:cron:engram-hourly-summary-v24:*`.
+
 ## File Hygiene
 
 Engram can optionally lint and rotate large workspace files that are bootstrapped into the prompt (e.g. `IDENTITY.md`). Without rotation, an oversized file can be silently truncated by the gateway.

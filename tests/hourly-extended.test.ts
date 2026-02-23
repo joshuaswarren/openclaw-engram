@@ -127,6 +127,8 @@ test("v2.4 extended hourly summary parser uses Topics bullets for recall", async
     principalFromSessionKeyRules: [],
     namespacePolicies: [],
     defaultRecallNamespaces: ["self"],
+    cronRecallMode: "all",
+    cronRecallAllowlist: [],
     autoPromoteToSharedEnabled: false,
     autoPromoteToSharedCategories: ["correction"],
     autoPromoteMinConfidenceTier: "explicit",

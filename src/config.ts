@@ -191,6 +191,13 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram",
     qmdMaxResults:
       typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
+    qmdColdTierEnabled: cfg.qmdColdTierEnabled === true,
+    qmdColdCollection:
+      typeof cfg.qmdColdCollection === "string" && cfg.qmdColdCollection.length > 0
+        ? cfg.qmdColdCollection
+        : "openclaw-engram-cold",
+    qmdColdMaxResults:
+      typeof cfg.qmdColdMaxResults === "number" ? cfg.qmdColdMaxResults : 8,
     embeddingFallbackEnabled: cfg.embeddingFallbackEnabled !== false,
     embeddingFallbackProvider:
       cfg.embeddingFallbackProvider === "openai"
@@ -420,6 +427,8 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.qmdEmbedMinIntervalMs === "number" ? cfg.qmdEmbedMinIntervalMs : 60 * 60_000,
     qmdUpdateTimeoutMs:
       typeof cfg.qmdUpdateTimeoutMs === "number" ? cfg.qmdUpdateTimeoutMs : 90_000,
+    qmdUpdateMinIntervalMs:
+      typeof cfg.qmdUpdateMinIntervalMs === "number" ? cfg.qmdUpdateMinIntervalMs : 15 * 60_000,
     // Local LLM resilience
     localLlmRetry5xxCount:
       typeof cfg.localLlmRetry5xxCount === "number" ? cfg.localLlmRetry5xxCount : 1,
@@ -454,6 +463,30 @@ export function parseConfig(raw: unknown): PluginConfig {
         })).filter((p) => p.name.length > 0)
       : [],
     defaultRecallNamespaces: Array.isArray(cfg.defaultRecallNamespaces) ? ["self", "shared"].filter((x) => (cfg.defaultRecallNamespaces as any[]).includes(x)) as any : ["self", "shared"],
+    cronRecallMode:
+      cfg.cronRecallMode === "none"
+        ? "none"
+        : cfg.cronRecallMode === "allowlist"
+          ? "allowlist"
+          : "all",
+    cronRecallAllowlist: Array.isArray(cfg.cronRecallAllowlist)
+      ? (cfg.cronRecallAllowlist as unknown[]).filter((v): v is string => typeof v === "string" && v.length > 0)
+      : [],
+    cronRecallPolicyEnabled: cfg.cronRecallPolicyEnabled !== false,
+    cronRecallNormalizedQueryMaxChars:
+      typeof cfg.cronRecallNormalizedQueryMaxChars === "number"
+        ? cfg.cronRecallNormalizedQueryMaxChars
+        : 480,
+    cronRecallInstructionHeavyTokenCap:
+      typeof cfg.cronRecallInstructionHeavyTokenCap === "number"
+        ? cfg.cronRecallInstructionHeavyTokenCap
+        : 36,
+    cronConversationRecallMode:
+      cfg.cronConversationRecallMode === "always"
+        ? "always"
+        : cfg.cronConversationRecallMode === "never"
+          ? "never"
+          : "auto",
     autoPromoteToSharedEnabled: cfg.autoPromoteToSharedEnabled === true,
     autoPromoteToSharedCategories: Array.isArray(cfg.autoPromoteToSharedCategories)
       ? (cfg.autoPromoteToSharedCategories as any[]).filter((c) => c === "correction" || c === "decision" || c === "preference")

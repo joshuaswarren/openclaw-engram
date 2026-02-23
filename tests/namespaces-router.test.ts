@@ -122,6 +122,8 @@ function baseConfig(memoryDir: string): PluginConfig {
     principalFromSessionKeyRules: [],
     namespacePolicies: [],
     defaultRecallNamespaces: ["self"],
+    cronRecallMode: "all",
+    cronRecallAllowlist: [],
     autoPromoteToSharedEnabled: false,
     autoPromoteToSharedCategories: ["correction"],
     autoPromoteMinConfidenceTier: "explicit",

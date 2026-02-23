@@ -227,6 +227,25 @@ Recommended starter policy:
 Operational note:
 - The default namespace continues using the legacy `memoryDir` root unless `memoryDir/namespaces/<defaultNamespace>` exists.
 
+### Cron Recall Query Policy (QMD Stability)
+
+Use this when cron prompts are large/instruction-heavy and cause QMD query instability:
+
+```jsonc
+{
+  "cronRecallPolicyEnabled": true,
+  "cronRecallNormalizedQueryMaxChars": 480,
+  "cronRecallInstructionHeavyTokenCap": 36,
+  "cronConversationRecallMode": "auto"
+}
+```
+
+Behavior:
+- For instruction-heavy cron prompts, Engram builds a compact retrieval query and applies minimal recall budget.
+- In `cronConversationRecallMode: "auto"`, conversation semantic recall is skipped only for instruction-heavy cron prompts.
+- Set `cronConversationRecallMode: "always"` to force conversation semantic recall for cron jobs that need it.
+- Set `cronConversationRecallMode: "never"` to disable conversation semantic recall for all cron jobs.
+
 ## 4) v4.0 Shared Context
 
 ```jsonc
@@ -297,8 +316,13 @@ Reliability / load:
   - `qmdMaintenanceEnabled: true`
   - `qmdMaintenanceDebounceMs: 30000`
   - `qmdUpdateTimeoutMs: 90000`
+  - `qmdUpdateMinIntervalMs: 900000` (15 min gate; prevents frequent global `qmd update` churn)
   - `qmdAutoEmbedEnabled: false` (enable only when you need frequent embed refresh)
   - `qmdEmbedMinIntervalMs: 3600000`
+- Cron recall load control:
+  - `cronRecallMode: "allowlist"` to default cron sessions to no recall.
+  - Populate `cronRecallAllowlist` with only context-heavy cron job ids/patterns (`*:cron:<job-id>:*`).
+  - Keep ingestion/integration script crons out of the allowlist unless they genuinely need memory context.
 - QMD performance patches (as of 2026-02-14):
   - Apply PRs [#166](https://github.com/tobi/qmd/pull/166), [#112](https://github.com/tobi/qmd/pull/112), [#117](https://github.com/tobi/qmd/pull/117) locally for daemon stability, model overrides, and FTS join fixes. See README for details.
   - With the daemon fix (#166), `qmd mcp --http --daemon` keeps models warm — queries drop from ~13s to ~30ms.
