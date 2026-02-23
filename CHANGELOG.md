@@ -7,6 +7,12 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 20D (lifecycle retrieval + docs slice):
+  - Added lifecycle-aware retrieval weighting in shared score post-processing with boosts for `active`/`validated` memories and penalties for `candidate`/`stale`/`archived` states.
+  - Added stronger retrieval penalty for `verificationState: disputed`.
+  - Added optional stale retrieval filtering (`lifecycleFilterStaleEnabled`) applied before final top-K cap.
+  - Preserved fail-open behavior for legacy memories with no lifecycle metadata.
+  - Added retrieval tests covering lifecycle weighting, stale filtering, and fail-open legacy behavior.
 - v8.3 PR 20C (lifecycle consolidation + metrics slice):
   - Added lifecycle policy config surface (`lifecyclePolicyEnabled`, thresholds, protected categories, metrics toggle) across `PluginConfig`, config parsing, and plugin schema/UI hints.
   - Wired lifecycle scoring pass into consolidation to persist lifecycle metadata (`lifecycleState`, `heatScore`, `decayScore`, `lastValidatedAt`) only when changed.
@@ -37,6 +43,7 @@ All notable changes to this project will be documented in this file.
 
 ### Docs
 - Updated v8.2 and v8.3 implementation plans to split large releases into smaller PR slices (A-D) for safer review and rollout.
+- Documented v8.3 lifecycle retrieval integration and staged rollout guidance in `docs/architecture/memory-lifecycle.md`, `docs/config-reference.md`, and `docs/setup-config-tuning.md`.
 
 ## [8.2.0-pr18] — v8.2 PR 18: Multi-Graph Memory
 
