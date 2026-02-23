@@ -24,6 +24,17 @@ test("buildCompressionGuidelinesMarkdown summarizes action/outcome counts", () =
   assert.match(doc, /Failure events detected/i);
 });
 
+test("buildCompressionGuidelinesMarkdown includes stable guidance when outcomes are healthy", () => {
+  const events: MemoryActionEvent[] = [
+    { timestamp: "2026-02-23T00:00:00.000Z", action: "summarize_node", outcome: "applied" },
+    { timestamp: "2026-02-23T00:01:00.000Z", action: "summarize_node", outcome: "applied" },
+    { timestamp: "2026-02-23T00:02:00.000Z", action: "store_note", outcome: "skipped" },
+  ];
+
+  const doc = buildCompressionGuidelinesMarkdown(events, "2026-02-23T00:03:00.000Z");
+  assert.match(doc, /Current action outcomes are stable/i);
+});
+
 test("runCompressionGuidelineLearningPass writes guidelines when enabled", async () => {
   let wrote = "";
   const ctx: any = {

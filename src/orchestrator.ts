@@ -149,7 +149,7 @@ export function buildCompressionGuidelinesMarkdown(
         "- Skipped actions outnumber applied actions. Revisit gating/thresholds before tightening policies.",
       );
     }
-    if (suggested.length === 0) {
+    if (failed === 0 && skipped <= applied) {
       suggested.push("- Current action outcomes are stable. Keep policy conservative and continue monitoring.");
     }
   }
