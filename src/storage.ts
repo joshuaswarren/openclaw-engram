@@ -1275,14 +1275,10 @@ export class StorageManager {
    * Update frontmatter fields without changing memory content.
    * Returns false when the memory is not found.
    */
-  async updateMemoryFrontmatter(
-    id: string,
+  async writeMemoryFrontmatter(
+    memory: MemoryFile,
     patch: Partial<MemoryFrontmatter>,
   ): Promise<boolean> {
-    const memories = await this.readAllMemories();
-    const memory = memories.find((m) => m.frontmatter.id === id);
-    if (!memory) return false;
-
     const beforeStatus = memory.frontmatter.status ?? "active";
     const updated: MemoryFrontmatter = {
       ...memory.frontmatter,
@@ -1296,6 +1292,20 @@ export class StorageManager {
       this.bumpMemoryStatusVersion();
     }
     return true;
+  }
+
+  /**
+   * Update frontmatter by memory ID.
+   * Prefer writeMemoryFrontmatter(memory, patch) in batch loops to avoid full-corpus rescans.
+   */
+  async updateMemoryFrontmatter(
+    id: string,
+    patch: Partial<MemoryFrontmatter>,
+  ): Promise<boolean> {
+    const memories = await this.readAllMemories();
+    const memory = memories.find((m) => m.frontmatter.id === id);
+    if (!memory) return false;
+    return this.writeMemoryFrontmatter(memory, patch);
   }
 
   /** Remove memories past their TTL expiresAt date */

@@ -2932,7 +2932,7 @@ export class Orchestrator {
 
       if (!shouldPersist) continue;
 
-      const wrote = await this.storage.updateMemoryFrontmatter(memory.frontmatter.id, {
+      const wrote = await this.storage.writeMemoryFrontmatter(memory, {
         lifecycleState: nextState,
         heatScore: decision.heatScore,
         decayScore: decision.decayScore,
