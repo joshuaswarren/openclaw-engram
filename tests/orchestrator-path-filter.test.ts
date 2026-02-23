@@ -4,7 +4,9 @@ import {
   computeQmdHybridFetchLimit,
   filterRecallCandidates,
   isArtifactMemoryPath,
+  lifecycleRecallScoreAdjustment,
   mergeArtifactRecallCandidates,
+  shouldFilterLifecycleRecallCandidate,
 } from "../src/orchestrator.ts";
 
 test("isArtifactMemoryPath matches artifact directory paths", () => {
@@ -124,5 +126,97 @@ test("mergeArtifactRecallCandidates continues past duplicate-only offsets", () =
   assert.deepEqual(
     merged.map((m) => m.frontmatter.id),
     ["x", "y", "z"],
+  );
+});
+
+function baseFrontmatter() {
+  return {
+    id: "fact-lifecycle-recall",
+    category: "fact" as const,
+    created: "2026-02-21T00:00:00.000Z",
+    updated: "2026-02-21T00:00:00.000Z",
+    source: "extraction",
+    confidence: 0.8,
+    confidenceTier: "implied" as const,
+    tags: [],
+    status: "active" as const,
+  };
+}
+
+test("lifecycleRecallScoreAdjustment fail-opens for legacy memories", () => {
+  const adjustment = lifecycleRecallScoreAdjustment(baseFrontmatter(), {
+    lifecyclePolicyEnabled: true,
+  });
+  assert.equal(adjustment, 0);
+});
+
+test("lifecycleRecallScoreAdjustment applies active/validated boosts and disputed penalty", () => {
+  const activeBoost = lifecycleRecallScoreAdjustment(
+    {
+      ...baseFrontmatter(),
+      lifecycleState: "active",
+      verificationState: "user_confirmed",
+    },
+    { lifecyclePolicyEnabled: true },
+  );
+  const validatedBoost = lifecycleRecallScoreAdjustment(
+    {
+      ...baseFrontmatter(),
+      lifecycleState: "validated",
+      verificationState: "system_inferred",
+    },
+    { lifecyclePolicyEnabled: true },
+  );
+  const disputedPenalty = lifecycleRecallScoreAdjustment(
+    {
+      ...baseFrontmatter(),
+      lifecycleState: "validated",
+      verificationState: "disputed",
+    },
+    { lifecyclePolicyEnabled: true },
+  );
+
+  assert.equal(activeBoost > validatedBoost, true);
+  assert.equal(disputedPenalty < 0, true);
+});
+
+test("shouldFilterLifecycleRecallCandidate only filters stale/archived when explicitly enabled", () => {
+  const stale = {
+    ...baseFrontmatter(),
+    lifecycleState: "stale" as const,
+  };
+  const archived = {
+    ...baseFrontmatter(),
+    lifecycleState: "archived" as const,
+    status: "archived" as const,
+  };
+
+  assert.equal(
+    shouldFilterLifecycleRecallCandidate(stale, {
+      lifecyclePolicyEnabled: true,
+      lifecycleFilterStaleEnabled: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldFilterLifecycleRecallCandidate(archived, {
+      lifecyclePolicyEnabled: true,
+      lifecycleFilterStaleEnabled: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldFilterLifecycleRecallCandidate(stale, {
+      lifecyclePolicyEnabled: true,
+      lifecycleFilterStaleEnabled: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFilterLifecycleRecallCandidate(baseFrontmatter(), {
+      lifecyclePolicyEnabled: true,
+      lifecycleFilterStaleEnabled: true,
+    }),
+    false,
   );
 });

@@ -61,6 +61,7 @@ import type {
   LifecycleState,
   MemoryLink,
   MemoryFile,
+  MemoryFrontmatter,
   PluginConfig,
   QmdSearchResult,
   RecallPlanMode,
@@ -114,6 +115,64 @@ export function filterRecallCandidates(
   return scopedByNamespace
     .filter((r) => !isArtifactMemoryPath(r.path))
     .slice(0, Math.max(0, options.limit));
+}
+
+function hasLifecycleMetadata(frontmatter: MemoryFrontmatter): boolean {
+  return (
+    frontmatter.lifecycleState !== undefined ||
+    frontmatter.verificationState !== undefined ||
+    frontmatter.policyClass !== undefined ||
+    frontmatter.lastValidatedAt !== undefined ||
+    frontmatter.decayScore !== undefined ||
+    frontmatter.heatScore !== undefined
+  );
+}
+
+export function shouldFilterLifecycleRecallCandidate(
+  frontmatter: MemoryFrontmatter,
+  options: {
+    lifecyclePolicyEnabled: boolean;
+    lifecycleFilterStaleEnabled: boolean;
+  },
+): boolean {
+  if (!options.lifecyclePolicyEnabled || !options.lifecycleFilterStaleEnabled) return false;
+  if (!hasLifecycleMetadata(frontmatter)) return false;
+  const lifecycleState = resolveLifecycleState(frontmatter);
+  return lifecycleState === "stale" || lifecycleState === "archived";
+}
+
+export function lifecycleRecallScoreAdjustment(
+  frontmatter: MemoryFrontmatter,
+  options: {
+    lifecyclePolicyEnabled: boolean;
+  },
+): number {
+  if (!options.lifecyclePolicyEnabled) return 0;
+  if (!hasLifecycleMetadata(frontmatter)) return 0;
+
+  let delta = 0;
+  const lifecycleState = resolveLifecycleState(frontmatter);
+  switch (lifecycleState) {
+    case "active":
+      delta += 0.05;
+      break;
+    case "validated":
+      delta += 0.03;
+      break;
+    case "candidate":
+      delta -= 0.01;
+      break;
+    case "stale":
+      delta -= 0.06;
+      break;
+    case "archived":
+      delta -= 0.08;
+      break;
+  }
+  if (frontmatter.verificationState === "disputed") {
+    delta -= 0.12;
+  }
+  return delta;
 }
 
 export function computeArtifactRecallLimit(
@@ -3361,12 +3420,23 @@ export class Orchestrator {
       }
     }
 
-    // Calculate boosted scores
-    const boosted = results.map((r) => {
+    let lifecycleFilteredCount = 0;
+    const boosted: QmdSearchResult[] = [];
+    for (const r of results) {
       const memory = memoryByPath.get(r.path);
       let score = r.score;
 
       if (memory) {
+        if (
+          shouldFilterLifecycleRecallCandidate(memory.frontmatter, {
+            lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
+            lifecycleFilterStaleEnabled: this.config.lifecycleFilterStaleEnabled,
+          })
+        ) {
+          lifecycleFilteredCount += 1;
+          continue;
+        }
+
         // Recency boost: exponential decay over 7 days
         if (this.config.recencyWeight > 0) {
           const createdAt = new Date(memory.frontmatter.created).getTime();
@@ -3438,10 +3508,18 @@ export class Orchestrator {
             score += 0.06; // Tag match boost
           }
         }
+
+        // v8.3: lifecycle retrieval weighting (fail-open on legacy memories).
+        score += lifecycleRecallScoreAdjustment(memory.frontmatter, {
+          lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
+        });
       }
 
-      return { ...r, score };
-    });
+      boosted.push({ ...r, score });
+    }
+    if (lifecycleFilteredCount > 0) {
+      log.debug(`lifecycle retrieval filter removed ${lifecycleFilteredCount} stale/archived candidates`);
+    }
 
     // Re-sort by boosted score
     return boosted.sort((a, b) => b.score - a.score);

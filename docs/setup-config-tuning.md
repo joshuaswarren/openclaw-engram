@@ -126,6 +126,32 @@ Recommended rollout:
 - Week 2: enable `verbatimArtifactsEnabled` and watch token usage/quality.
 - Week 3: enable `intentRoutingEnabled` and compare retrieval relevance before/after.
 
+## 2c) v8.3 Lifecycle Policy Rollout
+
+Start in shadow mode, then phase in retrieval behavior:
+
+```jsonc
+{
+  "lifecyclePolicyEnabled": true,
+  "lifecycleMetricsEnabled": true,
+  "lifecycleFilterStaleEnabled": false,
+  "lifecyclePromoteHeatThreshold": 0.55,
+  "lifecycleStaleDecayThreshold": 0.65,
+  "lifecycleArchiveDecayThreshold": 0.85,
+  "lifecycleProtectedCategories": ["decision", "principle", "commitment", "preference"]
+}
+```
+
+Recommended staged rollout:
+- Week 1 (shadow mode): enable `lifecyclePolicyEnabled` + `lifecycleMetricsEnabled`; keep `lifecycleFilterStaleEnabled=false`.
+- Week 2 (ranking-only): keep stale filtering off, observe retrieval quality with lifecycle score adjustments.
+- Week 3 (optional filtering): enable `lifecycleFilterStaleEnabled=true` only if stale/disputed recall metrics improve and no recall regressions are observed.
+
+Validation checkpoints:
+- Confirm metrics file is emitted: `memory/state/lifecycle-metrics.json`.
+- Compare stale/disputed recall rates before/after each phase.
+- If relevance drops, keep policy on but disable stale filtering and retune thresholds.
+
 QMD collection (`~/.config/qmd/index.yml`):
 
 ```yaml

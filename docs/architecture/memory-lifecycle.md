@@ -75,6 +75,32 @@ Consolidation
 | `superseded` | Replaced by a newer memory; still on disk |
 | `archived` | Moved to `archive/`; still searchable via QMD and can appear in recall results (archive path is not filtered out) |
 
+## Lifecycle Policy States (v8.3)
+
+When `lifecyclePolicyEnabled` is on, memories can also carry policy metadata:
+
+- `lifecycleState`: `candidate | validated | active | stale | archived`
+- `verificationState`: `unverified | user_confirmed | system_inferred | disputed`
+- `policyClass`: `ephemeral | durable | protected`
+- scores: `heatScore` and `decayScore` (both in `[0,1]`)
+
+`status` remains the storage lifecycle, while `lifecycleState` controls retrieval weighting/filtering.
+If lifecycle fields are absent (legacy memories), retrieval fail-opens to pre-v8.3 behavior.
+
+### Retrieval Integration (PR20D)
+
+With lifecycle policy enabled:
+
+- `active` / `validated` receive a small retrieval score boost
+- `candidate` gets a slight penalty
+- `stale` gets a stronger penalty
+- `verificationState=disputed` gets an additional penalty
+
+Optional hard filtering:
+
+- If `lifecycleFilterStaleEnabled=true`, `stale`/`archived` lifecycle candidates are filtered before final top-K cap.
+- Filtering is metadata-aware and fail-open: legacy memories without lifecycle fields are not filtered.
+
 Memories in `superseded` or `archived` status remain on disk. However, **speculative TTL expiry** and **commitment decay** physically delete files via `unlink` — these entries are not retained.
 
 ## Expiry and Archival

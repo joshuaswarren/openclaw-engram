@@ -85,6 +85,18 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `queryAwareIndexingEnabled` | `false` | Build and maintain temporal (`state/index_time.json`) and tag (`state/index_tags.json`) indexes after each extraction. Enables score boosts for temporal queries and `#tag` tokens at recall time. |
 | `queryAwareIndexingMaxCandidates` | `200` | Max candidate paths from the index prefilter (0 = no cap). |
 
+## v8.3 Lifecycle Policy Engine
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `lifecyclePolicyEnabled` | `false` | Enable lifecycle scoring + transitions + retrieval weighting. |
+| `lifecycleFilterStaleEnabled` | `false` | Filter lifecycle `stale`/`archived` candidates from retrieval before final cap (only when policy is enabled). |
+| `lifecyclePromoteHeatThreshold` | `0.55` | Heat threshold for promotion toward `validated`/`active`. |
+| `lifecycleStaleDecayThreshold` | `0.65` | Decay threshold to move a memory to `stale`. |
+| `lifecycleArchiveDecayThreshold` | `0.85` | Decay threshold to move a memory to `archived` (non-protected categories). |
+| `lifecycleProtectedCategories` | `["decision","principle","commitment","preference"]` | Categories protected from automatic archive transition. |
+| `lifecycleMetricsEnabled` | `false` (auto-`true` when policy enabled unless explicitly set) | Emit lifecycle metrics snapshot at `state/lifecycle-metrics.json`. |
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |
