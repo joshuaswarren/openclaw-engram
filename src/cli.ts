@@ -257,6 +257,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
 
+          // Probe in this CLI process before availability check.
+          await orchestrator.qmd.probe();
+
           if (orchestrator.qmd.isAvailable()) {
             const results = await orchestrator.qmd.search(
               query,
@@ -286,11 +289,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 m.content.toLowerCase().includes(lowerQuery) ||
                 m.frontmatter.tags.some((t) => t.includes(lowerQuery)),
             );
+            const qmdStatus = orchestrator.qmd.debugStatus();
             if (matches.length === 0) {
-              console.log(`No results for: "${query}" (QMD not available, using text search)`);
+              console.log(
+                `No results for: "${query}" (QMD unavailable in this CLI process; text search fallback).`,
+              );
+              console.log(`QMD status: ${qmdStatus}`);
               return;
             }
-            console.log(`\n=== Text Search: "${query}" (${matches.length} results) ===\n`);
+            console.log(`\n=== Text Search Fallback: "${query}" (${matches.length} results) ===\n`);
+            console.log(`QMD status: ${qmdStatus}\n`);
             for (const m of matches.slice(0, maxResults)) {
               console.log(`  [${m.frontmatter.category}] ${m.content.slice(0, 120)}`);
             }

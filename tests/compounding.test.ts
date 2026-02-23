@@ -122,6 +122,8 @@ function minimalConfig(memoryDir: string, sharedContextDir: string): PluginConfi
     principalFromSessionKeyRules: [],
     namespacePolicies: [],
     defaultRecallNamespaces: ["self"],
+    cronRecallMode: "all",
+    cronRecallAllowlist: [],
     autoPromoteToSharedEnabled: false,
     autoPromoteToSharedCategories: ["correction"],
     autoPromoteMinConfidenceTier: "explicit",

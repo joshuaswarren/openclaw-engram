@@ -1099,6 +1099,46 @@ export class StorageManager {
     return memories;
   }
 
+  /**
+   * Read archived memory markdown files under archive/.
+   * Used by long-term recall fallback when hot recall has no hits.
+   */
+  async readArchivedMemories(): Promise<MemoryFile[]> {
+    const memories: MemoryFile[] = [];
+    const root = this.archiveDir;
+
+    const readDir = async (dir: string) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await readDir(fullPath);
+          } else if (entry.name.endsWith(".md")) {
+            try {
+              const raw = await readFile(fullPath, "utf-8");
+              const parsed = parseFrontmatter(raw);
+              if (parsed) {
+                memories.push({
+                  path: fullPath,
+                  frontmatter: parsed.frontmatter,
+                  content: parsed.content,
+                });
+              }
+            } catch {
+              // Skip unreadable files
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist yet
+      }
+    };
+
+    await readDir(root);
+    return memories;
+  }
+
   /** Read a single memory file by its absolute path. Returns null if unreadable. */
   async readMemoryByPath(filePath: string): Promise<MemoryFile | null> {
     try {

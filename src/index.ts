@@ -10,6 +10,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
+const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
+
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
 function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
@@ -31,6 +33,31 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
   }
+}
+
+function wildcardToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+}
+
+function shouldSkipRecallForSession(
+  sessionKey: string,
+  cfg: { cronRecallMode: "all" | "none" | "allowlist"; cronRecallAllowlist: string[] },
+): boolean {
+  const isCron = sessionKey.includes(":cron:");
+  if (!isCron) return false;
+
+  if (cfg.cronRecallMode === "none") return true;
+  if (cfg.cronRecallMode === "all") return false;
+
+  if (cfg.cronRecallAllowlist.length === 0) return true;
+  return !cfg.cronRecallAllowlist.some((pattern) => {
+    try {
+      return wildcardToRegExp(pattern).test(sessionKey);
+    } catch {
+      return false;
+    }
+  });
 }
 
 export default {
@@ -56,6 +83,14 @@ export default {
     log.info(
       `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled})`,
     );
+
+    // Hard guard: prevent duplicate hook/tool/CLI registration when plugin register()
+    // is invoked multiple times in the same process context.
+    if ((globalThis as any)[ENGRAM_REGISTERED_GUARD] === true) {
+      log.warn("register called more than once; skipping duplicate hook/tool registration");
+      return;
+    }
+    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
 
     // Singleton guard: the gateway may call register() twice (gateway + plugin contexts).
     // Reuse the existing orchestrator if one was already created in this process.
@@ -83,6 +118,25 @@ export default {
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
         log.debug(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+        log.debug(
+          `before_agent_start: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+        );
+        if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
+          const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
+            const re = wildcardToRegExp(pattern);
+            return re.test(sessionKey);
+          });
+          log.debug(
+            `before_agent_start: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
+          );
+        }
+
+        if (shouldSkipRecallForSession(sessionKey, cfg)) {
+          log.debug(
+            `before_agent_start: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
+          );
+          return;
+        }
 
         try {
           // Optional: keep bootstrap workspace files small and warn about truncation risk.
@@ -364,6 +418,8 @@ export default {
         log.info("engram memory system ready");
       },
       stop: () => {
+        // Allow register() to run again in-process after a stop/reload cycle.
+        (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         log.info("stopped");
       },
     });

@@ -70,6 +70,21 @@
         "default": 8,
         "description": "Max QMD results per search"
       },
+      "qmdColdTierEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable cold-tier QMD recall from a secondary collection when hot recall misses"
+      },
+      "qmdColdCollection": {
+        "type": "string",
+        "default": "openclaw-engram-cold",
+        "description": "Secondary QMD collection name used for cold-tier fallback recall"
+      },
+      "qmdColdMaxResults": {
+        "type": "number",
+        "default": 8,
+        "description": "Max cold-tier QMD results considered before final recall cap"
+      },
       "embeddingFallbackEnabled": {
         "type": "boolean",
         "default": true,
@@ -732,6 +747,11 @@
         "default": 90000,
         "description": "Timeout for QMD update command (ms). Increase if your index grows and updates exceed 30s."
       },
+      "qmdUpdateMinIntervalMs": {
+        "type": "number",
+        "default": 900000,
+        "description": "Minimum interval between QMD update executions (ms). Useful because current QMD update runs globally across collections."
+      },
       "localLlmRetry5xxCount": {
         "type": "number",
         "default": 1,
@@ -881,6 +901,39 @@
         "description": "Which namespaces to include by default in recall.",
         "items": { "type": "string", "enum": ["self", "shared"] },
         "default": ["self", "shared"]
+      },
+      "cronRecallMode": {
+        "type": "string",
+        "enum": ["all", "none", "allowlist"],
+        "default": "all",
+        "description": "Recall behavior for cron sessions. Use allowlist to opt specific cron sessionKeys in."
+      },
+      "cronRecallAllowlist": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Session-key wildcard patterns (supports *) allowed for recall when cronRecallMode=allowlist."
+      },
+      "cronRecallPolicyEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable prompt-shape-aware recall query normalization for cron sessions."
+      },
+      "cronRecallNormalizedQueryMaxChars": {
+        "type": "number",
+        "default": 480,
+        "description": "Maximum query length (characters) used for cron recall retrieval after normalization."
+      },
+      "cronRecallInstructionHeavyTokenCap": {
+        "type": "number",
+        "default": 36,
+        "description": "Maximum token count used to build compact retrieval queries for instruction-heavy cron prompts."
+      },
+      "cronConversationRecallMode": {
+        "type": "string",
+        "enum": ["auto", "always", "never"],
+        "default": "auto",
+        "description": "Controls conversation semantic recall in cron sessions. auto skips it for instruction-heavy prompts."
       },
       "autoPromoteToSharedEnabled": {
         "type": "boolean",
@@ -1154,6 +1207,21 @@
     },
     "qmdMaxResults": {
       "label": "QMD Max Results",
+      "advanced": true,
+      "placeholder": "8"
+    },
+    "qmdColdTierEnabled": {
+      "label": "Enable Cold QMD Tier",
+      "advanced": true,
+      "help": "When hot recall misses, query a secondary cold QMD collection before archive scan fallback"
+    },
+    "qmdColdCollection": {
+      "label": "Cold QMD Collection",
+      "advanced": true,
+      "placeholder": "openclaw-engram-cold"
+    },
+    "qmdColdMaxResults": {
+      "label": "Cold QMD Max Results",
       "advanced": true,
       "placeholder": "8"
     },

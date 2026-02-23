@@ -6,6 +6,7 @@ import type { QmdSearchResult } from "./types.js";
 
 const QMD_TIMEOUT_MS = 30_000;
 const QMD_DAEMON_TIMEOUT_MS = 60_000; // Longer timeout for daemon (first call may load models)
+const QMD_PROBE_TIMEOUT_MS = 8_000;
 const QMD_UPDATE_BACKOFF_MS = 15 * 60 * 1000; // 15m
 const QMD_EMBED_BACKOFF_MS = 60 * 60 * 1000; // 60m
 const QMD_FALLBACK_PATHS = [
@@ -294,7 +295,10 @@ export class QmdClient {
   private available: boolean | null = null;
   private lastUpdateFailAtMs: number | null = null;
   private lastEmbedFailAtMs: number | null = null;
+  private lastUpdateRunAtMs: number | null = null;
+  private warnedGlobalUpdateBehavior = false;
   private readonly updateTimeoutMs: number;
+  private readonly updateMinIntervalMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
   private readonly configuredQmdPath?: string;
   private qmdPathSource: "auto-path" | "auto-fallback" | "configured" = "auto-path";
@@ -313,6 +317,7 @@ export class QmdClient {
     opts?: {
       slowLog?: { enabled: boolean; thresholdMs: number };
       updateTimeoutMs?: number;
+      updateMinIntervalMs?: number;
       qmdPath?: string;
       daemonUrl?: string;
       daemonRecheckIntervalMs?: number;
@@ -320,6 +325,7 @@ export class QmdClient {
   ) {
     this.slowLog = opts?.slowLog;
     this.updateTimeoutMs = opts?.updateTimeoutMs ?? 120_000;
+    this.updateMinIntervalMs = Math.max(0, opts?.updateMinIntervalMs ?? 15 * 60_000);
     this.configuredQmdPath = opts?.qmdPath?.trim() ? opts.qmdPath.trim() : undefined;
     this.daemonRecheckIntervalMs = opts?.daemonRecheckIntervalMs ?? 60_000;
     if (opts?.daemonUrl) {
@@ -382,7 +388,7 @@ export class QmdClient {
 
     if (this.configuredQmdPath) {
       try {
-        const result = await runQmd(["--version"], 3000, this.configuredQmdPath);
+        const result = await runQmd(["--version"], QMD_PROBE_TIMEOUT_MS, this.configuredQmdPath);
         this.available = true;
         this.qmdPath = this.configuredQmdPath;
         this.qmdPathSource = "configured";
@@ -399,7 +405,7 @@ export class QmdClient {
 
     // Try PATH first
     try {
-      const result = await runQmd(["--version"], 3000, "qmd");
+      const result = await runQmd(["--version"], QMD_PROBE_TIMEOUT_MS, "qmd");
       this.available = true;
       this.qmdPath = "qmd";
       this.qmdPathSource = "auto-path";
@@ -411,7 +417,7 @@ export class QmdClient {
       // Try fallback paths
       for (const fallbackPath of QMD_FALLBACK_PATHS) {
         try {
-          const result = await runQmd(["--version"], 3000, fallbackPath);
+          const result = await runQmd(["--version"], QMD_PROBE_TIMEOUT_MS, fallbackPath);
           this.available = true;
           this.qmdPath = fallbackPath;
           this.qmdPathSource = "auto-fallback";
@@ -470,7 +476,12 @@ export class QmdClient {
     await this.maybeProbeDaemon();
     if (this.daemonAvailable) {
       const results = await this.searchViaDaemon(trimmed, col, n);
-      if (results !== null) return results;
+      if (results !== null) {
+        if (results.length > 0) return results;
+        // Fail-open: daemon sometimes returns zero hits while subprocess
+        // query expansion/rerank still finds relevant docs.
+        log.debug("QMD daemon search returned 0 results; falling back to subprocess query");
+      }
     }
 
     // Subprocess fallback
@@ -492,7 +503,10 @@ export class QmdClient {
     if (this.daemonAvailable) {
       // Global search: no collection filter
       const results = await this.searchViaDaemon(trimmed, undefined, n);
-      if (results !== null) return results;
+      if (results !== null) {
+        if (results.length > 0) return results;
+        log.debug("QMD daemon global search returned 0 results; falling back to subprocess query");
+      }
     }
 
     // Subprocess fallback
@@ -774,6 +788,13 @@ export class QmdClient {
   async update(): Promise<void> {
     if (this.available === false) return;
     if (
+      this.lastUpdateRunAtMs &&
+      Date.now() - this.lastUpdateRunAtMs < this.updateMinIntervalMs
+    ) {
+      log.debug("QMD update: suppressed due to min-interval gate");
+      return;
+    }
+    if (
       this.lastUpdateFailAtMs &&
       Date.now() - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
     ) {
@@ -781,12 +802,19 @@ export class QmdClient {
       return;
     }
     try {
+      if (!this.warnedGlobalUpdateBehavior) {
+        this.warnedGlobalUpdateBehavior = true;
+        log.warn(
+          "QMD update runs globally across collections in current CLI versions; Engram now rate-limits update calls to reduce gateway load.",
+        );
+      }
       const startedAtMs = Date.now();
       await runQmd(["update", "-c", this.collection], this.updateTimeoutMs, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
       }
+      this.lastUpdateRunAtMs = Date.now();
       log.debug("QMD update completed");
     } catch (err) {
       this.lastUpdateFailAtMs = Date.now();

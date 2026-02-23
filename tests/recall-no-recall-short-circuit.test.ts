@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import type { PluginConfig } from "../src/types.js";
 import { Orchestrator } from "../src/orchestrator.js";
 
@@ -122,6 +122,8 @@ function baseConfig(memoryDir: string): PluginConfig {
     principalFromSessionKeyRules: [],
     namespacePolicies: [],
     defaultRecallNamespaces: ["self"],
+    cronRecallMode: "all",
+    cronRecallAllowlist: [],
     autoPromoteToSharedEnabled: false,
     autoPromoteToSharedCategories: ["correction"],
     autoPromoteMinConfidenceTier: "explicit",
@@ -393,4 +395,247 @@ test("qmd top-up applies namespace filtering before cap", async () => {
 
   assert.equal(results.length, 3);
   assert.equal(results.every((r: any) => r.path.includes("/default/")), true);
+});
+
+test("qmd top-up falls back to query when hybrid returns empty", async () => {
+  const memoryDir = tmpDir("engram-qmd-topup-query-fallback-empty");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  let queryCalled = 0;
+  const mkResult = (path: string, score: number) => ({
+    docid: path,
+    path,
+    snippet: path,
+    score,
+  });
+
+  (orchestrator as any).qmd = {
+    hybridSearch: async () => [],
+    search: async () => {
+      queryCalled += 1;
+      return [
+        mkResult("/tmp/memory/artifacts/a.md", 0.99),
+        mkResult("/tmp/memory/default/facts/1.md", 0.9),
+        mkResult("/tmp/memory/default/facts/2.md", 0.89),
+      ];
+    },
+  };
+
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 2, 8, {
+    namespacesEnabled: true,
+    recallNamespaces: ["default"],
+    resolveNamespace: (path: string) => (path.includes("/default/") ? "default" : "other"),
+  });
+
+  assert.equal(queryCalled, 1);
+  assert.equal(results.length, 2);
+  assert.equal(results.every((r: any) => r.path.includes("/default/facts/")), true);
+});
+
+test("qmd top-up falls back to query after artifact-only hybrid window", async () => {
+  const memoryDir = tmpDir("engram-qmd-topup-query-fallback-artifacts");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  let queryCalled = 0;
+  const mkResult = (path: string, score: number) => ({
+    docid: path,
+    path,
+    snippet: path,
+    score,
+  });
+
+  (orchestrator as any).qmd = {
+    hybridSearch: async (_query: string, _collection: any, maxResults: number) =>
+      Array.from({ length: maxResults }, (_, i) => mkResult(`/tmp/memory/artifacts/${i + 1}.md`, 1 - i * 0.0001)),
+    search: async () => {
+      queryCalled += 1;
+      return [
+        mkResult("/tmp/memory/default/facts/a.md", 0.91),
+        mkResult("/tmp/memory/default/facts/b.md", 0.9),
+        mkResult("/tmp/memory/default/facts/c.md", 0.89),
+      ];
+    },
+  };
+
+  const results = await (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp("topic", 2, 8, {
+    namespacesEnabled: true,
+    recallNamespaces: ["default"],
+    resolveNamespace: (path: string) => (path.includes("/default/") ? "default" : "other"),
+  });
+
+  assert.equal(queryCalled, 1);
+  assert.equal(results.length, 2);
+  assert.equal(results.every((r: any) => r.path.includes("/default/facts/")), true);
+});
+
+test("recall falls back to long-term archive when hot memory is empty", async () => {
+  const memoryDir = tmpDir("engram-long-term-fallback");
+  await mkdir(path.join(memoryDir, "archive", "2026-02-23"), { recursive: true });
+
+  const archivedPath = path.join(memoryDir, "archive", "2026-02-23", "fact-archived-1.md");
+  await writeFile(
+    archivedPath,
+    [
+      "---",
+      "id: fact-archived-1",
+      "category: fact",
+      "created: 2026-01-01T00:00:00.000Z",
+      "updated: 2026-01-01T00:00:00.000Z",
+      "source: extraction",
+      "confidence: 0.9",
+      "confidenceTier: explicit",
+      "status: archived",
+      "---",
+      "",
+      "Historical API quota incident: the burst limiter failed when shard counts exceeded 64.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = false;
+  const orchestrator = new Orchestrator(cfg);
+
+  const context = await (orchestrator as any).recallInternal("What happened with burst limiter shard counts?", undefined);
+  assert.match(context, /Long-Term Memories \(Fallback\)/);
+  assert.match(context, /burst limiter failed/i);
+});
+
+test("cold fallback applies boost pipeline and tracking signals", async () => {
+  const memoryDir = tmpDir("engram-long-term-pipeline");
+  await mkdir(path.join(memoryDir, "archive", "2026-02-23"), { recursive: true });
+
+  const archivedPath = path.join(memoryDir, "archive", "2026-02-23", "fact-archived-2.md");
+  await writeFile(
+    archivedPath,
+    [
+      "---",
+      "id: fact-archived-2",
+      "category: fact",
+      "created: 2026-01-01T00:00:00.000Z",
+      "updated: 2026-01-01T00:00:00.000Z",
+      "source: extraction",
+      "confidence: 0.9",
+      "confidenceTier: explicit",
+      "status: archived",
+      "---",
+      "",
+      "Legacy incident notes mention shard overflow behavior.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = false;
+  const orchestrator = new Orchestrator(cfg);
+
+  let boostCalled = 0;
+  let tracked: string[] = [];
+  let recalled: string[] = [];
+  (orchestrator as any).boostSearchResults = async (results: any[]) => {
+    boostCalled += 1;
+    return results.map((r) => ({ ...r, score: r.score + 1 }));
+  };
+  (orchestrator as any).trackMemoryAccess = (ids: string[]) => {
+    tracked = ids;
+  };
+  (orchestrator as any).lastRecall = {
+    record: async (payload: { memoryIds: string[] }) => {
+      recalled = payload.memoryIds;
+    },
+  };
+
+  const context = await (orchestrator as any).recallInternal(
+    "Do we have notes about shard overflow behavior?",
+    "session-cold-pipeline",
+  );
+
+  assert.match(context, /Long-Term Memories \(Fallback\)/);
+  assert.equal(boostCalled > 0, true);
+  assert.deepEqual(tracked, ["fact-archived-2"]);
+  assert.deepEqual(recalled, ["fact-archived-2"]);
+});
+
+test("cold fallback remains eligible when lifecycle stale filtering is enabled", async () => {
+  const memoryDir = tmpDir("engram-long-term-lifecycle");
+  await mkdir(path.join(memoryDir, "archive", "2026-02-23"), { recursive: true });
+
+  const archivedPath = path.join(memoryDir, "archive", "2026-02-23", "fact-archived-3.md");
+  await writeFile(
+    archivedPath,
+    [
+      "---",
+      "id: fact-archived-3",
+      "category: fact",
+      "created: 2025-01-01T00:00:00.000Z",
+      "updated: 2025-01-01T00:00:00.000Z",
+      "source: extraction",
+      "confidence: 0.9",
+      "confidenceTier: explicit",
+      "status: archived",
+      "lifecycleState: archived",
+      "---",
+      "",
+      "Archived memory about shard migration edge cases.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = false;
+  cfg.lifecyclePolicyEnabled = true;
+  cfg.lifecycleFilterStaleEnabled = true;
+  const orchestrator = new Orchestrator(cfg);
+
+  const context = await (orchestrator as any).recallInternal("Any shard migration edge cases?", undefined);
+  assert.match(context, /Long-Term Memories \(Fallback\)/);
+  assert.match(context, /shard migration edge cases/i);
+});
+
+test("cold fallback uses configured cold QMD collection before archive scan", async () => {
+  const memoryDir = tmpDir("engram-cold-qmd");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = true;
+  (cfg as any).qmdColdTierEnabled = true;
+  (cfg as any).qmdColdCollection = "openclaw-engram-cold";
+  (cfg as any).qmdColdMaxResults = 3;
+  const orchestrator = new Orchestrator(cfg);
+
+  const calls: Array<{ collection?: string; maxResults?: number }> = [];
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+    hybridSearch: async (_query: string, collection?: string, maxResults?: number) => {
+      calls.push({ collection, maxResults });
+      if (collection === "openclaw-engram-cold") {
+        return [
+          {
+            docid: "fact-cold-qmd-1",
+            path: "/tmp/memory/default/facts/fact-cold-qmd-1.md",
+            snippet: "Cold collection memory about shard migration edge cases",
+            score: 0.91,
+          },
+        ];
+      }
+      return [];
+    },
+    search: async () => [],
+  };
+
+  const context = await (orchestrator as any).recallInternal("Any shard migration edge cases?", "s-cold-qmd");
+  assert.match(context, /Long-Term Memories \(Fallback\)/);
+  assert.match(context, /Cold collection memory about shard migration edge cases/i);
+  assert.equal(calls.some((c) => c.collection === "openclaw-engram-cold"), true);
 });
