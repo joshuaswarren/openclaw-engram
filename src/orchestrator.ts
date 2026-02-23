@@ -27,6 +27,7 @@ import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from ".
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
+import { decideLifecycleTransition, resolveLifecycleState } from "./lifecycle.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -57,6 +58,7 @@ import type {
   BootstrapResult,
   BufferTurn,
   ExtractionResult,
+  LifecycleState,
   MemoryLink,
   MemoryFile,
   PluginConfig,
@@ -2794,6 +2796,16 @@ export class Orchestrator {
       }
     }
 
+    // v8.3 Lifecycle policy pass — deterministic promotion/decay metadata
+    if (this.config.lifecyclePolicyEnabled) {
+      try {
+        const lifecycleCorpus = await this.storage.readAllMemories();
+        await this.runLifecyclePolicyPass(lifecycleCorpus);
+      } catch (err) {
+        log.warn(`lifecycle policy pass failed (ignored): ${err}`);
+      }
+    }
+
     // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
     if (this.config.factArchivalEnabled) {
       const archived = await this.runFactArchival(allMemories);
@@ -2867,6 +2879,89 @@ export class Orchestrator {
 
     log.info("consolidation complete");
     return { memoriesProcessed: allMemories.length, merged, invalidated };
+  }
+
+  private async runLifecyclePolicyPass(allMemories: MemoryFile[]): Promise<void> {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const countsByState: Record<LifecycleState, number> = {
+      candidate: 0,
+      validated: 0,
+      active: 0,
+      stale: 0,
+      archived: 0,
+    };
+    const transitionCounts: Record<string, number> = {};
+    let updatedCount = 0;
+    let disputedCount = 0;
+
+    const policy = {
+      promoteHeatThreshold: this.config.lifecyclePromoteHeatThreshold,
+      staleDecayThreshold: this.config.lifecycleStaleDecayThreshold,
+      archiveDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+      protectedCategories: this.config.lifecycleProtectedCategories,
+    };
+
+    for (const memory of allMemories) {
+      const currentState = resolveLifecycleState(memory.frontmatter);
+      const decision = decideLifecycleTransition(memory, policy, now);
+      const nextState: LifecycleState = memory.frontmatter.status === "archived"
+        ? "archived"
+        : decision.nextState;
+
+      countsByState[nextState] += 1;
+      if (memory.frontmatter.verificationState === "disputed") {
+        disputedCount += 1;
+      }
+      if (nextState !== currentState) {
+        const key = `${currentState}->${nextState}`;
+        transitionCounts[key] = (transitionCounts[key] ?? 0) + 1;
+      }
+
+      const prevHeat = memory.frontmatter.heatScore;
+      const prevDecay = memory.frontmatter.decayScore;
+      const scoreDelta =
+        Math.abs((prevHeat ?? -1) - decision.heatScore) +
+        Math.abs((prevDecay ?? -1) - decision.decayScore);
+      const shouldPersist =
+        memory.frontmatter.lifecycleState !== nextState ||
+        memory.frontmatter.heatScore === undefined ||
+        memory.frontmatter.decayScore === undefined ||
+        memory.frontmatter.lastValidatedAt === undefined ||
+        scoreDelta >= 0.01;
+
+      if (!shouldPersist) continue;
+
+      const wrote = await this.storage.updateMemoryFrontmatter(memory.frontmatter.id, {
+        lifecycleState: nextState,
+        heatScore: decision.heatScore,
+        decayScore: decision.decayScore,
+        lastValidatedAt: nowIso,
+      });
+      if (wrote) updatedCount += 1;
+    }
+
+    if (!this.config.lifecycleMetricsEnabled) return;
+
+    const total = allMemories.length;
+    const metrics = {
+      generatedAt: nowIso,
+      memoriesEvaluated: total,
+      memoriesUpdated: updatedCount,
+      countsByLifecycleState: countsByState,
+      transitionCounts,
+      staleRatio: total > 0 ? countsByState.stale / total : 0,
+      disputedRatio: total > 0 ? disputedCount / total : 0,
+      policy: {
+        promoteHeatThreshold: this.config.lifecyclePromoteHeatThreshold,
+        staleDecayThreshold: this.config.lifecycleStaleDecayThreshold,
+        archiveDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+        protectedCategories: this.config.lifecycleProtectedCategories,
+      },
+    };
+    const metricsPath = path.join(this.storage.dir, "state", "lifecycle-metrics.json");
+    await mkdir(path.dirname(metricsPath), { recursive: true });
+    await writeFile(metricsPath, JSON.stringify(metrics, null, 2), "utf-8");
   }
 
   /**

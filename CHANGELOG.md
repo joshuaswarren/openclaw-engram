@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 20C (lifecycle consolidation + metrics slice):
+  - Added lifecycle policy config surface (`lifecyclePolicyEnabled`, thresholds, protected categories, metrics toggle) across `PluginConfig`, config parsing, and plugin schema/UI hints.
+  - Wired lifecycle scoring pass into consolidation to persist lifecycle metadata (`lifecycleState`, `heatScore`, `decayScore`, `lastValidatedAt`) only when changed.
+  - Added lifecycle metrics snapshot output at `state/lifecycle-metrics.json` with state counts, transition counts, stale ratio, and disputed ratio.
+  - Added lifecycle policy tests for config parsing and consolidation/metrics integration.
 - v8.3 PR 20B (deterministic lifecycle engine slice):
   - Added `src/lifecycle.ts` with deterministic, bounded lifecycle scoring functions (`computeHeat`, `computeDecay`) and transition logic (`decideLifecycleTransition`).
   - Added lifecycle guardrails: archived is terminal, disputed memories never auto-promote to active, and protected categories are not auto-archived.
