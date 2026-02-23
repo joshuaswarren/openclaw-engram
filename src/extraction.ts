@@ -8,12 +8,14 @@ import {
   ConsolidationResultSchema,
   IdentityConsolidationResultSchema,
   ProfileConsolidationResultSchema,
+  ProactiveQuestionsResultSchema,
   ContradictionVerificationSchema,
   SuggestedLinksSchema,
   MemorySummarySchema,
   type ContradictionVerificationResult,
   type SuggestedLinks,
   type MemorySummaryResult,
+  type ProactiveQuestionsResultParsed,
 } from "./schemas.js";
 import type {
   BufferTurn,
@@ -27,6 +29,50 @@ import type {
 import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
+
+type ExtractionQuestion = ExtractionResult["questions"][number];
+
+function normalizeQuestion(question: ExtractionQuestion): ExtractionQuestion {
+  const priority = Number.isFinite(question.priority)
+    ? Math.max(0, Math.min(1, question.priority))
+    : 0.5;
+  return {
+    question: typeof question.question === "string" ? question.question.trim() : "",
+    context: typeof question.context === "string" ? question.context.trim() : "",
+    priority,
+  };
+}
+
+export function mergeProactiveQuestions(
+  baseQuestions: ExtractionQuestion[],
+  proactiveQuestions: ExtractionQuestion[],
+  maxAdditional: number,
+): ExtractionQuestion[] {
+  const cappedAdditional = Math.max(0, Math.floor(maxAdditional));
+  if (cappedAdditional === 0 || proactiveQuestions.length === 0) {
+    return baseQuestions;
+  }
+
+  const merged = [...baseQuestions];
+  const seen = new Set(
+    baseQuestions
+      .map((q) => q.question.trim().toLowerCase())
+      .filter((q) => q.length > 0),
+  );
+
+  let added = 0;
+  for (const rawQuestion of proactiveQuestions) {
+    if (added >= cappedAdditional) break;
+    const question = normalizeQuestion(rawQuestion);
+    if (!question.question) continue;
+    const key = question.question.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(question);
+    added += 1;
+  }
+  return merged;
+}
 
 export class ExtractionEngine {
   private client: OpenAI | null;
@@ -86,6 +132,128 @@ export class ExtractionEngine {
     return { ...result, items };
   }
 
+  private async applyProactiveQuestionPass(
+    conversation: string,
+    base: ExtractionResult,
+  ): Promise<ExtractionResult> {
+    if (!this.config.proactiveExtractionEnabled) return base;
+    const maxAdditional = Math.max(0, Math.floor(this.config.maxProactiveQuestionsPerExtraction));
+    if (maxAdditional === 0) return base;
+
+    try {
+      const proactive = await this.generateProactiveQuestions(conversation, base, maxAdditional);
+      if (proactive.length === 0) return base;
+      return {
+        ...base,
+        questions: mergeProactiveQuestions(base.questions ?? [], proactive, maxAdditional),
+      };
+    } catch (err) {
+      log.debug(`proactive extraction question pass failed (ignored): ${err}`);
+      return base;
+    }
+  }
+
+  private parseProactiveQuestionsFromText(
+    content: string,
+    existingQuestionKeys: Set<string>,
+  ): ExtractionQuestion[] {
+    for (const candidate of extractJsonCandidates(content)) {
+      try {
+        const parsed = JSON.parse(candidate) as Partial<ProactiveQuestionsResultParsed>;
+        if (!Array.isArray(parsed.questions)) continue;
+        return parsed.questions
+          .map((q) => normalizeQuestion(q as ExtractionQuestion))
+          .filter((q) => q.question.length > 0)
+          .filter((q) => !existingQuestionKeys.has(q.question.toLowerCase()));
+      } catch {
+        // Continue to next candidate.
+      }
+    }
+    return [];
+  }
+
+  private async generateProactiveQuestions(
+    conversation: string,
+    base: ExtractionResult,
+    maxAdditional: number,
+  ): Promise<ExtractionQuestion[]> {
+    const existingQuestionKeys = new Set(
+      (base.questions ?? [])
+        .map((q) => q.question.trim().toLowerCase())
+        .filter((q) => q.length > 0),
+    );
+    const factsPreview = base.facts
+      .slice(0, 8)
+      .map((f) => `- (${f.category}) ${f.content}`)
+      .join("\n");
+    const existingQuestionsPreview = (base.questions ?? [])
+      .slice(0, 8)
+      .map((q) => `- ${q.question}`)
+      .join("\n");
+
+    const prompt = [
+      "You are doing a proactive second-pass memory extraction.",
+      `Generate up to ${maxAdditional} additional high-value follow-up questions not already covered.`,
+      "Return only valid JSON with this shape:",
+      '{"questions":[{"question":"...","context":"...","priority":0.0}]}',
+      "",
+      "Current extracted facts:",
+      factsPreview || "(none)",
+      "",
+      "Questions already extracted (do not repeat):",
+      existingQuestionsPreview || "(none)",
+      "",
+      "Conversation:",
+      conversation,
+    ].join("\n");
+
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResponse = await this.localLlm.chatCompletion(
+          [
+            {
+              role: "system",
+              content: "You are a proactive memory extraction assistant. Output valid JSON only.",
+            },
+            { role: "user", content: prompt },
+          ],
+          { temperature: 0.2, maxTokens: 700, operation: "extraction" },
+        );
+        if (localResponse?.content) {
+          const localParsed = this.parseProactiveQuestionsFromText(
+            localResponse.content.trim(),
+            existingQuestionKeys,
+          );
+          if (localParsed.length > 0) {
+            return localParsed.slice(0, maxAdditional);
+          }
+        }
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          throw err;
+        }
+      }
+    }
+
+    const fallbackResult = await this.fallbackLlm.parseWithSchema(
+      [
+        {
+          role: "system",
+          content: "Generate additional proactive memory follow-up questions. Return valid JSON only.",
+        },
+        { role: "user", content: prompt },
+      ],
+      ProactiveQuestionsResultSchema,
+      { temperature: 0.2, maxTokens: 900 },
+    );
+    if (!fallbackResult?.questions) return [];
+    return fallbackResult.questions
+      .map((q) => normalizeQuestion(q as ExtractionQuestion))
+      .filter((q) => q.question.length > 0)
+      .filter((q) => !existingQuestionKeys.has(q.question.toLowerCase()))
+      .slice(0, maxAdditional);
+  }
+
   private async parseWithGatewayFallback<T>(
     traceId: string,
     operation: LlmTraceEvent["operation"],
@@ -135,7 +303,8 @@ export class ExtractionEngine {
           const durationMs = Date.now() - startTime;
           this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "extraction", durationMs });
           log.debug(`extraction: used local LLM — ${localResult.facts.length} facts, ${localResult.entities.length} entities`);
-          return this.sanitizeExtractionResult(localResult);
+          const sanitized = this.sanitizeExtractionResult(localResult);
+          return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
         // Local failed, fall back if allowed
         if (!this.config.localLlmFallback) {
@@ -177,11 +346,12 @@ export class ExtractionEngine {
         log.debug(
           `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback`,
         );
-        return this.sanitizeExtractionResult({
+        const sanitized = this.sanitizeExtractionResult({
           ...result,
           questions: result.questions ?? [],
           identityReflection: result.identityReflection ?? undefined,
         } as ExtractionResult);
+        return await this.applyProactiveQuestionPass(conversation, sanitized);
       }
 
       log.warn("extraction fallback returned no parsed output");
