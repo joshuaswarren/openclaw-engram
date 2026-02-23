@@ -264,6 +264,12 @@ export interface PluginConfig {
   lifecycleArchiveDecayThreshold: number;
   lifecycleProtectedCategories: MemoryCategory[];
   lifecycleMetricsEnabled: boolean;
+  // v8.3 proactive + policy learning
+  proactiveExtractionEnabled: boolean;
+  contextCompressionActionsEnabled: boolean;
+  compressionGuidelineLearningEnabled: boolean;
+  maxProactiveQuestionsPerExtraction: number;
+  maxCompressionTokensPerHour: number;
   // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts
   recallPlannerEnabled: boolean;
   recallPlannerMaxQmdResultsMinimal: number;
@@ -605,6 +611,27 @@ export interface MetaState {
   lastConsolidationAt: string | null;
   totalMemories: number;
   totalEntities: number;
+}
+
+export type MemoryActionType =
+  | "store_episode"
+  | "store_note"
+  | "update_note"
+  | "create_artifact"
+  | "summarize_node"
+  | "discard"
+  | "link_graph";
+
+export type MemoryActionOutcome = "applied" | "skipped" | "failed";
+
+export interface MemoryActionEvent {
+  timestamp: string;
+  action: MemoryActionType;
+  outcome: MemoryActionOutcome;
+  reason?: string;
+  memoryId?: string;
+  namespace?: string;
+  promptHash?: string;
 }
 
 /** Entry in the access tracking buffer (batched updates) */

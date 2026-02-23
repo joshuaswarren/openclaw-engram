@@ -542,6 +542,18 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.lifecycleMetricsEnabled === "boolean"
         ? cfg.lifecycleMetricsEnabled
         : cfg.lifecyclePolicyEnabled === true,
+    // v8.3 proactive + policy learning (default off)
+    proactiveExtractionEnabled: cfg.proactiveExtractionEnabled === true,
+    contextCompressionActionsEnabled: cfg.contextCompressionActionsEnabled === true,
+    compressionGuidelineLearningEnabled: cfg.compressionGuidelineLearningEnabled === true,
+    maxProactiveQuestionsPerExtraction:
+      typeof cfg.maxProactiveQuestionsPerExtraction === "number"
+        ? Math.max(0, Math.floor(cfg.maxProactiveQuestionsPerExtraction))
+        : 2,
+    maxCompressionTokensPerHour:
+      typeof cfg.maxCompressionTokensPerHour === "number"
+        ? Math.max(0, Math.floor(cfg.maxCompressionTokensPerHour))
+        : 1500,
     // v8.0 phase 1
     recallPlannerEnabled: cfg.recallPlannerEnabled !== false,
     recallPlannerMaxQmdResultsMinimal:

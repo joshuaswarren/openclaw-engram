@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
 import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -22,6 +22,7 @@ import type {
   VerificationState,
   PolicyClass,
   MemoryStatus,
+  MemoryActionEvent,
   MemorySummary,
   MetaState,
   PluginConfig,
@@ -684,6 +685,12 @@ export class StorageManager {
   }
   private get profilePath(): string {
     return path.join(this.baseDir, "profile.md");
+  }
+  private get memoryActionsPath(): string {
+    return path.join(this.stateDir, "memory-actions.jsonl");
+  }
+  private get compressionGuidelinesPath(): string {
+    return path.join(this.stateDir, "compression-guidelines.md");
   }
 
   /**
@@ -1371,6 +1378,66 @@ export class StorageManager {
     await this.ensureDirectories();
     const metaPath = path.join(this.stateDir, "meta.json");
     await writeFile(metaPath, JSON.stringify(state, null, 2), "utf-8");
+  }
+
+  async appendMemoryActionEvents(events: MemoryActionEvent[]): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+
+    const nowIso = new Date().toISOString();
+    const payload = events.map((event) => {
+      const normalized: MemoryActionEvent = {
+        ...event,
+        timestamp: event.timestamp && event.timestamp.length > 0 ? event.timestamp : nowIso,
+      };
+      return `${JSON.stringify(normalized)}\n`;
+    }).join("");
+
+    await appendFile(this.memoryActionsPath, payload, "utf-8");
+    return events.length;
+  }
+
+  async readMemoryActionEvents(limit: number = 200): Promise<MemoryActionEvent[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+
+    try {
+      const raw = await readFile(this.memoryActionsPath, "utf-8");
+      const out: MemoryActionEvent[] = [];
+      const lines = raw.split("\n");
+      for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
+        const line = lines[i]?.trim();
+        if (!line) continue;
+        try {
+          const parsed = JSON.parse(line) as Partial<MemoryActionEvent>;
+          if (
+            typeof parsed.timestamp === "string" &&
+            typeof parsed.action === "string" &&
+            typeof parsed.outcome === "string"
+          ) {
+            out.push(parsed as MemoryActionEvent);
+          }
+        } catch {
+          // Ignore malformed rows (fail-open).
+        }
+      }
+      return out.reverse();
+    } catch {
+      return [];
+    }
+  }
+
+  async writeCompressionGuidelines(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.compressionGuidelinesPath, content, "utf-8");
+  }
+
+  async readCompressionGuidelines(): Promise<string | null> {
+    try {
+      return await readFile(this.compressionGuidelinesPath, "utf-8");
+    } catch {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -97,6 +97,16 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `lifecycleProtectedCategories` | `["decision","principle","commitment","preference"]` | Categories protected from automatic archive transition. |
 | `lifecycleMetricsEnabled` | `false` (auto-`true` when policy enabled unless explicitly set) | Emit lifecycle metrics snapshot at `state/lifecycle-metrics.json`. |
 
+## v8.3 Proactive + Policy Learning Foundation
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `proactiveExtractionEnabled` | `false` | Enable proactive extraction second-pass paths (feature-gated). |
+| `contextCompressionActionsEnabled` | `false` | Enable context compression action tool paths and action telemetry wiring. |
+| `compressionGuidelineLearningEnabled` | `false` | Enable adaptive compression guideline learning loop. |
+| `maxProactiveQuestionsPerExtraction` | `2` | Hard cap on proactive self-questions per extraction (`0` disables). |
+| `maxCompressionTokensPerHour` | `1500` | Hourly token budget for compression-learning workflows (`0` disables). |
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |

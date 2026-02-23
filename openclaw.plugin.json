@@ -1015,6 +1015,31 @@
         "default": true,
         "description": "Emit lifecycle metrics snapshots to state/lifecycle-metrics.json when policy is enabled."
       },
+      "proactiveExtractionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable proactive self-questioning extraction second-pass (v8.3, default off)."
+      },
+      "contextCompressionActionsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable context compression action tooling and telemetry paths (v8.3, default off)."
+      },
+      "compressionGuidelineLearningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable adaptive compression guideline learning from memory-action outcomes (v8.3, default off)."
+      },
+      "maxProactiveQuestionsPerExtraction": {
+        "type": "number",
+        "default": 2,
+        "description": "Maximum proactive self-questions generated per extraction pass (0 disables question generation)."
+      },
+      "maxCompressionTokensPerHour": {
+        "type": "number",
+        "default": 1500,
+        "description": "Hourly token budget for compression actions/guideline generation (0 disables budgeted compression work)."
+      },
       "qmdDaemonEnabled": {
         "type": "boolean",
         "default": true,
@@ -1465,6 +1490,28 @@
       "label": "Lifecycle Metrics",
       "advanced": true,
       "help": "Write lifecycle metrics snapshots to state/lifecycle-metrics.json"
+    },
+    "proactiveExtractionEnabled": {
+      "label": "Proactive Extraction",
+      "help": "Enable proactive self-questioning extraction second-pass (v8.3, default off)"
+    },
+    "contextCompressionActionsEnabled": {
+      "label": "Context Compression Actions",
+      "help": "Enable context compression action tools and action telemetry (v8.3, default off)"
+    },
+    "compressionGuidelineLearningEnabled": {
+      "label": "Compression Guideline Learning",
+      "help": "Enable adaptive compression guideline learning from action outcomes (v8.3, default off)"
+    },
+    "maxProactiveQuestionsPerExtraction": {
+      "label": "Max Proactive Questions / Extraction",
+      "advanced": true,
+      "placeholder": "2"
+    },
+    "maxCompressionTokensPerHour": {
+      "label": "Max Compression Tokens / Hour",
+      "advanced": true,
+      "placeholder": "1500"
     },
     "knowledgeIndexEnabled": {
       "label": "Knowledge Index",

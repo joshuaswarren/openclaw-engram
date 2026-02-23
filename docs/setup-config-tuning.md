@@ -152,6 +152,25 @@ Validation checkpoints:
 - Compare stale/disputed recall rates before/after each phase.
 - If relevance drops, keep policy on but disable stale filtering and retune thresholds.
 
+## 2d) v8.3 Proactive + Policy Learning Foundation
+
+Start with all new policy-learning behavior disabled, then enable incrementally:
+
+```jsonc
+{
+  "proactiveExtractionEnabled": false,
+  "contextCompressionActionsEnabled": false,
+  "compressionGuidelineLearningEnabled": false,
+  "maxProactiveQuestionsPerExtraction": 2,
+  "maxCompressionTokensPerHour": 1500
+}
+```
+
+Rollout suggestion:
+- Enable `proactiveExtractionEnabled` first and validate extraction quality/latency.
+- Enable `contextCompressionActionsEnabled` after tool-level validation.
+- Enable `compressionGuidelineLearningEnabled` last, once memory-action telemetry is stable.
+
 QMD collection (`~/.config/qmd/index.yml`):
 
 ```yaml

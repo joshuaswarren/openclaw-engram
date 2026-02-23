@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 21A (proactive/policy-learning foundation slice):
+  - Added new config surface (default off): `proactiveExtractionEnabled`, `contextCompressionActionsEnabled`, `compressionGuidelineLearningEnabled`.
+  - Added new v8.3 policy limits with zero-safe semantics: `maxProactiveQuestionsPerExtraction` and `maxCompressionTokensPerHour`.
+  - Added typed policy-state storage primitives in `StorageManager` for `state/memory-actions.jsonl` and `state/compression-guidelines.md`.
+  - Added test coverage for proactive/policy config parsing and policy-state storage read/write behavior.
 - v8.3 PR 20D (lifecycle retrieval + docs slice):
   - Added lifecycle-aware retrieval weighting in shared score post-processing with boosts for `active`/`validated` memories and penalties for `candidate`/`stale`/`archived` states.
   - Added stronger retrieval penalty for `verificationState: disputed`.

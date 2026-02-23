@@ -78,6 +78,11 @@ The roadmap implements all requested paper concepts, grouped by the capability t
 - Proactive extraction self-questioning
 - Compression guideline optimizer
 - Memory actions telemetry and policy tuning loop
+- Delivery split (post-PR20 lifecycle completion):
+  - PR 21A: proactive/policy foundation (config + schema + typed state stores)
+  - PR 21B: proactive extraction self-questioning integration (bounded, fail-open)
+  - PR 21C: context compression action tools + memory action telemetry
+  - PR 21D: compression guideline learner + rollout docs + hardening gate
 - Recommended delivery split:
   - PR 20A: lifecycle data model + config
   - PR 20B: lifecycle engine module
