@@ -107,6 +107,18 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `maxProactiveQuestionsPerExtraction` | `2` | Hard cap on proactive self-questions per extraction (`0` disables). |
 | `maxCompressionTokensPerHour` | `1500` | Hourly token budget for compression-learning workflows (`0` disables). |
 
+### v8.3 Tool + State Artifacts
+
+- `context_checkpoint` tool:
+  - gated by `contextCompressionActionsEnabled`
+  - records append-only telemetry in `state/memory-actions.jsonl`
+- `memory_action_apply` tool:
+  - gated by `contextCompressionActionsEnabled`
+  - records append-only action + outcome telemetry in `state/memory-actions.jsonl`
+- `compressionGuidelineLearningEnabled`:
+  - consolidation synthesizes/updates `state/compression-guidelines.md`
+  - synthesis is fail-open and never blocks consolidation
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |

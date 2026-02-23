@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 21D (guideline learning + docs hardening slice):
+  - Added consolidation-integrated, fail-open compression guideline learning pass behind `compressionGuidelineLearningEnabled`.
+  - Added deterministic synthesis of `state/compression-guidelines.md` from recent `state/memory-actions.jsonl` telemetry.
+  - Added test coverage for guideline synthesis output and flag-gated pass execution in `tests/orchestrator-compression-guidelines.test.ts`.
+  - Expanded v8.3 docs with tool/state artifact details and operator checks for guideline-learning rollout.
 - v8.3 PR 21C (compression action tools + telemetry slice):
   - Added `context_checkpoint` and `memory_action_apply` tools behind `contextCompressionActionsEnabled`.
   - Added append-only telemetry wiring through `Orchestrator.appendMemoryActionEvent(...)` to persist policy-learning events into namespace-scoped `state/memory-actions.jsonl`.

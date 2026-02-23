@@ -64,8 +64,19 @@ Consolidation
    ├─ Archive old, low-importance facts (v6.0, if factArchivalEnabled)
    ├─ Auto-consolidate IDENTITY.md reflections (when > 8 KB)
    ├─ Update topic index (state/topics.json)
+   ├─ Learn compression guidelines from action telemetry (v8.3, if compressionGuidelineLearningEnabled)
    └─ Update QMD index (qmd update)
 ```
+
+### Compression Guideline Learning (v8.3 PR21D)
+
+When `compressionGuidelineLearningEnabled=true`, each consolidation pass runs a fail-open guideline synthesis step:
+
+- Reads recent telemetry from `state/memory-actions.jsonl`
+- Produces/update `state/compression-guidelines.md`
+- Summarizes action/outcome distributions and emits conservative next-step guidance
+
+This pass never blocks consolidation. On read/write errors, it logs and continues.
 
 ## Memory States
 
