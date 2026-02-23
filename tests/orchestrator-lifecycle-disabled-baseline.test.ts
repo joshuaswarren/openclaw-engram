@@ -69,7 +69,7 @@ test("lifecycle disabled path preserves byte-for-byte retrieval ordering baselin
     };
     const baselineOutput = await (orchestrator as any).boostSearchResults(resultSet, [], undefined);
 
-    assert.equal(JSON.stringify(withLifecycleOutput), JSON.stringify(baselineOutput));
+    assert.deepEqual(withLifecycleOutput, baselineOutput);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });
