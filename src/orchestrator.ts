@@ -2894,6 +2894,7 @@ export class Orchestrator {
     const transitionCounts: Record<string, number> = {};
     let updatedCount = 0;
     let disputedCount = 0;
+    let evaluatedCount = 0;
 
     const policy = {
       promoteHeatThreshold: this.config.lifecyclePromoteHeatThreshold,
@@ -2903,6 +2904,10 @@ export class Orchestrator {
     };
 
     for (const memory of allMemories) {
+      if (memory.frontmatter.status === "superseded") {
+        continue;
+      }
+      evaluatedCount += 1;
       const currentState = resolveLifecycleState(memory.frontmatter);
       const decision = decideLifecycleTransition(memory, policy, now);
       const nextState: LifecycleState = memory.frontmatter.status === "archived"
@@ -2943,7 +2948,7 @@ export class Orchestrator {
 
     if (!this.config.lifecycleMetricsEnabled) return;
 
-    const total = allMemories.length;
+    const total = evaluatedCount;
     const metrics = {
       generatedAt: nowIso,
       memoriesEvaluated: total,

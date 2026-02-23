@@ -47,19 +47,28 @@ test("runConsolidation applies lifecycle policy metadata and writes metrics", as
       lastAccessed: "2010-01-01T00:00:00.000Z",
       confidenceTier: "speculative",
     });
+    await storage.updateMemoryFrontmatter(ids[4], {
+      status: "superseded",
+    });
 
     await orchestrator.runConsolidationNow();
 
     const memories = await storage.readAllMemories();
     assert.equal(memories.length >= 5, true);
-    assert.equal(memories.every((m: any) => typeof m.frontmatter.lifecycleState === "string"), true);
-    assert.equal(memories.every((m: any) => typeof m.frontmatter.lastValidatedAt === "string"), true);
-    assert.equal(memories.every((m: any) => typeof m.frontmatter.heatScore === "number"), true);
-    assert.equal(memories.every((m: any) => typeof m.frontmatter.decayScore === "number"), true);
+    const superseded = memories.find((m: any) => m.frontmatter.id === ids[4]);
+    assert.ok(superseded);
+    assert.equal(superseded.frontmatter.status, "superseded");
+    assert.equal(superseded.frontmatter.lifecycleState, undefined);
+
+    const evaluated = memories.filter((m: any) => m.frontmatter.status !== "superseded");
+    assert.equal(evaluated.every((m: any) => typeof m.frontmatter.lifecycleState === "string"), true);
+    assert.equal(evaluated.every((m: any) => typeof m.frontmatter.lastValidatedAt === "string"), true);
+    assert.equal(evaluated.every((m: any) => typeof m.frontmatter.heatScore === "number"), true);
+    assert.equal(evaluated.every((m: any) => typeof m.frontmatter.decayScore === "number"), true);
 
     const metricsRaw = await readFile(path.join(memoryDir, "state", "lifecycle-metrics.json"), "utf-8");
     const metrics = JSON.parse(metricsRaw) as any;
-    assert.equal(metrics.memoriesEvaluated >= 5, true);
+    assert.equal(metrics.memoriesEvaluated, evaluated.length);
     assert.equal(typeof metrics.memoriesUpdated, "number");
     assert.equal(typeof metrics.countsByLifecycleState, "object");
     assert.equal(typeof metrics.staleRatio, "number");
