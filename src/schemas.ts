@@ -34,6 +34,12 @@ export const ExtractedQuestionSchema = z.object({
   priority: z.number().min(0).max(1).describe("How important/urgent this question is (0-1)"),
 });
 
+export const ProactiveQuestionsResultSchema = z.object({
+  questions: z
+    .array(ExtractedQuestionSchema)
+    .describe("Additional follow-up questions discovered in a proactive second-pass extraction."),
+});
+
 export const ExtractedRelationshipSchema = z.object({
   source: z.string().describe("Source entity name (normalized, e.g. person-jane-doe)"),
   target: z.string().describe("Target entity name (normalized, e.g. company-acme-corp)"),
@@ -209,6 +215,7 @@ export type MemorySummaryResult = z.infer<typeof MemorySummarySchema>;
 export type ExtractedFactParsed = z.infer<typeof ExtractedFactSchema>;
 export type EntityMentionParsed = z.infer<typeof EntityMentionSchema>;
 export type ExtractedQuestionParsed = z.infer<typeof ExtractedQuestionSchema>;
+export type ProactiveQuestionsResultParsed = z.infer<typeof ProactiveQuestionsResultSchema>;
 export type ExtractionResultParsed = z.infer<typeof ExtractionResultSchema>;
 export type ConsolidationItemParsed = z.infer<typeof ConsolidationItemSchema>;
 export type ConsolidationResultParsed = z.infer<

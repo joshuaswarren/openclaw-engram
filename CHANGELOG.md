@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 21B (proactive extraction slice):
+  - Added a proactive second-pass extraction path in `ExtractionEngine` behind `proactiveExtractionEnabled`.
+  - Added strict cap enforcement for proactive follow-up questions via `maxProactiveQuestionsPerExtraction` with zero-safe semantics.
+  - Added fail-open behavior: proactive-pass failures are logged and baseline extraction results are preserved.
+  - Added question merge/dedupe helper coverage in `tests/extraction-proactive.test.ts`.
 - v8.3 PR 21A (proactive/policy-learning foundation slice):
   - Added new config surface (default off): `proactiveExtractionEnabled`, `contextCompressionActionsEnabled`, `compressionGuidelineLearningEnabled`.
   - Added new v8.3 policy limits with zero-safe semantics: `maxProactiveQuestionsPerExtraction` and `maxCompressionTokensPerHour`.
