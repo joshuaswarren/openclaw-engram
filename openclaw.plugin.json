@@ -979,6 +979,42 @@
         "default": ["commitment", "preference", "decision", "principle"],
         "description": "Categories that protect a fact from archival regardless of other criteria."
       },
+      "lifecyclePolicyEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable lifecycle scoring/promotions during consolidation (v8.3)."
+      },
+      "lifecycleFilterStaleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If enabled, stale lifecycle memories can be filtered from retrieval (wired in PR20D)."
+      },
+      "lifecyclePromoteHeatThreshold": {
+        "type": "number",
+        "default": 0.55,
+        "description": "Heat threshold for lifecycle promotion to validated/active states."
+      },
+      "lifecycleStaleDecayThreshold": {
+        "type": "number",
+        "default": 0.65,
+        "description": "Decay threshold for lifecycle demotion to stale."
+      },
+      "lifecycleArchiveDecayThreshold": {
+        "type": "number",
+        "default": 0.85,
+        "description": "Decay threshold for lifecycle demotion to archived state semantics."
+      },
+      "lifecycleProtectedCategories": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["decision", "principle", "commitment", "preference"],
+        "description": "Categories that lifecycle policy will not auto-archive."
+      },
+      "lifecycleMetricsEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Emit lifecycle metrics snapshots to state/lifecycle-metrics.json when policy is enabled."
+      },
       "qmdDaemonEnabled": {
         "type": "boolean",
         "default": true,
@@ -1395,6 +1431,40 @@
       "label": "Archival Protected Categories",
       "advanced": true,
       "help": "Categories that are never archived regardless of age or importance"
+    },
+    "lifecyclePolicyEnabled": {
+      "label": "Lifecycle Policy Engine",
+      "help": "Enable lifecycle scoring/promotions during consolidation (v8.3)"
+    },
+    "lifecycleFilterStaleEnabled": {
+      "label": "Filter Stale Lifecycle Memories",
+      "advanced": true,
+      "help": "If enabled, retrieval may filter stale lifecycle memories (activated in PR20D)"
+    },
+    "lifecyclePromoteHeatThreshold": {
+      "label": "Lifecycle Promote Heat Threshold",
+      "advanced": true,
+      "placeholder": "0.55"
+    },
+    "lifecycleStaleDecayThreshold": {
+      "label": "Lifecycle Stale Decay Threshold",
+      "advanced": true,
+      "placeholder": "0.65"
+    },
+    "lifecycleArchiveDecayThreshold": {
+      "label": "Lifecycle Archive Decay Threshold",
+      "advanced": true,
+      "placeholder": "0.85"
+    },
+    "lifecycleProtectedCategories": {
+      "label": "Lifecycle Protected Categories",
+      "advanced": true,
+      "help": "Categories lifecycle policy should not auto-archive"
+    },
+    "lifecycleMetricsEnabled": {
+      "label": "Lifecycle Metrics",
+      "advanced": true,
+      "help": "Write lifecycle metrics snapshots to state/lifecycle-metrics.json"
     },
     "knowledgeIndexEnabled": {
       "label": "Knowledge Index",

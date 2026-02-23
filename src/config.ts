@@ -517,6 +517,31 @@ export function parseConfig(raw: unknown): PluginConfig {
     factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
       : ["commitment", "preference", "decision", "principle"],
+    // v8.3 lifecycle policy engine (default off)
+    lifecyclePolicyEnabled: cfg.lifecyclePolicyEnabled === true,
+    lifecycleFilterStaleEnabled: cfg.lifecycleFilterStaleEnabled === true,
+    lifecyclePromoteHeatThreshold:
+      typeof cfg.lifecyclePromoteHeatThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.lifecyclePromoteHeatThreshold))
+        : 0.55,
+    lifecycleStaleDecayThreshold:
+      typeof cfg.lifecycleStaleDecayThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.lifecycleStaleDecayThreshold))
+        : 0.65,
+    lifecycleArchiveDecayThreshold:
+      typeof cfg.lifecycleArchiveDecayThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.lifecycleArchiveDecayThreshold))
+        : 0.85,
+    lifecycleProtectedCategories: Array.isArray(cfg.lifecycleProtectedCategories)
+      ? (cfg.lifecycleProtectedCategories as any[]).filter(
+          (c): c is PluginConfig["lifecycleProtectedCategories"][number] =>
+            typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
+        )
+      : ["decision", "principle", "commitment", "preference"],
+    lifecycleMetricsEnabled:
+      typeof cfg.lifecycleMetricsEnabled === "boolean"
+        ? cfg.lifecycleMetricsEnabled
+        : cfg.lifecyclePolicyEnabled === true,
     // v8.0 phase 1
     recallPlannerEnabled: cfg.recallPlannerEnabled !== false,
     recallPlannerMaxQmdResultsMinimal:

@@ -256,6 +256,14 @@ export interface PluginConfig {
   factArchivalMaxAccessCount: number;
   /** Tags that protect a fact from archival regardless of other criteria. */
   factArchivalProtectedCategories: string[];
+  // v8.3 Lifecycle policy engine
+  lifecyclePolicyEnabled: boolean;
+  lifecycleFilterStaleEnabled: boolean;
+  lifecyclePromoteHeatThreshold: number;
+  lifecycleStaleDecayThreshold: number;
+  lifecycleArchiveDecayThreshold: number;
+  lifecycleProtectedCategories: MemoryCategory[];
+  lifecycleMetricsEnabled: boolean;
   // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts
   recallPlannerEnabled: boolean;
   recallPlannerMaxQmdResultsMinimal: number;
