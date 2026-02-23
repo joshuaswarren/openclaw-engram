@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Added
+- v8.3 PR 20B (deterministic lifecycle engine slice):
+  - Added `src/lifecycle.ts` with deterministic, bounded lifecycle scoring functions (`computeHeat`, `computeDecay`) and transition logic (`decideLifecycleTransition`).
+  - Added lifecycle guardrails: archived is terminal, disputed memories never auto-promote to active, and protected categories are not auto-archived.
+  - Added `tests/lifecycle.test.ts` coverage for bounds, monotonic scoring behavior, and transition guardrails.
 - v8.3 PR 20A (lifecycle data-model slice):
   - Added optional lifecycle policy frontmatter fields to `MemoryFrontmatter`: `lifecycleState`, `verificationState`, `policyClass`, `lastValidatedAt`, `decayScore`, and `heatScore`.
   - Extended memory frontmatter serialization/parsing to persist and restore lifecycle metadata, including zero-valued score fields.
