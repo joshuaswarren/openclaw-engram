@@ -136,12 +136,14 @@ export function computeDecay(
   const nowMs = now.getTime();
   const ageDays = daysSince(frontmatter.updated ?? frontmatter.created, nowMs);
   const staleAccessDays = daysSince(frontmatter.lastAccessed, nowMs);
+  const ageRisk = clamp01(ageDays / 180);
+  const staleAccessRisk = clamp01(staleAccessDays / 120);
   const confidenceRisk = 1 - confidenceTierWeight(frontmatter);
   const feedbackRisk = clamp01(((signals?.feedbackScore ?? 0) * -1 + 1) / 2);
   const heat = computeHeat(memory, now, signals);
 
-  const score = (ageDays / 180) * 0.3
-    + (staleAccessDays / 120) * 0.25
+  const score = (ageRisk * 0.3)
+    + (staleAccessRisk * 0.25)
     + (confidenceRisk * 0.2)
     + (feedbackRisk * 0.1)
     + ((1 - heat) * 0.15);

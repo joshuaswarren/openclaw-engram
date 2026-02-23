@@ -66,6 +66,18 @@ test("computeDecay increases for older and unaccessed memories", () => {
   assert.equal(old > recent, true);
 });
 
+test("computeDecay caps age/staleness components for very old but active memories", () => {
+  const now = new Date("2026-02-22T00:00:00.000Z");
+  const decay = computeDecay(buildMemory({
+    updated: "2010-01-01T00:00:00.000Z",
+    lastAccessed: "2026-02-22T00:00:00.000Z",
+    accessCount: 50,
+    confidenceTier: "explicit",
+    verificationState: "user_confirmed",
+  }), now, { feedbackScore: 1 });
+  assert.equal(decay < 0.65, true);
+});
+
 test("decideLifecycleTransition never promotes disputed memory to active", () => {
   const now = new Date("2026-02-22T00:00:00.000Z");
   const decision = decideLifecycleTransition(
