@@ -171,6 +171,12 @@ Rollout suggestion:
 - Enable `contextCompressionActionsEnabled` after tool-level validation.
 - Enable `compressionGuidelineLearningEnabled` last, once memory-action telemetry is stable.
 
+Operational checks after enabling guideline learning:
+- Confirm telemetry is append-only: `memory/state/memory-actions.jsonl`.
+- Confirm guideline synthesis output exists: `memory/state/compression-guidelines.md`.
+- Verify fail-open behavior by temporarily making state unwritable and confirming consolidation still completes.
+- If guidance quality regresses, keep telemetry enabled and disable only `compressionGuidelineLearningEnabled`.
+
 QMD collection (`~/.config/qmd/index.yml`):
 
 ```yaml
