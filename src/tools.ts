@@ -1,7 +1,8 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
-import type { MemoryCategory } from "./types.js";
+import type { MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
 
 interface ToolApi {
@@ -29,6 +30,21 @@ function toolResult(text: string) {
 }
 
 export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
+  const actionTypes: MemoryActionType[] = [
+    "store_episode",
+    "store_note",
+    "update_note",
+    "create_artifact",
+    "summarize_node",
+    "discard",
+    "link_graph",
+  ];
+
+  function promptHashForTelemetry(input?: string): string | undefined {
+    if (typeof input !== "string" || input.trim().length === 0) return undefined;
+    return createHash("sha256").update(input).digest("hex").slice(0, 16);
+  }
+
   function namespaceFromPath(p: string): string {
     const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
     return m && m[1] ? m[1] : orchestrator.config.defaultNamespace;
@@ -332,6 +348,133 @@ Best for:
       },
     },
     { name: "memory_feedback_last_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "context_checkpoint",
+      label: "Context Checkpoint",
+      description:
+        "Record a context-compression checkpoint event for policy-learning telemetry (v8.3).",
+      parameters: Type.Object({
+        summary: Type.String({
+          description: "Short summary of what was checkpointed.",
+        }),
+        sourcePrompt: Type.Optional(
+          Type.String({
+            description: "Optional source prompt text used for hashing in telemetry.",
+          }),
+        ),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace. Defaults to defaultNamespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.contextCompressionActionsEnabled) {
+          return toolResult(
+            "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
+          );
+        }
+        const { summary, sourcePrompt, namespace } = params as {
+          summary: string;
+          sourcePrompt?: string;
+          namespace?: string;
+        };
+        const ns =
+          typeof namespace === "string" && namespace.length > 0
+            ? namespace
+            : orchestrator.config.defaultNamespace;
+        const wrote = await orchestrator.appendMemoryActionEvent({
+          action: "summarize_node",
+          outcome: "applied",
+          namespace: ns,
+          reason: `context_checkpoint:${summary.slice(0, 200)}`,
+          promptHash: promptHashForTelemetry(sourcePrompt),
+        });
+        if (!wrote) {
+          return toolResult("Checkpoint recorded best-effort failed (fail-open).");
+        }
+        return toolResult(`Recorded context checkpoint telemetry in namespace=${ns}.`);
+      },
+    },
+    { name: "context_checkpoint" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_action_apply",
+      label: "Apply Memory Action",
+      description:
+        "Record a memory-action application event for policy-learning telemetry (v8.3).",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: actionTypes,
+          description: "Memory action type.",
+        }),
+        outcome: Type.Optional(
+          Type.String({
+            enum: ["applied", "skipped", "failed"],
+            description: "Outcome status (default: applied).",
+          }),
+        ),
+        reason: Type.Optional(
+          Type.String({
+            description: "Optional reason/notes for this action outcome.",
+          }),
+        ),
+        memoryId: Type.Optional(
+          Type.String({
+            description: "Optional memory ID targeted by this action.",
+          }),
+        ),
+        sourcePrompt: Type.Optional(
+          Type.String({
+            description: "Optional source prompt text used for hashing in telemetry.",
+          }),
+        ),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace. Defaults to defaultNamespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.contextCompressionActionsEnabled) {
+          return toolResult(
+            "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
+          );
+        }
+        const { action, outcome, reason, memoryId, sourcePrompt, namespace } = params as {
+          action: MemoryActionType;
+          outcome?: "applied" | "skipped" | "failed";
+          reason?: string;
+          memoryId?: string;
+          sourcePrompt?: string;
+          namespace?: string;
+        };
+        const ns =
+          typeof namespace === "string" && namespace.length > 0
+            ? namespace
+            : orchestrator.config.defaultNamespace;
+        const wrote = await orchestrator.appendMemoryActionEvent({
+          action,
+          outcome: outcome ?? "applied",
+          namespace: ns,
+          reason,
+          memoryId,
+          promptHash: promptHashForTelemetry(sourcePrompt),
+        });
+        if (!wrote) {
+          return toolResult("Memory action telemetry write failed (fail-open).");
+        }
+        return toolResult(
+          `Recorded memory action telemetry: action=${action}, outcome=${outcome ?? "applied"}, namespace=${ns}.`,
+        );
+      },
+    },
+    { name: "memory_action_apply" },
   );
 
   api.registerTool(

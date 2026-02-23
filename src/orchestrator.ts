@@ -59,6 +59,7 @@ import type {
   BufferTurn,
   ExtractionResult,
   LifecycleState,
+  MemoryActionEvent,
   MemoryLink,
   MemoryFile,
   MemoryFrontmatter,
@@ -780,6 +781,31 @@ export class Orchestrator {
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
+  }
+
+  async appendMemoryActionEvent(
+    event: Omit<MemoryActionEvent, "timestamp"> & { timestamp?: string },
+  ): Promise<boolean> {
+    const namespace =
+      typeof event.namespace === "string" && event.namespace.length > 0
+        ? event.namespace
+        : this.config.defaultNamespace;
+    try {
+      const storage = await this.getStorage(namespace);
+      const toWrite: MemoryActionEvent = {
+        ...event,
+        namespace,
+        timestamp:
+          typeof event.timestamp === "string" && event.timestamp.length > 0
+            ? event.timestamp
+            : new Date().toISOString(),
+      };
+      await storage.appendMemoryActionEvents([toWrite]);
+      return true;
+    } catch (err) {
+      log.warn(`appendMemoryActionEvent failed (non-fatal): ${err}`);
+      return false;
+    }
   }
 
   async getLastGraphRecallSnapshot(namespace?: string): Promise<GraphRecallSnapshot | null> {
