@@ -27,6 +27,7 @@ state/
 # Auto-generated claude-mem context files (contain session-specific data)
 src/CLAUDE.md
 scripts/CLAUDE.md
+.claude/
 
 # Git worktrees
 .worktrees/

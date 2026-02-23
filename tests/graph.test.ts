@@ -303,4 +303,30 @@ describe("Integration: corrupt JSONL fail-open", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("spreadingActivation returns [] when all graph JSONL lines are corrupt", async () => {
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const dir = await mkdtemp(path.join(tmpdir(), "engram-corrupt-sa-"));
+    try {
+      const saCfg: GraphConfig = {
+        multiGraphMemoryEnabled: true,
+        entityGraphEnabled: true,
+        timeGraphEnabled: true,
+        causalGraphEnabled: true,
+        maxGraphTraversalSteps: 3,
+        graphActivationDecay: 0.7,
+        maxEntityGraphEdgesPerMemory: 10,
+      };
+      await mkdir(path.join(dir, "state", "graphs"), { recursive: true });
+      await writeFile(path.join(dir, "state", "graphs", "entity.jsonl"), "NOT JSON\nALSO NOT JSON\n");
+      await writeFile(path.join(dir, "state", "graphs", "time.jsonl"), "###\n");
+      await writeFile(path.join(dir, "state", "graphs", "causal.jsonl"), "{oops\n");
+
+      const gi = new GraphIndex(dir, saCfg);
+      const results = await gi.spreadingActivation(["A.md"]);
+      assert.deepEqual(results, []);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
