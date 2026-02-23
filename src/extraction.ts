@@ -228,6 +228,9 @@ export class ExtractionEngine {
             return localParsed.slice(0, maxAdditional);
           }
         }
+        if (!this.config.localLlmFallback) {
+          return [];
+        }
       } catch (err) {
         if (!this.config.localLlmFallback) {
           throw err;

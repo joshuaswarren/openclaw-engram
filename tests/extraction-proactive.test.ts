@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeProactiveQuestions } from "../src/extraction.ts";
+import { ExtractionEngine, mergeProactiveQuestions } from "../src/extraction.ts";
+import { parseConfig } from "../src/config.ts";
 
 test("mergeProactiveQuestions appends unique proactive questions up to cap", () => {
   const base = [
@@ -40,4 +41,37 @@ test("mergeProactiveQuestions preserves base questions when cap is zero", () => 
 
   const merged = mergeProactiveQuestions(base, proactive, 0);
   assert.deepEqual(merged, base);
+});
+
+test("generateProactiveQuestions does not call cloud fallback when localLlmFallback is false", async () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+    proactiveExtractionEnabled: true,
+    maxProactiveQuestionsPerExtraction: 2,
+    localLlmEnabled: true,
+    localLlmFallback: false,
+  });
+
+  const engine = new ExtractionEngine(config);
+  let fallbackCalled = false;
+  (engine as any).localLlm = {
+    chatCompletion: async () => ({ content: '{"questions":[]}' }),
+  };
+  (engine as any).fallbackLlm = {
+    parseWithSchema: async () => {
+      fallbackCalled = true;
+      return { questions: [{ question: "fallback", context: "", priority: 0.5 }] };
+    },
+  };
+
+  const questions = await (engine as any).generateProactiveQuestions(
+    "user: hello\nassistant: hi",
+    { facts: [], profileUpdates: [], entities: [], questions: [] },
+    2,
+  );
+
+  assert.deepEqual(questions, []);
+  assert.equal(fallbackCalled, false);
 });
