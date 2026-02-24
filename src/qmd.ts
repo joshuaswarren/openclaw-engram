@@ -9,11 +9,37 @@ const QMD_DAEMON_TIMEOUT_MS = 60_000; // Longer timeout for daemon (first call m
 const QMD_PROBE_TIMEOUT_MS = 8_000;
 const QMD_UPDATE_BACKOFF_MS = 15 * 60 * 1000; // 15m
 const QMD_EMBED_BACKOFF_MS = 60 * 60 * 1000; // 60m
+const QMD_CLI_WARN_THROTTLE_MS = 15 * 60 * 1000; // 15m
 const QMD_FALLBACK_PATHS = [
   path.join(os.homedir(), ".bun", "bin", "qmd"),
   "/usr/local/bin/qmd",
   "/opt/homebrew/bin/qmd",
 ];
+const QMD_GLOBAL_STATE_KEY = "__openclawEngramQmdGlobalState";
+
+type QmdGlobalState = {
+  warnedGlobalUpdateBehavior: boolean;
+  lastGlobalUpdateRunAtMs: number | null;
+  lastGlobalUpdateFailAtMs: number | null;
+  lastGlobalEmbedRunAtMs: number | null;
+  lastGlobalEmbedFailAtMs: number | null;
+  lastCliWarnAtMs: number | null;
+};
+
+function getGlobalQmdState(): QmdGlobalState {
+  const g = globalThis as any;
+  if (!g[QMD_GLOBAL_STATE_KEY]) {
+    g[QMD_GLOBAL_STATE_KEY] = {
+      warnedGlobalUpdateBehavior: false,
+      lastGlobalUpdateRunAtMs: null,
+      lastGlobalUpdateFailAtMs: null,
+      lastGlobalEmbedRunAtMs: null,
+      lastGlobalEmbedFailAtMs: null,
+      lastCliWarnAtMs: null,
+    } satisfies QmdGlobalState;
+  }
+  return g[QMD_GLOBAL_STATE_KEY] as QmdGlobalState;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -296,7 +322,6 @@ export class QmdClient {
   private lastUpdateFailAtMs: number | null = null;
   private lastEmbedFailAtMs: number | null = null;
   private lastUpdateRunAtMs: number | null = null;
-  private warnedGlobalUpdateBehavior = false;
   private readonly updateTimeoutMs: number;
   private readonly updateMinIntervalMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
@@ -397,9 +422,11 @@ export class QmdClient {
         return true;
       } catch (err) {
         markProbeFailure(err);
-        log.warn(`QMD: configured qmdPath failed (${this.configuredQmdPath}): ${this.lastCliProbeError}`);
-        this.available = false;
-        return false;
+        // Do not hard-fail here: fall through to PATH/fallback probing.
+        // This keeps recall healthy even when configured path is stale.
+        this.logCliProbeWarning(
+          `QMD: configured qmdPath failed (${this.configuredQmdPath}): ${this.lastCliProbeError}`,
+        );
       }
     }
 
@@ -433,6 +460,24 @@ export class QmdClient {
       this.available = false;
       return false;
     }
+  }
+
+  private logCliProbeWarning(message: string): void {
+    const state = getGlobalQmdState();
+    const now = Date.now();
+    const canWarn =
+      state.lastCliWarnAtMs === null || now - state.lastCliWarnAtMs >= QMD_CLI_WARN_THROTTLE_MS;
+    if (!canWarn) {
+      log.debug(message);
+      return;
+    }
+    state.lastCliWarnAtMs = now;
+    if (this.daemonAvailable) {
+      // Daemon mode is healthy; keep this as debug noise rather than warning.
+      log.debug(message);
+      return;
+    }
+    log.warn(message);
   }
 
   /** Re-probe daemon if it was down and recheck interval has elapsed. */
@@ -601,9 +646,24 @@ export class QmdClient {
     maxResults?: number,
   ): Promise<QmdSearchResult[]> {
     const n = maxResults ?? this.maxResults;
+
+    // Daemon first when available. This bypasses subprocess mutex contention
+    // and typically provides lower tail latency under concurrent recall load.
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    await this.maybeProbeDaemon();
+    if (this.daemonAvailable) {
+      const daemonResults = await this.searchViaDaemon(trimmed, collection ?? this.collection, n);
+      if (daemonResults !== null && daemonResults.length > 0) {
+        return daemonResults
+          .sort((a, b) => b.score - a.score)
+          .slice(0, n);
+      }
+    }
+
     const [bm25Results, vectorResults] = await Promise.all([
-      this.bm25Search(query, collection, n),
-      this.vectorSearch(query, collection, n),
+      this.bm25Search(trimmed, collection, n),
+      this.vectorSearch(trimmed, collection, n),
     ]);
 
     // Merge by path, keeping best score
@@ -787,6 +847,7 @@ export class QmdClient {
 
   async update(): Promise<void> {
     if (this.available === false) return;
+    const globalState = getGlobalQmdState();
     if (
       this.lastUpdateRunAtMs &&
       Date.now() - this.lastUpdateRunAtMs < this.updateMinIntervalMs
@@ -801,9 +862,23 @@ export class QmdClient {
       log.debug("QMD update: suppressed due to recent failures (backoff)");
       return;
     }
+    if (
+      globalState.lastGlobalUpdateRunAtMs &&
+      Date.now() - globalState.lastGlobalUpdateRunAtMs < this.updateMinIntervalMs
+    ) {
+      log.debug("QMD update: suppressed by global min-interval gate");
+      return;
+    }
+    if (
+      globalState.lastGlobalUpdateFailAtMs &&
+      Date.now() - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+    ) {
+      log.debug("QMD update: suppressed by global failure backoff");
+      return;
+    }
     try {
-      if (!this.warnedGlobalUpdateBehavior) {
-        this.warnedGlobalUpdateBehavior = true;
+      if (!globalState.warnedGlobalUpdateBehavior) {
+        globalState.warnedGlobalUpdateBehavior = true;
         log.warn(
           "QMD update runs globally across collections in current CLI versions; Engram now rate-limits update calls to reduce gateway load.",
         );
@@ -814,10 +889,14 @@ export class QmdClient {
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
       }
-      this.lastUpdateRunAtMs = Date.now();
+      const now = Date.now();
+      this.lastUpdateRunAtMs = now;
+      globalState.lastGlobalUpdateRunAtMs = now;
       log.debug("QMD update completed");
     } catch (err) {
-      this.lastUpdateFailAtMs = Date.now();
+      const now = Date.now();
+      this.lastUpdateFailAtMs = now;
+      globalState.lastGlobalUpdateFailAtMs = now;
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD update failed: ${msg}`);
     }
@@ -825,11 +904,26 @@ export class QmdClient {
 
   async embed(): Promise<void> {
     if (this.available === false) return;
+    const globalState = getGlobalQmdState();
     if (
       this.lastEmbedFailAtMs &&
       Date.now() - this.lastEmbedFailAtMs < QMD_EMBED_BACKOFF_MS
     ) {
       log.debug("QMD embed: suppressed due to recent failures (backoff)");
+      return;
+    }
+    if (
+      globalState.lastGlobalEmbedRunAtMs &&
+      Date.now() - globalState.lastGlobalEmbedRunAtMs < this.updateMinIntervalMs
+    ) {
+      log.debug("QMD embed: suppressed by global min-interval gate");
+      return;
+    }
+    if (
+      globalState.lastGlobalEmbedFailAtMs &&
+      Date.now() - globalState.lastGlobalEmbedFailAtMs < QMD_EMBED_BACKOFF_MS
+    ) {
+      log.debug("QMD embed: suppressed by global failure backoff");
       return;
     }
     try {
@@ -839,9 +933,12 @@ export class QmdClient {
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD embed: durationMs=${durationMs}`);
       }
+      globalState.lastGlobalEmbedRunAtMs = Date.now();
       log.debug("QMD embed completed");
     } catch (err) {
-      this.lastEmbedFailAtMs = Date.now();
+      const now = Date.now();
+      this.lastEmbedFailAtMs = now;
+      globalState.lastGlobalEmbedFailAtMs = now;
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD embed failed: ${msg}`);
     }

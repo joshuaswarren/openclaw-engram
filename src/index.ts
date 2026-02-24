@@ -87,7 +87,7 @@ export default {
     // Hard guard: prevent duplicate hook/tool/CLI registration when plugin register()
     // is invoked multiple times in the same process context.
     if ((globalThis as any)[ENGRAM_REGISTERED_GUARD] === true) {
-      log.warn("register called more than once; skipping duplicate hook/tool registration");
+      log.debug("register called more than once; skipping duplicate hook/tool registration");
       return;
     }
     (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
@@ -343,6 +343,7 @@ export default {
         const newJob = {
           id: jobId,
           agentId: "generalist",
+          model,
           name: "Engram Hourly Summary",
           enabled: true,
           createdAtMs: Date.now(),
