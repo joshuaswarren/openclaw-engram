@@ -18,6 +18,11 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 identity continuity config slice (PR #36):
+  - Added new config surface: `identityContinuityEnabled`, `identityInjectionMode`, `identityMaxInjectChars`, `continuityIncidentLoggingEnabled`, and `continuityAuditEnabled`.
+  - Added parser semantics for bounded identity injection chars and dynamic default for incident logging (`identityContinuityEnabled` when unset).
+  - Added config-schema/UI metadata and config-reference documentation for v8.4 identity continuity.
+  - Added `tests/config-identity-continuity.test.ts` and updated typed test fixtures to match the expanded `PluginConfig` contract.
 - v8.3 PR 21D (guideline learning + docs hardening slice):
   - Added consolidation-integrated, fail-open compression guideline learning pass behind `compressionGuidelineLearningEnabled`.
   - Added deterministic synthesis of `state/compression-guidelines.md` from recent `state/memory-actions.jsonl` telemetry.
