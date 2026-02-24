@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 continuity incident workflow slice (PR #39):
+  - Added `continuity_incident_open`, `continuity_incident_close`, and `continuity_incident_list` tools.
+  - Added `openclaw engram continuity incidents`, `openclaw engram continuity incident-open`, and `openclaw engram continuity incident-close` CLI commands.
+  - Added validation for required incident closure fields and state-filtered incident listing behavior.
+  - Added `tests/continuity-incidents.test.ts` coverage for tool gating, open/close flows, and listing behavior.
+  - Documented continuity incident tools and CLI usage in API/operations docs.
 - v8.4 identity anchor tooling slice (PR #38):
   - Added `identity_anchor_get` and `identity_anchor_update` tools behind `identityContinuityEnabled`.
   - Added conservative, section-aware identity-anchor merge behavior to avoid destructive overwrites.

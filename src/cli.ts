@@ -2,7 +2,7 @@ import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
-import type { TranscriptEntry } from "./types.js";
+import type { ContinuityIncidentRecord, TranscriptEntry } from "./types.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -207,6 +207,22 @@ async function readAllMemoryFiles(memoryDir: string): Promise<DedupeCandidate[]>
   }
 
   return out;
+}
+
+function formatContinuityIncidentCli(incident: ContinuityIncidentRecord): string {
+  const lines = [
+    `${incident.id} [${incident.state}]`,
+    `  opened: ${incident.openedAt}`,
+  ];
+  if (incident.closedAt) lines.push(`  closed: ${incident.closedAt}`);
+  if (incident.triggerWindow) lines.push(`  window: ${incident.triggerWindow}`);
+  lines.push(`  symptom: ${incident.symptom}`);
+  if (incident.suspectedCause) lines.push(`  suspected-cause: ${incident.suspectedCause}`);
+  if (incident.fixApplied) lines.push(`  fix-applied: ${incident.fixApplied}`);
+  if (incident.verificationResult) lines.push(`  verification: ${incident.verificationResult}`);
+  if (incident.preventiveRule) lines.push(`  preventive-rule: ${incident.preventiveRule}`);
+  if (incident.filePath) lines.push(`  path: ${incident.filePath}`);
+  return lines.join("\n");
 }
 
 export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
@@ -706,6 +722,117 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
           console.log(identity);
+        });
+
+      const continuityCmd = cmd
+        .command("continuity")
+        .description("Identity continuity incident workflow commands");
+
+      continuityCmd
+        .command("incidents")
+        .description("List continuity incidents")
+        .option("--state <state>", "Filter by state: open|closed|all", "open")
+        .option("--limit <number>", "Maximum incidents to list", "25")
+        .action(async (...args: unknown[]) => {
+          if (!orchestrator.config.identityContinuityEnabled) {
+            console.log("Identity continuity is disabled.");
+            return;
+          }
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const stateRaw = String(options.state ?? "open").toLowerCase();
+          const state: "open" | "closed" | "all" =
+            stateRaw === "closed" || stateRaw === "all" ? stateRaw : "open";
+          const limit = Math.max(1, Math.min(200, parseInt(String(options.limit ?? "25"), 10) || 25));
+          const incidents = await orchestrator.storage.readContinuityIncidents(limit);
+          const filtered =
+            state === "all" ? incidents : incidents.filter((incident) => incident.state === state);
+          if (filtered.length === 0) {
+            console.log(`No continuity incidents found for state=${state}.`);
+            return;
+          }
+          console.log(`=== Continuity Incidents (${filtered.length}, state=${state}) ===\n`);
+          for (const incident of filtered) {
+            console.log(formatContinuityIncidentCli(incident));
+            console.log();
+          }
+        });
+
+      continuityCmd
+        .command("incident-open")
+        .description("Open a continuity incident")
+        .option("--symptom <text>", "Required symptom description")
+        .option("--trigger-window <window>", "Optional incident trigger window")
+        .option("--suspected-cause <text>", "Optional suspected cause")
+        .action(async (...args: unknown[]) => {
+          if (!orchestrator.config.identityContinuityEnabled) {
+            console.log("Identity continuity is disabled.");
+            return;
+          }
+          if (!orchestrator.config.continuityIncidentLoggingEnabled) {
+            console.log("Continuity incident logging is disabled.");
+            return;
+          }
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const symptom = String(options.symptom ?? "").trim();
+          if (!symptom) {
+            console.log("Missing required --symptom.");
+            return;
+          }
+          const created = await orchestrator.storage.appendContinuityIncident({
+            symptom,
+            triggerWindow: options.triggerWindow ? String(options.triggerWindow) : undefined,
+            suspectedCause: options.suspectedCause ? String(options.suspectedCause) : undefined,
+          });
+          console.log("Opened continuity incident:\n");
+          console.log(formatContinuityIncidentCli(created));
+        });
+
+      continuityCmd
+        .command("incident-close")
+        .description("Close a continuity incident")
+        .option("--id <id>", "Required incident ID")
+        .option("--fix-applied <text>", "Required fix description")
+        .option("--verification-result <text>", "Required verification result")
+        .option("--preventive-rule <text>", "Optional preventive rule")
+        .action(async (...args: unknown[]) => {
+          if (!orchestrator.config.identityContinuityEnabled) {
+            console.log("Identity continuity is disabled.");
+            return;
+          }
+          if (!orchestrator.config.continuityIncidentLoggingEnabled) {
+            console.log("Continuity incident logging is disabled.");
+            return;
+          }
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const id = String(options.id ?? "").trim();
+          const fixApplied = String(options.fixApplied ?? "").trim();
+          const verificationResult = String(options.verificationResult ?? "").trim();
+          const preventiveRule = options.preventiveRule ? String(options.preventiveRule).trim() : undefined;
+
+          if (!id) {
+            console.log("Missing required --id.");
+            return;
+          }
+          if (!fixApplied) {
+            console.log("Missing required --fix-applied.");
+            return;
+          }
+          if (!verificationResult) {
+            console.log("Missing required --verification-result.");
+            return;
+          }
+
+          const closed = await orchestrator.storage.closeContinuityIncident(id, {
+            fixApplied,
+            verificationResult,
+            preventiveRule,
+          });
+          if (!closed) {
+            console.log(`Incident not found: ${id}`);
+            return;
+          }
+          console.log("Closed continuity incident:\n");
+          console.log(formatContinuityIncidentCli(closed));
         });
 
       cmd

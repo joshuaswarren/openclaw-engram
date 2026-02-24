@@ -131,6 +131,26 @@ function mergeIdentityAnchor(
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
+function formatContinuityIncidentSummary(
+  incident: Awaited<ReturnType<Orchestrator["storage"]["appendContinuityIncident"]>>,
+  index?: number,
+): string {
+  const prefix = typeof index === "number" ? `### [${index + 1}] ` : "### ";
+  const lines = [
+    `${prefix}${incident.id} (${incident.state})`,
+    `Opened: ${incident.openedAt}`,
+  ];
+  if (incident.closedAt) lines.push(`Closed: ${incident.closedAt}`);
+  if (incident.triggerWindow) lines.push(`Window: ${incident.triggerWindow}`);
+  lines.push("", `Symptom: ${incident.symptom}`);
+  if (incident.suspectedCause) lines.push(`Suspected Cause: ${incident.suspectedCause}`);
+  if (incident.fixApplied) lines.push(`Fix Applied: ${incident.fixApplied}`);
+  if (incident.verificationResult) lines.push(`Verification: ${incident.verificationResult}`);
+  if (incident.preventiveRule) lines.push(`Preventive Rule: ${incident.preventiveRule}`);
+  if (incident.filePath) lines.push(`Path: ${incident.filePath}`);
+  return lines.join("\n");
+}
+
 export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
   const actionTypes: MemoryActionType[] = [
     "store_episode",
@@ -227,6 +247,156 @@ Best for:
       },
     },
     { name: "memory_search" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_incident_open",
+      label: "Open Continuity Incident",
+      description: "Create a new continuity incident record in append-only storage.",
+      parameters: Type.Object({
+        symptom: Type.String({
+          description: "Observed continuity failure symptom.",
+        }),
+        triggerWindow: Type.Optional(
+          Type.String({
+            description: "Optional time window when incident occurred.",
+          }),
+        ),
+        suspectedCause: Type.Optional(
+          Type.String({
+            description: "Optional suspected root cause.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to open incidents.",
+          );
+        }
+        if (!orchestrator.config.continuityIncidentLoggingEnabled) {
+          return toolResult(
+            "Continuity incident logging is disabled. Enable `continuityIncidentLoggingEnabled: true` to open incidents.",
+          );
+        }
+        const symptom = typeof params.symptom === "string" ? params.symptom.trim() : "";
+        if (!symptom) {
+          return toolResult("Missing required field: symptom");
+        }
+        const created = await orchestrator.storage.appendContinuityIncident({
+          symptom,
+          triggerWindow: typeof params.triggerWindow === "string" ? params.triggerWindow : undefined,
+          suspectedCause: typeof params.suspectedCause === "string" ? params.suspectedCause : undefined,
+        });
+        log.info(`continuity-incident open id=${created.id}`);
+        return toolResult(`Continuity incident opened.\n\n${formatContinuityIncidentSummary(created)}`);
+      },
+    },
+    { name: "continuity_incident_open" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_incident_close",
+      label: "Close Continuity Incident",
+      description: "Close an open continuity incident with required verification details.",
+      parameters: Type.Object({
+        id: Type.String({
+          description: "Incident ID to close.",
+        }),
+        fixApplied: Type.String({
+          description: "What fix was applied.",
+        }),
+        verificationResult: Type.String({
+          description: "How closure was verified.",
+        }),
+        preventiveRule: Type.Optional(
+          Type.String({
+            description: "Optional preventive follow-up rule.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to close incidents.",
+          );
+        }
+        if (!orchestrator.config.continuityIncidentLoggingEnabled) {
+          return toolResult(
+            "Continuity incident logging is disabled. Enable `continuityIncidentLoggingEnabled: true` to close incidents.",
+          );
+        }
+
+        const id = typeof params.id === "string" ? params.id.trim() : "";
+        const fixApplied = typeof params.fixApplied === "string" ? params.fixApplied.trim() : "";
+        const verificationResult =
+          typeof params.verificationResult === "string" ? params.verificationResult.trim() : "";
+        const preventiveRule =
+          typeof params.preventiveRule === "string" ? params.preventiveRule.trim() : undefined;
+
+        if (!id) return toolResult("Missing required field: id");
+        if (!fixApplied) return toolResult("Missing required field: fixApplied");
+        if (!verificationResult) return toolResult("Missing required field: verificationResult");
+
+        const closed = await orchestrator.storage.closeContinuityIncident(id, {
+          fixApplied,
+          verificationResult,
+          preventiveRule,
+        });
+        if (!closed) return toolResult(`Incident not found: ${id}`);
+        log.info(`continuity-incident close id=${id}`);
+        return toolResult(`Continuity incident closed.\n\n${formatContinuityIncidentSummary(closed)}`);
+      },
+    },
+    { name: "continuity_incident_close" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_incident_list",
+      label: "List Continuity Incidents",
+      description: "List continuity incidents and optionally filter by state.",
+      parameters: Type.Object({
+        state: Type.Optional(
+          Type.String({
+            enum: ["open", "closed", "all"],
+            description: "Incident state filter (default: open).",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max incidents to return (default: 25, max: 200).",
+            minimum: 1,
+            maximum: 200,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to list incidents.",
+          );
+        }
+        const state = params.state === "closed" || params.state === "all" ? params.state : "open";
+        const limitRaw = typeof params.limit === "number" ? params.limit : 25;
+        const limit = Math.max(1, Math.min(200, Math.floor(limitRaw)));
+        const incidents = await orchestrator.storage.readContinuityIncidents(limit);
+        const filtered =
+          state === "all" ? incidents : incidents.filter((incident) => incident.state === state);
+
+        if (filtered.length === 0) {
+          return toolResult(`No continuity incidents found for state=${state}.`);
+        }
+
+        const body = filtered
+          .map((incident, index) => formatContinuityIncidentSummary(incident, index))
+          .join("\n\n");
+        return toolResult(`## Continuity Incidents (${filtered.length}, state=${state})\n\n${body}`);
+      },
+    },
+    { name: "continuity_incident_list" },
   );
 
   api.registerTool(

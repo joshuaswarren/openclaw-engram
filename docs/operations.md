@@ -176,6 +176,22 @@ Anchor file location:
 <memoryDir>/identity/identity-anchor.md
 ```
 
+## Continuity Incidents
+
+When `identityContinuityEnabled=true` and `continuityIncidentLoggingEnabled=true`, use these CLI commands:
+
+```bash
+openclaw engram continuity incidents --state open --limit 25
+openclaw engram continuity incident-open --symptom "identity anchor missing in recovery response"
+openclaw engram continuity incident-close --id incident-123 --fix-applied "restored merge guard" --verification-result "recovery prompt includes anchor"
+```
+
+Incident artifact location:
+
+```text
+<memoryDir>/identity/incidents/*.md
+```
+
 ## Runbooks
 
 - [PR Review Hardening Playbook](ops/pr-review-hardening-playbook.md)

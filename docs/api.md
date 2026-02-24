@@ -102,6 +102,45 @@ Conservatively merge updates into identity anchor sections (non-destructive by d
 
 ---
 
+### `continuity_incident_open`
+
+Open a continuity incident with symptom and optional context fields.
+
+**Parameters:**
+- `symptom` (string, required)
+- `triggerWindow` (string, optional)
+- `suspectedCause` (string, optional)
+
+**Returns:** Created incident record summary.
+
+---
+
+### `continuity_incident_close`
+
+Close an existing continuity incident with required fix and verification fields.
+
+**Parameters:**
+- `id` (string, required)
+- `fixApplied` (string, required)
+- `verificationResult` (string, required)
+- `preventiveRule` (string, optional)
+
+**Returns:** Closed incident record summary, or not-found message.
+
+---
+
+### `continuity_incident_list`
+
+List continuity incidents with optional state filtering.
+
+**Parameters:**
+- `state` (`open` | `closed` | `all`, optional, default `open`)
+- `limit` (number, optional, default `25`, max `200`)
+
+**Returns:** Formatted incident list.
+
+---
+
 ## CLI Commands
 
 Run via `openclaw engram <command>`:
@@ -114,6 +153,9 @@ Run via `openclaw engram <command>`:
 | `export [--format json\|sqlite\|md]` | Export all memories to a portable file |
 | `import <file>` | Import memories from a portable file |
 | `purge` | Delete all memories (requires confirmation) |
+| `continuity incidents [--state open\|closed\|all] [--limit N]` | List continuity incidents |
+| `continuity incident-open --symptom <text> [--trigger-window <text>] [--suspected-cause <text>]` | Open a continuity incident |
+| `continuity incident-close --id <id> --fix-applied <text> --verification-result <text> [--preventive-rule <text>]` | Close a continuity incident |
 
 ## Plugin Hooks
 
