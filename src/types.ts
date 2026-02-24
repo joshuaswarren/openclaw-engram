@@ -8,6 +8,7 @@ export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
 export type RecallPlanMode = "no_recall" | "minimal" | "full" | "graph_mode";
 export type CronRecallMode = "all" | "none" | "allowlist";
 export type CronConversationRecallMode = "auto" | "always" | "never";
+export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 
 export interface FileHygieneConfig {
   enabled: boolean;
@@ -66,6 +67,11 @@ export interface PluginConfig {
   memoryDir: string;
   debug: boolean;
   identityEnabled: boolean;
+  identityContinuityEnabled: boolean;
+  identityInjectionMode: IdentityInjectionMode;
+  identityMaxInjectChars: number;
+  continuityIncidentLoggingEnabled: boolean;
+  continuityAuditEnabled: boolean;
   injectQuestions: boolean;
   commitmentDecayDays: number;
   workspaceDir: string;

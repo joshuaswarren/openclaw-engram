@@ -114,6 +114,31 @@
         "default": true,
         "description": "Enable agent identity reflections (appends to workspace IDENTITY.md)"
       },
+      "identityContinuityEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable identity continuity workflows (anchor, incidents, audits)"
+      },
+      "identityInjectionMode": {
+        "type": "string",
+        "enum": ["recovery_only", "minimal", "full"],
+        "default": "recovery_only",
+        "description": "Controls when identity continuity context is injected into recall assembly"
+      },
+      "identityMaxInjectChars": {
+        "type": "number",
+        "default": 1200,
+        "description": "Maximum characters allowed for identity continuity context injection"
+      },
+      "continuityIncidentLoggingEnabled": {
+        "type": "boolean",
+        "description": "When unset, defaults to identityContinuityEnabled. Controls continuity incident logging artifacts."
+      },
+      "continuityAuditEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable continuity audit artifact generation workflows"
+      },
       "injectQuestions": {
         "type": "boolean",
         "default": false,
@@ -1277,6 +1302,31 @@
     "identityEnabled": {
       "label": "Identity Reflections",
       "help": "Append self-reflections to workspace IDENTITY.md after each extraction"
+    },
+    "identityContinuityEnabled": {
+      "label": "Identity Continuity",
+      "help": "Enable identity continuity workflows (anchor, incidents, audits)"
+    },
+    "identityInjectionMode": {
+      "label": "Identity Injection Mode",
+      "advanced": true,
+      "placeholder": "recovery_only",
+      "help": "When to inject identity continuity context: recovery_only, minimal, or full"
+    },
+    "identityMaxInjectChars": {
+      "label": "Identity Max Inject Chars",
+      "advanced": true,
+      "placeholder": "1200"
+    },
+    "continuityIncidentLoggingEnabled": {
+      "label": "Continuity Incident Logging",
+      "advanced": true,
+      "help": "When omitted, follows Identity Continuity enabled state"
+    },
+    "continuityAuditEnabled": {
+      "label": "Continuity Audits",
+      "advanced": true,
+      "help": "Generate continuity audit artifacts"
     },
     "injectQuestions": {
       "label": "Inject Questions",
