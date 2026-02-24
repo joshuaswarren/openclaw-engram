@@ -9,6 +9,9 @@ import type {
   AccessTrackingEntry,
   BufferState,
   ConfidenceTier,
+  ContinuityIncidentCloseInput,
+  ContinuityIncidentOpenInput,
+  ContinuityIncidentRecord,
   EntityActivityEntry,
   EntityFile,
   EntityRelationship,
@@ -31,6 +34,12 @@ import type {
   FileHygieneConfig,
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
+import {
+  closeContinuityIncidentRecord,
+  createContinuityIncidentRecord,
+  parseContinuityIncident,
+  serializeContinuityIncident,
+} from "./identity-continuity.js";
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "a",
@@ -683,6 +692,24 @@ export class StorageManager {
   private get artifactsDir(): string {
     return path.join(this.baseDir, "artifacts");
   }
+  private get identityDir(): string {
+    return path.join(this.baseDir, "identity");
+  }
+  private get identityAnchorPath(): string {
+    return path.join(this.identityDir, "identity-anchor.md");
+  }
+  private get identityIncidentsDir(): string {
+    return path.join(this.identityDir, "incidents");
+  }
+  private get identityAuditsWeeklyDir(): string {
+    return path.join(this.identityDir, "audits", "weekly");
+  }
+  private get identityAuditsMonthlyDir(): string {
+    return path.join(this.identityDir, "audits", "monthly");
+  }
+  private get identityImprovementLoopsPath(): string {
+    return path.join(this.identityDir, "improvement-loops.md");
+  }
   private get profilePath(): string {
     return path.join(this.baseDir, "profile.md");
   }
@@ -721,6 +748,10 @@ export class StorageManager {
     await mkdir(this.stateDir, { recursive: true });
     await mkdir(this.questionsDir, { recursive: true });
     await mkdir(this.artifactsDir, { recursive: true });
+    await mkdir(this.identityDir, { recursive: true });
+    await mkdir(this.identityIncidentsDir, { recursive: true });
+    await mkdir(this.identityAuditsWeeklyDir, { recursive: true });
+    await mkdir(this.identityAuditsMonthlyDir, { recursive: true });
     await mkdir(path.join(this.baseDir, "config"), { recursive: true });
   }
 
@@ -1480,6 +1511,102 @@ export class StorageManager {
     }
   }
 
+  async writeIdentityAnchor(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.identityAnchorPath, content, "utf-8");
+  }
+
+  async readIdentityAnchor(): Promise<string | null> {
+    try {
+      return await readFile(this.identityAnchorPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async appendContinuityIncident(input: ContinuityIncidentOpenInput): Promise<ContinuityIncidentRecord> {
+    await this.ensureDirectories();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const date = nowIso.slice(0, 10);
+    const id = this.generateId("incident");
+    const incident = createContinuityIncidentRecord(id, input, nowIso);
+    const filePath = path.join(this.identityIncidentsDir, `${date}-${id}.md`);
+    await writeFile(filePath, serializeContinuityIncident(incident), "utf-8");
+    return { ...incident, filePath };
+  }
+
+  async readContinuityIncidents(limit: number = 200): Promise<ContinuityIncidentRecord[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+
+    try {
+      const candidates = await this.readContinuityIncidentFileNames();
+      const incidents: ContinuityIncidentRecord[] = [];
+
+      for (const file of candidates) {
+        if (incidents.length >= cappedLimit) break;
+        const filePath = path.join(this.identityIncidentsDir, file);
+        try {
+          const raw = await readFile(filePath, "utf-8");
+          const parsed = parseContinuityIncident(raw);
+          if (parsed) incidents.push({ ...parsed, filePath });
+        } catch {
+          // Fail-open on malformed/missing files.
+        }
+      }
+      return incidents;
+    } catch {
+      return [];
+    }
+  }
+
+  async closeContinuityIncident(
+    id: string,
+    closure: ContinuityIncidentCloseInput,
+  ): Promise<ContinuityIncidentRecord | null> {
+    const directFilePath = await this.findContinuityIncidentFilePathById(id);
+    const target = directFilePath ? await this.readContinuityIncidentFile(directFilePath) : null;
+    if (!target || !directFilePath) return null;
+    if (target.state === "closed") return target;
+
+    const closed = closeContinuityIncidentRecord(target, closure, new Date().toISOString());
+    await writeFile(directFilePath, serializeContinuityIncident(closed), "utf-8");
+    return { ...closed, filePath: directFilePath };
+  }
+
+  async writeIdentityAudit(period: "weekly" | "monthly", key: string, content: string): Promise<string> {
+    await this.ensureDirectories();
+    const safeKey = this.sanitizeIdentityAuditKey(key);
+    const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
+    const filePath = path.join(dir, `${safeKey}.md`);
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  async readIdentityAudit(period: "weekly" | "monthly", key: string): Promise<string | null> {
+    try {
+      const safeKey = this.sanitizeIdentityAuditKey(key);
+      const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
+      return await readFile(path.join(dir, `${safeKey}.md`), "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async writeIdentityImprovementLoops(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.identityImprovementLoopsPath, content, "utf-8");
+  }
+
+  async readIdentityImprovementLoops(): Promise<string | null> {
+    try {
+      return await readFile(this.identityImprovementLoopsPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Question storage
   // ---------------------------------------------------------------------------
@@ -1488,6 +1615,45 @@ export class StorageManager {
     const ts = Date.now().toString(36);
     const rand = Math.random().toString(36).slice(2, 4);
     return `${prefix}-${ts}-${rand}`;
+  }
+
+  private async readContinuityIncidentFileNames(): Promise<string[]> {
+    const files = await readdir(this.identityIncidentsDir);
+    return files
+      .filter((file) => file.endsWith(".md"))
+      .sort()
+      .reverse();
+  }
+
+  private async readContinuityIncidentFile(filePath: string): Promise<ContinuityIncidentRecord | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const parsed = parseContinuityIncident(raw);
+      return parsed ? { ...parsed, filePath } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async findContinuityIncidentFilePathById(id: string): Promise<string | null> {
+    const fileNames = await this.readContinuityIncidentFileNames();
+    const directMatch = fileNames.find((name) => name.endsWith(`-${id}.md`));
+    if (directMatch) return path.join(this.identityIncidentsDir, directMatch);
+
+    for (const fileName of fileNames) {
+      const filePath = path.join(this.identityIncidentsDir, fileName);
+      const parsed = await this.readContinuityIncidentFile(filePath);
+      if (parsed?.id === id) return filePath;
+    }
+    return null;
+  }
+
+  private sanitizeIdentityAuditKey(key: string): string {
+    const trimmed = key.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed) || trimmed.includes("..")) {
+      throw new Error("Invalid identity audit key");
+    }
+    return trimmed;
   }
 
   async writeQuestion(

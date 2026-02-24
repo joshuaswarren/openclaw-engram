@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 identity continuity storage slice (PR #37):
+  - Added identity continuity artifact types and helpers for anchor, incidents, audits, and improvement-loop storage paths.
+  - Added `src/identity-continuity.ts` to create/parse continuity incidents with explicit open/close lifecycle transitions.
+  - Extended `StorageManager` with typed read/write APIs for identity continuity artifacts and append-only incident handling.
+  - Added fail-open parsing behavior for malformed continuity incident files to preserve baseline runtime behavior.
+  - Added `tests/identity-continuity-storage.test.ts` coverage for storage round-trips, incident close transitions, and malformed-file handling.
 - v8.4 identity continuity config slice (PR #36):
   - Added new config surface: `identityContinuityEnabled`, `identityInjectionMode`, `identityMaxInjectChars`, `continuityIncidentLoggingEnabled`, and `continuityAuditEnabled`.
   - Added parser semantics for bounded identity injection chars and dynamic default for incident logging (`identityContinuityEnabled` when unset).
