@@ -1659,7 +1659,8 @@ export class Orchestrator {
 
       const shouldRunGraphExpansion =
         recallMode === "graph_mode" ||
-        (this.config.graphAssistInFullModeEnabled !== false &&
+        (this.config.multiGraphMemoryEnabled &&
+          this.config.graphAssistInFullModeEnabled !== false &&
           recallMode === "full" &&
           memoryResults.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3));
       if (shouldRunGraphExpansion) {

@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #34 recall hardening + dedupe tooling:
+  - Switched recall retrieval to daemon-preferred `search()` with bounded hybrid backfill to reduce contention and preserve fail-open behavior.
+  - Kept `hybridSearch()` as BM25+vector diversification path (no daemon short-circuit), so backfill can broaden recall candidates.
+  - Added graph-assist guardrails so full-mode graph expansion requires `multiGraphMemoryEnabled=true`.
+  - Added bounded TMT summary input capping helpers to avoid oversized summarization payloads.
 - PR #33 stability pass:
   - Fixed `buildRecallQueryPolicy` to preserve raw non-cron prompts (no whitespace normalization) when cron recall policy is not active.
   - Replaced cron prompt bullet/numbered-line regex scoring with deterministic parsing to avoid regex-risk findings on untrusted input.

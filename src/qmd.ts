@@ -646,20 +646,8 @@ export class QmdClient {
     maxResults?: number,
   ): Promise<QmdSearchResult[]> {
     const n = maxResults ?? this.maxResults;
-
-    // Daemon first when available. This bypasses subprocess mutex contention
-    // and typically provides lower tail latency under concurrent recall load.
     const trimmed = query.trim();
     if (!trimmed) return [];
-    await this.maybeProbeDaemon();
-    if (this.daemonAvailable) {
-      const daemonResults = await this.searchViaDaemon(trimmed, collection ?? this.collection, n);
-      if (daemonResults !== null && daemonResults.length > 0) {
-        return daemonResults
-          .sort((a, b) => b.score - a.score)
-          .slice(0, n);
-      }
-    }
 
     const [bm25Results, vectorResults] = await Promise.all([
       this.bm25Search(trimmed, collection, n),
