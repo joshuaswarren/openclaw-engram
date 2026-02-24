@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
 import type { MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
+import { log } from "./logger.js";
 
 interface ToolApi {
   registerTool(
@@ -27,6 +28,107 @@ interface ToolApi {
 
 function toolResult(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined };
+}
+
+const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
+const IDENTITY_ANCHOR_SECTION_ORDER = [
+  "Identity Traits",
+  "Communication Preferences",
+  "Operating Principles",
+  "Continuity Notes",
+] as const;
+
+type IdentityAnchorSectionName = typeof IDENTITY_ANCHOR_SECTION_ORDER[number];
+type IdentityAnchorSections = Record<IdentityAnchorSectionName, string>;
+
+function parseMarkdownSections(raw: string): {
+  header: string;
+  sections: Map<string, string>;
+  order: string[];
+} {
+  const lines = raw.replace(/\r/g, "").split("\n");
+  const headerLines: string[] = [];
+  const sectionLines = new Map<string, string[]>();
+  const order: string[] = [];
+  let currentSection: string | null = null;
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^##\s+(.+?)\s*$/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim();
+      if (!sectionLines.has(currentSection)) {
+        sectionLines.set(currentSection, []);
+        order.push(currentSection);
+      }
+      continue;
+    }
+    if (!currentSection) {
+      headerLines.push(line);
+      continue;
+    }
+    sectionLines.get(currentSection)?.push(line);
+  }
+
+  const sections = new Map<string, string>();
+  for (const [name, contentLines] of sectionLines.entries()) {
+    sections.set(name, contentLines.join("\n").trim());
+  }
+
+  return {
+    header: headerLines.join("\n").trim(),
+    sections,
+    order,
+  };
+}
+
+function mergeAnchorSection(existing: string | undefined, incoming: string | undefined): string {
+  const next = incoming?.trim();
+  if (!next) return existing?.trim() ?? "";
+  const prev = existing?.trim();
+  if (!prev) return next;
+  if (prev.includes(next)) return prev;
+  if (next.includes(prev)) return next;
+  return `${prev}\n\n${next}`;
+}
+
+function mergeIdentityAnchor(
+  existingRaw: string | null,
+  updates: Partial<IdentityAnchorSections>,
+): string {
+  const parsed = parseMarkdownSections(existingRaw ?? "");
+  const header = parsed.header.length > 0 ? parsed.header : IDENTITY_ANCHOR_TITLE;
+  const sections = new Map(parsed.sections);
+
+  for (const sectionName of IDENTITY_ANCHOR_SECTION_ORDER) {
+    const merged = mergeAnchorSection(sections.get(sectionName), updates[sectionName]);
+    if (merged) {
+      sections.set(sectionName, merged);
+    } else if (!sections.has(sectionName)) {
+      sections.set(sectionName, "");
+    }
+  }
+
+  const finalOrder: string[] = [];
+  for (const sectionName of IDENTITY_ANCHOR_SECTION_ORDER) {
+    if (sections.has(sectionName)) finalOrder.push(sectionName);
+  }
+  for (const sectionName of parsed.order) {
+    if (!finalOrder.includes(sectionName) && sections.has(sectionName)) {
+      finalOrder.push(sectionName);
+    }
+  }
+
+  const lines: string[] = [header.trim(), ""];
+  for (const sectionName of finalOrder) {
+    lines.push(`## ${sectionName}`, "");
+    const body = sections.get(sectionName)?.trim();
+    if (body && body.length > 0) {
+      lines.push(body, "");
+    } else {
+      lines.push("- (empty)", "");
+    }
+  }
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
 export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
@@ -125,6 +227,104 @@ Best for:
       },
     },
     { name: "memory_search" },
+  );
+
+  api.registerTool(
+    {
+      name: "identity_anchor_get",
+      label: "Get Identity Anchor",
+      description:
+        "Read the identity continuity anchor document used for recovery-safe identity context.",
+      parameters: Type.Object({}),
+      async execute() {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to use identity anchor tools.",
+          );
+        }
+        const anchor = await orchestrator.storage.readIdentityAnchor();
+        if (!anchor) {
+          return toolResult(
+            "No identity anchor found yet. Use `identity_anchor_update` to create one.",
+          );
+        }
+        return toolResult(`## Identity Anchor\n\n${anchor}`);
+      },
+    },
+    { name: "identity_anchor_get" },
+  );
+
+  api.registerTool(
+    {
+      name: "identity_anchor_update",
+      label: "Update Identity Anchor",
+      description:
+        "Conservatively update identity anchor sections without overwriting existing material.",
+      parameters: Type.Object({
+        identityTraits: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Identity Traits' section.",
+          }),
+        ),
+        communicationPreferences: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Communication Preferences' section.",
+          }),
+        ),
+        operatingPrinciples: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Operating Principles' section.",
+          }),
+        ),
+        continuityNotes: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Continuity Notes' section.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to use identity anchor tools.",
+          );
+        }
+
+        const updates: Partial<IdentityAnchorSections> = {
+          "Identity Traits": typeof params.identityTraits === "string" ? params.identityTraits : undefined,
+          "Communication Preferences":
+            typeof params.communicationPreferences === "string" ? params.communicationPreferences : undefined,
+          "Operating Principles":
+            typeof params.operatingPrinciples === "string" ? params.operatingPrinciples : undefined,
+          "Continuity Notes":
+            typeof params.continuityNotes === "string" ? params.continuityNotes : undefined,
+        };
+
+        const hasUpdate = Object.values(updates).some(
+          (value) => typeof value === "string" && value.trim().length > 0,
+        );
+        if (!hasUpdate) {
+          return toolResult(
+            "No updates provided. Supply at least one section field to update the identity anchor.",
+          );
+        }
+
+        const existing = await orchestrator.storage.readIdentityAnchor();
+        const merged = mergeIdentityAnchor(existing, updates);
+        await orchestrator.storage.writeIdentityAnchor(merged);
+
+        const updatedSections = Object.entries(updates)
+          .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
+          .map(([name]) => name);
+        log.info(
+          `identity-anchor update sections=${updatedSections.join(",")} chars=${merged.length}`,
+        );
+
+        return toolResult(
+          `Identity anchor updated (${updatedSections.length} section${updatedSections.length === 1 ? "" : "s"}).\n\n${merged}`,
+        );
+      },
+    },
+    { name: "identity_anchor_update" },
   );
 
   api.registerTool(

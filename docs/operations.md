@@ -163,6 +163,19 @@ qmd embed --collection openclaw-engram
 wc -l ~/.openclaw/workspace/memory/local/state/fact-hashes.txt
 ```
 
+## Identity Continuity Anchor
+
+When `identityContinuityEnabled=true`, agents can manage the recovery anchor via tools:
+
+- `identity_anchor_get` reads the current anchor.
+- `identity_anchor_update` merges updates into anchor sections (`Identity Traits`, `Communication Preferences`, `Operating Principles`, `Continuity Notes`) without destructive overwrite.
+
+Anchor file location:
+
+```text
+<memoryDir>/identity/identity-anchor.md
+```
+
 ## Runbooks
 
 - [PR Review Hardening Playbook](ops/pr-review-hardening-playbook.md)

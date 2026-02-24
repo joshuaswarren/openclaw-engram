@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 identity anchor tooling slice (PR #38):
+  - Added `identity_anchor_get` and `identity_anchor_update` tools behind `identityContinuityEnabled`.
+  - Added conservative, section-aware identity-anchor merge behavior to avoid destructive overwrites.
+  - Added identity-anchor update audit logging for operational traceability.
+  - Added `tests/tools-identity-anchor.test.ts` coverage for gating, retrieval, merge semantics, and validation.
+  - Documented identity anchor tools and storage location in API/operations docs.
 - v8.4 identity continuity storage slice (PR #37):
   - Added identity continuity artifact types and helpers for anchor, incidents, audits, and improvement-loop storage paths.
   - Added `src/identity-continuity.ts` to create/parse continuity incidents with explicit open/close lifecycle transitions.

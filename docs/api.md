@@ -78,6 +78,30 @@ Record explicit feedback on a recalled memory.
 
 ---
 
+### `identity_anchor_get`
+
+Read the identity continuity anchor document used for recovery-safe identity context.
+
+**Parameters:** None.
+
+**Returns:** Current identity anchor markdown, or guidance if missing/disabled.
+
+---
+
+### `identity_anchor_update`
+
+Conservatively merge updates into identity anchor sections (non-destructive by default).
+
+**Parameters:**
+- `identityTraits` (string, optional) — Updates for `Identity Traits`.
+- `communicationPreferences` (string, optional) — Updates for `Communication Preferences`.
+- `operatingPrinciples` (string, optional) — Updates for `Operating Principles`.
+- `continuityNotes` (string, optional) — Updates for `Continuity Notes`.
+
+**Returns:** Updated anchor content with merged sections.
+
+---
+
 ## CLI Commands
 
 Run via `openclaw engram <command>`:
