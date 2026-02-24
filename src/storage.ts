@@ -1541,15 +1541,11 @@ export class StorageManager {
     if (cappedLimit === 0) return [];
 
     try {
-      const files = await readdir(this.identityIncidentsDir);
-      const candidates = files
-        .filter((file) => file.endsWith(".md"))
-        .sort()
-        .reverse()
-        .slice(0, cappedLimit);
+      const candidates = await this.readContinuityIncidentFileNames();
       const incidents: ContinuityIncidentRecord[] = [];
 
       for (const file of candidates) {
+        if (incidents.length >= cappedLimit) break;
         const filePath = path.join(this.identityIncidentsDir, file);
         try {
           const raw = await readFile(filePath, "utf-8");
@@ -1569,19 +1565,19 @@ export class StorageManager {
     id: string,
     closure: ContinuityIncidentCloseInput,
   ): Promise<ContinuityIncidentRecord | null> {
-    const incidents = await this.readContinuityIncidents(2000);
-    const target = incidents.find((incident) => incident.id === id);
-    if (!target?.filePath) return null;
+    const directFilePath = await this.findContinuityIncidentFilePathById(id);
+    const target = directFilePath ? await this.readContinuityIncidentFile(directFilePath) : null;
+    if (!target || !directFilePath) return null;
     if (target.state === "closed") return target;
 
     const closed = closeContinuityIncidentRecord(target, closure, new Date().toISOString());
-    await writeFile(target.filePath, serializeContinuityIncident(closed), "utf-8");
-    return { ...closed, filePath: target.filePath };
+    await writeFile(directFilePath, serializeContinuityIncident(closed), "utf-8");
+    return { ...closed, filePath: directFilePath };
   }
 
   async writeIdentityAudit(period: "weekly" | "monthly", key: string, content: string): Promise<string> {
     await this.ensureDirectories();
-    const safeKey = key.trim();
+    const safeKey = this.sanitizeIdentityAuditKey(key);
     const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
     const filePath = path.join(dir, `${safeKey}.md`);
     await writeFile(filePath, content, "utf-8");
@@ -1590,8 +1586,9 @@ export class StorageManager {
 
   async readIdentityAudit(period: "weekly" | "monthly", key: string): Promise<string | null> {
     try {
+      const safeKey = this.sanitizeIdentityAuditKey(key);
       const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
-      return await readFile(path.join(dir, `${key.trim()}.md`), "utf-8");
+      return await readFile(path.join(dir, `${safeKey}.md`), "utf-8");
     } catch {
       return null;
     }
@@ -1618,6 +1615,45 @@ export class StorageManager {
     const ts = Date.now().toString(36);
     const rand = Math.random().toString(36).slice(2, 4);
     return `${prefix}-${ts}-${rand}`;
+  }
+
+  private async readContinuityIncidentFileNames(): Promise<string[]> {
+    const files = await readdir(this.identityIncidentsDir);
+    return files
+      .filter((file) => file.endsWith(".md"))
+      .sort()
+      .reverse();
+  }
+
+  private async readContinuityIncidentFile(filePath: string): Promise<ContinuityIncidentRecord | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const parsed = parseContinuityIncident(raw);
+      return parsed ? { ...parsed, filePath } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async findContinuityIncidentFilePathById(id: string): Promise<string | null> {
+    const fileNames = await this.readContinuityIncidentFileNames();
+    const directMatch = fileNames.find((name) => name.endsWith(`-${id}.md`));
+    if (directMatch) return path.join(this.identityIncidentsDir, directMatch);
+
+    for (const fileName of fileNames) {
+      const filePath = path.join(this.identityIncidentsDir, fileName);
+      const parsed = await this.readContinuityIncidentFile(filePath);
+      if (parsed?.id === id) return filePath;
+    }
+    return null;
+  }
+
+  private sanitizeIdentityAuditKey(key: string): string {
+    const trimmed = key.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed) || trimmed.includes("..")) {
+      throw new Error("Invalid identity audit key");
+    }
+    return trimmed;
   }
 
   async writeQuestion(

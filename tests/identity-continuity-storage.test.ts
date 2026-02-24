@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createContinuityIncidentRecord, serializeContinuityIncident } from "../src/identity-continuity.ts";
 import { StorageManager } from "../src/storage.ts";
 
 test("identity continuity storage writes/reads anchor and improvement loop artifacts", async () => {
@@ -80,6 +81,78 @@ test("identity continuity incident reader ignores malformed files (fail-open)", 
   }
 });
 
+test("identity continuity incident limit applies after valid parse (fail-open)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-limit-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const incidentDir = path.join(dir, "identity", "incidents");
+    const valid = createContinuityIncidentRecord(
+      "incident-valid",
+      { symptom: "valid incident should still be listed" },
+      "2026-02-24T00:00:00.000Z",
+    );
+    await writeFile(
+      path.join(incidentDir, "2026-02-24-incident-valid.md"),
+      serializeContinuityIncident(valid),
+      "utf-8",
+    );
+    await writeFile(path.join(incidentDir, "9999-99-99-incident-bad.md"), "not-frontmatter\n", "utf-8");
+
+    const incidents = await storage.readContinuityIncidents(1);
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0]?.id, "incident-valid");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("identity continuity close can find older incidents beyond previous scan window", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-close-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const incidentDir = path.join(dir, "identity", "incidents");
+    const target = createContinuityIncidentRecord(
+      "incident-target",
+      { symptom: "older incident should remain closable" },
+      "2026-01-01T00:00:00.000Z",
+    );
+    await writeFile(
+      path.join(incidentDir, "2026-01-01-incident-target.md"),
+      serializeContinuityIncident(target),
+      "utf-8",
+    );
+
+    for (let i = 0; i < 2105; i += 1) {
+      const id = `incident-newer-${i}`;
+      const now = "2026-02-24T00:00:00.000Z";
+      const newer = createContinuityIncidentRecord(id, { symptom: `newer incident ${i}` }, now);
+      await writeFile(
+        path.join(incidentDir, `2026-02-24-${id}.md`),
+        serializeContinuityIncident(newer),
+        "utf-8",
+      );
+    }
+
+    const closed = await storage.closeContinuityIncident("incident-target", {
+      fixApplied: "applied fix",
+      verificationResult: "verified",
+      preventiveRule: "keep searchable",
+    });
+    assert.ok(closed);
+    assert.equal(closed?.id, "incident-target");
+    assert.equal(closed?.state, "closed");
+
+    const raw = await readFile(path.join(incidentDir, "2026-01-01-incident-target.md"), "utf-8");
+    assert.match(raw, /state: "closed"/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("identity continuity audit artifacts round-trip", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-audits-"));
   try {
@@ -92,6 +165,22 @@ test("identity continuity audit artifacts round-trip", async () => {
     assert.equal(await storage.readIdentityAudit("weekly", "2026-W09"), "# Weekly Audit\n");
     assert.equal(await storage.readIdentityAudit("monthly", "2026-02"), "# Monthly Audit\n");
     assert.equal(await storage.readIdentityAudit("weekly", "2026-W10"), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("identity continuity audits reject unsafe key paths", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-audit-key-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    await assert.rejects(
+      storage.writeIdentityAudit("weekly", "../escape", "# bad\n"),
+      /Invalid identity audit key/,
+    );
+    assert.equal(await storage.readIdentityAudit("weekly", "../escape"), null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
