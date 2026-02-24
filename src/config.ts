@@ -1,5 +1,11 @@
 import path from "node:path";
-import type { PluginConfig, PrincipalRule, ReasoningEffort, TriggerMode } from "./types.js";
+import type {
+  IdentityInjectionMode,
+  PluginConfig,
+  PrincipalRule,
+  ReasoningEffort,
+  TriggerMode,
+} from "./types.js";
 import { log } from "./logger.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
@@ -56,6 +62,7 @@ function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "e
 
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
+const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
 const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
@@ -106,6 +113,13 @@ export function parseConfig(raw: unknown): PluginConfig {
     typeof cfg.memoryDir === "string" && cfg.memoryDir.length > 0
       ? cfg.memoryDir
       : DEFAULT_MEMORY_DIR;
+  const rawIdentityInjectionMode = cfg.identityInjectionMode as string | undefined;
+  const identityInjectionMode: IdentityInjectionMode =
+    rawIdentityInjectionMode
+      && VALID_IDENTITY_INJECTION_MODES.includes(rawIdentityInjectionMode as IdentityInjectionMode)
+      ? (rawIdentityInjectionMode as IdentityInjectionMode)
+      : "recovery_only";
+  const identityContinuityEnabled = cfg.identityContinuityEnabled === true;
 
   const principalRules: PrincipalRule[] = Array.isArray(cfg.principalFromSessionKeyRules)
     ? (cfg.principalFromSessionKeyRules as any[]).map((r) => ({
@@ -212,6 +226,17 @@ export function parseConfig(raw: unknown): PluginConfig {
     memoryDir,
     debug: cfg.debug === true,
     identityEnabled: cfg.identityEnabled !== false,
+    identityContinuityEnabled,
+    identityInjectionMode,
+    identityMaxInjectChars:
+      typeof cfg.identityMaxInjectChars === "number"
+        ? Math.max(0, Math.floor(cfg.identityMaxInjectChars))
+        : 1200,
+    continuityIncidentLoggingEnabled:
+      typeof cfg.continuityIncidentLoggingEnabled === "boolean"
+        ? cfg.continuityIncidentLoggingEnabled
+        : identityContinuityEnabled,
+    continuityAuditEnabled: cfg.continuityAuditEnabled === true,
     injectQuestions: cfg.injectQuestions === true,
     commitmentDecayDays:
       typeof cfg.commitmentDecayDays === "number" ? cfg.commitmentDecayDays : 90,

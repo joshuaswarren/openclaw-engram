@@ -143,6 +143,16 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `injectQuestions` | `false` | Inject open questions into system prompt |
 | `commitmentDecayDays` | `90` | Days before fulfilled commitments are removed |
 
+## v8.4 Identity Continuity
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `identityContinuityEnabled` | `false` | Enable identity continuity workflows (anchor/incidents/audits) |
+| `identityInjectionMode` | `recovery_only` | Identity context injection mode: `recovery_only`, `minimal`, `full` |
+| `identityMaxInjectChars` | `1200` | Maximum identity continuity characters injected into recall |
+| `continuityIncidentLoggingEnabled` | `(follows identityContinuityEnabled when unset)` | Explicit override for continuity incident logging |
+| `continuityAuditEnabled` | `false` | Enable continuity audit generation workflows |
+
 ## v2.2 Advanced Retrieval
 
 See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
