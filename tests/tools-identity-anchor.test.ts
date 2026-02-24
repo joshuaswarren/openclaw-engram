@@ -151,3 +151,21 @@ test("identity_anchor_update requires at least one section update", async () => 
   assert.match(toolText(result), /No updates provided/);
   assert.equal(writes.length, 0);
 });
+
+test("identity_anchor_update does not retain empty sentinel across staged updates", async () => {
+  const { tools, getAnchor } = buildHarness({ identityContinuityEnabled: true });
+  const updateTool = tools.get("identity_anchor_update");
+  assert.ok(updateTool);
+
+  await updateTool.execute("tc6", {
+    identityTraits: "- Calm",
+  });
+  await updateTool.execute("tc7", {
+    communicationPreferences: "- Keep it concise",
+  });
+
+  const anchor = getAnchor() ?? "";
+  assert.doesNotMatch(anchor, /- \(empty\)/);
+  assert.match(anchor, /## Communication Preferences/);
+  assert.match(anchor, /Keep it concise/);
+});

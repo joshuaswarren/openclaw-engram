@@ -83,8 +83,8 @@ function parseMarkdownSections(raw: string): {
 
 function mergeAnchorSection(existing: string | undefined, incoming: string | undefined): string {
   const next = incoming?.trim();
-  if (!next) return existing?.trim() ?? "";
-  const prev = existing?.trim();
+  const prev = existing?.trim() === "- (empty)" ? "" : existing?.trim();
+  if (!next) return prev ?? "";
   if (!prev) return next;
   if (prev.includes(next)) return prev;
   if (next.includes(prev)) return next;
@@ -125,7 +125,7 @@ function mergeIdentityAnchor(
     if (body && body.length > 0) {
       lines.push(body, "");
     } else {
-      lines.push("- (empty)", "");
+      lines.push("");
     }
   }
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
