@@ -47,6 +47,7 @@ import {
   extractTagsFromPrompt,
 } from "./temporal-index.js";
 import { GraphIndex } from "./graph.js";
+import type { ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -2242,6 +2243,22 @@ export class Orchestrator {
 
     if (decision === "keep_buffering") return;
     await this.queueBufferedExtraction(this.buffer.getTurns(), "trigger_mode");
+  }
+
+  async ingestReplayBatch(turns: ReplayTurn[]): Promise<void> {
+    if (!Array.isArray(turns) || turns.length === 0) return;
+
+    const bufferedTurns: BufferTurn[] = turns
+      .filter((turn) => turn.role === "user" || turn.role === "assistant")
+      .map((turn) => ({
+        role: turn.role,
+        content: turn.content,
+        timestamp: turn.timestamp,
+        sessionKey: turn.sessionKey,
+      }));
+
+    if (bufferedTurns.length === 0) return;
+    await this.queueBufferedExtraction(bufferedTurns, "trigger_mode", { skipDedupeCheck: true });
   }
 
   async observeSessionHeartbeat(sessionKey: string): Promise<void> {

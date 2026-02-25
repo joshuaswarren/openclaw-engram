@@ -25,6 +25,11 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.6 replay ingestion Task 3 (CLI + integration slice):
+  - Added `openclaw engram replay` command with source selection, date-range filtering, dry-run, offset/max, and batch controls.
+  - Added replay command integration helper in `src/cli.ts` that wires source normalizers into replay execution and optional post-replay consolidation.
+  - Added `Orchestrator.ingestReplayBatch(...)` to enqueue replay batches through the existing extraction pipeline with preserved replay timestamps/session keys.
+  - Added `tests/cli-replay.test.ts` coverage for dry-run and live ingestion paths.
 - v8.6 replay ingestion Task 2 (source normalizers slice):
   - Added source normalizers for `openclaw`, `claude`, and `chatgpt` exports in `src/replay/normalizers/*`.
   - Added robust shape handling for JSON/JSONL transcript exports, including ChatGPT mapping exports and Claude `chat_messages`.
