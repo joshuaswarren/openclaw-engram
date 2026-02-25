@@ -178,13 +178,7 @@ export function serializeContinuityImprovementLoops(loops: ContinuityImprovement
   const sorted = [...loops].sort((a, b) => a.id.localeCompare(b.id));
   const lines: string[] = [LOOP_HEADER, ""];
   for (const loop of sorted) {
-    lines.push(`## ${loop.id}`);
-    lines.push(`cadence: ${loop.cadence}`);
-    lines.push(`purpose: ${loop.purpose}`);
-    lines.push(`status: ${loop.status}`);
-    lines.push(`killCondition: ${loop.killCondition}`);
-    lines.push(`lastReviewed: ${loop.lastReviewed}`);
-    if (loop.notes) lines.push(`notes: ${loop.notes}`);
+    lines.push(serializeContinuityLoopSection(loop));
     lines.push("");
   }
   return lines.join("\n").trimEnd() + "\n";

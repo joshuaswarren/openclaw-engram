@@ -44,7 +44,6 @@ import {
   parseContinuityImprovementLoops,
   reviewContinuityLoopInMarkdown,
   serializeContinuityIncident,
-  serializeContinuityImprovementLoops,
   upsertContinuityLoopInMarkdown,
 } from "./identity-continuity.js";
 
@@ -1624,10 +1623,6 @@ export class StorageManager {
     const raw = await this.readIdentityImprovementLoops();
     if (!raw) return [];
     return parseContinuityImprovementLoops(raw);
-  }
-
-  async writeIdentityImprovementLoopRegister(loops: ContinuityImprovementLoop[]): Promise<void> {
-    await this.writeIdentityImprovementLoops(serializeContinuityImprovementLoops(loops));
   }
 
   async upsertIdentityImprovementLoop(input: ContinuityLoopUpsertInput): Promise<ContinuityImprovementLoop> {
