@@ -102,15 +102,13 @@ export class CompoundingEngine {
     const period = opts?.period === "monthly" ? "monthly" : "weekly";
     const key = opts?.key?.trim() || (period === "weekly" ? isoWeekId(new Date()) : isoMonthId(new Date()));
     const nowIso = new Date().toISOString();
-    const [anchorPresent, improvementLoopPresent, incidents, mistakes] = await Promise.all([
+    const [anchorPresent, improvementLoopPresent, openIncidents, closedIncidents, mistakes] = await Promise.all([
       this.readNonEmptyFile(this.identityAnchorPath),
       this.readNonEmptyFile(this.identityImprovementLoopsPath),
-      this.readContinuityIncidents(),
+      this.readContinuityIncidents(200, "open"),
+      this.readContinuityIncidents(200, "closed"),
       this.readMistakes(),
     ]);
-
-    const openIncidents = incidents.filter((i) => i.state === "open");
-    const closedIncidents = incidents.filter((i) => i.state === "closed");
     const hardeningCandidates: string[] = [];
     if (!anchorPresent) {
       hardeningCandidates.push("Create/update identity anchor baseline and verify recovery injection path.");
@@ -293,8 +291,12 @@ export class CompoundingEngine {
     }
   }
 
-  private async readContinuityIncidents(limit: number = 200): Promise<ContinuityIncidentRecord[]> {
-    const cappedLimit = Math.max(0, Math.floor(limit));
+  private async readContinuityIncidents(
+    limit: number = 200,
+    state?: ContinuityIncidentRecord["state"],
+  ): Promise<ContinuityIncidentRecord[]> {
+    const normalizedLimit = Number.isFinite(limit) ? limit : 0;
+    const cappedLimit = Math.max(0, Math.floor(normalizedLimit));
     if (cappedLimit === 0) return [];
     const incidents: ContinuityIncidentRecord[] = [];
     try {
@@ -306,7 +308,9 @@ export class CompoundingEngine {
         try {
           const raw = await readFile(filePath, "utf-8");
           const parsed = parseContinuityIncident(raw);
-          if (parsed) incidents.push(parsed);
+          if (!parsed) continue;
+          if (state && parsed.state !== state) continue;
+          incidents.push(parsed);
         } catch {
           // fail-open
         }

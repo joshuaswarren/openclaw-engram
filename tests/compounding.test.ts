@@ -218,3 +218,56 @@ test("v5 compounding does not read continuity audit references when audits are d
   const report = await readFile(res.reportPath, "utf-8");
   assert.match(report, /Weekly Compounding/);
 });
+
+test("v5 continuity audit filters incidents by state before applying scan cap", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-cap-");
+  const sharedDir = tmpDir("engram-continuity-audit-cap-shared-");
+  await mkdir(path.join(memoryDir, "identity", "incidents"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = true;
+  const eng = new CompoundingEngine(cfg);
+
+  const incidentsDir = path.join(memoryDir, "identity", "incidents");
+  const now = new Date().toISOString();
+  for (let i = 0; i < 200; i += 1) {
+    const id = `continuity-${String(1000 + i).padStart(4, "0")}`;
+    const md = [
+      "---",
+      `id: ${JSON.stringify(id)}`,
+      'state: "closed"',
+      `openedAt: ${JSON.stringify(now)}`,
+      `updatedAt: ${JSON.stringify(now)}`,
+      `closedAt: ${JSON.stringify(now)}`,
+      "---",
+      "",
+      "## Symptom",
+      "",
+      "Closed regression.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(incidentsDir, `${id}.md`), md, "utf-8");
+  }
+
+  const openId = "continuity-0001";
+  const openMd = [
+    "---",
+    `id: ${JSON.stringify(openId)}`,
+    'state: "open"',
+    `openedAt: ${JSON.stringify(now)}`,
+    `updatedAt: ${JSON.stringify(now)}`,
+    "---",
+    "",
+    "## Symptom",
+    "",
+    "Still open incident.",
+    "",
+  ].join("\n");
+  await writeFile(path.join(incidentsDir, `${openId}.md`), openMd, "utf-8");
+
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W08" });
+  const report = await readFile(res.reportPath, "utf-8");
+  assert.match(report, /Open incidents: 1/);
+  assert.match(report, /- continuity-0001/);
+});
