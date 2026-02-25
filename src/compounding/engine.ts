@@ -4,7 +4,7 @@ import os from "node:os";
 import { log } from "../logger.js";
 import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
 import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
-import { parseContinuityIncident } from "../identity-continuity.js";
+import { parseContinuityIncident, parseContinuityImprovementLoops } from "../identity-continuity.js";
 
 type MistakesFile = {
   updatedAt: string;
@@ -45,6 +45,21 @@ function sharedContextDir(config: PluginConfig): string {
     return config.sharedContextDir;
   }
   return path.join(os.homedir(), ".openclaw", "workspace", "shared-context");
+}
+
+function cadenceStaleWindowMs(cadence: "daily" | "weekly" | "monthly" | "quarterly"): number {
+  switch (cadence) {
+    case "daily":
+      return 2 * 24 * 60 * 60 * 1000;
+    case "weekly":
+      return 10 * 24 * 60 * 60 * 1000;
+    case "monthly":
+      return 45 * 24 * 60 * 60 * 1000;
+    case "quarterly":
+      return 120 * 24 * 60 * 60 * 1000;
+    default:
+      return 45 * 24 * 60 * 60 * 1000;
+  }
 }
 
 export class CompoundingEngine {
@@ -102,13 +117,20 @@ export class CompoundingEngine {
     const period = opts?.period === "monthly" ? "monthly" : "weekly";
     const key = opts?.key?.trim() || (period === "weekly" ? isoWeekId(new Date()) : isoMonthId(new Date()));
     const nowIso = new Date().toISOString();
-    const [anchorPresent, improvementLoopPresent, openIncidents, closedIncidents, mistakes] = await Promise.all([
+    const [anchorPresent, improvementLoopsRaw, openIncidents, closedIncidents, mistakes] = await Promise.all([
       this.readNonEmptyFile(this.identityAnchorPath),
-      this.readNonEmptyFile(this.identityImprovementLoopsPath),
+      this.readOptionalFile(this.identityImprovementLoopsPath),
       this.readContinuityIncidents(200, "open"),
       this.readContinuityIncidents(200, "closed"),
       this.readMistakes(),
     ]);
+    const improvementLoops = improvementLoopsRaw ? parseContinuityImprovementLoops(improvementLoopsRaw) : [];
+    const activeLoops = improvementLoops.filter((loop) => loop.status === "active");
+    const staleActiveLoops = activeLoops.filter((loop) => {
+      const reviewedAt = Date.parse(loop.lastReviewed);
+      if (!Number.isFinite(reviewedAt)) return true;
+      return Date.now() - reviewedAt > cadenceStaleWindowMs(loop.cadence);
+    });
     const hardeningCandidates: string[] = [];
     if (!anchorPresent) {
       hardeningCandidates.push("Create/update identity anchor baseline and verify recovery injection path.");
@@ -118,8 +140,15 @@ export class CompoundingEngine {
         `Close or downgrade ${openIncidents.length} open continuity incident${openIncidents.length === 1 ? "" : "s"}.`,
       );
     }
-    if (!improvementLoopPresent) {
+    if (improvementLoops.length === 0) {
       hardeningCandidates.push("Initialize continuity improvement-loops register with cadence and kill conditions.");
+    } else if (staleActiveLoops.length > 0) {
+      hardeningCandidates.push(
+        `Review stale active continuity loop${staleActiveLoops.length === 1 ? "" : "s"}: ${staleActiveLoops
+          .slice(0, 3)
+          .map((loop) => loop.id)
+          .join(", ")}.`,
+      );
     }
     if ((mistakes?.patterns.length ?? 0) > 0) {
       hardeningCandidates.push("Review latest compounding mistakes and convert one pattern into preventive continuity rule.");
@@ -134,7 +163,9 @@ export class CompoundingEngine {
       "",
       "## Signal Summary",
       `- Identity anchor present: ${anchorPresent ? "yes" : "no"}`,
-      `- Improvement-loop register present: ${improvementLoopPresent ? "yes" : "no"}`,
+      `- Improvement loops tracked: ${improvementLoops.length}`,
+      `- Active improvement loops: ${activeLoops.length}`,
+      `- Stale active loops: ${staleActiveLoops.length}`,
       `- Open incidents: ${openIncidents.length}`,
       `- Closed incidents: ${closedIncidents.length}`,
       `- Compounding mistake patterns: ${mistakes?.patterns.length ?? 0}`,
@@ -142,10 +173,12 @@ export class CompoundingEngine {
       "## Drift Checks",
       `- Identity anchor drift: ${anchorPresent ? "pass" : "needs attention"}`,
       `- Incident backlog: ${openIncidents.length === 0 ? "pass" : "needs attention"}`,
-      `- Improvement-loop coverage: ${improvementLoopPresent ? "pass" : "needs attention"}`,
+      `- Improvement-loop coverage: ${improvementLoops.length > 0 ? "pass" : "needs attention"}`,
+      `- Improvement-loop freshness: ${staleActiveLoops.length === 0 ? "pass" : "needs attention"}`,
       "",
       "## Stale Rule Detection",
       `- Open incidents older than closure window: ${openIncidents.length > 0 ? "possible" : "none detected"}`,
+      `- Stale active continuity loops: ${staleActiveLoops.length > 0 ? staleActiveLoops.map((l) => l.id).join(", ") : "none detected"}`,
       `- Preventive rule coverage on closed incidents: ${
         closedIncidents.some((i) => (i.preventiveRule ?? "").trim().length > 0) ? "present" : "not detected"
       }`,
@@ -288,6 +321,15 @@ export class CompoundingEngine {
       return raw.trim().length > 0;
     } catch {
       return false;
+    }
+  }
+
+  private async readOptionalFile(filePath: string): Promise<string | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      return raw.trim().length > 0 ? raw : null;
+    } catch {
+      return null;
     }
   }
 

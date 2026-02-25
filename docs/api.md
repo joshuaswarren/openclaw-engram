@@ -141,6 +141,37 @@ List continuity incidents with optional state filtering.
 
 ---
 
+### `continuity_loop_add_or_update`
+
+Add or update a continuity improvement loop entry in `identity/improvement-loops.md`.
+
+**Parameters:**
+- `id` (string, required) — Stable loop identifier.
+- `cadence` (`daily` | `weekly` | `monthly` | `quarterly`, required)
+- `purpose` (string, required)
+- `status` (`active` | `paused` | `retired`, required)
+- `killCondition` (string, required)
+- `lastReviewed` (string, optional, ISO timestamp)
+- `notes` (string, optional)
+
+**Returns:** Saved loop summary.
+
+---
+
+### `continuity_loop_review`
+
+Update review metadata on an existing continuity loop entry.
+
+**Parameters:**
+- `id` (string, required)
+- `status` (`active` | `paused` | `retired`, optional)
+- `notes` (string, optional)
+- `reviewedAt` (string, optional, ISO timestamp)
+
+**Returns:** Updated loop summary, or not-found message.
+
+---
+
 ## CLI Commands
 
 Run via `openclaw engram <command>`:

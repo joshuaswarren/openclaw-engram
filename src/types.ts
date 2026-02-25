@@ -691,6 +691,35 @@ export interface ContinuityIncidentCloseInput {
   preventiveRule?: string;
 }
 
+export type ContinuityLoopCadence = "daily" | "weekly" | "monthly" | "quarterly";
+export type ContinuityLoopStatus = "active" | "paused" | "retired";
+
+export interface ContinuityImprovementLoop {
+  id: string;
+  cadence: ContinuityLoopCadence;
+  purpose: string;
+  status: ContinuityLoopStatus;
+  killCondition: string;
+  lastReviewed: string;
+  notes?: string;
+}
+
+export interface ContinuityLoopUpsertInput {
+  id: string;
+  cadence: ContinuityLoopCadence;
+  purpose: string;
+  status: ContinuityLoopStatus;
+  killCondition: string;
+  lastReviewed?: string;
+  notes?: string;
+}
+
+export interface ContinuityLoopReviewInput {
+  status?: ContinuityLoopStatus;
+  notes?: string;
+  reviewedAt?: string;
+}
+
 /** Entry in the access tracking buffer (batched updates) */
 export interface AccessTrackingEntry {
   memoryId: string;

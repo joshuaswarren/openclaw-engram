@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
-import type { MemoryActionType, MemoryCategory } from "./types.js";
+import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
 import { log } from "./logger.js";
 
@@ -148,6 +148,19 @@ function formatContinuityIncidentSummary(
   if (incident.verificationResult) lines.push(`Verification: ${incident.verificationResult}`);
   if (incident.preventiveRule) lines.push(`Preventive Rule: ${incident.preventiveRule}`);
   if (incident.filePath) lines.push(`Path: ${incident.filePath}`);
+  return lines.join("\n");
+}
+
+function formatContinuityLoopSummary(loop: ContinuityImprovementLoop): string {
+  const lines = [
+    `### ${loop.id}`,
+    `Cadence: ${loop.cadence}`,
+    `Status: ${loop.status}`,
+    `Last Reviewed: ${loop.lastReviewed}`,
+    `Purpose: ${loop.purpose}`,
+    `Kill Condition: ${loop.killCondition}`,
+  ];
+  if (loop.notes) lines.push(`Notes: ${loop.notes}`);
   return lines.join("\n");
 }
 
@@ -445,6 +458,113 @@ Best for:
       },
     },
     { name: "continuity_incident_list" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_loop_add_or_update",
+      label: "Add or Update Continuity Loop",
+      description: "Add or update a continuity improvement loop entry in identity/improvement-loops.md.",
+      parameters: Type.Object({
+        id: Type.String({
+          description: "Stable loop identifier.",
+        }),
+        cadence: Type.String({
+          enum: ["daily", "weekly", "monthly", "quarterly"],
+          description: "Review cadence.",
+        }),
+        purpose: Type.String({
+          description: "What this recurring loop improves.",
+        }),
+        status: Type.String({
+          enum: ["active", "paused", "retired"],
+          description: "Current lifecycle status for the loop.",
+        }),
+        killCondition: Type.String({
+          description: "Clear condition for retiring this loop.",
+        }),
+        lastReviewed: Type.Optional(
+          Type.String({
+            description: "Optional ISO timestamp for last review. Defaults to now.",
+          }),
+        ),
+        notes: Type.Optional(
+          Type.String({
+            description: "Optional operator notes.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to manage continuity loops.",
+          );
+        }
+        try {
+          const loop = await orchestrator.storage.upsertIdentityImprovementLoop({
+            id: typeof params.id === "string" ? params.id : "",
+            cadence: params.cadence as "daily" | "weekly" | "monthly" | "quarterly",
+            purpose: typeof params.purpose === "string" ? params.purpose : "",
+            status: params.status as "active" | "paused" | "retired",
+            killCondition: typeof params.killCondition === "string" ? params.killCondition : "",
+            lastReviewed: typeof params.lastReviewed === "string" ? params.lastReviewed : undefined,
+            notes: typeof params.notes === "string" ? params.notes : undefined,
+          });
+          log.info(`continuity-loop upsert id=${loop.id} status=${loop.status}`);
+          return toolResult(`Continuity loop saved.\n\n${formatContinuityLoopSummary(loop)}`);
+        } catch (err) {
+          return toolResult(`Failed to save continuity loop: ${String(err)}`);
+        }
+      },
+    },
+    { name: "continuity_loop_add_or_update" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_loop_review",
+      label: "Review Continuity Loop",
+      description: "Update review metadata (lastReviewed/status/notes) for an existing continuity loop.",
+      parameters: Type.Object({
+        id: Type.String({
+          description: "Loop ID to review.",
+        }),
+        status: Type.Optional(
+          Type.String({
+            enum: ["active", "paused", "retired"],
+            description: "Optional status update.",
+          }),
+        ),
+        notes: Type.Optional(
+          Type.String({
+            description: "Optional notes update.",
+          }),
+        ),
+        reviewedAt: Type.Optional(
+          Type.String({
+            description: "Optional ISO timestamp for review event. Defaults to now.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to manage continuity loops.",
+          );
+        }
+        const id = typeof params.id === "string" ? params.id.trim() : "";
+        if (!id) return toolResult("Missing required field: id");
+        const reviewed = await orchestrator.storage.reviewIdentityImprovementLoop(id, {
+          status: typeof params.status === "string" ? (params.status as "active" | "paused" | "retired") : undefined,
+          notes: typeof params.notes === "string" ? params.notes : undefined,
+          reviewedAt: typeof params.reviewedAt === "string" ? params.reviewedAt : undefined,
+        });
+        if (!reviewed) return toolResult(`Continuity loop not found: ${id}`);
+        log.info(`continuity-loop review id=${id} status=${reviewed.status}`);
+        return toolResult(`Continuity loop reviewed.\n\n${formatContinuityLoopSummary(reviewed)}`);
+      },
+    },
+    { name: "continuity_loop_review" },
   );
 
   api.registerTool(

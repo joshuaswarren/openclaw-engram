@@ -1,6 +1,11 @@
 import type {
   ContinuityIncidentCloseInput,
   ContinuityIncidentOpenInput,
+  ContinuityImprovementLoop,
+  ContinuityLoopCadence,
+  ContinuityLoopReviewInput,
+  ContinuityLoopStatus,
+  ContinuityLoopUpsertInput,
   ContinuityIncidentRecord,
   ContinuityIncidentState,
 } from "./types.js";
@@ -119,5 +124,126 @@ export function closeContinuityIncidentRecord(
     fixApplied: closure.fixApplied.trim(),
     verificationResult: closure.verificationResult.trim(),
     preventiveRule: closure.preventiveRule?.trim() || incident.preventiveRule,
+  };
+}
+
+const LOOP_HEADER = "# Continuity Improvement Loops";
+const LOOP_CADENCES = new Set<ContinuityLoopCadence>(["daily", "weekly", "monthly", "quarterly"]);
+const LOOP_STATUSES = new Set<ContinuityLoopStatus>(["active", "paused", "retired"]);
+
+function normalizeLoopField(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return trimmed.replace(/\s+/g, " ");
+}
+
+function isValidIso(value: string): boolean {
+  const ts = Date.parse(value);
+  return Number.isFinite(ts);
+}
+
+export function normalizeContinuityLoop(
+  input: ContinuityLoopUpsertInput | ContinuityImprovementLoop,
+  nowIso: string,
+): ContinuityImprovementLoop | null {
+  const id = normalizeLoopField(input.id);
+  const cadence = normalizeLoopField(input.cadence) as ContinuityLoopCadence | undefined;
+  const status = normalizeLoopField(input.status) as ContinuityLoopStatus | undefined;
+  const purpose = normalizeLoopField(input.purpose);
+  const killCondition = normalizeLoopField(input.killCondition);
+  const notes = normalizeLoopField(input.notes);
+  const lastReviewedRaw =
+    "lastReviewed" in input && typeof input.lastReviewed === "string" ? input.lastReviewed : undefined;
+  const lastReviewed = normalizeLoopField(lastReviewedRaw) ?? nowIso;
+
+  if (!id || !cadence || !status || !purpose || !killCondition) return null;
+  if (!LOOP_CADENCES.has(cadence)) return null;
+  if (!LOOP_STATUSES.has(status)) return null;
+  if (!isValidIso(lastReviewed)) return null;
+
+  return {
+    id,
+    cadence,
+    purpose,
+    status,
+    killCondition,
+    lastReviewed,
+    notes,
+  };
+}
+
+export function serializeContinuityImprovementLoops(loops: ContinuityImprovementLoop[]): string {
+  const sorted = [...loops].sort((a, b) => a.id.localeCompare(b.id));
+  const lines: string[] = [LOOP_HEADER, ""];
+  for (const loop of sorted) {
+    lines.push(`## ${loop.id}`);
+    lines.push(`cadence: ${loop.cadence}`);
+    lines.push(`purpose: ${loop.purpose}`);
+    lines.push(`status: ${loop.status}`);
+    lines.push(`killCondition: ${loop.killCondition}`);
+    lines.push(`lastReviewed: ${loop.lastReviewed}`);
+    if (loop.notes) lines.push(`notes: ${loop.notes}`);
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd() + "\n";
+}
+
+export function parseContinuityImprovementLoops(raw: string): ContinuityImprovementLoop[] {
+  const text = raw.replace(/\r/g, "").trim();
+  if (!text) return [];
+
+  const lines = text.split("\n");
+  const loops: ContinuityImprovementLoop[] = [];
+  let currentId: string | null = null;
+  let fields: Record<string, string> = {};
+
+  const pushCurrent = () => {
+    if (!currentId) return;
+    const parsed = normalizeContinuityLoop(
+      {
+        id: currentId,
+        cadence: (fields.cadence ?? "") as ContinuityLoopCadence,
+        purpose: fields.purpose ?? "",
+        status: (fields.status ?? "") as ContinuityLoopStatus,
+        killCondition: fields.killCondition ?? "",
+        lastReviewed: fields.lastReviewed,
+        notes: fields.notes,
+      },
+      new Date().toISOString(),
+    );
+    if (parsed) loops.push(parsed);
+  };
+
+  for (const line of lines) {
+    const section = line.match(/^##\s+(.+?)\s*$/);
+    if (section) {
+      pushCurrent();
+      currentId = section[1].trim();
+      fields = {};
+      continue;
+    }
+    const kv = line.match(/^([A-Za-z][A-Za-z0-9_]*):\s*(.+?)\s*$/);
+    if (!kv || !currentId) continue;
+    fields[kv[1]] = kv[2];
+  }
+  pushCurrent();
+  return loops;
+}
+
+export function applyContinuityLoopReview(
+  existing: ContinuityImprovementLoop,
+  input: ContinuityLoopReviewInput,
+  nowIso: string,
+): ContinuityImprovementLoop {
+  const nextStatus = normalizeLoopField(input.status) as ContinuityLoopStatus | undefined;
+  const nextNotes = normalizeLoopField(input.notes);
+  const reviewedAt = normalizeLoopField(input.reviewedAt) ?? nowIso;
+
+  return {
+    ...existing,
+    status: nextStatus && LOOP_STATUSES.has(nextStatus) ? nextStatus : existing.status,
+    notes: nextNotes ?? existing.notes,
+    lastReviewed: isValidIso(reviewedAt) ? reviewedAt : nowIso,
   };
 }

@@ -158,6 +158,21 @@ test("continuity audit generator writes deterministic weekly audit", async () =>
     "utf-8",
   );
   await writeFile(
+    path.join(memoryDir, "identity", "improvement-loops.md"),
+    [
+      "# Continuity Improvement Loops",
+      "",
+      "## weekly-audit",
+      "cadence: weekly",
+      "purpose: run continuity audit",
+      "status: active",
+      "killCondition: automated health checks replace manual loop",
+      "lastReviewed: 2020-01-01T00:00:00.000Z",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  await writeFile(
     path.join(memoryDir, "identity", "incidents", "2026-02-24-incident-1.md"),
     [
       "---",
@@ -181,7 +196,9 @@ test("continuity audit generator writes deterministic weekly audit", async () =>
 
   assert.match(md, /Continuity Audit — weekly 2026-W09/);
   assert.match(md, /Identity anchor present: yes/);
+  assert.match(md, /Stale active loops: 1/);
   assert.match(md, /Open incidents: 1/);
+  assert.match(md, /Stale active continuity loops: weekly-audit/);
   assert.match(md, /Next Hardening Action/);
 });
 
