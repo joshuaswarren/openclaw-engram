@@ -50,6 +50,7 @@ test("parseIsoTimestamp rejects non-canonical timestamp formats", () => {
   assert.equal(parseIsoTimestamp("02/25/2026 10:00"), null);
   assert.equal(parseIsoTimestamp("2026-02-25T10:00:00"), null);
   assert.equal(parseIsoTimestamp("2026-02-25"), null);
+  assert.equal(parseIsoTimestamp("2026-02-30T00:00:00Z"), null);
 });
 
 test("runReplayWithNormalizer applies validation, range, offset, max and dry-run", async () => {

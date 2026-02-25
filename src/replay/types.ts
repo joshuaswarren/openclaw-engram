@@ -54,6 +54,10 @@ const VALID_SOURCES: ReadonlySet<string> = new Set(["openclaw", "claude", "chatg
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant"]);
 const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 
+function normalizeIsoForComparison(value: string): string {
+  return value.includes(".") ? value : value.replace("Z", ".000Z");
+}
+
 export function isReplaySource(value: unknown): value is ReplaySource {
   return typeof value === "string" && VALID_SOURCES.has(value);
 }
@@ -65,7 +69,10 @@ export function isReplayRole(value: unknown): value is ReplayRole {
 export function parseIsoTimestamp(value: string): number | null {
   if (typeof value !== "string" || !ISO_UTC_TIMESTAMP_RE.test(value)) return null;
   const ts = Date.parse(value);
-  return Number.isFinite(ts) ? ts : null;
+  if (!Number.isFinite(ts)) return null;
+  const roundTrip = new Date(ts).toISOString();
+  if (roundTrip !== normalizeIsoForComparison(value)) return null;
+  return ts;
 }
 
 export function validateReplayTurn(turn: ReplayTurn, index?: number): ReplayValidationIssue[] {
