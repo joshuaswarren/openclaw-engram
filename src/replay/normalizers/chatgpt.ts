@@ -1,60 +1,10 @@
 import {
-  isReplayRole,
   type ReplayNormalizer,
   type ReplayParseOptions,
   type ReplayParseResult,
-  type ReplayRole,
   type ReplayTurn,
 } from "../types.js";
-
-function normalizeRole(value: unknown): ReplayRole | null {
-  if (typeof value !== "string") return null;
-  const role = value.trim().toLowerCase();
-  if (isReplayRole(role)) return role;
-  if (role === "human") return "user";
-  if (role === "assistant" || role === "ai" || role === "model") return "assistant";
-  return null;
-}
-
-function normalizeContent(value: unknown): string | null {
-  if (typeof value === "string") {
-    const content = value.trim();
-    return content.length > 0 ? content : null;
-  }
-  if (Array.isArray(value)) {
-    const text = value
-      .map((part) => (typeof part === "string" ? part : ""))
-      .join("\n")
-      .trim();
-    return text.length > 0 ? text : null;
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    if (Array.isArray(obj.parts)) return normalizeContent(obj.parts);
-    if (typeof obj.text === "string") return normalizeContent(obj.text);
-  }
-  return null;
-}
-
-function normalizeTimestamp(value: unknown): string | null {
-  const toIso = (millis: number): string | null => {
-    if (!Number.isFinite(millis)) return null;
-    const date = new Date(millis);
-    if (!Number.isFinite(date.getTime())) return null;
-    try {
-      return date.toISOString();
-    } catch {
-      return null;
-    }
-  };
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return toIso(value > 1e12 ? value : value * 1000);
-  }
-  if (typeof value !== "string") return null;
-  const parsed = Date.parse(value);
-  return toIso(parsed);
-}
+import { normalizeReplayContent, normalizeReplayRole, normalizeReplayTimestamp } from "./shared.js";
 
 function gatherConversations(input: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(input)) {
@@ -143,13 +93,13 @@ export const chatgptReplayNormalizer: ReplayNormalizer = {
 
       for (let j = 0; j < messageRows.length; j += 1) {
         const row = messageRows[j];
-        const role = normalizeRole(
+        const role = normalizeReplayRole(
           (row.author as Record<string, unknown> | undefined)?.role ?? row.role,
         );
-        const content = normalizeContent(
+        const content = normalizeReplayContent(
           (row.content as Record<string, unknown> | undefined)?.parts ?? row.content ?? row.text,
         );
-        const timestamp = normalizeTimestamp(
+        const timestamp = normalizeReplayTimestamp(
           row.create_time ?? row.timestamp ?? row._nodeCreateTime ?? row.created_at,
         );
 

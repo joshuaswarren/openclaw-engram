@@ -1,60 +1,10 @@
 import {
-  isReplayRole,
   type ReplayNormalizer,
   type ReplayParseOptions,
   type ReplayParseResult,
-  type ReplayRole,
   type ReplayTurn,
 } from "../types.js";
-
-function normalizeRole(value: unknown): ReplayRole | null {
-  if (typeof value !== "string") return null;
-  const role = value.trim().toLowerCase();
-  if (isReplayRole(role)) return role;
-  if (role === "human") return "user";
-  if (role === "assistant" || role === "ai" || role === "model") return "assistant";
-  return null;
-}
-
-function normalizeContent(value: unknown): string | null {
-  if (typeof value === "string") {
-    const content = value.trim();
-    return content.length > 0 ? content : null;
-  }
-  if (Array.isArray(value)) {
-    const text = value
-      .map((part) => (typeof part === "string" ? part : ""))
-      .join("\n")
-      .trim();
-    return text.length > 0 ? text : null;
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    if (Array.isArray(obj.parts)) return normalizeContent(obj.parts);
-    if (typeof obj.text === "string") return normalizeContent(obj.text);
-  }
-  return null;
-}
-
-function normalizeTimestamp(value: unknown): string | null {
-  const toIso = (millis: number): string | null => {
-    if (!Number.isFinite(millis)) return null;
-    const date = new Date(millis);
-    if (!Number.isFinite(date.getTime())) return null;
-    try {
-      return date.toISOString();
-    } catch {
-      return null;
-    }
-  };
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return toIso(value > 1e12 ? value : value * 1000);
-  }
-  if (typeof value !== "string") return null;
-  const parsed = Date.parse(value);
-  return toIso(parsed);
-}
+import { normalizeReplayContent, normalizeReplayRole, normalizeReplayTimestamp } from "./shared.js";
 
 function gatherConversations(input: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(input)) return input.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
@@ -114,9 +64,11 @@ export const claudeReplayNormalizer: ReplayNormalizer = {
         }
 
         const row = msg as Record<string, unknown>;
-        const role = normalizeRole(row.sender ?? row.role ?? (row.author as Record<string, unknown> | undefined)?.role);
-        const content = normalizeContent(row.text ?? row.content ?? row.message);
-        const timestamp = normalizeTimestamp(
+        const role = normalizeReplayRole(
+          row.sender ?? row.role ?? (row.author as Record<string, unknown> | undefined)?.role,
+        );
+        const content = normalizeReplayContent(row.text ?? row.content ?? row.message);
+        const timestamp = normalizeReplayTimestamp(
           row.created_at ?? row.createdAt ?? row.updated_at ?? row.updatedAt ?? row.timestamp,
         );
 
