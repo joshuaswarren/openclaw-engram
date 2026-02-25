@@ -69,16 +69,20 @@ id: incident-<ts>-<slug>
 state: open
 openedAt: 2026-02-25T00:00:00.000Z
 closedAt:
-symptom: identity anchor omitted in recovery response
-fixApplied:
-verificationResult:
 ---
 
 ## Timeline
 - 2026-02-25T00:00:00.000Z opened
 
+## Symptom
+identity anchor omitted in recovery response
+
+## Fix Applied
+
+## Verification Result
+
 ## Notes
-- Observed during weekly continuity audit.
+Observed during weekly continuity audit.
 ```
 
 ## Template: Continuity Audit
