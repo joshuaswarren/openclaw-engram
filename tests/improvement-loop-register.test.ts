@@ -290,6 +290,44 @@ test("review normalizes loop id spacing to match canonicalized upsert ids", asyn
   }
 });
 
+test("upsert matches legacy section titles after id normalization", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-loop-legacy-id-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    await storage.writeIdentityImprovementLoops(
+      [
+        "# Continuity Improvement Loops",
+        "",
+        "## weekly   audit",
+        "cadence: weekly",
+        "purpose: Run weekly continuity audit",
+        "status: active",
+        "killCondition: Retire when automated",
+        "lastReviewed: 2026-02-26T00:00:00.000Z",
+        "",
+      ].join("\n"),
+    );
+
+    await storage.upsertIdentityImprovementLoop({
+      id: "weekly audit",
+      cadence: "weekly",
+      purpose: "Run weekly continuity audit (updated)",
+      status: "active",
+      killCondition: "Retire when automated",
+      lastReviewed: "2026-02-27T00:00:00.000Z",
+    });
+
+    const raw = await storage.readIdentityImprovementLoops();
+    assert.ok(raw);
+    assert.equal((raw?.match(/^## /gm) ?? []).length, 1);
+    assert.match(raw ?? "", /^## weekly audit$/m);
+    assert.match(raw ?? "", /Run weekly continuity audit \(updated\)/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("continuity_loop_review returns fail-open error on storage exceptions", async () => {
   const tools = new Map<string, RegisteredTool>();
   const api = {

@@ -323,7 +323,7 @@ export function upsertContinuityLoopInMarkdown(
   const parsed = splitLoopMarkdown(raw);
   let replaced = false;
   const nextSections = parsed.sections.map((section) => {
-    if (section.title !== normalized.id) return section;
+    if (normalizeLoopField(section.title) !== normalized.id) return section;
     replaced = true;
     return { title: normalized.id, body: serializeContinuityLoopSection(normalized).split("\n").slice(1).join("\n") };
   });
@@ -351,7 +351,7 @@ export function reviewContinuityLoopInMarkdown(
   }
   let updatedLoop: ContinuityImprovementLoop | null = null;
   const nextSections = parsed.sections.map((section) => {
-    if (section.title !== normalizedId) return section;
+    if (normalizeLoopField(section.title) !== normalizedId) return section;
     const existing = parseLoopFromSection(section, nowIso);
     if (!existing) return section;
     const reviewed = applyContinuityLoopReview(existing, input, nowIso);
