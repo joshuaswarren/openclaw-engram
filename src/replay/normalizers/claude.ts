@@ -82,7 +82,8 @@ export const claudeReplayNormalizer: ReplayNormalizer = {
       const conversation = conversations[i];
       const convoIdRaw = conversation.uuid ?? conversation.id ?? conversation.conversation_id;
       const convoId = typeof convoIdRaw === "string" && convoIdRaw.trim().length > 0 ? convoIdRaw.trim() : `conv-${i + 1}`;
-      const sessionKey = options.defaultSessionKey?.trim() || `replay:claude:${convoId}`;
+      const sessionKey = `replay:claude:${convoId}`;
+      const fallbackSessionKey = options.defaultSessionKey?.trim() || sessionKey;
 
       const messagesRaw = Array.isArray(conversation.chat_messages)
         ? conversation.chat_messages
@@ -119,7 +120,7 @@ export const claudeReplayNormalizer: ReplayNormalizer = {
 
         turns.push({
           source: "claude",
-          sessionKey,
+          sessionKey: convoIdRaw ? sessionKey : fallbackSessionKey,
           role,
           content,
           timestamp,

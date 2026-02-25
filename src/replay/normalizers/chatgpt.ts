@@ -61,22 +61,46 @@ function gatherConversations(input: unknown): Array<Record<string, unknown>> {
 function extractFromMapping(conversation: Record<string, unknown>): Array<Record<string, unknown>> {
   const mapping = conversation.mapping;
   if (!mapping || typeof mapping !== "object") return [];
+  const nodes = mapping as Record<string, unknown>;
+  const currentNodeId = typeof conversation.current_node === "string" ? conversation.current_node : null;
 
-  const messages: Array<Record<string, unknown>> = [];
-  for (const node of Object.values(mapping as Record<string, unknown>)) {
-    if (!node || typeof node !== "object") continue;
-    const nodeObj = node as Record<string, unknown>;
-    const message = nodeObj.message;
-    if (!message || typeof message !== "object") continue;
-
-    messages.push({
-      ...(message as Record<string, unknown>),
-      _nodeId: typeof nodeObj.id === "string" ? nodeObj.id : undefined,
-      _nodeCreateTime: nodeObj.create_time,
-    });
+  if (!currentNodeId || !nodes[currentNodeId] || typeof nodes[currentNodeId] !== "object") {
+    // Fallback for malformed/legacy exports without a traversable active pointer.
+    const loose: Array<Record<string, unknown>> = [];
+    for (const node of Object.values(nodes)) {
+      if (!node || typeof node !== "object") continue;
+      const nodeObj = node as Record<string, unknown>;
+      const message = nodeObj.message;
+      if (!message || typeof message !== "object") continue;
+      loose.push({
+        ...(message as Record<string, unknown>),
+        _nodeId: typeof nodeObj.id === "string" ? nodeObj.id : undefined,
+        _nodeCreateTime: nodeObj.create_time,
+      });
+    }
+    return loose;
   }
 
-  return messages;
+  const chain: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  let cursor: string | null = currentNodeId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const node = nodes[cursor];
+    if (!node || typeof node !== "object") break;
+    const nodeObj = node as Record<string, unknown>;
+    const message = nodeObj.message;
+    if (message && typeof message === "object") {
+      chain.push({
+        ...(message as Record<string, unknown>),
+        _nodeId: typeof nodeObj.id === "string" ? nodeObj.id : cursor,
+        _nodeCreateTime: nodeObj.create_time,
+      });
+    }
+    cursor = typeof nodeObj.parent === "string" ? nodeObj.parent : null;
+  }
+
+  return chain.reverse();
 }
 
 export const chatgptReplayNormalizer: ReplayNormalizer = {
@@ -98,8 +122,10 @@ export const chatgptReplayNormalizer: ReplayNormalizer = {
     for (let i = 0; i < conversations.length; i += 1) {
       const conversation = conversations[i];
       const convIdRaw = conversation.id ?? conversation.conversation_id ?? conversation.uuid;
-      const convId = typeof convIdRaw === "string" && convIdRaw.trim().length > 0 ? convIdRaw.trim() : `conv-${i + 1}`;
-      const sessionKey = options.defaultSessionKey?.trim() || `replay:chatgpt:${convId}`;
+      const hasSourceConversationId = typeof convIdRaw === "string" && convIdRaw.trim().length > 0;
+      const convId = hasSourceConversationId ? convIdRaw.trim() : `conv-${i + 1}`;
+      const sessionKey = `replay:chatgpt:${convId}`;
+      const fallbackSessionKey = options.defaultSessionKey?.trim() || sessionKey;
 
       const messageRows = Array.isArray(conversation.messages)
         ? conversation.messages.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
@@ -128,7 +154,7 @@ export const chatgptReplayNormalizer: ReplayNormalizer = {
 
         turns.push({
           source: "chatgpt",
-          sessionKey,
+          sessionKey: hasSourceConversationId ? sessionKey : fallbackSessionKey,
           role,
           content,
           timestamp,

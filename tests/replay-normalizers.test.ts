@@ -74,9 +74,11 @@ test("chatgpt normalizer parses mapping export shape", async () => {
     {
       id: "chatgpt-conv-1",
       title: "Mapping Export",
+      current_node: "n2",
       mapping: {
         n1: {
           id: "n1",
+          parent: null,
           create_time: 1772054400,
           message: {
             id: "msg-1",
@@ -87,6 +89,7 @@ test("chatgpt normalizer parses mapping export shape", async () => {
         },
         n2: {
           id: "n2",
+          parent: "n1",
           create_time: 1772054460,
           message: {
             id: "msg-2",
@@ -105,6 +108,65 @@ test("chatgpt normalizer parses mapping export shape", async () => {
   assert.equal(result.turns[0].role, "user");
   assert.equal(result.turns[1].role, "assistant");
   assert.equal(result.warnings.length, 0);
+});
+
+test("chatgpt normalizer follows active branch from current_node", async () => {
+  const input = [
+    {
+      id: "chatgpt-conv-branchy",
+      current_node: "n4",
+      mapping: {
+        n1: {
+          id: "n1",
+          parent: null,
+          create_time: 1772054400,
+          message: {
+            id: "msg-1",
+            author: { role: "user" },
+            content: { parts: ["root"] },
+            create_time: 1772054400,
+          },
+        },
+        n2: {
+          id: "n2",
+          parent: "n1",
+          create_time: 1772054460,
+          message: {
+            id: "msg-2",
+            author: { role: "assistant" },
+            content: { parts: ["branch-a"] },
+            create_time: 1772054460,
+          },
+        },
+        n3: {
+          id: "n3",
+          parent: "n1",
+          create_time: 1772054520,
+          message: {
+            id: "msg-3",
+            author: { role: "assistant" },
+            content: { parts: ["branch-b"] },
+            create_time: 1772054520,
+          },
+        },
+        n4: {
+          id: "n4",
+          parent: "n2",
+          create_time: 1772054580,
+          message: {
+            id: "msg-4",
+            author: { role: "user" },
+            content: { parts: ["tail"] },
+            create_time: 1772054580,
+          },
+        },
+      },
+    },
+  ];
+
+  const result = await chatgptReplayNormalizer.parse(input, {});
+  assert.equal(result.turns.length, 3);
+  assert.deepEqual(result.turns.map((turn) => turn.content), ["root", "branch-a", "tail"]);
 });
 
 test("chatgpt normalizer skips unsupported roles with warnings", async () => {
@@ -145,4 +207,29 @@ test("normalizers honor defaultSessionKey when source session identifiers are ab
   assert.equal(openclaw.turns[0].sessionKey, "replay:default:session");
   assert.equal(claude.turns[0].sessionKey, "replay:default:session");
   assert.equal(chatgpt.turns[0].sessionKey, "replay:default:session");
+});
+
+test("defaultSessionKey is fallback-only when conversation identifiers exist", async () => {
+  const claude = await claudeReplayNormalizer.parse(
+    {
+      conversations: [
+        {
+          uuid: "claude-conv-xyz",
+          chat_messages: [{ sender: "human", text: "x", created_at: "2026-02-25T03:01:00.000Z" }],
+        },
+      ],
+    },
+    { defaultSessionKey: "replay:default:session" },
+  );
+
+  const chatgpt = await chatgptReplayNormalizer.parse(
+    {
+      id: "chatgpt-conv-xyz",
+      messages: [{ author: { role: "user" }, content: { parts: ["y"] }, create_time: 1772054460 }],
+    },
+    { defaultSessionKey: "replay:default:session" },
+  );
+
+  assert.equal(claude.turns[0].sessionKey, "replay:claude:claude-conv-xyz");
+  assert.equal(chatgpt.turns[0].sessionKey, "replay:chatgpt:chatgpt-conv-xyz");
 });
