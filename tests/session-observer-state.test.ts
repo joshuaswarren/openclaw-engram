@@ -135,3 +135,41 @@ test("session observer persists non-threshold and debounced updates", async () =
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("session observer save merges shared state across instances", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-session-observer-merge-"));
+  try {
+    const a = new SessionObserverState({
+      memoryDir: dir,
+      debounceMs: 60_000,
+      bands: [{ maxBytes: 100_000, triggerDeltaBytes: 500, triggerDeltaTokens: 100 }],
+    });
+    const b = new SessionObserverState({
+      memoryDir: dir,
+      debounceMs: 60_000,
+      bands: [{ maxBytes: 100_000, triggerDeltaBytes: 500, triggerDeltaTokens: 100 }],
+    });
+    await a.load();
+    await b.load();
+
+    await a.observe({
+      sessionKey: "agent:generalist:main",
+      totalBytes: 10_000,
+      totalTokens: 2_000,
+      observedAt: "2026-02-25T00:00:00.000Z",
+    });
+    await b.observe({
+      sessionKey: "agent:research:main",
+      totalBytes: 20_000,
+      totalTokens: 4_000,
+      observedAt: "2026-02-25T00:00:10.000Z",
+    });
+
+    const raw = await readFile(path.join(dir, "state", "session-observer-state.json"), "utf-8");
+    const parsed = JSON.parse(raw) as { sessions: Record<string, unknown> };
+    assert.ok(parsed.sessions["agent:generalist:main"]);
+    assert.ok(parsed.sessions["agent:research:main"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

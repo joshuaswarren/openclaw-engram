@@ -2255,6 +2255,11 @@ export class Orchestrator {
     if (!decision.triggered) return;
     const turns = this.buffer.getTurns();
     if (turns.length === 0) return;
+    const mixedSessionTurns = turns.some((turn) => turn.sessionKey !== sessionKey);
+    if (mixedSessionTurns) {
+      log.debug(`heartbeat observer skipped: mixed session buffer for ${sessionKey}`);
+      return;
+    }
     log.debug(
       `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
     );

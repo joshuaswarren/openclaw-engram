@@ -77,6 +77,50 @@ test("observeSessionHeartbeat no-ops when observer is disabled", async () => {
   assert.equal(invoked, false);
 });
 
+test("observeSessionHeartbeat skips when buffer contains mixed session turns", async () => {
+  let queued = false;
+  const fake = {
+    config: { sessionObserverEnabled: true },
+    transcript: {
+      estimateSessionFootprint: async () => ({ bytes: 25_000, tokens: 6_250 }),
+    },
+    sessionObserver: {
+      observe: async () => ({
+        triggered: true,
+        deltaBytes: 6_500,
+        deltaTokens: 1_500,
+        band: { maxBytes: 50_000, triggerDeltaBytes: 6_000, triggerDeltaTokens: 1_200 },
+      }),
+    },
+    buffer: {
+      getTurns: () => [
+        {
+          role: "user",
+          content: "session A",
+          timestamp: "2026-02-25T00:00:00.000Z",
+          sessionKey: "agent:generalist:main",
+        },
+        {
+          role: "assistant",
+          content: "session B",
+          timestamp: "2026-02-25T00:00:01.000Z",
+          sessionKey: "agent:research:main",
+        },
+      ],
+    },
+    queueBufferedExtraction: async () => {
+      queued = true;
+    },
+  };
+
+  await (Orchestrator.prototype as any).observeSessionHeartbeat.call(
+    fake,
+    "agent:generalist:main",
+  );
+
+  assert.equal(queued, false);
+});
+
 test("queueBufferedExtraction preserves buffered turns when dedupe skips enqueue", async () => {
   let cleared = false;
   let queued = false;

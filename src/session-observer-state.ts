@@ -36,6 +36,12 @@ function sanitizeNonNegativeInt(value: number): number {
   return Math.max(0, Math.floor(value));
 }
 
+function parseIsoMs(value?: string): number {
+  if (!value) return 0;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 export function normalizeObserverBands(
   bands: SessionObserverBandConfig[],
 ): SessionObserverBandConfig[] {
@@ -74,6 +80,37 @@ export class SessionObserverState {
   private sessions = new Map<string, SessionObserverCursor>();
   private saveQueue: Promise<void> = Promise.resolve();
 
+  private async readPersistedState(): Promise<SessionObserverPersistedState | null> {
+    try {
+      const raw = await readFile(this.statePath, "utf-8");
+      const parsed = JSON.parse(raw) as SessionObserverPersistedState;
+      if (parsed?.version !== 1 || !parsed.sessions || typeof parsed.sessions !== "object") {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizePersistedSessions(
+    sessions: Record<string, SessionObserverCursor>,
+  ): Map<string, SessionObserverCursor> {
+    const next = new Map<string, SessionObserverCursor>();
+    for (const [sessionKey, value] of Object.entries(sessions)) {
+      if (!value || typeof value !== "object") continue;
+      next.set(sessionKey, {
+        sessionKey,
+        cursorBytes: sanitizeNonNegativeInt(value.cursorBytes),
+        cursorTokens: sanitizeNonNegativeInt(value.cursorTokens),
+        lastObservedAt:
+          typeof value.lastObservedAt === "string" ? value.lastObservedAt : new Date(0).toISOString(),
+        lastTriggeredAt: typeof value.lastTriggeredAt === "string" ? value.lastTriggeredAt : undefined,
+      });
+    }
+    return next;
+  }
+
   constructor(opts: {
     memoryDir: string;
     debounceMs: number;
@@ -85,34 +122,47 @@ export class SessionObserverState {
   }
 
   async load(): Promise<void> {
-    try {
-      const raw = await readFile(this.statePath, "utf-8");
-      const parsed = JSON.parse(raw) as SessionObserverPersistedState;
-      if (parsed?.version !== 1 || !parsed.sessions || typeof parsed.sessions !== "object") {
-        this.sessions.clear();
-        return;
-      }
-
-      const next = new Map<string, SessionObserverCursor>();
-      for (const [sessionKey, value] of Object.entries(parsed.sessions)) {
-        if (!value || typeof value !== "object") continue;
-        next.set(sessionKey, {
-          sessionKey,
-          cursorBytes: sanitizeNonNegativeInt(value.cursorBytes),
-          cursorTokens: sanitizeNonNegativeInt(value.cursorTokens),
-          lastObservedAt: typeof value.lastObservedAt === "string" ? value.lastObservedAt : new Date(0).toISOString(),
-          lastTriggeredAt: typeof value.lastTriggeredAt === "string" ? value.lastTriggeredAt : undefined,
-        });
-      }
-      this.sessions = next;
-    } catch {
+    const parsed = await this.readPersistedState();
+    if (!parsed) {
       this.sessions.clear();
+      return;
     }
+    this.sessions = this.normalizePersistedSessions(parsed.sessions);
   }
 
   async save(): Promise<void> {
+    const merged = new Map<string, SessionObserverCursor>();
+    const persisted = await this.readPersistedState();
+    if (persisted) {
+      for (const [key, value] of this.normalizePersistedSessions(persisted.sessions).entries()) {
+        merged.set(key, value);
+      }
+    }
+    for (const [key, current] of this.sessions.entries()) {
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, current);
+        continue;
+      }
+      const currentObserved = parseIsoMs(current.lastObservedAt);
+      const existingObserved = parseIsoMs(existing.lastObservedAt);
+      if (currentObserved > existingObserved) {
+        merged.set(key, current);
+        continue;
+      }
+      if (currentObserved < existingObserved) {
+        continue;
+      }
+      const currentTriggered = parseIsoMs(current.lastTriggeredAt);
+      const existingTriggered = parseIsoMs(existing.lastTriggeredAt);
+      if (currentTriggered >= existingTriggered) {
+        merged.set(key, current);
+      }
+    }
+    this.sessions = merged;
+
     const sessions: Record<string, SessionObserverCursor> = {};
-    for (const [key, value] of this.sessions.entries()) {
+    for (const [key, value] of merged.entries()) {
       sessions[key] = value;
     }
     const payload: SessionObserverPersistedState = { version: 1, sessions };
