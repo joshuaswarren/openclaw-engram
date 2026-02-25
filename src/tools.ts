@@ -554,14 +554,18 @@ Best for:
         }
         const id = typeof params.id === "string" ? params.id.trim() : "";
         if (!id) return toolResult("Missing required field: id");
-        const reviewed = await orchestrator.storage.reviewIdentityImprovementLoop(id, {
-          status: typeof params.status === "string" ? (params.status as "active" | "paused" | "retired") : undefined,
-          notes: typeof params.notes === "string" ? params.notes : undefined,
-          reviewedAt: typeof params.reviewedAt === "string" ? params.reviewedAt : undefined,
-        });
-        if (!reviewed) return toolResult(`Continuity loop not found: ${id}`);
-        log.info(`continuity-loop review id=${id} status=${reviewed.status}`);
-        return toolResult(`Continuity loop reviewed.\n\n${formatContinuityLoopSummary(reviewed)}`);
+        try {
+          const reviewed = await orchestrator.storage.reviewIdentityImprovementLoop(id, {
+            status: typeof params.status === "string" ? (params.status as "active" | "paused" | "retired") : undefined,
+            notes: typeof params.notes === "string" ? params.notes : undefined,
+            reviewedAt: typeof params.reviewedAt === "string" ? params.reviewedAt : undefined,
+          });
+          if (!reviewed) return toolResult(`Continuity loop not found: ${id}`);
+          log.info(`continuity-loop review id=${id} status=${reviewed.status}`);
+          return toolResult(`Continuity loop reviewed.\n\n${formatContinuityLoopSummary(reviewed)}`);
+        } catch (err) {
+          return toolResult(`Failed to review continuity loop: ${String(err)}`);
+        }
       },
     },
     { name: "continuity_loop_review" },

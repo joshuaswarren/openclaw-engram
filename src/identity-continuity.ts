@@ -189,6 +189,84 @@ export function serializeContinuityImprovementLoops(loops: ContinuityImprovement
   return lines.join("\n").trimEnd() + "\n";
 }
 
+function serializeContinuityLoopSection(loop: ContinuityImprovementLoop): string {
+  const lines = [
+    `## ${loop.id}`,
+    `cadence: ${loop.cadence}`,
+    `purpose: ${loop.purpose}`,
+    `status: ${loop.status}`,
+    `killCondition: ${loop.killCondition}`,
+    `lastReviewed: ${loop.lastReviewed}`,
+  ];
+  if (loop.notes) lines.push(`notes: ${loop.notes}`);
+  return lines.join("\n");
+}
+
+type MarkdownSection = {
+  title: string;
+  body: string;
+};
+
+function splitLoopMarkdown(raw: string | null): { header: string; sections: MarkdownSection[] } {
+  const text = (raw ?? "").replace(/\r/g, "");
+  const lines = text.split("\n");
+  const headerLines: string[] = [];
+  const sections: MarkdownSection[] = [];
+  let current: MarkdownSection | null = null;
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^##\s+(.+?)\s*$/);
+    if (sectionMatch) {
+      if (current) sections.push({ title: current.title, body: current.body.trimEnd() });
+      current = { title: sectionMatch[1].trim(), body: "" };
+      continue;
+    }
+    if (!current) {
+      headerLines.push(line);
+      continue;
+    }
+    current.body += current.body.length > 0 ? `\n${line}` : line;
+  }
+  if (current) sections.push({ title: current.title, body: current.body.trimEnd() });
+
+  const headerRaw = headerLines.join("\n").trim();
+  const header = headerRaw.length > 0 ? headerRaw : LOOP_HEADER;
+  return { header, sections };
+}
+
+function parseLoopFromSection(section: MarkdownSection, nowIso: string): ContinuityImprovementLoop | null {
+  const fields: Record<string, string> = {};
+  for (const line of section.body.split("\n")) {
+    const kv = line.match(/^([A-Za-z][A-Za-z0-9_]*):\s*(.+?)\s*$/);
+    if (!kv) continue;
+    fields[kv[1]] = kv[2];
+  }
+  return normalizeContinuityLoop(
+    {
+      id: section.title,
+      cadence: (fields.cadence ?? "") as ContinuityLoopCadence,
+      purpose: fields.purpose ?? "",
+      status: (fields.status ?? "") as ContinuityLoopStatus,
+      killCondition: fields.killCondition ?? "",
+      lastReviewed: fields.lastReviewed,
+      notes: fields.notes,
+    },
+    nowIso,
+  );
+}
+
+function joinLoopMarkdown(header: string, sections: MarkdownSection[]): string {
+  const lines: string[] = [header.trim(), ""];
+  for (const section of sections) {
+    lines.push(`## ${section.title}`);
+    if (section.body.trim().length > 0) {
+      lines.push(section.body.trimEnd());
+    }
+    lines.push("");
+  }
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
 export function parseContinuityImprovementLoops(raw: string): ContinuityImprovementLoop[] {
   const text = raw.replace(/\r/g, "").trim();
   if (!text) return [];
@@ -229,6 +307,54 @@ export function parseContinuityImprovementLoops(raw: string): ContinuityImprovem
   }
   pushCurrent();
   return loops;
+}
+
+export function upsertContinuityLoopInMarkdown(
+  raw: string | null,
+  input: ContinuityLoopUpsertInput,
+  nowIso: string,
+): { markdown: string; loop: ContinuityImprovementLoop } {
+  const normalized = normalizeContinuityLoop(input, nowIso);
+  if (!normalized) {
+    throw new Error("Invalid continuity loop input");
+  }
+
+  const parsed = splitLoopMarkdown(raw);
+  let replaced = false;
+  const nextSections = parsed.sections.map((section) => {
+    if (section.title !== normalized.id) return section;
+    replaced = true;
+    return { title: normalized.id, body: serializeContinuityLoopSection(normalized).split("\n").slice(1).join("\n") };
+  });
+
+  if (!replaced) {
+    nextSections.push({
+      title: normalized.id,
+      body: serializeContinuityLoopSection(normalized).split("\n").slice(1).join("\n"),
+    });
+  }
+
+  return { markdown: joinLoopMarkdown(parsed.header, nextSections), loop: normalized };
+}
+
+export function reviewContinuityLoopInMarkdown(
+  raw: string | null,
+  id: string,
+  input: ContinuityLoopReviewInput,
+  nowIso: string,
+): { markdown: string; loop: ContinuityImprovementLoop | null } {
+  const parsed = splitLoopMarkdown(raw);
+  let updatedLoop: ContinuityImprovementLoop | null = null;
+  const nextSections = parsed.sections.map((section) => {
+    if (section.title !== id) return section;
+    const existing = parseLoopFromSection(section, nowIso);
+    if (!existing) return section;
+    const reviewed = applyContinuityLoopReview(existing, input, nowIso);
+    updatedLoop = reviewed;
+    return { title: reviewed.id, body: serializeContinuityLoopSection(reviewed).split("\n").slice(1).join("\n") };
+  });
+
+  return { markdown: joinLoopMarkdown(parsed.header, nextSections), loop: updatedLoop };
 }
 
 export function applyContinuityLoopReview(

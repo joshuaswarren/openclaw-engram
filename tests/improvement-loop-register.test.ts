@@ -223,3 +223,97 @@ test("storage upsert rejects invalid loop payloads", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("storage upsert preserves legacy freeform sections in improvement-loops markdown", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-loop-legacy-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    await storage.writeIdentityImprovementLoops(
+      [
+        "# Continuity Improvement Loops",
+        "",
+        "## legacy-notes",
+        "This block predates structured fields and must be preserved.",
+        "",
+        "## malformed-loop",
+        "cadence: weekly",
+        "purpose: missing required fields should not be dropped on rewrite",
+        "",
+      ].join("\n"),
+    );
+
+    await storage.upsertIdentityImprovementLoop({
+      id: "weekly-audit",
+      cadence: "weekly",
+      purpose: "Run weekly continuity audit",
+      status: "active",
+      killCondition: "Retire when automated",
+      lastReviewed: "2026-02-27T00:00:00.000Z",
+    });
+
+    const raw = await storage.readIdentityImprovementLoops();
+    assert.ok(raw);
+    assert.match(raw ?? "", /## legacy-notes/);
+    assert.match(raw ?? "", /predates structured fields/);
+    assert.match(raw ?? "", /## malformed-loop/);
+    assert.match(raw ?? "", /missing required fields/);
+    assert.match(raw ?? "", /## weekly-audit/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("continuity_loop_review returns fail-open error on storage exceptions", async () => {
+  const tools = new Map<string, RegisteredTool>();
+  const api = {
+    registerTool(spec: RegisteredTool) {
+      tools.set(spec.name, spec);
+    },
+  };
+  const orchestrator = {
+    config: {
+      defaultNamespace: "default",
+      contextCompressionActionsEnabled: false,
+      feedbackEnabled: false,
+      negativeExamplesEnabled: false,
+      conversationIndexEnabled: false,
+      sharedContextEnabled: false,
+      compoundingEnabled: false,
+      continuityIncidentLoggingEnabled: true,
+      identityContinuityEnabled: true,
+    },
+    qmd: { search: async () => [], searchGlobal: async () => [] },
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    storage: {
+      readIdentity: async () => null,
+      readProfile: async () => null,
+      readAllEntities: async () => [],
+      readIdentityAnchor: async () => null,
+      writeIdentityAnchor: async () => {},
+      appendContinuityIncident: async () => null,
+      closeContinuityIncident: async () => null,
+      readContinuityIncidents: async () => [],
+      upsertIdentityImprovementLoop: async () => {
+        throw new Error("disk unavailable");
+      },
+      reviewIdentityImprovementLoop: async () => {
+        throw new Error("disk unavailable");
+      },
+    },
+    summarizer: { runHourly: async () => {} },
+    transcript: { listSessionKeys: async () => [] },
+    sharedContext: null,
+    compounding: null,
+    recordMemoryFeedback: async () => {},
+    recordNotUsefulMemories: async () => {},
+    requestQmdMaintenanceForTool: () => {},
+    appendMemoryActionEvent: async () => true,
+  };
+
+  registerTools(api as any, orchestrator as any);
+  const reviewTool = tools.get("continuity_loop_review");
+  assert.ok(reviewTool);
+  const result = await reviewTool.execute("tc-fail-open", { id: "weekly-audit" });
+  assert.match(toolText(result), /Failed to review continuity loop/);
+});

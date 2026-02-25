@@ -38,14 +38,14 @@ import type {
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
 import {
-  applyContinuityLoopReview,
   closeContinuityIncidentRecord,
   createContinuityIncidentRecord,
-  normalizeContinuityLoop,
   parseContinuityIncident,
   parseContinuityImprovementLoops,
+  reviewContinuityLoopInMarkdown,
   serializeContinuityIncident,
   serializeContinuityImprovementLoops,
+  upsertContinuityLoopInMarkdown,
 } from "./identity-continuity.js";
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
@@ -1632,28 +1632,21 @@ export class StorageManager {
 
   async upsertIdentityImprovementLoop(input: ContinuityLoopUpsertInput): Promise<ContinuityImprovementLoop> {
     const nowIso = new Date().toISOString();
-    const normalized = normalizeContinuityLoop(input, nowIso);
-    if (!normalized) {
-      throw new Error("Invalid continuity loop input");
-    }
-    const existing = await this.readIdentityImprovementLoopRegister();
-    const next = existing.filter((loop) => loop.id !== normalized.id);
-    next.push(normalized);
-    await this.writeIdentityImprovementLoopRegister(next);
-    return normalized;
+    const raw = await this.readIdentityImprovementLoops();
+    const { markdown, loop } = upsertContinuityLoopInMarkdown(raw, input, nowIso);
+    await this.writeIdentityImprovementLoops(markdown);
+    return loop;
   }
 
   async reviewIdentityImprovementLoop(
     id: string,
     input: ContinuityLoopReviewInput,
   ): Promise<ContinuityImprovementLoop | null> {
-    const loops = await this.readIdentityImprovementLoopRegister();
-    const idx = loops.findIndex((loop) => loop.id === id);
-    if (idx < 0) return null;
-    const updated = applyContinuityLoopReview(loops[idx], input, new Date().toISOString());
-    loops[idx] = updated;
-    await this.writeIdentityImprovementLoopRegister(loops);
-    return updated;
+    const raw = await this.readIdentityImprovementLoops();
+    const { markdown, loop } = reviewContinuityLoopInMarkdown(raw, id, input, new Date().toISOString());
+    if (!loop) return null;
+    await this.writeIdentityImprovementLoops(markdown);
+    return loop;
   }
 
   // ---------------------------------------------------------------------------
