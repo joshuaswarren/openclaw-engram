@@ -144,7 +144,7 @@ function isValidIso(value: string): boolean {
   return Number.isFinite(ts);
 }
 
-export function normalizeContinuityLoop(
+function normalizeContinuityLoop(
   input: ContinuityLoopUpsertInput | ContinuityImprovementLoop,
   nowIso: string,
 ): ContinuityImprovementLoop | null {
@@ -226,6 +226,9 @@ function parseLoopFromSection(section: MarkdownSection, nowIso: string): Continu
     if (!kv) continue;
     fields[kv[1]] = kv[2];
   }
+  const parsedLastReviewed = normalizeLoopField(fields.lastReviewed);
+  const safeLastReviewed =
+    parsedLastReviewed && isValidIso(parsedLastReviewed) ? parsedLastReviewed : STALE_LAST_REVIEWED_FALLBACK;
   return normalizeContinuityLoop(
     {
       id: section.title,
@@ -233,7 +236,7 @@ function parseLoopFromSection(section: MarkdownSection, nowIso: string): Continu
       purpose: fields.purpose ?? "",
       status: (fields.status ?? "") as ContinuityLoopStatus,
       killCondition: fields.killCondition ?? "",
-      lastReviewed: fields.lastReviewed ?? STALE_LAST_REVIEWED_FALLBACK,
+      lastReviewed: safeLastReviewed,
       notes: fields.notes,
     },
     nowIso,
@@ -312,7 +315,7 @@ export function reviewContinuityLoopInMarkdown(
   return { markdown: joinLoopMarkdown(parsed.header, nextSections), loop: updatedLoop };
 }
 
-export function applyContinuityLoopReview(
+function applyContinuityLoopReview(
   existing: ContinuityImprovementLoop,
   input: ContinuityLoopReviewInput,
   nowIso: string,

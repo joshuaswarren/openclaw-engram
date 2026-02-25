@@ -252,6 +252,41 @@ test("continuity audit treats missing loop lastReviewed as stale", async () => {
   assert.match(md, /Stale active continuity loops: weekly-audit/);
 });
 
+test("continuity audit treats invalid loop lastReviewed as stale", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-invalid-reviewed");
+  const sharedDir = tmpDir("engram-continuity-audit-invalid-reviewed-shared");
+  await mkdir(path.join(memoryDir, "identity"), { recursive: true });
+  await mkdir(path.join(memoryDir, "identity", "incidents"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  await writeFile(
+    path.join(memoryDir, "identity", "identity-anchor.md"),
+    "# Identity Continuity Anchor\n",
+    "utf-8",
+  );
+  await writeFile(
+    path.join(memoryDir, "identity", "improvement-loops.md"),
+    [
+      "# Continuity Improvement Loops",
+      "",
+      "## weekly-audit",
+      "cadence: weekly",
+      "purpose: run continuity audit",
+      "status: active",
+      "killCondition: automated checks replace manual loop",
+      "lastReviewed: 2026-13-01",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(minimalConfig(memoryDir, sharedDir));
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W09" });
+  const md = await readFile(res.reportPath, "utf-8");
+  assert.match(md, /Stale active loops: 1/);
+  assert.match(md, /Stale active continuity loops: weekly-audit/);
+});
+
 test("continuity_audit_generate tool is config-gated and returns report path", async () => {
   type RegisteredTool = {
     name: string;
