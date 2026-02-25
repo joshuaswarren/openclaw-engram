@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { log } from "./logger.js";
 import type { SessionObserverBandConfig } from "./types.js";
 import { cloneDefaultSessionObserverBands } from "./session-observer-bands.js";
@@ -72,6 +72,7 @@ export function normalizeObserverBands(
 
 export class SessionObserverState {
   private readonly statePath: string;
+  private readonly lockPath: string;
   private readonly debounceMs: number;
   private readonly bands: SessionObserverBandConfig[];
   private sessions = new Map<string, SessionObserverCursor>();
@@ -114,8 +115,29 @@ export class SessionObserverState {
     bands: SessionObserverBandConfig[];
   }) {
     this.statePath = path.join(opts.memoryDir, "state", "session-observer-state.json");
+    this.lockPath = path.join(opts.memoryDir, "state", "session-observer-state.lock");
     this.debounceMs = Math.max(0, Math.floor(opts.debounceMs));
     this.bands = normalizeObserverBands(opts.bands);
+  }
+
+  private async withSaveLock(fn: () => Promise<void>): Promise<void> {
+    await mkdir(path.dirname(this.lockPath), { recursive: true });
+    for (let attempt = 0; attempt < 80; attempt++) {
+      try {
+        const handle = await open(this.lockPath, "wx");
+        try {
+          await fn();
+        } finally {
+          await handle.close();
+          await unlink(this.lockPath).catch(() => {});
+        }
+        return;
+      } catch (err: any) {
+        if (err?.code !== "EEXIST") throw err;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    log.debug("session observer save lock timeout");
   }
 
   async load(): Promise<void> {
@@ -128,44 +150,46 @@ export class SessionObserverState {
   }
 
   async save(): Promise<void> {
-    const merged = new Map<string, SessionObserverCursor>();
-    const persisted = await this.readPersistedState();
-    if (persisted) {
-      for (const [key, value] of this.normalizePersistedSessions(persisted.sessions).entries()) {
-        merged.set(key, value);
-      }
-    }
-    for (const [key, current] of this.sessions.entries()) {
-      const existing = merged.get(key);
-      if (!existing) {
-        merged.set(key, current);
-        continue;
-      }
-      const currentObserved = parseIsoMs(current.lastObservedAt);
-      const existingObserved = parseIsoMs(existing.lastObservedAt);
-      if (currentObserved > existingObserved) {
-        merged.set(key, current);
-        continue;
-      }
-      if (currentObserved < existingObserved) {
-        continue;
-      }
-      const currentTriggered = parseIsoMs(current.lastTriggeredAt);
-      const existingTriggered = parseIsoMs(existing.lastTriggeredAt);
-      if (currentTriggered >= existingTriggered) {
-        merged.set(key, current);
-      }
-    }
-    this.sessions = merged;
-
-    const sessions: Record<string, SessionObserverCursor> = {};
-    for (const [key, value] of merged.entries()) {
-      sessions[key] = value;
-    }
-    const payload: SessionObserverPersistedState = { version: 1, sessions };
     try {
-      await mkdir(path.dirname(this.statePath), { recursive: true });
-      await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
+      await this.withSaveLock(async () => {
+        const merged = new Map<string, SessionObserverCursor>();
+        const persisted = await this.readPersistedState();
+        if (persisted) {
+          for (const [key, value] of this.normalizePersistedSessions(persisted.sessions).entries()) {
+            merged.set(key, value);
+          }
+        }
+        for (const [key, current] of this.sessions.entries()) {
+          const existing = merged.get(key);
+          if (!existing) {
+            merged.set(key, current);
+            continue;
+          }
+          const currentObserved = parseIsoMs(current.lastObservedAt);
+          const existingObserved = parseIsoMs(existing.lastObservedAt);
+          if (currentObserved > existingObserved) {
+            merged.set(key, current);
+            continue;
+          }
+          if (currentObserved < existingObserved) {
+            continue;
+          }
+          const currentTriggered = parseIsoMs(current.lastTriggeredAt);
+          const existingTriggered = parseIsoMs(existing.lastTriggeredAt);
+          if (currentTriggered >= existingTriggered) {
+            merged.set(key, current);
+          }
+        }
+        this.sessions = merged;
+
+        const sessions: Record<string, SessionObserverCursor> = {};
+        for (const [key, value] of merged.entries()) {
+          sessions[key] = value;
+        }
+        const payload: SessionObserverPersistedState = { version: 1, sessions };
+        await mkdir(path.dirname(this.statePath), { recursive: true });
+        await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
+      });
     } catch (err) {
       log.debug(`session observer state write failed: ${err}`);
     }
