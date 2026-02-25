@@ -40,16 +40,6 @@ export interface ReplayNormalizer {
   parse(input: unknown, options?: ReplayParseOptions): Promise<ReplayParseResult> | ReplayParseResult;
 }
 
-export class ReplayValidationError extends Error {
-  readonly issues: ReplayValidationIssue[];
-
-  constructor(message: string, issues: ReplayValidationIssue[]) {
-    super(message);
-    this.name = "ReplayValidationError";
-    this.issues = issues;
-  }
-}
-
 const VALID_SOURCES: ReadonlySet<string> = new Set(["openclaw", "claude", "chatgpt"]);
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant"]);
 const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
