@@ -72,6 +72,7 @@ export class SessionObserverState {
   private readonly debounceMs: number;
   private readonly bands: SessionObserverBandConfig[];
   private sessions = new Map<string, SessionObserverCursor>();
+  private saveQueue: Promise<void> = Promise.resolve();
 
   constructor(opts: {
     memoryDir: string;
@@ -123,6 +124,11 @@ export class SessionObserverState {
     }
   }
 
+  private enqueueSave(): Promise<void> {
+    this.saveQueue = this.saveQueue.then(() => this.save());
+    return this.saveQueue;
+  }
+
   private bandForTotalBytes(totalBytes: number): SessionObserverBandConfig {
     const bytes = sanitizeNonNegativeInt(totalBytes);
     for (const band of this.bands) {
@@ -145,7 +151,7 @@ export class SessionObserverState {
         cursorTokens: totalTokens,
         lastObservedAt: nowIso,
       });
-      await this.save();
+      await this.enqueueSave();
       return {
         triggered: false,
         deltaBytes: 0,
@@ -161,7 +167,7 @@ export class SessionObserverState {
       session.cursorTokens = totalTokens;
       session.lastObservedAt = nowIso;
       this.sessions.set(input.sessionKey, session);
-      await this.save();
+      await this.enqueueSave();
       return { triggered: false, deltaBytes: 0, deltaTokens: 0, band, reason: "baseline" };
     }
 
@@ -173,6 +179,7 @@ export class SessionObserverState {
 
     if (!crossedThreshold) {
       this.sessions.set(input.sessionKey, session);
+      await this.enqueueSave();
       return {
         triggered: false,
         deltaBytes,
@@ -188,6 +195,7 @@ export class SessionObserverState {
 
     if (withinDebounce) {
       this.sessions.set(input.sessionKey, session);
+      await this.enqueueSave();
       return {
         triggered: false,
         deltaBytes,
@@ -201,7 +209,7 @@ export class SessionObserverState {
     session.cursorBytes = totalBytes;
     session.cursorTokens = totalTokens;
     this.sessions.set(input.sessionKey, session);
-    await this.save();
+    await this.enqueueSave();
     return {
       triggered: true,
       deltaBytes,
