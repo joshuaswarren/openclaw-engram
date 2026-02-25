@@ -101,8 +101,14 @@ export async function runReplayWithNormalizer(
   options: ReplayRunOptions = {},
 ): Promise<ReplayRunSummary> {
   const parseResult = await normalizer.parse(input, options);
+  if (!parseResult || typeof parseResult !== "object") {
+    throw new Error(`replay normalizer '${normalizer.source}' returned invalid parse result object`);
+  }
   if (!Array.isArray(parseResult.turns)) {
     throw new Error(`replay normalizer '${normalizer.source}' returned invalid parse result: turns must be an array`);
+  }
+  if (parseResult.warnings != null && !Array.isArray(parseResult.warnings)) {
+    throw new Error(`replay normalizer '${normalizer.source}' returned invalid parse result: warnings must be an array`);
   }
   const warnings: ReplayWarning[] = [...(parseResult.warnings ?? [])];
   const parsedTurns = parseResult.turns;

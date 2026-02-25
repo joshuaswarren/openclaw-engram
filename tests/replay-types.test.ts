@@ -187,6 +187,34 @@ test("runReplayWithNormalizer rejects parse results without turns arrays", async
   );
 });
 
+test("runReplayWithNormalizer rejects non-object parse results", async () => {
+  const badNormalizer: ReplayNormalizer = {
+    source: "openclaw",
+    parse: () => null as any,
+  };
+
+  await assert.rejects(
+    async () => runReplayWithNormalizer(badNormalizer, {}, {}, {}),
+    /invalid parse result object/,
+  );
+});
+
+test("runReplayWithNormalizer rejects non-array warning payloads", async () => {
+  const badNormalizer: ReplayNormalizer = {
+    source: "openclaw",
+    parse: () =>
+      ({
+        warnings: "oops",
+        turns: [],
+      }) as any,
+  };
+
+  await assert.rejects(
+    async () => runReplayWithNormalizer(badNormalizer, {}, {}, {}),
+    /warnings must be an array/,
+  );
+});
+
 test("runReplayWithNormalizer rejects turns emitted for a different source", async () => {
   const normalizer: ReplayNormalizer = {
     source: "openclaw",
