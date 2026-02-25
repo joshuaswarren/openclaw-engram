@@ -1,0 +1,188 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildReplayNormalizerRegistry,
+  runReplay,
+  runReplayWithNormalizer,
+} from "../src/replay/runner.ts";
+import type { ReplayNormalizer } from "../src/replay/types.ts";
+import { parseIsoTimestamp, validateReplayTurn } from "../src/replay/types.ts";
+
+test("validateReplayTurn accepts canonical replay turns", () => {
+  const issues = validateReplayTurn({
+    source: "openclaw",
+    sessionKey: "agent:generalist:main",
+    role: "user",
+    content: "hello",
+    timestamp: "2026-02-25T00:00:00.000Z",
+  });
+  assert.equal(issues.length, 0);
+});
+
+test("validateReplayTurn rejects malformed replay turns", () => {
+  const issues = validateReplayTurn({
+    source: "openclaw" as any,
+    sessionKey: "",
+    role: "system" as any,
+    content: "",
+    timestamp: "not-a-date",
+  });
+  assert.equal(issues.length >= 3, true);
+});
+
+test("parseIsoTimestamp returns epoch for valid timestamps", () => {
+  const epoch = parseIsoTimestamp("2026-02-25T00:00:00.000Z");
+  assert.equal(typeof epoch, "number");
+});
+
+test("runReplayWithNormalizer applies validation, range, offset, max and dry-run", async () => {
+  const normalizer: ReplayNormalizer = {
+    source: "openclaw",
+    parse: async () => ({
+      warnings: [{ code: "raw.warning", message: "source warning" }],
+      turns: [
+        {
+          source: "openclaw",
+          sessionKey: "agent:generalist:main",
+          role: "assistant",
+          content: "late",
+          timestamp: "2026-02-25T12:00:00.000Z",
+        },
+        {
+          source: "openclaw",
+          sessionKey: "agent:generalist:main",
+          role: "invalid",
+          content: "bad",
+          timestamp: "2026-02-25T11:00:00.000Z",
+        } as any,
+        {
+          source: "openclaw",
+          sessionKey: "agent:generalist:main",
+          role: "user",
+          content: "middle",
+          timestamp: "2026-02-25T10:00:00.000Z",
+        },
+        {
+          source: "openclaw",
+          sessionKey: "agent:generalist:main",
+          role: "assistant",
+          content: "early",
+          timestamp: "2026-02-25T09:00:00.000Z",
+        },
+      ],
+    }),
+  };
+
+  let onTurnCalls = 0;
+  const summary = await runReplayWithNormalizer(
+    normalizer,
+    {},
+    {
+      onTurn: async () => {
+        onTurnCalls += 1;
+      },
+    },
+    {
+      dryRun: true,
+      from: "2026-02-25T09:30:00.000Z",
+      to: "2026-02-25T12:00:00.000Z",
+      startOffset: 1,
+      maxTurns: 1,
+      batchSize: 2,
+    },
+  );
+
+  assert.equal(onTurnCalls, 0);
+  assert.equal(summary.parsedTurns, 4);
+  assert.equal(summary.invalidTurns, 1);
+  assert.equal(summary.filteredByDate, 1);
+  assert.equal(summary.skippedByOffset, 1);
+  assert.equal(summary.processedTurns, 1);
+  assert.equal(summary.batchCount, 1);
+  assert.equal(summary.firstTimestamp, "2026-02-25T12:00:00.000Z");
+  assert.equal(summary.nextOffset, 2);
+  assert.equal(summary.warnings.length >= 2, true);
+});
+
+test("runReplayWithNormalizer processes in batches and calls handlers", async () => {
+  const normalizer: ReplayNormalizer = {
+    source: "claude",
+    parse: () => ({
+      warnings: [],
+      turns: [
+        {
+          source: "claude",
+          sessionKey: "agent:generalist:main",
+          role: "user",
+          content: "1",
+          timestamp: "2026-02-25T09:00:00.000Z",
+        },
+        {
+          source: "claude",
+          sessionKey: "agent:generalist:main",
+          role: "assistant",
+          content: "2",
+          timestamp: "2026-02-25T09:01:00.000Z",
+        },
+        {
+          source: "claude",
+          sessionKey: "agent:generalist:main",
+          role: "user",
+          content: "3",
+          timestamp: "2026-02-25T09:02:00.000Z",
+        },
+      ],
+    }),
+  };
+
+  const batches: number[] = [];
+  let turns = 0;
+  const summary = await runReplayWithNormalizer(
+    normalizer,
+    {},
+    {
+      onBatch: async (batch) => {
+        batches.push(batch.length);
+      },
+      onTurn: async () => {
+        turns += 1;
+      },
+    },
+    { batchSize: 2 },
+  );
+
+  assert.deepEqual(batches, [2, 1]);
+  assert.equal(turns, 3);
+  assert.equal(summary.batchCount, 2);
+  assert.equal(summary.processedTurns, 3);
+});
+
+test("buildReplayNormalizerRegistry rejects duplicates and runReplay resolves normalizers", async () => {
+  const openclaw: ReplayNormalizer = {
+    source: "openclaw",
+    parse: () => ({
+      warnings: [],
+      turns: [
+        {
+          source: "openclaw",
+          sessionKey: "agent:generalist:main",
+          role: "user",
+          content: "ok",
+          timestamp: "2026-02-25T00:00:00.000Z",
+        },
+      ],
+    }),
+  };
+  const claude: ReplayNormalizer = {
+    source: "claude",
+    parse: () => ({ warnings: [], turns: [] }),
+  };
+  const registry = buildReplayNormalizerRegistry([openclaw, claude]);
+  const summary = await runReplay("openclaw", {}, registry, {}, {});
+  assert.equal(summary.processedTurns, 1);
+
+  assert.throws(
+    () => buildReplayNormalizerRegistry([openclaw, { ...openclaw }]),
+    /duplicate replay normalizer/,
+  );
+});
