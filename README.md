@@ -86,6 +86,7 @@ kill -USR1 $(pgrep openclaw-gateway)
 | [Shared Context](docs/shared-context.md) | Cross-agent shared intelligence |
 | [Compounding](docs/compounding.md) | Weekly synthesis and mistake learning |
 | [Context Retention](docs/context-retention.md) | Transcript indexing and hourly summaries |
+| [Identity Continuity](docs/identity-continuity.md) | Anchor/incidents/audits/loop register templates and rollout |
 
 ## Requirements
 

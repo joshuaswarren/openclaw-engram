@@ -25,6 +25,7 @@
 - [Namespaces](namespaces.md) — Multi-agent memory isolation (v3.0)
 - [Shared Context](shared-context.md) — Cross-agent shared intelligence (v4.0)
 - [Compounding](compounding.md) — Weekly synthesis and mistake learning (v5.0)
+- [Identity Continuity](identity-continuity.md) — Continuity artifacts, templates, and rollout safety model (v8.4)
 
 ## Plans / Roadmaps
 
