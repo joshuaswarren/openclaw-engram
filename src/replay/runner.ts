@@ -101,14 +101,24 @@ export async function runReplayWithNormalizer(
   options: ReplayRunOptions = {},
 ): Promise<ReplayRunSummary> {
   const parseResult = await normalizer.parse(input, options);
+  if (!Array.isArray(parseResult.turns)) {
+    throw new Error(`replay normalizer '${normalizer.source}' returned invalid parse result: turns must be an array`);
+  }
   const warnings: ReplayWarning[] = [...(parseResult.warnings ?? [])];
-  const parsedTurns = Array.isArray(parseResult.turns) ? parseResult.turns : [];
+  const parsedTurns = parseResult.turns;
 
   const validTurns: ReplayTurn[] = [];
   let invalidTurns = 0;
   for (let i = 0; i < parsedTurns.length; i += 1) {
     const turn = parsedTurns[i];
     const issues = validateReplayTurn(turn, i);
+    if (issues.length === 0 && turn.source !== normalizer.source) {
+      issues.push({
+        code: "turn.source.mismatch",
+        message: `Replay turn source '${turn.source}' does not match normalizer source '${normalizer.source}'.`,
+        index: i,
+      });
+    }
     if (issues.length > 0) {
       invalidTurns += 1;
       for (const issue of issues) warnings.push(toWarning(issue));

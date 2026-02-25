@@ -175,6 +175,41 @@ test("runReplayWithNormalizer processes in batches and calls handlers", async ()
   assert.equal(summary.processedTurns, 3);
 });
 
+test("runReplayWithNormalizer rejects parse results without turns arrays", async () => {
+  const badNormalizer: ReplayNormalizer = {
+    source: "openclaw",
+    parse: () => ({ warnings: [] } as any),
+  };
+
+  await assert.rejects(
+    async () => runReplayWithNormalizer(badNormalizer, {}, {}, {}),
+    /turns must be an array/,
+  );
+});
+
+test("runReplayWithNormalizer rejects turns emitted for a different source", async () => {
+  const normalizer: ReplayNormalizer = {
+    source: "openclaw",
+    parse: () => ({
+      warnings: [],
+      turns: [
+        {
+          source: "claude",
+          sessionKey: "agent:generalist:main",
+          role: "user",
+          content: "wrong source",
+          timestamp: "2026-02-25T00:00:00.000Z",
+        },
+      ],
+    }),
+  };
+
+  const summary = await runReplayWithNormalizer(normalizer, {}, {}, {});
+  assert.equal(summary.invalidTurns, 1);
+  assert.equal(summary.processedTurns, 0);
+  assert.equal(summary.warnings.some((warning) => warning.code === "turn.source.mismatch"), true);
+});
+
 test("buildReplayNormalizerRegistry rejects duplicates and runReplay resolves normalizers", async () => {
   const openclaw: ReplayNormalizer = {
     source: "openclaw",
