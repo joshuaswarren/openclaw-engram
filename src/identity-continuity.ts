@@ -130,6 +130,7 @@ export function closeContinuityIncidentRecord(
 const LOOP_HEADER = "# Continuity Improvement Loops";
 const LOOP_CADENCES = new Set<ContinuityLoopCadence>(["daily", "weekly", "monthly", "quarterly"]);
 const LOOP_STATUSES = new Set<ContinuityLoopStatus>(["active", "paused", "retired"]);
+const STALE_LAST_REVIEWED_FALLBACK = "1970-01-01T00:00:00.000Z";
 
 function normalizeLoopField(value: string | undefined): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -248,7 +249,7 @@ function parseLoopFromSection(section: MarkdownSection, nowIso: string): Continu
       purpose: fields.purpose ?? "",
       status: (fields.status ?? "") as ContinuityLoopStatus,
       killCondition: fields.killCondition ?? "",
-      lastReviewed: fields.lastReviewed,
+      lastReviewed: fields.lastReviewed ?? STALE_LAST_REVIEWED_FALLBACK,
       notes: fields.notes,
     },
     nowIso,
@@ -285,7 +286,7 @@ export function parseContinuityImprovementLoops(raw: string): ContinuityImprovem
         purpose: fields.purpose ?? "",
         status: (fields.status ?? "") as ContinuityLoopStatus,
         killCondition: fields.killCondition ?? "",
-        lastReviewed: fields.lastReviewed,
+        lastReviewed: fields.lastReviewed ?? STALE_LAST_REVIEWED_FALLBACK,
         notes: fields.notes,
       },
       new Date().toISOString(),
@@ -344,9 +345,13 @@ export function reviewContinuityLoopInMarkdown(
   nowIso: string,
 ): { markdown: string; loop: ContinuityImprovementLoop | null } {
   const parsed = splitLoopMarkdown(raw);
+  const normalizedId = normalizeLoopField(id);
+  if (!normalizedId) {
+    return { markdown: joinLoopMarkdown(parsed.header, parsed.sections), loop: null };
+  }
   let updatedLoop: ContinuityImprovementLoop | null = null;
   const nextSections = parsed.sections.map((section) => {
-    if (section.title !== id) return section;
+    if (section.title !== normalizedId) return section;
     const existing = parseLoopFromSection(section, nowIso);
     if (!existing) return section;
     const reviewed = applyContinuityLoopReview(existing, input, nowIso);

@@ -264,6 +264,32 @@ test("storage upsert preserves legacy freeform sections in improvement-loops mar
   }
 });
 
+test("review normalizes loop id spacing to match canonicalized upsert ids", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-loop-id-normalize-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    await storage.upsertIdentityImprovementLoop({
+      id: "weekly   audit",
+      cadence: "weekly",
+      purpose: "Run weekly continuity audit",
+      status: "active",
+      killCondition: "Retire when automated",
+      lastReviewed: "2026-02-26T00:00:00.000Z",
+    });
+
+    const reviewed = await storage.reviewIdentityImprovementLoop("weekly   audit", {
+      notes: "reviewed with original spacing",
+      reviewedAt: "2026-02-27T00:00:00.000Z",
+    });
+    assert.ok(reviewed);
+    assert.equal(reviewed?.id, "weekly audit");
+    assert.equal(reviewed?.notes, "reviewed with original spacing");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("continuity_loop_review returns fail-open error on storage exceptions", async () => {
   const tools = new Map<string, RegisteredTool>();
   const api = {
