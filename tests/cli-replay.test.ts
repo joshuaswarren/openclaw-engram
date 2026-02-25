@@ -90,3 +90,76 @@ test("runReplayCliCommand enqueues batches and can run consolidation", async () 
   assert.equal(waitCalls, 1);
   assert.equal(consolidationCalls, 1);
 });
+
+test("runReplayCliCommand partitions mixed-session batches before ingest", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-replay-session-split-"));
+  const inputPath = path.join(dir, "replay.jsonl");
+  const raw = [
+    JSON.stringify({
+      timestamp: "2026-02-25T10:00:00.000Z",
+      role: "user",
+      content: "a1",
+      sessionKey: "agent:a",
+    }),
+    JSON.stringify({
+      timestamp: "2026-02-25T10:00:01.000Z",
+      role: "assistant",
+      content: "a2",
+      sessionKey: "agent:a",
+    }),
+    JSON.stringify({
+      timestamp: "2026-02-25T10:00:02.000Z",
+      role: "user",
+      content: "b1",
+      sessionKey: "agent:b",
+    }),
+  ].join("\n");
+  await writeFile(inputPath, raw, "utf-8");
+
+  const sessionKeysByCall: string[][] = [];
+  const orchestrator: ReplayCliOrchestrator = {
+    async ingestReplayBatch(turns) {
+      sessionKeysByCall.push(Array.from(new Set(turns.map((turn) => turn.sessionKey))).sort());
+    },
+    async waitForExtractionIdle() {
+      return true;
+    },
+    async runConsolidationNow() {
+      return { memoriesProcessed: 0, merged: 0, invalidated: 0 };
+    },
+  };
+
+  const summary = await runReplayCliCommand(orchestrator, {
+    source: "openclaw",
+    inputPath,
+    batchSize: 10,
+  });
+
+  assert.equal(summary.processedTurns, 3);
+  assert.deepEqual(sessionKeysByCall, [["agent:a"], ["agent:b"]]);
+});
+
+test("runReplayCliCommand throws when extraction queue does not become idle", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-replay-timeout-"));
+  const inputPath = path.join(dir, "replay.jsonl");
+  await writeFile(inputPath, openclawJsonlSample(), "utf-8");
+
+  const orchestrator: ReplayCliOrchestrator = {
+    async ingestReplayBatch() {},
+    async waitForExtractionIdle() {
+      return false;
+    },
+    async runConsolidationNow() {
+      return { memoriesProcessed: 0, merged: 0, invalidated: 0 };
+    },
+  };
+
+  await assert.rejects(
+    async () =>
+      runReplayCliCommand(orchestrator, {
+        source: "openclaw",
+        inputPath,
+      }),
+    /did not become idle before timeout/,
+  );
+});

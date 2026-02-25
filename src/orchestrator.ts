@@ -898,15 +898,16 @@ export class Orchestrator {
     return this.runConsolidation();
   }
 
-  async waitForExtractionIdle(timeoutMs: number = 60_000): Promise<void> {
+  async waitForExtractionIdle(timeoutMs: number = 60_000): Promise<boolean> {
     const started = Date.now();
     while (this.queueProcessing || this.extractionQueue.length > 0) {
       if (Date.now() - started > timeoutMs) {
         log.warn(`waitForExtractionIdle timed out after ${timeoutMs}ms`);
-        return;
+        return false;
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    return true;
   }
 
   async getStorage(namespace?: string): Promise<StorageManager> {
@@ -2248,17 +2249,29 @@ export class Orchestrator {
   async ingestReplayBatch(turns: ReplayTurn[]): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) return;
 
-    const bufferedTurns: BufferTurn[] = turns
-      .filter((turn) => turn.role === "user" || turn.role === "assistant")
-      .map((turn) => ({
+    const bySession = new Map<string, BufferTurn[]>();
+    for (const turn of turns) {
+      if (turn.role !== "user" && turn.role !== "assistant") continue;
+      const key = typeof turn.sessionKey === "string" && turn.sessionKey.trim().length > 0
+        ? turn.sessionKey.trim()
+        : "replay:unknown";
+      const list = bySession.get(key) ?? [];
+      list.push({
         role: turn.role,
         content: turn.content,
         timestamp: turn.timestamp,
-        sessionKey: turn.sessionKey,
-      }));
+        sessionKey: key,
+      });
+      bySession.set(key, list);
+    }
 
-    if (bufferedTurns.length === 0) return;
-    await this.queueBufferedExtraction(bufferedTurns, "trigger_mode", { skipDedupeCheck: true });
+    for (const sessionTurns of bySession.values()) {
+      if (sessionTurns.length === 0) continue;
+      await this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
+        skipDedupeCheck: true,
+        clearBufferAfterExtraction: false,
+      });
+    }
   }
 
   async observeSessionHeartbeat(sessionKey: string): Promise<void> {
@@ -2306,7 +2319,7 @@ export class Orchestrator {
   private async queueBufferedExtraction(
     turnsToExtract: BufferTurn[],
     reason: "trigger_mode" | "heartbeat_observer",
-    options: { skipDedupeCheck?: boolean } = {},
+    options: { skipDedupeCheck?: boolean; clearBufferAfterExtraction?: boolean } = {},
   ): Promise<void> {
     if (!options.skipDedupeCheck && !this.shouldQueueExtraction(turnsToExtract)) {
       log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
@@ -2314,7 +2327,9 @@ export class Orchestrator {
     }
 
     this.extractionQueue.push(async () => {
-      await this.runExtraction(turnsToExtract);
+      await this.runExtraction(turnsToExtract, {
+        clearBufferAfterExtraction: options.clearBufferAfterExtraction !== false,
+      });
     });
 
     if (!this.queueProcessing) {
@@ -2385,14 +2400,23 @@ export class Orchestrator {
     this.queueProcessing = false;
   }
 
-  private async runExtraction(turns: BufferTurn[]): Promise<void> {
+  private async runExtraction(
+    turns: BufferTurn[],
+    options: { clearBufferAfterExtraction?: boolean } = {},
+  ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
+    const clearBufferAfterExtraction = options.clearBufferAfterExtraction !== false;
+    const clearBuffer = async () => {
+      if (clearBufferAfterExtraction) {
+        await this.buffer.clearAfterExtraction();
+      }
+    };
 
     // Skip extraction for cron job sessions - these are system operations, not user conversations
     const sessionKey = turns[0]?.sessionKey ?? "";
     if (sessionKey.includes(":cron:")) {
       log.debug(`skipping extraction for cron session: ${sessionKey}`);
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
 
@@ -2413,7 +2437,7 @@ export class Orchestrator {
       log.debug(
         `skipping extraction: below threshold (totalChars=${totalChars}, userTurns=${userTurns.length})`,
       );
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
 
@@ -2428,12 +2452,12 @@ export class Orchestrator {
     // Defensive: validate extraction result before processing
     if (!result) {
       log.warn("runExtraction: extraction returned null/undefined");
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
     if (!Array.isArray(result.facts)) {
       log.warn("runExtraction: extraction returned invalid facts (not an array)", { factsType: typeof result.facts, resultKeys: Object.keys(result) });
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
     if (
@@ -2443,7 +2467,7 @@ export class Orchestrator {
       result.profileUpdates.length === 0
     ) {
       log.debug("runExtraction: extraction produced no durable outputs; skipping persistence");
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
 
@@ -2459,7 +2483,7 @@ export class Orchestrator {
     }
 
     const persistedIds = await this.persistExtraction(result, storage, threadIdForExtraction);
-    await this.buffer.clearAfterExtraction();
+    await clearBuffer();
 
     // Build memory box from this extraction (v8.0 Phase 2A)
     // Topics are derived from the current extraction's facts and entities only —

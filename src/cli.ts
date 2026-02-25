@@ -138,7 +138,7 @@ export interface ReplayCliCommandOptions {
 
 export interface ReplayCliOrchestrator {
   ingestReplayBatch(turns: ReplayTurn[]): Promise<void>;
-  waitForExtractionIdle(timeoutMs?: number): Promise<void>;
+  waitForExtractionIdle(timeoutMs?: number): Promise<boolean | void>;
   runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }>;
 }
 
@@ -159,7 +159,16 @@ export async function runReplayCliCommand(
     registry,
     {
       onBatch: async (batch) => {
-        await orchestrator.ingestReplayBatch(batch);
+        const bySession = new Map<string, ReplayTurn[]>();
+        for (const turn of batch) {
+          const key = turn.sessionKey.trim();
+          const turns = bySession.get(key) ?? [];
+          turns.push(turn);
+          bySession.set(key, turns);
+        }
+        for (const turns of bySession.values()) {
+          await orchestrator.ingestReplayBatch(turns);
+        }
       },
     },
     {
@@ -175,7 +184,10 @@ export async function runReplayCliCommand(
   );
 
   if (!summary.dryRun) {
-    await orchestrator.waitForExtractionIdle();
+    const becameIdle = await orchestrator.waitForExtractionIdle();
+    if (becameIdle === false) {
+      throw new Error("replay extraction queue did not become idle before timeout");
+    }
     if (options.runConsolidation === true) {
       await orchestrator.runConsolidationNow();
     }
