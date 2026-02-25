@@ -197,26 +197,26 @@ Recommended starter policy:
   "sharedNamespace": "shared",
   "principalFromSessionKeyMode": "prefix",
   "principalFromSessionKeyRules": [
-    { "match": "agent:generalist:", "principal": "generalist" },
-    { "match": "agent:main:", "principal": "main" }
+    { "match": "agent:<agent-id-1>:", "principal": "<agent-id-1>" },
+    { "match": "agent:<agent-id-2>:", "principal": "<agent-id-2>" }
   ],
   "namespacePolicies": [
     {
-      "name": "generalist",
-      "readPrincipals": ["generalist", "main"],
-      "writePrincipals": ["generalist"],
+      "name": "<agent-id-1>",
+      "readPrincipals": ["<agent-id-1>", "<agent-id-2>"],
+      "writePrincipals": ["<agent-id-1>"],
       "includeInRecallByDefault": true
     },
     {
-      "name": "main",
-      "readPrincipals": ["main"],
-      "writePrincipals": ["main"],
+      "name": "<agent-id-2>",
+      "readPrincipals": ["<agent-id-2>"],
+      "writePrincipals": ["<agent-id-2>"],
       "includeInRecallByDefault": true
     },
     {
       "name": "shared",
       "readPrincipals": ["*"],
-      "writePrincipals": ["generalist", "main"],
+      "writePrincipals": ["<agent-id-1>", "<agent-id-2>"],
       "includeInRecallByDefault": true
     }
   ],

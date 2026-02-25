@@ -246,6 +246,23 @@ export default {
     );
 
     // ========================================================================
+    // HOOK: agent_heartbeat — Observe active session growth (non-blocking)
+    // ========================================================================
+    api.on(
+      "agent_heartbeat",
+      (
+        _event: Record<string, unknown>,
+        ctx: Record<string, unknown>,
+      ) => {
+        if (orchestrator.config.sessionObserverEnabled !== true) return;
+        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        void orchestrator.observeSessionHeartbeat(sessionKey).catch((err) => {
+          log.debug(`agent_heartbeat observer failed: ${err}`);
+        });
+      },
+    );
+
+    // ========================================================================
     // HOOK: before_compaction — Save checkpoint before context is lost
     // ========================================================================
     api.on(

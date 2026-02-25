@@ -19,6 +19,7 @@ import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
+import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
@@ -503,6 +504,7 @@ export class Orchestrator {
   readonly compounding?: CompoundingEngine;
   readonly buffer: SmartBuffer;
   readonly transcript: TranscriptManager;
+  readonly sessionObserver: SessionObserverState;
   readonly summarizer: HourlySummarizer;
   readonly localLlm: LocalLlmClient;
   readonly modelRegistry: ModelRegistry;
@@ -600,6 +602,11 @@ export class Orchestrator {
     this.relevance = new RelevanceStore(config.memoryDir);
     this.negatives = new NegativeExampleStore(config.memoryDir);
     this.lastRecall = new LastRecallStore(config.memoryDir);
+    this.sessionObserver = new SessionObserverState({
+      memoryDir: config.memoryDir,
+      debounceMs: config.sessionObserverDebounceMs ?? 120_000,
+      bands: config.sessionObserverBands ?? [],
+    });
     this.embeddingFallback = new EmbeddingFallback(config);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
@@ -737,6 +744,7 @@ export class Orchestrator {
     await this.relevance.load();
     await this.negatives.load();
     await this.lastRecall.load();
+    await this.sessionObserver.load();
 
     // Initialize content-hash dedup index
     if (this.config.factDeduplicationEnabled) {
@@ -2232,20 +2240,40 @@ export class Orchestrator {
     const decision = await this.buffer.addTurn(turn);
 
     if (decision === "keep_buffering") return;
+    await this.queueBufferedExtraction(this.buffer.getTurns(), "trigger_mode");
+  }
 
-    // Queue extraction for background processing (agent_end returns immediately)
-    // Capture the current buffer turns in a closure
-    const turnsToExtract = this.buffer.getTurns();
+  async observeSessionHeartbeat(sessionKey: string): Promise<void> {
+    if (this.config.sessionObserverEnabled !== true) return;
+    if (!sessionKey || sessionKey.length === 0) return;
+    const footprint = await this.transcript.estimateSessionFootprint(sessionKey);
+    const decision = await this.sessionObserver.observe({
+      sessionKey,
+      totalBytes: footprint.bytes,
+      totalTokens: footprint.tokens,
+    });
+    if (!decision.triggered) return;
+    const turns = this.buffer.getTurns();
+    if (turns.length === 0) return;
+    log.debug(
+      `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
+    );
+    await this.queueBufferedExtraction(turns, "heartbeat_observer");
+  }
+
+  private async queueBufferedExtraction(
+    turnsToExtract: BufferTurn[],
+    reason: "trigger_mode" | "heartbeat_observer",
+  ): Promise<void> {
     if (!this.shouldQueueExtraction(turnsToExtract)) {
-      // We still clear buffered turns so the queue doesn't keep re-enqueueing duplicates.
       await this.buffer.clearAfterExtraction();
       return;
     }
+
     this.extractionQueue.push(async () => {
       await this.runExtraction(turnsToExtract);
     });
 
-    // Start background processor if not already running
     if (!this.queueProcessing) {
       this.queueProcessing = true;
       this.processQueue().catch(err => {
@@ -2253,6 +2281,7 @@ export class Orchestrator {
         this.queueProcessing = false;
       });
     }
+    log.debug(`queued extraction from ${reason}`);
   }
 
   private shouldQueueExtraction(turns: BufferTurn[]): boolean {

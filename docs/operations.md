@@ -86,8 +86,8 @@ Engram supports cron-specific recall policy so you can keep high-frequency autom
 {
   "cronRecallMode": "allowlist",
   "cronRecallAllowlist": [
-    "*:cron:deckard-morning-briefing:*",
-    "*:cron:deckard-evening-reflection:*"
+    "*:cron:<job-id-1>:*",
+    "*:cron:<job-id-2>:*"
   ],
   "cronRecallPolicyEnabled": true,
   "cronRecallNormalizedQueryMaxChars": 480,
@@ -108,7 +108,7 @@ Query stability controls:
 - `cronConversationRecallMode`: `auto` skips conversation semantic recall only for instruction-heavy cron prompts, `always` keeps it enabled for all cron prompts, `never` always skips it.
 
 Pattern tip:
-- Session keys include `:cron:<job-id>:`. Match by job id for stability, for example `*:cron:engram-hourly-summary-v24:*`.
+- Session keys include `:cron:<job-id>:`. Match by job id for stability, for example `*:cron:engram-hourly-summary:*`.
 
 ## File Hygiene
 

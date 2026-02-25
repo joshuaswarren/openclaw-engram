@@ -139,6 +139,35 @@
         "default": false,
         "description": "Enable continuity audit artifact generation workflows"
       },
+      "sessionObserverEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable heartbeat-driven active session observer checks for proactive extraction triggers."
+      },
+      "sessionObserverDebounceMs": {
+        "type": "number",
+        "default": 120000,
+        "description": "Minimum interval between heartbeat observer triggers per session (ms)."
+      },
+      "sessionObserverBands": {
+        "type": "array",
+        "description": "Session size bands and growth thresholds for heartbeat observer triggers.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": { "type": "number" },
+            "triggerDeltaBytes": { "type": "number" },
+            "triggerDeltaTokens": { "type": "number" }
+          },
+          "required": ["maxBytes", "triggerDeltaBytes", "triggerDeltaTokens"]
+        },
+        "default": [
+          { "maxBytes": 50000, "triggerDeltaBytes": 6000, "triggerDeltaTokens": 1200 },
+          { "maxBytes": 200000, "triggerDeltaBytes": 12000, "triggerDeltaTokens": 2400 },
+          { "maxBytes": 1000000000, "triggerDeltaBytes": 24000, "triggerDeltaTokens": 4800 }
+        ]
+      },
       "injectQuestions": {
         "type": "boolean",
         "default": false,
@@ -1327,6 +1356,21 @@
       "label": "Continuity Audits",
       "advanced": true,
       "help": "Generate continuity audit artifacts"
+    },
+    "sessionObserverEnabled": {
+      "label": "Session Observer",
+      "advanced": true,
+      "help": "Observe heartbeat growth and proactively trigger extraction when configured thresholds are crossed"
+    },
+    "sessionObserverDebounceMs": {
+      "label": "Observer Debounce (ms)",
+      "advanced": true,
+      "placeholder": "120000"
+    },
+    "sessionObserverBands": {
+      "label": "Observer Size Bands",
+      "advanced": true,
+      "help": "Array of {maxBytes, triggerDeltaBytes, triggerDeltaTokens} threshold objects"
     },
     "injectQuestions": {
       "label": "Inject Questions",

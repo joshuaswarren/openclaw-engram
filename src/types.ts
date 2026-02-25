@@ -10,6 +10,12 @@ export type CronRecallMode = "all" | "none" | "allowlist";
 export type CronConversationRecallMode = "auto" | "always" | "never";
 export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 
+export interface SessionObserverBandConfig {
+  maxBytes: number;
+  triggerDeltaBytes: number;
+  triggerDeltaTokens: number;
+}
+
 export interface FileHygieneConfig {
   enabled: boolean;
   // Lint (warn before truncation risk)
@@ -72,6 +78,9 @@ export interface PluginConfig {
   identityMaxInjectChars: number;
   continuityIncidentLoggingEnabled: boolean;
   continuityAuditEnabled: boolean;
+  sessionObserverEnabled?: boolean;
+  sessionObserverDebounceMs?: number;
+  sessionObserverBands?: SessionObserverBandConfig[];
   injectQuestions: boolean;
   commitmentDecayDays: number;
   workspaceDir: string;

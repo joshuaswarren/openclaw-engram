@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { log } from "./logger.js";
 import type { TranscriptEntry, Checkpoint, PluginConfig } from "./types.js";
@@ -36,10 +36,10 @@ export class TranscriptManager {
    * Parse a sessionKey to extract channel type and ID.
    *
    * SessionKey patterns:
-   *   - agent:generalist:main → type="main", id="default"
-   *   - agent:generalist:discord:channel:1468425700242620516 → type="discord", id="1468425700242620516"
-   *   - agent:generalist:cron:db61e2ac-... → type="cron", id="db61e2ac-..."
-   *   - agent:generalist:slack:channel:C123456 → type="slack", id="C123456"
+   *   - agent:<agent-id>:main → type="main", id="default"
+   *   - agent:<agent-id>:discord:channel:<channel-id> → type="discord", id="<channel-id>"
+   *   - agent:<agent-id>:cron:<job-id> → type="cron", id="<job-id>"
+   *   - agent:<agent-id>:slack:channel:<channel-id> → type="slack", id="<channel-id>"
    *
    * @returns Object with dir (channel type/channel id) and file (YYYY-MM-DD.jsonl)
    */
@@ -175,6 +175,32 @@ export class TranscriptManager {
     } catch {
       return [];
     }
+  }
+
+  async estimateSessionFootprint(sessionKey: string): Promise<{ bytes: number; tokens: number }> {
+    const { dir } = this.getTranscriptPath(sessionKey);
+    const channelDir = path.join(this.transcriptsDir, dir);
+    let bytes = 0;
+
+    try {
+      const files = await readdir(channelDir);
+      for (const file of files) {
+        if (!file.endsWith(".jsonl")) continue;
+        try {
+          const fileInfo = await stat(path.join(channelDir, file));
+          bytes += Math.max(0, fileInfo.size);
+        } catch {
+          // fail-open
+        }
+      }
+    } catch {
+      // fail-open
+    }
+
+    return {
+      bytes,
+      tokens: Math.floor(bytes / TranscriptManager.CHARS_PER_TOKEN),
+    };
   }
 
   /**

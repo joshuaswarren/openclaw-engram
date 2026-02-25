@@ -153,6 +153,14 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `continuityIncidentLoggingEnabled` | `(follows identityContinuityEnabled when unset)` | Explicit override for continuity incident logging |
 | `continuityAuditEnabled` | `false` | Enable continuity audit generation workflows |
 
+## v8.5 Active Session Observer
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `sessionObserverEnabled` | `false` | Enable heartbeat observer checks for session growth-triggered extraction |
+| `sessionObserverDebounceMs` | `120000` | Minimum milliseconds between observer-triggered extractions per session |
+| `sessionObserverBands` | `[{maxBytes:50000,triggerDeltaBytes:6000,triggerDeltaTokens:1200}, ...]` | Size-band thresholds used to trigger observer extraction when growth exceeds configured byte/token deltas |
+
 ## v2.2 Advanced Retrieval
 
 See [advanced-retrieval.md](advanced-retrieval.md) for guidance.

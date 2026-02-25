@@ -4,6 +4,7 @@ import type {
   PluginConfig,
   PrincipalRule,
   ReasoningEffort,
+  SessionObserverBandConfig,
   TriggerMode,
 } from "./types.js";
 import { log } from "./logger.js";
@@ -120,6 +121,26 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? (rawIdentityInjectionMode as IdentityInjectionMode)
       : "recovery_only";
   const identityContinuityEnabled = cfg.identityContinuityEnabled === true;
+  const sessionObserverBands: SessionObserverBandConfig[] = Array.isArray(cfg.sessionObserverBands)
+    ? (cfg.sessionObserverBands as Array<Record<string, unknown>>)
+        .map((band) => ({
+          maxBytes:
+            typeof band?.maxBytes === "number" ? Math.max(0, Math.floor(band.maxBytes)) : 0,
+          triggerDeltaBytes:
+            typeof band?.triggerDeltaBytes === "number"
+              ? Math.max(0, Math.floor(band.triggerDeltaBytes))
+              : 0,
+          triggerDeltaTokens:
+            typeof band?.triggerDeltaTokens === "number"
+              ? Math.max(0, Math.floor(band.triggerDeltaTokens))
+              : 0,
+        }))
+        .filter((band) => band.maxBytes > 0)
+    : [
+        { maxBytes: 50_000, triggerDeltaBytes: 6_000, triggerDeltaTokens: 1_200 },
+        { maxBytes: 200_000, triggerDeltaBytes: 12_000, triggerDeltaTokens: 2_400 },
+        { maxBytes: 1_000_000_000, triggerDeltaBytes: 24_000, triggerDeltaTokens: 4_800 },
+      ];
 
   const principalRules: PrincipalRule[] = Array.isArray(cfg.principalFromSessionKeyRules)
     ? (cfg.principalFromSessionKeyRules as any[]).map((r) => ({
@@ -237,6 +258,12 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.continuityIncidentLoggingEnabled
         : identityContinuityEnabled,
     continuityAuditEnabled: cfg.continuityAuditEnabled === true,
+    sessionObserverEnabled: cfg.sessionObserverEnabled === true,
+    sessionObserverDebounceMs:
+      typeof cfg.sessionObserverDebounceMs === "number"
+        ? Math.max(0, Math.floor(cfg.sessionObserverDebounceMs))
+        : 120_000,
+    sessionObserverBands,
     injectQuestions: cfg.injectQuestions === true,
     commitmentDecayDays:
       typeof cfg.commitmentDecayDays === "number" ? cfg.commitmentDecayDays : 90,
