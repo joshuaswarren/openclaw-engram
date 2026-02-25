@@ -50,7 +50,12 @@ export class ReplayValidationError extends Error {
   }
 }
 
+const VALID_SOURCES: ReadonlySet<string> = new Set(["openclaw", "claude", "chatgpt"]);
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant"]);
+
+export function isReplaySource(value: unknown): value is ReplaySource {
+  return typeof value === "string" && VALID_SOURCES.has(value);
+}
 
 export function isReplayRole(value: unknown): value is ReplayRole {
   return typeof value === "string" && VALID_ROLES.has(value);
@@ -80,10 +85,10 @@ export function validateReplayTurn(turn: ReplayTurn, index?: number): ReplayVali
     });
   }
 
-  if (!turn.source || typeof turn.source !== "string") {
+  if (!isReplaySource(turn.source)) {
     issues.push({
       code: "turn.source.invalid",
-      message: "Replay source is required.",
+      message: `Replay source must be 'openclaw', 'claude', or 'chatgpt', received '${String(turn.source)}'.`,
       index,
     });
   }

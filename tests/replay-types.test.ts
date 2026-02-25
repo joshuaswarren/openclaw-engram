@@ -30,6 +30,17 @@ test("validateReplayTurn rejects malformed replay turns", () => {
   assert.equal(issues.length >= 3, true);
 });
 
+test("validateReplayTurn rejects unknown replay source values", () => {
+  const issues = validateReplayTurn({
+    source: "other" as any,
+    sessionKey: "agent:generalist:main",
+    role: "user",
+    content: "hello",
+    timestamp: "2026-02-25T00:00:00.000Z",
+  });
+  assert.equal(issues.some((issue) => issue.code === "turn.source.invalid"), true);
+});
+
 test("parseIsoTimestamp returns epoch for valid timestamps", () => {
   const epoch = parseIsoTimestamp("2026-02-25T00:00:00.000Z");
   assert.equal(typeof epoch, "number");
@@ -184,5 +195,10 @@ test("buildReplayNormalizerRegistry rejects duplicates and runReplay resolves no
   assert.throws(
     () => buildReplayNormalizerRegistry([openclaw, { ...openclaw }]),
     /duplicate replay normalizer/,
+  );
+
+  assert.throws(
+    () => buildReplayNormalizerRegistry([{ parse: () => ({ warnings: [], turns: [] }) } as any]),
+    /source is required/,
   );
 });

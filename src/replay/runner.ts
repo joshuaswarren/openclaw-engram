@@ -69,7 +69,9 @@ function inDateRange(turn: ReplayTurn, fromTs: number | null, toTs: number | nul
 export function buildReplayNormalizerRegistry(normalizers: ReplayNormalizer[]): ReplayNormalizerRegistry {
   const registry = {} as ReplayNormalizerRegistry;
   for (const normalizer of normalizers) {
-    if (!normalizer?.source) continue;
+    if (!normalizer?.source) {
+      throw new Error("replay normalizer source is required");
+    }
     if (registry[normalizer.source]) {
       throw new Error(`duplicate replay normalizer for source '${normalizer.source}'`);
     }
