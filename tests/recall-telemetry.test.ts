@@ -44,6 +44,9 @@ test("recall telemetry emits for no_recall short-circuit", async () => {
   assert.equal(recallEvent.source, "none");
   assert.equal(recallEvent.recalledMemoryCount, 0);
   assert.equal(recallEvent.injected, false);
+  assert.equal(recallEvent.identityInjectionMode, "none");
+  assert.equal(recallEvent.identityInjectedChars, 0);
+  assert.equal(recallEvent.identityInjectionTruncated, false);
 });
 
 test("recall telemetry emits source/count for recent-scan fallback", async () => {

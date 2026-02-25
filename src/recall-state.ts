@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "./logger.js";
+import type { IdentityInjectionMode } from "./types.js";
 
 export interface LastRecallSnapshot {
   sessionKey: string;
@@ -9,6 +10,9 @@ export interface LastRecallSnapshot {
   queryHash: string;
   queryLen: number;
   memoryIds: string[];
+  identityInjectionMode?: IdentityInjectionMode | "none";
+  identityInjectedChars?: number;
+  identityInjectionTruncated?: boolean;
 }
 
 type LastRecallState = Record<string, LastRecallSnapshot>;
@@ -48,7 +52,16 @@ export class LastRecallStore {
    * Persist last-recall snapshot and append an impression log entry.
    * Does not store raw query text; uses a stable hash for correlation.
    */
-  async record(opts: { sessionKey: string; query: string; memoryIds: string[] }): Promise<void> {
+  async record(opts: {
+    sessionKey: string;
+    query: string;
+    memoryIds: string[];
+    identityInjection?: {
+      mode: IdentityInjectionMode | "none";
+      injectedChars: number;
+      truncated: boolean;
+    };
+  }): Promise<void> {
     const now = new Date().toISOString();
     const queryHash = createHash("sha256").update(opts.query).digest("hex");
 
@@ -58,6 +71,9 @@ export class LastRecallStore {
       queryHash,
       queryLen: opts.query.length,
       memoryIds: opts.memoryIds,
+      identityInjectionMode: opts.identityInjection?.mode,
+      identityInjectedChars: opts.identityInjection?.injectedChars,
+      identityInjectionTruncated: opts.identityInjection?.truncated,
     };
 
     this.state[opts.sessionKey] = snapshot;
