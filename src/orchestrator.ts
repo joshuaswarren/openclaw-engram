@@ -3698,6 +3698,9 @@ export class Orchestrator {
     if (maxChars <= 0) return { text: "", truncated: false };
     if (content.length <= maxChars) return { text: content, truncated: false };
     const suffix = "\n\n...(identity continuity trimmed)";
+    if (maxChars <= suffix.length) {
+      return { text: content.slice(0, maxChars), truncated: true };
+    }
     const headroom = Math.max(0, maxChars - suffix.length);
     return { text: `${content.slice(0, headroom)}${suffix}`, truncated: true };
   }

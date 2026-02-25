@@ -109,3 +109,28 @@ test("minimal recall mode downgrades full identity mode and enforces char cap wi
   assert.equal(recallEvent.identityInjectionTruncated, true);
   assert.equal((recallEvent.identityInjectedChars ?? 0) <= 140, true);
 });
+
+test("identity injection never exceeds tiny non-zero caps", async () => {
+  const orchestrator = await makeOrchestrator("engram-identity-tiny-cap-", {
+    identityInjectionMode: "full",
+    identityMaxInjectChars: 8,
+  });
+  await orchestrator.storage.writeIdentityAnchor(
+    "# Identity Continuity Anchor\n\n## Identity Traits\n\n- " + "X".repeat(400) + "\n",
+  );
+
+  const events: EngramTraceEvent[] = [];
+  const previous = (globalThis as any).__openclawEngramTrace;
+  (globalThis as any).__openclawEngramTrace = (event: EngramTraceEvent) => events.push(event);
+
+  try {
+    await (orchestrator as any).recallInternal("Please recover continuity context", "user:test:id-tiny-cap");
+  } finally {
+    (globalThis as any).__openclawEngramTrace = previous;
+  }
+
+  const recallEvent = events.find((e) => e.kind === "recall_summary");
+  assert.ok(recallEvent && recallEvent.kind === "recall_summary");
+  assert.equal((recallEvent.identityInjectedChars ?? 0) <= 8, true);
+  assert.equal(recallEvent.identityInjectionTruncated, true);
+});
