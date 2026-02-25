@@ -16,7 +16,7 @@ Primary artifacts:
 
 - `identity-anchor.md`: canonical continuity anchor sections.
 - `incidents/*.md`: incident records with open/close lifecycle.
-- `audits/*.md`: generated continuity audits.
+- `audits/weekly/*.md` and `audits/monthly/*.md`: generated continuity audits by period.
 - `improvement-loops.md`: recurring loop register and review metadata.
 
 ## Safety Boundaries
