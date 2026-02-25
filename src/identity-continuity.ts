@@ -174,16 +174,6 @@ export function normalizeContinuityLoop(
   };
 }
 
-export function serializeContinuityImprovementLoops(loops: ContinuityImprovementLoop[]): string {
-  const sorted = [...loops].sort((a, b) => a.id.localeCompare(b.id));
-  const lines: string[] = [LOOP_HEADER, ""];
-  for (const loop of sorted) {
-    lines.push(serializeContinuityLoopSection(loop));
-    lines.push("");
-  }
-  return lines.join("\n").trimEnd() + "\n";
-}
-
 function serializeContinuityLoopSection(loop: ContinuityImprovementLoop): string {
   const lines = [
     `## ${loop.id}`,
@@ -263,45 +253,11 @@ function joinLoopMarkdown(header: string, sections: MarkdownSection[]): string {
 }
 
 export function parseContinuityImprovementLoops(raw: string): ContinuityImprovementLoop[] {
-  const text = raw.replace(/\r/g, "").trim();
-  if (!text) return [];
-
-  const lines = text.split("\n");
-  const loops: ContinuityImprovementLoop[] = [];
-  let currentId: string | null = null;
-  let fields: Record<string, string> = {};
-
-  const pushCurrent = () => {
-    if (!currentId) return;
-    const parsed = normalizeContinuityLoop(
-      {
-        id: currentId,
-        cadence: (fields.cadence ?? "") as ContinuityLoopCadence,
-        purpose: fields.purpose ?? "",
-        status: (fields.status ?? "") as ContinuityLoopStatus,
-        killCondition: fields.killCondition ?? "",
-        lastReviewed: fields.lastReviewed ?? STALE_LAST_REVIEWED_FALLBACK,
-        notes: fields.notes,
-      },
-      new Date().toISOString(),
-    );
-    if (parsed) loops.push(parsed);
-  };
-
-  for (const line of lines) {
-    const section = line.match(/^##\s+(.+?)\s*$/);
-    if (section) {
-      pushCurrent();
-      currentId = section[1].trim();
-      fields = {};
-      continue;
-    }
-    const kv = line.match(/^([A-Za-z][A-Za-z0-9_]*):\s*(.+?)\s*$/);
-    if (!kv || !currentId) continue;
-    fields[kv[1]] = kv[2];
-  }
-  pushCurrent();
-  return loops;
+  const parsed = splitLoopMarkdown(raw);
+  const nowIso = new Date().toISOString();
+  return parsed.sections
+    .map((section) => parseLoopFromSection(section, nowIso))
+    .filter((loop): loop is ContinuityImprovementLoop => loop !== null);
 }
 
 export function upsertContinuityLoopInMarkdown(
