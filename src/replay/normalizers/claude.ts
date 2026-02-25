@@ -37,13 +37,23 @@ function normalizeContent(value: unknown): string | null {
 }
 
 function normalizeTimestamp(value: unknown): string | null {
+  const toIso = (millis: number): string | null => {
+    if (!Number.isFinite(millis)) return null;
+    const date = new Date(millis);
+    if (!Number.isFinite(date.getTime())) return null;
+    try {
+      return date.toISOString();
+    } catch {
+      return null;
+    }
+  };
+
   if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(value > 1e12 ? value : value * 1000).toISOString();
+    return toIso(value > 1e12 ? value : value * 1000);
   }
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return null;
-  return new Date(parsed).toISOString();
+  return toIso(parsed);
 }
 
 function gatherConversations(input: unknown): Array<Record<string, unknown>> {
@@ -81,7 +91,8 @@ export const claudeReplayNormalizer: ReplayNormalizer = {
     for (let i = 0; i < conversations.length; i += 1) {
       const conversation = conversations[i];
       const convoIdRaw = conversation.uuid ?? conversation.id ?? conversation.conversation_id;
-      const convoId = typeof convoIdRaw === "string" && convoIdRaw.trim().length > 0 ? convoIdRaw.trim() : `conv-${i + 1}`;
+      const hasSourceConversationId = typeof convoIdRaw === "string" && convoIdRaw.trim().length > 0;
+      const convoId = hasSourceConversationId ? convoIdRaw.trim() : `conv-${i + 1}`;
       const sessionKey = `replay:claude:${convoId}`;
       const fallbackSessionKey = options.defaultSessionKey?.trim() || sessionKey;
 
@@ -120,7 +131,7 @@ export const claudeReplayNormalizer: ReplayNormalizer = {
 
         turns.push({
           source: "claude",
-          sessionKey: convoIdRaw ? sessionKey : fallbackSessionKey,
+          sessionKey: hasSourceConversationId ? sessionKey : fallbackSessionKey,
           role,
           content,
           timestamp,

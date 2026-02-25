@@ -37,19 +37,29 @@ function normalizeContent(value: unknown): string | null {
 }
 
 function normalizeTimestamp(value: unknown): string | null {
+  const toIso = (millis: number): string | null => {
+    if (!Number.isFinite(millis)) return null;
+    const date = new Date(millis);
+    if (!Number.isFinite(date.getTime())) return null;
+    try {
+      return date.toISOString();
+    } catch {
+      return null;
+    }
+  };
+
   if (typeof value === "number" && Number.isFinite(value)) {
     const millis = value > 1e12 ? value : value * 1000;
-    return new Date(millis).toISOString();
+    return toIso(millis);
   }
   if (value instanceof Date && Number.isFinite(value.getTime())) {
-    return value.toISOString();
+    return toIso(value.getTime());
   }
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   const parsed = Date.parse(trimmed);
-  if (!Number.isFinite(parsed)) return null;
-  return new Date(parsed).toISOString();
+  return toIso(parsed);
 }
 
 function parseJsonl(raw: string, warnings: Array<{ code: string; message: string; index?: number }>): unknown[] {

@@ -233,3 +233,41 @@ test("defaultSessionKey is fallback-only when conversation identifiers exist", a
   assert.equal(claude.turns[0].sessionKey, "replay:claude:claude-conv-xyz");
   assert.equal(chatgpt.turns[0].sessionKey, "replay:chatgpt:chatgpt-conv-xyz");
 });
+
+test("claude normalizer uses defaultSessionKey when conversation id is blank", async () => {
+  const result = await claudeReplayNormalizer.parse(
+    {
+      conversations: [
+        {
+          uuid: "   ",
+          chat_messages: [{ sender: "human", text: "x", created_at: "2026-02-25T03:01:00.000Z" }],
+        },
+      ],
+    },
+    { defaultSessionKey: "replay:default:session" },
+  );
+
+  assert.equal(result.turns[0].sessionKey, "replay:default:session");
+});
+
+test("normalizers skip out-of-range numeric timestamps instead of throwing", async () => {
+  const openclaw = await openclawReplayNormalizer.parse(
+    [{ role: "user", content: "x", timestamp: 1e20 }],
+    {},
+  );
+  const claude = await claudeReplayNormalizer.parse(
+    { chat_messages: [{ sender: "human", text: "x", created_at: 1e20 }] },
+    {},
+  );
+  const chatgpt = await chatgptReplayNormalizer.parse(
+    { messages: [{ author: { role: "user" }, content: { parts: ["x"] }, create_time: 1e20 }] },
+    {},
+  );
+
+  assert.equal(openclaw.turns.length, 0);
+  assert.equal(claude.turns.length, 0);
+  assert.equal(chatgpt.turns.length, 0);
+  assert.equal(openclaw.warnings.length > 0, true);
+  assert.equal(claude.warnings.length > 0, true);
+  assert.equal(chatgpt.warnings.length > 0, true);
+});
