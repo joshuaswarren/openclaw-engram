@@ -1,0 +1,146 @@
+import {
+  isReplayRole,
+  type ReplayNormalizer,
+  type ReplayParseOptions,
+  type ReplayParseResult,
+  type ReplayRole,
+  type ReplayTurn,
+} from "../types.js";
+
+function normalizeRole(value: unknown): ReplayRole | null {
+  if (typeof value !== "string") return null;
+  const role = value.trim().toLowerCase();
+  if (isReplayRole(role)) return role;
+  if (role === "human") return "user";
+  if (role === "assistant" || role === "ai" || role === "model") return "assistant";
+  return null;
+}
+
+function normalizeContent(value: unknown): string | null {
+  if (typeof value === "string") {
+    const content = value.trim();
+    return content.length > 0 ? content : null;
+  }
+  if (Array.isArray(value)) {
+    const text = value
+      .map((part) => (typeof part === "string" ? part : ""))
+      .join("\n")
+      .trim();
+    return text.length > 0 ? text : null;
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (Array.isArray(obj.parts)) return normalizeContent(obj.parts);
+    if (typeof obj.text === "string") return normalizeContent(obj.text);
+  }
+  return null;
+}
+
+function normalizeTimestamp(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value > 1e12 ? value : value * 1000).toISOString();
+  }
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+function gatherConversations(input: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(input)) {
+    return input.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+  }
+  if (!input || typeof input !== "object") return [];
+  const obj = input as Record<string, unknown>;
+  if (Array.isArray(obj.conversations)) {
+    return obj.conversations.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+  }
+  return [obj];
+}
+
+function extractFromMapping(conversation: Record<string, unknown>): Array<Record<string, unknown>> {
+  const mapping = conversation.mapping;
+  if (!mapping || typeof mapping !== "object") return [];
+
+  const messages: Array<Record<string, unknown>> = [];
+  for (const node of Object.values(mapping as Record<string, unknown>)) {
+    if (!node || typeof node !== "object") continue;
+    const nodeObj = node as Record<string, unknown>;
+    const message = nodeObj.message;
+    if (!message || typeof message !== "object") continue;
+
+    messages.push({
+      ...(message as Record<string, unknown>),
+      _nodeId: typeof nodeObj.id === "string" ? nodeObj.id : undefined,
+      _nodeCreateTime: nodeObj.create_time,
+    });
+  }
+
+  return messages;
+}
+
+export const chatgptReplayNormalizer: ReplayNormalizer = {
+  source: "chatgpt",
+  parse(input: unknown, options: ReplayParseOptions = {}): ReplayParseResult {
+    let parsedInput = input;
+    if (typeof input === "string") {
+      try {
+        parsedInput = JSON.parse(input);
+      } catch {
+        parsedInput = [];
+      }
+    }
+
+    const warnings: ReplayParseResult["warnings"] = [];
+    const turns: ReplayTurn[] = [];
+
+    const conversations = gatherConversations(parsedInput);
+    for (let i = 0; i < conversations.length; i += 1) {
+      const conversation = conversations[i];
+      const convIdRaw = conversation.id ?? conversation.conversation_id ?? conversation.uuid;
+      const convId = typeof convIdRaw === "string" && convIdRaw.trim().length > 0 ? convIdRaw.trim() : `conv-${i + 1}`;
+      const sessionKey = options.defaultSessionKey?.trim() || `replay:chatgpt:${convId}`;
+
+      const messageRows = Array.isArray(conversation.messages)
+        ? conversation.messages.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+        : extractFromMapping(conversation);
+
+      for (let j = 0; j < messageRows.length; j += 1) {
+        const row = messageRows[j];
+        const role = normalizeRole(
+          (row.author as Record<string, unknown> | undefined)?.role ?? row.role,
+        );
+        const content = normalizeContent(
+          (row.content as Record<string, unknown> | undefined)?.parts ?? row.content ?? row.text,
+        );
+        const timestamp = normalizeTimestamp(
+          row.create_time ?? row.timestamp ?? row._nodeCreateTime ?? row.created_at,
+        );
+
+        if (!role || !content || !timestamp) {
+          const message = `Skipping invalid ChatGPT replay message at conversation ${i + 1}, index ${j}.`;
+          if (options.strict) throw new Error(message);
+          warnings.push({ code: "replay.chatgpt.message.invalid", message, index: j });
+          continue;
+        }
+
+        const externalIdRaw = row.id ?? row._nodeId;
+
+        turns.push({
+          source: "chatgpt",
+          sessionKey,
+          role,
+          content,
+          timestamp,
+          externalId: typeof externalIdRaw === "string" ? externalIdRaw : undefined,
+          metadata: {
+            conversationId: convId,
+            conversationTitle: typeof conversation.title === "string" ? conversation.title : undefined,
+          },
+        });
+      }
+    }
+
+    return { turns, warnings };
+  },
+};

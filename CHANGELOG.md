@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.6 replay ingestion Task 2 (source normalizers slice):
+  - Added source normalizers for `openclaw`, `claude`, and `chatgpt` exports in `src/replay/normalizers/*`.
+  - Added robust shape handling for JSON/JSONL transcript exports, including ChatGPT mapping exports and Claude `chat_messages`.
+  - Added `tests/replay-normalizers.test.ts` coverage for source parsing, strict-mode validation behavior, role/content/timestamp normalization, and default session key fallbacks.
 - v8.6 replay ingestion Task 1 (core contracts slice):
   - Added `src/replay/types.ts` with canonical replay turn schema, parser contracts, and strict validation helpers.
   - Added `src/replay/runner.ts` with source normalizer registry helpers and replay execution flow (dry-run, date range, offset, batching, progress summary).
