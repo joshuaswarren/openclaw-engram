@@ -199,7 +199,9 @@ export class SessionObserverState {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
     }
-    log.debug("session observer save lock timeout");
+    const error = new Error("session observer save lock timeout");
+    log.debug(error.message);
+    throw error;
   }
 
   async load(): Promise<void> {
@@ -212,36 +214,32 @@ export class SessionObserverState {
   }
 
   async save(): Promise<void> {
-    try {
-      await this.withSaveLock(async () => {
-        const merged = new Map<string, SessionObserverCursor>();
-        const persisted = await this.readPersistedState();
-        if (persisted) {
-          for (const [key, value] of this.normalizePersistedSessions(persisted.sessions).entries()) {
-            merged.set(key, value);
-          }
+    await this.withSaveLock(async () => {
+      const merged = new Map<string, SessionObserverCursor>();
+      const persisted = await this.readPersistedState();
+      if (persisted) {
+        for (const [key, value] of this.normalizePersistedSessions(persisted.sessions).entries()) {
+          merged.set(key, value);
         }
-        for (const [key, current] of this.sessions.entries()) {
-          const existing = merged.get(key);
-          if (!existing) {
-            merged.set(key, current);
-            continue;
-          }
-          merged.set(key, mergeSessionCursor(existing, current));
+      }
+      for (const [key, current] of this.sessions.entries()) {
+        const existing = merged.get(key);
+        if (!existing) {
+          merged.set(key, current);
+          continue;
         }
-        this.sessions = merged;
+        merged.set(key, mergeSessionCursor(existing, current));
+      }
+      this.sessions = merged;
 
-        const sessions: Record<string, SessionObserverCursor> = {};
-        for (const [key, value] of merged.entries()) {
-          sessions[key] = value;
-        }
-        const payload: SessionObserverPersistedState = { version: 1, sessions };
-        await mkdir(path.dirname(this.statePath), { recursive: true });
-        await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
-      });
-    } catch (err) {
-      log.debug(`session observer state write failed: ${err}`);
-    }
+      const sessions: Record<string, SessionObserverCursor> = {};
+      for (const [key, value] of merged.entries()) {
+        sessions[key] = value;
+      }
+      const payload: SessionObserverPersistedState = { version: 1, sessions };
+      await mkdir(path.dirname(this.statePath), { recursive: true });
+      await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
+    });
   }
 
   private enqueueSave(): Promise<void> {

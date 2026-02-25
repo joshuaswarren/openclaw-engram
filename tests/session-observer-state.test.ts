@@ -408,3 +408,35 @@ test("session observer merge allows cursor reset when reset is explicitly observ
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("session observer observe fails when save lock remains held", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-session-observer-lock-timeout-"));
+  try {
+    const stateDir = path.join(dir, "state");
+    const lockPath = path.join(stateDir, "session-observer-state.lock");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(lockPath, "locked", "utf-8");
+    const now = new Date();
+    await utimes(lockPath, now, now);
+
+    const observer = new SessionObserverState({
+      memoryDir: dir,
+      debounceMs: 60_000,
+      bands: [{ maxBytes: 100_000, triggerDeltaBytes: 500, triggerDeltaTokens: 100 }],
+    });
+    await observer.load();
+
+    await assert.rejects(
+      () =>
+        observer.observe({
+          sessionKey: "agent:generalist:main",
+          totalBytes: 10_000,
+          totalTokens: 2_500,
+          observedAt: "2026-02-25T00:00:00.000Z",
+        }),
+      /save lock timeout/i,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
