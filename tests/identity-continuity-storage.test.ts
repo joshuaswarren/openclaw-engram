@@ -108,6 +108,20 @@ test("identity continuity incident limit applies after valid parse (fail-open)",
   }
 });
 
+test("identity continuity incident reader treats NaN limit as zero", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-limit-nan-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    await storage.appendContinuityIncident({ symptom: "valid incident" });
+
+    const incidents = await storage.readContinuityIncidents(Number.NaN as unknown as number);
+    assert.equal(incidents.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("identity continuity close can find older incidents beyond previous scan window", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-close-"));
   try {
@@ -148,6 +162,50 @@ test("identity continuity close can find older incidents beyond previous scan wi
 
     const raw = await readFile(path.join(incidentDir, "2026-01-01-incident-target.md"), "utf-8");
     assert.match(raw, /state: "closed"/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("identity continuity close verifies frontmatter id for direct filename matches", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-directmatch-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const incidentDir = path.join(dir, "identity", "incidents");
+    const target = createContinuityIncidentRecord(
+      "incident-target",
+      { symptom: "actual target incident" },
+      "2026-01-01T00:00:00.000Z",
+    );
+    await writeFile(
+      path.join(incidentDir, "2026-01-01-incident-target.md"),
+      serializeContinuityIncident(target),
+      "utf-8",
+    );
+
+    const spoof = createContinuityIncidentRecord(
+      "incident-spoof",
+      { symptom: "spoofed filename should not be trusted" },
+      "2026-02-01T00:00:00.000Z",
+    );
+    await writeFile(
+      path.join(incidentDir, "2026-02-01-prefix-incident-target.md"),
+      serializeContinuityIncident(spoof),
+      "utf-8",
+    );
+
+    const closed = await storage.closeContinuityIncident("incident-target", {
+      fixApplied: "applied fix",
+      verificationResult: "verified",
+    });
+    assert.ok(closed);
+    assert.equal(closed?.id, "incident-target");
+
+    const spoofRaw = await readFile(path.join(incidentDir, "2026-02-01-prefix-incident-target.md"), "utf-8");
+    assert.match(spoofRaw, /id: \"incident-spoof\"/);
+    assert.match(spoofRaw, /state: \"open\"/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

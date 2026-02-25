@@ -101,11 +101,11 @@ function mergeIdentityAnchor(
 
   for (const sectionName of IDENTITY_ANCHOR_SECTION_ORDER) {
     const merged = mergeAnchorSection(sections.get(sectionName), updates[sectionName]);
-    if (merged) {
-      sections.set(sectionName, merged);
-    } else if (!sections.has(sectionName)) {
+    if (!sections.has(sectionName) && !merged) {
       sections.set(sectionName, "");
+      continue;
     }
+    sections.set(sectionName, merged);
   }
 
   const finalOrder: string[] = [];
@@ -432,9 +432,7 @@ Best for:
         const state = params.state === "closed" || params.state === "all" ? params.state : "open";
         const limitRaw = typeof params.limit === "number" ? params.limit : 25;
         const limit = Math.max(1, Math.min(200, Math.floor(limitRaw)));
-        const incidents = await orchestrator.storage.readContinuityIncidents(limit);
-        const filtered =
-          state === "all" ? incidents : incidents.filter((incident) => incident.state === state);
+        const filtered = await orchestrator.storage.readContinuityIncidents(limit, state);
 
         if (filtered.length === 0) {
           return toolResult(`No continuity incidents found for state=${state}.`);

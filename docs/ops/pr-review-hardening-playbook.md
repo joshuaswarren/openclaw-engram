@@ -81,6 +81,17 @@ Run this before every push:
 4. Self-review staged diff for invariant classes below
 5. Add/adjust tests for each new invariant touched
 
+## Mandatory Pre-Merge Cursor Gate
+
+Before merging any PR that uses Cursor/Bugbot review:
+
+1. Required checks are green.
+2. `Cursor Bugbot` is not `pending`/`in_progress`/`neutral`/`skipping`.
+3. PR has an explicit positive Cursor verdict comment (`PASS`).
+4. No unresolved Cursor-authored review threads remain.
+
+Do not merge on `NEUTRAL` without an explicit positive verdict + zero unresolved Cursor threads.
+
 Repository automation:
 - `npm run hooks:install` configures git hooks that enforce this gate locally.
 - `pre-commit` runs `npm run preflight:quick`

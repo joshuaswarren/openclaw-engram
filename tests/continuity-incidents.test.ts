@@ -70,8 +70,10 @@ function buildHarness(options?: {
       incidents.set(id, closed);
       return closed;
     },
-    readContinuityIncidents: async (limit: number) =>
-      [...incidents.values()].slice(0, Math.max(0, Math.floor(limit))),
+    readContinuityIncidents: async (limit: number, state: "open" | "closed" | "all" = "all") =>
+      [...incidents.values()]
+        .filter((incident) => state === "all" || incident.state === state)
+        .slice(0, Math.max(0, Math.floor(limit))),
   };
 
   const orchestrator = {
@@ -176,4 +178,30 @@ test("continuity_incident_close validates required fields and closes incident", 
   const closedList = await listTool.execute("tc7", { state: "closed", limit: 10 });
   assert.match(toolText(closedList), /incident-1/);
   assert.match(toolText(closedList), /closed/);
+});
+
+test("continuity_incident_list applies limit after state filtering", async () => {
+  const { tools } = buildHarness({
+    identityContinuityEnabled: true,
+    continuityIncidentLoggingEnabled: true,
+  });
+  const openTool = tools.get("continuity_incident_open");
+  const closeTool = tools.get("continuity_incident_close");
+  const listTool = tools.get("continuity_incident_list");
+  assert.ok(openTool);
+  assert.ok(closeTool);
+  assert.ok(listTool);
+
+  await openTool.execute("tc8", { symptom: "old closed incident" });
+  await closeTool.execute("tc9", {
+    id: "incident-1",
+    fixApplied: "fixed",
+    verificationResult: "verified",
+  });
+  await openTool.execute("tc10", { symptom: "new open incident" });
+
+  const closedOnly = await listTool.execute("tc11", { state: "closed", limit: 1 });
+  const text = toolText(closedOnly);
+  assert.match(text, /incident-1/);
+  assert.doesNotMatch(text, /incident-2/);
 });

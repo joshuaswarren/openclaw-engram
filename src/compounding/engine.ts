@@ -79,7 +79,9 @@ export class CompoundingEngine {
 
     const entries = await this.readFeedbackEntriesForWeek(weekId);
     const mistakes = this.buildMistakes(entries);
-    const continuity = await this.readContinuityAuditReferences(weekId);
+    const continuity = this.config.continuityAuditEnabled
+      ? await this.readContinuityAuditReferences(weekId)
+      : { monthId: monthIdFromIsoWeek(weekId), weeklyPath: null, monthlyPath: null };
 
     // Write weekly report (always, even if empty: "day-one outcomes").
     const reportPath = path.join(this.weeklyDir, `${weekId}.md`);
@@ -291,12 +293,15 @@ export class CompoundingEngine {
     }
   }
 
-  private async readContinuityIncidents(): Promise<ContinuityIncidentRecord[]> {
+  private async readContinuityIncidents(limit: number = 200): Promise<ContinuityIncidentRecord[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
     const incidents: ContinuityIncidentRecord[] = [];
     try {
       const names = await readdir(this.identityIncidentsDir);
       const files = names.filter((n) => n.endsWith(".md")).sort().reverse();
       for (const file of files) {
+        if (incidents.length >= cappedLimit) break;
         const filePath = path.join(this.identityIncidentsDir, file);
         try {
           const raw = await readFile(filePath, "utf-8");

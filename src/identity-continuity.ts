@@ -68,8 +68,7 @@ export function parseContinuityIncident(raw: string): ContinuityIncidentRecord |
 
   const id = typeof frontmatter.id === "string" ? frontmatter.id : "";
   const stateRaw = frontmatter.state;
-  const state: ContinuityIncidentState =
-    stateRaw === "closed" ? "closed" : stateRaw === "open" ? "open" : "open";
+  const state: ContinuityIncidentState = stateRaw === "closed" ? "closed" : "open";
   const openedAt = typeof frontmatter.openedAt === "string" ? frontmatter.openedAt : "";
   const updatedAt = typeof frontmatter.updatedAt === "string" ? frontmatter.updatedAt : openedAt;
   const symptom = parseSection(body, "Symptom");

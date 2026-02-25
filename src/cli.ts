@@ -743,9 +743,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const state: "open" | "closed" | "all" =
             stateRaw === "closed" || stateRaw === "all" ? stateRaw : "open";
           const limit = Math.max(1, Math.min(200, parseInt(String(options.limit ?? "25"), 10) || 25));
-          const incidents = await orchestrator.storage.readContinuityIncidents(limit);
-          const filtered =
-            state === "all" ? incidents : incidents.filter((incident) => incident.state === state);
+          const filtered = await orchestrator.storage.readContinuityIncidents(limit, state);
           if (filtered.length === 0) {
             console.log(`No continuity incidents found for state=${state}.`);
             return;

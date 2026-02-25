@@ -169,3 +169,34 @@ test("identity_anchor_update does not retain empty sentinel across staged update
   assert.match(anchor, /## Communication Preferences/);
   assert.match(anchor, /Keep it concise/);
 });
+
+test("identity_anchor_update removes legacy empty sentinel from untouched sections", async () => {
+  const initial = [
+    "# Identity Continuity Anchor",
+    "",
+    "## Identity Traits",
+    "",
+    "- (empty)",
+    "",
+    "## Communication Preferences",
+    "",
+    "- (empty)",
+    "",
+  ].join("\n");
+
+  const { tools, getAnchor } = buildHarness({
+    identityContinuityEnabled: true,
+    initialAnchor: initial,
+  });
+  const updateTool = tools.get("identity_anchor_update");
+  assert.ok(updateTool);
+
+  await updateTool.execute("tc8", {
+    operatingPrinciples: "- Verify constraints",
+  });
+
+  const anchor = getAnchor() ?? "";
+  assert.doesNotMatch(anchor, /- \(empty\)/);
+  assert.match(anchor, /## Operating Principles/);
+  assert.match(anchor, /Verify constraints/);
+});

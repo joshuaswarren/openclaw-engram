@@ -199,3 +199,22 @@ test("v5 compounding extracts patterns from feedback learning/rejections", async
   assert.ok(mistakes!.patterns.some((p) => p.includes("seo-digest: Always include confidence score")));
   assert.ok(mistakes!.patterns.some((p) => p.includes("client-health: WRONG DATA")));
 });
+
+test("v5 compounding does not read continuity audit references when audits are disabled", async () => {
+  const memoryDir = tmpDir("engram-compound-no-audit-");
+  const sharedDir = tmpDir("engram-compound-no-audit-shared-");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = false;
+  const eng = new CompoundingEngine(cfg);
+
+  (eng as any).readContinuityAuditReferences = async () => {
+    throw new Error("should not be called when continuityAuditEnabled=false");
+  };
+
+  const res = await eng.synthesizeWeekly();
+  const report = await readFile(res.reportPath, "utf-8");
+  assert.match(report, /Weekly Compounding/);
+});

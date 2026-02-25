@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #42 review-hardening backfill for Cursor findings (PRs #37-#40):
+  - Fixed continuity incident read-limit handling to guard `NaN` limits and to apply state filtering before result capping.
+  - Fixed continuity incident close-path ID lookup to verify parsed frontmatter ID before using filename suffix matches.
+  - Simplified continuity incident state parsing (removed redundant ternary branch).
+  - Fixed identity anchor merge to always persist sentinel cleanup for existing sections.
+  - Gated continuity-audit reference reads behind `continuityAuditEnabled` and bounded compounding incident scans.
+  - Added regression tests for all above cases (storage, tools/CLI state filtering, compounding gate, anchor sentinel cleanup).
 - PR #34 recall hardening + dedupe tooling:
   - Switched recall retrieval to daemon-preferred `search()` with bounded hybrid backfill to reduce contention and preserve fail-open behavior.
   - Kept `hybridSearch()` as BM25+vector diversification path (no daemon short-circuit), so backfill can broaden recall candidates.

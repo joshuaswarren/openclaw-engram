@@ -1536,8 +1536,12 @@ export class StorageManager {
     return { ...incident, filePath };
   }
 
-  async readContinuityIncidents(limit: number = 200): Promise<ContinuityIncidentRecord[]> {
-    const cappedLimit = Math.max(0, Math.floor(limit));
+  async readContinuityIncidents(
+    limit: number = 200,
+    state: "open" | "closed" | "all" = "all",
+  ): Promise<ContinuityIncidentRecord[]> {
+    const normalizedLimit = Number.isFinite(limit) ? Math.floor(limit) : 0;
+    const cappedLimit = Math.max(0, normalizedLimit);
     if (cappedLimit === 0) return [];
 
     try {
@@ -1550,7 +1554,9 @@ export class StorageManager {
         try {
           const raw = await readFile(filePath, "utf-8");
           const parsed = parseContinuityIncident(raw);
-          if (parsed) incidents.push({ ...parsed, filePath });
+          if (!parsed) continue;
+          if (state !== "all" && parsed.state !== state) continue;
+          incidents.push({ ...parsed, filePath });
         } catch {
           // Fail-open on malformed/missing files.
         }
@@ -1638,7 +1644,11 @@ export class StorageManager {
   private async findContinuityIncidentFilePathById(id: string): Promise<string | null> {
     const fileNames = await this.readContinuityIncidentFileNames();
     const directMatch = fileNames.find((name) => name.endsWith(`-${id}.md`));
-    if (directMatch) return path.join(this.identityIncidentsDir, directMatch);
+    if (directMatch) {
+      const directPath = path.join(this.identityIncidentsDir, directMatch);
+      const parsed = await this.readContinuityIncidentFile(directPath);
+      if (parsed?.id === id) return directPath;
+    }
 
     for (const fileName of fileNames) {
       const filePath = path.join(this.identityIncidentsDir, fileName);
