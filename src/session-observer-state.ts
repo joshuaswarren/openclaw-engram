@@ -43,6 +43,39 @@ function parseIsoMs(value?: string): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function mergeSessionCursor(
+  existing: SessionObserverCursor,
+  incoming: SessionObserverCursor,
+): SessionObserverCursor {
+  const existingObservedMs = parseIsoMs(existing.lastObservedAt);
+  const incomingObservedMs = parseIsoMs(incoming.lastObservedAt);
+  const existingTriggeredMs = parseIsoMs(existing.lastTriggeredAt);
+  const incomingTriggeredMs = parseIsoMs(incoming.lastTriggeredAt);
+
+  const observedAt =
+    incomingObservedMs >= existingObservedMs ? incoming.lastObservedAt : existing.lastObservedAt;
+  const triggeredAt =
+    incomingTriggeredMs >= existingTriggeredMs ? incoming.lastTriggeredAt : existing.lastTriggeredAt;
+
+  // Preserve monotonic cursor progression across concurrent instances sharing one memoryDir.
+  const cursorBytes = Math.max(
+    sanitizeNonNegativeInt(existing.cursorBytes),
+    sanitizeNonNegativeInt(incoming.cursorBytes),
+  );
+  const cursorTokens = Math.max(
+    sanitizeNonNegativeInt(existing.cursorTokens),
+    sanitizeNonNegativeInt(incoming.cursorTokens),
+  );
+
+  return {
+    sessionKey: existing.sessionKey,
+    cursorBytes,
+    cursorTokens,
+    lastObservedAt: observedAt,
+    lastTriggeredAt: triggeredAt,
+  };
+}
+
 export function normalizeObserverBands(
   bands: SessionObserverBandConfig[],
 ): SessionObserverBandConfig[] {
@@ -175,20 +208,7 @@ export class SessionObserverState {
             merged.set(key, current);
             continue;
           }
-          const currentObserved = parseIsoMs(current.lastObservedAt);
-          const existingObserved = parseIsoMs(existing.lastObservedAt);
-          if (currentObserved > existingObserved) {
-            merged.set(key, current);
-            continue;
-          }
-          if (currentObserved < existingObserved) {
-            continue;
-          }
-          const currentTriggered = parseIsoMs(current.lastTriggeredAt);
-          const existingTriggered = parseIsoMs(existing.lastTriggeredAt);
-          if (currentTriggered >= existingTriggered) {
-            merged.set(key, current);
-          }
+          merged.set(key, mergeSessionCursor(existing, current));
         }
         this.sessions = merged;
 

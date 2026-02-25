@@ -310,3 +310,46 @@ test("session observer skips state writes when heartbeat footprint is unchanged"
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("session observer merge keeps monotonic cursor across stale instances", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-session-observer-monotonic-"));
+  try {
+    const fresh = new SessionObserverState({
+      memoryDir: dir,
+      debounceMs: 60_000,
+      bands: [{ maxBytes: 100_000, triggerDeltaBytes: 500, triggerDeltaTokens: 100 }],
+    });
+    const stale = new SessionObserverState({
+      memoryDir: dir,
+      debounceMs: 60_000,
+      bands: [{ maxBytes: 100_000, triggerDeltaBytes: 500, triggerDeltaTokens: 100 }],
+    });
+    await fresh.load();
+    await stale.load();
+
+    await fresh.observe({
+      sessionKey: "agent:generalist:main",
+      totalBytes: 3_000,
+      totalTokens: 750,
+      observedAt: "2026-02-25T00:00:00.000Z",
+    });
+    await stale.observe({
+      sessionKey: "agent:generalist:main",
+      totalBytes: 1_200,
+      totalTokens: 300,
+      observedAt: "2026-02-25T00:01:00.000Z",
+    });
+
+    const raw = await readFile(path.join(dir, "state", "session-observer-state.json"), "utf-8");
+    const parsed = JSON.parse(raw) as {
+      sessions: Record<string, { cursorBytes: number; cursorTokens: number; lastObservedAt: string }>;
+    };
+    const session = parsed.sessions["agent:generalist:main"];
+    assert.ok(session);
+    assert.equal(session.cursorBytes, 3_000);
+    assert.equal(session.cursorTokens, 750);
+    assert.equal(session.lastObservedAt, "2026-02-25T00:01:00.000Z");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

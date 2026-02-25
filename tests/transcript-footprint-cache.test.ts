@@ -5,6 +5,10 @@ import path from "node:path";
 import { mkdtemp, mkdir, rm, writeFile, unlink } from "node:fs/promises";
 import { TranscriptManager } from "../src/transcript.ts";
 
+function makeLine(sessionKey: string, content: string): string {
+  return `${JSON.stringify({ sessionKey, role: "user", content })}\n`;
+}
+
 test("estimateSessionFootprint updates cached totals from newest shard growth", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "engram-transcript-footprint-"));
   try {
@@ -20,15 +24,23 @@ test("estimateSessionFootprint updates cached totals from newest shard growth", 
 
     const oldShard = path.join(channelDir, "2026-02-24.jsonl");
     const newShard = path.join(channelDir, "2026-02-25.jsonl");
-    await writeFile(oldShard, "a".repeat(100), "utf-8");
-    await writeFile(newShard, "b".repeat(200), "utf-8");
+    const oldOwn = makeLine(sessionKey, "old-own");
+    const oldOther = makeLine("agent:other:main", "old-other");
+    const newOwn = makeLine(sessionKey, "new-own");
+    const newOther = makeLine("agent:other:main", "new-other");
+    await writeFile(oldShard, `${oldOwn}${oldOther}`, "utf-8");
+    await writeFile(newShard, `${newOwn}${newOther}`, "utf-8");
 
     const first = await transcript.estimateSessionFootprint(sessionKey);
-    assert.equal(first.bytes, 300);
+    assert.equal(first.bytes, Buffer.byteLength(oldOwn) + Buffer.byteLength(newOwn));
 
-    await writeFile(newShard, "b".repeat(260), "utf-8");
+    const newOwnGrowth = makeLine(sessionKey, "new-own-growth");
+    await writeFile(newShard, `${newOwn}${newOwnGrowth}${newOther}`, "utf-8");
     const second = await transcript.estimateSessionFootprint(sessionKey);
-    assert.equal(second.bytes, 360);
+    assert.equal(
+      second.bytes,
+      Buffer.byteLength(oldOwn) + Buffer.byteLength(newOwn) + Buffer.byteLength(newOwnGrowth),
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -49,18 +61,21 @@ test("estimateSessionFootprint cache handles shard removal and new shard additio
 
     const shardA = path.join(channelDir, "2026-02-23.jsonl");
     const shardB = path.join(channelDir, "2026-02-24.jsonl");
-    await writeFile(shardA, "a".repeat(80), "utf-8");
-    await writeFile(shardB, "b".repeat(120), "utf-8");
+    const aOwn = makeLine(sessionKey, "a-own");
+    const bOwn = makeLine(sessionKey, "b-own");
+    await writeFile(shardA, aOwn, "utf-8");
+    await writeFile(shardB, bOwn, "utf-8");
 
     const first = await transcript.estimateSessionFootprint(sessionKey);
-    assert.equal(first.bytes, 200);
+    assert.equal(first.bytes, Buffer.byteLength(aOwn) + Buffer.byteLength(bOwn));
 
     await unlink(shardA);
     const shardC = path.join(channelDir, "2026-02-25.jsonl");
-    await writeFile(shardC, "c".repeat(150), "utf-8");
+    const cOwn = makeLine(sessionKey, "c-own");
+    await writeFile(shardC, cOwn, "utf-8");
 
     const second = await transcript.estimateSessionFootprint(sessionKey);
-    assert.equal(second.bytes, 270);
+    assert.equal(second.bytes, Buffer.byteLength(bOwn) + Buffer.byteLength(cOwn));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

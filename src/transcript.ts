@@ -18,7 +18,10 @@ export class TranscriptManager {
   private stateDir: string;
   private toolUsageDir: string;
   private config: PluginConfig;
-  private sessionFootprintCache = new Map<string, { totalBytes: number; fileSizes: Map<string, number> }>();
+  private sessionFootprintCache = new Map<
+    string,
+    { totalBytes: number; fileBytes: Map<string, number>; fileSizes: Map<string, number> }
+  >();
 
   /** Default checkpoint TTL in hours */
   private static readonly DEFAULT_CHECKPOINT_TTL_HOURS = 24;
@@ -187,53 +190,66 @@ export class TranscriptManager {
       const files = (await readdir(channelDir)).filter((file) => file.endsWith(".jsonl")).sort();
       const cached = this.sessionFootprintCache.get(sessionKey);
       if (!cached) {
+        const fileBytes = new Map<string, number>();
         const fileSizes = new Map<string, number>();
         for (const file of files) {
           try {
-            const fileInfo = await stat(path.join(channelDir, file));
-            const size = Math.max(0, fileInfo.size);
-            fileSizes.set(file, size);
-            bytes += size;
+            const fullPath = path.join(channelDir, file);
+            const fileInfo = await stat(fullPath);
+            const sessionBytes = await this.estimateSessionBytesInFile(
+              fullPath,
+              sessionKey,
+            );
+            fileBytes.set(file, sessionBytes);
+            fileSizes.set(file, Math.max(0, fileInfo.size));
+            bytes += sessionBytes;
           } catch {
             // fail-open
           }
         }
-        this.sessionFootprintCache.set(sessionKey, { totalBytes: bytes, fileSizes });
+        this.sessionFootprintCache.set(sessionKey, { totalBytes: bytes, fileBytes, fileSizes });
       } else {
         bytes = cached.totalBytes;
         const seen = new Set(files);
 
         // Drop removed files from the cached total.
-        for (const [cachedFile, cachedSize] of cached.fileSizes.entries()) {
+        for (const [cachedFile, cachedSessionBytes] of cached.fileBytes.entries()) {
           if (!seen.has(cachedFile)) {
-            bytes -= cachedSize;
+            bytes -= cachedSessionBytes;
+            cached.fileBytes.delete(cachedFile);
             cached.fileSizes.delete(cachedFile);
           }
         }
 
-        // Stat only newly discovered files.
+        // Read only newly discovered files.
         for (const file of files) {
-          if (cached.fileSizes.has(file)) continue;
+          if (cached.fileBytes.has(file)) continue;
           try {
-            const fileInfo = await stat(path.join(channelDir, file));
-            const size = Math.max(0, fileInfo.size);
-            cached.fileSizes.set(file, size);
-            bytes += size;
+            const fullPath = path.join(channelDir, file);
+            const fileInfo = await stat(fullPath);
+            const sessionBytes = await this.estimateSessionBytesInFile(fullPath, sessionKey);
+            cached.fileBytes.set(file, sessionBytes);
+            cached.fileSizes.set(file, Math.max(0, fileInfo.size));
+            bytes += sessionBytes;
           } catch {
             // fail-open
           }
         }
 
-        // Re-stat only the newest shard, where growth happens.
+        // Recompute only the newest shard, where growth usually happens.
         const newestFile = files[files.length - 1];
         if (newestFile) {
           try {
-            const fileInfo = await stat(path.join(channelDir, newestFile));
+            const newestPath = path.join(channelDir, newestFile);
+            const fileInfo = await stat(newestPath);
             const size = Math.max(0, fileInfo.size);
-            const previous = cached.fileSizes.get(newestFile) ?? 0;
-            if (size !== previous) {
+            const previousSessionBytes = cached.fileBytes.get(newestFile) ?? 0;
+            const previousSize = cached.fileSizes.get(newestFile) ?? -1;
+            if (size !== previousSize) {
+              const sessionBytes = await this.estimateSessionBytesInFile(newestPath, sessionKey);
+              cached.fileBytes.set(newestFile, sessionBytes);
               cached.fileSizes.set(newestFile, size);
-              bytes += size - previous;
+              bytes += sessionBytes - previousSessionBytes;
             }
           } catch {
             // fail-open
@@ -252,6 +268,27 @@ export class TranscriptManager {
       bytes,
       tokens: Math.floor(bytes / TranscriptManager.CHARS_PER_TOKEN),
     };
+  }
+
+  private async estimateSessionBytesInFile(filePath: string, sessionKey: string): Promise<number> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      let total = 0;
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { sessionKey?: string };
+          if (parsed.sessionKey === sessionKey) {
+            total += Buffer.byteLength(`${line}\n`, "utf-8");
+          }
+        } catch {
+          // fail-open for malformed lines
+        }
+      }
+      return total;
+    } catch {
+      return 0;
+    }
   }
 
   /**
