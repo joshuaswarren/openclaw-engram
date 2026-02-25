@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.6 replay ingestion Task 1 (core contracts slice):
+  - Added `src/replay/types.ts` with canonical replay turn schema, parser contracts, and strict validation helpers.
+  - Added `src/replay/runner.ts` with source normalizer registry helpers and replay execution flow (dry-run, date range, offset, batching, progress summary).
+  - Added `tests/replay-types.test.ts` coverage for validation, batching, range filtering, offset/max limits, dry-run behavior, and registry duplicate guards.
 - v8.5 active session observer + heartbeat thresholds slice:
   - Added `src/session-observer-state.ts` to persist per-session observer cursors and threshold/debounce decisions.
   - Added heartbeat observer integration (`agent_heartbeat`) to queue proactive extraction when session growth crosses configured byte/token bands.
