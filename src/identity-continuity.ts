@@ -1,6 +1,11 @@
 import type {
   ContinuityIncidentCloseInput,
   ContinuityIncidentOpenInput,
+  ContinuityImprovementLoop,
+  ContinuityLoopCadence,
+  ContinuityLoopReviewInput,
+  ContinuityLoopStatus,
+  ContinuityLoopUpsertInput,
   ContinuityIncidentRecord,
   ContinuityIncidentState,
 } from "./types.js";
@@ -119,5 +124,210 @@ export function closeContinuityIncidentRecord(
     fixApplied: closure.fixApplied.trim(),
     verificationResult: closure.verificationResult.trim(),
     preventiveRule: closure.preventiveRule?.trim() || incident.preventiveRule,
+  };
+}
+
+const LOOP_HEADER = "# Continuity Improvement Loops";
+const LOOP_CADENCES = new Set<ContinuityLoopCadence>(["daily", "weekly", "monthly", "quarterly"]);
+const LOOP_STATUSES = new Set<ContinuityLoopStatus>(["active", "paused", "retired"]);
+const STALE_LAST_REVIEWED_FALLBACK = "1970-01-01T00:00:00.000Z";
+
+function normalizeLoopField(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return trimmed.replace(/\s+/g, " ");
+}
+
+function isValidIso(value: string): boolean {
+  const ts = Date.parse(value);
+  return Number.isFinite(ts);
+}
+
+function normalizeContinuityLoop(
+  input: ContinuityLoopUpsertInput | ContinuityImprovementLoop,
+  nowIso: string,
+): ContinuityImprovementLoop | null {
+  const id = normalizeLoopField(input.id);
+  const cadence = normalizeLoopField(input.cadence) as ContinuityLoopCadence | undefined;
+  const status = normalizeLoopField(input.status) as ContinuityLoopStatus | undefined;
+  const purpose = normalizeLoopField(input.purpose);
+  const killCondition = normalizeLoopField(input.killCondition);
+  const notes = normalizeLoopField(input.notes);
+  const lastReviewedRaw =
+    "lastReviewed" in input && typeof input.lastReviewed === "string" ? input.lastReviewed : undefined;
+  const lastReviewed = normalizeLoopField(lastReviewedRaw) ?? nowIso;
+
+  if (!id || !cadence || !status || !purpose || !killCondition) return null;
+  if (!LOOP_CADENCES.has(cadence)) return null;
+  if (!LOOP_STATUSES.has(status)) return null;
+  if (!isValidIso(lastReviewed)) return null;
+
+  return {
+    id,
+    cadence,
+    purpose,
+    status,
+    killCondition,
+    lastReviewed,
+    notes,
+  };
+}
+
+function serializeContinuityLoopSection(loop: ContinuityImprovementLoop): string {
+  const lines = [
+    `## ${loop.id}`,
+    `cadence: ${loop.cadence}`,
+    `purpose: ${loop.purpose}`,
+    `status: ${loop.status}`,
+    `killCondition: ${loop.killCondition}`,
+    `lastReviewed: ${loop.lastReviewed}`,
+  ];
+  if (loop.notes) lines.push(`notes: ${loop.notes}`);
+  return lines.join("\n");
+}
+
+type MarkdownSection = {
+  title: string;
+  body: string;
+};
+
+function splitLoopMarkdown(raw: string | null): { header: string; sections: MarkdownSection[] } {
+  const text = (raw ?? "").replace(/\r/g, "");
+  const lines = text.split("\n");
+  const headerLines: string[] = [];
+  const sections: MarkdownSection[] = [];
+  let current: MarkdownSection | null = null;
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^##\s+(.+?)\s*$/);
+    if (sectionMatch) {
+      if (current) sections.push({ title: current.title, body: current.body.trimEnd() });
+      current = { title: sectionMatch[1].trim(), body: "" };
+      continue;
+    }
+    if (!current) {
+      headerLines.push(line);
+      continue;
+    }
+    current.body += current.body.length > 0 ? `\n${line}` : line;
+  }
+  if (current) sections.push({ title: current.title, body: current.body.trimEnd() });
+
+  const headerRaw = headerLines.join("\n").trim();
+  const header = headerRaw.length > 0 ? headerRaw : LOOP_HEADER;
+  return { header, sections };
+}
+
+function parseLoopFromSection(section: MarkdownSection, nowIso: string): ContinuityImprovementLoop | null {
+  const fields: Record<string, string> = {};
+  for (const line of section.body.split("\n")) {
+    const kv = line.match(/^([A-Za-z][A-Za-z0-9_]*):\s*(.+?)\s*$/);
+    if (!kv) continue;
+    fields[kv[1]] = kv[2];
+  }
+  const parsedLastReviewed = normalizeLoopField(fields.lastReviewed);
+  const safeLastReviewed =
+    parsedLastReviewed && isValidIso(parsedLastReviewed) ? parsedLastReviewed : STALE_LAST_REVIEWED_FALLBACK;
+  return normalizeContinuityLoop(
+    {
+      id: section.title,
+      cadence: (fields.cadence ?? "") as ContinuityLoopCadence,
+      purpose: fields.purpose ?? "",
+      status: (fields.status ?? "") as ContinuityLoopStatus,
+      killCondition: fields.killCondition ?? "",
+      lastReviewed: safeLastReviewed,
+      notes: fields.notes,
+    },
+    nowIso,
+  );
+}
+
+function joinLoopMarkdown(header: string, sections: MarkdownSection[]): string {
+  const lines: string[] = [header.trim(), ""];
+  for (const section of sections) {
+    lines.push(`## ${section.title}`);
+    if (section.body.trim().length > 0) {
+      lines.push(section.body.trimEnd());
+    }
+    lines.push("");
+  }
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
+export function parseContinuityImprovementLoops(raw: string): ContinuityImprovementLoop[] {
+  const parsed = splitLoopMarkdown(raw);
+  const nowIso = new Date().toISOString();
+  return parsed.sections
+    .map((section) => parseLoopFromSection(section, nowIso))
+    .filter((loop): loop is ContinuityImprovementLoop => loop !== null);
+}
+
+export function upsertContinuityLoopInMarkdown(
+  raw: string | null,
+  input: ContinuityLoopUpsertInput,
+  nowIso: string,
+): { markdown: string; loop: ContinuityImprovementLoop } {
+  const normalized = normalizeContinuityLoop(input, nowIso);
+  if (!normalized) {
+    throw new Error("Invalid continuity loop input");
+  }
+
+  const parsed = splitLoopMarkdown(raw);
+  let replaced = false;
+  const nextSections = parsed.sections.map((section) => {
+    if (normalizeLoopField(section.title) !== normalized.id) return section;
+    replaced = true;
+    return { title: normalized.id, body: serializeContinuityLoopSection(normalized).split("\n").slice(1).join("\n") };
+  });
+
+  if (!replaced) {
+    nextSections.push({
+      title: normalized.id,
+      body: serializeContinuityLoopSection(normalized).split("\n").slice(1).join("\n"),
+    });
+  }
+
+  return { markdown: joinLoopMarkdown(parsed.header, nextSections), loop: normalized };
+}
+
+export function reviewContinuityLoopInMarkdown(
+  raw: string | null,
+  id: string,
+  input: ContinuityLoopReviewInput,
+  nowIso: string,
+): { markdown: string; loop: ContinuityImprovementLoop | null } {
+  const parsed = splitLoopMarkdown(raw);
+  const normalizedId = normalizeLoopField(id);
+  if (!normalizedId) {
+    return { markdown: joinLoopMarkdown(parsed.header, parsed.sections), loop: null };
+  }
+  let updatedLoop: ContinuityImprovementLoop | null = null;
+  const nextSections = parsed.sections.map((section) => {
+    if (normalizeLoopField(section.title) !== normalizedId) return section;
+    const existing = parseLoopFromSection(section, nowIso);
+    if (!existing) return section;
+    const reviewed = applyContinuityLoopReview(existing, input, nowIso);
+    updatedLoop = reviewed;
+    return { title: reviewed.id, body: serializeContinuityLoopSection(reviewed).split("\n").slice(1).join("\n") };
+  });
+
+  return { markdown: joinLoopMarkdown(parsed.header, nextSections), loop: updatedLoop };
+}
+
+function applyContinuityLoopReview(
+  existing: ContinuityImprovementLoop,
+  input: ContinuityLoopReviewInput,
+  nowIso: string,
+): ContinuityImprovementLoop {
+  const nextStatus = normalizeLoopField(input.status) as ContinuityLoopStatus | undefined;
+  const nextNotes = normalizeLoopField(input.notes);
+  const reviewedAt = normalizeLoopField(input.reviewedAt) ?? nowIso;
+
+  return {
+    ...existing,
+    status: nextStatus && LOOP_STATUSES.has(nextStatus) ? nextStatus : existing.status,
+    notes: nextNotes ?? existing.notes,
+    lastReviewed: isValidIso(reviewedAt) ? reviewedAt : nowIso,
   };
 }

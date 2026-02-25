@@ -12,6 +12,9 @@ import type {
   ContinuityIncidentCloseInput,
   ContinuityIncidentOpenInput,
   ContinuityIncidentRecord,
+  ContinuityImprovementLoop,
+  ContinuityLoopReviewInput,
+  ContinuityLoopUpsertInput,
   EntityActivityEntry,
   EntityFile,
   EntityRelationship,
@@ -38,7 +41,10 @@ import {
   closeContinuityIncidentRecord,
   createContinuityIncidentRecord,
   parseContinuityIncident,
+  parseContinuityImprovementLoops,
+  reviewContinuityLoopInMarkdown,
   serializeContinuityIncident,
+  upsertContinuityLoopInMarkdown,
 } from "./identity-continuity.js";
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
@@ -1611,6 +1617,31 @@ export class StorageManager {
     } catch {
       return null;
     }
+  }
+
+  async readIdentityImprovementLoopRegister(): Promise<ContinuityImprovementLoop[]> {
+    const raw = await this.readIdentityImprovementLoops();
+    if (!raw) return [];
+    return parseContinuityImprovementLoops(raw);
+  }
+
+  async upsertIdentityImprovementLoop(input: ContinuityLoopUpsertInput): Promise<ContinuityImprovementLoop> {
+    const nowIso = new Date().toISOString();
+    const raw = await this.readIdentityImprovementLoops();
+    const { markdown, loop } = upsertContinuityLoopInMarkdown(raw, input, nowIso);
+    await this.writeIdentityImprovementLoops(markdown);
+    return loop;
+  }
+
+  async reviewIdentityImprovementLoop(
+    id: string,
+    input: ContinuityLoopReviewInput,
+  ): Promise<ContinuityImprovementLoop | null> {
+    const raw = await this.readIdentityImprovementLoops();
+    const { markdown, loop } = reviewContinuityLoopInMarkdown(raw, id, input, new Date().toISOString());
+    if (!loop) return null;
+    await this.writeIdentityImprovementLoops(markdown);
+    return loop;
   }
 
   // ---------------------------------------------------------------------------

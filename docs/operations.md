@@ -169,6 +169,8 @@ When `identityContinuityEnabled=true`, agents can manage the recovery anchor via
 
 - `identity_anchor_get` reads the current anchor.
 - `identity_anchor_update` merges updates into anchor sections (`Identity Traits`, `Communication Preferences`, `Operating Principles`, `Continuity Notes`) without destructive overwrite.
+- `continuity_loop_add_or_update` writes structured recurring-loop entries (cadence, purpose, status, kill condition, review timestamp).
+- `continuity_loop_review` updates review status/notes while stamping latest review time.
 
 Anchor file location:
 
@@ -190,6 +192,12 @@ Incident artifact location:
 
 ```text
 <memoryDir>/identity/incidents/*.md
+```
+
+Improvement loop register location:
+
+```text
+<memoryDir>/identity/improvement-loops.md
 ```
 
 ## Runbooks

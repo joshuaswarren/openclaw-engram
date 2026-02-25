@@ -25,6 +25,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 improvement-loop register slice (Task 7 / PR pending):
+  - Added structured improvement-loop register parsing/serialization helpers in `src/identity-continuity.ts`.
+  - Extended `StorageManager` with typed register APIs: read/write register, upsert loop, and review loop metadata updates.
+  - Added `continuity_loop_add_or_update` and `continuity_loop_review` tools for managing recurring continuity loops.
+  - Extended continuity audit synthesis to detect stale active loops by cadence and surface stale-loop signals/actions.
+  - Added `tests/improvement-loop-register.test.ts` and expanded continuity-audit test coverage for stale-loop detection.
 - v8.4 identity injection budgeting + mode gating slice (PR #41):
   - Added runtime identity continuity injection modes (`recovery_only`, `minimal`, `full`) with explicit recovery-intent gating and minimal-mode downgrade safeguards.
   - Added per-section `identityMaxInjectChars` enforcement with trim marker + telemetry for injected chars and truncation state.

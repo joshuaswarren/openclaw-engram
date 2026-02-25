@@ -158,6 +158,21 @@ test("continuity audit generator writes deterministic weekly audit", async () =>
     "utf-8",
   );
   await writeFile(
+    path.join(memoryDir, "identity", "improvement-loops.md"),
+    [
+      "# Continuity Improvement Loops",
+      "",
+      "## weekly-audit",
+      "cadence: weekly",
+      "purpose: run continuity audit",
+      "status: active",
+      "killCondition: automated health checks replace manual loop",
+      "lastReviewed: 2020-01-01T00:00:00.000Z",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  await writeFile(
     path.join(memoryDir, "identity", "incidents", "2026-02-24-incident-1.md"),
     [
       "---",
@@ -181,7 +196,9 @@ test("continuity audit generator writes deterministic weekly audit", async () =>
 
   assert.match(md, /Continuity Audit — weekly 2026-W09/);
   assert.match(md, /Identity anchor present: yes/);
+  assert.match(md, /Stale active loops: 1/);
   assert.match(md, /Open incidents: 1/);
+  assert.match(md, /Stale active continuity loops: weekly-audit/);
   assert.match(md, /Next Hardening Action/);
 });
 
@@ -199,6 +216,75 @@ test("weekly compounding report links continuity audit outputs when enabled", as
   const report = await readFile(rerun.reportPath, "utf-8");
   assert.match(report, /## Continuity Audits/);
   assert.match(report, new RegExp(`weekly: .*${weekly.weekId}\\.md`));
+});
+
+test("continuity audit treats missing loop lastReviewed as stale", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-missing-reviewed");
+  const sharedDir = tmpDir("engram-continuity-audit-missing-reviewed-shared");
+  await mkdir(path.join(memoryDir, "identity"), { recursive: true });
+  await mkdir(path.join(memoryDir, "identity", "incidents"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  await writeFile(
+    path.join(memoryDir, "identity", "identity-anchor.md"),
+    "# Identity Continuity Anchor\n",
+    "utf-8",
+  );
+  await writeFile(
+    path.join(memoryDir, "identity", "improvement-loops.md"),
+    [
+      "# Continuity Improvement Loops",
+      "",
+      "## weekly-audit",
+      "cadence: weekly",
+      "purpose: run continuity audit",
+      "status: active",
+      "killCondition: automated checks replace manual loop",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(minimalConfig(memoryDir, sharedDir));
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W09" });
+  const md = await readFile(res.reportPath, "utf-8");
+  assert.match(md, /Stale active loops: 1/);
+  assert.match(md, /Stale active continuity loops: weekly-audit/);
+});
+
+test("continuity audit treats invalid loop lastReviewed as stale", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-invalid-reviewed");
+  const sharedDir = tmpDir("engram-continuity-audit-invalid-reviewed-shared");
+  await mkdir(path.join(memoryDir, "identity"), { recursive: true });
+  await mkdir(path.join(memoryDir, "identity", "incidents"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  await writeFile(
+    path.join(memoryDir, "identity", "identity-anchor.md"),
+    "# Identity Continuity Anchor\n",
+    "utf-8",
+  );
+  await writeFile(
+    path.join(memoryDir, "identity", "improvement-loops.md"),
+    [
+      "# Continuity Improvement Loops",
+      "",
+      "## weekly-audit",
+      "cadence: weekly",
+      "purpose: run continuity audit",
+      "status: active",
+      "killCondition: automated checks replace manual loop",
+      "lastReviewed: 2026-13-01",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(minimalConfig(memoryDir, sharedDir));
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W09" });
+  const md = await readFile(res.reportPath, "utf-8");
+  assert.match(md, /Stale active loops: 1/);
+  assert.match(md, /Stale active continuity loops: weekly-audit/);
 });
 
 test("continuity_audit_generate tool is config-gated and returns report path", async () => {
