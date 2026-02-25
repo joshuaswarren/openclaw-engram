@@ -36,3 +36,14 @@ compounding_weekly_synthesize
 Recommended scheduling:
 - Use OpenClaw cron with an isolated agent turn that calls `compounding_weekly_synthesize`.
 
+## Continuity Audit Generation
+
+When `identityContinuityEnabled=true`, `continuityAuditEnabled=true`, and `compoundingEnabled=true`, use:
+
+- `continuity_audit_generate` with `period=weekly|monthly` and optional `key`.
+
+Outputs:
+- `memoryDir/identity/audits/weekly/<YYYY-Www>.md`
+- `memoryDir/identity/audits/monthly/<YYYY-MM>.md`
+
+When continuity audits are enabled, weekly compounding reports include a `Continuity Audits` section linking available weekly/monthly audit artifacts.

@@ -1,9 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { log } from "../logger.js";
-import type { PluginConfig } from "../types.js";
+import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
 import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
+import { parseContinuityIncident } from "../identity-continuity.js";
 
 type MistakesFile = {
   updatedAt: string;
@@ -21,6 +22,24 @@ function isoWeekId(d: Date): string {
   return `${yyyy}-W${String(week).padStart(2, "0")}`;
 }
 
+function isoMonthId(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthIdFromIsoWeek(weekId: string): string {
+  const match = weekId.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return isoMonthId(new Date());
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const isoWeekOneMonday = new Date(jan4);
+  isoWeekOneMonday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const monday = new Date(isoWeekOneMonday);
+  monday.setUTCDate(isoWeekOneMonday.getUTCDate() + (week - 1) * 7);
+  return isoMonthId(monday);
+}
+
 function sharedContextDir(config: PluginConfig): string {
   if (typeof config.sharedContextDir === "string" && config.sharedContextDir.length > 0) {
     return config.sharedContextDir;
@@ -32,11 +51,21 @@ export class CompoundingEngine {
   private readonly weeklyDir: string;
   private readonly mistakesPath: string;
   private readonly feedbackInboxPath: string;
+  private readonly identityAnchorPath: string;
+  private readonly identityIncidentsDir: string;
+  private readonly identityAuditWeeklyDir: string;
+  private readonly identityAuditMonthlyDir: string;
+  private readonly identityImprovementLoopsPath: string;
 
   constructor(private readonly config: PluginConfig) {
     this.weeklyDir = path.join(config.memoryDir, "compounding", "weekly");
     this.mistakesPath = path.join(config.memoryDir, "compounding", "mistakes.json");
     this.feedbackInboxPath = path.join(sharedContextDir(config), "feedback", "inbox.jsonl");
+    this.identityAnchorPath = path.join(config.memoryDir, "identity", "identity-anchor.md");
+    this.identityIncidentsDir = path.join(config.memoryDir, "identity", "incidents");
+    this.identityAuditWeeklyDir = path.join(config.memoryDir, "identity", "audits", "weekly");
+    this.identityAuditMonthlyDir = path.join(config.memoryDir, "identity", "audits", "monthly");
+    this.identityImprovementLoopsPath = path.join(config.memoryDir, "identity", "improvement-loops.md");
   }
 
   async ensureDirs(): Promise<void> {
@@ -50,10 +79,11 @@ export class CompoundingEngine {
 
     const entries = await this.readFeedbackEntriesForWeek(weekId);
     const mistakes = this.buildMistakes(entries);
+    const continuity = await this.readContinuityAuditReferences(weekId);
 
     // Write weekly report (always, even if empty: "day-one outcomes").
     const reportPath = path.join(this.weeklyDir, `${weekId}.md`);
-    const md = this.formatWeeklyReport(weekId, entries, mistakes.patterns);
+    const md = this.formatWeeklyReport(weekId, entries, mistakes.patterns, continuity);
     await writeFile(reportPath, md, "utf-8");
 
     // Update mistakes.json (always).
@@ -61,6 +91,78 @@ export class CompoundingEngine {
 
     log.info(`compounding: wrote weekly=${reportPath} mistakes=${this.mistakesPath}`);
     return { weekId, reportPath, mistakesCount: mistakes.patterns.length };
+  }
+
+  async synthesizeContinuityAudit(opts?: {
+    period?: "weekly" | "monthly";
+    key?: string;
+  }): Promise<{ period: "weekly" | "monthly"; key: string; reportPath: string }> {
+    const period = opts?.period === "monthly" ? "monthly" : "weekly";
+    const key = opts?.key?.trim() || (period === "weekly" ? isoWeekId(new Date()) : isoMonthId(new Date()));
+    const nowIso = new Date().toISOString();
+    const [anchorPresent, improvementLoopPresent, incidents, mistakes] = await Promise.all([
+      this.readNonEmptyFile(this.identityAnchorPath),
+      this.readNonEmptyFile(this.identityImprovementLoopsPath),
+      this.readContinuityIncidents(),
+      this.readMistakes(),
+    ]);
+
+    const openIncidents = incidents.filter((i) => i.state === "open");
+    const closedIncidents = incidents.filter((i) => i.state === "closed");
+    const hardeningCandidates: string[] = [];
+    if (!anchorPresent) {
+      hardeningCandidates.push("Create/update identity anchor baseline and verify recovery injection path.");
+    }
+    if (openIncidents.length > 0) {
+      hardeningCandidates.push(
+        `Close or downgrade ${openIncidents.length} open continuity incident${openIncidents.length === 1 ? "" : "s"}.`,
+      );
+    }
+    if (!improvementLoopPresent) {
+      hardeningCandidates.push("Initialize continuity improvement-loops register with cadence and kill conditions.");
+    }
+    if ((mistakes?.patterns.length ?? 0) > 0) {
+      hardeningCandidates.push("Review latest compounding mistakes and convert one pattern into preventive continuity rule.");
+    }
+    const nextAction = hardeningCandidates[0] ?? "No critical drift detected; keep weekly/monthly continuity audit cadence.";
+
+    const lines: string[] = [
+      `# Continuity Audit — ${period} ${key}`,
+      "",
+      `Generated: ${nowIso}`,
+      `Scope: ${period}`,
+      "",
+      "## Signal Summary",
+      `- Identity anchor present: ${anchorPresent ? "yes" : "no"}`,
+      `- Improvement-loop register present: ${improvementLoopPresent ? "yes" : "no"}`,
+      `- Open incidents: ${openIncidents.length}`,
+      `- Closed incidents: ${closedIncidents.length}`,
+      `- Compounding mistake patterns: ${mistakes?.patterns.length ?? 0}`,
+      "",
+      "## Drift Checks",
+      `- Identity anchor drift: ${anchorPresent ? "pass" : "needs attention"}`,
+      `- Incident backlog: ${openIncidents.length === 0 ? "pass" : "needs attention"}`,
+      `- Improvement-loop coverage: ${improvementLoopPresent ? "pass" : "needs attention"}`,
+      "",
+      "## Stale Rule Detection",
+      `- Open incidents older than closure window: ${openIncidents.length > 0 ? "possible" : "none detected"}`,
+      `- Preventive rule coverage on closed incidents: ${
+        closedIncidents.some((i) => (i.preventiveRule ?? "").trim().length > 0) ? "present" : "not detected"
+      }`,
+      "",
+      "## Next Hardening Action",
+      `- ${nextAction}`,
+      "",
+      "## Open Incident IDs",
+      ...(openIncidents.length > 0 ? openIncidents.slice(0, 20).map((i) => `- ${i.id}`) : ["- (none)"]),
+      "",
+    ];
+
+    const dir = period === "weekly" ? this.identityAuditWeeklyDir : this.identityAuditMonthlyDir;
+    await mkdir(dir, { recursive: true });
+    const reportPath = path.join(dir, `${key}.md`);
+    await writeFile(reportPath, lines.join("\n"), "utf-8");
+    return { period, key, reportPath };
   }
 
   async readMistakes(): Promise<MistakesFile | null> {
@@ -115,7 +217,12 @@ export class CompoundingEngine {
     return { updatedAt: new Date().toISOString(), patterns: uniq };
   }
 
-  private formatWeeklyReport(weekId: string, entries: SharedFeedbackEntry[], patterns: string[]): string {
+  private formatWeeklyReport(
+    weekId: string,
+    entries: SharedFeedbackEntry[],
+    patterns: string[],
+    continuity: { monthId: string; weeklyPath: string | null; monthlyPath: string | null },
+  ): string {
     const byAgent = new Map<string, SharedFeedbackEntry[]>();
     for (const e of entries) {
       const list = byAgent.get(e.agent) ?? [];
@@ -157,8 +264,70 @@ export class CompoundingEngine {
       for (const p of patterns.slice(0, 100)) lines.push(`- ${p}`);
     }
     lines.push("");
+    if (this.config.continuityAuditEnabled) {
+      lines.push("## Continuity Audits");
+      if (continuity.weeklyPath) {
+        lines.push(`- weekly: ${continuity.weeklyPath}`);
+      } else {
+        lines.push(`- weekly: (missing for ${weekId})`);
+      }
+      if (continuity.monthlyPath) {
+        lines.push(`- monthly: ${continuity.monthlyPath}`);
+      } else {
+        lines.push(`- monthly: (missing for ${continuity.monthId})`);
+      }
+      lines.push("");
+    }
 
     return lines.join("\n");
   }
-}
 
+  private async readNonEmptyFile(filePath: string): Promise<boolean> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      return raw.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private async readContinuityIncidents(): Promise<ContinuityIncidentRecord[]> {
+    const incidents: ContinuityIncidentRecord[] = [];
+    try {
+      const names = await readdir(this.identityIncidentsDir);
+      const files = names.filter((n) => n.endsWith(".md")).sort().reverse();
+      for (const file of files) {
+        const filePath = path.join(this.identityIncidentsDir, file);
+        try {
+          const raw = await readFile(filePath, "utf-8");
+          const parsed = parseContinuityIncident(raw);
+          if (parsed) incidents.push(parsed);
+        } catch {
+          // fail-open
+        }
+      }
+    } catch {
+      // fail-open
+    }
+    return incidents;
+  }
+
+  private async readContinuityAuditReferences(weekId: string): Promise<{
+    weekId: string;
+    monthId: string;
+    weeklyPath: string | null;
+    monthlyPath: string | null;
+  }> {
+    const monthId = monthIdFromIsoWeek(weekId);
+    const weeklyPath = path.join(this.identityAuditWeeklyDir, `${weekId}.md`);
+    const monthlyPath = path.join(this.identityAuditMonthlyDir, `${monthId}.md`);
+    const weeklyExists = await this.readNonEmptyFile(weeklyPath);
+    const monthlyExists = await this.readNonEmptyFile(monthlyPath);
+    return {
+      weekId,
+      monthId,
+      weeklyPath: weeklyExists ? weeklyPath : null,
+      monthlyPath: monthlyExists ? monthlyPath : null,
+    };
+  }
+}

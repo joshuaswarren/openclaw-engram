@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 continuity audit generator slice (PR #40):
+  - Added `continuity_audit_generate` tool for deterministic weekly/monthly continuity audit artifacts.
+  - Extended `CompoundingEngine` with continuity audit synthesis and signal checks (anchor presence, incident counts, improvement-loop presence, compounding pattern count).
+  - Added weekly compounding report linking for available continuity audits when `continuityAuditEnabled=true`.
+  - Added `tests/continuity-audit.test.ts` coverage for audit generation, compounding linkage, and tool behavior.
+  - Updated `docs/compounding.md` with continuity audit workflow and output locations.
 - v8.4 continuity incident workflow slice (PR #39):
   - Added `continuity_incident_open`, `continuity_incident_close`, and `continuity_incident_list` tools.
   - Added `openclaw engram continuity incidents`, `openclaw engram continuity incident-open`, and `openclaw engram continuity incident-close` CLI commands.

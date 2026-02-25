@@ -251,6 +251,56 @@ Best for:
 
   api.registerTool(
     {
+      name: "continuity_audit_generate",
+      label: "Generate Continuity Audit",
+      description:
+        "Generate a deterministic identity continuity audit report (weekly/monthly) and persist it under identity/audits.",
+      parameters: Type.Object({
+        period: Type.Optional(
+          Type.String({
+            enum: ["weekly", "monthly"],
+            description: "Audit period. Defaults to weekly.",
+          }),
+        ),
+        key: Type.Optional(
+          Type.String({
+            description:
+              "Optional period key (weekly: YYYY-Www, monthly: YYYY-MM). Defaults to current period.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to generate continuity audits.",
+          );
+        }
+        if (!orchestrator.config.continuityAuditEnabled) {
+          return toolResult(
+            "Continuity audits are disabled. Enable `continuityAuditEnabled: true` to generate continuity audits.",
+          );
+        }
+        if (!orchestrator.compounding) {
+          return toolResult(
+            "Compounding engine is disabled. Enable `compoundingEnabled: true` to generate continuity audits.",
+          );
+        }
+        const period = params.period === "monthly" ? "monthly" : "weekly";
+        const key = typeof params.key === "string" ? params.key : undefined;
+        const audit = await orchestrator.compounding.synthesizeContinuityAudit({
+          period,
+          key,
+        });
+        return toolResult(
+          `OK\n\nperiod: ${audit.period}\nkey: ${audit.key}\nreport: ${audit.reportPath}`,
+        );
+      },
+    },
+    { name: "continuity_audit_generate" },
+  );
+
+  api.registerTool(
+    {
       name: "continuity_incident_open",
       label: "Open Continuity Incident",
       description: "Create a new continuity incident record in append-only storage.",
