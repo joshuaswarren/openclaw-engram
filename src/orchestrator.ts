@@ -63,8 +63,10 @@ import type {
   BootstrapOptions,
   BootstrapResult,
   BufferTurn,
+  ContinuityIncidentRecord,
   EngramTraceEvent,
   ExtractionResult,
+  IdentityInjectionMode,
   LifecycleState,
   MemoryActionEvent,
   MemoryLink,
@@ -301,6 +303,28 @@ export function resolveEffectiveRecallMode(options: {
     return "full";
   }
   return plannedMode;
+}
+
+export function hasIdentityRecoveryIntent(prompt: string): boolean {
+  const text = typeof prompt === "string" ? prompt.toLowerCase() : "";
+  if (!text) return false;
+  return /\b(identity|continuity|recover(?:y|ing|ed)?|incident|drift|restore|regress(?:ion|ed|ing)?)\b/i.test(
+    text,
+  );
+}
+
+export function resolveEffectiveIdentityInjectionMode(options: {
+  configuredMode: IdentityInjectionMode;
+  recallMode: RecallPlanMode;
+  prompt: string;
+}): { mode: IdentityInjectionMode; shouldInject: boolean } {
+  if (options.configuredMode === "recovery_only" && !hasIdentityRecoveryIntent(options.prompt)) {
+    return { mode: "recovery_only", shouldInject: false };
+  }
+  if (options.recallMode === "minimal" && options.configuredMode === "full") {
+    return { mode: "minimal", shouldInject: true };
+  }
+  return { mode: options.configuredMode, shouldInject: true };
 }
 
 export function computeArtifactCandidateFetchLimit(targetCount: number): number {
@@ -1402,6 +1426,9 @@ export class Orchestrator {
     let impressionRecorded = false;
     let recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan" = "none";
     let recalledMemoryCount = 0;
+    let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
+    let identityInjectedChars = 0;
+    let identityInjectionTruncated = false;
     timings.queryPolicy = `${queryPolicy.promptShape}/${queryPolicy.retrievalBudgetMode}${queryPolicy.skipConversationRecall ? "/skip-conv" : ""}`;
     const recallMode: RecallPlanMode = resolveEffectiveRecallMode({
       plannerEnabled: this.config.recallPlannerEnabled,
@@ -1461,6 +1488,9 @@ export class Orchestrator {
         recalledMemoryCount,
         injected: false,
         contextChars: 0,
+        identityInjectionMode: identityInjectionModeUsed,
+        identityInjectedChars,
+        identityInjectionTruncated,
         durationMs: Date.now() - recallStart,
         timings: { ...timings },
       });
@@ -1505,6 +1535,18 @@ export class Orchestrator {
       const profile = await profileStorage.readProfile();
       timings.profile = `${Date.now() - t0}ms`;
       return profile || null;
+    })();
+
+    // 1a. Identity continuity signals (v8.4)
+    const identityContinuityPromise = (async () => {
+      const t0 = Date.now();
+      const section = await this.buildIdentityContinuitySection({
+        storage: profileStorage,
+        recallMode,
+        prompt: retrievalQuery,
+      });
+      timings.identityContinuity = `${Date.now() - t0}ms`;
+      return section;
     })();
 
     // 1b. Knowledge Index (v7.0)
@@ -1581,9 +1623,10 @@ export class Orchestrator {
     })();
 
     // --- Wait for all parallel work ---
-    const [sharedCtx, profile, kiResult, artifacts, qmdResult] = await Promise.all([
+    const [sharedCtx, profile, identityContinuity, kiResult, artifacts, qmdResult] = await Promise.all([
       sharedContextPromise,
       profilePromise,
+      identityContinuityPromise,
       knowledgeIndexPromise,
       artifactsPromise,
       qmdPromise,
@@ -1596,6 +1639,14 @@ export class Orchestrator {
 
     // 1. Profile
     if (profile) sections.push(`## User Profile\n\n${profile}`);
+
+    // 1a. Identity continuity
+    if (identityContinuity) {
+      sections.push(identityContinuity.section);
+      identityInjectionModeUsed = identityContinuity.mode;
+      identityInjectedChars = identityContinuity.injectedChars;
+      identityInjectionTruncated = identityContinuity.truncated;
+    }
 
     // 1b. Knowledge Index
     if (kiResult?.result) {
@@ -1733,6 +1784,11 @@ export class Orchestrator {
           sections,
           retrievalQuery,
           sessionKey,
+          identityInjection: {
+            mode: identityInjectionModeUsed,
+            injectedChars: identityInjectedChars,
+            truncated: identityInjectionTruncated,
+          },
         });
         impressionRecorded = true;
       } else {
@@ -1756,6 +1812,11 @@ export class Orchestrator {
             sections,
             retrievalQuery,
             sessionKey,
+            identityInjection: {
+              mode: identityInjectionModeUsed,
+              injectedChars: identityInjectedChars,
+              truncated: identityInjectionTruncated,
+            },
           });
           impressionRecorded = true;
         } else {
@@ -1773,6 +1834,11 @@ export class Orchestrator {
               sections,
               retrievalQuery,
               sessionKey,
+              identityInjection: {
+                mode: identityInjectionModeUsed,
+                injectedChars: identityInjectedChars,
+                truncated: identityInjectionTruncated,
+              },
             });
             impressionRecorded = true;
           }
@@ -1826,6 +1892,11 @@ export class Orchestrator {
           sections,
           retrievalQuery,
           sessionKey,
+          identityInjection: {
+            mode: identityInjectionModeUsed,
+            injectedChars: identityInjectedChars,
+            truncated: identityInjectionTruncated,
+          },
         });
         impressionRecorded = true;
       } else {
@@ -1874,6 +1945,11 @@ export class Orchestrator {
               sections,
               retrievalQuery,
               sessionKey,
+              identityInjection: {
+                mode: identityInjectionModeUsed,
+                injectedChars: identityInjectedChars,
+                truncated: identityInjectionTruncated,
+              },
             });
             impressionRecorded = true;
           } else {
@@ -1891,6 +1967,11 @@ export class Orchestrator {
                 sections,
                 retrievalQuery,
                 sessionKey,
+                identityInjection: {
+                  mode: identityInjectionModeUsed,
+                  injectedChars: identityInjectedChars,
+                  truncated: identityInjectionTruncated,
+                },
               });
               impressionRecorded = true;
             }
@@ -1910,6 +1991,11 @@ export class Orchestrator {
               sections,
               retrievalQuery,
               sessionKey,
+              identityInjection: {
+                mode: identityInjectionModeUsed,
+                injectedChars: identityInjectedChars,
+                truncated: identityInjectionTruncated,
+              },
             });
             impressionRecorded = true;
           }
@@ -2081,7 +2167,16 @@ export class Orchestrator {
 
     if (!impressionRecorded && sessionKey && this.config.recordEmptyRecallImpressions) {
       this.lastRecall
-        .record({ sessionKey, query: retrievalQuery, memoryIds: [] })
+        .record({
+          sessionKey,
+          query: retrievalQuery,
+          memoryIds: [],
+          identityInjection: {
+            mode: identityInjectionModeUsed,
+            injectedChars: identityInjectedChars,
+            truncated: identityInjectionTruncated,
+          },
+        })
         .catch((err) => log.debug(`last recall record failed: ${err}`));
     }
 
@@ -2107,6 +2202,9 @@ export class Orchestrator {
       recalledMemoryCount,
       injected: context.length > 0,
       contextChars: context.length,
+      identityInjectionMode: identityInjectionModeUsed,
+      identityInjectedChars,
+      identityInjectionTruncated,
       durationMs: Date.now() - recallStart,
       timings: { ...timings },
     });
@@ -3576,6 +3674,101 @@ export class Orchestrator {
     return `## ${title}\n\n${lines.join("\n\n")}`;
   }
 
+  private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {
+    const lines = raw
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    const compact = lines.slice(0, Math.max(1, maxLines)).join(" ");
+    if (compact.length <= maxChars) return compact;
+    return `${compact.slice(0, Math.max(0, maxChars - 1))}…`;
+  }
+
+  private formatOpenIncidentLine(incident: ContinuityIncidentRecord, includeDetails: boolean): string {
+    const base = `[${incident.id}] ${incident.symptom.trim()}`;
+    if (!includeDetails) return `- ${base}`;
+    const parts = [base];
+    if (incident.suspectedCause) parts.push(`cause: ${incident.suspectedCause.trim()}`);
+    if (incident.triggerWindow) parts.push(`window: ${incident.triggerWindow.trim()}`);
+    return `- ${parts.join(" | ")}`;
+  }
+
+  private trimIdentitySection(content: string, maxChars: number): { text: string; truncated: boolean } {
+    if (maxChars <= 0) return { text: "", truncated: false };
+    if (content.length <= maxChars) return { text: content, truncated: false };
+    const suffix = "\n\n...(identity continuity trimmed)";
+    const headroom = Math.max(0, maxChars - suffix.length);
+    return { text: `${content.slice(0, headroom)}${suffix}`, truncated: true };
+  }
+
+  private async buildIdentityContinuitySection(options: {
+    storage: StorageManager;
+    recallMode: RecallPlanMode;
+    prompt: string;
+  }): Promise<{ section: string; mode: IdentityInjectionMode; injectedChars: number; truncated: boolean } | null> {
+    if (!this.config.identityContinuityEnabled) return null;
+    if (this.config.identityMaxInjectChars <= 0) return null;
+
+    const resolved = resolveEffectiveIdentityInjectionMode({
+      configuredMode: this.config.identityInjectionMode,
+      recallMode: options.recallMode,
+      prompt: options.prompt,
+    });
+    if (!resolved.shouldInject) return null;
+
+    const [anchorRaw, loopsRaw, incidents] = await Promise.all([
+      options.storage.readIdentityAnchor(),
+      options.storage.readIdentityImprovementLoops(),
+      options.storage.readContinuityIncidents(200),
+    ]);
+    const openIncidents = incidents.filter((incident) => incident.state === "open");
+
+    const lines: string[] = [];
+    if (resolved.mode === "full") {
+      lines.push("## Identity Continuity");
+      if (anchorRaw && anchorRaw.trim().length > 0) {
+        lines.push("", "### Anchor", "", anchorRaw.trim());
+      }
+      if (loopsRaw && loopsRaw.trim().length > 0) {
+        lines.push("", "### Improvement Loops", "", loopsRaw.trim());
+      }
+      lines.push("", "### Open Incidents", "");
+      if (openIncidents.length === 0) {
+        lines.push("- none");
+      } else {
+        lines.push(
+          ...openIncidents.slice(0, 5).map((incident) => this.formatOpenIncidentLine(incident, true)),
+        );
+      }
+    } else {
+      const anchorSummary = anchorRaw ? this.summarizeIdentityText(anchorRaw, 3, 320) : "";
+      const loopsSummary = loopsRaw ? this.summarizeIdentityText(loopsRaw, 2, 240) : "";
+      lines.push("## Identity Continuity Signals", "");
+      if (anchorSummary) lines.push(`- anchor: ${anchorSummary}`);
+      if (loopsSummary) lines.push(`- loops: ${loopsSummary}`);
+      if (openIncidents.length === 0) {
+        lines.push("- incidents: 0 open");
+      } else {
+        lines.push(`- incidents: ${openIncidents.length} open`);
+        lines.push(...openIncidents.slice(0, 2).map((incident) => this.formatOpenIncidentLine(incident, false)));
+      }
+    }
+
+    const body = lines.join("\n").trim();
+    if (!body) return null;
+
+    const { text, truncated } = this.trimIdentitySection(body, this.config.identityMaxInjectChars);
+    if (!text) return null;
+
+    return {
+      section: text,
+      mode: resolved.mode,
+      injectedChars: text.length,
+      truncated,
+    };
+  }
+
   private emitTrace(event: EngramTraceEvent): void {
     try {
       const cb = (globalThis as any).__openclawEngramTrace;
@@ -3591,6 +3784,11 @@ export class Orchestrator {
     sections: string[];
     retrievalQuery: string;
     sessionKey: string | undefined;
+    identityInjection?: {
+      mode: IdentityInjectionMode | "none";
+      injectedChars: number;
+      truncated: boolean;
+    };
   }): void {
     const memoryIds = this.extractMemoryIdsFromResults(options.results);
     this.trackMemoryAccess(memoryIds);
@@ -3598,7 +3796,12 @@ export class Orchestrator {
     if (options.sessionKey) {
       const unique = Array.from(new Set(memoryIds)).slice(0, 40);
       this.lastRecall
-        .record({ sessionKey: options.sessionKey, query: options.retrievalQuery, memoryIds: unique })
+        .record({
+          sessionKey: options.sessionKey,
+          query: options.retrievalQuery,
+          memoryIds: unique,
+          identityInjection: options.identityInjection,
+        })
         .catch((err) => log.debug(`last recall record failed: ${err}`));
     }
 

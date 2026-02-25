@@ -624,6 +624,7 @@ Best for:
             "",
             `Recorded at: ${snap.recordedAt}`,
             `Query hash: ${snap.queryHash} (len=${snap.queryLen})`,
+            `Identity injection: mode=${snap.identityInjectionMode ?? "none"}, chars=${snap.identityInjectedChars ?? 0}, truncated=${snap.identityInjectionTruncated === true ? "yes" : "no"}`,
             `Memories (${snap.memoryIds.length}):`,
             ...snap.memoryIds.map((id) => `- ${id}`),
           ].join("\n"),

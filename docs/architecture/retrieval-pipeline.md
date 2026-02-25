@@ -49,12 +49,13 @@ before_agent_start
 │  6. Context assembly            │
 │  0. Shared context (opt-in)     │  cross-agent shared context (if enabled)
 │  1. Profile                     │  behavioral context
-│  2. Knowledge Index             │  entity/topic index (default-on)
-│  3. Artifacts (v8.0)            │  high-confidence anchors
-│  4. Memory boxes                │  recent topic windows
-│  5. Notes + memories            │  search results
-│  6. Checkpoint / transcripts    │  working context recovery
-│  7. Hourly summaries            │  recent activity digest
+│  2. Identity continuity (v8.4)  │  mode-gated anchor/incident signals
+│  3. Knowledge Index             │  entity/topic index (default-on)
+│  4. Artifacts (v8.0)            │  high-confidence anchors
+│  5. Memory boxes                │  recent topic windows
+│  6. Notes + memories            │  search results
+│  7. Checkpoint / transcripts    │  working context recovery
+│  8. Hourly summaries            │  recent activity digest
 └──────────────┬──────────────────┘
                ▼
          inject into system prompt
@@ -95,12 +96,24 @@ When `intentRoutingEnabled` is on, extraction captures `intent.goal`, `intent.ac
 All retrieved content is capped at `maxMemoryTokens` (default 2000 tokens) before injection. Sections are assembled in this order:
 0. Shared context (if enabled)
 1. Profile
-2. Knowledge Index (entity/topic index; default-on)
-3. Artifacts
-4. Memory boxes
-5. Notes + search results
-6. Checkpoint / working context recovery
-7. Hourly summaries
+2. Identity continuity (if enabled + mode gate passes)
+3. Knowledge Index (entity/topic index; default-on)
+4. Artifacts
+5. Memory boxes
+6. Notes + search results
+7. Checkpoint / working context recovery
+8. Hourly summaries
+
+Identity continuity section behavior:
+- `recovery_only`: inject only when prompt has explicit recovery/continuity intent.
+- `minimal`: inject compact identity signals.
+- `full`: inject structured anchor/loops/incidents block (downgraded to compact form when recall planner mode is `minimal`).
+- `identityMaxInjectChars`: per-section cap with explicit trim marker when exceeded.
+
+Recall telemetry (`recall_summary`) includes identity fields:
+- `identityInjectionMode`
+- `identityInjectedChars`
+- `identityInjectionTruncated`
 
 ## Namespace Routing (v3.0)
 
@@ -113,6 +126,9 @@ With namespaces enabled, retrieval filters candidates to allowed namespaces (loc
 | `recallPlannerEnabled` | `true` | Lightweight request classifier |
 | `recallPlannerMaxQmdResultsMinimal` | `4` | QMD cap in minimal mode |
 | `maxMemoryTokens` | `2000` | Total injected token cap |
+| `identityContinuityEnabled` | `false` | Enables identity continuity injection path |
+| `identityInjectionMode` | `recovery_only` | Identity injection behavior (`recovery_only|minimal|full`) |
+| `identityMaxInjectChars` | `1200` | Max characters for identity continuity section |
 | `qmdEnabled` | `true` | Enable QMD hybrid search |
 | `qmdMaxResults` | `8` | Max QMD candidates |
 | `intentRoutingEnabled` | `false` | Intent-compatible recall boost |

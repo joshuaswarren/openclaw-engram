@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.4 identity injection budgeting + mode gating slice (PR #41):
+  - Added runtime identity continuity injection modes (`recovery_only`, `minimal`, `full`) with explicit recovery-intent gating and minimal-mode downgrade safeguards.
+  - Added per-section `identityMaxInjectChars` enforcement with trim marker + telemetry for injected chars and truncation state.
+  - Extended recall telemetry (`recall_summary`) and last-recall snapshots with identity injection fields for observability/debugging.
+  - Added `tests/identity-injection-budget.test.ts` and extended recall mode/telemetry tests for identity mode reachability and budget behavior.
+  - Updated retrieval architecture documentation with identity continuity assembly order and telemetry fields.
 - v8.4 continuity audit generator slice (PR #40):
   - Added `continuity_audit_generate` tool for deterministic weekly/monthly continuity audit artifacts.
   - Extended `CompoundingEngine` with continuity audit synthesis and signal checks (anchor presence, incident counts, improvement-loop presence, compounding pattern count).

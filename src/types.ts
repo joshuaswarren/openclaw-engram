@@ -737,6 +737,9 @@ export interface RecallTraceEvent {
   recalledMemoryCount: number;
   injected: boolean;
   contextChars: number;
+  identityInjectionMode?: IdentityInjectionMode | "none";
+  identityInjectedChars?: number;
+  identityInjectionTruncated?: boolean;
   durationMs: number;
   timings?: Record<string, string>;
 }
