@@ -46,6 +46,12 @@ test("parseIsoTimestamp returns epoch for valid timestamps", () => {
   assert.equal(typeof epoch, "number");
 });
 
+test("parseIsoTimestamp rejects non-canonical timestamp formats", () => {
+  assert.equal(parseIsoTimestamp("02/25/2026 10:00"), null);
+  assert.equal(parseIsoTimestamp("2026-02-25T10:00:00"), null);
+  assert.equal(parseIsoTimestamp("2026-02-25"), null);
+});
+
 test("runReplayWithNormalizer applies validation, range, offset, max and dry-run", async () => {
   const normalizer: ReplayNormalizer = {
     source: "openclaw",
