@@ -51,8 +51,7 @@ export function applyWorkExtractionBoundary(conversation: string): string {
 
   const cleanedLines = restoredEscapes
     .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => !/^\[(user|assistant)\]\s*$/.test(line));
+    .map((line) => line.trimEnd());
 
   return cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

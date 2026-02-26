@@ -72,6 +72,18 @@ test("applyWorkExtractionBoundary keeps metadata-like opener text in linked payl
   assert.match(bounded, /\[WORK_LAYER_CONTEXT link_to_memory=false\] literal text/);
 });
 
+test("applyWorkExtractionBoundary preserves literal role marker lines", () => {
+  const conversation = [
+    "[assistant]",
+    "template line",
+    "[user]",
+    "another line",
+  ].join("\n");
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.equal(bounded, conversation);
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",
