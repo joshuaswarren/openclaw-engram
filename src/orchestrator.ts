@@ -4547,7 +4547,9 @@ export class Orchestrator {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
-      const existingMemory = await this.storage.getMemoryById(memoryId);
+      const resultNamespace = this.namespaceFromPath(result.path);
+      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
       // Skip already superseded memories
@@ -4575,7 +4577,7 @@ export class Orchestrator {
         if (this.config.contradictionAutoResolve) {
           // The new memory supersedes the old one (unless LLM said first is newer)
           if (verification.whichIsNewer !== "first") {
-            await this.storage.supersedeMemory(
+            await resultStorage.supersedeMemory(
               existingMemory.frontmatter.id,
               "pending-new", // Will be updated after the new memory is written
               verification.reasoning,
@@ -4624,7 +4626,9 @@ export class Orchestrator {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
-      const memory = await this.storage.getMemoryById(memoryId);
+      const resultNamespace = this.namespaceFromPath(result.path);
+      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const memory = await resultStorage.getMemoryById(memoryId);
       if (memory && memory.frontmatter.status !== "superseded") {
         candidates.push({
           id: memory.frontmatter.id,
