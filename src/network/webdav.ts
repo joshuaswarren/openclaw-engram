@@ -5,6 +5,13 @@ import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { URL } from "node:url";
 
+export function hostToUrlAuthority(host: string): string {
+  if (host.includes(":") && !host.startsWith("[") && !host.endsWith("]")) {
+    return `[${host}]`;
+  }
+  return host;
+}
+
 export interface WebDavAuth {
   username: string;
   password: string;
@@ -154,7 +161,7 @@ export class WebDavServer {
       return;
     }
 
-    const parsed = new URL(req.url ?? "/", `http://${this.options.host}`);
+    const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.options.host)}`);
     const resolved = await this.resolvePath(parsed.pathname);
     if (!resolved.ok) {
       res.writeHead(resolved.code, { "Content-Type": "text/plain; charset=utf-8" });

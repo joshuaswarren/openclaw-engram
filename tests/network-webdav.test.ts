@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
-import { WebDavServer } from "../src/network/webdav.ts";
+import { WebDavServer, hostToUrlAuthority } from "../src/network/webdav.ts";
 
 type HttpResult = {
   status: number;
@@ -184,4 +184,10 @@ test("webdav start resets state after listen failure and supports retry", async 
   const secondStarted = await second.start();
   assert.equal(secondStarted.running, true);
   await second.stop();
+});
+
+test("hostToUrlAuthority brackets IPv6 host literals", () => {
+  assert.equal(hostToUrlAuthority("127.0.0.1"), "127.0.0.1");
+  assert.equal(hostToUrlAuthority("::1"), "[::1]");
+  assert.equal(hostToUrlAuthority("[::1]"), "[::1]");
 });
