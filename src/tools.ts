@@ -1561,17 +1561,23 @@ Best for:
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
               return workLayerTextResult("work_task.update requires `id`.");
             }
-            const updated = await storage.updateTask(p.id, {
-              title: typeof p.title === "string" ? p.title : undefined,
-              description: typeof p.description === "string" ? p.description : undefined,
-              status: asTaskStatus(p.status),
-              priority: asTaskPriority(p.priority),
-              owner: asNonEmptyString(p.owner),
-              assignee: asNonEmptyString(p.assignee),
-              projectId: asNonEmptyString(p.projectId),
-              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
-              dueAt: asNonEmptyString(p.dueAt),
-            });
+            const patch: Record<string, unknown> = {};
+            if (typeof p.title === "string") patch.title = p.title;
+            if (typeof p.description === "string") patch.description = p.description;
+            const status = asTaskStatus(p.status);
+            if (status) patch.status = status;
+            const priority = asTaskPriority(p.priority);
+            if (priority) patch.priority = priority;
+            const owner = asNonEmptyString(p.owner);
+            if (owner) patch.owner = owner;
+            const assignee = asNonEmptyString(p.assignee);
+            if (assignee) patch.assignee = assignee;
+            const projectIdPatch = asNonEmptyString(p.projectId);
+            if (projectIdPatch) patch.projectId = projectIdPatch;
+            if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
+            const dueAt = asNonEmptyString(p.dueAt);
+            if (dueAt) patch.dueAt = dueAt;
+            const updated = await storage.updateTask(p.id, patch as any);
             return toolJsonResult({ action, task: updated });
           }
 
@@ -1666,13 +1672,15 @@ Best for:
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
               return workLayerTextResult("work_project.update requires `id`.");
             }
-            const project = await storage.updateProject(p.id, {
-              name: typeof p.name === "string" ? p.name : undefined,
-              description: typeof p.description === "string" ? p.description : undefined,
-              status: asProjectStatus(p.status),
-              owner: asNonEmptyString(p.owner),
-              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
-            });
+            const patch: Record<string, unknown> = {};
+            if (typeof p.name === "string") patch.name = p.name;
+            if (typeof p.description === "string") patch.description = p.description;
+            const status = asProjectStatus(p.status);
+            if (status) patch.status = status;
+            const owner = asNonEmptyString(p.owner);
+            if (owner) patch.owner = owner;
+            if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
+            const project = await storage.updateProject(p.id, patch as any);
             return toolJsonResult({ action, project });
           }
 
