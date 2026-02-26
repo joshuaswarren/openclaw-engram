@@ -25,6 +25,9 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.6 observation-ledger maintenance Task 5 (docs/runbook slice):
+  - Updated `docs/operations.md` with an observation-ledger maintenance runbook covering archive/rebuild/migrate commands.
+  - Documented dry-run defaults, `--write` mutation mode, and operational guarantees (backup-first writes, deterministic UTC hour bucketing, idempotent no-op migration behavior).
 - v8.6 observation-ledger maintenance Task 4 (CLI command surfaces slice):
   - Added CLI wrappers in `src/cli.ts` for archive/rebuild/migrate observation maintenance flows with safe dry-run defaults.
   - Added commands: `openclaw engram archive-observations`, `openclaw engram rebuild-observations`, and `openclaw engram migrate-observations`.
