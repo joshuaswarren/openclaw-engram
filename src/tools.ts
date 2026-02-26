@@ -1549,10 +1549,11 @@ Best for:
           }
 
           if (action === "get") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+            const taskId = asNonEmptyString(p.id);
+            if (!taskId) {
               return workLayerTextResult("work_task.get requires `id`.");
             }
-            const task = await storage.getTask(p.id);
+            const task = await storage.getTask(taskId);
             return toolJsonResult({ action, task });
           }
 
@@ -1567,7 +1568,8 @@ Best for:
           }
 
           if (action === "update") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+            const taskId = asNonEmptyString(p.id);
+            if (!taskId) {
               return workLayerTextResult("work_task.update requires `id`.");
             }
             const patch: Record<string, unknown> = {};
@@ -1586,32 +1588,30 @@ Best for:
             if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
             const dueAt = asNullablePatchString(p, "dueAt");
             if (dueAt !== undefined) patch.dueAt = dueAt;
-            const updated = await storage.updateTask(p.id, patch as any);
+            const updated = await storage.updateTask(taskId, patch as any);
             return toolJsonResult({ action, task: updated });
           }
 
           if (action === "transition") {
-            if (
-              typeof p.id !== "string"
-              || p.id.trim().length === 0
-              || typeof p.status !== "string"
-              || p.status.trim().length === 0
-            ) {
+            const taskId = asNonEmptyString(p.id);
+            const rawStatus = asNonEmptyString(p.status);
+            if (!taskId || !rawStatus) {
               return workLayerTextResult("work_task.transition requires `id` and `status`.");
             }
-            const status = asTaskStatus(p.status);
+            const status = asTaskStatus(rawStatus);
             if (!status) {
               return workLayerTextResult("work_task.transition received invalid `status`.");
             }
-            const task = await storage.transitionTask(p.id, status);
+            const task = await storage.transitionTask(taskId, status);
             return toolJsonResult({ action, task });
           }
 
           if (action === "delete") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+            const taskId = asNonEmptyString(p.id);
+            if (!taskId) {
               return workLayerTextResult("work_task.delete requires `id`.");
             }
-            const deleted = await storage.deleteTask(p.id);
+            const deleted = await storage.deleteTask(taskId);
             return toolJsonResult({ action, deleted });
           }
 
@@ -1665,10 +1665,11 @@ Best for:
           }
 
           if (action === "get") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+            const projectId = asNonEmptyString(p.id);
+            if (!projectId) {
               return workLayerTextResult("work_project.get requires `id`.");
             }
-            const project = await storage.getProject(p.id);
+            const project = await storage.getProject(projectId);
             return toolJsonResult({ action, project });
           }
 
@@ -1678,7 +1679,8 @@ Best for:
           }
 
           if (action === "update") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+            const projectId = asNonEmptyString(p.id);
+            if (!projectId) {
               return workLayerTextResult("work_project.update requires `id`.");
             }
             const patch: Record<string, unknown> = {};
@@ -1689,28 +1691,26 @@ Best for:
             const owner = asNullablePatchString(p, "owner");
             if (owner !== undefined) patch.owner = owner;
             if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
-            const project = await storage.updateProject(p.id, patch as any);
+            const project = await storage.updateProject(projectId, patch as any);
             return toolJsonResult({ action, project });
           }
 
           if (action === "delete") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+            const projectId = asNonEmptyString(p.id);
+            if (!projectId) {
               return workLayerTextResult("work_project.delete requires `id`.");
             }
-            const deleted = await storage.deleteProject(p.id);
+            const deleted = await storage.deleteProject(projectId);
             return toolJsonResult({ action, deleted });
           }
 
           if (action === "link_task") {
-            if (
-              typeof p.taskId !== "string"
-              || p.taskId.trim().length === 0
-              || typeof p.projectId !== "string"
-              || p.projectId.trim().length === 0
-            ) {
+            const taskId = asNonEmptyString(p.taskId);
+            const projectId = asNonEmptyString(p.projectId);
+            if (!taskId || !projectId) {
               return workLayerTextResult("work_project.link_task requires `taskId` and `projectId`.");
             }
-            const linked = await storage.linkTaskToProject(p.taskId, p.projectId);
+            const linked = await storage.linkTaskToProject(taskId, projectId);
             return toolJsonResult({ action, linked });
           }
 
