@@ -163,6 +163,35 @@ qmd embed --collection openclaw-engram
 wc -l ~/.openclaw/workspace/memory/local/state/fact-hashes.txt
 ```
 
+## Observation Ledger Maintenance
+
+Engram exposes explicit maintenance commands for observation artifacts.
+
+```bash
+# Archive dated transcript/tool/hourly artifacts older than retention window
+openclaw engram archive-observations --retention-days 30
+
+# Rebuild canonical observation ledger from transcripts
+openclaw engram rebuild-observations
+
+# Migrate legacy observation-ledger JSONL shapes into canonical rebuilt ledger
+openclaw engram migrate-observations
+```
+
+All three commands are dry-run by default. Use `--write` to apply mutations:
+
+```bash
+openclaw engram archive-observations --retention-days 30 --write
+openclaw engram rebuild-observations --write
+openclaw engram migrate-observations --write
+```
+
+Operational guarantees:
+- backup-first writes for rebuilt ledger updates
+- deterministic UTC hour bucketing
+- idempotent no-op migration when no legacy files are present
+- fail-open parsing for malformed lines (with counters in CLI output)
+
 ## Identity Continuity Anchor
 
 When `identityContinuityEnabled=true`, agents can manage the recovery anchor via tools:
