@@ -123,6 +123,24 @@ function normalizeImportedNullableField(
   throw new Error(`invalid task ${fieldName} in snapshot for ${taskId}`);
 }
 
+function normalizeImportedTitle(rawValue: unknown, taskId: string): string {
+  if (typeof rawValue !== "string") {
+    throw new Error(`invalid task title in snapshot for ${taskId}`);
+  }
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`invalid task title in snapshot for ${taskId}`);
+  }
+  return trimmed;
+}
+
+function normalizeImportedDescription(rawValue: unknown, taskId: string): string {
+  if (typeof rawValue !== "string") {
+    throw new Error(`invalid task description in snapshot for ${taskId}`);
+  }
+  return rawValue;
+}
+
 function asBoardItem(task: WorkTask): WorkBoardItem {
   return {
     id: task.id,
@@ -229,6 +247,8 @@ export async function importWorkBoardSnapshot(options: {
     item: WorkBoardItem;
     existing: WorkTask | null;
     id: string;
+    title: string;
+    description: string;
     projectId: string | null;
     tags: string[];
     owner: string | null;
@@ -246,6 +266,8 @@ export async function importWorkBoardSnapshot(options: {
     seenItemIds.add(id);
     assertValidImportEnums(item);
     const existing = await storage.getTask(id);
+    const title = normalizeImportedTitle((item as unknown as { title?: unknown }).title, id);
+    const description = normalizeImportedDescription((item as unknown as { description?: unknown }).description, id);
     const fallbackProjectId = existing ? existing.projectId : snapshotProjectId;
     const projectId = forcedProjectId === undefined
       ? normalizeImportedProjectId(
@@ -282,7 +304,7 @@ export async function importWorkBoardSnapshot(options: {
       existing?.dueAt ?? null,
     );
 
-    preparedRows.push({ item, existing, id, projectId, tags, owner, assignee, dueAt });
+    preparedRows.push({ item, existing, id, title, description, projectId, tags, owner, assignee, dueAt });
   }
 
   const projectIdsToValidate = new Set(
@@ -298,12 +320,12 @@ export async function importWorkBoardSnapshot(options: {
   let created = 0;
   let updated = 0;
   for (const row of preparedRows) {
-    const { item, existing, id, projectId, tags, owner, assignee, dueAt } = row;
+    const { item, existing, id, title, description, projectId, tags, owner, assignee, dueAt } = row;
 
     if (existing) {
       await storage.updateTask(id, {
-        title: item.title,
-        description: item.description,
+        title,
+        description,
         status: item.status,
         priority: item.priority,
         owner,
@@ -318,8 +340,8 @@ export async function importWorkBoardSnapshot(options: {
 
     await storage.createTask({
       id,
-      title: item.title,
-      description: item.description,
+      title,
+      description,
       status: item.status,
       priority: item.priority,
       owner,

@@ -535,3 +535,42 @@ test("work board import preserves nullable fields when omitted", async () => {
   assert.equal(updated.assignee, "assignee-1");
   assert.equal(updated.dueAt, "2026-03-01T00:00:00.000Z");
 });
+
+test("work board import rejects missing title/description before mutation", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-title-desc-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await storage.createTask({
+    id: "task-existing-safe",
+    title: "Safe",
+    status: "todo",
+  });
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [{
+          id: "task-new-bad",
+          title: "Valid",
+          description: undefined as unknown as string,
+          status: "todo",
+          priority: "medium",
+          owner: null,
+          assignee: null,
+          projectId: null,
+          tags: [],
+          dueAt: null,
+        }],
+      },
+    }),
+  );
+
+  const unchanged = await storage.getTask("task-existing-safe");
+  assert.ok(unchanged);
+  assert.equal(unchanged.title, "Safe");
+});
