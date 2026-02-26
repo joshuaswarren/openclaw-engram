@@ -25,6 +25,11 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.6 observation-ledger maintenance Task 2 (rebuild service slice):
+  - Added `src/maintenance/rebuild-observations.ts` to rebuild an observation ledger from transcript history with deterministic session/hour aggregation.
+  - Added dry-run-by-default rebuild behavior with backup-first replacement of `state/observation-ledger/rebuilt-observations.jsonl`.
+  - Added fail-open parsing for malformed transcript lines during rebuild.
+  - Added `tests/rebuild-observations.test.ts` coverage for dry-run, deterministic rebuild output, backup behavior, and malformed-line handling.
 - v8.6 observation-ledger maintenance Task 1 (archive service slice):
   - Added `src/maintenance/archive-observations.ts` with deterministic archive candidate scanning across dated transcript, tool-usage, and hourly-summary artifacts.
   - Added dry-run-by-default archival behavior with backup-first copy-then-delete flow into `archive/observations/<timestamp>/...`.
