@@ -1760,7 +1760,7 @@ Best for:
           }
           if (action === "import_snapshot") {
             if (typeof p.snapshotJson !== "string" || p.snapshotJson.trim().length === 0) {
-              return workLayerTextResult("work_board.import_snapshot requires `snapshotJson`.");
+              return workLayerTextResult("work_board.import_snapshot requires `snapshotJson`.", { linkToMemory });
             }
             const snapshot = JSON.parse(p.snapshotJson);
             const result = await importWorkBoardSnapshot({
@@ -1770,9 +1770,11 @@ Best for:
             });
             return toolJsonResult({ action, result }, { linkToMemory });
           }
-          return workLayerTextResult(`Unsupported work_board action: ${action}`);
+          return workLayerTextResult(`Unsupported work_board action: ${action}`, { linkToMemory });
         } catch (err) {
-          return workLayerTextResult(`work_board error: ${err instanceof Error ? err.message : String(err)}`);
+          return workLayerTextResult(`work_board error: ${err instanceof Error ? err.message : String(err)}`, {
+            linkToMemory,
+          });
         }
       },
     },

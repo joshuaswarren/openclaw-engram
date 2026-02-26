@@ -116,3 +116,19 @@ test("work tools normalize whitespace around IDs", async () => {
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("work_board failures honor linkToMemory=true", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-link-failure-"));
+  try {
+    const tools = buildHarness(memoryDir);
+    const boardTool = tools.get("work_board");
+    assert.ok(boardTool);
+
+    const result = await boardTool.execute("b1", { action: "import_snapshot", linkToMemory: true });
+    const text = result.content.map((c) => c.text).join("\n");
+    assert.match(text, /\[WORK_LAYER_CONTEXT link_to_memory=true\]/);
+    assert.match(text, /requires `snapshotJson`/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
