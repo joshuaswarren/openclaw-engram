@@ -87,6 +87,17 @@ function normalizeImportedProjectId(
   throw new Error(`invalid task projectId in snapshot for ${taskId}`);
 }
 
+function normalizeImportedTags(rawValue: unknown, taskId: string): string[] {
+  if (rawValue === undefined || rawValue === null) return [];
+  if (!Array.isArray(rawValue)) {
+    throw new Error(`invalid task tags in snapshot for ${taskId}`);
+  }
+  if (!rawValue.every((entry) => typeof entry === "string")) {
+    throw new Error(`invalid task tags in snapshot for ${taskId}`);
+  }
+  return [...rawValue];
+}
+
 function asBoardItem(task: WorkTask): WorkBoardItem {
   return {
     id: task.id,
@@ -182,6 +193,11 @@ export async function importWorkBoardSnapshot(options: {
   const forcedProjectId = options.projectId === undefined
     ? undefined
     : (options.projectId?.trim() || null);
+  const snapshotProjectId = normalizeImportedProjectId(
+    (options.snapshot as unknown as { projectId?: unknown }).projectId,
+    "snapshot",
+    null,
+  );
 
   let created = 0;
   let updated = 0;
@@ -193,9 +209,10 @@ export async function importWorkBoardSnapshot(options: {
       ? normalizeImportedProjectId(
         (item as unknown as { projectId?: unknown }).projectId,
         item.id,
-        existing?.projectId ?? null,
+        existing?.projectId ?? snapshotProjectId,
       )
       : forcedProjectId;
+    const tags = normalizeImportedTags((item as unknown as { tags?: unknown }).tags, item.id);
 
     if (existing) {
       await storage.updateTask(item.id, {
@@ -206,7 +223,7 @@ export async function importWorkBoardSnapshot(options: {
         owner: item.owner,
         assignee: item.assignee,
         projectId,
-        tags: [...item.tags],
+        tags,
         dueAt: item.dueAt,
       }, options.now, { skipStatusTransitionValidation: true });
       updated += 1;
@@ -222,7 +239,7 @@ export async function importWorkBoardSnapshot(options: {
       owner: item.owner,
       assignee: item.assignee,
       projectId,
-      tags: [...item.tags],
+      tags,
       dueAt: item.dueAt,
     }, options.now);
     created += 1;

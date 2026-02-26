@@ -204,3 +204,67 @@ test("work board import preserves existing project linkage when item projectId i
   assert.ok(updated);
   assert.equal(updated.projectId, project.id);
 });
+
+test("work board import falls back to snapshot projectId for new tasks", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-snapshot-project-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const project = await storage.createProject({
+    id: "project-snapshot-fallback",
+    name: "Snapshot fallback",
+  });
+
+  await importWorkBoardSnapshot({
+    memoryDir,
+    snapshot: {
+      version: 1,
+      generatedAt: "2026-02-26T00:00:00.000Z",
+      projectId: project.id,
+      projectName: project.name,
+      items: [{
+        id: "task-new-snapshot",
+        title: "From snapshot",
+        description: "",
+        status: "todo",
+        priority: "medium",
+        owner: null,
+        assignee: null,
+        projectId: undefined as unknown as null,
+        tags: [],
+        dueAt: null,
+      }],
+    },
+  });
+
+  const created = await storage.getTask("task-new-snapshot");
+  assert.ok(created);
+  assert.equal(created.projectId, project.id);
+});
+
+test("work board import rejects invalid tags payload", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-invalid-tags-"));
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [{
+          id: "task-bad-tags",
+          title: "Bad tags",
+          description: "",
+          status: "todo",
+          priority: "low",
+          owner: null,
+          assignee: null,
+          projectId: null,
+          tags: "infra" as unknown as string[],
+          dueAt: null,
+        }],
+      },
+    }),
+  );
+});
