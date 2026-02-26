@@ -28,6 +28,17 @@ function stableRuleId(rule: Pick<RouteRule, "patternType" | "pattern" | "priorit
   return `route-${createHash("sha256").update(seed).digest("hex").slice(0, 12)}`;
 }
 
+function resolveStatePath(memoryDir: string, stateFile: string): string {
+  const root = path.resolve(memoryDir);
+  const defaultPath = path.join(root, "state", "routing-rules.json");
+  if (path.isAbsolute(stateFile)) {
+    const absolute = path.resolve(stateFile);
+    return absolute.startsWith(root + path.sep) || absolute === root ? absolute : defaultPath;
+  }
+  const resolved = path.resolve(root, stateFile);
+  return resolved.startsWith(root + path.sep) || resolved === root ? resolved : defaultPath;
+}
+
 function normalizeRule(rule: RouteRule, options?: RoutingEngineOptions): RouteRule | null {
   if (!rule || typeof rule !== "object") return null;
   if (rule.enabled === false) return null;
@@ -38,22 +49,32 @@ function normalizeRule(rule: RouteRule, options?: RoutingEngineOptions): RouteRu
   const targetValidation = validateRouteTarget(rule.target, options);
   if (!targetValidation.ok || !targetValidation.target) return null;
 
-  const id = typeof rule.id === "string" && rule.id.trim().length > 0 ? rule.id.trim() : stableRuleId(rule);
+  const normalizedPriority = Math.trunc(rule.priority);
+  const normalizedTarget = targetValidation.target;
+  const id = typeof rule.id === "string" && rule.id.trim().length > 0
+    ? rule.id.trim()
+    : stableRuleId({
+      patternType: rule.patternType,
+      pattern: rule.pattern.trim(),
+      priority: normalizedPriority,
+      target: normalizedTarget,
+    });
   return {
     id,
     patternType: rule.patternType,
     pattern: rule.pattern.trim(),
-    priority: Math.trunc(rule.priority),
-    target: targetValidation.target,
+    priority: normalizedPriority,
+    target: normalizedTarget,
     enabled: true,
   };
 }
 
 export class RoutingRulesStore {
   private readonly statePath: string;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(memoryDir: string, stateFile = "state/routing-rules.json") {
-    this.statePath = path.isAbsolute(stateFile) ? stateFile : path.join(memoryDir, stateFile);
+    this.statePath = resolveStatePath(memoryDir, stateFile);
   }
 
   async read(options?: RoutingEngineOptions): Promise<RouteRule[]> {
@@ -71,6 +92,52 @@ export class RoutingRulesStore {
   }
 
   async write(rules: RouteRule[], options?: RoutingEngineOptions): Promise<RouteRule[]> {
+    return this.withWriteLock(async () => this.writeNormalized(rules, options));
+  }
+
+  async upsert(rule: RouteRule, options?: RoutingEngineOptions): Promise<RouteRule[]> {
+    return this.withWriteLock(async () => {
+      const existing = await this.read(options);
+      const normalized = normalizeRule(rule, options);
+      if (!normalized) return existing;
+
+      const next = existing.filter((entry) => entry.id !== normalized.id);
+      next.push(normalized);
+      return this.writeNormalized(next, options);
+    });
+  }
+
+  async removeByPattern(pattern: string, options?: RoutingEngineOptions): Promise<RouteRule[]> {
+    return this.withWriteLock(async () => {
+      const trimmed = pattern.trim();
+      const existing = await this.read(options);
+      const next = existing.filter((entry) => entry.pattern !== trimmed);
+      if (next.length === existing.length) return existing;
+      return this.writeNormalized(next, options);
+    });
+  }
+
+  async reset(): Promise<void> {
+    await this.withWriteLock(async () => {
+      const payload = defaultState();
+      try {
+        await mkdir(path.dirname(this.statePath), { recursive: true });
+        await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
+      } catch (err) {
+        log.debug(`routing rules reset failed: ${err}`);
+      }
+    });
+  }
+
+  private dedupeById(rules: RouteRule[]): RouteRule[] {
+    const byId = new Map<string, RouteRule>();
+    for (const rule of rules) {
+      byId.set(rule.id, rule);
+    }
+    return Array.from(byId.values());
+  }
+
+  private async writeNormalized(rules: RouteRule[], options?: RoutingEngineOptions): Promise<RouteRule[]> {
     const normalized = this.dedupeById(
       rules
         .map((rule) => normalizeRule(rule, options))
@@ -93,39 +160,17 @@ export class RoutingRulesStore {
     return normalized;
   }
 
-  async upsert(rule: RouteRule, options?: RoutingEngineOptions): Promise<RouteRule[]> {
-    const existing = await this.read(options);
-    const normalized = normalizeRule(rule, options);
-    if (!normalized) return existing;
-
-    const next = existing.filter((entry) => entry.id !== normalized.id);
-    next.push(normalized);
-    return this.write(next, options);
-  }
-
-  async removeByPattern(pattern: string, options?: RoutingEngineOptions): Promise<RouteRule[]> {
-    const trimmed = pattern.trim();
-    const existing = await this.read(options);
-    const next = existing.filter((entry) => entry.pattern !== trimmed);
-    if (next.length === existing.length) return existing;
-    return this.write(next, options);
-  }
-
-  async reset(): Promise<void> {
-    const payload = defaultState();
+  private async withWriteLock<T>(op: () => Promise<T>): Promise<T> {
+    const previous = this.writeQueue;
+    let release!: () => void;
+    this.writeQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
     try {
-      await mkdir(path.dirname(this.statePath), { recursive: true });
-      await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
-    } catch (err) {
-      log.debug(`routing rules reset failed: ${err}`);
+      return await op();
+    } finally {
+      release();
     }
-  }
-
-  private dedupeById(rules: RouteRule[]): RouteRule[] {
-    const byId = new Map<string, RouteRule>();
-    for (const rule of rules) {
-      byId.set(rule.id, rule);
-    }
-    return Array.from(byId.values());
   }
 }

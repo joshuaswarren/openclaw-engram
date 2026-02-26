@@ -115,3 +115,59 @@ test("routing store removeByPattern persists removal", async () => {
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("routing store dedupes stable ids from normalized rule content", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-stable-id-"));
+  try {
+    const store = new RoutingRulesStore(memoryDir);
+    const rules = await store.write([
+      {
+        ...sampleRule({ id: " " as unknown as string, priority: 5.7 }),
+        target: { category: "fact", namespace: "default", extra: true } as unknown as RouteRule["target"],
+      },
+      {
+        ...sampleRule({ id: "" as unknown as string, priority: 5 }),
+        target: { category: "fact", namespace: "default" },
+      },
+    ]);
+
+    assert.equal(rules.length, 1);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("routing store keeps state file scoped under memoryDir", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-path-scope-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-path-outside-"));
+  try {
+    const outsidePath = path.join(outsideDir, "outside.json");
+    const store = new RoutingRulesStore(memoryDir, "../outside.json");
+    await store.write([sampleRule()]);
+
+    await assert.rejects(async () => readFile(outsidePath, "utf-8"));
+    const scopedRaw = await readFile(path.join(memoryDir, "state", "routing-rules.json"), "utf-8");
+    assert.match(scopedRaw, /\"rules\"/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test("routing store serializes concurrent upserts without lost updates", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-concurrent-"));
+  try {
+    const store = new RoutingRulesStore(memoryDir);
+    await Promise.all([
+      store.upsert(sampleRule({ id: "r1", pattern: "one" })),
+      store.upsert(sampleRule({ id: "r2", pattern: "two" })),
+    ]);
+
+    const rules = await store.read();
+    const ids = new Set(rules.map((r) => r.id));
+    assert.equal(ids.has("r1"), true);
+    assert.equal(ids.has("r2"), true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
