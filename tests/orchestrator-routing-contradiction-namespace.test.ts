@@ -49,10 +49,58 @@ test("checkForContradiction resolves candidate memory in routed namespace storag
     }),
   };
 
-  const contradiction = await orchestrator.checkForContradiction("new shared fact", "fact");
+  const contradiction = await orchestrator.checkForContradiction("new shared fact", "fact", "shared");
   assert.ok(contradiction);
   assert.equal(contradiction.supersededId, sharedId);
 
   const superseded = await sharedStorage.getMemoryById(sharedId);
   assert.equal(superseded?.frontmatter.status, "superseded");
+});
+
+test("checkForContradiction ignores candidates outside target write namespace", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-contradiction-scope-"));
+  const config = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    contradictionDetectionEnabled: true,
+    contradictionAutoResolve: true,
+  });
+
+  const orchestrator = new Orchestrator(config) as any;
+  const sharedStorage = await orchestrator.getStorage("shared");
+  await sharedStorage.ensureDirectories();
+
+  const sharedId = await sharedStorage.writeMemory("fact", "shared tenant memory");
+  const sharedMemory = await sharedStorage.getMemoryById(sharedId);
+  assert.ok(sharedMemory);
+
+  orchestrator.qmd = {
+    isAvailable: () => true,
+    search: async () => [
+      {
+        docid: sharedId,
+        path: sharedMemory!.path,
+        snippet: "shared tenant memory",
+        score: 0.95,
+      },
+    ],
+  };
+  orchestrator.extraction = {
+    verifyContradiction: async () => ({
+      isContradiction: true,
+      confidence: 0.95,
+      reasoning: "would supersede if namespace matched",
+      whichIsNewer: "second",
+    }),
+  };
+
+  const contradiction = await orchestrator.checkForContradiction("new default fact", "fact", "default");
+  assert.equal(contradiction, null);
+
+  const sharedAfter = await sharedStorage.getMemoryById(sharedId);
+  assert.equal(sharedAfter?.frontmatter.status ?? "active", "active");
 });

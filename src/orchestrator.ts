@@ -2978,7 +2978,12 @@ export class Orchestrator {
       let links: MemoryLink[] = [];
 
       if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
-        const contradiction = await this.checkForContradiction(fact.content, writeCategory);
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const contradiction = await this.checkForContradiction(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
         if (contradiction) {
           supersedes = contradiction.supersededId;
           links.push({
@@ -3002,7 +3007,12 @@ export class Orchestrator {
 
       // Suggest links for this memory (Phase 3A)
       if (this.config.memoryLinkingEnabled && this.qmd.isAvailable()) {
-        const suggestedLinks = await this.suggestLinksForMemory(fact.content, writeCategory);
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const suggestedLinks = await this.suggestLinksForMemory(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
         if (suggestedLinks.length > 0) {
           links.push(...suggestedLinks);
         }
@@ -4531,6 +4541,7 @@ export class Orchestrator {
   private async checkForContradiction(
     content: string,
     category: string,
+    namespaceScope: string,
   ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
     if (!this.qmd.isAvailable()) return null;
 
@@ -4548,6 +4559,7 @@ export class Orchestrator {
       if (!memoryId) continue;
 
       const resultNamespace = this.namespaceFromPath(result.path);
+      if (resultNamespace !== namespaceScope) continue;
       const resultStorage = await this.storageRouter.storageFor(resultNamespace);
       const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
@@ -4613,6 +4625,7 @@ export class Orchestrator {
   private async suggestLinksForMemory(
     content: string,
     category: string,
+    namespaceScope: string,
   ): Promise<MemoryLink[]> {
     if (!this.qmd.isAvailable()) return [];
 
@@ -4627,6 +4640,7 @@ export class Orchestrator {
       if (!memoryId) continue;
 
       const resultNamespace = this.namespaceFromPath(result.path);
+      if (resultNamespace !== namespaceScope) continue;
       const resultStorage = await this.storageRouter.storageFor(resultNamespace);
       const memory = await resultStorage.getMemoryById(memoryId);
       if (memory && memory.frontmatter.status !== "superseded") {
@@ -4659,7 +4673,16 @@ export class Orchestrator {
 
   private namespaceFromPath(p: string): string {
     if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
-    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
+    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)(?:[\\/]|$)/);
+    return m && m[1] ? m[1] : this.config.defaultNamespace;
+  }
+
+  private namespaceFromStorageDir(storageDir: string): string {
+    if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
+    const resolvedStorageDir = path.resolve(storageDir);
+    const resolvedMemoryDir = path.resolve(this.config.memoryDir);
+    if (resolvedStorageDir === resolvedMemoryDir) return this.config.defaultNamespace;
+    const m = resolvedStorageDir.match(/[\\/]namespaces[\\/]([^\\/]+)$/);
     return m && m[1] ? m[1] : this.config.defaultNamespace;
   }
 
