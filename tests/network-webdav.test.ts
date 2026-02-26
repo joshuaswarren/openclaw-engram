@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { WebDavServer } from "../src/network/webdav.ts";
 
@@ -133,4 +133,55 @@ test("webdav enforces optional basic auth", async () => {
   } finally {
     await server.stop();
   }
+});
+
+test("webdav blocks symlink escapes outside allowlisted root", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-symlink-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-outside-"));
+  const outsideFile = path.join(outsideDir, "outside.txt");
+  await writeFile(outsideFile, "outside-secret", "utf-8");
+  await symlink(outsideFile, path.join(root, "leak.txt"));
+
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [root],
+  });
+  const started = await server.start();
+  const alias = path.basename(root);
+
+  try {
+    const leakAttempt = await httpRequest("GET", started.port, `/${alias}/leak.txt`);
+    assert.equal(leakAttempt.status, 403);
+    assert.match(leakAttempt.body, /allowlist/i);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("webdav start resets state after listen failure and supports retry", async () => {
+  const rootA = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-retry-a-"));
+  const rootB = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-retry-b-"));
+
+  const first = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [rootA],
+  });
+  const firstStarted = await first.start();
+
+  const second = await WebDavServer.create({
+    enabled: true,
+    port: firstStarted.port,
+    allowlistDirs: [rootB],
+  });
+
+  await assert.rejects(() => second.start());
+  assert.equal(second.status().running, false);
+
+  await first.stop();
+
+  const secondStarted = await second.start();
+  assert.equal(secondStarted.running, true);
+  await second.stop();
 });

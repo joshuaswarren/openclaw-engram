@@ -78,7 +78,7 @@ export class WebDavServer {
       return this.status();
     }
 
-    this.server = createServer((req, res) => {
+    const server = createServer((req, res) => {
       this.handle(req, res).catch((err) => {
         if (!res.headersSent) {
           res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
@@ -86,14 +86,29 @@ export class WebDavServer {
         res.end(`webdav error: ${(err as Error).message}`);
       });
     });
+    this.server = server;
 
-    await new Promise<void>((resolve, reject) => {
-      if (!this.server) return reject(new Error("webdav server initialization failed"));
-      this.server.once("error", reject);
-      this.server.listen(this.options.port, this.options.host, () => resolve());
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          server.removeListener("listening", onListening);
+          reject(err);
+        };
+        const onListening = () => {
+          server.removeListener("error", onError);
+          resolve();
+        };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(this.options.port, this.options.host);
+      });
+    } catch (err) {
+      this.server = null;
+      server.close();
+      throw err;
+    }
 
-    const address = this.server.address();
+    const address = server.address();
     if (address && typeof address !== "string") {
       this.options.port = address.port;
     }
@@ -223,7 +238,19 @@ export class WebDavServer {
       return { ok: false, code: 403, message: "path escaped allowlist" };
     }
 
-    return { ok: true, absolutePath: candidate, displayPath: `/${segments.join("/")}` };
+    try {
+      const canonicalCandidate = await realpath(candidate);
+      if (!this.isPathInside(root.absolute, canonicalCandidate)) {
+        return { ok: false, code: 403, message: "path escaped allowlist via symlink" };
+      }
+      return { ok: true, absolutePath: canonicalCandidate, displayPath: `/${segments.join("/")}` };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw err;
+      }
+      return { ok: true, absolutePath: candidate, displayPath: `/${segments.join("/")}` };
+    }
   }
 
   private async handleRead(method: "GET" | "HEAD", absolutePath: string, res: ServerResponse): Promise<void> {
@@ -292,6 +319,11 @@ export class WebDavServer {
 
     res.writeHead(207, { "Content-Type": "application/xml; charset=utf-8" });
     res.end(xml);
+  }
+
+  private isPathInside(root: string, target: string): boolean {
+    if (target === root) return true;
+    return target.startsWith(`${root}${path.sep}`);
   }
 }
 
