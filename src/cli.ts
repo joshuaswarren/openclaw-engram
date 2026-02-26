@@ -290,6 +290,10 @@ export async function runWorkTaskCliCommand(options: WorkTaskCliCommandOptions):
       throw new Error(`invalid task priority: ${options.priority}`);
     }
     const explicitId = options.id?.trim();
+    if (explicitId && explicitId.length > 0) {
+      const existing = await storage.getTask(explicitId);
+      if (existing) throw new Error(`task already exists: ${explicitId}`);
+    }
     return storage.createTask({
       id: explicitId && explicitId.length > 0 ? explicitId : undefined,
       title: options.title.trim(),
@@ -370,6 +374,10 @@ export async function runWorkProjectCliCommand(options: WorkProjectCliCommandOpt
       throw new Error(`invalid project status: ${options.status}`);
     }
     const explicitId = options.id?.trim();
+    if (explicitId && explicitId.length > 0) {
+      const existing = await storage.getProject(explicitId);
+      if (existing) throw new Error(`project already exists: ${explicitId}`);
+    }
     return storage.createProject({
       id: explicitId && explicitId.length > 0 ? explicitId : undefined,
       name: options.name.trim(),

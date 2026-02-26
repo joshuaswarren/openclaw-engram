@@ -219,3 +219,37 @@ test("work CLI wrappers maintain task/project linkage and validate transitions",
   });
   assert.equal((orphanedTask as { projectId: string | null }).projectId, null);
 });
+
+test("work CLI wrappers reject duplicate explicit IDs on create", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-work-duplicate-id-"));
+
+  await runWorkTaskCliCommand({
+    memoryDir,
+    action: "create",
+    id: "task-dup-id",
+    title: "First task",
+  });
+  await assert.rejects(() =>
+    runWorkTaskCliCommand({
+      memoryDir,
+      action: "create",
+      id: "task-dup-id",
+      title: "Second task",
+    }),
+  );
+
+  await runWorkProjectCliCommand({
+    memoryDir,
+    action: "create",
+    id: "project-dup-id",
+    name: "First project",
+  });
+  await assert.rejects(() =>
+    runWorkProjectCliCommand({
+      memoryDir,
+      action: "create",
+      id: "project-dup-id",
+      name: "Second project",
+    }),
+  );
+});
