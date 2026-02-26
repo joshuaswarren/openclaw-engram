@@ -11,7 +11,7 @@ import { importJsonBundle } from "./transfer/import-json.js";
 import { importSqlite } from "./transfer/import-sqlite.js";
 import { importMarkdownBundle } from "./transfer/import-md.js";
 import { detectImportFormat } from "./transfer/autodetect.js";
-import { buildReplayNormalizerRegistry, runReplay, type ReplayRunSummary } from "./replay/runner.js";
+import { buildReplayNormalizerRegistry, clampBatchSize, runReplay, type ReplayRunSummary } from "./replay/runner.js";
 import { chatgptReplayNormalizer } from "./replay/normalizers/chatgpt.js";
 import { claudeReplayNormalizer } from "./replay/normalizers/claude.js";
 import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
@@ -164,13 +164,6 @@ async function withTimeout<T>(
   }
 }
 
-function clampReplayBatchSize(value: number | undefined): number {
-  if (!Number.isFinite(value as number)) return 100;
-  const parsed = Math.floor(value as number);
-  if (parsed < 1) return 1;
-  return Math.min(parsed, 1000);
-}
-
 export async function runReplayCliCommand(
   orchestrator: ReplayCliOrchestrator,
   options: ReplayCliCommandOptions,
@@ -184,7 +177,7 @@ export async function runReplayCliCommand(
     claudeReplayNormalizer,
     chatgptReplayNormalizer,
   ]);
-  const ingestBatchSize = clampReplayBatchSize(options.batchSize);
+  const ingestBatchSize = clampBatchSize(options.batchSize);
   const turnsBySession = new Map<string, ReplayTurn[]>();
   const ingestSessionChunk = async (sessionTurns: ReplayTurn[]): Promise<void> => {
     const deadlineMs = Date.now() + extractionIdleTimeoutMs;

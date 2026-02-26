@@ -44,7 +44,7 @@ function clampNonNegativeInt(value: number | undefined, defaultValue: number): n
   return Math.max(0, Math.floor(value as number));
 }
 
-function clampBatchSize(value: number | undefined): number {
+export function clampBatchSize(value: number | undefined): number {
   const parsed = clampNonNegativeInt(value, 100);
   if (parsed < 1) return 1;
   return Math.min(parsed, 1000);
