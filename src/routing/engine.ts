@@ -52,6 +52,11 @@ export function isLikelyUnsafeRegex(pattern: string): boolean {
   if (/\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(value)) return true; // nested quantifiers
   // Conservative fail-closed guardrail: grouped/alternation regexes are user-configurable and can be expensive.
   if (/(^|[^\\])[()|]/.test(value)) return true;
+  // Multiple quantifiers in one user pattern are high risk for catastrophic backtracking on non-matches.
+  const quantifierCount =
+    (value.match(/(^|[^\\])[*+?]/g)?.length ?? 0) +
+    (value.match(/(^|[^\\])\{/g)?.length ?? 0);
+  if (quantifierCount > 1) return true;
   return false;
 }
 

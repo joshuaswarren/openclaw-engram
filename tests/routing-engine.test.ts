@@ -48,6 +48,13 @@ test("doesRuleMatch reject grouped user regex patterns", () => {
   );
 });
 
+test("doesRuleMatch rejects adjacent quantifier regex patterns", () => {
+  assert.equal(
+    doesRuleMatch(rule({ patternType: "regex", pattern: "a+a+$" }), "a".repeat(2000) + "X"),
+    false,
+  );
+});
+
 test("doesRuleMatch ignores unsupported pattern types", () => {
   const invalidTypeRule = { ...rule({ patternType: "keyword", pattern: "incident" }), patternType: "glob" } as RouteRule;
   assert.equal(doesRuleMatch(invalidTypeRule, "incident occurred"), false);
@@ -104,5 +111,6 @@ test("isSafeRouteNamespace rejects traversal and path separators", () => {
 test("isLikelyUnsafeRegex flags high-risk constructs", () => {
   assert.equal(isLikelyUnsafeRegex("(a|aa)+$"), true);
   assert.equal(isLikelyUnsafeRegex("(\\w+)\\1"), true);
+  assert.equal(isLikelyUnsafeRegex("a+a+$"), true);
   assert.equal(isLikelyUnsafeRegex("outage\\s+in"), false);
 });
