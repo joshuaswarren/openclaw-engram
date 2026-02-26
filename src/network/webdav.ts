@@ -216,7 +216,12 @@ export class WebDavServer {
     | { ok: true; absolutePath: string; displayPath: string }
     | { ok: false; code: number; message: string }
   > {
-    const decodedPath = decodeURIComponent(requestPathname || "/");
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(requestPathname || "/");
+    } catch {
+      return { ok: false, code: 400, message: "invalid path encoding" };
+    }
     if (decodedPath.includes("\0")) {
       return { ok: false, code: 400, message: "invalid path" };
     }

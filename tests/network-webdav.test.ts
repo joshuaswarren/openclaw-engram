@@ -191,3 +191,20 @@ test("hostToUrlAuthority brackets IPv6 host literals", () => {
   assert.equal(hostToUrlAuthority("::1"), "[::1]");
   assert.equal(hostToUrlAuthority("[::1]"), "[::1]");
 });
+
+test("webdav returns 400 for malformed URL encoding", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-bad-escape-"));
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [root],
+  });
+  const started = await server.start();
+  try {
+    const malformed = await httpRequest("GET", started.port, "/%E0%A4%A");
+    assert.equal(malformed.status, 400);
+    assert.match(malformed.body, /invalid path encoding/i);
+  } finally {
+    await server.stop();
+  }
+});
