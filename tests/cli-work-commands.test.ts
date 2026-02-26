@@ -100,6 +100,17 @@ test("work project CLI wrapper supports create/get/list/update/delete", async ()
   });
   assert.equal((updated as { status: string }).status, "on_hold");
 
+  const statusOnly = await runWorkProjectCliCommand({
+    memoryDir,
+    action: "update",
+    id: projectId,
+    patch: {
+      status: "completed",
+    },
+  });
+  assert.equal((statusOnly as { name: string }).name, "v8.7 CLI");
+  assert.equal((statusOnly as { owner: string | null }).owner, "eng");
+
   const removed = await runWorkProjectCliCommand({
     memoryDir,
     action: "delete",
@@ -159,6 +170,8 @@ test("work CLI wrappers maintain task/project linkage and validate transitions",
     action: "create",
     title: "Linked task",
     projectId,
+    owner: "eng",
+    dueAt: "2026-03-01T00:00:00.000Z",
   });
   const taskId = (createdTask as { id: string }).id;
 
@@ -169,12 +182,16 @@ test("work CLI wrappers maintain task/project linkage and validate transitions",
   });
   assert.equal((fetchedProject as { taskIds: string[] }).taskIds.includes(taskId), true);
 
-  await runWorkTaskCliCommand({
+  const statusOnlyUpdate = await runWorkTaskCliCommand({
     memoryDir,
-    action: "transition",
+    action: "update",
     id: taskId,
-    status: "in_progress",
+    patch: { status: "in_progress" },
   });
+  assert.equal((statusOnlyUpdate as { projectId: string | null }).projectId, projectId);
+  assert.equal((statusOnlyUpdate as { owner: string | null }).owner, "eng");
+  assert.equal((statusOnlyUpdate as { dueAt: string | null }).dueAt, "2026-03-01T00:00:00.000Z");
+
   await runWorkTaskCliCommand({
     memoryDir,
     action: "transition",

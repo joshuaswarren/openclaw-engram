@@ -20,6 +20,7 @@ import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
 import { WorkStorage } from "./work/storage.js";
+import type { WorkProjectStatus, WorkTaskPriority, WorkTaskStatus } from "./work/types.js";
 
 interface CliApi {
   registerCli(
@@ -172,8 +173,8 @@ export interface MigrateObservationsCliCommandOptions {
 interface WorkTaskPatchInput {
   title?: string;
   description?: string;
-  status?: string;
-  priority?: string;
+  status?: WorkTaskStatus;
+  priority?: WorkTaskPriority;
   owner?: string | null;
   assignee?: string | null;
   projectId?: string | null;
@@ -184,7 +185,7 @@ interface WorkTaskPatchInput {
 interface WorkProjectPatchInput {
   name?: string;
   description?: string;
-  status?: string;
+  status?: WorkProjectStatus;
   owner?: string | null;
   tags?: string[];
 }
@@ -195,8 +196,8 @@ export interface WorkTaskCliCommandOptions {
   id?: string;
   title?: string;
   description?: string;
-  status?: string;
-  priority?: string;
+  status?: WorkTaskStatus;
+  priority?: WorkTaskPriority;
   owner?: string;
   assignee?: string;
   projectId?: string;
@@ -211,7 +212,7 @@ export interface WorkProjectCliCommandOptions {
   id?: string;
   name?: string;
   description?: string;
-  status?: string;
+  status?: WorkProjectStatus;
   owner?: string;
   tags?: string[];
   patch?: WorkProjectPatchInput;
@@ -325,17 +326,19 @@ export async function runWorkTaskCliCommand(options: WorkTaskCliCommandOptions):
     if (patch.priority !== undefined && !isWorkTaskPriority(patch.priority)) {
       throw new Error(`invalid task priority: ${patch.priority}`);
     }
-    return storage.updateTask(options.id.trim(), {
-      title: patch.title,
-      description: patch.description,
-      status: patch.status,
-      priority: patch.priority,
-      owner: patch.owner,
-      assignee: patch.assignee,
-      projectId: patch.projectId,
-      tags: patch.tags,
-      dueAt: patch.dueAt,
-    });
+
+    const sparsePatch: WorkTaskPatchInput = {};
+    if (Object.prototype.hasOwnProperty.call(patch, "title")) sparsePatch.title = patch.title;
+    if (Object.prototype.hasOwnProperty.call(patch, "description")) sparsePatch.description = patch.description;
+    if (Object.prototype.hasOwnProperty.call(patch, "status")) sparsePatch.status = patch.status;
+    if (Object.prototype.hasOwnProperty.call(patch, "priority")) sparsePatch.priority = patch.priority;
+    if (Object.prototype.hasOwnProperty.call(patch, "owner")) sparsePatch.owner = patch.owner;
+    if (Object.prototype.hasOwnProperty.call(patch, "assignee")) sparsePatch.assignee = patch.assignee;
+    if (Object.prototype.hasOwnProperty.call(patch, "projectId")) sparsePatch.projectId = patch.projectId;
+    if (Object.prototype.hasOwnProperty.call(patch, "tags")) sparsePatch.tags = patch.tags;
+    if (Object.prototype.hasOwnProperty.call(patch, "dueAt")) sparsePatch.dueAt = patch.dueAt;
+
+    return storage.updateTask(options.id.trim(), sparsePatch);
   }
 
   if (options.action === "transition") {
@@ -392,13 +395,15 @@ export async function runWorkProjectCliCommand(options: WorkProjectCliCommandOpt
     if (patch.status !== undefined && !isWorkProjectStatus(patch.status)) {
       throw new Error(`invalid project status: ${patch.status}`);
     }
-    return storage.updateProject(options.id.trim(), {
-      name: patch.name,
-      description: patch.description,
-      status: patch.status,
-      owner: patch.owner,
-      tags: patch.tags,
-    });
+
+    const sparsePatch: WorkProjectPatchInput = {};
+    if (Object.prototype.hasOwnProperty.call(patch, "name")) sparsePatch.name = patch.name;
+    if (Object.prototype.hasOwnProperty.call(patch, "description")) sparsePatch.description = patch.description;
+    if (Object.prototype.hasOwnProperty.call(patch, "status")) sparsePatch.status = patch.status;
+    if (Object.prototype.hasOwnProperty.call(patch, "owner")) sparsePatch.owner = patch.owner;
+    if (Object.prototype.hasOwnProperty.call(patch, "tags")) sparsePatch.tags = patch.tags;
+
+    return storage.updateProject(options.id.trim(), sparsePatch);
   }
 
   if (options.action === "delete") {
@@ -959,11 +964,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async (...args: unknown[]) => {
           const actionRaw = typeof args[0] === "string" ? args[0].trim().toLowerCase() : "";
           const options = (args[1] ?? {}) as Record<string, unknown>;
+          const statusOptRaw = typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined;
+          const priorityOptRaw = typeof options.priority === "string" ? options.priority.trim().toLowerCase() : undefined;
+          if (statusOptRaw !== undefined && !isWorkTaskStatus(statusOptRaw)) {
+            throw new Error(`invalid task status: ${statusOptRaw}`);
+          }
+          if (priorityOptRaw !== undefined && !isWorkTaskPriority(priorityOptRaw)) {
+            throw new Error(`invalid task priority: ${priorityOptRaw}`);
+          }
+
           const patch: WorkTaskPatchInput = {};
           if (typeof options.title === "string") patch.title = options.title.trim();
           if (typeof options.description === "string") patch.description = options.description;
-          if (typeof options.status === "string") patch.status = options.status.trim().toLowerCase();
-          if (typeof options.priority === "string") patch.priority = options.priority.trim().toLowerCase();
+          if (statusOptRaw !== undefined) patch.status = statusOptRaw;
+          if (priorityOptRaw !== undefined) patch.priority = priorityOptRaw;
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
           if (typeof options.assignee === "string") patch.assignee = normalizeNullableCliValue(options.assignee) ?? null;
           if (typeof options.projectId === "string") patch.projectId = normalizeNullableCliValue(options.projectId) ?? null;
@@ -978,8 +992,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             id: typeof options.id === "string" ? options.id : undefined,
             title: typeof options.title === "string" ? options.title : undefined,
             description: typeof options.description === "string" ? options.description : undefined,
-            status: typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined,
-            priority: typeof options.priority === "string" ? options.priority.trim().toLowerCase() : undefined,
+            status: statusOptRaw,
+            priority: priorityOptRaw,
             owner: typeof options.owner === "string" ? options.owner : undefined,
             assignee: typeof options.assignee === "string" ? options.assignee : undefined,
             projectId: typeof options.projectId === "string" ? options.projectId : undefined,
@@ -1010,10 +1024,15 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async (...args: unknown[]) => {
           const actionRaw = typeof args[0] === "string" ? args[0].trim().toLowerCase() : "";
           const options = (args[1] ?? {}) as Record<string, unknown>;
+          const statusOptRaw = typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined;
+          if (statusOptRaw !== undefined && !isWorkProjectStatus(statusOptRaw)) {
+            throw new Error(`invalid project status: ${statusOptRaw}`);
+          }
+
           const patch: WorkProjectPatchInput = {};
           if (typeof options.name === "string") patch.name = options.name.trim();
           if (typeof options.description === "string") patch.description = options.description;
-          if (typeof options.status === "string") patch.status = options.status.trim().toLowerCase();
+          if (statusOptRaw !== undefined) patch.status = statusOptRaw;
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
           if (Object.prototype.hasOwnProperty.call(options, "tags")) {
             patch.tags = parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true);
@@ -1025,7 +1044,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             id: typeof options.id === "string" ? options.id : undefined,
             name: typeof options.name === "string" ? options.name : undefined,
             description: typeof options.description === "string" ? options.description : undefined,
-            status: typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined,
+            status: statusOptRaw,
             owner: typeof options.owner === "string" ? options.owner : undefined,
             tags: Object.prototype.hasOwnProperty.call(options, "tags")
               ? parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true)
