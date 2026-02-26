@@ -910,6 +910,18 @@ export class Orchestrator {
     return true;
   }
 
+  async waitForConsolidationIdle(timeoutMs: number = 60_000): Promise<boolean> {
+    const started = Date.now();
+    while (this.consolidationInFlight) {
+      if (Date.now() - started > timeoutMs) {
+        log.warn(`waitForConsolidationIdle timed out after ${timeoutMs}ms`);
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
+  }
+
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);

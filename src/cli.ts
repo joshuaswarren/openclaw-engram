@@ -140,6 +140,7 @@ export interface ReplayCliCommandOptions {
 export interface ReplayCliOrchestrator {
   ingestReplayBatch(turns: ReplayTurn[]): Promise<void>;
   waitForExtractionIdle(timeoutMs?: number): Promise<boolean | void>;
+  waitForConsolidationIdle(timeoutMs?: number): Promise<boolean | void>;
   runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }>;
 }
 
@@ -201,6 +202,12 @@ export async function runReplayCliCommand(
       throw new Error(`replay extraction queue did not become idle before timeout (${extractionIdleTimeoutMs}ms)`);
     }
     if (options.runConsolidation === true) {
+      const consolidationIdle = await orchestrator.waitForConsolidationIdle(extractionIdleTimeoutMs);
+      if (consolidationIdle === false) {
+        throw new Error(
+          `replay consolidation did not become idle before timeout (${extractionIdleTimeoutMs}ms)`,
+        );
+      }
       await orchestrator.runConsolidationNow();
     }
   }

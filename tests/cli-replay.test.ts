@@ -37,6 +37,9 @@ test("runReplayCliCommand dry-run parses but does not enqueue extraction", async
     async waitForExtractionIdle() {
       waitCalls += 1;
     },
+    async waitForConsolidationIdle() {
+      waitCalls += 1;
+    },
     async runConsolidationNow() {
       consolidationCalls += 1;
       return { memoriesProcessed: 0, merged: 0, invalidated: 0 };
@@ -71,6 +74,9 @@ test("runReplayCliCommand enqueues batches and can run consolidation", async () 
     async waitForExtractionIdle() {
       waitCalls += 1;
     },
+    async waitForConsolidationIdle() {
+      waitCalls += 1;
+    },
     async runConsolidationNow() {
       consolidationCalls += 1;
       return { memoriesProcessed: 2, merged: 0, invalidated: 0 };
@@ -87,7 +93,7 @@ test("runReplayCliCommand enqueues batches and can run consolidation", async () 
   assert.equal(summary.dryRun, false);
   assert.equal(summary.processedTurns, 2);
   assert.deepEqual(ingested, [1, 1]);
-  assert.equal(waitCalls, 3);
+  assert.equal(waitCalls, 4);
   assert.equal(consolidationCalls, 1);
 });
 
@@ -126,6 +132,10 @@ test("runReplayCliCommand partitions mixed-session batches before ingest", async
       waitCalls += 1;
       return true;
     },
+    async waitForConsolidationIdle() {
+      waitCalls += 1;
+      return true;
+    },
     async runConsolidationNow() {
       return { memoriesProcessed: 0, merged: 0, invalidated: 0 };
     },
@@ -152,6 +162,9 @@ test("runReplayCliCommand throws when extraction queue does not become idle", as
     async waitForExtractionIdle() {
       return false;
     },
+    async waitForConsolidationIdle() {
+      return true;
+    },
     async runConsolidationNow() {
       return { memoriesProcessed: 0, merged: 0, invalidated: 0 };
     },
@@ -165,4 +178,36 @@ test("runReplayCliCommand throws when extraction queue does not become idle", as
       }),
     /did not become idle before timeout/,
   );
+});
+
+test("runReplayCliCommand throws when consolidation remains in-flight before finalize", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-replay-consolidation-timeout-"));
+  const inputPath = path.join(dir, "replay.jsonl");
+  await writeFile(inputPath, openclawJsonlSample(), "utf-8");
+
+  let consolidationCalls = 0;
+  const orchestrator: ReplayCliOrchestrator = {
+    async ingestReplayBatch() {},
+    async waitForExtractionIdle() {
+      return true;
+    },
+    async waitForConsolidationIdle() {
+      return false;
+    },
+    async runConsolidationNow() {
+      consolidationCalls += 1;
+      return { memoriesProcessed: 0, merged: 0, invalidated: 0 };
+    },
+  };
+
+  await assert.rejects(
+    async () =>
+      runReplayCliCommand(orchestrator, {
+        source: "openclaw",
+        inputPath,
+        runConsolidation: true,
+      }),
+    /replay consolidation did not become idle before timeout/,
+  );
+  assert.equal(consolidationCalls, 0);
 });
