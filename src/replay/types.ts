@@ -43,6 +43,7 @@ export interface ReplayNormalizer {
 const VALID_SOURCES: ReadonlySet<string> = new Set(["openclaw", "claude", "chatgpt"]);
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant"]);
 const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+export const REPLAY_UNKNOWN_SESSION_KEY = "replay:unknown";
 
 function normalizeIsoForComparison(value: string): string {
   return value.includes(".") ? value : value.replace("Z", ".000Z");
@@ -54,6 +55,12 @@ export function isReplaySource(value: unknown): value is ReplaySource {
 
 export function isReplayRole(value: unknown): value is ReplayRole {
   return typeof value === "string" && VALID_ROLES.has(value);
+}
+
+export function normalizeReplaySessionKey(value: unknown): string {
+  if (typeof value !== "string") return REPLAY_UNKNOWN_SESSION_KEY;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : REPLAY_UNKNOWN_SESSION_KEY;
 }
 
 export function parseIsoTimestamp(value: string): number | null {

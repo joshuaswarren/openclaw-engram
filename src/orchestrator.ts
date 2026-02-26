@@ -47,7 +47,7 @@ import {
   extractTagsFromPrompt,
 } from "./temporal-index.js";
 import { GraphIndex } from "./graph.js";
-import type { ReplayTurn } from "./replay/types.js";
+import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -2267,9 +2267,7 @@ export class Orchestrator {
     const bySession = new Map<string, BufferTurn[]>();
     for (const turn of turns) {
       if (turn.role !== "user" && turn.role !== "assistant") continue;
-      const key = typeof turn.sessionKey === "string" && turn.sessionKey.trim().length > 0
-        ? turn.sessionKey.trim()
-        : "replay:unknown";
+      const key = normalizeReplaySessionKey(turn.sessionKey);
       const list = bySession.get(key) ?? [];
       list.push({
         role: turn.role,

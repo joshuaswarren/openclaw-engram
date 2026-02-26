@@ -15,7 +15,7 @@ import { buildReplayNormalizerRegistry, runReplay, type ReplayRunSummary } from 
 import { chatgptReplayNormalizer } from "./replay/normalizers/chatgpt.js";
 import { claudeReplayNormalizer } from "./replay/normalizers/claude.js";
 import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
-import { isReplaySource, type ReplaySource, type ReplayTurn } from "./replay/types.js";
+import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
 
 interface CliApi {
   registerCli(
@@ -142,7 +142,7 @@ export interface ReplayCliOrchestrator {
     turns: ReplayTurn[],
     options?: { deadlineMs?: number },
   ): Promise<void>;
-  waitForConsolidationIdle(timeoutMs?: number): Promise<boolean | void>;
+  waitForConsolidationIdle(timeoutMs?: number): Promise<boolean>;
   runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }>;
 }
 
@@ -177,6 +177,7 @@ export async function runReplayCliCommand(
     claudeReplayNormalizer,
     chatgptReplayNormalizer,
   ]);
+  const turnsBySession = new Map<string, ReplayTurn[]>();
 
   const summary = await runReplay(
     options.source,
@@ -184,23 +185,11 @@ export async function runReplayCliCommand(
     registry,
     {
       onBatch: async (batch) => {
-        const bySession = new Map<string, ReplayTurn[]>();
         for (const turn of batch) {
-          const key =
-            typeof turn.sessionKey === "string" && turn.sessionKey.trim().length > 0
-              ? turn.sessionKey.trim()
-              : "replay:unknown";
-          const turns = bySession.get(key) ?? [];
+          const key = normalizeReplaySessionKey(turn.sessionKey);
+          const turns = turnsBySession.get(key) ?? [];
           turns.push(turn);
-          bySession.set(key, turns);
-        }
-        for (const turns of bySession.values()) {
-          const deadlineMs = Date.now() + extractionIdleTimeoutMs;
-          await withTimeout(
-            orchestrator.ingestReplayBatch(turns, { deadlineMs }),
-            extractionIdleTimeoutMs,
-            `replay extraction batch did not complete before timeout (${extractionIdleTimeoutMs}ms)`,
-          );
+          turnsBySession.set(key, turns);
         }
       },
     },
@@ -217,9 +206,17 @@ export async function runReplayCliCommand(
   );
 
   if (!summary.dryRun) {
+    for (const turns of turnsBySession.values()) {
+      const deadlineMs = Date.now() + extractionIdleTimeoutMs;
+      await withTimeout(
+        orchestrator.ingestReplayBatch(turns, { deadlineMs }),
+        extractionIdleTimeoutMs,
+        `replay extraction batch did not complete before timeout (${extractionIdleTimeoutMs}ms)`,
+      );
+    }
     if (options.runConsolidation === true) {
       const consolidationIdle = await orchestrator.waitForConsolidationIdle(extractionIdleTimeoutMs);
-      if (consolidationIdle === false) {
+      if (!consolidationIdle) {
         throw new Error(
           `replay consolidation did not become idle before timeout (${extractionIdleTimeoutMs}ms)`,
         );

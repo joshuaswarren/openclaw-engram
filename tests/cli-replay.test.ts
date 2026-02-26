@@ -36,6 +36,7 @@ test("runReplayCliCommand dry-run parses but does not enqueue extraction", async
     },
     async waitForConsolidationIdle() {
       waitCalls += 1;
+      return true;
     },
     async runConsolidationNow() {
       consolidationCalls += 1;
@@ -70,6 +71,7 @@ test("runReplayCliCommand enqueues batches and can run consolidation", async () 
     },
     async waitForConsolidationIdle() {
       waitCalls += 1;
+      return true;
     },
     async runConsolidationNow() {
       consolidationCalls += 1;
@@ -86,7 +88,7 @@ test("runReplayCliCommand enqueues batches and can run consolidation", async () 
 
   assert.equal(summary.dryRun, false);
   assert.equal(summary.processedTurns, 2);
-  assert.deepEqual(ingested, [1, 1]);
+  assert.deepEqual(ingested, [2]);
   assert.equal(waitCalls, 1);
   assert.equal(consolidationCalls, 1);
 });
