@@ -18,7 +18,7 @@ test("persistExtraction updates in-memory thread episode IDs before graph edge c
 
   const appendIdx = source.indexOf("threadEpisodeIdsForGraph.push(memoryId);");
   const buildIdx = source.search(
-    /await this\.buildGraphEdge\(\s*storage,\s*memoryRelPath,\s*entityRef,\s*memoryId/m,
+    /await this\.buildGraphEdge\(\s*(?:targetStorage|storage),\s*memoryRelPath,\s*entityRef,\s*memoryId/m,
   );
 
   assert.notEqual(
