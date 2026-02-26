@@ -1027,14 +1027,18 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (!isRoutePatternType(patternTypeRaw)) {
             throw new Error(`invalid route pattern type: ${patternTypeRaw}`);
           }
-          const priorityRaw = parseInt(String(options.priority ?? "0"), 10);
+          const priorityInput = String(options.priority ?? "0").trim();
+          if (!/^-?\d+$/.test(priorityInput)) {
+            throw new Error(`invalid route priority: ${priorityInput}`);
+          }
+          const priorityRaw = Number(priorityInput);
           const updated = await runRouteCliCommand({
             action: "add",
             memoryDir: orchestrator.config.memoryDir,
             stateFile: orchestrator.config.routingRulesStateFile,
             pattern,
             patternType: patternTypeRaw,
-            priority: Number.isFinite(priorityRaw) ? priorityRaw : 0,
+            priority: priorityRaw,
             targetRaw,
             id: typeof options.id === "string" ? options.id : undefined,
           }) as RouteRule[];

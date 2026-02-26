@@ -71,4 +71,14 @@ test("route CLI wrapper validates target and pattern type", async () => {
       patternType: "glob" as unknown as "keyword",
     }),
   );
+
+  await assert.rejects(() =>
+    runRouteCliCommand({
+      action: "add",
+      memoryDir,
+      pattern: "incident",
+      targetRaw: "category=fact",
+      priority: Number.NaN,
+    }),
+  );
 });
