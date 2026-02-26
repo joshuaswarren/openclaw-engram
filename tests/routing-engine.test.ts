@@ -41,11 +41,16 @@ test("doesRuleMatch fail-opens for invalid regex", () => {
   );
 });
 
-test("doesRuleMatch rejects potentially catastrophic regex patterns", () => {
+test("doesRuleMatch reject grouped user regex patterns", () => {
   assert.equal(
-    doesRuleMatch(rule({ patternType: "regex", pattern: "(a+)+$" }), "aaaaaaaaaaaaaaaaaaaaX"),
+    doesRuleMatch(rule({ patternType: "regex", pattern: "(alpha)+" }), "alpha alpha"),
     false,
   );
+});
+
+test("doesRuleMatch ignores unsupported pattern types", () => {
+  const invalidTypeRule = { ...rule({ patternType: "keyword", pattern: "incident" }), patternType: "glob" } as RouteRule;
+  assert.equal(doesRuleMatch(invalidTypeRule, "incident occurred"), false);
 });
 
 test("selectRouteRule uses priority order with stable tie-break", () => {
@@ -97,7 +102,7 @@ test("isSafeRouteNamespace rejects traversal and path separators", () => {
 });
 
 test("isLikelyUnsafeRegex flags high-risk constructs", () => {
-  assert.equal(isLikelyUnsafeRegex("(a+)+$"), true);
+  assert.equal(isLikelyUnsafeRegex("(a|aa)+$"), true);
   assert.equal(isLikelyUnsafeRegex("(\\w+)\\1"), true);
   assert.equal(isLikelyUnsafeRegex("outage\\s+in"), false);
 });

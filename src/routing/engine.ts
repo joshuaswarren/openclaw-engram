@@ -50,6 +50,8 @@ export function isLikelyUnsafeRegex(pattern: string): boolean {
   if (/\\[1-9]/.test(value)) return true; // backreferences
   if (/\(\?<?[=!]/.test(value)) return true; // lookaround assertions
   if (/\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(value)) return true; // nested quantifiers
+  // Conservative fail-closed guardrail: grouped/alternation regexes are user-configurable and can be expensive.
+  if (/(^|[^\\])[()|]/.test(value)) return true;
   return false;
 }
 
@@ -106,6 +108,9 @@ export function doesRuleMatch(rule: RouteRule, text: string): boolean {
 
   if (rule.patternType === "keyword") {
     return text.toLowerCase().includes(pattern.toLowerCase());
+  }
+  if (rule.patternType !== "regex") {
+    return false;
   }
 
   if (isLikelyUnsafeRegex(pattern)) {
