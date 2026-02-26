@@ -180,7 +180,7 @@ export class RoutingRulesStore {
 
   private async withWriteLock<T>(op: () => Promise<T>): Promise<T> {
     const previous = this.writeQueue;
-    let release!: () => void;
+    let release: () => void = () => {};
     this.writeQueue = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -234,13 +234,13 @@ export class RoutingRulesStore {
 
   private async assertStatePathScoped(): Promise<void> {
     await mkdir(this.memoryRoot, { recursive: true });
-    await mkdir(path.dirname(this.statePath), { recursive: true });
     const canonicalRoot = await realpath(this.memoryRoot);
-    const canonicalParent = await realpath(path.dirname(this.statePath));
+    const canonicalParent = await this.canonicalizePathWithoutCreating(path.dirname(this.statePath));
     const canonicalStatePath = path.join(canonicalParent, path.basename(this.statePath));
     if (!this.isPathInside(canonicalRoot, canonicalStatePath)) {
       throw new Error(`routing rules state path escaped memoryDir: ${canonicalStatePath}`);
     }
+    await mkdir(path.dirname(this.statePath), { recursive: true });
     try {
       const stateStats = await lstat(this.statePath);
       if (stateStats.isSymbolicLink()) {
@@ -261,5 +261,27 @@ export class RoutingRulesStore {
     const normalizedRoot = path.resolve(root);
     const normalizedCandidate = path.resolve(candidate);
     return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
+  }
+
+  private async canonicalizePathWithoutCreating(targetPath: string): Promise<string> {
+    const absoluteTarget = path.resolve(targetPath);
+    let probe = absoluteTarget;
+    while (true) {
+      try {
+        const canonicalProbe = await realpath(probe);
+        const remainder = path.relative(probe, absoluteTarget);
+        return path.resolve(canonicalProbe, remainder);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          throw err;
+        }
+        const parent = path.dirname(probe);
+        if (parent === probe) {
+          return absoluteTarget;
+        }
+        probe = parent;
+      }
+    }
   }
 }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { RoutingRulesStore } from "../src/routing/store.ts";
 import type { RouteRule } from "../src/routing/engine.ts";
 
@@ -272,5 +272,23 @@ test("routing store upsert with narrow options preserves unrelated persisted rul
     assert.equal(ids.has("team-rule"), true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("routing store does not create out-of-root directories before scope rejection", async () => {
+  if (process.platform === "win32") return;
+
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-parent-symlink-root-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-parent-symlink-outside-"));
+  try {
+    await symlink(outsideDir, path.join(memoryDir, "state-link"));
+    const store = new RoutingRulesStore(memoryDir, "state-link/sub/routing-rules.json");
+    const rules = await store.read();
+    assert.deepEqual(rules, []);
+
+    await assert.rejects(async () => stat(path.join(outsideDir, "sub")));
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
   }
 });
