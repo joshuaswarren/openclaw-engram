@@ -56,9 +56,17 @@ function toSafeSlug(value: string): string {
     .slice(0, 80);
 }
 
+const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+
 function makeId(prefix: string, titleOrName: string, now: Date): string {
   const slug = toSafeSlug(titleOrName) || "item";
   return `${prefix}-${now.getTime()}-${slug}`;
+}
+
+function assertValidWorkId(id: string, kind: "task" | "project"): void {
+  if (!WORK_ID_PATTERN.test(id)) {
+    throw new Error(`invalid ${kind} id: ${id}`);
+  }
 }
 
 function ensureString(value: unknown, fallback = ""): string {
@@ -106,10 +114,12 @@ export class WorkStorage {
   }
 
   private taskPath(id: string): string {
+    assertValidWorkId(id, "task");
     return path.join(this.tasksDir, `${id}.md`);
   }
 
   private projectPath(id: string): string {
+    assertValidWorkId(id, "project");
     return path.join(this.projectsDir, `${id}.md`);
   }
 
@@ -234,7 +244,11 @@ export class WorkStorage {
 
   async deleteTask(id: string): Promise<boolean> {
     try {
+      const existing = await this.getTask(id);
       await rm(this.taskPath(id));
+      if (existing?.projectId) {
+        await this.removeTaskIdFromProject(existing.projectId, id);
+      }
       return true;
     } catch {
       return false;
@@ -289,6 +303,7 @@ export class WorkStorage {
       ...existing,
       ...patch,
       tags: patch.tags ?? existing.tags,
+      taskIds: patch.taskIds ? [...patch.taskIds].sort() : existing.taskIds,
       updatedAt: now.toISOString(),
     };
     await writeFile(this.projectPath(id), this.serializeProject(next), "utf-8");
@@ -310,17 +325,28 @@ export class WorkStorage {
     const project = await this.getProject(projectId);
     if (!project) throw new Error(`project not found: ${projectId}`);
 
+    if (task.projectId && task.projectId !== projectId) {
+      await this.removeTaskIdFromProject(task.projectId, taskId, now);
+    }
+
     const updatedTask = await this.updateTask(taskId, { projectId }, now);
     if (!updatedTask) throw new Error(`task not found after update: ${taskId}`);
 
     const taskIds = new Set(project.taskIds);
     taskIds.add(taskId);
-    const updatedProject = await this.updateProject(projectId, { tags: project.tags }, now);
+    const updatedProject = await this.updateProject(projectId, { taskIds: Array.from(taskIds) }, now);
     if (!updatedProject) throw new Error(`project not found after update: ${projectId}`);
-    updatedProject.taskIds = Array.from(taskIds).sort();
-    updatedProject.updatedAt = now.toISOString();
-    await writeFile(this.projectPath(projectId), this.serializeProject(updatedProject), "utf-8");
 
     return { task: updatedTask, project: updatedProject };
+  }
+
+  private async removeTaskIdFromProject(projectId: string, taskId: string, now = new Date()): Promise<void> {
+    const project = await this.getProject(projectId);
+    if (!project) return;
+
+    const filtered = project.taskIds.filter((id) => id !== taskId);
+    if (filtered.length === project.taskIds.length) return;
+
+    await this.updateProject(projectId, { taskIds: filtered }, now);
   }
 }

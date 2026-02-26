@@ -58,31 +58,59 @@ test("work storage project CRUD and task linkage", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-storage-project-"));
   const storage = new WorkStorage(memoryDir);
 
-  const project = await storage.createProject({
+  const projectA = await storage.createProject({
     name: "v8.7 Work Layer",
     owner: "eng",
     tags: ["v8.7"],
   });
+  const projectB = await storage.createProject({
+    name: "v8.7 Followup",
+    owner: "eng",
+  });
   const task = await storage.createTask({ title: "Model storage", owner: "eng" });
 
-  const linked = await storage.linkTaskToProject(task.id, project.id);
-  assert.equal(linked.task.projectId, project.id);
-  assert.deepEqual(linked.project.taskIds, [task.id]);
+  const linkedA = await storage.linkTaskToProject(task.id, projectA.id);
+  assert.equal(linkedA.task.projectId, projectA.id);
+  assert.deepEqual(linkedA.project.taskIds, [task.id]);
 
-  const fetchedProject = await storage.getProject(project.id);
-  assert.ok(fetchedProject);
-  assert.deepEqual(fetchedProject?.taskIds, [task.id]);
+  const linkedB = await storage.linkTaskToProject(task.id, projectB.id);
+  assert.equal(linkedB.task.projectId, projectB.id);
+  assert.deepEqual(linkedB.project.taskIds, [task.id]);
+
+  const fetchedProjectA = await storage.getProject(projectA.id);
+  const fetchedProjectB = await storage.getProject(projectB.id);
+  assert.ok(fetchedProjectA);
+  assert.ok(fetchedProjectB);
+  assert.deepEqual(fetchedProjectA?.taskIds, []);
+  assert.deepEqual(fetchedProjectB?.taskIds, [task.id]);
+
+  const taskRemoved = await storage.deleteTask(task.id);
+  assert.equal(taskRemoved, true);
+  const projectBAfterDelete = await storage.getProject(projectB.id);
+  assert.ok(projectBAfterDelete);
+  assert.deepEqual(projectBAfterDelete?.taskIds, []);
 
   const projects = await storage.listProjects();
-  assert.equal(projects.length, 1);
+  assert.equal(projects.length, 2);
 
-  const updatedProject = await storage.updateProject(project.id, { status: "on_hold", description: "blocked" });
+  const updatedProject = await storage.updateProject(projectA.id, { status: "on_hold", description: "blocked" });
   assert.equal(updatedProject?.status, "on_hold");
   assert.equal(updatedProject?.description, "blocked");
 
-  const removed = await storage.deleteProject(project.id);
+  const removed = await storage.deleteProject(projectA.id);
   assert.equal(removed, true);
-  assert.equal(await storage.getProject(project.id), null);
+  assert.equal(await storage.getProject(projectA.id), null);
+});
+
+test("work storage rejects unsafe task and project IDs", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-storage-safe-id-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await assert.rejects(() => storage.createTask({ id: "../escape", title: "bad" }), /invalid task id/);
+  await assert.rejects(() => storage.createProject({ id: "../escape", name: "bad" }), /invalid project id/);
+
+  assert.equal(await storage.getTask("../escape"), null);
+  assert.equal(await storage.getProject("../escape"), null);
 });
 
 test("work storage uses markdown frontmatter files for persisted work artifacts", async () => {

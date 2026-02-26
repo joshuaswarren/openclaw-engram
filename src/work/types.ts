@@ -71,6 +71,7 @@ export interface UpdateWorkProjectInput {
   status?: WorkProjectStatus;
   owner?: string | null;
   tags?: string[];
+  taskIds?: string[];
 }
 
 export interface WorkTaskListFilter {
