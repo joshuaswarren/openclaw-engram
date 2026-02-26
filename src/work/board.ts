@@ -229,6 +229,10 @@ export async function importWorkBoardSnapshot(options: {
   projectId?: string | null;
   now?: Date;
 }): Promise<ImportWorkBoardResult> {
+  if (options.snapshot.version !== 1) {
+    throw new Error(`unsupported work board snapshot version: ${options.snapshot.version}`);
+  }
+
   const storage = new WorkStorage(options.memoryDir);
   await storage.ensureDirectories();
 

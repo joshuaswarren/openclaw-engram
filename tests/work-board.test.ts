@@ -194,6 +194,23 @@ test("work board import rejects invalid status/priority values", async () => {
   );
 });
 
+test("work board import rejects unsupported snapshot versions", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-version-"));
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 2 as unknown as 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [],
+      },
+    }),
+  );
+});
+
 test("work board import preserves existing project linkage when item projectId is omitted", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-project-link-"));
   const storage = new WorkStorage(memoryDir);
