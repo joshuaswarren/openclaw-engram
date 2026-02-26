@@ -18,7 +18,7 @@ test("persistExtraction updates in-memory thread episode IDs before graph edge c
 
   const appendIdx = source.indexOf("threadEpisodeIdsForGraph.push(memoryId);");
   const buildIdx = source.search(
-    /await this\.buildGraphEdge\(\s*storage,\s*memoryRelPath,\s*entityRef,\s*memoryId/m,
+    /await this\.buildGraphEdge\(\s*(?:targetStorage|storage),\s*memoryRelPath,\s*entityRef,\s*memoryId/m,
   );
 
   assert.notEqual(
@@ -121,7 +121,7 @@ test("persistExtraction includes written question IDs in persistedIds", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
   assert.match(
     source,
-    /const id = await storage\.writeQuestion\(q\.question,\s*q\.context,\s*q\.priority\);\s*if \(id\) persistedIds\.push\(id\);/m,
+    /const id = await storage\.writeQuestion\(q\.question,\s*q\.context,\s*q\.priority\);\s*if \(id\) trackPersistedId\(storage,\s*id\);/m,
     "question IDs should be added to persistedIds so thread batch append can include them",
   );
 });

@@ -60,6 +60,8 @@ import {
 } from "./namespaces/principal.js";
 import { SharedContextManager } from "./shared-context/manager.js";
 import { CompoundingEngine } from "./compounding/engine.js";
+import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
+import { RoutingRulesStore } from "./routing/store.js";
 import type {
   AccessTrackingEntry,
   BootstrapOptions,
@@ -524,6 +526,7 @@ export class Orchestrator {
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
   private readonly tmtBuilder: TmtBuilder;
   private readonly rerankCache = new RerankCache();
+  private routingRulesStore: RoutingRulesStore | null = null;
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
     StorageManager,
@@ -647,6 +650,39 @@ export class Orchestrator {
       }));
     }
     return this.boxBuilders.get(dir)!;
+  }
+
+  private routeEngineOptions(): RoutingEngineOptions {
+    const allowedNamespaces = this.config.namespacesEnabled
+      ? Array.from(
+          new Set([
+            this.config.defaultNamespace,
+            this.config.sharedNamespace,
+            ...this.config.namespacePolicies.map((policy) => policy.name),
+          ]),
+        )
+      : [this.config.defaultNamespace];
+    return { allowedNamespaces };
+  }
+
+  private getRoutingRulesStore(): RoutingRulesStore {
+    if (!this.routingRulesStore) {
+      this.routingRulesStore = new RoutingRulesStore(
+        this.config.memoryDir,
+        this.config.routingRulesStateFile,
+      );
+    }
+    return this.routingRulesStore;
+  }
+
+  private async loadRoutingRules(): Promise<RouteRule[]> {
+    if (!this.config.routingRulesEnabled) return [];
+    try {
+      return await this.getRoutingRulesStore().read(this.routeEngineOptions());
+    } catch (err) {
+      log.warn(`routing rules unavailable; fail-open to default writes: ${err}`);
+      return [];
+    }
   }
 
   private async resolveArtifactSourceStatuses(
@@ -2676,6 +2712,17 @@ export class Orchestrator {
     threadIdForExtraction?: string | null,
   ): Promise<string[]> {
     const persistedIds: string[] = [];
+    const persistedIdsByStorage = new Map<string, { storage: StorageManager; ids: string[] }>();
+    const trackPersistedId = (targetStorage: StorageManager, id: string): void => {
+      persistedIds.push(id);
+      const key = targetStorage.dir;
+      const existing = persistedIdsByStorage.get(key);
+      if (existing) {
+        existing.ids.push(id);
+        return;
+      }
+      persistedIdsByStorage.set(key, { storage: targetStorage, ids: [id] });
+    };
     let dedupedCount = 0;
 
     // Defensive: validate result and facts array
@@ -2719,16 +2766,30 @@ export class Orchestrator {
     }
 
     // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
-    let allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null = null;
-    const memoryPathById = new Map<string, string>();
-    if (this.config.multiGraphMemoryEnabled) {
-      try {
-        allMemsForGraph = await storage.readAllMemories();
-        for (const [id, relPath] of buildMemoryPathById(allMemsForGraph, storage.dir)) {
-          memoryPathById.set(id, relPath);
-        }
-      } catch { /* fail-open */ }
-    }
+    type GraphStorageContext = {
+      allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null;
+      memoryPathById: Map<string, string>;
+      previousPersistedRelPath?: string;
+    };
+    const graphContextByStorageDir = new Map<string, GraphStorageContext>();
+    const ensureGraphContext = async (targetStorage: StorageManager): Promise<GraphStorageContext> => {
+      const existing = graphContextByStorageDir.get(targetStorage.dir);
+      if (existing) return existing;
+      const created: GraphStorageContext = {
+        allMemsForGraph: null,
+        memoryPathById: new Map<string, string>(),
+      };
+      if (this.config.multiGraphMemoryEnabled) {
+        try {
+          created.allMemsForGraph = await targetStorage.readAllMemories();
+          for (const [id, relPath] of buildMemoryPathById(created.allMemsForGraph, targetStorage.dir)) {
+            created.memoryPathById.set(id, relPath);
+          }
+        } catch { /* fail-open */ }
+      }
+      graphContextByStorageDir.set(targetStorage.dir, created);
+      return created;
+    };
     let threadEpisodeIdsForGraph: string[] | undefined;
     if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
       try {
@@ -2736,7 +2797,8 @@ export class Orchestrator {
         threadEpisodeIdsForGraph = thread?.episodeIds ? [...thread.episodeIds] : [];
       } catch { /* fail-open */ }
     }
-    let previousPersistedRelPath: string | undefined;
+    const routeRules = await this.loadRoutingRules();
+    const routeOptions = this.routeEngineOptions();
 
     for (const fact of facts) {
       if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
@@ -2759,9 +2821,29 @@ export class Orchestrator {
       }
 
       // Score importance using local heuristics (Phase 1B)
-      const importance = scoreImportance(fact.content, fact.category, fact.tags);
+      let writeCategory = fact.category;
+      let targetStorage = storage;
+      let routedRuleId: string | undefined;
+      if (routeRules.length > 0) {
+        try {
+          const routeText = `${fact.category} ${fact.tags.join(" ")} ${fact.content}`;
+          const selected = selectRouteRule(routeText, routeRules, routeOptions);
+          if (selected) {
+            routedRuleId = selected.rule.id;
+            if (selected.target.category) {
+              writeCategory = selected.target.category;
+            }
+            if (selected.target.namespace) {
+              targetStorage = await this.storageRouter.storageFor(selected.target.namespace);
+            }
+          }
+        } catch (err) {
+          log.warn(`routing evaluation failed; fail-open to extracted category/namespace: ${err}`);
+        }
+      }
+      const importance = scoreImportance(fact.content, writeCategory, fact.tags);
       const inferredIntent = this.config.intentRoutingEnabled
-        ? inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`)
+        ? inferIntentFromText(`${writeCategory} ${fact.tags.join(" ")} ${fact.content}`)
         : null;
 
       // Check if chunking is enabled and content should be chunked
@@ -2771,11 +2853,11 @@ export class Orchestrator {
         if (chunkResult.chunked && chunkResult.chunks.length > 1) {
           // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
           const memoryKind = this.config.episodeNoteModeEnabled
-            ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+            ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
             : undefined;
 
           // Write the parent memory first (with full content for reference)
-          const parentId = await storage.writeMemory(fact.category, fact.content, {
+          const parentId = await targetStorage.writeMemory(writeCategory, fact.content, {
             confidence: fact.confidence,
             tags: [...fact.tags, "chunked"],
             entityRef: fact.entityRef,
@@ -2790,13 +2872,13 @@ export class Orchestrator {
           // Write individual chunks with parent reference
           for (const chunk of chunkResult.chunks) {
             // Score each chunk's importance separately
-            const chunkImportance = scoreImportance(chunk.content, fact.category, fact.tags);
+            const chunkImportance = scoreImportance(chunk.content, writeCategory, fact.tags);
 
-            await storage.writeChunk(
+            await targetStorage.writeChunk(
               parentId,
               chunk.index,
               chunkResult.chunks.length,
-              fact.category,
+              writeCategory,
               chunk.content,
               {
                 confidence: fact.confidence,
@@ -2812,12 +2894,17 @@ export class Orchestrator {
             );
           }
 
+          if (routedRuleId) {
+            log.debug(
+              `routing applied for chunked memory ${parentId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
+            );
+          }
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
-          persistedIds.push(parentId);
+          trackPersistedId(targetStorage, parentId);
           if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
             threadEpisodeIdsForGraph.push(parentId);
           }
-          await this.indexPersistedMemory(storage, parentId);
+          await this.indexPersistedMemory(targetStorage, parentId);
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
             this.contentHashIndex.add(fact.content);
@@ -2829,17 +2916,17 @@ export class Orchestrator {
             // into boxBuilder.onExtraction() or threading.processTurn(), which
             // only expect canonical parent memory IDs.  Call indexPersistedMemory
             // directly for embedding-fallback sync of each chunk document.
-            await this.indexPersistedMemory(storage, chunkId);
+            await this.indexPersistedMemory(targetStorage, chunkId);
           }
           if (
             this.config.verbatimArtifactsEnabled &&
-            this.config.verbatimArtifactCategories.includes(fact.category) &&
+            this.config.verbatimArtifactCategories.includes(writeCategory) &&
             fact.confidence >= this.config.verbatimArtifactsMinConfidence
           ) {
-            await storage.writeArtifact(fact.content, {
+            await targetStorage.writeArtifact(fact.content, {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
-              artifactType: this.artifactTypeForCategory(fact.category),
+              artifactType: this.artifactTypeForCategory(writeCategory),
               sourceMemoryId: parentId,
               intentGoal: inferredIntent?.goal,
               intentActionType: inferredIntent?.actionType,
@@ -2849,36 +2936,37 @@ export class Orchestrator {
           // v8.2: graph edge building for chunked memories
           if (this.config.multiGraphMemoryEnabled) {
             try {
+              const graphContext = await ensureGraphContext(targetStorage);
               const entityRef =
                 typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
               const parentRelPath = resolvePersistedMemoryRelativePath({
                 memoryId: parentId,
-                pathById: memoryPathById,
-                category: fact.category,
+                pathById: graphContext.memoryPathById,
+                category: writeCategory,
               });
-              memoryPathById.set(parentId, parentRelPath);
+              graphContext.memoryPathById.set(parentId, parentRelPath);
               appendMemoryToGraphContext({
-                allMemsForGraph,
-                storageDir: storage.dir,
+                allMemsForGraph: graphContext.allMemsForGraph,
+                storageDir: targetStorage.dir,
                 memoryRelPath: parentRelPath,
                 memoryId: parentId,
-                category: fact.category,
+                category: writeCategory,
                 content: fact.content ?? "",
                 entityRef,
               });
               await this.buildGraphEdge(
-                storage,
+                targetStorage,
                 parentRelPath,
                 entityRef,
                 parentId,
                 fact.content ?? "",
-                allMemsForGraph,
-                memoryPathById,
+                graphContext.allMemsForGraph,
+                graphContext.memoryPathById,
                 threadIdForExtraction ?? undefined,
                 threadEpisodeIdsForGraph,
-                previousPersistedRelPath,
+                graphContext.previousPersistedRelPath,
               );
-              previousPersistedRelPath = parentRelPath;
+              graphContext.previousPersistedRelPath = parentRelPath;
             } catch { /* fail-open */ }
           }
           continue; // Skip the normal write below
@@ -2890,7 +2978,12 @@ export class Orchestrator {
       let links: MemoryLink[] = [];
 
       if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
-        const contradiction = await this.checkForContradiction(fact.content, fact.category);
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const contradiction = await this.checkForContradiction(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
         if (contradiction) {
           supersedes = contradiction.supersededId;
           links.push({
@@ -2914,7 +3007,12 @@ export class Orchestrator {
 
       // Suggest links for this memory (Phase 3A)
       if (this.config.memoryLinkingEnabled && this.qmd.isAvailable()) {
-        const suggestedLinks = await this.suggestLinksForMemory(fact.content, fact.category);
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const suggestedLinks = await this.suggestLinksForMemory(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
         if (suggestedLinks.length > 0) {
           links.push(...suggestedLinks);
         }
@@ -2922,11 +3020,11 @@ export class Orchestrator {
 
       // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
       const memoryKind = this.config.episodeNoteModeEnabled
-        ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+        ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
         : undefined;
 
       // Normal write (no chunking)
-      const memoryId = await storage.writeMemory(fact.category, fact.content, {
+      const memoryId = await targetStorage.writeMemory(writeCategory, fact.content, {
         confidence: fact.confidence,
         tags: fact.tags,
         entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
@@ -2939,55 +3037,61 @@ export class Orchestrator {
         intentEntityTypes: inferredIntent?.entityTypes,
         memoryKind,
       });
-      persistedIds.push(memoryId);
+      if (routedRuleId) {
+        log.debug(
+          `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
+        );
+      }
+      trackPersistedId(targetStorage, memoryId);
       if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
         threadEpisodeIdsForGraph.push(memoryId);
       }
-      await this.indexPersistedMemory(storage, memoryId);
+      await this.indexPersistedMemory(targetStorage, memoryId);
       // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
       if (this.config.multiGraphMemoryEnabled) {
         try {
+          const graphContext = await ensureGraphContext(targetStorage);
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
           const memoryRelPath = resolvePersistedMemoryRelativePath({
             memoryId,
-            pathById: memoryPathById,
-            category: fact.category,
+            pathById: graphContext.memoryPathById,
+            category: writeCategory,
           });
-          memoryPathById.set(memoryId, memoryRelPath);
+          graphContext.memoryPathById.set(memoryId, memoryRelPath);
           appendMemoryToGraphContext({
-            allMemsForGraph,
-            storageDir: storage.dir,
+            allMemsForGraph: graphContext.allMemsForGraph,
+            storageDir: targetStorage.dir,
             memoryRelPath: memoryRelPath,
             memoryId,
-            category: fact.category,
+            category: writeCategory,
             content: fact.content ?? "",
             entityRef,
           });
           await this.buildGraphEdge(
-            storage,
+            targetStorage,
             memoryRelPath,
             entityRef,
             memoryId,
             fact.content ?? "",
-            allMemsForGraph,
-            memoryPathById,
+            graphContext.allMemsForGraph,
+            graphContext.memoryPathById,
             threadIdForExtraction ?? undefined,
             threadEpisodeIdsForGraph,
-            previousPersistedRelPath,
+            graphContext.previousPersistedRelPath,
           );
-          previousPersistedRelPath = memoryRelPath;
+          graphContext.previousPersistedRelPath = memoryRelPath;
         } catch { /* fail-open */ }
       }
       if (
         this.config.verbatimArtifactsEnabled &&
-        this.config.verbatimArtifactCategories.includes(fact.category) &&
+        this.config.verbatimArtifactCategories.includes(writeCategory) &&
         fact.confidence >= this.config.verbatimArtifactsMinConfidence
       ) {
-        await storage.writeArtifact(fact.content, {
+        await targetStorage.writeArtifact(fact.content, {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
-          artifactType: this.artifactTypeForCategory(fact.category),
+          artifactType: this.artifactTypeForCategory(writeCategory),
           sourceMemoryId: memoryId,
           intentGoal: inferredIntent?.goal,
           intentActionType: inferredIntent?.actionType,
@@ -3011,7 +3115,7 @@ export class Orchestrator {
           ? (entity as any).facts.filter((f: any) => typeof f === "string")
           : [];
         const id = await storage.writeEntity(name, type, safeFacts);
-        if (id) persistedIds.push(id);
+        if (id) trackPersistedId(storage, id);
       } catch (err) {
         log.warn(`persistExtraction: entity write failed: ${err}`);
       }
@@ -3058,7 +3162,7 @@ export class Orchestrator {
     // Persist questions
     for (const q of questions) {
       const id = await storage.writeQuestion(q.question, q.context, q.priority);
-      if (id) persistedIds.push(id);
+      if (id) trackPersistedId(storage, id);
     }
 
     // Persist identity reflection
@@ -3083,9 +3187,15 @@ export class Orchestrator {
     );
 
     // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open
-    this.updateTemporalTagIndexes(storage, persistedIds).catch((err) =>
-      log.debug(`temporal-index update error (non-fatal): ${err}`),
-    );
+    void (async () => {
+      if (persistedIdsByStorage.size === 0) {
+        await this.updateTemporalTagIndexes(storage, []);
+        return;
+      }
+      for (const entry of persistedIdsByStorage.values()) {
+        await this.updateTemporalTagIndexes(entry.storage, entry.ids);
+      }
+    })().catch((err) => log.debug(`temporal-index update error (non-fatal): ${err}`));
 
     // Return the persisted fact IDs for threading
     return persistedIds;
@@ -4431,6 +4541,7 @@ export class Orchestrator {
   private async checkForContradiction(
     content: string,
     category: string,
+    namespaceScope: string,
   ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
     if (!this.qmd.isAvailable()) return null;
 
@@ -4447,7 +4558,10 @@ export class Orchestrator {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
-      const existingMemory = await this.storage.getMemoryById(memoryId);
+      const resultNamespace = this.namespaceFromPath(result.path);
+      if (resultNamespace !== namespaceScope) continue;
+      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
       // Skip already superseded memories
@@ -4475,7 +4589,7 @@ export class Orchestrator {
         if (this.config.contradictionAutoResolve) {
           // The new memory supersedes the old one (unless LLM said first is newer)
           if (verification.whichIsNewer !== "first") {
-            await this.storage.supersedeMemory(
+            await resultStorage.supersedeMemory(
               existingMemory.frontmatter.id,
               "pending-new", // Will be updated after the new memory is written
               verification.reasoning,
@@ -4511,6 +4625,7 @@ export class Orchestrator {
   private async suggestLinksForMemory(
     content: string,
     category: string,
+    namespaceScope: string,
   ): Promise<MemoryLink[]> {
     if (!this.qmd.isAvailable()) return [];
 
@@ -4524,7 +4639,10 @@ export class Orchestrator {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
-      const memory = await this.storage.getMemoryById(memoryId);
+      const resultNamespace = this.namespaceFromPath(result.path);
+      if (resultNamespace !== namespaceScope) continue;
+      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const memory = await resultStorage.getMemoryById(memoryId);
       if (memory && memory.frontmatter.status !== "superseded") {
         candidates.push({
           id: memory.frontmatter.id,
@@ -4555,7 +4673,16 @@ export class Orchestrator {
 
   private namespaceFromPath(p: string): string {
     if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
-    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
+    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)(?:[\\/]|$)/);
+    return m && m[1] ? m[1] : this.config.defaultNamespace;
+  }
+
+  private namespaceFromStorageDir(storageDir: string): string {
+    if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
+    const resolvedStorageDir = path.resolve(storageDir);
+    const resolvedMemoryDir = path.resolve(this.config.memoryDir);
+    if (resolvedStorageDir === resolvedMemoryDir) return this.config.defaultNamespace;
+    const m = resolvedStorageDir.match(/[\\/]namespaces[\\/]([^\\/]+)$/);
     return m && m[1] ? m[1] : this.config.defaultNamespace;
   }
 
