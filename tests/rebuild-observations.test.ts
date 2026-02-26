@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { rebuildObservations } from "../src/maintenance/rebuild-observations.js";
 
 async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
@@ -102,6 +102,8 @@ test("rebuildObservations ignores malformed transcript lines fail-open", async (
     "transcripts/main/default/2026-02-25.jsonl",
     [
       "{not-json}",
+      "null",
+      "123",
       JSON.stringify({
         timestamp: "2026-02-25T10:01:00.000Z",
         role: "user",
@@ -113,7 +115,69 @@ test("rebuildObservations ignores malformed transcript lines fail-open", async (
   );
 
   const result = await rebuildObservations({ memoryDir });
-  assert.equal(result.malformedLines, 1);
+  assert.equal(result.malformedLines, 3);
   assert.equal(result.parsedTurns, 1);
   assert.equal(result.rebuiltRows, 1);
+});
+
+test("rebuildObservations enforces backup-first when existing ledger backup fails", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-rebuild-observations-backup-fail-"));
+  await writeText(
+    memoryDir,
+    "transcripts/main/default/2026-02-25.jsonl",
+    JSON.stringify({
+      timestamp: "2026-02-25T10:01:00.000Z",
+      role: "user",
+      content: "ok",
+      sessionKey: "agent:main:default",
+      turnId: "t1",
+    }) + "\n",
+  );
+  await writeText(memoryDir, "state/observation-ledger/rebuilt-observations.jsonl", "{\"legacy\":true}\n");
+
+  const now = new Date("2026-02-26T12:00:00.000Z");
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  await writeText(
+    memoryDir,
+    `archive/observations/${stamp}/state`,
+    "not-a-directory",
+  );
+
+  await assert.rejects(
+    () =>
+      rebuildObservations({
+        memoryDir,
+        dryRun: false,
+        now,
+      }),
+  );
+});
+
+test("rebuildObservations skips transcript symlink loops", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-rebuild-observations-symlink-"));
+  await writeText(
+    memoryDir,
+    "transcripts/main/default/2026-02-25.jsonl",
+    JSON.stringify({
+      timestamp: "2026-02-25T10:01:00.000Z",
+      role: "user",
+      content: "ok",
+      sessionKey: "agent:main:default",
+      turnId: "t1",
+    }) + "\n",
+  );
+
+  try {
+    await symlink(
+      path.join(memoryDir, "transcripts"),
+      path.join(memoryDir, "transcripts", "loop"),
+      "dir",
+    );
+  } catch {
+    return;
+  }
+
+  const result = await rebuildObservations({ memoryDir });
+  assert.equal(result.scannedFiles, 1);
+  assert.equal(result.parsedTurns, 1);
 });

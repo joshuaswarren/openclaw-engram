@@ -45,18 +45,25 @@ function toSortableKey(sessionKey: string, hour: string): string {
 
 async function listTranscriptFiles(root: string): Promise<string[]> {
   const out: string[] = [];
-  let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  let entries: Array<{
+    name: string;
+    isDirectory(): boolean;
+    isFile(): boolean;
+    isSymbolicLink(): boolean;
+  }>;
   try {
     entries = (await readdir(root, { withFileTypes: true })) as Array<{
       name: string;
       isDirectory(): boolean;
       isFile(): boolean;
+      isSymbolicLink(): boolean;
     }>;
   } catch {
     return out;
   }
 
   for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
     const full = path.join(root, entry.name);
     if (entry.isDirectory()) {
       out.push(...(await listTranscriptFiles(full)));
@@ -85,7 +92,12 @@ function buildLedgerRows(linesByFile: string[]): {
       if (!line.trim()) continue;
       let parsed: TranscriptLikeEntry;
       try {
-        parsed = JSON.parse(line) as TranscriptLikeEntry;
+        const candidate = JSON.parse(line);
+        if (candidate == null || typeof candidate !== "object" || Array.isArray(candidate)) {
+          malformedLines += 1;
+          continue;
+        }
+        parsed = candidate as TranscriptLikeEntry;
       } catch {
         malformedLines += 1;
         continue;
@@ -135,7 +147,14 @@ export async function rebuildObservations(
   );
 
   const transcriptFiles = await listTranscriptFiles(transcriptsRoot);
-  const contents = await Promise.all(transcriptFiles.map((file) => readFile(file, "utf-8")));
+  const contents: string[] = [];
+  for (const file of transcriptFiles) {
+    try {
+      contents.push(await readFile(file, "utf-8"));
+    } catch {
+      // Fail-open: skip unreadable shards and continue rebuilding from healthy files.
+    }
+  }
   const { aggregates, parsedTurns, malformedLines } = buildLedgerRows(contents);
 
   let backupPath: string | undefined;
@@ -147,7 +166,17 @@ export async function rebuildObservations(
       const existing = await readFile(outputPath, "utf-8");
       await mkdir(path.dirname(backupPath), { recursive: true });
       await writeFile(backupPath, existing, "utf-8");
-    } catch {
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code && code === "ENOENT") {
+        backupPath = undefined;
+      } else {
+        throw err;
+      }
+    }
+    if (backupPath !== undefined) {
+      // Backup exists; proceed to overwrite output file.
+    } else {
       backupPath = undefined;
     }
 
