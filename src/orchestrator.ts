@@ -2843,7 +2843,7 @@ export class Orchestrator {
       }
       const importance = scoreImportance(fact.content, writeCategory, fact.tags);
       const inferredIntent = this.config.intentRoutingEnabled
-        ? inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`)
+        ? inferIntentFromText(`${writeCategory} ${fact.tags.join(" ")} ${fact.content}`)
         : null;
 
       // Check if chunking is enabled and content should be chunked

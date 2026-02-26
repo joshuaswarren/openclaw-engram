@@ -11,3 +11,12 @@ test("persistExtraction serializes per-storage temporal index updates", () => {
     "per-storage temporal index updates should run serially to avoid concurrent index file races",
   );
 });
+
+test("persistExtraction derives intent from routed category", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.match(
+    source,
+    /inferIntentFromText\(`\$\{writeCategory\} \$\{fact\.tags\.join\(" "\)\} \$\{fact\.content\}`\)/m,
+    "intent inference should use routed category so downstream intent metadata matches write target",
+  );
+});
