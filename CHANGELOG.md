@@ -41,6 +41,11 @@ All notable changes to this project will be documented in this file.
   - Added `openclaw engram route list|add|remove|test` command support in `src/cli.ts`.
   - Added `runRouteCliCommand` wrapper with target parsing/validation and routing rule store integration.
   - Added `tests/cli-routing-commands.test.ts` coverage for route command add/list/test/remove behavior and validation failures.
+- v8.7 custom memory routing rules Task 4 (orchestrator wiring + docs):
+  - Added write-time routing in `persistExtraction(...)` so rule matches can retarget extracted facts by category/namespace before persistence.
+  - Added fail-open behavior for routing rule load/evaluation errors to preserve default extraction writes.
+  - Added `tests/orchestrator-routing-rules.test.ts` coverage for category+namespace reroute behavior.
+  - Documented routing config/ops surfaces in `docs/config-reference.md` and `docs/operations.md`.
 - v8.7 work management Task 3 (board generation + import/export helpers):
   - Added `src/work/board.ts` with board snapshot export, Kanban markdown rendering, and snapshot import helpers.
   - Added `tests/work-board.test.ts` coverage for project-scoped board export and import create/update behavior.

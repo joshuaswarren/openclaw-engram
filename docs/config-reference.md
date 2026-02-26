@@ -161,6 +161,13 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `sessionObserverDebounceMs` | `120000` | Minimum milliseconds between observer-triggered extractions per session |
 | `sessionObserverBands` | `[{maxBytes:50000,triggerDeltaBytes:6000,triggerDeltaTokens:1200}, ...]` | Size-band thresholds used to trigger observer extraction when growth exceeds configured byte/token deltas |
 
+## v8.7 Custom Memory Routing Rules
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `routingRulesEnabled` | `false` | Enable write-time routing-rule evaluation for extracted facts |
+| `routingRulesStateFile` | `state/routing-rules.json` | Relative state file path for persisted route rules |
+
 ## v2.2 Advanced Retrieval
 
 See [advanced-retrieval.md](advanced-retrieval.md) for guidance.

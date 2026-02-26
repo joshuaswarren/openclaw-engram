@@ -45,10 +45,19 @@ openclaw engram stats               # Memory counts and index state
 openclaw engram topics              # View extracted topic list
 openclaw engram threads             # View conversation threads
 openclaw engram access              # Most-accessed memories
+openclaw engram route list          # List routing rules
+openclaw engram route add ...       # Add/update a routing rule
+openclaw engram route remove ...    # Remove routing rules by pattern
+openclaw engram route test ...      # Test routing rule match
 openclaw engram export              # Export memory store
 openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
 ```
+
+Routing behavior notes:
+- Routing is optional and disabled unless `routingRulesEnabled=true`.
+- Rules are applied at write-time for extracted facts before persistence.
+- Rule targets may override `category`, `namespace`, or both; invalid targets fail-open to default writes.
 
 ## Hourly Summaries (Cron)
 

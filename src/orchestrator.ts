@@ -60,6 +60,8 @@ import {
 } from "./namespaces/principal.js";
 import { SharedContextManager } from "./shared-context/manager.js";
 import { CompoundingEngine } from "./compounding/engine.js";
+import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
+import { RoutingRulesStore } from "./routing/store.js";
 import type {
   AccessTrackingEntry,
   BootstrapOptions,
@@ -524,6 +526,7 @@ export class Orchestrator {
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
   private readonly tmtBuilder: TmtBuilder;
   private readonly rerankCache = new RerankCache();
+  private routingRulesStore: RoutingRulesStore | null = null;
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
     StorageManager,
@@ -647,6 +650,39 @@ export class Orchestrator {
       }));
     }
     return this.boxBuilders.get(dir)!;
+  }
+
+  private routeEngineOptions(): RoutingEngineOptions {
+    const allowedNamespaces = this.config.namespacesEnabled
+      ? Array.from(
+          new Set([
+            this.config.defaultNamespace,
+            this.config.sharedNamespace,
+            ...this.config.namespacePolicies.map((policy) => policy.name),
+          ]),
+        )
+      : [this.config.defaultNamespace];
+    return { allowedNamespaces };
+  }
+
+  private getRoutingRulesStore(): RoutingRulesStore {
+    if (!this.routingRulesStore) {
+      this.routingRulesStore = new RoutingRulesStore(
+        this.config.memoryDir,
+        this.config.routingRulesStateFile,
+      );
+    }
+    return this.routingRulesStore;
+  }
+
+  private async loadRoutingRules(): Promise<RouteRule[]> {
+    if (!this.config.routingRulesEnabled) return [];
+    try {
+      return await this.getRoutingRulesStore().read(this.routeEngineOptions());
+    } catch (err) {
+      log.warn(`routing rules unavailable; fail-open to default writes: ${err}`);
+      return [];
+    }
   }
 
   private async resolveArtifactSourceStatuses(
@@ -2737,6 +2773,8 @@ export class Orchestrator {
       } catch { /* fail-open */ }
     }
     let previousPersistedRelPath: string | undefined;
+    const routeRules = await this.loadRoutingRules();
+    const routeOptions = this.routeEngineOptions();
 
     for (const fact of facts) {
       if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
@@ -2759,7 +2797,27 @@ export class Orchestrator {
       }
 
       // Score importance using local heuristics (Phase 1B)
-      const importance = scoreImportance(fact.content, fact.category, fact.tags);
+      let writeCategory = fact.category;
+      let targetStorage = storage;
+      let routedRuleId: string | undefined;
+      if (routeRules.length > 0) {
+        try {
+          const routeText = `${fact.category} ${fact.tags.join(" ")} ${fact.content}`;
+          const selected = selectRouteRule(routeText, routeRules, routeOptions);
+          if (selected) {
+            routedRuleId = selected.rule.id;
+            if (selected.target.category) {
+              writeCategory = selected.target.category;
+            }
+            if (selected.target.namespace) {
+              targetStorage = await this.storageRouter.storageFor(selected.target.namespace);
+            }
+          }
+        } catch (err) {
+          log.warn(`routing evaluation failed; fail-open to extracted category/namespace: ${err}`);
+        }
+      }
+      const importance = scoreImportance(fact.content, writeCategory, fact.tags);
       const inferredIntent = this.config.intentRoutingEnabled
         ? inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`)
         : null;
@@ -2771,11 +2829,11 @@ export class Orchestrator {
         if (chunkResult.chunked && chunkResult.chunks.length > 1) {
           // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
           const memoryKind = this.config.episodeNoteModeEnabled
-            ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+            ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
             : undefined;
 
           // Write the parent memory first (with full content for reference)
-          const parentId = await storage.writeMemory(fact.category, fact.content, {
+          const parentId = await targetStorage.writeMemory(writeCategory, fact.content, {
             confidence: fact.confidence,
             tags: [...fact.tags, "chunked"],
             entityRef: fact.entityRef,
@@ -2790,13 +2848,13 @@ export class Orchestrator {
           // Write individual chunks with parent reference
           for (const chunk of chunkResult.chunks) {
             // Score each chunk's importance separately
-            const chunkImportance = scoreImportance(chunk.content, fact.category, fact.tags);
+            const chunkImportance = scoreImportance(chunk.content, writeCategory, fact.tags);
 
-            await storage.writeChunk(
+            await targetStorage.writeChunk(
               parentId,
               chunk.index,
               chunkResult.chunks.length,
-              fact.category,
+              writeCategory,
               chunk.content,
               {
                 confidence: fact.confidence,
@@ -2812,12 +2870,17 @@ export class Orchestrator {
             );
           }
 
+          if (routedRuleId) {
+            log.debug(
+              `routing applied for chunked memory ${parentId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
+            );
+          }
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
           persistedIds.push(parentId);
           if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
             threadEpisodeIdsForGraph.push(parentId);
           }
-          await this.indexPersistedMemory(storage, parentId);
+          await this.indexPersistedMemory(targetStorage, parentId);
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
             this.contentHashIndex.add(fact.content);
@@ -2829,17 +2892,17 @@ export class Orchestrator {
             // into boxBuilder.onExtraction() or threading.processTurn(), which
             // only expect canonical parent memory IDs.  Call indexPersistedMemory
             // directly for embedding-fallback sync of each chunk document.
-            await this.indexPersistedMemory(storage, chunkId);
+            await this.indexPersistedMemory(targetStorage, chunkId);
           }
           if (
             this.config.verbatimArtifactsEnabled &&
-            this.config.verbatimArtifactCategories.includes(fact.category) &&
+            this.config.verbatimArtifactCategories.includes(writeCategory) &&
             fact.confidence >= this.config.verbatimArtifactsMinConfidence
           ) {
-            await storage.writeArtifact(fact.content, {
+            await targetStorage.writeArtifact(fact.content, {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
-              artifactType: this.artifactTypeForCategory(fact.category),
+              artifactType: this.artifactTypeForCategory(writeCategory),
               sourceMemoryId: parentId,
               intentGoal: inferredIntent?.goal,
               intentActionType: inferredIntent?.actionType,
@@ -2847,27 +2910,27 @@ export class Orchestrator {
             });
           }
           // v8.2: graph edge building for chunked memories
-          if (this.config.multiGraphMemoryEnabled) {
+          if (this.config.multiGraphMemoryEnabled && targetStorage.dir === storage.dir) {
             try {
               const entityRef =
                 typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
               const parentRelPath = resolvePersistedMemoryRelativePath({
                 memoryId: parentId,
                 pathById: memoryPathById,
-                category: fact.category,
+                category: writeCategory,
               });
               memoryPathById.set(parentId, parentRelPath);
               appendMemoryToGraphContext({
                 allMemsForGraph,
-                storageDir: storage.dir,
+                storageDir: targetStorage.dir,
                 memoryRelPath: parentRelPath,
                 memoryId: parentId,
-                category: fact.category,
+                category: writeCategory,
                 content: fact.content ?? "",
                 entityRef,
               });
               await this.buildGraphEdge(
-                storage,
+                targetStorage,
                 parentRelPath,
                 entityRef,
                 parentId,
@@ -2890,7 +2953,7 @@ export class Orchestrator {
       let links: MemoryLink[] = [];
 
       if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
-        const contradiction = await this.checkForContradiction(fact.content, fact.category);
+        const contradiction = await this.checkForContradiction(fact.content, writeCategory);
         if (contradiction) {
           supersedes = contradiction.supersededId;
           links.push({
@@ -2914,7 +2977,7 @@ export class Orchestrator {
 
       // Suggest links for this memory (Phase 3A)
       if (this.config.memoryLinkingEnabled && this.qmd.isAvailable()) {
-        const suggestedLinks = await this.suggestLinksForMemory(fact.content, fact.category);
+        const suggestedLinks = await this.suggestLinksForMemory(fact.content, writeCategory);
         if (suggestedLinks.length > 0) {
           links.push(...suggestedLinks);
         }
@@ -2922,11 +2985,11 @@ export class Orchestrator {
 
       // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
       const memoryKind = this.config.episodeNoteModeEnabled
-        ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+        ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
         : undefined;
 
       // Normal write (no chunking)
-      const memoryId = await storage.writeMemory(fact.category, fact.content, {
+      const memoryId = await targetStorage.writeMemory(writeCategory, fact.content, {
         confidence: fact.confidence,
         tags: fact.tags,
         entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
@@ -2939,33 +3002,38 @@ export class Orchestrator {
         intentEntityTypes: inferredIntent?.entityTypes,
         memoryKind,
       });
+      if (routedRuleId) {
+        log.debug(
+          `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
+        );
+      }
       persistedIds.push(memoryId);
       if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
         threadEpisodeIdsForGraph.push(memoryId);
       }
-      await this.indexPersistedMemory(storage, memoryId);
+      await this.indexPersistedMemory(targetStorage, memoryId);
       // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
-      if (this.config.multiGraphMemoryEnabled) {
+      if (this.config.multiGraphMemoryEnabled && targetStorage.dir === storage.dir) {
         try {
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
           const memoryRelPath = resolvePersistedMemoryRelativePath({
             memoryId,
             pathById: memoryPathById,
-            category: fact.category,
+            category: writeCategory,
           });
           memoryPathById.set(memoryId, memoryRelPath);
           appendMemoryToGraphContext({
             allMemsForGraph,
-            storageDir: storage.dir,
+            storageDir: targetStorage.dir,
             memoryRelPath: memoryRelPath,
             memoryId,
-            category: fact.category,
+            category: writeCategory,
             content: fact.content ?? "",
             entityRef,
           });
           await this.buildGraphEdge(
-            storage,
+            targetStorage,
             memoryRelPath,
             entityRef,
             memoryId,
@@ -2981,13 +3049,13 @@ export class Orchestrator {
       }
       if (
         this.config.verbatimArtifactsEnabled &&
-        this.config.verbatimArtifactCategories.includes(fact.category) &&
+        this.config.verbatimArtifactCategories.includes(writeCategory) &&
         fact.confidence >= this.config.verbatimArtifactsMinConfidence
       ) {
-        await storage.writeArtifact(fact.content, {
+        await targetStorage.writeArtifact(fact.content, {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
-          artifactType: this.artifactTypeForCategory(fact.category),
+          artifactType: this.artifactTypeForCategory(writeCategory),
           sourceMemoryId: memoryId,
           intentGoal: inferredIntent?.goal,
           intentActionType: inferredIntent?.actionType,
