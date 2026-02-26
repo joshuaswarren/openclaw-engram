@@ -69,11 +69,15 @@ export function isSafeRouteNamespace(namespace: string): boolean {
   return /^[A-Za-z0-9._-]{1,64}$/.test(value);
 }
 
-export function validateRouteTarget(target: RouteTarget, options?: RoutingEngineOptions): {
+export function validateRouteTarget(target: RouteTarget | null | undefined, options?: RoutingEngineOptions): {
   ok: boolean;
   error?: string;
   target?: RouteTarget;
 } {
+  if (!target || typeof target !== "object") {
+    return { ok: false, error: "target must be an object" };
+  }
+
   const allowedCategories = new Set(options?.allowedCategories ?? DEFAULT_CATEGORIES);
   const allowedNamespaces = options?.allowedNamespaces
     ? new Set(options.allowedNamespaces.map((v) => v.trim()).filter((v) => v.length > 0))
@@ -107,7 +111,9 @@ export function validateRouteTarget(target: RouteTarget, options?: RoutingEngine
 }
 
 export function doesRuleMatch(rule: RouteRule, text: string): boolean {
+  if (!rule || typeof rule !== "object") return false;
   if (rule.enabled === false) return false;
+  if (typeof rule.pattern !== "string") return false;
   const pattern = rule.pattern.trim();
   if (pattern.length === 0) return false;
 

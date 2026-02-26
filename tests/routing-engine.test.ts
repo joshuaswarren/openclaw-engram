@@ -60,6 +60,11 @@ test("doesRuleMatch ignores unsupported pattern types", () => {
   assert.equal(doesRuleMatch(invalidTypeRule, "incident occurred"), false);
 });
 
+test("doesRuleMatch fail-opens when pattern is not a string", () => {
+  const malformedRule = { ...rule({ patternType: "keyword" }), pattern: null } as unknown as RouteRule;
+  assert.equal(doesRuleMatch(malformedRule, "incident occurred"), false);
+});
+
 test("selectRouteRule uses priority order with stable tie-break", () => {
   const rules: RouteRule[] = [
     rule({ id: "low", priority: 1, pattern: "incident", target: { category: "fact" } }),
@@ -83,6 +88,17 @@ test("selectRouteRule skips invalid targets and continues", () => {
   assert.ok(selected);
   assert.equal(selected.rule.id, "good");
   assert.equal(selected.target.namespace, "ops");
+});
+
+test("selectRouteRule skips malformed null targets", () => {
+  const rules: RouteRule[] = [
+    { ...rule({ id: "bad", priority: 10, pattern: "incident" }), target: null as unknown as RouteRule["target"] },
+    rule({ id: "good", priority: 1, pattern: "incident", target: { category: "fact" } }),
+  ];
+
+  const selected = selectRouteRule("incident occurred", rules);
+  assert.ok(selected);
+  assert.equal(selected.rule.id, "good");
 });
 
 test("validateRouteTarget enforces allowed namespaces and categories", () => {
