@@ -63,6 +63,7 @@ async function listTranscriptFiles(root: string): Promise<string[]> {
   }
 
   for (const entry of entries) {
+    if (entry.name === "." || entry.name === "..") continue;
     if (entry.isSymbolicLink()) continue;
     const full = path.join(root, entry.name);
     if (entry.isDirectory()) {
