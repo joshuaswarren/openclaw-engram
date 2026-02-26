@@ -119,7 +119,8 @@ function formatTaskLine(task: WorkBoardItem): string {
   if (task.owner) bits.push(`owner:${task.owner}`);
   if (task.dueAt) bits.push(`due:${task.dueAt}`);
   if (task.tags.length > 0) bits.push(`tags:${task.tags.join(",")}`);
-  return `- [ ] ${task.title} \`[${bits.join(" ")}]\``;
+  const checked = task.status === "done" || task.status === "cancelled";
+  return `- [${checked ? "x" : " "}] ${task.title} \`[${bits.join(" ")}]\``;
 }
 
 export async function exportWorkBoardSnapshot(options: {
@@ -199,20 +200,51 @@ export async function importWorkBoardSnapshot(options: {
     null,
   );
 
-  let created = 0;
-  let updated = 0;
+  type PreparedImportRow = {
+    item: WorkBoardItem;
+    existing: WorkTask | null;
+    projectId: string | null;
+    tags: string[];
+  };
 
+  const preparedRows: PreparedImportRow[] = [];
   for (const item of options.snapshot.items) {
     assertValidImportEnums(item);
     const existing = await storage.getTask(item.id);
+    const fallbackProjectId = existing ? existing.projectId : snapshotProjectId;
     const projectId = forcedProjectId === undefined
       ? normalizeImportedProjectId(
         (item as unknown as { projectId?: unknown }).projectId,
         item.id,
-        existing?.projectId ?? snapshotProjectId,
+        fallbackProjectId,
       )
       : forcedProjectId;
-    const tags = normalizeImportedTags((item as unknown as { tags?: unknown }).tags, item.id);
+
+    const hasTagsField = Object.prototype.hasOwnProperty.call(
+      item as unknown as Record<string, unknown>,
+      "tags",
+    );
+    const tags = hasTagsField
+      ? normalizeImportedTags((item as unknown as { tags?: unknown }).tags, item.id)
+      : (existing ? [...existing.tags] : []);
+
+    preparedRows.push({ item, existing, projectId, tags });
+  }
+
+  const projectIdsToValidate = new Set(
+    preparedRows
+      .map((row) => row.projectId)
+      .filter((projectId): projectId is string => typeof projectId === "string"),
+  );
+  for (const projectId of projectIdsToValidate) {
+    const project = await storage.getProject(projectId);
+    if (!project) throw new Error(`project not found: ${projectId}`);
+  }
+
+  let created = 0;
+  let updated = 0;
+  for (const row of preparedRows) {
+    const { item, existing, projectId, tags } = row;
 
     if (existing) {
       await storage.updateTask(item.id, {

@@ -40,6 +40,13 @@ test("work board export groups tasks by status and filters by project", async ()
     priority: "low",
     projectId: null,
   });
+  await storage.createTask({
+    id: "task-d",
+    title: "Done item",
+    status: "done",
+    priority: "medium",
+    projectId: project.id,
+  });
 
   const markdown = await exportWorkBoardMarkdown({
     memoryDir,
@@ -52,8 +59,10 @@ test("work board export groups tasks by status and filters by project", async ()
   assert.match(markdown, /## Todo \(1\)/);
   assert.match(markdown, /## In Progress \(1\)/);
   assert.match(markdown, /## Blocked \(0\)/);
+  assert.match(markdown, /## Done \(1\)/);
   assert.match(markdown, /Alpha/);
   assert.match(markdown, /Beta/);
+  assert.match(markdown, /- \[x\] Done item/);
   assert.doesNotMatch(markdown, /Gamma/);
 });
 
@@ -267,4 +276,138 @@ test("work board import rejects invalid tags payload", async () => {
       },
     }),
   );
+});
+
+test("work board import preserves existing null project linkage when item projectId is omitted", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-null-project-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const project = await storage.createProject({
+    id: "project-null-fallback",
+    name: "Null fallback",
+  });
+  await storage.createTask({
+    id: "task-null-project",
+    title: "No project",
+    status: "todo",
+    projectId: null,
+  });
+
+  await importWorkBoardSnapshot({
+    memoryDir,
+    snapshot: {
+      version: 1,
+      generatedAt: "2026-02-26T00:00:00.000Z",
+      projectId: project.id,
+      projectName: project.name,
+      items: [{
+        id: "task-null-project",
+        title: "No project",
+        description: "",
+        status: "todo",
+        priority: "medium",
+        owner: null,
+        assignee: null,
+        projectId: undefined as unknown as null,
+        tags: [],
+        dueAt: null,
+      }],
+    },
+  });
+
+  const updated = await storage.getTask("task-null-project");
+  assert.ok(updated);
+  assert.equal(updated.projectId, null);
+});
+
+test("work board import preserves existing tags when item omits tags", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-preserve-tags-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await storage.createTask({
+    id: "task-tags-keep",
+    title: "Keep tags",
+    status: "todo",
+    tags: ["alpha", "beta"],
+  });
+
+  await importWorkBoardSnapshot({
+    memoryDir,
+    snapshot: {
+      version: 1,
+      generatedAt: "2026-02-26T00:00:00.000Z",
+      projectId: null,
+      projectName: null,
+      items: [{
+        id: "task-tags-keep",
+        title: "Keep tags",
+        description: "",
+        status: "in_progress",
+        priority: "medium",
+        owner: null,
+        assignee: null,
+        projectId: null,
+        dueAt: null,
+      } as unknown as any],
+    },
+  });
+
+  const updated = await storage.getTask("task-tags-keep");
+  assert.ok(updated);
+  assert.deepEqual(updated.tags, ["alpha", "beta"]);
+});
+
+test("work board import validates snapshot fully before mutating storage", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-atomic-validate-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await storage.createTask({
+    id: "task-atomic",
+    title: "Atomic",
+    status: "todo",
+    tags: ["keep"],
+  });
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [
+          {
+            id: "task-atomic",
+            title: "Atomic changed",
+            description: "",
+            status: "in_progress",
+            priority: "medium",
+            owner: null,
+            assignee: null,
+            projectId: null,
+            tags: ["keep"],
+            dueAt: null,
+          },
+          {
+            id: "task-invalid",
+            title: "Invalid",
+            description: "",
+            status: "todo",
+            priority: "high",
+            owner: null,
+            assignee: null,
+            projectId: null,
+            tags: "not-array" as unknown as string[],
+            dueAt: null,
+          },
+        ],
+      },
+    }),
+  );
+
+  const unchanged = await storage.getTask("task-atomic");
+  assert.ok(unchanged);
+  assert.equal(unchanged.title, "Atomic");
+  assert.equal(unchanged.status, "todo");
 });
