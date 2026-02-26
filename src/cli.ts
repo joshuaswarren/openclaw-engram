@@ -224,13 +224,16 @@ function normalizeNullableCliValue(value: string | undefined): string | null | u
   return trimmed;
 }
 
-function parseTagsCsv(raw: string | undefined): string[] | undefined {
-  if (!raw) return undefined;
+function parseTagsCsv(raw: string | undefined, preserveEmpty = false): string[] | undefined {
+  if (raw === undefined) return undefined;
   const tags = raw
     .split(",")
     .map((tag) => tag.trim())
     .filter((tag) => tag.length > 0);
-  return tags.length > 0 ? tags : undefined;
+  if (tags.length === 0) {
+    return preserveEmpty ? [] : undefined;
+  }
+  return tags;
 }
 
 function isWorkTaskStatus(value: string | undefined): value is "todo" | "in_progress" | "blocked" | "done" | "cancelled" {
@@ -960,7 +963,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
           if (typeof options.assignee === "string") patch.assignee = normalizeNullableCliValue(options.assignee) ?? null;
           if (typeof options.projectId === "string") patch.projectId = normalizeNullableCliValue(options.projectId) ?? null;
-          if (typeof options.tags === "string") patch.tags = parseTagsCsv(options.tags);
+          if (Object.prototype.hasOwnProperty.call(options, "tags")) {
+            patch.tags = parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true);
+          }
           if (typeof options.dueAt === "string") patch.dueAt = normalizeNullableCliValue(options.dueAt) ?? null;
 
           const result = await runWorkTaskCliCommand({
@@ -974,7 +979,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             owner: typeof options.owner === "string" ? options.owner : undefined,
             assignee: typeof options.assignee === "string" ? options.assignee : undefined,
             projectId: typeof options.projectId === "string" ? options.projectId : undefined,
-            tags: typeof options.tags === "string" ? parseTagsCsv(options.tags) : undefined,
+            tags: Object.prototype.hasOwnProperty.call(options, "tags")
+              ? parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true)
+              : undefined,
             dueAt: typeof options.dueAt === "string" ? options.dueAt : undefined,
             patch,
           });
@@ -1004,7 +1011,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (typeof options.description === "string") patch.description = options.description;
           if (typeof options.status === "string") patch.status = options.status.trim().toLowerCase();
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
-          if (typeof options.tags === "string") patch.tags = parseTagsCsv(options.tags);
+          if (Object.prototype.hasOwnProperty.call(options, "tags")) {
+            patch.tags = parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true);
+          }
 
           const result = await runWorkProjectCliCommand({
             memoryDir: orchestrator.config.memoryDir,
@@ -1014,7 +1023,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             description: typeof options.description === "string" ? options.description : undefined,
             status: typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined,
             owner: typeof options.owner === "string" ? options.owner : undefined,
-            tags: typeof options.tags === "string" ? parseTagsCsv(options.tags) : undefined,
+            tags: Object.prototype.hasOwnProperty.call(options, "tags")
+              ? parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true)
+              : undefined,
             patch,
           });
 

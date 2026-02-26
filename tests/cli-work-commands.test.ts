@@ -105,6 +105,42 @@ test("work project CLI wrapper supports create/get/list/update/delete", async ()
   assert.equal(removed, true);
 });
 
+test("work CLI wrappers support explicit tag clearing on update", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-work-tag-clear-"));
+
+  const project = await runWorkProjectCliCommand({
+    memoryDir,
+    action: "create",
+    name: "Tag clear project",
+    tags: ["alpha"],
+  });
+  const projectId = (project as { id: string }).id;
+
+  const task = await runWorkTaskCliCommand({
+    memoryDir,
+    action: "create",
+    title: "Tag clear task",
+    tags: ["todo"],
+  });
+  const taskId = (task as { id: string }).id;
+
+  const clearedTask = await runWorkTaskCliCommand({
+    memoryDir,
+    action: "update",
+    id: taskId,
+    patch: { tags: [] },
+  });
+  assert.deepEqual((clearedTask as { tags: string[] }).tags, []);
+
+  const clearedProject = await runWorkProjectCliCommand({
+    memoryDir,
+    action: "update",
+    id: projectId,
+    patch: { tags: [] },
+  });
+  assert.deepEqual((clearedProject as { tags: string[] }).tags, []);
+});
+
 test("work CLI wrappers maintain task/project linkage and validate transitions", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-work-linkage-"));
 
