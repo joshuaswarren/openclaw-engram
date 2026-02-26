@@ -42,6 +42,12 @@ function workLayerTextResult(text: string, options?: { linkToMemory?: boolean })
   return toolResult(wrapWorkLayerContext(text, { linkToMemory: options?.linkToMemory === true }));
 }
 
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
 const IDENTITY_ANCHOR_SECTION_ORDER = [
   "Identity Traits",
@@ -1500,13 +1506,13 @@ Best for:
             const created = await storage.createTask({
               title: p.title,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: typeof p.status === "string" ? p.status as any : undefined,
-              priority: typeof p.priority === "string" ? p.priority as any : undefined,
-              owner: typeof p.owner === "string" ? p.owner : undefined,
-              assignee: typeof p.assignee === "string" ? p.assignee : undefined,
-              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+              status: asNonEmptyString(p.status) as any,
+              priority: asNonEmptyString(p.priority) as any,
+              owner: asNonEmptyString(p.owner),
+              assignee: asNonEmptyString(p.assignee),
+              projectId: asNonEmptyString(p.projectId),
               tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
-              dueAt: typeof p.dueAt === "string" ? p.dueAt : undefined,
+              dueAt: asNonEmptyString(p.dueAt),
             });
             return toolJsonResult({ action, task: created });
           }
@@ -1521,10 +1527,10 @@ Best for:
 
           if (action === "list") {
             const tasks = await storage.listTasks({
-              status: typeof p.status === "string" ? p.status as any : undefined,
-              owner: typeof p.owner === "string" ? p.owner : undefined,
-              assignee: typeof p.assignee === "string" ? p.assignee : undefined,
-              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+              status: asNonEmptyString(p.status) as any,
+              owner: asNonEmptyString(p.owner),
+              assignee: asNonEmptyString(p.assignee),
+              projectId: asNonEmptyString(p.projectId),
             });
             return toolJsonResult({ action, count: tasks.length, tasks });
           }
@@ -1536,13 +1542,13 @@ Best for:
             const updated = await storage.updateTask(p.id, {
               title: typeof p.title === "string" ? p.title : undefined,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: typeof p.status === "string" ? p.status as any : undefined,
-              priority: typeof p.priority === "string" ? p.priority as any : undefined,
-              owner: typeof p.owner === "string" ? p.owner : undefined,
-              assignee: typeof p.assignee === "string" ? p.assignee : undefined,
-              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+              status: asNonEmptyString(p.status) as any,
+              priority: asNonEmptyString(p.priority) as any,
+              owner: asNonEmptyString(p.owner),
+              assignee: asNonEmptyString(p.assignee),
+              projectId: asNonEmptyString(p.projectId),
               tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
-              dueAt: typeof p.dueAt === "string" ? p.dueAt : undefined,
+              dueAt: asNonEmptyString(p.dueAt),
             });
             return toolJsonResult({ action, task: updated });
           }
@@ -1610,8 +1616,8 @@ Best for:
             const project = await storage.createProject({
               name: p.name,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: typeof p.status === "string" ? p.status as any : undefined,
-              owner: typeof p.owner === "string" ? p.owner : undefined,
+              status: asNonEmptyString(p.status) as any,
+              owner: asNonEmptyString(p.owner),
               tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
             });
             return toolJsonResult({ action, project });
@@ -1637,8 +1643,8 @@ Best for:
             const project = await storage.updateProject(p.id, {
               name: typeof p.name === "string" ? p.name : undefined,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: typeof p.status === "string" ? p.status as any : undefined,
-              owner: typeof p.owner === "string" ? p.owner : undefined,
+              status: asNonEmptyString(p.status) as any,
+              owner: asNonEmptyString(p.owner),
               tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
             });
             return toolJsonResult({ action, project });
@@ -1697,7 +1703,7 @@ Best for:
       async execute(_toolCallId, params) {
         const p = params as Record<string, unknown>;
         const action = String(p.action ?? "");
-        const projectId = typeof p.projectId === "string" ? p.projectId : undefined;
+        const projectId = asNonEmptyString(p.projectId);
         const linkToMemory = p.linkToMemory === true;
         try {
           if (action === "export_markdown") {
@@ -1716,7 +1722,7 @@ Best for:
             const result = await importWorkBoardSnapshot({
               memoryDir: orchestrator.config.memoryDir,
               snapshot,
-              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+              projectId: asNonEmptyString(p.projectId),
             });
             return toolJsonResult({ action, result }, { linkToMemory });
           }
