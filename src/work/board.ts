@@ -1,5 +1,5 @@
 import type { WorkProject, WorkTask, WorkTaskPriority, WorkTaskStatus } from "./types.js";
-import { WorkStorage } from "./storage.js";
+import { WORK_ID_PATTERN, WorkStorage } from "./storage.js";
 
 const BOARD_STATUS_ORDER: WorkTaskStatus[] = [
   "todo",
@@ -22,8 +22,6 @@ const PRIORITY_WEIGHT: Record<WorkTaskPriority, number> = {
   medium: 1,
   low: 2,
 };
-
-const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 export interface WorkBoardItem {
   id: string;
@@ -162,7 +160,7 @@ function formatTaskLine(task: WorkBoardItem): string {
   if (task.owner) bits.push(`owner:${task.owner}`);
   if (task.dueAt) bits.push(`due:${task.dueAt}`);
   if (task.tags.length > 0) bits.push(`tags:${task.tags.join(",")}`);
-  const checked = task.status === "done" || task.status === "cancelled";
+  const checked = task.status === "done";
   return `- [${checked ? "x" : " "}] ${task.title} \`[${bits.join(" ")}]\``;
 }
 

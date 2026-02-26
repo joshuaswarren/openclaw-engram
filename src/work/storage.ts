@@ -57,7 +57,7 @@ function toSafeSlug(value: string): string {
     .slice(0, 80);
 }
 
-const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+export const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 function makeId(prefix: string, titleOrName: string, now: Date): string {
   const slug = toSafeSlug(titleOrName) || "item";

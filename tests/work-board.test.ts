@@ -47,6 +47,13 @@ test("work board export groups tasks by status and filters by project", async ()
     priority: "medium",
     projectId: project.id,
   });
+  await storage.createTask({
+    id: "task-e",
+    title: "Cancelled item",
+    status: "cancelled",
+    priority: "low",
+    projectId: project.id,
+  });
 
   const markdown = await exportWorkBoardMarkdown({
     memoryDir,
@@ -60,9 +67,11 @@ test("work board export groups tasks by status and filters by project", async ()
   assert.match(markdown, /## In Progress \(1\)/);
   assert.match(markdown, /## Blocked \(0\)/);
   assert.match(markdown, /## Done \(1\)/);
+  assert.match(markdown, /## Cancelled \(1\)/);
   assert.match(markdown, /Alpha/);
   assert.match(markdown, /Beta/);
   assert.match(markdown, /- \[x\] Done item/);
+  assert.match(markdown, /- \[ \] Cancelled item/);
   assert.doesNotMatch(markdown, /Gamma/);
 });
 
