@@ -1544,7 +1544,12 @@ Best for:
           }
 
           if (action === "transition") {
-            if (typeof p.id !== "string" || p.id.trim().length === 0 || typeof p.status !== "string") {
+            if (
+              typeof p.id !== "string"
+              || p.id.trim().length === 0
+              || typeof p.status !== "string"
+              || p.status.trim().length === 0
+            ) {
               return toolResult("work_task.transition requires `id` and `status`.");
             }
             const task = await storage.transitionTask(p.id, p.status as any);
@@ -1644,7 +1649,12 @@ Best for:
           }
 
           if (action === "link_task") {
-            if (typeof p.taskId !== "string" || typeof p.projectId !== "string") {
+            if (
+              typeof p.taskId !== "string"
+              || p.taskId.trim().length === 0
+              || typeof p.projectId !== "string"
+              || p.projectId.trim().length === 0
+            ) {
               return toolResult("work_project.link_task requires `taskId` and `projectId`.");
             }
             const linked = await storage.linkTaskToProject(p.taskId, p.projectId);
