@@ -63,6 +63,15 @@ test("applyWorkExtractionBoundary keeps literal token text in linked payloads", 
   assert.match(bounded, /\[WORK_LAYER_CONTEXT without wrapper metadata/);
 });
 
+test("applyWorkExtractionBoundary keeps metadata-like opener text in linked payloads", () => {
+  const linked =
+    "note has [WORK_LAYER_CONTEXT link_to_memory=false] literal text and should remain intact";
+  const conversation = wrapWorkLayerContext(linked, { linkToMemory: true });
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.match(bounded, /\[WORK_LAYER_CONTEXT link_to_memory=false\] literal text/);
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",

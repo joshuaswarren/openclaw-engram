@@ -1,11 +1,15 @@
 export const WORK_LAYER_CONTEXT_OPEN = "[WORK_LAYER_CONTEXT";
 export const WORK_LAYER_CONTEXT_CLOSE = "[/WORK_LAYER_CONTEXT]";
+const WORK_LAYER_CONTEXT_ESCAPED_OPEN = "[WORK_LAYER_ESCAPED_CONTEXT";
 const WORK_LAYER_CONTEXT_ESCAPED_CLOSE = "[/WORK_LAYER_CONTEXT_ESC]";
 
 export function wrapWorkLayerContext(content: string, options?: { linkToMemory?: boolean }): string {
   const linkToMemory = options?.linkToMemory === true;
   const header = `${WORK_LAYER_CONTEXT_OPEN} link_to_memory=${linkToMemory ? "true" : "false"}]`;
-  const payload = content.trim().replaceAll(WORK_LAYER_CONTEXT_CLOSE, WORK_LAYER_CONTEXT_ESCAPED_CLOSE);
+  const payload = content
+    .trim()
+    .replaceAll(WORK_LAYER_CONTEXT_OPEN, WORK_LAYER_CONTEXT_ESCAPED_OPEN)
+    .replaceAll(WORK_LAYER_CONTEXT_CLOSE, WORK_LAYER_CONTEXT_ESCAPED_CLOSE);
   return `${header}\n${payload}\n${WORK_LAYER_CONTEXT_CLOSE}`;
 }
 
@@ -30,7 +34,7 @@ export function applyWorkExtractionBoundary(conversation: string): string {
     }
 
     // Default wrapper keeps payload readable and escapes closing delimiter inside content.
-    return body.trim().replaceAll(WORK_LAYER_CONTEXT_ESCAPED_CLOSE, WORK_LAYER_CONTEXT_CLOSE);
+    return body.trim();
   });
 
   // Defensive hardening: if a *real wrapper opener* survives without a closer (e.g., turn-level truncation),
@@ -41,7 +45,11 @@ export function applyWorkExtractionBoundary(conversation: string): string {
     "",
   );
 
-  const cleanedLines = strippedUnterminated
+  const restoredEscapes = strippedUnterminated
+    .replaceAll(WORK_LAYER_CONTEXT_ESCAPED_OPEN, WORK_LAYER_CONTEXT_OPEN)
+    .replaceAll(WORK_LAYER_CONTEXT_ESCAPED_CLOSE, WORK_LAYER_CONTEXT_CLOSE);
+
+  const cleanedLines = restoredEscapes
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => !/^\[(user|assistant)\]\s*$/.test(line));
