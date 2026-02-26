@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import type {
   CreateWorkProjectInput,
@@ -60,7 +61,8 @@ const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 function makeId(prefix: string, titleOrName: string, now: Date): string {
   const slug = toSafeSlug(titleOrName) || "item";
-  return `${prefix}-${now.getTime()}-${slug}`;
+  const nonce = randomUUID().slice(0, 8);
+  return `${prefix}-${now.getTime()}-${slug}-${nonce}`;
 }
 
 function assertValidWorkId(id: string, kind: "task" | "project"): void {
@@ -185,7 +187,20 @@ export class WorkStorage {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+
+    if (task.projectId) {
+      const project = await this.getProject(task.projectId);
+      if (!project) {
+        throw new Error(`project not found: ${task.projectId}`);
+      }
+    }
+
     await writeFile(this.taskPath(task.id), this.serializeTask(task), "utf-8");
+
+    if (task.projectId) {
+      await this.addTaskIdToProject(task.projectId, task.id, now);
+    }
+
     return task;
   }
 
@@ -222,7 +237,12 @@ export class WorkStorage {
     if (!existing) return null;
 
     const projectIdPatched = Object.prototype.hasOwnProperty.call(patch, "projectId");
+    const statusPatched = Object.prototype.hasOwnProperty.call(patch, "status");
     const nextProjectId = projectIdPatched ? patch.projectId ?? null : existing.projectId;
+
+    if (statusPatched && patch.status && existing.status !== patch.status && !TASK_TRANSITIONS[existing.status].has(patch.status)) {
+      throw new Error(`invalid task status transition: ${existing.status} -> ${patch.status}`);
+    }
 
     if (projectIdPatched && nextProjectId) {
       const nextProject = await this.getProject(nextProjectId);

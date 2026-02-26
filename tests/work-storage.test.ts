@@ -52,6 +52,7 @@ test("work storage enforces valid status transitions", async () => {
   assert.equal(done.status, "done");
 
   await assert.rejects(() => storage.transitionTask(task.id, "todo"));
+  await assert.rejects(() => storage.updateTask(task.id, { status: "todo" }));
 });
 
 test("work storage project CRUD and task linkage", async () => {
@@ -68,10 +69,11 @@ test("work storage project CRUD and task linkage", async () => {
     owner: "eng",
   });
   const task = await storage.createTask({ title: "Model storage", owner: "eng" });
+  const createLinked = await storage.createTask({ title: "Created linked", projectId: projectA.id });
 
   const linkedA = await storage.linkTaskToProject(task.id, projectA.id);
   assert.equal(linkedA.task.projectId, projectA.id);
-  assert.deepEqual(linkedA.project.taskIds, [task.id]);
+  assert.deepEqual(linkedA.project.taskIds, [createLinked.id, task.id].sort());
 
   const linkedB = await storage.linkTaskToProject(task.id, projectB.id);
   assert.equal(linkedB.task.projectId, projectB.id);
@@ -81,7 +83,7 @@ test("work storage project CRUD and task linkage", async () => {
   const fetchedProjectB = await storage.getProject(projectB.id);
   assert.ok(fetchedProjectA);
   assert.ok(fetchedProjectB);
-  assert.deepEqual(fetchedProjectA?.taskIds, []);
+  assert.deepEqual(fetchedProjectA?.taskIds, [createLinked.id]);
   assert.deepEqual(fetchedProjectB?.taskIds, [task.id]);
 
   const taskRemoved = await storage.deleteTask(task.id);
@@ -89,6 +91,8 @@ test("work storage project CRUD and task linkage", async () => {
   const projectBAfterDelete = await storage.getProject(projectB.id);
   assert.ok(projectBAfterDelete);
   assert.deepEqual(projectBAfterDelete?.taskIds, []);
+
+  await assert.rejects(() => storage.createTask({ title: "bad link", projectId: "project-missing" }), /project not found/);
 
   const projects = await storage.listProjects();
   assert.equal(projects.length, 2);
@@ -138,6 +142,19 @@ test("work storage clears task links when deleting a project", async () => {
   const orphaned = await storage.getTask(task.id);
   assert.ok(orphaned);
   assert.equal(orphaned?.projectId, null);
+});
+
+test("work storage generates collision-resistant ids for same timestamp/title", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-storage-id-collision-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const fixedNow = new Date("2026-02-26T00:00:00.000Z");
+  const first = await storage.createTask({ title: "Same title" }, fixedNow);
+  const second = await storage.createTask({ title: "Same title" }, fixedNow);
+
+  assert.notEqual(first.id, second.id);
+  const tasks = await storage.listTasks();
+  assert.equal(tasks.length, 2);
 });
 
 test("work storage rejects unsafe task and project IDs", async () => {
