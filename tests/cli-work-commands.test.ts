@@ -14,13 +14,14 @@ test("work task CLI wrapper supports create/list/transition/update/delete", asyn
   const created = await runWorkTaskCliCommand({
     memoryDir,
     action: "create",
+    id: "task-explicit-id",
     title: "Ship task CLI",
     status: "todo",
     priority: "high",
     owner: "eng",
     tags: ["v8.7", "cli"],
   });
-  assert.equal(typeof (created as { id?: string }).id, "string");
+  assert.equal((created as { id: string }).id, "task-explicit-id");
 
   const taskId = (created as { id: string }).id;
   const listed = await runWorkTaskCliCommand({
@@ -65,12 +66,14 @@ test("work project CLI wrapper supports create/get/list/update/delete", async ()
   const created = await runWorkProjectCliCommand({
     memoryDir,
     action: "create",
+    id: "project-explicit-id",
     name: "v8.7 CLI",
     status: "active",
     owner: "eng",
     tags: ["v8.7"],
   });
   const projectId = (created as { id: string }).id;
+  assert.equal(projectId, "project-explicit-id");
 
   const got = await runWorkProjectCliCommand({
     memoryDir,
