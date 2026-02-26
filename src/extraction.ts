@@ -29,6 +29,7 @@ import type {
 import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
+import { applyWorkExtractionBoundary } from "./work/boundary.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 
@@ -338,9 +339,14 @@ export class ExtractionEngine {
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     }
 
-    const conversation = substantiveTurns
+    const rawConversation = substantiveTurns
       .map((t) => `[${t.role}] ${t.content}`)
       .join("\n\n");
+    const conversation = applyWorkExtractionBoundary(rawConversation);
+    if (conversation.trim().length === 0) {
+      log.debug("extraction skipped — conversation only contained non-memory work-layer context");
+      return { facts: [], profileUpdates: [], entities: [], questions: [] };
+    }
 
     const traceId = crypto.randomUUID();
     this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });

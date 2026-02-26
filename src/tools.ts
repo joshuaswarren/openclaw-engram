@@ -5,6 +5,9 @@ import type { Orchestrator } from "./orchestrator.js";
 import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
 import { log } from "./logger.js";
+import { WorkStorage } from "./work/storage.js";
+import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
+import { wrapWorkLayerContext } from "./work/boundary.js";
 
 interface ToolApi {
   registerTool(
@@ -28,6 +31,11 @@ interface ToolApi {
 
 function toolResult(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined };
+}
+
+function toolJsonResult(value: unknown, options?: { linkToMemory?: boolean }) {
+  const payload = JSON.stringify(value, null, 2);
+  return toolResult(wrapWorkLayerContext(payload, { linkToMemory: options?.linkToMemory === true }));
 }
 
 const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
@@ -1451,6 +1459,260 @@ Best for:
       },
     },
     { name: "conversation_index_update" },
+  );
+
+  api.registerTool(
+    {
+      name: "work_task",
+      label: "Manage Work Tasks",
+      description:
+        "Manage Engram work-layer tasks (create, get, list, update, transition, delete). Responses are marked as work-layer context and excluded from default memory extraction.",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: ["create", "get", "list", "update", "transition", "delete"],
+          description: "Task action to run.",
+        }),
+        id: Type.Optional(Type.String({ description: "Task ID for get/update/transition/delete." })),
+        title: Type.Optional(Type.String({ description: "Task title (create/update)." })),
+        description: Type.Optional(Type.String({ description: "Task description (create/update)." })),
+        status: Type.Optional(Type.String({ enum: ["todo", "in_progress", "blocked", "done", "cancelled"] })),
+        priority: Type.Optional(Type.String({ enum: ["low", "medium", "high"] })),
+        owner: Type.Optional(Type.String()),
+        assignee: Type.Optional(Type.String()),
+        projectId: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        dueAt: Type.Optional(Type.String()),
+      }),
+      async execute(_toolCallId, params) {
+        const p = params as Record<string, unknown>;
+        const action = String(p.action ?? "");
+        const storage = new WorkStorage(orchestrator.config.memoryDir);
+        await storage.ensureDirectories();
+        try {
+          if (action === "create") {
+            if (typeof p.title !== "string" || p.title.trim().length === 0) {
+              return toolResult("work_task.create requires non-empty `title`.");
+            }
+            const created = await storage.createTask({
+              title: p.title,
+              description: typeof p.description === "string" ? p.description : undefined,
+              status: typeof p.status === "string" ? p.status as any : undefined,
+              priority: typeof p.priority === "string" ? p.priority as any : undefined,
+              owner: typeof p.owner === "string" ? p.owner : undefined,
+              assignee: typeof p.assignee === "string" ? p.assignee : undefined,
+              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
+              dueAt: typeof p.dueAt === "string" ? p.dueAt : undefined,
+            });
+            return toolJsonResult({ action, task: created });
+          }
+
+          if (action === "get") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+              return toolResult("work_task.get requires `id`.");
+            }
+            const task = await storage.getTask(p.id);
+            return toolJsonResult({ action, task });
+          }
+
+          if (action === "list") {
+            const tasks = await storage.listTasks({
+              status: typeof p.status === "string" ? p.status as any : undefined,
+              owner: typeof p.owner === "string" ? p.owner : undefined,
+              assignee: typeof p.assignee === "string" ? p.assignee : undefined,
+              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+            });
+            return toolJsonResult({ action, count: tasks.length, tasks });
+          }
+
+          if (action === "update") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+              return toolResult("work_task.update requires `id`.");
+            }
+            const updated = await storage.updateTask(p.id, {
+              title: typeof p.title === "string" ? p.title : undefined,
+              description: typeof p.description === "string" ? p.description : undefined,
+              status: typeof p.status === "string" ? p.status as any : undefined,
+              priority: typeof p.priority === "string" ? p.priority as any : undefined,
+              owner: typeof p.owner === "string" ? p.owner : undefined,
+              assignee: typeof p.assignee === "string" ? p.assignee : undefined,
+              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
+              dueAt: typeof p.dueAt === "string" ? p.dueAt : undefined,
+            });
+            return toolJsonResult({ action, task: updated });
+          }
+
+          if (action === "transition") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0 || typeof p.status !== "string") {
+              return toolResult("work_task.transition requires `id` and `status`.");
+            }
+            const task = await storage.transitionTask(p.id, p.status as any);
+            return toolJsonResult({ action, task });
+          }
+
+          if (action === "delete") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+              return toolResult("work_task.delete requires `id`.");
+            }
+            const deleted = await storage.deleteTask(p.id);
+            return toolJsonResult({ action, deleted });
+          }
+
+          return toolResult(`Unsupported work_task action: ${action}`);
+        } catch (err) {
+          return toolResult(`work_task error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    { name: "work_task" },
+  );
+
+  api.registerTool(
+    {
+      name: "work_project",
+      label: "Manage Work Projects",
+      description:
+        "Manage Engram work-layer projects (create, get, list, update, delete, link_task). Responses are marked as work-layer context and excluded from default memory extraction.",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: ["create", "get", "list", "update", "delete", "link_task"],
+          description: "Project action to run.",
+        }),
+        id: Type.Optional(Type.String({ description: "Project ID for get/update/delete." })),
+        name: Type.Optional(Type.String({ description: "Project name (create/update)." })),
+        description: Type.Optional(Type.String({ description: "Project description (create/update)." })),
+        status: Type.Optional(Type.String({ enum: ["active", "on_hold", "completed", "archived"] })),
+        owner: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        taskId: Type.Optional(Type.String({ description: "Task ID for link_task action." })),
+        projectId: Type.Optional(Type.String({ description: "Project ID for link_task action." })),
+      }),
+      async execute(_toolCallId, params) {
+        const p = params as Record<string, unknown>;
+        const action = String(p.action ?? "");
+        const storage = new WorkStorage(orchestrator.config.memoryDir);
+        await storage.ensureDirectories();
+        try {
+          if (action === "create") {
+            if (typeof p.name !== "string" || p.name.trim().length === 0) {
+              return toolResult("work_project.create requires non-empty `name`.");
+            }
+            const project = await storage.createProject({
+              name: p.name,
+              description: typeof p.description === "string" ? p.description : undefined,
+              status: typeof p.status === "string" ? p.status as any : undefined,
+              owner: typeof p.owner === "string" ? p.owner : undefined,
+              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
+            });
+            return toolJsonResult({ action, project });
+          }
+
+          if (action === "get") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+              return toolResult("work_project.get requires `id`.");
+            }
+            const project = await storage.getProject(p.id);
+            return toolJsonResult({ action, project });
+          }
+
+          if (action === "list") {
+            const projects = await storage.listProjects();
+            return toolJsonResult({ action, count: projects.length, projects });
+          }
+
+          if (action === "update") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+              return toolResult("work_project.update requires `id`.");
+            }
+            const project = await storage.updateProject(p.id, {
+              name: typeof p.name === "string" ? p.name : undefined,
+              description: typeof p.description === "string" ? p.description : undefined,
+              status: typeof p.status === "string" ? p.status as any : undefined,
+              owner: typeof p.owner === "string" ? p.owner : undefined,
+              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
+            });
+            return toolJsonResult({ action, project });
+          }
+
+          if (action === "delete") {
+            if (typeof p.id !== "string" || p.id.trim().length === 0) {
+              return toolResult("work_project.delete requires `id`.");
+            }
+            const deleted = await storage.deleteProject(p.id);
+            return toolJsonResult({ action, deleted });
+          }
+
+          if (action === "link_task") {
+            if (typeof p.taskId !== "string" || typeof p.projectId !== "string") {
+              return toolResult("work_project.link_task requires `taskId` and `projectId`.");
+            }
+            const linked = await storage.linkTaskToProject(p.taskId, p.projectId);
+            return toolJsonResult({ action, linked });
+          }
+
+          return toolResult(`Unsupported work_project action: ${action}`);
+        } catch (err) {
+          return toolResult(`work_project error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    { name: "work_project" },
+  );
+
+  api.registerTool(
+    {
+      name: "work_board",
+      label: "Work Board Import/Export",
+      description:
+        "Export/import work-layer board snapshots and markdown. Outputs are marked as work-layer context and excluded from default memory extraction unless explicitly linked.",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: ["export_markdown", "export_snapshot", "import_snapshot"],
+          description: "Board action to run.",
+        }),
+        projectId: Type.Optional(Type.String({ description: "Optional project filter/id." })),
+        snapshotJson: Type.Optional(Type.String({ description: "Snapshot JSON payload for import_snapshot." })),
+        linkToMemory: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, wrap output as linkable work context so extraction can retain it as long-term memory.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const p = params as Record<string, unknown>;
+        const action = String(p.action ?? "");
+        const projectId = typeof p.projectId === "string" ? p.projectId : undefined;
+        const linkToMemory = p.linkToMemory === true;
+        try {
+          if (action === "export_markdown") {
+            const markdown = await exportWorkBoardMarkdown({ memoryDir: orchestrator.config.memoryDir, projectId });
+            return toolResult(wrapWorkLayerContext(markdown, { linkToMemory }));
+          }
+          if (action === "export_snapshot") {
+            const snapshot = await exportWorkBoardSnapshot({ memoryDir: orchestrator.config.memoryDir, projectId });
+            return toolJsonResult(snapshot, { linkToMemory });
+          }
+          if (action === "import_snapshot") {
+            if (typeof p.snapshotJson !== "string" || p.snapshotJson.trim().length === 0) {
+              return toolResult("work_board.import_snapshot requires `snapshotJson`.");
+            }
+            const snapshot = JSON.parse(p.snapshotJson);
+            const result = await importWorkBoardSnapshot({
+              memoryDir: orchestrator.config.memoryDir,
+              snapshot,
+              projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+            });
+            return toolJsonResult({ action, result });
+          }
+          return toolResult(`Unsupported work_board action: ${action}`);
+        } catch (err) {
+          return toolResult(`work_board error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    { name: "work_board" },
   );
 
   api.registerTool(

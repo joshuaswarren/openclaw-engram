@@ -1,0 +1,59 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { parseConfig } from "../src/config.ts";
+import { ExtractionEngine } from "../src/extraction.ts";
+import { applyWorkExtractionBoundary, wrapWorkLayerContext } from "../src/work/boundary.js";
+
+test("applyWorkExtractionBoundary strips default work-layer blocks", () => {
+  const conversation = [
+    "[user] normal context",
+    wrapWorkLayerContext('{"action":"list","tasks":[{"id":"task-1"}]}'),
+    "[assistant] response",
+  ].join("\n\n");
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.match(bounded, /normal context/);
+  assert.match(bounded, /response/);
+  assert.doesNotMatch(bounded, /task-1/);
+  assert.doesNotMatch(bounded, /WORK_LAYER_CONTEXT/);
+});
+
+test("applyWorkExtractionBoundary preserves explicitly linked work-layer blocks", () => {
+  const conversation = [
+    "[user] please remember this board result",
+    wrapWorkLayerContext('linked summary: task-42 is critical', { linkToMemory: true }),
+  ].join("\n\n");
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.match(bounded, /task-42 is critical/);
+  assert.doesNotMatch(bounded, /WORK_LAYER_CONTEXT/);
+});
+
+test("extraction skips work-only conversation before calling fallback parser", async () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+    localLlmEnabled: false,
+  });
+
+  const engine = new ExtractionEngine(config);
+  let fallbackCalled = false;
+  (engine as any).fallbackLlm = {
+    parseWithSchema: async () => {
+      fallbackCalled = true;
+      return null;
+    },
+  };
+
+  const result = await engine.extract([
+    {
+      role: "assistant",
+      content: wrapWorkLayerContext('{"action":"list","tasks":[{"id":"task-1"}]}'),
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+
+  assert.deepEqual(result, { facts: [], profileUpdates: [], entities: [], questions: [] });
+  assert.equal(fallbackCalled, false);
+});
