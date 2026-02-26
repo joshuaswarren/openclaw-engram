@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "../logger.js";
@@ -70,17 +70,20 @@ function normalizeRule(rule: RouteRule, options?: RoutingEngineOptions): RouteRu
 }
 
 export class RoutingRulesStore {
+  private readonly memoryRoot: string;
   private readonly statePath: string;
   private readonly lockPath: string;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(memoryDir: string, stateFile = "state/routing-rules.json") {
+    this.memoryRoot = path.resolve(memoryDir);
     this.statePath = resolveStatePath(memoryDir, stateFile);
     this.lockPath = `${this.statePath}.lock`;
   }
 
   async read(options?: RoutingEngineOptions): Promise<RouteRule[]> {
     try {
+      await this.assertStatePathScoped();
       const raw = await readFile(this.statePath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<RoutingRulesState>;
       if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.rules)) return [];
@@ -123,6 +126,7 @@ export class RoutingRulesStore {
     await this.withWriteLock(async () => {
       const payload = defaultState();
       try {
+        await this.assertStatePathScoped();
         await mkdir(path.dirname(this.statePath), { recursive: true });
         await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
       } catch (err) {
@@ -153,6 +157,7 @@ export class RoutingRulesStore {
     };
 
     try {
+      await this.assertStatePathScoped();
       await mkdir(path.dirname(this.statePath), { recursive: true });
       await writeFile(this.statePath, JSON.stringify(payload, null, 2), "utf-8");
     } catch (err) {
@@ -169,11 +174,12 @@ export class RoutingRulesStore {
       release = resolve;
     });
     await previous;
-    const unlock = await this.acquireFileLock();
+    let unlock: (() => Promise<void>) | null = null;
     try {
+      unlock = await this.acquireFileLock();
       return await op();
     } finally {
-      await unlock();
+      if (unlock) await unlock();
       release();
     }
   }
@@ -212,6 +218,23 @@ export class RoutingRulesStore {
       }
     }
 
-    return async () => {};
+    throw new Error(`routing rules lock acquisition timed out after ${timeoutMs}ms`);
+  }
+
+  private async assertStatePathScoped(): Promise<void> {
+    await mkdir(this.memoryRoot, { recursive: true });
+    await mkdir(path.dirname(this.statePath), { recursive: true });
+    const canonicalRoot = await realpath(this.memoryRoot);
+    const canonicalParent = await realpath(path.dirname(this.statePath));
+    const canonicalStatePath = path.join(canonicalParent, path.basename(this.statePath));
+    if (!this.isPathInside(canonicalRoot, canonicalStatePath)) {
+      throw new Error(`routing rules state path escaped memoryDir: ${canonicalStatePath}`);
+    }
+  }
+
+  private isPathInside(root: string, candidate: string): boolean {
+    const normalizedRoot = path.resolve(root);
+    const normalizedCandidate = path.resolve(candidate);
+    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
   }
 }

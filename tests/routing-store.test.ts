@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { RoutingRulesStore } from "../src/routing/store.ts";
 import type { RouteRule } from "../src/routing/engine.ts";
 
@@ -188,5 +188,26 @@ test("routing store serializes concurrent upserts across separate instances", as
     assert.equal(ids.has("rb"), true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("routing store blocks symlink-based state path escapes", async () => {
+  if (process.platform === "win32") return;
+
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-symlink-root-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-symlink-outside-"));
+  try {
+    const linkDir = path.join(memoryDir, "state-link");
+    await symlink(outsideDir, linkDir);
+
+    const store = new RoutingRulesStore(memoryDir, "state-link/routing-rules.json");
+    await store.write([sampleRule()]);
+
+    await assert.rejects(async () => readFile(path.join(outsideDir, "routing-rules.json"), "utf-8"));
+    const rules = await store.read();
+    assert.deepEqual(rules, []);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
   }
 });
