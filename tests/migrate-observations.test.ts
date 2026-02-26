@@ -162,3 +162,28 @@ test("migrateObservations enforces backup-first when backup write fails", async 
     }),
   );
 });
+
+test("migrateObservations live mode is no-op when no legacy files exist", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-migrate-observations-noop-"));
+  await writeText(
+    memoryDir,
+    "state/observation-ledger/rebuilt-observations.jsonl",
+    "{\"sessionKey\":\"agent:main:default\",\"hour\":\"2026-02-25T10:00:00.000Z\",\"turnCount\":1}\n",
+  );
+
+  const result = await migrateObservations({
+    memoryDir,
+    dryRun: false,
+    now: new Date("2026-02-26T12:00:00.000Z"),
+  });
+
+  assert.equal(result.scannedFiles, 0);
+  assert.equal(result.parsedRows, 0);
+  assert.equal(result.migratedRows, 0);
+  assert.equal(result.backupPath, undefined);
+  const current = await readFile(result.outputPath, "utf-8");
+  assert.equal(
+    current,
+    "{\"sessionKey\":\"agent:main:default\",\"hour\":\"2026-02-25T10:00:00.000Z\",\"turnCount\":1}\n",
+  );
+});

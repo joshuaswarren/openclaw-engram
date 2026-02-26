@@ -180,6 +180,18 @@ export async function migrateObservations(
     return a.hour.localeCompare(b.hour);
   });
 
+  if (!dryRun && legacyFiles.length === 0) {
+    return {
+      dryRun,
+      scannedFiles: legacyFiles.length,
+      parsedRows,
+      malformedLines,
+      migratedRows: aggregates.length,
+      outputPath,
+      sourceRelativePaths,
+    };
+  }
+
   let backupPath: string | undefined;
   if (!dryRun) {
     const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
