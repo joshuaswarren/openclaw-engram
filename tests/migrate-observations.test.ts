@@ -187,3 +187,36 @@ test("migrateObservations live mode is no-op when no legacy files exist", async 
     "{\"sessionKey\":\"agent:main:default\",\"hour\":\"2026-02-25T10:00:00.000Z\",\"turnCount\":1}\n",
   );
 });
+
+test("migrateObservations ignores negative sentinel counts and falls back to alternate fields", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-migrate-observations-neg-fallback-"));
+  await writeText(
+    memoryDir,
+    "state/observation-ledger/legacy.jsonl",
+    JSON.stringify({
+      session: "agent:main:default",
+      hour: "2026-02-25T10:00:00.000Z",
+      turnCount: -1,
+      turns: 5,
+      userTurns: -1,
+      userCount: 2,
+      assistantTurns: -1,
+      assistantCount: 3,
+    }) + "\n",
+  );
+
+  const result = await migrateObservations({
+    memoryDir,
+    dryRun: false,
+    now: new Date("2026-02-26T12:00:00.000Z"),
+  });
+  assert.equal(result.parsedRows, 1);
+  assert.equal(result.migratedRows, 1);
+  const rows = (await readFile(result.outputPath, "utf-8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as any);
+  assert.equal(rows[0]?.turnCount, 5);
+  assert.equal(rows[0]?.userTurns, 2);
+  assert.equal(rows[0]?.assistantTurns, 3);
+});

@@ -30,7 +30,9 @@ export interface MigrateObservationsResult {
 
 function toNonNegativeInt(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  return Math.max(0, Math.floor(value));
+  const normalized = Math.floor(value);
+  if (normalized < 0) return null;
+  return normalized;
 }
 
 function toHourIso(value: unknown): string | null {
