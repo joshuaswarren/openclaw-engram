@@ -192,6 +192,16 @@ Operational guarantees:
 - idempotent no-op migration when no legacy files are present
 - fail-open parsing for malformed lines (with counters in CLI output)
 
+## Work Board Helpers
+
+The work-management layer includes programmatic board helpers for Kanban-style exports and snapshot import:
+
+- `exportWorkBoardSnapshot({ memoryDir, projectId? })`
+- `exportWorkBoardMarkdown({ memoryDir, projectId? })`
+- `importWorkBoardSnapshot({ memoryDir, snapshot, projectId? })`
+
+These helpers live in `src/work/board.ts` and operate on `work/tasks` + `work/projects` without changing default memory extraction behavior.
+
 ## Identity Continuity Anchor
 
 When `identityContinuityEnabled=true`, agents can manage the recovery anchor via tools:

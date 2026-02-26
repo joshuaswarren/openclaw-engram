@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.7 work management Task 3 (board generation + import/export helpers):
+  - Added `src/work/board.ts` with board snapshot export, Kanban markdown rendering, and snapshot import helpers.
+  - Added `tests/work-board.test.ts` coverage for project-scoped board export and import create/update behavior.
+  - Updated `docs/operations.md` with work board helper usage notes.
 - v8.7 work management Task 2 (task/project CLI command slice):
   - Added `openclaw engram task <action>` and `openclaw engram project <action>` command surfaces in `src/cli.ts`.
   - Added CLI wrappers `runWorkTaskCliCommand` and `runWorkProjectCliCommand` with validation for status/priority transitions and required IDs.
