@@ -293,7 +293,7 @@ export async function runWorkTaskCliCommand(options: WorkTaskCliCommandOptions):
     return storage.createTask({
       id: explicitId && explicitId.length > 0 ? explicitId : undefined,
       title: options.title.trim(),
-      description: options.description,
+      description: options.description?.trim(),
       status: options.status,
       priority: options.priority,
       owner: normalizeNullableCliValue(options.owner),
@@ -373,7 +373,7 @@ export async function runWorkProjectCliCommand(options: WorkProjectCliCommandOpt
     return storage.createProject({
       id: explicitId && explicitId.length > 0 ? explicitId : undefined,
       name: options.name.trim(),
-      description: options.description,
+      description: options.description?.trim(),
       status: options.status,
       owner: normalizeNullableCliValue(options.owner),
       tags: options.tags,
@@ -975,7 +975,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           const patch: WorkTaskPatchInput = {};
           if (typeof options.title === "string") patch.title = options.title.trim();
-          if (typeof options.description === "string") patch.description = options.description;
+          if (typeof options.description === "string") patch.description = options.description.trim();
           if (statusOptRaw !== undefined) patch.status = statusOptRaw;
           if (priorityOptRaw !== undefined) patch.priority = priorityOptRaw;
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
@@ -1031,7 +1031,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           const patch: WorkProjectPatchInput = {};
           if (typeof options.name === "string") patch.name = options.name.trim();
-          if (typeof options.description === "string") patch.description = options.description;
+          if (typeof options.description === "string") patch.description = options.description.trim();
           if (statusOptRaw !== undefined) patch.status = statusOptRaw;
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
           if (Object.prototype.hasOwnProperty.call(options, "tags")) {
