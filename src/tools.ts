@@ -70,6 +70,15 @@ function asProjectStatus(value: unknown): "active" | "on_hold" | "completed" | "
   return normalized as "active" | "on_hold" | "completed" | "archived";
 }
 
+function asNullablePatchString(params: Record<string, unknown>, key: string): string | null | undefined {
+  if (!Object.prototype.hasOwnProperty.call(params, key)) return undefined;
+  const value = params[key];
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
 const IDENTITY_ANCHOR_SECTION_ORDER = [
   "Identity Traits",
@@ -1568,15 +1577,15 @@ Best for:
             if (status) patch.status = status;
             const priority = asTaskPriority(p.priority);
             if (priority) patch.priority = priority;
-            const owner = asNonEmptyString(p.owner);
-            if (owner) patch.owner = owner;
-            const assignee = asNonEmptyString(p.assignee);
-            if (assignee) patch.assignee = assignee;
-            const projectIdPatch = asNonEmptyString(p.projectId);
-            if (projectIdPatch) patch.projectId = projectIdPatch;
+            const owner = asNullablePatchString(p, "owner");
+            if (owner !== undefined) patch.owner = owner;
+            const assignee = asNullablePatchString(p, "assignee");
+            if (assignee !== undefined) patch.assignee = assignee;
+            const projectIdPatch = asNullablePatchString(p, "projectId");
+            if (projectIdPatch !== undefined) patch.projectId = projectIdPatch;
             if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
-            const dueAt = asNonEmptyString(p.dueAt);
-            if (dueAt) patch.dueAt = dueAt;
+            const dueAt = asNullablePatchString(p, "dueAt");
+            if (dueAt !== undefined) patch.dueAt = dueAt;
             const updated = await storage.updateTask(p.id, patch as any);
             return toolJsonResult({ action, task: updated });
           }
@@ -1677,8 +1686,8 @@ Best for:
             if (typeof p.description === "string") patch.description = p.description;
             const status = asProjectStatus(p.status);
             if (status) patch.status = status;
-            const owner = asNonEmptyString(p.owner);
-            if (owner) patch.owner = owner;
+            const owner = asNullablePatchString(p, "owner");
+            if (owner !== undefined) patch.owner = owner;
             if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
             const project = await storage.updateProject(p.id, patch as any);
             return toolJsonResult({ action, project });
