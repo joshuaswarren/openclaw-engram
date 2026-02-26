@@ -29,6 +29,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.7 custom memory routing rules Task 1 (routing engine):
+  - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
+  - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
+  - Added `tests/routing-engine.test.ts` coverage for matching behavior, ordering, and target validation guardrails.
 - v8.7 work management Task 3 (board generation + import/export helpers):
   - Added `src/work/board.ts` with board snapshot export, Kanban markdown rendering, and snapshot import helpers.
   - Added `tests/work-board.test.ts` coverage for project-scoped board export and import create/update behavior.
