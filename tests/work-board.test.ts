@@ -175,3 +175,32 @@ test("work board import rejects invalid status/priority values", async () => {
     }),
   );
 });
+
+test("work board import preserves existing project linkage when item projectId is omitted", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-project-link-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const project = await storage.createProject({
+    id: "project-keep-link",
+    name: "Keep link",
+  });
+  await storage.createTask({
+    id: "task-keep-link",
+    title: "Keep link task",
+    status: "todo",
+    projectId: project.id,
+  });
+
+  const snapshot = await exportWorkBoardSnapshot({ memoryDir, projectId: project.id });
+  const item = snapshot.items.find((entry) => entry.id === "task-keep-link");
+  assert.ok(item);
+
+  const { projectId: _dropProjectId, ...withoutProjectId } = item;
+  snapshot.items = [withoutProjectId as unknown as typeof item];
+
+  await importWorkBoardSnapshot({ memoryDir, snapshot });
+
+  const updated = await storage.getTask("task-keep-link");
+  assert.ok(updated);
+  assert.equal(updated.projectId, project.id);
+});

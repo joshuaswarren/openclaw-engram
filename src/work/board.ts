@@ -73,6 +73,20 @@ function assertValidImportEnums(item: WorkBoardItem): void {
   }
 }
 
+function normalizeImportedProjectId(
+  rawValue: unknown,
+  taskId: string,
+  fallbackForUndefined: string | null,
+): string | null {
+  if (rawValue === undefined) return fallbackForUndefined;
+  if (rawValue === null) return null;
+  if (typeof rawValue === "string") {
+    const trimmed = rawValue.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  throw new Error(`invalid task projectId in snapshot for ${taskId}`);
+}
+
 function asBoardItem(task: WorkTask): WorkBoardItem {
   return {
     id: task.id,
@@ -174,8 +188,14 @@ export async function importWorkBoardSnapshot(options: {
 
   for (const item of options.snapshot.items) {
     assertValidImportEnums(item);
-    const projectId = forcedProjectId === undefined ? item.projectId : forcedProjectId;
     const existing = await storage.getTask(item.id);
+    const projectId = forcedProjectId === undefined
+      ? normalizeImportedProjectId(
+        (item as unknown as { projectId?: unknown }).projectId,
+        item.id,
+        existing?.projectId ?? null,
+      )
+      : forcedProjectId;
 
     if (existing) {
       await storage.updateTask(item.id, {
