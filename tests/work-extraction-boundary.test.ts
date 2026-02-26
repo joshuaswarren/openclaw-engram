@@ -84,6 +84,14 @@ test("applyWorkExtractionBoundary preserves literal role marker lines", () => {
   assert.equal(bounded, conversation);
 });
 
+test("applyWorkExtractionBoundary does not strip inline wrapper syntax discussion", () => {
+  const conversation =
+    "Here is [WORK_LAYER_CONTEXT link_to_memory=false] syntax in prose, keep this whole sentence.";
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.equal(bounded, conversation);
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",

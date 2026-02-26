@@ -41,8 +41,8 @@ export function applyWorkExtractionBoundary(conversation: string): string {
   // strip everything from the opener onward to avoid leaking excluded work-layer payloads.
   // Keep literal "[WORK_LAYER_CONTEXT" text unless it contains wrapper metadata attributes.
   const strippedUnterminated = bounded.replace(
-    /\[WORK_LAYER_CONTEXT(?=[^\]]*(?:\blink_to_memory=|\bencoding=))[^\]]*\][\s\S]*$/,
-    "",
+    /(^|\n)\[WORK_LAYER_CONTEXT(?=[^\]]*(?:\blink_to_memory=|\bencoding=))[^\]]*\][\s\S]*$/,
+    "$1",
   );
 
   const restoredEscapes = strippedUnterminated
