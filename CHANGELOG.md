@@ -29,6 +29,11 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.8 network sync Task 1 (WebDAV module):
+  - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
+  - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.
+  - Added optional HTTP Basic auth support and minimal DAV/read endpoints (`OPTIONS`, `PROPFIND`, `GET`, `HEAD`).
+  - Added `tests/network-webdav.test.ts` coverage for disabled-by-default behavior, allowlist enforcement, traversal blocking, and auth gating.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
