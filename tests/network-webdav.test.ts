@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { WebDavServer, hostToUrlAuthority } from "../src/network/webdav.ts";
 
@@ -226,4 +226,26 @@ test("webdav create rejects duplicate root aliases", async () => {
       }),
     /duplicate webdav allowlist alias: shared/,
   );
+});
+
+test("webdav supports filesystem-root allowlists", async () => {
+  const hostsPath = "/etc/hosts";
+  try {
+    await stat(hostsPath);
+  } catch {
+    return;
+  }
+
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: ["/"],
+  });
+  const started = await server.start();
+  try {
+    const res = await httpRequest("GET", started.port, "/root/etc/hosts");
+    assert.equal(res.status, 200);
+  } finally {
+    await server.stop();
+  }
 });

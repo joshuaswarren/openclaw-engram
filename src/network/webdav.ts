@@ -251,8 +251,7 @@ export class WebDavServer {
     }
 
     const candidate = path.resolve(root.absolute, ...relative);
-    const scopedPrefix = `${root.absolute}${path.sep}`;
-    if (candidate !== root.absolute && !candidate.startsWith(scopedPrefix)) {
+    if (!this.isPathInside(root.absolute, candidate)) {
       return { ok: false, code: 403, message: "path escaped allowlist" };
     }
 
@@ -341,6 +340,9 @@ export class WebDavServer {
 
   private isPathInside(root: string, target: string): boolean {
     if (target === root) return true;
+    if (root === path.parse(root).root) {
+      return target.startsWith(root);
+    }
     return target.startsWith(`${root}${path.sep}`);
   }
 }
