@@ -55,6 +55,14 @@ test("applyWorkExtractionBoundary drops unterminated work-layer blocks", () => {
   assert.equal(bounded, "[assistant] prefix");
 });
 
+test("applyWorkExtractionBoundary keeps literal token text in linked payloads", () => {
+  const linked = "note starts [WORK_LAYER_CONTEXT without wrapper metadata and should stay";
+  const conversation = wrapWorkLayerContext(linked, { linkToMemory: true });
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.match(bounded, /\[WORK_LAYER_CONTEXT without wrapper metadata/);
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",

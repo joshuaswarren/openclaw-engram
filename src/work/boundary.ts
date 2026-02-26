@@ -33,9 +33,13 @@ export function applyWorkExtractionBoundary(conversation: string): string {
     return body.trim().replaceAll(WORK_LAYER_CONTEXT_ESCAPED_CLOSE, WORK_LAYER_CONTEXT_CLOSE);
   });
 
-  // Defensive hardening: if a block opener survives without a closer (e.g., turn-level truncation),
+  // Defensive hardening: if a *real wrapper opener* survives without a closer (e.g., turn-level truncation),
   // strip everything from the opener onward to avoid leaking excluded work-layer payloads.
-  const strippedUnterminated = bounded.replace(/\[WORK_LAYER_CONTEXT[^\]]*\][\s\S]*$/, "");
+  // Keep literal "[WORK_LAYER_CONTEXT" text unless it contains wrapper metadata attributes.
+  const strippedUnterminated = bounded.replace(
+    /\[WORK_LAYER_CONTEXT(?=[^\]]*(?:\blink_to_memory=|\bencoding=))[^\]]*\][\s\S]*$/,
+    "",
+  );
 
   const cleanedLines = strippedUnterminated
     .split("\n")
