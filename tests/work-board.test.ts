@@ -118,3 +118,60 @@ test("work board import creates missing tasks and updates existing tasks", async
   assert.equal(created.projectId, project.id);
   assert.deepEqual(created.tags, ["imported"]);
 });
+
+test("work board import bypasses transition guardrails for snapshot restores", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-transition-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const project = await storage.createProject({
+    id: "project-transition",
+    name: "Transition project",
+  });
+
+  await storage.createTask({
+    id: "task-restore",
+    title: "Restore me",
+    status: "done",
+    projectId: project.id,
+  });
+
+  const snapshot = await exportWorkBoardSnapshot({ memoryDir, projectId: project.id });
+  const target = snapshot.items.find((item) => item.id === "task-restore");
+  assert.ok(target);
+  target.status = "todo";
+
+  const result = await importWorkBoardSnapshot({ memoryDir, snapshot });
+  assert.deepEqual(result, { created: 0, updated: 1 });
+
+  const restored = await storage.getTask("task-restore");
+  assert.ok(restored);
+  assert.equal(restored.status, "todo");
+});
+
+test("work board import rejects invalid status/priority values", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-invalid-enum-"));
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [{
+          id: "task-bad",
+          title: "Bad enum",
+          description: "",
+          status: "inprogress" as unknown as "todo",
+          priority: "urgent" as unknown as "medium",
+          owner: null,
+          assignee: null,
+          projectId: null,
+          tags: [],
+          dueAt: null,
+        }],
+      },
+    }),
+  );
+});

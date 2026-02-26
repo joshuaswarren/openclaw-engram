@@ -64,6 +64,15 @@ function projectMatches(task: WorkTask, projectId?: string): boolean {
   return task.projectId === projectId;
 }
 
+function assertValidImportEnums(item: WorkBoardItem): void {
+  if (!["todo", "in_progress", "blocked", "done", "cancelled"].includes(item.status)) {
+    throw new Error(`invalid task status in snapshot for ${item.id}: ${item.status}`);
+  }
+  if (!["low", "medium", "high"].includes(item.priority)) {
+    throw new Error(`invalid task priority in snapshot for ${item.id}: ${item.priority}`);
+  }
+}
+
 function asBoardItem(task: WorkTask): WorkBoardItem {
   return {
     id: task.id,
@@ -164,6 +173,7 @@ export async function importWorkBoardSnapshot(options: {
   let updated = 0;
 
   for (const item of options.snapshot.items) {
+    assertValidImportEnums(item);
     const projectId = forcedProjectId === undefined ? item.projectId : forcedProjectId;
     const existing = await storage.getTask(item.id);
 
@@ -178,7 +188,7 @@ export async function importWorkBoardSnapshot(options: {
         projectId,
         tags: [...item.tags],
         dueAt: item.dueAt,
-      }, options.now);
+      }, options.now, { skipStatusTransitionValidation: true });
       updated += 1;
       continue;
     }
