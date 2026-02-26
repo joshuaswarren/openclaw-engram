@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.7 work management Task 1 (work item models + storage slice):
+  - Added `src/work/types.ts` with task/project model contracts, ownership metadata, and status enums.
+  - Added `src/work/storage.ts` for markdown-frontmatter task/project persistence, CRUD operations, status transitions, and task-to-project linkage.
+  - Added `tests/work-storage.test.ts` coverage for task/project CRUD, transition guards, linkage behavior, and frontmatter file persistence.
 - v8.6 observation-ledger maintenance Task 5 (docs/runbook slice):
   - Updated `docs/operations.md` with an observation-ledger maintenance runbook covering archive/rebuild/migrate commands.
   - Documented dry-run defaults, `--write` mutation mode, and operational guarantees (backup-first writes, deterministic UTC hour bucketing, idempotent no-op migration behavior).
