@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.7 work management Task 2 (task/project CLI command slice):
+  - Added `openclaw engram task <action>` and `openclaw engram project <action>` command surfaces in `src/cli.ts`.
+  - Added CLI wrappers `runWorkTaskCliCommand` and `runWorkProjectCliCommand` with validation for status/priority transitions and required IDs.
+  - Added `tests/cli-work-commands.test.ts` coverage for task/project CRUD flows, linkage behavior, and transition guardrails.
 - v8.7 work management Task 1 (work item models + storage slice):
   - Added `src/work/types.ts` with task/project model contracts, ownership metadata, and status enums.
   - Added `src/work/storage.ts` for markdown-frontmatter task/project persistence, CRUD operations, status transitions, and task-to-project linkage.

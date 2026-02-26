@@ -19,6 +19,7 @@ import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type Repl
 import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
+import { WorkStorage } from "./work/storage.js";
 
 interface CliApi {
   registerCli(
@@ -168,6 +169,82 @@ export interface MigrateObservationsCliCommandOptions {
   now?: Date;
 }
 
+interface WorkTaskPatchInput {
+  title?: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  owner?: string | null;
+  assignee?: string | null;
+  projectId?: string | null;
+  tags?: string[];
+  dueAt?: string | null;
+}
+
+interface WorkProjectPatchInput {
+  name?: string;
+  description?: string;
+  status?: string;
+  owner?: string | null;
+  tags?: string[];
+}
+
+export interface WorkTaskCliCommandOptions {
+  memoryDir: string;
+  action: "create" | "get" | "list" | "update" | "transition" | "delete" | "link";
+  id?: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  owner?: string;
+  assignee?: string;
+  projectId?: string;
+  tags?: string[];
+  dueAt?: string;
+  patch?: WorkTaskPatchInput;
+}
+
+export interface WorkProjectCliCommandOptions {
+  memoryDir: string;
+  action: "create" | "get" | "list" | "update" | "delete";
+  id?: string;
+  name?: string;
+  description?: string;
+  status?: string;
+  owner?: string;
+  tags?: string[];
+  patch?: WorkProjectPatchInput;
+}
+
+function normalizeNullableCliValue(value: string | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.toLowerCase() === "null") return null;
+  return trimmed;
+}
+
+function parseTagsCsv(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined;
+  const tags = raw
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+  return tags.length > 0 ? tags : undefined;
+}
+
+function isWorkTaskStatus(value: string | undefined): value is "todo" | "in_progress" | "blocked" | "done" | "cancelled" {
+  return value === "todo" || value === "in_progress" || value === "blocked" || value === "done" || value === "cancelled";
+}
+
+function isWorkTaskPriority(value: string | undefined): value is "low" | "medium" | "high" {
+  return value === "low" || value === "medium" || value === "high";
+}
+
+function isWorkProjectStatus(value: string | undefined): value is "active" | "on_hold" | "completed" | "archived" {
+  return value === "active" || value === "on_hold" || value === "completed" || value === "archived";
+}
+
 export async function runArchiveObservationsCliCommand(
   options: ArchiveObservationsCliCommandOptions,
 ) {
@@ -197,6 +274,132 @@ export async function runMigrateObservationsCliCommand(
     dryRun: options.write !== true,
     now: options.now,
   });
+}
+
+export async function runWorkTaskCliCommand(options: WorkTaskCliCommandOptions): Promise<unknown> {
+  const storage = new WorkStorage(options.memoryDir);
+
+  if (options.action === "create") {
+    if (!options.title || options.title.trim().length === 0) throw new Error("missing title");
+    if (options.status !== undefined && !isWorkTaskStatus(options.status)) throw new Error(`invalid task status: ${options.status}`);
+    if (options.priority !== undefined && !isWorkTaskPriority(options.priority)) {
+      throw new Error(`invalid task priority: ${options.priority}`);
+    }
+    return storage.createTask({
+      title: options.title.trim(),
+      description: options.description,
+      status: options.status,
+      priority: options.priority,
+      owner: normalizeNullableCliValue(options.owner),
+      assignee: normalizeNullableCliValue(options.assignee),
+      projectId: normalizeNullableCliValue(options.projectId),
+      tags: options.tags,
+      dueAt: normalizeNullableCliValue(options.dueAt),
+    });
+  }
+
+  if (options.action === "get") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    return storage.getTask(options.id.trim());
+  }
+
+  if (options.action === "list") {
+    if (options.status !== undefined && !isWorkTaskStatus(options.status)) throw new Error(`invalid task status: ${options.status}`);
+    return storage.listTasks({
+      status: options.status,
+      owner: options.owner?.trim() || undefined,
+      assignee: options.assignee?.trim() || undefined,
+      projectId: options.projectId?.trim() || undefined,
+    });
+  }
+
+  if (options.action === "update") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    const patch = options.patch ?? {};
+    if (patch.status !== undefined && !isWorkTaskStatus(patch.status)) throw new Error(`invalid task status: ${patch.status}`);
+    if (patch.priority !== undefined && !isWorkTaskPriority(patch.priority)) {
+      throw new Error(`invalid task priority: ${patch.priority}`);
+    }
+    return storage.updateTask(options.id.trim(), {
+      title: patch.title,
+      description: patch.description,
+      status: patch.status,
+      priority: patch.priority,
+      owner: patch.owner,
+      assignee: patch.assignee,
+      projectId: patch.projectId,
+      tags: patch.tags,
+      dueAt: patch.dueAt,
+    });
+  }
+
+  if (options.action === "transition") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    if (!options.status || !isWorkTaskStatus(options.status)) throw new Error(`invalid task status: ${options.status}`);
+    return storage.transitionTask(options.id.trim(), options.status);
+  }
+
+  if (options.action === "delete") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    return storage.deleteTask(options.id.trim());
+  }
+
+  if (options.action === "link") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    if (!options.projectId || options.projectId.trim().length === 0) throw new Error("missing projectId");
+    return storage.linkTaskToProject(options.id.trim(), options.projectId.trim());
+  }
+
+  throw new Error(`unsupported task action: ${options.action}`);
+}
+
+export async function runWorkProjectCliCommand(options: WorkProjectCliCommandOptions): Promise<unknown> {
+  const storage = new WorkStorage(options.memoryDir);
+
+  if (options.action === "create") {
+    if (!options.name || options.name.trim().length === 0) throw new Error("missing name");
+    if (options.status !== undefined && !isWorkProjectStatus(options.status)) {
+      throw new Error(`invalid project status: ${options.status}`);
+    }
+    return storage.createProject({
+      name: options.name.trim(),
+      description: options.description,
+      status: options.status,
+      owner: normalizeNullableCliValue(options.owner),
+      tags: options.tags,
+    });
+  }
+
+  if (options.action === "get") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    return storage.getProject(options.id.trim());
+  }
+
+  if (options.action === "list") {
+    return storage.listProjects();
+  }
+
+  if (options.action === "update") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    const patch = options.patch ?? {};
+    if (patch.status !== undefined && !isWorkProjectStatus(patch.status)) {
+      throw new Error(`invalid project status: ${patch.status}`);
+    }
+    return storage.updateProject(options.id.trim(), {
+      name: patch.name,
+      description: patch.description,
+      status: patch.status,
+      owner: patch.owner,
+      tags: patch.tags,
+    });
+  }
+
+  if (options.action === "delete") {
+    if (!options.id || options.id.trim().length === 0) throw new Error("missing id");
+    return storage.deleteProject(options.id.trim());
+  }
+
+  throw new Error(`unsupported project action: ${options.action}`);
 }
 
 async function withTimeout<T>(
@@ -729,6 +932,96 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
           console.log(`Output path: ${result.outputPath}`);
           if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("task")
+        .description("Manage work tasks")
+        .argument("<action>", "create|get|list|update|transition|delete|link")
+        .option("--id <id>", "Task ID")
+        .option("--title <title>", "Task title")
+        .option("--description <description>", "Task description")
+        .option("--status <status>", "Task status")
+        .option("--priority <priority>", "Task priority")
+        .option("--owner <owner>", "Task owner")
+        .option("--assignee <assignee>", "Task assignee")
+        .option("--project-id <projectId>", "Project ID")
+        .option("--tags <csv>", "Comma-separated tags")
+        .option("--due-at <iso>", "Due timestamp (ISO)")
+        .action(async (...args: unknown[]) => {
+          const actionRaw = typeof args[0] === "string" ? args[0].trim().toLowerCase() : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const patch: WorkTaskPatchInput = {};
+          if (typeof options.title === "string") patch.title = options.title.trim();
+          if (typeof options.description === "string") patch.description = options.description;
+          if (typeof options.status === "string") patch.status = options.status.trim().toLowerCase();
+          if (typeof options.priority === "string") patch.priority = options.priority.trim().toLowerCase();
+          if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
+          if (typeof options.assignee === "string") patch.assignee = normalizeNullableCliValue(options.assignee) ?? null;
+          if (typeof options.projectId === "string") patch.projectId = normalizeNullableCliValue(options.projectId) ?? null;
+          if (typeof options.tags === "string") patch.tags = parseTagsCsv(options.tags);
+          if (typeof options.dueAt === "string") patch.dueAt = normalizeNullableCliValue(options.dueAt) ?? null;
+
+          const result = await runWorkTaskCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            action: actionRaw as WorkTaskCliCommandOptions["action"],
+            id: typeof options.id === "string" ? options.id : undefined,
+            title: typeof options.title === "string" ? options.title : undefined,
+            description: typeof options.description === "string" ? options.description : undefined,
+            status: typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined,
+            priority: typeof options.priority === "string" ? options.priority.trim().toLowerCase() : undefined,
+            owner: typeof options.owner === "string" ? options.owner : undefined,
+            assignee: typeof options.assignee === "string" ? options.assignee : undefined,
+            projectId: typeof options.projectId === "string" ? options.projectId : undefined,
+            tags: typeof options.tags === "string" ? parseTagsCsv(options.tags) : undefined,
+            dueAt: typeof options.dueAt === "string" ? options.dueAt : undefined,
+            patch,
+          });
+
+          if (Array.isArray(result)) {
+            console.log(`Count: ${result.length}`);
+          }
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("project")
+        .description("Manage work projects")
+        .argument("<action>", "create|get|list|update|delete")
+        .option("--id <id>", "Project ID")
+        .option("--name <name>", "Project name")
+        .option("--description <description>", "Project description")
+        .option("--status <status>", "Project status")
+        .option("--owner <owner>", "Project owner")
+        .option("--tags <csv>", "Comma-separated tags")
+        .action(async (...args: unknown[]) => {
+          const actionRaw = typeof args[0] === "string" ? args[0].trim().toLowerCase() : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const patch: WorkProjectPatchInput = {};
+          if (typeof options.name === "string") patch.name = options.name.trim();
+          if (typeof options.description === "string") patch.description = options.description;
+          if (typeof options.status === "string") patch.status = options.status.trim().toLowerCase();
+          if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
+          if (typeof options.tags === "string") patch.tags = parseTagsCsv(options.tags);
+
+          const result = await runWorkProjectCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            action: actionRaw as WorkProjectCliCommandOptions["action"],
+            id: typeof options.id === "string" ? options.id : undefined,
+            name: typeof options.name === "string" ? options.name : undefined,
+            description: typeof options.description === "string" ? options.description : undefined,
+            status: typeof options.status === "string" ? options.status.trim().toLowerCase() : undefined,
+            owner: typeof options.owner === "string" ? options.owner : undefined,
+            tags: typeof options.tags === "string" ? parseTagsCsv(options.tags) : undefined,
+            patch,
+          });
+
+          if (Array.isArray(result)) {
+            console.log(`Count: ${result.length}`);
+          }
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 
