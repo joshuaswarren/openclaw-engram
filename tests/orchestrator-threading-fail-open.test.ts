@@ -121,7 +121,7 @@ test("persistExtraction includes written question IDs in persistedIds", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
   assert.match(
     source,
-    /const id = await storage\.writeQuestion\(q\.question,\s*q\.context,\s*q\.priority\);\s*if \(id\) persistedIds\.push\(id\);/m,
+    /const id = await storage\.writeQuestion\(q\.question,\s*q\.context,\s*q\.priority\);\s*if \(id\) trackPersistedId\(storage,\s*id\);/m,
     "question IDs should be added to persistedIds so thread batch append can include them",
   );
 });

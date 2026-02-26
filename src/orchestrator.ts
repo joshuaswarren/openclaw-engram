@@ -2712,6 +2712,17 @@ export class Orchestrator {
     threadIdForExtraction?: string | null,
   ): Promise<string[]> {
     const persistedIds: string[] = [];
+    const persistedIdsByStorage = new Map<string, { storage: StorageManager; ids: string[] }>();
+    const trackPersistedId = (targetStorage: StorageManager, id: string): void => {
+      persistedIds.push(id);
+      const key = targetStorage.dir;
+      const existing = persistedIdsByStorage.get(key);
+      if (existing) {
+        existing.ids.push(id);
+        return;
+      }
+      persistedIdsByStorage.set(key, { storage: targetStorage, ids: [id] });
+    };
     let dedupedCount = 0;
 
     // Defensive: validate result and facts array
@@ -2755,16 +2766,30 @@ export class Orchestrator {
     }
 
     // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
-    let allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null = null;
-    const memoryPathById = new Map<string, string>();
-    if (this.config.multiGraphMemoryEnabled) {
-      try {
-        allMemsForGraph = await storage.readAllMemories();
-        for (const [id, relPath] of buildMemoryPathById(allMemsForGraph, storage.dir)) {
-          memoryPathById.set(id, relPath);
-        }
-      } catch { /* fail-open */ }
-    }
+    type GraphStorageContext = {
+      allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null;
+      memoryPathById: Map<string, string>;
+      previousPersistedRelPath?: string;
+    };
+    const graphContextByStorageDir = new Map<string, GraphStorageContext>();
+    const ensureGraphContext = async (targetStorage: StorageManager): Promise<GraphStorageContext> => {
+      const existing = graphContextByStorageDir.get(targetStorage.dir);
+      if (existing) return existing;
+      const created: GraphStorageContext = {
+        allMemsForGraph: null,
+        memoryPathById: new Map<string, string>(),
+      };
+      if (this.config.multiGraphMemoryEnabled) {
+        try {
+          created.allMemsForGraph = await targetStorage.readAllMemories();
+          for (const [id, relPath] of buildMemoryPathById(created.allMemsForGraph, targetStorage.dir)) {
+            created.memoryPathById.set(id, relPath);
+          }
+        } catch { /* fail-open */ }
+      }
+      graphContextByStorageDir.set(targetStorage.dir, created);
+      return created;
+    };
     let threadEpisodeIdsForGraph: string[] | undefined;
     if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
       try {
@@ -2772,7 +2797,6 @@ export class Orchestrator {
         threadEpisodeIdsForGraph = thread?.episodeIds ? [...thread.episodeIds] : [];
       } catch { /* fail-open */ }
     }
-    let previousPersistedRelPath: string | undefined;
     const routeRules = await this.loadRoutingRules();
     const routeOptions = this.routeEngineOptions();
 
@@ -2876,7 +2900,7 @@ export class Orchestrator {
             );
           }
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
-          persistedIds.push(parentId);
+          trackPersistedId(targetStorage, parentId);
           if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
             threadEpisodeIdsForGraph.push(parentId);
           }
@@ -2910,18 +2934,19 @@ export class Orchestrator {
             });
           }
           // v8.2: graph edge building for chunked memories
-          if (this.config.multiGraphMemoryEnabled && targetStorage.dir === storage.dir) {
+          if (this.config.multiGraphMemoryEnabled) {
             try {
+              const graphContext = await ensureGraphContext(targetStorage);
               const entityRef =
                 typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
               const parentRelPath = resolvePersistedMemoryRelativePath({
                 memoryId: parentId,
-                pathById: memoryPathById,
+                pathById: graphContext.memoryPathById,
                 category: writeCategory,
               });
-              memoryPathById.set(parentId, parentRelPath);
+              graphContext.memoryPathById.set(parentId, parentRelPath);
               appendMemoryToGraphContext({
-                allMemsForGraph,
+                allMemsForGraph: graphContext.allMemsForGraph,
                 storageDir: targetStorage.dir,
                 memoryRelPath: parentRelPath,
                 memoryId: parentId,
@@ -2935,13 +2960,13 @@ export class Orchestrator {
                 entityRef,
                 parentId,
                 fact.content ?? "",
-                allMemsForGraph,
-                memoryPathById,
+                graphContext.allMemsForGraph,
+                graphContext.memoryPathById,
                 threadIdForExtraction ?? undefined,
                 threadEpisodeIdsForGraph,
-                previousPersistedRelPath,
+                graphContext.previousPersistedRelPath,
               );
-              previousPersistedRelPath = parentRelPath;
+              graphContext.previousPersistedRelPath = parentRelPath;
             } catch { /* fail-open */ }
           }
           continue; // Skip the normal write below
@@ -3007,24 +3032,25 @@ export class Orchestrator {
           `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
         );
       }
-      persistedIds.push(memoryId);
+      trackPersistedId(targetStorage, memoryId);
       if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
         threadEpisodeIdsForGraph.push(memoryId);
       }
       await this.indexPersistedMemory(targetStorage, memoryId);
       // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
-      if (this.config.multiGraphMemoryEnabled && targetStorage.dir === storage.dir) {
+      if (this.config.multiGraphMemoryEnabled) {
         try {
+          const graphContext = await ensureGraphContext(targetStorage);
           const entityRef =
             typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
           const memoryRelPath = resolvePersistedMemoryRelativePath({
             memoryId,
-            pathById: memoryPathById,
+            pathById: graphContext.memoryPathById,
             category: writeCategory,
           });
-          memoryPathById.set(memoryId, memoryRelPath);
+          graphContext.memoryPathById.set(memoryId, memoryRelPath);
           appendMemoryToGraphContext({
-            allMemsForGraph,
+            allMemsForGraph: graphContext.allMemsForGraph,
             storageDir: targetStorage.dir,
             memoryRelPath: memoryRelPath,
             memoryId,
@@ -3038,13 +3064,13 @@ export class Orchestrator {
             entityRef,
             memoryId,
             fact.content ?? "",
-            allMemsForGraph,
-            memoryPathById,
+            graphContext.allMemsForGraph,
+            graphContext.memoryPathById,
             threadIdForExtraction ?? undefined,
             threadEpisodeIdsForGraph,
-            previousPersistedRelPath,
+            graphContext.previousPersistedRelPath,
           );
-          previousPersistedRelPath = memoryRelPath;
+          graphContext.previousPersistedRelPath = memoryRelPath;
         } catch { /* fail-open */ }
       }
       if (
@@ -3079,7 +3105,7 @@ export class Orchestrator {
           ? (entity as any).facts.filter((f: any) => typeof f === "string")
           : [];
         const id = await storage.writeEntity(name, type, safeFacts);
-        if (id) persistedIds.push(id);
+        if (id) trackPersistedId(storage, id);
       } catch (err) {
         log.warn(`persistExtraction: entity write failed: ${err}`);
       }
@@ -3126,7 +3152,7 @@ export class Orchestrator {
     // Persist questions
     for (const q of questions) {
       const id = await storage.writeQuestion(q.question, q.context, q.priority);
-      if (id) persistedIds.push(id);
+      if (id) trackPersistedId(storage, id);
     }
 
     // Persist identity reflection
@@ -3151,9 +3177,11 @@ export class Orchestrator {
     );
 
     // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open
-    this.updateTemporalTagIndexes(storage, persistedIds).catch((err) =>
-      log.debug(`temporal-index update error (non-fatal): ${err}`),
-    );
+    for (const entry of persistedIdsByStorage.values()) {
+      this.updateTemporalTagIndexes(entry.storage, entry.ids).catch((err) =>
+        log.debug(`temporal-index update error (non-fatal): ${err}`),
+      );
+    }
 
     // Return the persisted fact IDs for threading
     return persistedIds;

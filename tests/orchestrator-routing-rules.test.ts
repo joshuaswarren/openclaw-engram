@@ -6,6 +6,8 @@ import { mkdtemp } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import { RoutingRulesStore } from "../src/routing/store.js";
+import { readEdges } from "../src/graph.js";
+import { queryByTagsAsync } from "../src/temporal-index.js";
 import type { ExtractionResult } from "../src/types.js";
 
 test("persistExtraction applies routing rule category+namespace targets", async () => {
@@ -19,9 +21,12 @@ test("persistExtraction applies routing rule category+namespace targets", async 
     sharedNamespace: "shared",
     routingRulesEnabled: true,
     routingRulesStateFile: "state/routing-rules.json",
+    queryAwareIndexingEnabled: true,
+    multiGraphMemoryEnabled: true,
+    causalGraphEnabled: true,
+    graphWriteSessionAdjacencyEnabled: true,
     qmdEnabled: false,
     embeddingFallbackEnabled: false,
-    multiGraphMemoryEnabled: false,
     verbatimArtifactsEnabled: false,
   });
 
@@ -51,6 +56,12 @@ test("persistExtraction applies routing rule category+namespace targets", async 
         confidence: 0.9,
         tags: ["ops"],
       },
+      {
+        content: "because of incident #42 we rolled back",
+        category: "fact",
+        confidence: 0.9,
+        tags: ["ops"],
+      },
     ],
     entities: [],
     relationships: [],
@@ -60,11 +71,23 @@ test("persistExtraction applies routing rule category+namespace targets", async 
   };
 
   const persisted = await orchestrator.persistExtraction(result, defaultStorage, null);
-  assert.equal(persisted.length, 1);
+  assert.equal(persisted.length, 2);
 
   const sharedMemories = await sharedStorage.readAllMemories();
   const defaultMemories = await defaultStorage.readAllMemories();
-  assert.equal(sharedMemories.length, 1);
+  assert.equal(sharedMemories.length, 2);
   assert.equal(defaultMemories.length, 0);
   assert.equal(sharedMemories[0]?.frontmatter.category, "decision");
+
+  let indexedPaths = await queryByTagsAsync(memoryDir, ["ops"]);
+  for (let attempt = 0; (!indexedPaths || indexedPaths.size === 0) && attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    indexedPaths = await queryByTagsAsync(memoryDir, ["ops"]);
+  }
+  assert.ok(indexedPaths && indexedPaths.size > 0);
+  const sharedPathMatch = [...indexedPaths!].some((p) => p.includes(path.join("namespaces", "shared")));
+  assert.equal(sharedPathMatch, true);
+
+  const causalEdges = await readEdges(sharedStorage.dir, "causal");
+  assert.ok(causalEdges.length > 0);
 });
