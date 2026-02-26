@@ -57,7 +57,7 @@ function toSafeSlug(value: string): string {
     .slice(0, 80);
 }
 
-const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+export const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 function makeId(prefix: string, titleOrName: string, now: Date): string {
   const slug = toSafeSlug(titleOrName) || "item";
@@ -232,7 +232,12 @@ export class WorkStorage {
     return out;
   }
 
-  async updateTask(id: string, patch: UpdateWorkTaskInput, now = new Date()): Promise<WorkTask | null> {
+  async updateTask(
+    id: string,
+    patch: UpdateWorkTaskInput,
+    now = new Date(),
+    options?: { skipStatusTransitionValidation?: boolean },
+  ): Promise<WorkTask | null> {
     const existing = await this.getTask(id);
     if (!existing) return null;
 
@@ -240,7 +245,13 @@ export class WorkStorage {
     const statusPatched = Object.prototype.hasOwnProperty.call(patch, "status");
     const nextProjectId = projectIdPatched ? patch.projectId ?? null : existing.projectId;
 
-    if (statusPatched && patch.status && existing.status !== patch.status && !TASK_TRANSITIONS[existing.status].has(patch.status)) {
+    if (
+      statusPatched
+      && patch.status
+      && existing.status !== patch.status
+      && options?.skipStatusTransitionValidation !== true
+      && !TASK_TRANSITIONS[existing.status].has(patch.status)
+    ) {
       throw new Error(`invalid task status transition: ${existing.status} -> ${patch.status}`);
     }
 
