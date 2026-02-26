@@ -21,6 +21,14 @@ import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
 import { WorkStorage } from "./work/storage.js";
 import type { WorkProjectStatus, WorkTaskPriority, WorkTaskStatus } from "./work/types.js";
+import {
+  selectRouteRule,
+  validateRouteTarget,
+  type RoutePatternType,
+  type RouteRule,
+  type RouteTarget,
+} from "./routing/engine.js";
+import { RoutingRulesStore } from "./routing/store.js";
 
 interface CliApi {
   registerCli(
@@ -218,6 +226,54 @@ export interface WorkProjectCliCommandOptions {
   patch?: WorkProjectPatchInput;
 }
 
+export interface RouteCliCommandOptions {
+  memoryDir: string;
+  stateFile?: string;
+  action: "list" | "add" | "remove" | "test";
+  pattern?: string;
+  patternType?: RoutePatternType;
+  priority?: number;
+  targetRaw?: string;
+  text?: string;
+  id?: string;
+}
+
+function isRoutePatternType(value: string | undefined): value is RoutePatternType {
+  return value === "keyword" || value === "regex";
+}
+
+function parseRouteTargetCliArg(raw: string): RouteTarget {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) throw new Error("missing target");
+
+  if (trimmed.startsWith("{")) {
+    const parsed = JSON.parse(trimmed) as RouteTarget;
+    if (!parsed || typeof parsed !== "object") throw new Error("invalid target JSON");
+    return parsed;
+  }
+
+  const target: RouteTarget = {};
+  for (const token of trimmed.split(",")) {
+    const part = token.trim();
+    if (part.length === 0) continue;
+    const normalized = part.replace(":", "=");
+    const [rawKey, ...rawValueParts] = normalized.split("=");
+    if (!rawKey || rawValueParts.length === 0) continue;
+    const key = rawKey.trim().toLowerCase();
+    const value = rawValueParts.join("=").trim();
+    if (value.length === 0) continue;
+    if (key === "category") {
+      target.category = value as RouteTarget["category"];
+      continue;
+    }
+    if (key === "namespace") {
+      target.namespace = value;
+    }
+  }
+
+  return target;
+}
+
 function normalizeNullableCliValue(value: string | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -278,6 +334,56 @@ export async function runMigrateObservationsCliCommand(
     dryRun: options.write !== true,
     now: options.now,
   });
+}
+
+export async function runRouteCliCommand(options: RouteCliCommandOptions): Promise<unknown> {
+  const store = new RoutingRulesStore(options.memoryDir, options.stateFile);
+
+  if (options.action === "list") {
+    const rules = await store.read();
+    return [...rules].sort((a, b) => {
+      if (b.priority !== a.priority) return b.priority - a.priority;
+      return a.pattern.localeCompare(b.pattern);
+    });
+  }
+
+  if (options.action === "add") {
+    const pattern = options.pattern?.trim();
+    if (!pattern) throw new Error("missing pattern");
+    if (!options.targetRaw || options.targetRaw.trim().length === 0) throw new Error("missing target");
+    const patternType = options.patternType ?? "keyword";
+    if (!isRoutePatternType(patternType)) throw new Error(`invalid route pattern type: ${patternType}`);
+    const priority = options.priority ?? 0;
+    if (!Number.isFinite(priority)) throw new Error("invalid priority");
+    const target = parseRouteTargetCliArg(options.targetRaw);
+    const validation = validateRouteTarget(target);
+    if (!validation.ok || !validation.target) throw new Error(validation.error ?? "invalid target");
+
+    const rule: RouteRule = {
+      id: options.id?.trim() || "",
+      patternType,
+      pattern,
+      priority: Math.trunc(priority),
+      target: validation.target,
+      enabled: true,
+    };
+    return store.upsert(rule);
+  }
+
+  if (options.action === "remove") {
+    const pattern = options.pattern?.trim();
+    if (!pattern) throw new Error("missing pattern");
+    return store.removeByPattern(pattern);
+  }
+
+  if (options.action === "test") {
+    const text = options.text?.trim();
+    if (!text) throw new Error("missing text");
+    const rules = await store.read();
+    return selectRouteRule(text, rules);
+  }
+
+  throw new Error(`unsupported route action: ${options.action}`);
 }
 
 export async function runWorkTaskCliCommand(options: WorkTaskCliCommandOptions): Promise<unknown> {
@@ -874,6 +980,105 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             }
           }
           console.log("OK");
+        });
+
+      const routeCmd = cmd
+        .command("route")
+        .description("Manage custom memory routing rules");
+
+      routeCmd
+        .command("list")
+        .description("List configured routing rules")
+        .action(async () => {
+          const rules = await runRouteCliCommand({
+            action: "list",
+            memoryDir: orchestrator.config.memoryDir,
+            stateFile: orchestrator.config.routingRulesStateFile,
+          }) as RouteRule[];
+
+          if (rules.length === 0) {
+            console.log("No routing rules configured.");
+            return;
+          }
+          for (const rule of rules) {
+            const targetParts = [
+              rule.target.category ? `category=${rule.target.category}` : "",
+              rule.target.namespace ? `namespace=${rule.target.namespace}` : "",
+            ].filter((value) => value.length > 0);
+            console.log(
+              `${rule.id} type=${rule.patternType} priority=${rule.priority} pattern="${rule.pattern}" target=${targetParts.join(",")}`,
+            );
+          }
+        });
+
+      routeCmd
+        .command("add")
+        .description("Add or update a routing rule")
+        .argument("<pattern>", "Keyword or regex pattern")
+        .argument("<target>", "Target (JSON or category=<cat>,namespace=<ns>)")
+        .option("--type <type>", "Pattern type: keyword|regex", "keyword")
+        .option("--priority <n>", "Rule priority", "0")
+        .option("--id <id>", "Optional stable rule id")
+        .action(async (...args: unknown[]) => {
+          const pattern = typeof args[0] === "string" ? args[0] : "";
+          const targetRaw = typeof args[1] === "string" ? args[1] : "";
+          const options = (args[2] ?? {}) as Record<string, unknown>;
+          const patternTypeRaw = typeof options.type === "string" ? options.type.trim().toLowerCase() : "keyword";
+          if (!isRoutePatternType(patternTypeRaw)) {
+            throw new Error(`invalid route pattern type: ${patternTypeRaw}`);
+          }
+          const priorityRaw = parseInt(String(options.priority ?? "0"), 10);
+          const updated = await runRouteCliCommand({
+            action: "add",
+            memoryDir: orchestrator.config.memoryDir,
+            stateFile: orchestrator.config.routingRulesStateFile,
+            pattern,
+            patternType: patternTypeRaw,
+            priority: Number.isFinite(priorityRaw) ? priorityRaw : 0,
+            targetRaw,
+            id: typeof options.id === "string" ? options.id : undefined,
+          }) as RouteRule[];
+          console.log(`OK (${updated.length} rules)`);
+        });
+
+      routeCmd
+        .command("remove")
+        .description("Remove routing rules by exact pattern")
+        .argument("<pattern>", "Pattern to remove")
+        .action(async (...args: unknown[]) => {
+          const pattern = typeof args[0] === "string" ? args[0] : "";
+          const next = await runRouteCliCommand({
+            action: "remove",
+            memoryDir: orchestrator.config.memoryDir,
+            stateFile: orchestrator.config.routingRulesStateFile,
+            pattern,
+          }) as RouteRule[];
+          console.log(`OK (${next.length} rules remain)`);
+        });
+
+      routeCmd
+        .command("test")
+        .description("Test routing rule match for input text")
+        .argument("<text>", "Text to evaluate")
+        .action(async (...args: unknown[]) => {
+          const text = typeof args[0] === "string" ? args[0] : "";
+          const selection = await runRouteCliCommand({
+            action: "test",
+            memoryDir: orchestrator.config.memoryDir,
+            stateFile: orchestrator.config.routingRulesStateFile,
+            text,
+          }) as { rule: RouteRule; target: RouteTarget } | null;
+          if (!selection) {
+            console.log("No route match.");
+            return;
+          }
+          const targetParts = [
+            selection.target.category ? `category=${selection.target.category}` : "",
+            selection.target.namespace ? `namespace=${selection.target.namespace}` : "",
+          ].filter((value) => value.length > 0);
+          console.log(
+            `Matched ${selection.rule.id} type=${selection.rule.patternType} priority=${selection.rule.priority} target=${targetParts.join(",")}`,
+          );
         });
 
       cmd

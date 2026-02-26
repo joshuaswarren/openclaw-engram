@@ -37,6 +37,10 @@ All notable changes to this project will be documented in this file.
   - Added `src/routing/store.ts` with fail-open persisted routing rule reads, normalized writes, and upsert/remove helpers.
   - Added config surface for routing rules: `routingRulesEnabled` and `routingRulesStateFile`.
   - Added `tests/routing-store.test.ts` and `tests/config-routing-rules.test.ts` coverage for store behavior and config defaults/overrides.
+- v8.7 custom memory routing rules Task 3 (CLI management commands):
+  - Added `openclaw engram route list|add|remove|test` command support in `src/cli.ts`.
+  - Added `runRouteCliCommand` wrapper with target parsing/validation and routing rule store integration.
+  - Added `tests/cli-routing-commands.test.ts` coverage for route command add/list/test/remove behavior and validation failures.
 - v8.7 work management Task 3 (board generation + import/export helpers):
   - Added `src/work/board.ts` with board snapshot export, Kanban markdown rendering, and snapshot import helpers.
   - Added `tests/work-board.test.ts` coverage for project-scoped board export and import create/update behavior.
