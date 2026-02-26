@@ -38,6 +38,10 @@ function toolJsonResult(value: unknown, options?: { linkToMemory?: boolean }) {
   return toolResult(wrapWorkLayerContext(payload, { linkToMemory: options?.linkToMemory === true }));
 }
 
+function workLayerTextResult(text: string, options?: { linkToMemory?: boolean }) {
+  return toolResult(wrapWorkLayerContext(text, { linkToMemory: options?.linkToMemory === true }));
+}
+
 const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
 const IDENTITY_ANCHOR_SECTION_ORDER = [
   "Identity Traits",
@@ -1491,7 +1495,7 @@ Best for:
         try {
           if (action === "create") {
             if (typeof p.title !== "string" || p.title.trim().length === 0) {
-              return toolResult("work_task.create requires non-empty `title`.");
+              return workLayerTextResult("work_task.create requires non-empty `title`.");
             }
             const created = await storage.createTask({
               title: p.title,
@@ -1509,7 +1513,7 @@ Best for:
 
           if (action === "get") {
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
-              return toolResult("work_task.get requires `id`.");
+              return workLayerTextResult("work_task.get requires `id`.");
             }
             const task = await storage.getTask(p.id);
             return toolJsonResult({ action, task });
@@ -1527,7 +1531,7 @@ Best for:
 
           if (action === "update") {
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
-              return toolResult("work_task.update requires `id`.");
+              return workLayerTextResult("work_task.update requires `id`.");
             }
             const updated = await storage.updateTask(p.id, {
               title: typeof p.title === "string" ? p.title : undefined,
@@ -1550,7 +1554,7 @@ Best for:
               || typeof p.status !== "string"
               || p.status.trim().length === 0
             ) {
-              return toolResult("work_task.transition requires `id` and `status`.");
+              return workLayerTextResult("work_task.transition requires `id` and `status`.");
             }
             const task = await storage.transitionTask(p.id, p.status as any);
             return toolJsonResult({ action, task });
@@ -1558,15 +1562,15 @@ Best for:
 
           if (action === "delete") {
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
-              return toolResult("work_task.delete requires `id`.");
+              return workLayerTextResult("work_task.delete requires `id`.");
             }
             const deleted = await storage.deleteTask(p.id);
             return toolJsonResult({ action, deleted });
           }
 
-          return toolResult(`Unsupported work_task action: ${action}`);
+          return workLayerTextResult(`Unsupported work_task action: ${action}`);
         } catch (err) {
-          return toolResult(`work_task error: ${err instanceof Error ? err.message : String(err)}`);
+          return workLayerTextResult(`work_task error: ${err instanceof Error ? err.message : String(err)}`);
         }
       },
     },
@@ -1601,7 +1605,7 @@ Best for:
         try {
           if (action === "create") {
             if (typeof p.name !== "string" || p.name.trim().length === 0) {
-              return toolResult("work_project.create requires non-empty `name`.");
+              return workLayerTextResult("work_project.create requires non-empty `name`.");
             }
             const project = await storage.createProject({
               name: p.name,
@@ -1615,7 +1619,7 @@ Best for:
 
           if (action === "get") {
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
-              return toolResult("work_project.get requires `id`.");
+              return workLayerTextResult("work_project.get requires `id`.");
             }
             const project = await storage.getProject(p.id);
             return toolJsonResult({ action, project });
@@ -1628,7 +1632,7 @@ Best for:
 
           if (action === "update") {
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
-              return toolResult("work_project.update requires `id`.");
+              return workLayerTextResult("work_project.update requires `id`.");
             }
             const project = await storage.updateProject(p.id, {
               name: typeof p.name === "string" ? p.name : undefined,
@@ -1642,7 +1646,7 @@ Best for:
 
           if (action === "delete") {
             if (typeof p.id !== "string" || p.id.trim().length === 0) {
-              return toolResult("work_project.delete requires `id`.");
+              return workLayerTextResult("work_project.delete requires `id`.");
             }
             const deleted = await storage.deleteProject(p.id);
             return toolJsonResult({ action, deleted });
@@ -1655,15 +1659,15 @@ Best for:
               || typeof p.projectId !== "string"
               || p.projectId.trim().length === 0
             ) {
-              return toolResult("work_project.link_task requires `taskId` and `projectId`.");
+              return workLayerTextResult("work_project.link_task requires `taskId` and `projectId`.");
             }
             const linked = await storage.linkTaskToProject(p.taskId, p.projectId);
             return toolJsonResult({ action, linked });
           }
 
-          return toolResult(`Unsupported work_project action: ${action}`);
+          return workLayerTextResult(`Unsupported work_project action: ${action}`);
         } catch (err) {
-          return toolResult(`work_project error: ${err instanceof Error ? err.message : String(err)}`);
+          return workLayerTextResult(`work_project error: ${err instanceof Error ? err.message : String(err)}`);
         }
       },
     },
@@ -1706,7 +1710,7 @@ Best for:
           }
           if (action === "import_snapshot") {
             if (typeof p.snapshotJson !== "string" || p.snapshotJson.trim().length === 0) {
-              return toolResult("work_board.import_snapshot requires `snapshotJson`.");
+              return workLayerTextResult("work_board.import_snapshot requires `snapshotJson`.");
             }
             const snapshot = JSON.parse(p.snapshotJson);
             const result = await importWorkBoardSnapshot({
@@ -1714,11 +1718,11 @@ Best for:
               snapshot,
               projectId: typeof p.projectId === "string" ? p.projectId : undefined,
             });
-            return toolJsonResult({ action, result });
+            return toolJsonResult({ action, result }, { linkToMemory });
           }
-          return toolResult(`Unsupported work_board action: ${action}`);
+          return workLayerTextResult(`Unsupported work_board action: ${action}`);
         } catch (err) {
-          return toolResult(`work_board error: ${err instanceof Error ? err.message : String(err)}`);
+          return workLayerTextResult(`work_board error: ${err instanceof Error ? err.message : String(err)}`);
         }
       },
     },
