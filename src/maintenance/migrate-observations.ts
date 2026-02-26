@@ -1,5 +1,9 @@
 import path from "node:path";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import {
+  backupAndWriteRebuiltObservations,
+  toHourBucketIso,
+} from "./observation-ledger-utils.js";
 
 interface CanonicalObservationRow {
   sessionKey: string;
@@ -37,12 +41,7 @@ function toNonNegativeInt(value: unknown): number | null {
 
 function toHourIso(value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
-  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/u.test(value) ? value : `${value}Z`;
-  const ms = Date.parse(normalized);
-  if (!Number.isFinite(ms)) return null;
-  const d = new Date(ms);
-  d.setUTCMinutes(0, 0, 0);
-  return d.toISOString();
+  return toHourBucketIso(value);
 }
 
 function toSessionKey(row: JsonRecord): string | null {
@@ -196,31 +195,12 @@ export async function migrateObservations(
 
   let backupPath: string | undefined;
   if (!dryRun) {
-    const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    const archiveRoot = path.join(options.memoryDir, "archive", "observations", stamp);
-    backupPath = path.join(archiveRoot, "state", "observation-ledger", "rebuilt-observations.jsonl");
-    try {
-      const existing = await readFile(outputPath, "utf-8");
-      await mkdir(path.dirname(backupPath), { recursive: true });
-      await writeFile(backupPath, existing, "utf-8");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code && code === "ENOENT") {
-        backupPath = undefined;
-      } else {
-        throw err;
-      }
-    }
-
-    const rebuiltAt = now.toISOString();
-    const lines = aggregates.map((row) =>
-      JSON.stringify({
-        ...row,
-        rebuiltAt,
-      }),
-    );
-    await mkdir(path.dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf-8");
+    backupPath = await backupAndWriteRebuiltObservations({
+      memoryDir: options.memoryDir,
+      outputPath,
+      rows: aggregates,
+      now,
+    });
   }
 
   return {

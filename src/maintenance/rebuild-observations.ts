@@ -1,5 +1,9 @@
 import path from "node:path";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import {
+  backupAndWriteRebuiltObservations,
+  toHourBucketIso,
+} from "./observation-ledger-utils.js";
 
 interface TranscriptLikeEntry {
   timestamp?: string;
@@ -29,15 +33,6 @@ export interface RebuildObservationsResult {
   rebuiltRows: number;
   outputPath: string;
   backupPath?: string;
-}
-
-function hourBucketIso(timestamp: string): string | null {
-  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/u.test(timestamp) ? timestamp : `${timestamp}Z`;
-  const ms = Date.parse(normalized);
-  if (!Number.isFinite(ms)) return null;
-  const d = new Date(ms);
-  d.setUTCMinutes(0, 0, 0);
-  return d.toISOString();
 }
 
 function toSortableKey(sessionKey: string, hour: string): string {
@@ -110,7 +105,7 @@ function buildLedgerRows(linesByFile: string[]): {
       if (typeof parsed.sessionKey !== "string" || parsed.sessionKey.length === 0) continue;
       if (parsed.role !== "user" && parsed.role !== "assistant") continue;
       if (typeof parsed.timestamp !== "string") continue;
-      const hour = hourBucketIso(parsed.timestamp);
+      const hour = toHourBucketIso(parsed.timestamp);
       if (!hour) continue;
 
       const key = toSortableKey(parsed.sessionKey, hour);
@@ -163,30 +158,12 @@ export async function rebuildObservations(
 
   let backupPath: string | undefined;
   if (!dryRun) {
-    const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    const archiveRoot = path.join(options.memoryDir, "archive", "observations", stamp);
-    backupPath = path.join(archiveRoot, "state", "observation-ledger", "rebuilt-observations.jsonl");
-    try {
-      const existing = await readFile(outputPath, "utf-8");
-      await mkdir(path.dirname(backupPath), { recursive: true });
-      await writeFile(backupPath, existing, "utf-8");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code && code === "ENOENT") {
-        backupPath = undefined;
-      } else {
-        throw err;
-      }
-    }
-    const rebuiltAt = now.toISOString();
-    const lines = aggregates.map((row) =>
-      JSON.stringify({
-        ...row,
-        rebuiltAt,
-      }),
-    );
-    await mkdir(path.dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf-8");
+    backupPath = await backupAndWriteRebuiltObservations({
+      memoryDir: options.memoryDir,
+      outputPath,
+      rows: aggregates,
+      now,
+    });
   }
 
   return {
