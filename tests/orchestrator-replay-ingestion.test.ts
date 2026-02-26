@@ -8,7 +8,7 @@ test("ingestReplayBatch enqueues replay slices without clearing shared buffer", 
 
   assert.match(
     source,
-    /skipDedupeCheck:\s*true,\s*clearBufferAfterExtraction:\s*false,\s*skipMinimumThresholds:\s*true,/m,
+    /skipDedupeCheck:\s*true,\s*clearBufferAfterExtraction:\s*false,\s*skipCharThreshold:\s*true,/m,
     "replay ingestion should bypass dedupe/minimum thresholds and preserve the live smart buffer",
   );
   assert.match(
@@ -33,8 +33,8 @@ test("runExtraction bypass only skips char threshold and still enforces user-tur
 
   assert.match(
     source,
-    /const skipMinimumThresholds = options\.skipMinimumThresholds \?\? false;/m,
-    "runExtraction should support explicit minimum-threshold bypass",
+    /const skipCharThreshold = options\.skipCharThreshold \?\? false;/m,
+    "runExtraction should support explicit char-threshold bypass",
   );
   assert.match(
     source,
@@ -43,7 +43,17 @@ test("runExtraction bypass only skips char threshold and still enforces user-tur
   );
   assert.match(
     source,
-    /if \(\(!skipMinimumThresholds && belowCharThreshold\) \|\| belowUserTurnThreshold\)/m,
+    /if \(\(!skipCharThreshold && belowCharThreshold\) \|\| belowUserTurnThreshold\)/m,
     "user-turn threshold should always be enforced, even when char threshold bypass is enabled",
+  );
+});
+
+test("queueBufferedExtraction settles task callbacks on dedupe skip", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+
+  assert.match(
+    source,
+    /if \(!options\.skipDedupeCheck && !this\.shouldQueueExtraction\(turnsToExtract\)\) \{[\s\S]*options\.onTaskSettled\?\.\(\);[\s\S]*return;/m,
+    "dedupe skip path should settle any task callback to avoid hanging replay promises",
   );
 });

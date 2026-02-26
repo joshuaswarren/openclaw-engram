@@ -2286,7 +2286,7 @@ export class Orchestrator {
           void this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
             skipDedupeCheck: true,
             clearBufferAfterExtraction: false,
-            skipMinimumThresholds: true,
+            skipCharThreshold: true,
             extractionDeadlineMs: options.deadlineMs,
             onTaskSettled: (err) => (err ? reject(err) : resolve()),
           }).catch(reject);
@@ -2352,13 +2352,14 @@ export class Orchestrator {
     options: {
       skipDedupeCheck?: boolean;
       clearBufferAfterExtraction?: boolean;
-      skipMinimumThresholds?: boolean;
+      skipCharThreshold?: boolean;
       extractionDeadlineMs?: number;
       onTaskSettled?: (error?: unknown) => void;
     } = {},
   ): Promise<void> {
     if (!options.skipDedupeCheck && !this.shouldQueueExtraction(turnsToExtract)) {
       log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
+      options.onTaskSettled?.();
       return;
     }
 
@@ -2366,7 +2367,7 @@ export class Orchestrator {
       try {
         await this.runExtraction(turnsToExtract, {
           clearBufferAfterExtraction: options.clearBufferAfterExtraction ?? true,
-          skipMinimumThresholds: options.skipMinimumThresholds ?? false,
+          skipCharThreshold: options.skipCharThreshold ?? false,
           deadlineMs: options.extractionDeadlineMs,
         });
         options.onTaskSettled?.();
@@ -2448,13 +2449,13 @@ export class Orchestrator {
     turns: BufferTurn[],
     options: {
       clearBufferAfterExtraction?: boolean;
-      skipMinimumThresholds?: boolean;
+      skipCharThreshold?: boolean;
       deadlineMs?: number;
     } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
     const clearBufferAfterExtraction = options.clearBufferAfterExtraction ?? true;
-    const skipMinimumThresholds = options.skipMinimumThresholds ?? false;
+    const skipCharThreshold = options.skipCharThreshold ?? false;
     const deadlineMs =
       typeof options.deadlineMs === "number" && Number.isFinite(options.deadlineMs)
         ? options.deadlineMs
@@ -2491,7 +2492,7 @@ export class Orchestrator {
     const totalChars = normalizedTurns.reduce((sum, t) => sum + t.content.length, 0);
     const belowCharThreshold = totalChars < this.config.extractionMinChars;
     const belowUserTurnThreshold = userTurns.length < this.config.extractionMinUserTurns;
-    if ((!skipMinimumThresholds && belowCharThreshold) || belowUserTurnThreshold) {
+    if ((!skipCharThreshold && belowCharThreshold) || belowUserTurnThreshold) {
       log.debug(
         `skipping extraction: below threshold (totalChars=${totalChars}, userTurns=${userTurns.length})`,
       );
