@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { WebDavServer, hostToUrlAuthority } from "../src/network/webdav.ts";
 
@@ -207,4 +207,23 @@ test("webdav returns 400 for malformed URL encoding", async () => {
   } finally {
     await server.stop();
   }
+});
+
+test("webdav create rejects duplicate root aliases", async () => {
+  const baseA = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-alias-a-"));
+  const baseB = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-alias-b-"));
+  const dirA = path.join(baseA, "shared");
+  const dirB = path.join(baseB, "shared");
+  await mkdir(dirA, { recursive: true });
+  await mkdir(dirB, { recursive: true });
+
+  await assert.rejects(
+    () =>
+      WebDavServer.create({
+        enabled: true,
+        port: 0,
+        allowlistDirs: [dirA, dirB],
+      }),
+    /duplicate webdav allowlist alias: shared/,
+  );
 });

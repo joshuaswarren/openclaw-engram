@@ -67,11 +67,17 @@ export class WebDavServer {
     }
 
     const allowedRoots: AllowedRoot[] = [];
+    const aliasSet = new Set<string>();
     for (const dir of options.allowlistDirs) {
       const resolved = path.resolve(dir);
       await mkdir(resolved, { recursive: true });
       const canonical = await realpath(resolved);
-      allowedRoots.push({ absolute: canonical, name: path.basename(canonical) || "root" });
+      const alias = path.basename(canonical) || "root";
+      if (aliasSet.has(alias)) {
+        throw new Error(`duplicate webdav allowlist alias: ${alias}`);
+      }
+      aliasSet.add(alias);
+      allowedRoots.push({ absolute: canonical, name: alias });
     }
 
     return new WebDavServer(options, allowedRoots);
