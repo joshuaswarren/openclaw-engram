@@ -411,3 +411,49 @@ test("work board import validates snapshot fully before mutating storage", async
   assert.equal(unchanged.title, "Atomic");
   assert.equal(unchanged.status, "todo");
 });
+
+test("work board import rejects duplicate snapshot task IDs before mutation", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-duplicate-ids-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [
+          {
+            id: "task-dup",
+            title: "First",
+            description: "",
+            status: "todo",
+            priority: "medium",
+            owner: null,
+            assignee: null,
+            projectId: null,
+            tags: [],
+            dueAt: null,
+          },
+          {
+            id: "task-dup",
+            title: "Second",
+            description: "",
+            status: "in_progress",
+            priority: "high",
+            owner: null,
+            assignee: null,
+            projectId: null,
+            tags: [],
+            dueAt: null,
+          },
+        ],
+      },
+    }),
+  );
+
+  const created = await storage.getTask("task-dup");
+  assert.equal(created, null);
+});

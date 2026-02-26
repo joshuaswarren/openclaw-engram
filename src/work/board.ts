@@ -208,7 +208,12 @@ export async function importWorkBoardSnapshot(options: {
   };
 
   const preparedRows: PreparedImportRow[] = [];
+  const seenItemIds = new Set<string>();
   for (const item of options.snapshot.items) {
+    if (seenItemIds.has(item.id)) {
+      throw new Error(`duplicate task id in snapshot: ${item.id}`);
+    }
+    seenItemIds.add(item.id);
     assertValidImportEnums(item);
     const existing = await storage.getTask(item.id);
     const fallbackProjectId = existing ? existing.projectId : snapshotProjectId;
