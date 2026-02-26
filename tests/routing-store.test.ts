@@ -251,3 +251,26 @@ test("routing store falls back when state file resolves to memoryDir root", asyn
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("routing store upsert with narrow options preserves unrelated persisted rules", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-upsert-preserve-"));
+  try {
+    const store = new RoutingRulesStore(memoryDir);
+    await store.write([
+      sampleRule({ id: "default-rule", target: { category: "fact", namespace: "default" } }),
+      sampleRule({ id: "team-rule", target: { category: "fact", namespace: "team" } }),
+    ]);
+
+    await store.upsert(
+      sampleRule({ id: "default-rule", pattern: "incident-updated" }),
+      { allowedNamespaces: ["default"] },
+    );
+
+    const all = await store.read();
+    const ids = new Set(all.map((rule) => rule.id));
+    assert.equal(ids.has("default-rule"), true);
+    assert.equal(ids.has("team-rule"), true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

@@ -83,14 +83,10 @@ export class RoutingRulesStore {
 
   async read(options?: RoutingEngineOptions): Promise<RouteRule[]> {
     try {
-      await this.assertStatePathScoped();
-      const raw = await readFile(this.statePath, "utf-8");
-      const parsed = JSON.parse(raw) as Partial<RoutingRulesState>;
-      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.rules)) return [];
-      const normalized = parsed.rules
+      const persisted = await this.readPersistedRules();
+      return persisted
         .map((rule) => normalizeRule(rule, options))
         .filter((rule): rule is RouteRule => rule !== null);
-      return this.dedupeById(normalized);
     } catch {
       return [];
     }
@@ -102,23 +98,23 @@ export class RoutingRulesStore {
 
   async upsert(rule: RouteRule, options?: RoutingEngineOptions): Promise<RouteRule[]> {
     return this.withWriteLock(async () => {
-      const existing = await this.read(options);
+      const existing = await this.readPersistedRules();
       const normalized = normalizeRule(rule, options);
       if (!normalized) return existing;
 
       const next = existing.filter((entry) => entry.id !== normalized.id);
       next.push(normalized);
-      return this.writeNormalized(next, options);
+      return this.writeNormalized(next);
     });
   }
 
   async removeByPattern(pattern: string, options?: RoutingEngineOptions): Promise<RouteRule[]> {
     return this.withWriteLock(async () => {
       const trimmed = pattern.trim();
-      const existing = await this.read(options);
+      const existing = await this.readPersistedRules();
       const next = existing.filter((entry) => entry.pattern !== trimmed);
       if (next.length === existing.length) return existing;
-      return this.writeNormalized(next, options);
+      return this.writeNormalized(next);
     });
   }
 
@@ -141,6 +137,21 @@ export class RoutingRulesStore {
       byId.set(rule.id, rule);
     }
     return Array.from(byId.values());
+  }
+
+  private async readPersistedRules(): Promise<RouteRule[]> {
+    try {
+      await this.assertStatePathScoped();
+      const raw = await readFile(this.statePath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<RoutingRulesState>;
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.rules)) return [];
+      const normalized = parsed.rules
+        .map((rule) => normalizeRule(rule))
+        .filter((rule): rule is RouteRule => rule !== null);
+      return this.dedupeById(normalized);
+    } catch {
+      return [];
+    }
   }
 
   private async writeNormalized(rules: RouteRule[], options?: RoutingEngineOptions): Promise<RouteRule[]> {
