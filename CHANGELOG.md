@@ -25,6 +25,11 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.6 observation-ledger maintenance Task 3 (migration service slice):
+  - Added `src/maintenance/migrate-observations.ts` to migrate legacy observation-ledger JSONL shapes into canonical `sessionKey/hour` aggregates.
+  - Added dry-run-by-default migration behavior with backup-first replacement of `state/observation-ledger/rebuilt-observations.jsonl`.
+  - Added deterministic UTC hour normalization for timezone-less legacy timestamps and bounded malformed-line fail-open parsing.
+  - Added `tests/migrate-observations.test.ts` coverage for dry-run scanning, mixed-shape migration, malformed input handling, and backup failure behavior.
 - v8.6 observation-ledger maintenance Task 2 (rebuild service slice):
   - Added `src/maintenance/rebuild-observations.ts` to rebuild an observation ledger from transcript history with deterministic session/hour aggregation.
   - Added dry-run-by-default rebuild behavior with backup-first replacement of `state/observation-ledger/rebuilt-observations.jsonl`.
