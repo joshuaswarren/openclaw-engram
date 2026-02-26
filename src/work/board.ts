@@ -190,7 +190,7 @@ export async function exportWorkBoardSnapshot(options: {
   };
 }
 
-export function renderWorkBoardMarkdown(snapshot: WorkBoardSnapshot): string {
+function renderWorkBoardMarkdown(snapshot: WorkBoardSnapshot): string {
   const lines: string[] = [];
   lines.push("# Work Board");
   lines.push("");
