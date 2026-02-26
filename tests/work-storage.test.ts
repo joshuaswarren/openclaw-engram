@@ -102,6 +102,44 @@ test("work storage project CRUD and task linkage", async () => {
   assert.equal(await storage.getProject(projectA.id), null);
 });
 
+test("work storage keeps project index in sync when patching task projectId", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-storage-patch-project-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const project = await storage.createProject({ name: "Patch Project" });
+  const task = await storage.createTask({ title: "Patchable task" });
+
+  const linked = await storage.updateTask(task.id, { projectId: project.id });
+  assert.equal(linked?.projectId, project.id);
+
+  const withLink = await storage.getProject(project.id);
+  assert.ok(withLink);
+  assert.deepEqual(withLink?.taskIds, [task.id]);
+
+  const unlinked = await storage.updateTask(task.id, { projectId: null });
+  assert.equal(unlinked?.projectId, null);
+
+  const cleared = await storage.getProject(project.id);
+  assert.ok(cleared);
+  assert.deepEqual(cleared?.taskIds, []);
+});
+
+test("work storage clears task links when deleting a project", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-storage-delete-project-"));
+  const storage = new WorkStorage(memoryDir);
+
+  const project = await storage.createProject({ name: "Disposable project" });
+  const task = await storage.createTask({ title: "Linked task" });
+  await storage.linkTaskToProject(task.id, project.id);
+
+  const removed = await storage.deleteProject(project.id);
+  assert.equal(removed, true);
+
+  const orphaned = await storage.getTask(task.id);
+  assert.ok(orphaned);
+  assert.equal(orphaned?.projectId, null);
+});
+
 test("work storage rejects unsafe task and project IDs", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-storage-safe-id-"));
   const storage = new WorkStorage(memoryDir);

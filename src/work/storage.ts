@@ -220,9 +220,30 @@ export class WorkStorage {
   async updateTask(id: string, patch: UpdateWorkTaskInput, now = new Date()): Promise<WorkTask | null> {
     const existing = await this.getTask(id);
     if (!existing) return null;
+
+    const projectIdPatched = Object.prototype.hasOwnProperty.call(patch, "projectId");
+    const nextProjectId = projectIdPatched ? patch.projectId ?? null : existing.projectId;
+
+    if (projectIdPatched && nextProjectId) {
+      const nextProject = await this.getProject(nextProjectId);
+      if (!nextProject) {
+        throw new Error(`project not found: ${nextProjectId}`);
+      }
+    }
+
+    if (projectIdPatched && existing.projectId !== nextProjectId) {
+      if (existing.projectId) {
+        await this.removeTaskIdFromProject(existing.projectId, id, now);
+      }
+      if (nextProjectId) {
+        await this.addTaskIdToProject(nextProjectId, id, now);
+      }
+    }
+
     const next: WorkTask = {
       ...existing,
       ...patch,
+      projectId: nextProjectId,
       tags: patch.tags ?? existing.tags,
       updatedAt: now.toISOString(),
     };
@@ -312,6 +333,12 @@ export class WorkStorage {
 
   async deleteProject(id: string): Promise<boolean> {
     try {
+      const existing = await this.getProject(id);
+      if (existing) {
+        for (const taskId of existing.taskIds) {
+          await this.updateTask(taskId, { projectId: null });
+        }
+      }
       await rm(this.projectPath(id));
       return true;
     } catch {
@@ -325,16 +352,10 @@ export class WorkStorage {
     const project = await this.getProject(projectId);
     if (!project) throw new Error(`project not found: ${projectId}`);
 
-    if (task.projectId && task.projectId !== projectId) {
-      await this.removeTaskIdFromProject(task.projectId, taskId, now);
-    }
-
     const updatedTask = await this.updateTask(taskId, { projectId }, now);
     if (!updatedTask) throw new Error(`task not found after update: ${taskId}`);
 
-    const taskIds = new Set(project.taskIds);
-    taskIds.add(taskId);
-    const updatedProject = await this.updateProject(projectId, { taskIds: Array.from(taskIds) }, now);
+    const updatedProject = await this.getProject(projectId);
     if (!updatedProject) throw new Error(`project not found after update: ${projectId}`);
 
     return { task: updatedTask, project: updatedProject };
@@ -348,5 +369,14 @@ export class WorkStorage {
     if (filtered.length === project.taskIds.length) return;
 
     await this.updateProject(projectId, { taskIds: filtered }, now);
+  }
+
+  private async addTaskIdToProject(projectId: string, taskId: string, now = new Date()): Promise<void> {
+    const project = await this.getProject(projectId);
+    if (!project) return;
+
+    const taskIds = new Set(project.taskIds);
+    taskIds.add(taskId);
+    await this.updateProject(projectId, { taskIds: Array.from(taskIds) }, now);
   }
 }
