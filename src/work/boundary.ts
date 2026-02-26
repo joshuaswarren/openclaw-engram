@@ -17,24 +17,24 @@ export function applyWorkExtractionBoundary(conversation: string): string {
   if (conversation.trim().length === 0) return "";
 
   const blockPattern =
-    /\[WORK_LAYER_CONTEXT(?:\s+link_to_memory=(true|false))?(?:\s+encoding=(base64))?\]\s*([\s\S]*?)\s*\[\/WORK_LAYER_CONTEXT\]/g;
+    /(^|\n)\[WORK_LAYER_CONTEXT(?:\s+link_to_memory=(true|false))?(?:\s+encoding=(base64))?\]\s*([\s\S]*?)\s*\[\/WORK_LAYER_CONTEXT\]/g;
 
   const bounded = conversation.replace(
     blockPattern,
-    (_full, flag: string | undefined, encoding: string | undefined, body: string) => {
+    (_full, prefix: string, flag: string | undefined, encoding: string | undefined, body: string) => {
     const shouldLink = typeof flag === "string" && flag.toLowerCase() === "true";
-    if (!shouldLink) return "";
+    if (!shouldLink) return prefix;
 
     if (typeof encoding === "string" && encoding.toLowerCase() === "base64") {
       try {
-        return Buffer.from(body.trim(), "base64").toString("utf8").trim();
+        return `${prefix}${Buffer.from(body.trim(), "base64").toString("utf8").trim()}`;
       } catch {
-        return "";
+        return prefix;
       }
     }
 
-    // Default wrapper keeps payload readable and escapes closing delimiter inside content.
-    return body.trim();
+    // Default wrapper keeps payload readable and escapes wrapper delimiters inside content.
+    return `${prefix}${body.trim()}`;
   });
 
   // Defensive hardening: if a *real wrapper opener* survives without a closer (e.g., turn-level truncation),

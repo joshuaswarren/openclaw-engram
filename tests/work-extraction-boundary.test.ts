@@ -92,6 +92,14 @@ test("applyWorkExtractionBoundary does not strip inline wrapper syntax discussio
   assert.equal(bounded, conversation);
 });
 
+test("applyWorkExtractionBoundary does not strip inline paired wrapper syntax in prose", () => {
+  const conversation =
+    "Use `[WORK_LAYER_CONTEXT link_to_memory=false]x[/WORK_LAYER_CONTEXT]` in docs as an example.";
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.equal(bounded, conversation);
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",
