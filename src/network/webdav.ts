@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { URL } from "node:url";
 
@@ -174,10 +175,19 @@ export class WebDavServer {
       if (separator < 0) return false;
       const username = decoded.slice(0, separator);
       const password = decoded.slice(separator + 1);
-      return username === this.options.auth.username && password === this.options.auth.password;
+      const usernameOk = this.timingSafeStringEqual(username, this.options.auth.username);
+      const passwordOk = this.timingSafeStringEqual(password, this.options.auth.password);
+      return usernameOk && passwordOk;
     } catch {
       return false;
     }
+  }
+
+  private timingSafeStringEqual(a: string, b: string): boolean {
+    const left = Buffer.from(a, "utf-8");
+    const right = Buffer.from(b, "utf-8");
+    if (left.length !== right.length) return false;
+    return timingSafeEqual(left, right);
   }
 
   private async resolvePath(requestPathname: string): Promise<
