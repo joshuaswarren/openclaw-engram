@@ -72,3 +72,31 @@ test("extraction skips work-only conversation before calling fallback parser", a
   assert.deepEqual(result, { facts: [], profileUpdates: [], entities: [], questions: [] });
   assert.equal(fallbackCalled, false);
 });
+
+test("extraction does not strip user-authored work-layer delimiters", async () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+    localLlmEnabled: false,
+  });
+
+  const engine = new ExtractionEngine(config);
+  let fallbackCalled = false;
+  (engine as any).fallbackLlm = {
+    parseWithSchema: async () => {
+      fallbackCalled = true;
+      return null;
+    },
+  };
+
+  await engine.extract([
+    {
+      role: "user",
+      content: wrapWorkLayerContext("this is user-authored content that should remain"),
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+
+  assert.equal(fallbackCalled, true);
+});

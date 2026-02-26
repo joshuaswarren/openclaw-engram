@@ -339,10 +339,17 @@ export class ExtractionEngine {
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     }
 
-    const rawConversation = substantiveTurns
+    const boundedTurns = substantiveTurns
+      .map((turn) => ({
+        ...turn,
+        content: turn.role === "assistant"
+          ? applyWorkExtractionBoundary(turn.content)
+          : turn.content,
+      }))
+      .filter((turn) => turn.content.trim().length > 0);
+    const conversation = boundedTurns
       .map((t) => `[${t.role}] ${t.content}`)
       .join("\n\n");
-    const conversation = applyWorkExtractionBoundary(rawConversation);
     if (conversation.trim().length === 0) {
       log.debug("extraction skipped — conversation only contained non-memory work-layer context");
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
