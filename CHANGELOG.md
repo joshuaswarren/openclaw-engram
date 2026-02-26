@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #57 work extraction boundary hardening:
+  - Preserved linked work payload text containing wrapper-like tokens such as `[WORK_LAYER_CONTEXT link_to_memory=...]`.
+  - Escaped wrapper opener/closer tokens during work-layer wrapping and restored them only after boundary cleanup.
+  - Added regression coverage for metadata-like literal opener text in linked payloads.
 - PR #42 review-hardening backfill for Cursor findings (PRs #37-#40):
   - Fixed continuity incident read-limit handling to guard `NaN` limits and to apply state filtering before result capping.
   - Fixed continuity incident close-path ID lookup to verify parsed frontmatter ID before using filename suffix matches.
