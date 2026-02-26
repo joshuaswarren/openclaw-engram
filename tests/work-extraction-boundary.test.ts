@@ -29,6 +29,21 @@ test("applyWorkExtractionBoundary preserves explicitly linked work-layer blocks"
   assert.doesNotMatch(bounded, /WORK_LAYER_CONTEXT/);
 });
 
+test("applyWorkExtractionBoundary is delimiter-safe for unlinked payload text", () => {
+  const tricky = 'title includes [/WORK_LAYER_CONTEXT] token';
+  const conversation = [
+    "[assistant] preface",
+    wrapWorkLayerContext(tricky),
+    "[assistant] suffix",
+  ].join("\n\n");
+
+  const bounded = applyWorkExtractionBoundary(conversation);
+  assert.match(bounded, /preface/);
+  assert.match(bounded, /suffix/);
+  assert.doesNotMatch(bounded, /\[\/WORK_LAYER_CONTEXT\]/);
+  assert.doesNotMatch(bounded, /title includes/);
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",
