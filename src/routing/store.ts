@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "../logger.js";
@@ -33,10 +33,10 @@ function resolveStatePath(memoryDir: string, stateFile: string): string {
   const defaultPath = path.join(root, "state", "routing-rules.json");
   if (path.isAbsolute(stateFile)) {
     const absolute = path.resolve(stateFile);
-    return absolute.startsWith(root + path.sep) || absolute === root ? absolute : defaultPath;
+    return absolute.startsWith(root + path.sep) ? absolute : defaultPath;
   }
   const resolved = path.resolve(root, stateFile);
-  return resolved.startsWith(root + path.sep) || resolved === root ? resolved : defaultPath;
+  return resolved.startsWith(root + path.sep) ? resolved : defaultPath;
 }
 
 function normalizeRule(rule: RouteRule, options?: RoutingEngineOptions): RouteRule | null {
@@ -229,6 +229,20 @@ export class RoutingRulesStore {
     const canonicalStatePath = path.join(canonicalParent, path.basename(this.statePath));
     if (!this.isPathInside(canonicalRoot, canonicalStatePath)) {
       throw new Error(`routing rules state path escaped memoryDir: ${canonicalStatePath}`);
+    }
+    try {
+      const stateStats = await lstat(this.statePath);
+      if (stateStats.isSymbolicLink()) {
+        const canonicalFile = await realpath(this.statePath);
+        if (!this.isPathInside(canonicalRoot, canonicalFile)) {
+          throw new Error(`routing rules state symlink escaped memoryDir: ${canonicalFile}`);
+        }
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw err;
+      }
     }
   }
 

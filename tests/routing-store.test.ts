@@ -211,3 +211,43 @@ test("routing store blocks symlink-based state path escapes", async () => {
     await rm(outsideDir, { recursive: true, force: true });
   }
 });
+
+test("routing store blocks final state-file symlink escapes", async () => {
+  if (process.platform === "win32") return;
+
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-file-symlink-root-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-file-symlink-outside-"));
+  try {
+    const outsideFile = path.join(outsideDir, "outside.json");
+    await writeFile(outsideFile, "{}", "utf-8");
+
+    const stateDir = path.join(memoryDir, "state");
+    await mkdir(stateDir, { recursive: true });
+    await symlink(outsideFile, path.join(stateDir, "routing-rules.json"));
+
+    const store = new RoutingRulesStore(memoryDir);
+    await store.write([sampleRule()]);
+
+    const outsideRaw = await readFile(outsideFile, "utf-8");
+    assert.equal(outsideRaw, "{}");
+    const rules = await store.read();
+    assert.deepEqual(rules, []);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test("routing store falls back when state file resolves to memoryDir root", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-root-fallback-"));
+  try {
+    const store = new RoutingRulesStore(memoryDir, ".");
+    await store.write([sampleRule()]);
+    const raw = await readFile(path.join(memoryDir, "state", "routing-rules.json"), "utf-8");
+    assert.match(raw, /"rules"/);
+    const rules = await store.read();
+    assert.equal(rules.length, 1);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
