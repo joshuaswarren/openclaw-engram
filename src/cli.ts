@@ -16,6 +16,9 @@ import { chatgptReplayNormalizer } from "./replay/normalizers/chatgpt.js";
 import { claudeReplayNormalizer } from "./replay/normalizers/claude.js";
 import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
+import { archiveObservations } from "./maintenance/archive-observations.js";
+import { rebuildObservations } from "./maintenance/rebuild-observations.js";
+import { migrateObservations } from "./maintenance/migrate-observations.js";
 
 interface CliApi {
   registerCli(
@@ -144,6 +147,56 @@ export interface ReplayCliOrchestrator {
   ): Promise<void>;
   waitForConsolidationIdle(timeoutMs?: number): Promise<boolean>;
   runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }>;
+}
+
+export interface ArchiveObservationsCliCommandOptions {
+  memoryDir: string;
+  retentionDays?: number;
+  write?: boolean;
+  now?: Date;
+}
+
+export interface RebuildObservationsCliCommandOptions {
+  memoryDir: string;
+  write?: boolean;
+  now?: Date;
+}
+
+export interface MigrateObservationsCliCommandOptions {
+  memoryDir: string;
+  write?: boolean;
+  now?: Date;
+}
+
+export async function runArchiveObservationsCliCommand(
+  options: ArchiveObservationsCliCommandOptions,
+) {
+  return archiveObservations({
+    memoryDir: options.memoryDir,
+    retentionDays: options.retentionDays,
+    dryRun: options.write !== true,
+    now: options.now,
+  });
+}
+
+export async function runRebuildObservationsCliCommand(
+  options: RebuildObservationsCliCommandOptions,
+) {
+  return rebuildObservations({
+    memoryDir: options.memoryDir,
+    dryRun: options.write !== true,
+    now: options.now,
+  });
+}
+
+export async function runMigrateObservationsCliCommand(
+  options: MigrateObservationsCliCommandOptions,
+) {
+  return migrateObservations({
+    memoryDir: options.memoryDir,
+    dryRun: options.write !== true,
+    now: options.now,
+  });
 }
 
 async function withTimeout<T>(
@@ -597,6 +650,85 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ... and ${summary.warnings.length - 20} more`);
             }
           }
+          console.log("OK");
+        });
+
+      cmd
+        .command("archive-observations")
+        .description("Archive aged observation artifacts (dry-run by default)")
+        .option("--retention-days <n>", "Archive files older than N days", "30")
+        .option("--write", "Apply archive mutations (default: dry-run)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const retentionDays = parseInt(String(options.retentionDays ?? "30"), 10);
+          const result = await runArchiveObservationsCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            retentionDays: Number.isFinite(retentionDays) ? retentionDays : 30,
+            write: options.write === true,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Retention days: ${result.retentionDays}`);
+          console.log(`Scanned files: ${result.scannedFiles}`);
+          console.log(`Archived files: ${result.archivedFiles}`);
+          console.log(`Archived bytes: ${result.archivedBytes}`);
+          if (result.archivedRelativePaths.length > 0) {
+            console.log("Archived paths:");
+            for (const relPath of result.archivedRelativePaths.slice(0, 20)) {
+              console.log(`  - ${relPath}`);
+            }
+            if (result.archivedRelativePaths.length > 20) {
+              console.log(`  ... and ${result.archivedRelativePaths.length - 20} more`);
+            }
+          }
+          console.log("OK");
+        });
+
+      cmd
+        .command("rebuild-observations")
+        .description("Rebuild observation ledger from transcript history (dry-run by default)")
+        .option("--write", "Write rebuilt ledger (default: dry-run)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runRebuildObservationsCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            write: options.write === true,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Scanned transcript files: ${result.scannedFiles}`);
+          console.log(`Parsed turns: ${result.parsedTurns}`);
+          console.log(`Malformed lines: ${result.malformedLines}`);
+          console.log(`Rebuilt rows: ${result.rebuiltRows}`);
+          console.log(`Output path: ${result.outputPath}`);
+          if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("migrate-observations")
+        .description("Migrate legacy observation ledgers into rebuilt format (dry-run by default)")
+        .option("--write", "Write migrated ledger (default: dry-run)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runMigrateObservationsCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            write: options.write === true,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Scanned legacy files: ${result.scannedFiles}`);
+          console.log(`Parsed rows: ${result.parsedRows}`);
+          console.log(`Malformed lines: ${result.malformedLines}`);
+          console.log(`Migrated rows: ${result.migratedRows}`);
+          if (result.sourceRelativePaths.length > 0) {
+            console.log("Source files:");
+            for (const relPath of result.sourceRelativePaths) {
+              console.log(`  - ${relPath}`);
+            }
+          }
+          console.log(`Output path: ${result.outputPath}`);
+          if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
           console.log("OK");
         });
 
