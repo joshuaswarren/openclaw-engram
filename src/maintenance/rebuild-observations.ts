@@ -1,0 +1,174 @@
+import path from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+
+interface TranscriptLikeEntry {
+  timestamp?: string;
+  role?: string;
+  sessionKey?: string;
+}
+
+interface ObservationAggregate {
+  sessionKey: string;
+  hour: string;
+  turnCount: number;
+  userTurns: number;
+  assistantTurns: number;
+}
+
+export interface RebuildObservationsOptions {
+  memoryDir: string;
+  dryRun?: boolean;
+  now?: Date;
+}
+
+export interface RebuildObservationsResult {
+  dryRun: boolean;
+  scannedFiles: number;
+  parsedTurns: number;
+  malformedLines: number;
+  rebuiltRows: number;
+  outputPath: string;
+  backupPath?: string;
+}
+
+function hourBucketIso(timestamp: string): string | null {
+  const ms = Date.parse(timestamp);
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  d.setUTCMinutes(0, 0, 0);
+  return d.toISOString();
+}
+
+function toSortableKey(sessionKey: string, hour: string): string {
+  return `${sessionKey}\u0000${hour}`;
+}
+
+async function listTranscriptFiles(root: string): Promise<string[]> {
+  const out: string[] = [];
+  let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  try {
+    entries = (await readdir(root, { withFileTypes: true })) as Array<{
+      name: string;
+      isDirectory(): boolean;
+      isFile(): boolean;
+    }>;
+  } catch {
+    return out;
+  }
+
+  for (const entry of entries) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...(await listTranscriptFiles(full)));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      out.push(full);
+    }
+  }
+
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
+function buildLedgerRows(linesByFile: string[]): {
+  aggregates: ObservationAggregate[];
+  parsedTurns: number;
+  malformedLines: number;
+} {
+  const byKey = new Map<string, ObservationAggregate>();
+  let parsedTurns = 0;
+  let malformedLines = 0;
+
+  for (const rawFile of linesByFile) {
+    for (const line of rawFile.split("\n")) {
+      if (!line.trim()) continue;
+      let parsed: TranscriptLikeEntry;
+      try {
+        parsed = JSON.parse(line) as TranscriptLikeEntry;
+      } catch {
+        malformedLines += 1;
+        continue;
+      }
+
+      if (typeof parsed.sessionKey !== "string" || parsed.sessionKey.length === 0) continue;
+      if (parsed.role !== "user" && parsed.role !== "assistant") continue;
+      if (typeof parsed.timestamp !== "string") continue;
+      const hour = hourBucketIso(parsed.timestamp);
+      if (!hour) continue;
+
+      const key = toSortableKey(parsed.sessionKey, hour);
+      const existing = byKey.get(key) ?? {
+        sessionKey: parsed.sessionKey,
+        hour,
+        turnCount: 0,
+        userTurns: 0,
+        assistantTurns: 0,
+      };
+      existing.turnCount += 1;
+      if (parsed.role === "user") existing.userTurns += 1;
+      if (parsed.role === "assistant") existing.assistantTurns += 1;
+      byKey.set(key, existing);
+      parsedTurns += 1;
+    }
+  }
+
+  const aggregates = Array.from(byKey.values()).sort((a, b) => {
+    if (a.sessionKey !== b.sessionKey) return a.sessionKey.localeCompare(b.sessionKey);
+    return a.hour.localeCompare(b.hour);
+  });
+
+  return { aggregates, parsedTurns, malformedLines };
+}
+
+export async function rebuildObservations(
+  options: RebuildObservationsOptions,
+): Promise<RebuildObservationsResult> {
+  const dryRun = options.dryRun !== false;
+  const now = options.now ?? new Date();
+  const transcriptsRoot = path.join(options.memoryDir, "transcripts");
+  const outputPath = path.join(
+    options.memoryDir,
+    "state",
+    "observation-ledger",
+    "rebuilt-observations.jsonl",
+  );
+
+  const transcriptFiles = await listTranscriptFiles(transcriptsRoot);
+  const contents = await Promise.all(transcriptFiles.map((file) => readFile(file, "utf-8")));
+  const { aggregates, parsedTurns, malformedLines } = buildLedgerRows(contents);
+
+  let backupPath: string | undefined;
+  if (!dryRun) {
+    const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const archiveRoot = path.join(options.memoryDir, "archive", "observations", stamp);
+    backupPath = path.join(archiveRoot, "state", "observation-ledger", "rebuilt-observations.jsonl");
+    try {
+      const existing = await readFile(outputPath, "utf-8");
+      await mkdir(path.dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, existing, "utf-8");
+    } catch {
+      backupPath = undefined;
+    }
+
+    const rebuiltAt = now.toISOString();
+    const lines = aggregates.map((row) =>
+      JSON.stringify({
+        ...row,
+        rebuiltAt,
+      }),
+    );
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf-8");
+  }
+
+  return {
+    dryRun,
+    scannedFiles: transcriptFiles.length,
+    parsedTurns,
+    malformedLines,
+    rebuiltRows: aggregates.length,
+    outputPath,
+    backupPath,
+  };
+}
