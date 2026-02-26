@@ -171,3 +171,22 @@ test("routing store serializes concurrent upserts without lost updates", async (
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("routing store serializes concurrent upserts across separate instances", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-store-cross-instance-"));
+  try {
+    const storeA = new RoutingRulesStore(memoryDir);
+    const storeB = new RoutingRulesStore(memoryDir);
+    await Promise.all([
+      storeA.upsert(sampleRule({ id: "ra", pattern: "alpha" })),
+      storeB.upsert(sampleRule({ id: "rb", pattern: "beta" })),
+    ]);
+
+    const rules = await storeA.read();
+    const ids = new Set(rules.map((r) => r.id));
+    assert.equal(ids.has("ra"), true);
+    assert.equal(ids.has("rb"), true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

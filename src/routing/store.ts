@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "../logger.js";
@@ -71,10 +71,12 @@ function normalizeRule(rule: RouteRule, options?: RoutingEngineOptions): RouteRu
 
 export class RoutingRulesStore {
   private readonly statePath: string;
+  private readonly lockPath: string;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(memoryDir: string, stateFile = "state/routing-rules.json") {
     this.statePath = resolveStatePath(memoryDir, stateFile);
+    this.lockPath = `${this.statePath}.lock`;
   }
 
   async read(options?: RoutingEngineOptions): Promise<RouteRule[]> {
@@ -167,10 +169,49 @@ export class RoutingRulesStore {
       release = resolve;
     });
     await previous;
+    const unlock = await this.acquireFileLock();
     try {
       return await op();
     } finally {
+      await unlock();
       release();
     }
+  }
+
+  private async acquireFileLock(): Promise<() => Promise<void>> {
+    const start = Date.now();
+    const staleMs = 30_000;
+    const timeoutMs = 5_000;
+    await mkdir(path.dirname(this.lockPath), { recursive: true });
+
+    while (Date.now() - start < timeoutMs) {
+      try {
+        await mkdir(this.lockPath);
+        return async () => {
+          try {
+            await rm(this.lockPath, { recursive: true, force: true });
+          } catch {
+            // Fail-open: lock cleanup should not fail writes.
+          }
+        };
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") {
+          break;
+        }
+        try {
+          const lockStat = await stat(this.lockPath);
+          if (Date.now() - lockStat.mtimeMs > staleMs) {
+            await rm(this.lockPath, { recursive: true, force: true });
+            continue;
+          }
+        } catch {
+          // Lock may have been released between stat/rm attempts.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+
+    return async () => {};
   }
 }
