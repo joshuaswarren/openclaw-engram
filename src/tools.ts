@@ -48,6 +48,28 @@ function asNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
+const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
+const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
+
+function asTaskStatus(value: unknown): "todo" | "in_progress" | "blocked" | "done" | "cancelled" | undefined {
+  const normalized = asNonEmptyString(value);
+  if (!normalized || !WORK_TASK_STATUSES.has(normalized)) return undefined;
+  return normalized as "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+}
+
+function asTaskPriority(value: unknown): "low" | "medium" | "high" | undefined {
+  const normalized = asNonEmptyString(value);
+  if (!normalized || !WORK_TASK_PRIORITIES.has(normalized)) return undefined;
+  return normalized as "low" | "medium" | "high";
+}
+
+function asProjectStatus(value: unknown): "active" | "on_hold" | "completed" | "archived" | undefined {
+  const normalized = asNonEmptyString(value);
+  if (!normalized || !WORK_PROJECT_STATUSES.has(normalized)) return undefined;
+  return normalized as "active" | "on_hold" | "completed" | "archived";
+}
+
 const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
 const IDENTITY_ANCHOR_SECTION_ORDER = [
   "Identity Traits",
@@ -1506,8 +1528,8 @@ Best for:
             const created = await storage.createTask({
               title: p.title,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: asNonEmptyString(p.status) as any,
-              priority: asNonEmptyString(p.priority) as any,
+              status: asTaskStatus(p.status),
+              priority: asTaskPriority(p.priority),
               owner: asNonEmptyString(p.owner),
               assignee: asNonEmptyString(p.assignee),
               projectId: asNonEmptyString(p.projectId),
@@ -1527,7 +1549,7 @@ Best for:
 
           if (action === "list") {
             const tasks = await storage.listTasks({
-              status: asNonEmptyString(p.status) as any,
+              status: asTaskStatus(p.status),
               owner: asNonEmptyString(p.owner),
               assignee: asNonEmptyString(p.assignee),
               projectId: asNonEmptyString(p.projectId),
@@ -1542,8 +1564,8 @@ Best for:
             const updated = await storage.updateTask(p.id, {
               title: typeof p.title === "string" ? p.title : undefined,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: asNonEmptyString(p.status) as any,
-              priority: asNonEmptyString(p.priority) as any,
+              status: asTaskStatus(p.status),
+              priority: asTaskPriority(p.priority),
               owner: asNonEmptyString(p.owner),
               assignee: asNonEmptyString(p.assignee),
               projectId: asNonEmptyString(p.projectId),
@@ -1562,7 +1584,11 @@ Best for:
             ) {
               return workLayerTextResult("work_task.transition requires `id` and `status`.");
             }
-            const task = await storage.transitionTask(p.id, p.status as any);
+            const status = asTaskStatus(p.status);
+            if (!status) {
+              return workLayerTextResult("work_task.transition received invalid `status`.");
+            }
+            const task = await storage.transitionTask(p.id, status);
             return toolJsonResult({ action, task });
           }
 
@@ -1616,7 +1642,7 @@ Best for:
             const project = await storage.createProject({
               name: p.name,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: asNonEmptyString(p.status) as any,
+              status: asProjectStatus(p.status),
               owner: asNonEmptyString(p.owner),
               tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
             });
@@ -1643,7 +1669,7 @@ Best for:
             const project = await storage.updateProject(p.id, {
               name: typeof p.name === "string" ? p.name : undefined,
               description: typeof p.description === "string" ? p.description : undefined,
-              status: asNonEmptyString(p.status) as any,
+              status: asProjectStatus(p.status),
               owner: asNonEmptyString(p.owner),
               tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
             });
