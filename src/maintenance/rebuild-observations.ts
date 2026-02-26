@@ -175,12 +175,6 @@ export async function rebuildObservations(
         throw err;
       }
     }
-    if (backupPath !== undefined) {
-      // Backup exists; proceed to overwrite output file.
-    } else {
-      backupPath = undefined;
-    }
-
     const rebuiltAt = now.toISOString();
     const lines = aggregates.map((row) =>
       JSON.stringify({
