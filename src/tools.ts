@@ -1497,8 +1497,8 @@ Best for:
         const p = params as Record<string, unknown>;
         const action = String(p.action ?? "");
         const storage = new WorkStorage(orchestrator.config.memoryDir);
-        await storage.ensureDirectories();
         try {
+          await storage.ensureDirectories();
           if (action === "create") {
             if (typeof p.title !== "string" || p.title.trim().length === 0) {
               return workLayerTextResult("work_task.create requires non-empty `title`.");
@@ -1607,8 +1607,8 @@ Best for:
         const p = params as Record<string, unknown>;
         const action = String(p.action ?? "");
         const storage = new WorkStorage(orchestrator.config.memoryDir);
-        await storage.ensureDirectories();
         try {
+          await storage.ensureDirectories();
           if (action === "create") {
             if (typeof p.name !== "string" || p.name.trim().length === 0) {
               return workLayerTextResult("work_project.create requires non-empty `name`.");
@@ -1706,6 +1706,7 @@ Best for:
         const projectId = asNonEmptyString(p.projectId);
         const linkToMemory = p.linkToMemory === true;
         try {
+          await new WorkStorage(orchestrator.config.memoryDir).ensureDirectories();
           if (action === "export_markdown") {
             const markdown = await exportWorkBoardMarkdown({ memoryDir: orchestrator.config.memoryDir, projectId });
             return toolResult(wrapWorkLayerContext(markdown, { linkToMemory }));
