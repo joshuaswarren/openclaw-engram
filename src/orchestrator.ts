@@ -2270,6 +2270,7 @@ export class Orchestrator {
       await this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
         skipDedupeCheck: true,
         clearBufferAfterExtraction: false,
+        skipMinimumThresholds: true,
       });
     }
   }
@@ -2319,7 +2320,11 @@ export class Orchestrator {
   private async queueBufferedExtraction(
     turnsToExtract: BufferTurn[],
     reason: "trigger_mode" | "heartbeat_observer",
-    options: { skipDedupeCheck?: boolean; clearBufferAfterExtraction?: boolean } = {},
+    options: {
+      skipDedupeCheck?: boolean;
+      clearBufferAfterExtraction?: boolean;
+      skipMinimumThresholds?: boolean;
+    } = {},
   ): Promise<void> {
     if (!options.skipDedupeCheck && !this.shouldQueueExtraction(turnsToExtract)) {
       log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
@@ -2328,7 +2333,8 @@ export class Orchestrator {
 
     this.extractionQueue.push(async () => {
       await this.runExtraction(turnsToExtract, {
-        clearBufferAfterExtraction: options.clearBufferAfterExtraction !== false,
+        clearBufferAfterExtraction: options.clearBufferAfterExtraction ?? true,
+        skipMinimumThresholds: options.skipMinimumThresholds ?? false,
       });
     });
 
@@ -2402,10 +2408,11 @@ export class Orchestrator {
 
   private async runExtraction(
     turns: BufferTurn[],
-    options: { clearBufferAfterExtraction?: boolean } = {},
+    options: { clearBufferAfterExtraction?: boolean; skipMinimumThresholds?: boolean } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
-    const clearBufferAfterExtraction = options.clearBufferAfterExtraction !== false;
+    const clearBufferAfterExtraction = options.clearBufferAfterExtraction ?? true;
+    const skipMinimumThresholds = options.skipMinimumThresholds ?? false;
     const clearBuffer = async () => {
       if (clearBufferAfterExtraction) {
         await this.buffer.clearAfterExtraction();
@@ -2431,7 +2438,9 @@ export class Orchestrator {
     const userTurns = normalizedTurns.filter((t) => t.role === "user");
     const totalChars = normalizedTurns.reduce((sum, t) => sum + t.content.length, 0);
     if (
+      !skipMinimumThresholds &&
       totalChars < this.config.extractionMinChars ||
+      !skipMinimumThresholds &&
       userTurns.length < this.config.extractionMinUserTurns
     ) {
       log.debug(
