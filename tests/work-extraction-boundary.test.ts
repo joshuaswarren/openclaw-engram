@@ -44,6 +44,17 @@ test("applyWorkExtractionBoundary is delimiter-safe for unlinked payload text", 
   assert.doesNotMatch(bounded, /title includes/);
 });
 
+test("applyWorkExtractionBoundary drops unterminated work-layer blocks", () => {
+  const truncatedConversation = [
+    "[assistant] prefix",
+    "[WORK_LAYER_CONTEXT link_to_memory=false]",
+    "this should never leak",
+  ].join("\n");
+
+  const bounded = applyWorkExtractionBoundary(truncatedConversation);
+  assert.equal(bounded, "[assistant] prefix");
+});
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",
