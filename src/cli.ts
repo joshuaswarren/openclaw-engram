@@ -981,8 +981,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
           if (typeof options.assignee === "string") patch.assignee = normalizeNullableCliValue(options.assignee) ?? null;
           if (typeof options.projectId === "string") patch.projectId = normalizeNullableCliValue(options.projectId) ?? null;
-          if (Object.prototype.hasOwnProperty.call(options, "tags")) {
-            patch.tags = parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true);
+          if (typeof options.tags === "string") {
+            patch.tags = parseTagsCsv(options.tags, true);
           }
           if (typeof options.dueAt === "string") patch.dueAt = normalizeNullableCliValue(options.dueAt) ?? null;
 
@@ -997,8 +997,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             owner: typeof options.owner === "string" ? options.owner : undefined,
             assignee: typeof options.assignee === "string" ? options.assignee : undefined,
             projectId: typeof options.projectId === "string" ? options.projectId : undefined,
-            tags: Object.prototype.hasOwnProperty.call(options, "tags")
-              ? parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true)
+            tags: typeof options.tags === "string"
+              ? parseTagsCsv(options.tags, true)
               : undefined,
             dueAt: typeof options.dueAt === "string" ? options.dueAt : undefined,
             patch,
@@ -1034,8 +1034,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (typeof options.description === "string") patch.description = options.description.trim();
           if (statusOptRaw !== undefined) patch.status = statusOptRaw;
           if (typeof options.owner === "string") patch.owner = normalizeNullableCliValue(options.owner) ?? null;
-          if (Object.prototype.hasOwnProperty.call(options, "tags")) {
-            patch.tags = parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true);
+          if (typeof options.tags === "string") {
+            patch.tags = parseTagsCsv(options.tags, true);
           }
 
           const result = await runWorkProjectCliCommand({
@@ -1046,8 +1046,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             description: typeof options.description === "string" ? options.description : undefined,
             status: statusOptRaw,
             owner: typeof options.owner === "string" ? options.owner : undefined,
-            tags: Object.prototype.hasOwnProperty.call(options, "tags")
-              ? parseTagsCsv(typeof options.tags === "string" ? options.tags : "", true)
+            tags: typeof options.tags === "string"
+              ? parseTagsCsv(options.tags, true)
               : undefined,
             patch,
           });
