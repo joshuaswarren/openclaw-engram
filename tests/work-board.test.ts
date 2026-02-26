@@ -457,3 +457,81 @@ test("work board import rejects duplicate snapshot task IDs before mutation", as
   const created = await storage.getTask("task-dup");
   assert.equal(created, null);
 });
+
+test("work board import rejects invalid snapshot task IDs before mutation", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-invalid-id-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await storage.createTask({
+    id: "task-safe",
+    title: "Safe",
+    status: "todo",
+  });
+
+  await assert.rejects(() =>
+    importWorkBoardSnapshot({
+      memoryDir,
+      snapshot: {
+        version: 1,
+        generatedAt: "2026-02-26T00:00:00.000Z",
+        projectId: null,
+        projectName: null,
+        items: [{
+          id: "bad/id" as unknown as string,
+          title: "Bad id",
+          description: "",
+          status: "todo",
+          priority: "medium",
+          owner: null,
+          assignee: null,
+          projectId: null,
+          tags: [],
+          dueAt: null,
+        }],
+      },
+    }),
+  );
+
+  const existing = await storage.getTask("task-safe");
+  assert.ok(existing);
+  assert.equal(existing.title, "Safe");
+});
+
+test("work board import preserves nullable fields when omitted", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-work-board-nullable-omit-"));
+  const storage = new WorkStorage(memoryDir);
+
+  await storage.createTask({
+    id: "task-nullable",
+    title: "Nullable",
+    status: "todo",
+    owner: "owner-1",
+    assignee: "assignee-1",
+    dueAt: "2026-03-01T00:00:00.000Z",
+  });
+
+  await importWorkBoardSnapshot({
+    memoryDir,
+    snapshot: {
+      version: 1,
+      generatedAt: "2026-02-26T00:00:00.000Z",
+      projectId: null,
+      projectName: null,
+      items: [{
+        id: "task-nullable",
+        title: "Nullable updated",
+        description: "",
+        status: "in_progress",
+        priority: "medium",
+        projectId: null,
+        tags: [],
+      } as unknown as any],
+    },
+  });
+
+  const updated = await storage.getTask("task-nullable");
+  assert.ok(updated);
+  assert.equal(updated.owner, "owner-1");
+  assert.equal(updated.assignee, "assignee-1");
+  assert.equal(updated.dueAt, "2026-03-01T00:00:00.000Z");
+});

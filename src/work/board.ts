@@ -23,6 +23,8 @@ const PRIORITY_WEIGHT: Record<WorkTaskPriority, number> = {
   low: 2,
 };
 
+const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+
 export interface WorkBoardItem {
   id: string;
   title: string;
@@ -96,6 +98,29 @@ function normalizeImportedTags(rawValue: unknown, taskId: string): string[] {
     throw new Error(`invalid task tags in snapshot for ${taskId}`);
   }
   return [...rawValue];
+}
+
+function assertValidImportedTaskId(rawValue: unknown): string {
+  if (typeof rawValue !== "string") {
+    throw new Error("invalid task id in snapshot");
+  }
+  const trimmed = rawValue.trim();
+  if (!WORK_ID_PATTERN.test(trimmed)) {
+    throw new Error(`invalid task id in snapshot: ${trimmed}`);
+  }
+  return trimmed;
+}
+
+function normalizeImportedNullableField(
+  rawValue: unknown,
+  taskId: string,
+  fieldName: "owner" | "assignee" | "dueAt",
+  fallbackForUndefined: string | null,
+): string | null {
+  if (rawValue === undefined) return fallbackForUndefined;
+  if (rawValue === null) return null;
+  if (typeof rawValue === "string") return rawValue;
+  throw new Error(`invalid task ${fieldName} in snapshot for ${taskId}`);
 }
 
 function asBoardItem(task: WorkTask): WorkBoardItem {
@@ -203,19 +228,24 @@ export async function importWorkBoardSnapshot(options: {
   type PreparedImportRow = {
     item: WorkBoardItem;
     existing: WorkTask | null;
+    id: string;
     projectId: string | null;
     tags: string[];
+    owner: string | null;
+    assignee: string | null;
+    dueAt: string | null;
   };
 
   const preparedRows: PreparedImportRow[] = [];
   const seenItemIds = new Set<string>();
   for (const item of options.snapshot.items) {
-    if (seenItemIds.has(item.id)) {
-      throw new Error(`duplicate task id in snapshot: ${item.id}`);
+    const id = assertValidImportedTaskId((item as unknown as { id?: unknown }).id);
+    if (seenItemIds.has(id)) {
+      throw new Error(`duplicate task id in snapshot: ${id}`);
     }
-    seenItemIds.add(item.id);
+    seenItemIds.add(id);
     assertValidImportEnums(item);
-    const existing = await storage.getTask(item.id);
+    const existing = await storage.getTask(id);
     const fallbackProjectId = existing ? existing.projectId : snapshotProjectId;
     const projectId = forcedProjectId === undefined
       ? normalizeImportedProjectId(
@@ -233,7 +263,26 @@ export async function importWorkBoardSnapshot(options: {
       ? normalizeImportedTags((item as unknown as { tags?: unknown }).tags, item.id)
       : (existing ? [...existing.tags] : []);
 
-    preparedRows.push({ item, existing, projectId, tags });
+    const owner = normalizeImportedNullableField(
+      (item as unknown as { owner?: unknown }).owner,
+      id,
+      "owner",
+      existing?.owner ?? null,
+    );
+    const assignee = normalizeImportedNullableField(
+      (item as unknown as { assignee?: unknown }).assignee,
+      id,
+      "assignee",
+      existing?.assignee ?? null,
+    );
+    const dueAt = normalizeImportedNullableField(
+      (item as unknown as { dueAt?: unknown }).dueAt,
+      id,
+      "dueAt",
+      existing?.dueAt ?? null,
+    );
+
+    preparedRows.push({ item, existing, id, projectId, tags, owner, assignee, dueAt });
   }
 
   const projectIdsToValidate = new Set(
@@ -249,35 +298,35 @@ export async function importWorkBoardSnapshot(options: {
   let created = 0;
   let updated = 0;
   for (const row of preparedRows) {
-    const { item, existing, projectId, tags } = row;
+    const { item, existing, id, projectId, tags, owner, assignee, dueAt } = row;
 
     if (existing) {
-      await storage.updateTask(item.id, {
+      await storage.updateTask(id, {
         title: item.title,
         description: item.description,
         status: item.status,
         priority: item.priority,
-        owner: item.owner,
-        assignee: item.assignee,
+        owner,
+        assignee,
         projectId,
         tags,
-        dueAt: item.dueAt,
+        dueAt,
       }, options.now, { skipStatusTransitionValidation: true });
       updated += 1;
       continue;
     }
 
     await storage.createTask({
-      id: item.id,
+      id,
       title: item.title,
       description: item.description,
       status: item.status,
       priority: item.priority,
-      owner: item.owner,
-      assignee: item.assignee,
+      owner,
+      assignee,
       projectId,
       tags,
-      dueAt: item.dueAt,
+      dueAt,
     }, options.now);
     created += 1;
   }
