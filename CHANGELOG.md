@@ -33,6 +33,10 @@ All notable changes to this project will be documented in this file.
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
   - Added `tests/routing-engine.test.ts` coverage for matching behavior, ordering, and target validation guardrails.
+- v8.7 custom memory routing rules Task 2 (config + persisted rules):
+  - Added `src/routing/store.ts` with fail-open persisted routing rule reads, normalized writes, and upsert/remove helpers.
+  - Added config surface for routing rules: `routingRulesEnabled` and `routingRulesStateFile`.
+  - Added `tests/routing-store.test.ts` and `tests/config-routing-rules.test.ts` coverage for store behavior and config defaults/overrides.
 - v8.7 work management Task 3 (board generation + import/export helpers):
   - Added `src/work/board.ts` with board snapshot export, Kanban markdown rendering, and snapshot import helpers.
   - Added `tests/work-board.test.ts` coverage for project-scoped board export and import create/update behavior.

@@ -547,6 +547,11 @@ export function parseConfig(raw: unknown): PluginConfig {
         : cfg.autoPromoteMinConfidenceTier === "implied"
           ? "implied"
           : "explicit",
+    routingRulesEnabled: cfg.routingRulesEnabled === true,
+    routingRulesStateFile:
+      typeof cfg.routingRulesStateFile === "string" && cfg.routingRulesStateFile.trim().length > 0
+        ? cfg.routingRulesStateFile.trim()
+        : "state/routing-rules.json",
 
     // v4.0 shared-context (default off)
     sharedContextEnabled: cfg.sharedContextEnabled === true,

@@ -242,6 +242,8 @@ export interface PluginConfig {
   autoPromoteToSharedEnabled: boolean;
   autoPromoteToSharedCategories: Array<"correction" | "decision" | "preference">;
   autoPromoteMinConfidenceTier: ConfidenceTier;
+  routingRulesEnabled: boolean;
+  routingRulesStateFile: string;
 
   // v4.0 Shared-context (cross-agent shared intelligence)
   sharedContextEnabled: boolean;

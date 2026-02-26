@@ -1031,6 +1031,16 @@
         "default": "explicit",
         "description": "Minimum confidence tier for auto-promotion."
       },
+      "routingRulesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable custom memory routing rules (v8.7). Default off."
+      },
+      "routingRulesStateFile": {
+        "type": "string",
+        "default": "state/routing-rules.json",
+        "description": "Relative path under memoryDir for persisted routing rules."
+      },
       "sharedContextEnabled": {
         "type": "boolean",
         "default": false,
