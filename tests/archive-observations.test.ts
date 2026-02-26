@@ -97,3 +97,20 @@ test("archiveObservations treats retentionDays=0 as disabled", async () => {
   const raw = await readFile(path.join(memoryDir, oldFile), "utf-8");
   assert.match(raw, /role/);
 });
+
+test("archiveObservations keeps cutoff-day files for non-midnight runs", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-archive-observations-cutoff-day-"));
+  const cutoffDayFile = "transcripts/main/default/2026-02-12.jsonl";
+  const olderFile = "transcripts/main/default/2026-02-11.jsonl";
+  await createFile(memoryDir, cutoffDayFile, "{\"role\":\"user\"}\n");
+  await createFile(memoryDir, olderFile, "{\"role\":\"user\"}\n");
+
+  const result = await archiveObservations({
+    memoryDir,
+    now: new Date("2026-02-26T18:00:00.000Z"),
+    retentionDays: 14,
+    dryRun: true,
+  });
+
+  assert.deepEqual(result.archivedRelativePaths, [olderFile]);
+});

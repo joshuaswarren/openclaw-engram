@@ -39,6 +39,10 @@ function extractDateFromFilename(name: string): Date | null {
   return parsed;
 }
 
+function startOfUtcDay(value: Date): number {
+  return Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+}
+
 async function listFilesRecursive(root: string, relPrefix = ""): Promise<string[]> {
   const out: string[] = [];
   let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
@@ -97,6 +101,9 @@ export async function archiveObservations(
   const retentionDays = normalizeRetentionDays(options.retentionDays);
   const dryRun = options.dryRun !== false;
   const now = options.now ?? new Date();
+  const cutoffDayStartUtc = startOfUtcDay(
+    new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000),
+  );
   const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   const archiveRoot = path.join(options.memoryDir, "archive", "observations", stamp);
   const candidates =
@@ -104,7 +111,7 @@ export async function archiveObservations(
       ? []
       : await collectArchiveCandidates(
         options.memoryDir,
-        now.getTime() - retentionDays * 24 * 60 * 60 * 1000,
+        cutoffDayStartUtc,
       );
 
   let archivedFiles = 0;
