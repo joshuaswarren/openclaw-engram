@@ -32,7 +32,8 @@ export interface RebuildObservationsResult {
 }
 
 function hourBucketIso(timestamp: string): string | null {
-  const ms = Date.parse(timestamp);
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/u.test(timestamp) ? timestamp : `${timestamp}Z`;
+  const ms = Date.parse(normalized);
   if (!Number.isFinite(ms)) return null;
   const d = new Date(ms);
   d.setUTCMinutes(0, 0, 0);
@@ -58,8 +59,10 @@ async function listTranscriptFiles(root: string): Promise<string[]> {
       isFile(): boolean;
       isSymbolicLink(): boolean;
     }>;
-  } catch {
-    return out;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code && code === "ENOENT") return out;
+    throw err;
   }
 
   for (const entry of entries) {

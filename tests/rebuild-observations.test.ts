@@ -181,3 +181,38 @@ test("rebuildObservations skips transcript symlink loops", async () => {
   assert.equal(result.scannedFiles, 1);
   assert.equal(result.parsedTurns, 1);
 });
+
+test("rebuildObservations treats timestamps without timezone suffix as UTC", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-rebuild-observations-tzless-"));
+  await writeText(
+    memoryDir,
+    "transcripts/main/default/2026-02-25.jsonl",
+    JSON.stringify({
+      timestamp: "2026-02-25T10:01:00",
+      role: "user",
+      content: "ok",
+      sessionKey: "agent:main:default",
+      turnId: "t1",
+    }) + "\n",
+  );
+
+  const result = await rebuildObservations({
+    memoryDir,
+    dryRun: false,
+    now: new Date("2026-02-26T12:00:00.000Z"),
+  });
+  const rebuiltRaw = await readFile(result.outputPath, "utf-8");
+  const rows = rebuiltRaw
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { hour: string });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.hour, "2026-02-25T10:00:00.000Z");
+});
+
+test("rebuildObservations throws when transcripts root is unreadable/non-directory", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-rebuild-observations-enotdir-"));
+  await writeText(memoryDir, "transcripts", "not-a-directory");
+
+  await assert.rejects(() => rebuildObservations({ memoryDir }));
+});
