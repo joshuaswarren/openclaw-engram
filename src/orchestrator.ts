@@ -3177,10 +3177,16 @@ export class Orchestrator {
     );
 
     // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open
-    for (const entry of persistedIdsByStorage.values()) {
-      this.updateTemporalTagIndexes(entry.storage, entry.ids).catch((err) =>
+    if (persistedIdsByStorage.size === 0) {
+      this.updateTemporalTagIndexes(storage, []).catch((err) =>
         log.debug(`temporal-index update error (non-fatal): ${err}`),
       );
+    } else {
+      for (const entry of persistedIdsByStorage.values()) {
+        this.updateTemporalTagIndexes(entry.storage, entry.ids).catch((err) =>
+          log.debug(`temporal-index update error (non-fatal): ${err}`),
+        );
+      }
     }
 
     // Return the persisted fact IDs for threading

@@ -2,13 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { access, mkdtemp } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import { RoutingRulesStore } from "../src/routing/store.js";
 import { readEdges } from "../src/graph.js";
 import { queryByTagsAsync } from "../src/temporal-index.js";
 import type { ExtractionResult } from "../src/types.js";
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test("persistExtraction applies routing rule category+namespace targets", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-orchestrator-routing-"));
@@ -90,4 +99,41 @@ test("persistExtraction applies routing rule category+namespace targets", async 
 
   const causalEdges = await readEdges(sharedStorage.dir, "causal");
   assert.ok(causalEdges.length > 0);
+});
+
+test("persistExtraction preserves index bootstrap when no memory IDs are persisted", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-orchestrator-routing-bootstrap-"));
+  const config = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    queryAwareIndexingEnabled: true,
+    qmdEnabled: false,
+    embeddingFallbackEnabled: false,
+  });
+
+  const orchestrator = new Orchestrator(config) as any;
+  const storage = await orchestrator.getStorage("default");
+  await storage.ensureDirectories();
+
+  const result: ExtractionResult = {
+    facts: [],
+    entities: [],
+    relationships: [],
+    questions: [],
+    profileUpdates: ["user prefers terse summaries"],
+    observations: [],
+  };
+
+  const persisted = await orchestrator.persistExtraction(result, storage, null);
+  assert.equal(persisted.length, 0);
+
+  const timeIndexPath = path.join(memoryDir, "state", "index_time.json");
+  const tagIndexPath = path.join(memoryDir, "state", "index_tags.json");
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if ((await exists(timeIndexPath)) && (await exists(tagIndexPath))) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(await exists(timeIndexPath), true);
+  assert.equal(await exists(tagIndexPath), true);
 });
