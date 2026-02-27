@@ -59,6 +59,38 @@ Routing behavior notes:
 - Rules are applied at write-time for extracted facts before persistence.
 - Rule targets may override `category`, `namespace`, or both; invalid targets fail-open to default writes.
 
+## Network Sync and WebDAV (v8.8)
+
+Network features are opt-in and not started by default.
+
+```bash
+# Check Tailscale availability + daemon state
+openclaw engram tailscale-status
+
+# Sync memory directory to a private Tailscale peer over rsync
+openclaw engram tailscale-sync \
+  --source-dir ~/.openclaw/workspace/memory/local \
+  --destination engram-peer:/srv/engram-memory \
+  --dry-run
+
+# Start local WebDAV service for explicit allowlisted directories
+openclaw engram webdav-serve \
+  --allowlist ~/.openclaw/workspace/memory/local \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --username engram \
+  --password '<strong-password>'
+
+# Stop WebDAV service in the running gateway process
+openclaw engram webdav-stop
+```
+
+Operational safety notes:
+- Keep WebDAV bound to `127.0.0.1` unless you have a private-network control plane in front of it.
+- Use non-empty username/password together; partial or blank auth fields are rejected.
+- WebDAV exposure is limited to the exact allowlist roots you pass via `--allowlist`.
+- `tailscale-sync` requires both `tailscale` and `rsync` availability plus a running Tailscale daemon.
+
 ## Hourly Summaries (Cron)
 
 Engram can generate hourly summaries of conversation activity.

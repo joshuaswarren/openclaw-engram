@@ -42,6 +42,9 @@ All notable changes to this project will be documented in this file.
   - Added network CLI wrappers in `src/cli.ts`: `runTailscaleStatusCliCommand`, `runTailscaleSyncCliCommand`, `runWebDavServeCliCommand`, and `runWebDavStopCliCommand`.
   - Added command surfaces: `openclaw engram tailscale-status`, `openclaw engram tailscale-sync`, `openclaw engram webdav-serve`, and `openclaw engram webdav-stop`.
   - Added `tests/cli-network-commands.test.ts` coverage for helper passthrough, WebDAV serve/stop lifecycle, and auth argument validation.
+- v8.8 network sync Task 4 (security + docs):
+  - Updated `docs/operations.md` with network sync/WebDAV command runbook and operational safety notes.
+  - Updated `SECURITY.md` with explicit v8.8 network-surface guardrails (opt-in defaults, allowlist-only exposure, loopback bind posture, and auth requirements).
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
