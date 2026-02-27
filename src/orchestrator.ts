@@ -31,6 +31,10 @@ import {
   planRecallMode,
 } from "./intent.js";
 import { buildRecallQueryPolicy } from "./recall-query-policy.js";
+import {
+  buildCompressionGuidelinesMarkdown as buildCompressionGuidelinesMarkdownV2,
+  computeCompressionGuidelineCandidate,
+} from "./compression-optimizer.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
@@ -126,71 +130,7 @@ export function buildCompressionGuidelinesMarkdown(
   events: MemoryActionEvent[],
   generatedAtIso: string = new Date().toISOString(),
 ): string {
-  const byAction = new Map<string, number>();
-  const byOutcome = new Map<string, number>();
-  for (const event of events) {
-    byAction.set(event.action, (byAction.get(event.action) ?? 0) + 1);
-    byOutcome.set(event.outcome, (byOutcome.get(event.outcome) ?? 0) + 1);
-  }
-
-  const actionLines =
-    byAction.size === 0
-      ? ["- (none)"]
-      : [...byAction.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([action, count]) => `- ${action}: ${count}`);
-  const outcomeLines =
-    byOutcome.size === 0
-      ? ["- (none)"]
-      : [...byOutcome.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([outcome, count]) => `- ${outcome}: ${count}`);
-
-  const failed = byOutcome.get("failed") ?? 0;
-  const skipped = byOutcome.get("skipped") ?? 0;
-  const applied = byOutcome.get("applied") ?? 0;
-  const topAction = [...byAction.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-
-  const suggested: string[] = [];
-  if (events.length === 0) {
-    suggested.push(
-      "- No telemetry events available yet. Keep defaults conservative and gather action data first.",
-    );
-  } else {
-    if (typeof topAction === "string") {
-      suggested.push(`- Prefer \`${topAction}\` when handling similar future compression decisions.`);
-    }
-    if (failed > 0) {
-      suggested.push(
-        "- Failure events detected. Favor smaller, reversible compression steps and keep fail-open behavior.",
-      );
-    }
-    if (skipped > applied) {
-      suggested.push(
-        "- Skipped actions outnumber applied actions. Revisit gating/thresholds before tightening policies.",
-      );
-    }
-    if (failed === 0 && skipped <= applied) {
-      suggested.push("- Current action outcomes are stable. Keep policy conservative and continue monitoring.");
-    }
-  }
-
-  return [
-    "# Compression Guidelines",
-    "",
-    `Generated: ${generatedAtIso}`,
-    `Source events analyzed: ${events.length}`,
-    "",
-    "## Action Distribution",
-    ...actionLines,
-    "",
-    "## Outcome Distribution",
-    ...outcomeLines,
-    "",
-    "## Suggested Guidelines",
-    ...suggested,
-    "",
-  ].join("\n");
+  return buildCompressionGuidelinesMarkdownV2(events, generatedAtIso);
 }
 
 export function filterRecallCandidates(
@@ -3758,9 +3698,20 @@ export class Orchestrator {
   private async runCompressionGuidelineLearningPass(): Promise<void> {
     if (!this.config.compressionGuidelineLearningEnabled) return;
     try {
+      const previousState = await this.storage.readCompressionGuidelineOptimizerState();
       const events = await this.storage.readMemoryActionEvents(500);
-      const content = buildCompressionGuidelinesMarkdown(events);
+      const content = buildCompressionGuidelinesMarkdownV2(events, new Date().toISOString(), previousState);
+      const candidate = computeCompressionGuidelineCandidate(events, {
+        previousState,
+      });
       await this.storage.writeCompressionGuidelines(content);
+      await this.storage.writeCompressionGuidelineOptimizerState({
+        version: candidate.optimizerVersion,
+        updatedAt: candidate.generatedAt,
+        sourceWindow: candidate.sourceWindow,
+        eventCounts: candidate.eventCounts,
+        guidelineVersion: candidate.guidelineVersion,
+      });
       log.info(`compression guideline learning updated (${events.length} events)`);
     } catch (err) {
       log.warn(`compression guideline learning failed (ignored): ${err}`);

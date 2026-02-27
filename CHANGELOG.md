@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.11 compression optimizer Task 2 (deterministic engine + orchestrator wiring):
+  - Added `src/compression-optimizer.ts` with deterministic telemetry aggregation, bounded rule-delta computation, and conservative sparse-sample behavior.
+  - Included downstream recall-quality marker parsing from telemetry notes to inform per-action confidence and direction.
+  - Wired orchestrator guideline-learning pass to compute/write versioned optimizer state and guideline markdown from the deterministic candidate.
+  - Added `tests/compression-optimizer.test.ts` and updated `tests/orchestrator-compression-guidelines.test.ts` for deterministic candidate/output and state-write coverage.
 - v8.11 compression optimizer Task 1 (state model + versioned storage):
   - Added typed optimizer state contracts in `src/types.ts` for version, source window, event counts, and guideline version metadata.
   - Added strict/fail-open storage APIs in `src/storage.ts`: `writeCompressionGuidelineOptimizerState` and `readCompressionGuidelineOptimizerState`.
