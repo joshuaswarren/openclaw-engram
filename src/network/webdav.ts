@@ -285,10 +285,13 @@ export class WebDavServer {
       return { ok: true, absolutePath: canonicalCandidate, displayPath: `/${segments.join("/")}` };
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        throw err;
+      if (code === "ENOENT") {
+        return { ok: true, absolutePath: candidate, displayPath: `/${segments.join("/")}` };
       }
-      return { ok: true, absolutePath: candidate, displayPath: `/${segments.join("/")}` };
+      if (code === "ENOTDIR" || code === "ELOOP") {
+        return { ok: false, code: 400, message: "invalid path" };
+      }
+      throw err;
     }
   }
 
@@ -344,7 +347,7 @@ export class WebDavServer {
       }
     }
 
-  const xml = `<?xml version="1.0" encoding="utf-8"?>
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:">
   <d:response>
     <d:href>${xmlEscape(toEncodedHref(displayPath))}</d:href>

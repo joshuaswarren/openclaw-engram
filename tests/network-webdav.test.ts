@@ -279,6 +279,27 @@ test("webdav returns 400 for malformed URL encoding", async () => {
   }
 });
 
+test("webdav returns 400 for ENOTDIR path traversal shape", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-notdir-"));
+  await writeFile(path.join(root, "leaf.txt"), "leaf", "utf-8");
+
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [root],
+  });
+  const started = await server.start();
+  const alias = path.basename(root);
+
+  try {
+    const res = await httpRequest("GET", started.port, `/${alias}/leaf.txt/child`);
+    assert.equal(res.status, 400);
+    assert.match(res.body, /invalid path/i);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("webdav create rejects duplicate root aliases", async () => {
   const baseA = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-alias-a-"));
   const baseB = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-alias-b-"));
