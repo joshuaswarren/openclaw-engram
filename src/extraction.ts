@@ -7,6 +7,7 @@ import {
   ExtractionResultSchema,
   ConsolidationResultSchema,
   IdentityConsolidationResultSchema,
+  buildProfileConsolidationResultSchema,
   ProfileConsolidationResultSchema,
   ContradictionVerificationSchema,
   SuggestedLinksSchema,
@@ -660,6 +661,7 @@ Respond with valid JSON matching this schema:
    */
   async consolidateProfile(
     fullProfileContent: string,
+    targetLines: number = 50,
   ): Promise<{ consolidatedProfile: string; removedCount: number; summary: string } | null> {
     const pTraceId = crypto.randomUUID();
     this.emit({ kind: "llm_start", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation", input: fullProfileContent.slice(0, 2000) });
@@ -668,7 +670,7 @@ Respond with valid JSON matching this schema:
     // Try local LLM first if enabled
     if (this.config.localLlmEnabled) {
       try {
-        const localResult = await this.consolidateProfileWithLocalLlm(fullProfileContent);
+        const localResult = await this.consolidateProfileWithLocalLlm(fullProfileContent, targetLines);
         if (localResult) {
           const durationMs = Date.now() - pStartTime;
           this.emit({ kind: "llm_end", traceId: pTraceId, model: this.config.localLlmModel, operation: "profile_consolidation", durationMs });
@@ -711,13 +713,13 @@ Respond with valid JSON matching this schema:
 3. REMOVES stale information that has been superseded by newer bullets
 4. REMOVES trivial or overly specific operational details that won't be useful across sessions
 5. KEEPS the most important, durable observations about the user's preferences, habits, identity, and working style
-6. Target roughly 400 lines — this is a soft target, prioritize quality over length
+6. Target roughly ${targetLines} lines — this is a soft target, prioritize quality over length
 7. Write in the same style as the existing profile — concise bullets, no fluff
 
 The output should be the COMPLETE consolidated profile as valid markdown, starting with "# Behavioral Profile".`,
         input: fullProfileContent,
         text: {
-          format: zodTextFormat(ProfileConsolidationResultSchema, "profile_consolidation_result"),
+          format: zodTextFormat(buildProfileConsolidationResultSchema(targetLines), "profile_consolidation_result"),
         },
       });
 
@@ -753,6 +755,7 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
    */
   private async consolidateProfileWithLocalLlm(
     fullProfileContent: string,
+    targetLines: number = 50,
   ): Promise<{ consolidatedProfile: string; removedCount: number; summary: string } | null> {
     // Get dynamic context sizes
     const contextSizes = this.modelRegistry.calculateContextSizes(
@@ -768,7 +771,7 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
 3. REMOVES stale information that has been superseded by newer bullets
 4. REMOVES trivial or overly specific operational details that won't be useful across sessions
 5. KEEPS the most important, durable observations about the user's preferences, habits, identity, and working style
-6. Target roughly 400 lines — this is a soft target, prioritize quality over length
+6. Target roughly ${targetLines} lines — this is a soft target, prioritize quality over length
 7. Write in the same style as the existing profile — concise bullets, no fluff
 
 Profile to consolidate:

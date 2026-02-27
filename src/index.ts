@@ -96,8 +96,9 @@ export default {
           log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
 
-          // Rough token estimate: 1 token ≈ 4 chars
-          const maxChars = cfg.maxMemoryTokens * 4;
+          // Use pipeline budget; the assembly already respects it, but this
+          // serves as a safety net in case conditional sections push past.
+          const maxChars = cfg.recallPipelineConfig.recallBudgetChars;
           const trimmed =
             context.length > maxChars
               ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"

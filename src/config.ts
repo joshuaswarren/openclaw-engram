@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { PluginConfig, PrincipalRule, ReasoningEffort, TriggerMode } from "./types.js";
+import type { PluginConfig, PrincipalRule, ReasoningEffort, RecallPipelineConfig, RecallSectionConfig, TriggerMode } from "./types.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   process.env.HOME ?? "~",
@@ -440,6 +440,9 @@ export function parseConfig(raw: unknown): PluginConfig {
     qmdDaemonRecheckIntervalMs:
       typeof cfg.qmdDaemonRecheckIntervalMs === "number" ? cfg.qmdDaemonRecheckIntervalMs : 60_000,
 
+    // Recall pipeline
+    recallPipelineConfig: buildRecallPipelineConfig(cfg),
+
     // v6.0 Fact deduplication & archival
     factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,
     factArchivalEnabled: cfg.factArchivalEnabled === true,
@@ -453,4 +456,160 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
       : ["commitment", "preference", "decision", "principle"],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Recall pipeline config parsing
+// ---------------------------------------------------------------------------
+
+function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {
+  const entry =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  return {
+    id: typeof entry.id === "string" ? entry.id : "",
+    enabled: entry.enabled !== false,
+    maxChars:
+      typeof entry.maxChars === "number"
+        ? entry.maxChars
+        : entry.maxChars === null
+          ? null
+          : undefined,
+    consolidateTriggerLines:
+      typeof entry.consolidateTriggerLines === "number"
+        ? entry.consolidateTriggerLines
+        : undefined,
+    consolidateTargetLines:
+      typeof entry.consolidateTargetLines === "number"
+        ? entry.consolidateTargetLines
+        : undefined,
+    maxEntities:
+      typeof entry.maxEntities === "number" ? entry.maxEntities : undefined,
+    maxResults:
+      typeof entry.maxResults === "number" ? entry.maxResults : undefined,
+    maxTurns:
+      typeof entry.maxTurns === "number" ? entry.maxTurns : undefined,
+    maxTokens:
+      typeof entry.maxTokens === "number" ? entry.maxTokens : undefined,
+    lookbackHours:
+      typeof entry.lookbackHours === "number" ? entry.lookbackHours : undefined,
+    maxCount:
+      typeof entry.maxCount === "number" ? entry.maxCount : undefined,
+    topK: typeof entry.topK === "number" ? entry.topK : undefined,
+    timeoutMs:
+      typeof entry.timeoutMs === "number" ? entry.timeoutMs : undefined,
+    maxPatterns:
+      typeof entry.maxPatterns === "number" ? entry.maxPatterns : undefined,
+  };
+}
+
+/**
+ * Build the default pipeline from existing scattered config keys.
+ * Produces the same section order and behavior as the pre-pipeline code.
+ */
+function buildDefaultPipeline(cfg: Record<string, unknown>): RecallSectionConfig[] {
+  return [
+    {
+      id: "shared-context",
+      enabled: cfg.sharedContextEnabled === true,
+      maxChars:
+        typeof cfg.sharedContextMaxInjectChars === "number"
+          ? cfg.sharedContextMaxInjectChars
+          : 4000,
+    },
+    {
+      id: "profile",
+      enabled: true,
+      consolidateTriggerLines: 100,
+      consolidateTargetLines: 50,
+    },
+    {
+      id: "knowledge-index",
+      enabled: cfg.knowledgeIndexEnabled !== false,
+      maxChars:
+        typeof cfg.knowledgeIndexMaxChars === "number"
+          ? cfg.knowledgeIndexMaxChars
+          : 4000,
+      maxEntities:
+        typeof cfg.knowledgeIndexMaxEntities === "number"
+          ? cfg.knowledgeIndexMaxEntities
+          : 40,
+    },
+    {
+      id: "memories",
+      enabled: true,
+      maxResults:
+        typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
+    },
+    {
+      id: "transcript",
+      enabled: cfg.transcriptEnabled !== false,
+      maxTurns:
+        typeof cfg.maxTranscriptTurns === "number"
+          ? cfg.maxTranscriptTurns
+          : 50,
+      maxTokens:
+        typeof cfg.maxTranscriptTokens === "number"
+          ? cfg.maxTranscriptTokens
+          : 1000,
+      lookbackHours:
+        typeof cfg.transcriptRecallHours === "number"
+          ? cfg.transcriptRecallHours
+          : 12,
+    },
+    {
+      id: "summaries",
+      enabled: cfg.hourlySummariesEnabled !== false,
+      maxCount:
+        typeof cfg.maxSummaryCount === "number" ? cfg.maxSummaryCount : 6,
+      lookbackHours:
+        typeof cfg.summaryRecallHours === "number"
+          ? cfg.summaryRecallHours
+          : 24,
+    },
+    {
+      id: "conversation-recall",
+      enabled: cfg.conversationIndexEnabled === true,
+      topK:
+        typeof cfg.conversationRecallTopK === "number"
+          ? cfg.conversationRecallTopK
+          : 3,
+      maxChars:
+        typeof cfg.conversationRecallMaxChars === "number"
+          ? cfg.conversationRecallMaxChars
+          : 2500,
+      timeoutMs:
+        typeof cfg.conversationRecallTimeoutMs === "number"
+          ? cfg.conversationRecallTimeoutMs
+          : 800,
+    },
+    {
+      id: "compounding",
+      enabled:
+        cfg.compoundingEnabled === true &&
+        cfg.compoundingInjectEnabled !== false,
+      maxPatterns: 40,
+    },
+    {
+      id: "questions",
+      enabled: cfg.injectQuestions === true,
+    },
+  ];
+}
+
+function buildRecallPipelineConfig(cfg: Record<string, unknown>): RecallPipelineConfig {
+  const maxMemoryTokens =
+    typeof cfg.maxMemoryTokens === "number" ? cfg.maxMemoryTokens : 2000;
+  const recallBudgetChars =
+    typeof cfg.recallBudgetChars === "number"
+      ? cfg.recallBudgetChars
+      : maxMemoryTokens * 4;
+
+  const rawPipeline = cfg.recallPipeline;
+  const pipeline: RecallSectionConfig[] = Array.isArray(rawPipeline)
+    ? rawPipeline.map(parseRecallSectionEntry).filter((e) => e.id.length > 0)
+    : buildDefaultPipeline(cfg);
+
+  return { recallBudgetChars, pipeline };
 }

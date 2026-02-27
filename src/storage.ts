@@ -757,11 +757,11 @@ export class StorageManager {
   }
 
   /** Check if profile.md exceeds the max line cap and needs LLM consolidation */
-  async profileNeedsConsolidation(): Promise<boolean> {
+  async profileNeedsConsolidation(triggerLines?: number): Promise<boolean> {
     const profile = await this.readProfile();
     if (!profile) return false;
     const lineCount = profile.split("\n").length;
-    return lineCount > StorageManager.PROFILE_MAX_LINES;
+    return lineCount > (triggerLines ?? StorageManager.PROFILE_MAX_LINES);
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {

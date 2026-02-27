@@ -41,6 +41,8 @@ import type {
   MemoryFile,
   PluginConfig,
   QmdSearchResult,
+  RecallSectionConfig,
+  SectionFetchResult,
 } from "./types.js";
 
 export class Orchestrator {
@@ -411,153 +413,107 @@ export class Orchestrator {
     });
   }
 
-  private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
-    const recallStart = Date.now();
-    const timings: Record<string, string> = {};
-    const sections: string[] = [];
+  // ---------------------------------------------------------------------------
+  // Recall Pipeline: Section Fetchers
+  // ---------------------------------------------------------------------------
 
-    const principal = resolvePrincipal(sessionKey, this.config);
-    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
-    const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
-    const profileStorage = await this.storageRouter.storageFor(selfNamespace);
-
-    // --- Phase 1: Launch ALL independent data fetches in parallel ---
-
-    // 0. Shared context (v4.0, optional)
-    const sharedContextPromise = (async (): Promise<string | null> => {
-      if (!this.sharedContext) return null;
-      const t0 = Date.now();
-      const [priorities, roundtable] = await Promise.all([
-        this.sharedContext.readPriorities(),
-        this.sharedContext.readLatestRoundtable(),
-      ]);
-      const combined =
-        [
-          "## Shared Context",
-          "",
-          priorities ? "### Priorities\n\n" + priorities.trim() : "",
-          roundtable ? "\n\n### Latest Roundtable\n\n" + roundtable.trim() : "",
-        ]
-          .filter((s) => s.trim().length > 0)
-          .join("\n");
-
-      const max = Math.max(500, this.config.sharedContextMaxInjectChars);
-      const trimmed =
-        combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
-      timings.sharedCtx = `${Date.now() - t0}ms`;
-      return trimmed.trim().length > 0 ? trimmed : null;
-    })();
-
-    // 1. Profile
-    const profilePromise = (async (): Promise<string | null> => {
-      const t0 = Date.now();
-      const profile = await profileStorage.readProfile();
-      timings.profile = `${Date.now() - t0}ms`;
-      return profile || null;
-    })();
-
-    // 1b. Knowledge Index (v7.0)
-    const knowledgeIndexPromise = (async (): Promise<{ result: string; cached: boolean } | null> => {
-      if (!this.config.knowledgeIndexEnabled) return null;
-      const t0 = Date.now();
-      try {
-        const ki = await this.storage.buildKnowledgeIndex(this.config);
-        timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
-        return ki.result ? ki : null;
-      } catch (err) {
-        timings.ki = `${Date.now() - t0}ms (err)`;
-        log.warn(`Knowledge Index build failed: ${err}`);
-        return null;
-      }
-    })();
-
-    // 2. QMD search (the slow part — runs in parallel with preamble)
-    type QmdPhaseResult = {
-      memoryResultsLists: QmdSearchResult[][];
-      globalResults: QmdSearchResult[];
-    } | null;
-
-    const qmdPromise = (async (): Promise<QmdPhaseResult> => {
-      if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
-        timings.qmd = "skip";
-        log.debug(`QMD skip: qmdEnabled=${this.config.qmdEnabled} ${this.qmd.debugStatus()}`);
-        return null;
-      }
-      const t0 = Date.now();
-
-      // Hybrid search: parallel BM25 + vector, merged by path.
-      // Much faster than `qmd query` (LLM expansion + reranking) which
-      // takes 30-70s and causes recall timeouts.
-      const memoryResults = await this.qmd.hybridSearch(
-        prompt,
-        undefined,
-        this.config.qmdMaxResults,
-      );
-
-      timings.qmd = `${Date.now() - t0}ms`;
-      return { memoryResultsLists: [memoryResults], globalResults: [] };
-    })();
-
-    // --- Wait for all parallel work ---
-    const [sharedCtx, profile, kiResult, qmdResult] = await Promise.all([
-      sharedContextPromise,
-      profilePromise,
-      knowledgeIndexPromise,
-      qmdPromise,
+  private async fetchSharedContext(
+    entry: RecallSectionConfig,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    if (!this.sharedContext) return null;
+    const t0 = Date.now();
+    const [priorities, roundtable] = await Promise.all([
+      this.sharedContext.readPriorities(),
+      this.sharedContext.readLatestRoundtable(),
     ]);
+    const parts: string[] = [];
+    if (priorities) parts.push("### Priorities\n\n" + priorities.trim());
+    if (roundtable) parts.push("### Latest Roundtable\n\n" + roundtable.trim());
+    timings.sharedCtx = `${Date.now() - t0}ms`;
+    if (parts.length === 0) return null;
+    return { header: "## Shared Context", body: parts.join("\n\n") };
+  }
 
-    // --- Phase 2: Assemble sections in correct order ---
+  private async fetchProfile(
+    entry: RecallSectionConfig,
+    profileStorage: StorageManager,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    const t0 = Date.now();
+    const profile = await profileStorage.readProfile();
+    timings.profile = `${Date.now() - t0}ms`;
+    if (!profile) return null;
+    return { header: "## User Profile", body: profile };
+  }
 
-    // 0. Shared context
-    if (sharedCtx) sections.push(sharedCtx);
-
-    // 1. Profile
-    if (profile) sections.push(`## User Profile\n\n${profile}`);
-
-    // 1b. Knowledge Index
-    if (kiResult?.result) {
-      sections.push(kiResult.result);
-      log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+  private async fetchKnowledgeIndex(
+    entry: RecallSectionConfig,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    if (!this.config.knowledgeIndexEnabled) return null;
+    const t0 = Date.now();
+    try {
+      const ki = await this.storage.buildKnowledgeIndex(this.config);
+      timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
+      if (!ki.result) return null;
+      log.debug(`Knowledge Index: ${ki.result.split("\n").length - 4} entities, ${ki.result.length} chars${ki.cached ? " (cached)" : ""}`);
+      // ki.result already includes "## Knowledge Index" header
+      return { header: "", body: ki.result };
+    } catch (err) {
+      timings.ki = `${Date.now() - t0}ms (err)`;
+      log.warn(`Knowledge Index build failed: ${err}`);
+      return null;
     }
+  }
 
-    // 2. QMD results — post-process and format
-    if (qmdResult) {
+  private async fetchMemories(
+    entry: RecallSectionConfig,
+    prompt: string,
+    sessionKey: string | undefined,
+    recallNamespaces: string[],
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    const maxResults = entry.maxResults ?? this.config.qmdMaxResults;
+
+    // QMD-based hybrid search
+    if (this.config.qmdEnabled && this.qmd.isAvailable()) {
       const t0 = Date.now();
-      const { memoryResultsLists, globalResults } = qmdResult;
+      const memoryResults = await this.qmd.hybridSearch(prompt, undefined, maxResults);
+      timings.qmd = `${Date.now() - t0}ms`;
 
-      // Merge/dedupe by path; keep the best score and first non-empty snippet.
+      const t1 = Date.now();
+
+      // Merge/dedupe by path
       const mergedByPath = new Map<string, QmdSearchResult>();
-      for (const list of memoryResultsLists) {
-        for (const r of list) {
-          const prev = mergedByPath.get(r.path);
-          if (!prev) {
-            mergedByPath.set(r.path, r);
-            continue;
-          }
-          const better = r.score > prev.score ? r : prev;
-          const snippet = prev.snippet || r.snippet;
-          mergedByPath.set(r.path, { ...better, snippet });
+      for (const r of memoryResults) {
+        const prev = mergedByPath.get(r.path);
+        if (!prev) {
+          mergedByPath.set(r.path, r);
+          continue;
         }
+        const better = r.score > prev.score ? r : prev;
+        const snippet = prev.snippet || r.snippet;
+        mergedByPath.set(r.path, { ...better, snippet });
       }
-      const memoryResultsRaw = Array.from(mergedByPath.values());
 
-      let memoryResults = memoryResultsRaw;
+      let results = Array.from(mergedByPath.values());
 
-      // Enforce namespace read policies by filtering paths.
+      // Namespace filtering
       if (this.config.namespacesEnabled) {
-        memoryResults = memoryResults.filter((r) =>
+        results = results.filter((r) =>
           recallNamespaces.includes(this.namespaceFromPath(r.path)),
         );
       }
 
-      // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces);
+      // Boosting
+      results = await this.boostSearchResults(results, recallNamespaces);
 
-      // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
+      // Optional LLM reranking
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
         const ranked = await rerankLocalOrNoop({
           query: prompt,
-          candidates: memoryResults.slice(0, this.config.rerankMaxCandidates).map((r) => ({
+          candidates: results.slice(0, this.config.rerankMaxCandidates).map((r) => ({
             id: r.path,
             snippet: r.snippet || r.path,
           })),
@@ -570,251 +526,379 @@ export class Orchestrator {
           cacheTtlMs: this.config.rerankCacheTtlMs,
         });
         if (ranked && ranked.length > 0) {
-          const byPath = new Map(memoryResults.map((r) => [r.path, r]));
+          const byPath = new Map(results.map((r) => [r.path, r]));
           const reordered: QmdSearchResult[] = [];
           for (const p of ranked) {
             const it = byPath.get(p);
             if (it) reordered.push(it);
           }
-          // Append any unranked items in original order.
           const rankedSet = new Set(ranked);
-          for (const r of memoryResults) {
+          for (const r of results) {
             if (!rankedSet.has(r.path)) reordered.push(r);
           }
-          memoryResults = reordered;
+          results = reordered;
         }
       }
       if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
         log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
       }
 
-      if (memoryResults.length > 0) {
-        // Track access for these memories
-        const memoryIds = this.extractMemoryIdsFromResults(memoryResults);
-        this.trackMemoryAccess(memoryIds);
+      timings.qmdPost = `${Date.now() - t1}ms`;
 
-        // Record last recall snapshot + impression log for feedback loops.
-        if (sessionKey) {
-          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-          this.lastRecall
-            .record({ sessionKey, query: prompt, memoryIds: unique })
-            .catch((err) => log.debug(`last recall record failed: ${err}`));
-        }
+      if (results.length === 0) return null;
 
-        sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
+      // Side effects: access tracking + last recall snapshot
+      const memoryIds = this.extractMemoryIdsFromResults(results);
+      this.trackMemoryAccess(memoryIds);
+      if (sessionKey) {
+        const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+        this.lastRecall
+          .record({ sessionKey, query: prompt, memoryIds: unique })
+          .catch((err) => log.debug(`last recall record failed: ${err}`));
       }
 
-      if (globalResults.length > 0) {
-        sections.push(
-          this.formatQmdResults("Workspace Context", globalResults),
-        );
-      }
-
-      timings.qmdPost = `${Date.now() - t0}ms`;
-
-      // If the user is pushing back ("that's not right", "why did you say that"),
-      // gently suggest an explicit workflow to inspect what was recalled and record feedback.
-      // IMPORTANT: this is suggestion-only; never auto-mark negatives.
-      if (isDisagreementPrompt(prompt)) {
-        sections.push(
-          [
-            "## Retrieval Feedback Helper",
-            "",
-            "The user may be disputing an answer. To debug whether retrieval misled the response:",
-            "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
-            "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
-            "",
-            "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
-          ].join("\n"),
-        );
-      }
-    } else if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
-      // Fallback: read recent memories directly
-      const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
-      if (memories.length > 0) {
-        // Filter out non-active memories
-        const activeMemories = memories.filter(
-          (m) => !m.frontmatter.status || m.frontmatter.status === "active",
-        );
-        const recent = activeMemories
-          .sort(
-            (a, b) =>
-              new Date(b.frontmatter.updated).getTime() -
-              new Date(a.frontmatter.updated).getTime(),
-          )
-          .slice(0, 10);
-
-        // Track access for these memories
-        const memoryIds = recent.map((m) => m.frontmatter.id);
-        this.trackMemoryAccess(memoryIds);
-
-        if (sessionKey) {
-          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-          this.lastRecall
-            .record({ sessionKey, query: prompt, memoryIds: unique })
-            .catch((err) => log.debug(`last recall record failed: ${err}`));
-        }
-
-        const lines = recent.map(
-          (m) => `- [${m.frontmatter.category}] ${m.content}`,
-        );
-        sections.push(`## Recent Memories\n\n${lines.join("\n")}`);
-      }
-
-      if (isDisagreementPrompt(prompt)) {
-        sections.push(
-          [
-            "## Retrieval Feedback Helper",
-            "",
-            "The user may be disputing an answer. To debug whether retrieval misled the response:",
-            "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
-            "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
-            "",
-            "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
-          ].join("\n"),
-        );
-      }
+      const formatted = this.formatQmdResults("Relevant Memories", results);
+      return { header: "", body: formatted };
     }
 
-    // 3. TRANSCRIPT INJECTION (NEW)
-    const transcriptT0 = Date.now();
+    // Fallback: raw file read when QMD unavailable
+    timings.qmd = "skip";
+    log.debug(`QMD skip: qmdEnabled=${this.config.qmdEnabled} ${this.qmd.debugStatus()}`);
+
+    const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
+    if (memories.length === 0) return null;
+
+    const activeMemories = memories.filter(
+      (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+    );
+    const recent = activeMemories
+      .sort(
+        (a, b) =>
+          new Date(b.frontmatter.updated).getTime() -
+          new Date(a.frontmatter.updated).getTime(),
+      )
+      .slice(0, 10);
+
+    if (recent.length === 0) return null;
+
+    const memoryIds = recent.map((m) => m.frontmatter.id);
+    this.trackMemoryAccess(memoryIds);
+    if (sessionKey) {
+      const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+      this.lastRecall
+        .record({ sessionKey, query: prompt, memoryIds: unique })
+        .catch((err) => log.debug(`last recall record failed: ${err}`));
+    }
+
+    const lines = recent.map(
+      (m) => `- [${m.frontmatter.category}] ${m.content}`,
+    );
+    return { header: "## Recent Memories", body: lines.join("\n") };
+  }
+
+  private async fetchTranscript(
+    entry: RecallSectionConfig,
+    sessionKey: string | undefined,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    const t0 = Date.now();
     log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
-    if (this.config.transcriptEnabled) {
-      // Try checkpoint first (post-compaction recovery)
-      let checkpointInjected = false;
-      if (this.config.checkpointEnabled) {
-        const checkpoint = await this.transcript.loadCheckpoint(sessionKey);
-        log.debug(`recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`);
-        if (checkpoint && checkpoint.turns.length > 0) {
-          const formatted = this.transcript.formatForRecall(
-            checkpoint.turns,
-            this.config.maxTranscriptTokens
-          );
-          if (formatted) {
-            sections.push(`## Working Context (Recovered)\n\n${formatted}`);
-            checkpointInjected = true;
-            // Clear checkpoint after injection
-            await this.transcript.clearCheckpoint();
-          }
-        }
-      }
 
-      // If no checkpoint, inject recent transcript
-      if (!checkpointInjected) {
-        const entries = await this.transcript.readRecent(
-          this.config.transcriptRecallHours,
-          sessionKey
+    if (!this.config.transcriptEnabled) {
+      timings.transcript = `${Date.now() - t0}ms`;
+      return null;
+    }
+
+    const maxTurns = entry.maxTurns ?? this.config.maxTranscriptTurns;
+    const maxTokens = entry.maxTokens ?? this.config.maxTranscriptTokens;
+    const lookbackHours = entry.lookbackHours ?? this.config.transcriptRecallHours;
+
+    // Try checkpoint first (post-compaction recovery)
+    if (this.config.checkpointEnabled) {
+      const checkpoint = await this.transcript.loadCheckpoint(sessionKey);
+      log.debug(`recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`);
+      if (checkpoint && checkpoint.turns.length > 0) {
+        const formatted = this.transcript.formatForRecall(
+          checkpoint.turns,
+          maxTokens,
         );
-        log.debug(`recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`);
-
-        // Apply max turns cap
-        const cappedEntries = entries.slice(-this.config.maxTranscriptTurns);
-
-        if (cappedEntries.length > 0) {
-          log.debug(`recall: injecting ${cappedEntries.length} transcript entries`);
-          const formatted = this.transcript.formatForRecall(
-            cappedEntries,
-            this.config.maxTranscriptTokens
-          );
-          if (formatted) {
-            sections.push(formatted);
-          }
+        if (formatted) {
+          await this.transcript.clearCheckpoint();
+          timings.transcript = `${Date.now() - t0}ms`;
+          return { header: "## Working Context (Recovered)", body: formatted };
         }
       }
     }
 
-    timings.transcript = `${Date.now() - transcriptT0}ms`;
+    // Normal: inject recent transcript
+    const entries = await this.transcript.readRecent(lookbackHours, sessionKey);
+    log.debug(`recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`);
 
-    // 4. HOURLY SUMMARIES INJECTION (NEW)
-    const summariesT0 = Date.now();
-    if (this.config.hourlySummariesEnabled && sessionKey) {
-      const summaries = await this.summarizer.readRecent(
-        sessionKey,
-        this.config.summaryRecallHours
-      );
-
-      // Apply max count cap
-      const cappedSummaries = summaries.slice(0, this.config.maxSummaryCount);
-
-      if (cappedSummaries.length > 0) {
-        const formatted = this.summarizer.formatForRecall(
-          cappedSummaries,
-          this.config.maxSummaryCount
-        );
-        sections.push(formatted);
-      }
+    const cappedEntries = entries.slice(-maxTurns);
+    if (cappedEntries.length === 0) {
+      timings.transcript = `${Date.now() - t0}ms`;
+      return null;
     }
 
-    timings.summaries = `${Date.now() - summariesT0}ms`;
+    log.debug(`recall: injecting ${cappedEntries.length} transcript entries`);
+    const formatted = this.transcript.formatForRecall(cappedEntries, maxTokens);
+    timings.transcript = `${Date.now() - t0}ms`;
+    if (!formatted) return null;
+    // formatForRecall already includes "## Working Context" header
+    return { header: "", body: formatted };
+  }
 
-    // 4.5. Conversation semantic recall hook (optional, default off).
-    // This searches over transcript chunk docs (ideally a separate QMD collection).
-    const convT0 = Date.now();
+  private async fetchSummaries(
+    entry: RecallSectionConfig,
+    sessionKey: string | undefined,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    const t0 = Date.now();
+    if (!this.config.hourlySummariesEnabled || !sessionKey) {
+      timings.summaries = `${Date.now() - t0}ms`;
+      return null;
+    }
+
+    const lookbackHours = entry.lookbackHours ?? this.config.summaryRecallHours;
+    const maxCount = entry.maxCount ?? this.config.maxSummaryCount;
+
+    const summaries = await this.summarizer.readRecent(sessionKey, lookbackHours);
+    const cappedSummaries = summaries.slice(0, maxCount);
+    timings.summaries = `${Date.now() - t0}ms`;
+
+    if (cappedSummaries.length === 0) return null;
+
+    const formatted = this.summarizer.formatForRecall(cappedSummaries, maxCount);
+    // formatForRecall already includes its own header
+    return { header: "", body: formatted };
+  }
+
+  private async fetchConversationRecall(
+    entry: RecallSectionConfig,
+    prompt: string,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    const t0 = Date.now();
     if (
-      this.config.conversationIndexEnabled &&
-      this.config.qmdEnabled &&
-      this.conversationQmd &&
-      this.conversationQmd.isAvailable()
+      !this.config.conversationIndexEnabled ||
+      !this.config.qmdEnabled ||
+      !this.conversationQmd ||
+      !this.conversationQmd.isAvailable()
     ) {
-      const startedAtMs = Date.now();
-      const timeoutMs = Math.max(200, this.config.conversationRecallTimeoutMs);
-      const topK = Math.max(1, this.config.conversationRecallTopK);
-      const maxChars = Math.max(400, this.config.conversationRecallMaxChars);
+      timings.convRecall = `${Date.now() - t0}ms`;
+      return null;
+    }
 
-      const results = (await Promise.race([
-        this.conversationQmd.search(prompt, undefined, topK),
-        new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
-      ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
+    const timeoutMs = Math.max(200, entry.timeoutMs ?? this.config.conversationRecallTimeoutMs);
+    const topK = Math.max(1, entry.topK ?? this.config.conversationRecallTopK);
+    const maxChars = Math.max(400, entry.maxChars ?? this.config.conversationRecallMaxChars);
 
-      const durationMs = Date.now() - startedAtMs;
-      if (durationMs >= timeoutMs) {
-        log.debug(`conversation recall: timed out after ${timeoutMs}ms`);
+    const results = (await Promise.race([
+      this.conversationQmd.search(prompt, undefined, topK),
+      new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
+    ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
+
+    const durationMs = Date.now() - t0;
+    if (durationMs >= timeoutMs) {
+      log.debug(`conversation recall: timed out after ${timeoutMs}ms`);
+    }
+    timings.convRecall = `${Date.now() - t0}ms`;
+
+    if (!Array.isArray(results) || results.length === 0) return null;
+
+    const lines: string[] = [];
+    let used = 0;
+    for (const r of results) {
+      if (!r?.snippet) continue;
+      const chunk =
+        `### ${r.path}\n` +
+        `Score: ${r.score.toFixed(3)}\n\n` +
+        `${r.snippet.trim()}\n`;
+      if (used + chunk.length > maxChars) break;
+      lines.push(chunk);
+      used += chunk.length;
+    }
+
+    if (used === 0) return null;
+    return { header: "## Semantic Recall (Past Conversations)", body: lines.join("\n") };
+  }
+
+  private async fetchCompounding(
+    entry: RecallSectionConfig,
+    timings: Record<string, string>,
+  ): Promise<SectionFetchResult | null> {
+    if (!this.compounding || !this.config.compoundingInjectEnabled) return null;
+
+    const maxPatterns = entry.maxPatterns ?? 40;
+    const mistakes = await this.compounding.readMistakes();
+    if (!mistakes || !Array.isArray(mistakes.patterns) || mistakes.patterns.length === 0) {
+      return null;
+    }
+
+    const body = [
+      "Avoid repeating these patterns:",
+      ...mistakes.patterns.slice(0, maxPatterns).map((p) => `- ${p}`),
+    ].join("\n");
+    return { header: "## Institutional Learning (Compounded)", body };
+  }
+
+  private async fetchQuestions(
+    entry: RecallSectionConfig,
+    profileStorage: StorageManager,
+  ): Promise<SectionFetchResult | null> {
+    if (!this.config.injectQuestions) return null;
+
+    const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
+    if (questions.length === 0) return null;
+
+    const topQuestion = questions[0]; // Already sorted by priority desc
+    const body = `Something I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`;
+    return { header: "## Open Question", body };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recall Pipeline: Assembly
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Assemble fetched sections in pipeline order with per-section caps and global budget.
+   * Returns the joined output string.
+   */
+  private assembleRecall(
+    pipeline: RecallSectionConfig[],
+    results: Map<string, SectionFetchResult | null>,
+    budget: number,
+  ): string {
+    const output: string[] = [];
+    let charsUsed = 0;
+
+    for (const entry of pipeline) {
+      if (!entry.enabled) continue;
+      const section = results.get(entry.id);
+      if (!section) continue;
+
+      let text = section.header
+        ? section.header + "\n\n" + section.body
+        : section.body;
+
+      // Per-section cap
+      if (entry.maxChars != null && text.length > entry.maxChars) {
+        text = text.slice(0, entry.maxChars) + "\n...(trimmed)";
       }
 
-      if (Array.isArray(results) && results.length > 0) {
-        const lines: string[] = ["## Semantic Recall (Past Conversations)", ""];
-        let used = 0;
-        for (const r of results) {
-          if (!r?.snippet) continue;
-          const chunk =
-            `### ${r.path}\n` +
-            `Score: ${r.score.toFixed(3)}\n\n` +
-            `${r.snippet.trim()}\n`;
-          if (used + chunk.length > maxChars) break;
-          lines.push(chunk);
-          used += chunk.length;
+      // Global budget check
+      if (charsUsed + text.length > budget) {
+        const remaining = budget - charsUsed;
+        if (remaining > 200) {
+          text = text.slice(0, remaining) + "\n...(budget reached)";
+          output.push(text);
         }
-        if (used > 0) {
-          sections.push(lines.join("\n"));
-        }
+        break;
+      }
+
+      output.push(text);
+      charsUsed += text.length;
+    }
+
+    return output.join("\n\n---\n\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Main recall implementation (pipeline-driven)
+  // ---------------------------------------------------------------------------
+
+  private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
+    const recallStart = Date.now();
+    const timings: Record<string, string> = {};
+
+    const principal = resolvePrincipal(sessionKey, this.config);
+    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
+    const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    const profileStorage = await this.storageRouter.storageFor(selfNamespace);
+
+    const pipelineConfig = this.config.recallPipelineConfig;
+    const pipeline = pipelineConfig.pipeline;
+    const budget = pipelineConfig.recallBudgetChars;
+
+    // --- Phase 1: Fire all enabled section fetchers in parallel ---
+
+    type FetcherFn = () => Promise<SectionFetchResult | null>;
+    const fetchers = new Map<string, FetcherFn>();
+
+    for (const entry of pipeline) {
+      if (!entry.enabled) continue;
+      switch (entry.id) {
+        case "shared-context":
+          fetchers.set(entry.id, () => this.fetchSharedContext(entry, timings));
+          break;
+        case "profile":
+          fetchers.set(entry.id, () => this.fetchProfile(entry, profileStorage, timings));
+          break;
+        case "knowledge-index":
+          fetchers.set(entry.id, () => this.fetchKnowledgeIndex(entry, timings));
+          break;
+        case "memories":
+          fetchers.set(entry.id, () =>
+            this.fetchMemories(entry, prompt, sessionKey, recallNamespaces, timings),
+          );
+          break;
+        case "transcript":
+          fetchers.set(entry.id, () => this.fetchTranscript(entry, sessionKey, timings));
+          break;
+        case "summaries":
+          fetchers.set(entry.id, () => this.fetchSummaries(entry, sessionKey, timings));
+          break;
+        case "conversation-recall":
+          fetchers.set(entry.id, () => this.fetchConversationRecall(entry, prompt, timings));
+          break;
+        case "compounding":
+          fetchers.set(entry.id, () => this.fetchCompounding(entry, timings));
+          break;
+        case "questions":
+          fetchers.set(entry.id, () => this.fetchQuestions(entry, profileStorage));
+          break;
+        default:
+          log.debug(`recall: unknown pipeline section "${entry.id}", skipping`);
       }
     }
 
-    timings.convRecall = `${Date.now() - convT0}ms`;
+    // Fire all fetchers in parallel
+    const ids = Array.from(fetchers.keys());
+    const fetchPromises = ids.map((id) => fetchers.get(id)!());
+    const fetchResults = await Promise.all(fetchPromises);
 
-    // 4.75. Compounding injection (v5.0, optional)
-    if (this.compounding && this.config.compoundingInjectEnabled) {
-      const mistakes = await this.compounding.readMistakes();
-      if (mistakes && Array.isArray(mistakes.patterns) && mistakes.patterns.length > 0) {
-        const lines: string[] = [
-          "## Institutional Learning (Compounded)",
-          "",
-          "Avoid repeating these patterns:",
-          ...mistakes.patterns.slice(0, 40).map((p) => `- ${p}`),
-        ];
-        sections.push(lines.join("\n"));
-      }
+    const resultsMap = new Map<string, SectionFetchResult | null>();
+    for (let i = 0; i < ids.length; i++) {
+      resultsMap.set(ids[i], fetchResults[i]);
     }
 
-    // 5. Inject most relevant question (if enabled) (existing)
-    if (this.config.injectQuestions) {
-      const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
-      if (questions.length > 0) {
-        // Find the most relevant question to the current prompt
-        // Simple approach: use the highest-priority unresolved question
-        // TODO: Could use QMD search to find the most contextually relevant one
-        const topQuestion = questions[0]; // Already sorted by priority desc
-        sections.push(`## Open Question\n\nSomething I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`);
+    // --- Phase 2: Assemble in pipeline order with budget ---
+
+    const assembled = this.assembleRecall(pipeline, resultsMap, budget);
+
+    // --- Conditional sections (outside the pipeline) ---
+
+    // Retrieval Feedback Helper: appended when user seems to disagree
+    if (isDisagreementPrompt(prompt)) {
+      const feedbackHelper = [
+        "## Retrieval Feedback Helper",
+        "",
+        "The user may be disputing an answer. To debug whether retrieval misled the response:",
+        "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+        "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
+        "",
+        "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
+      ].join("\n");
+
+      if (assembled.length > 0) {
+        // Only append if we had memories in the recall
+        const hadMemories = resultsMap.get("memories") != null;
+        if (hadMemories) {
+          const result = assembled + "\n\n---\n\n" + feedbackHelper;
+          timings.total = `${Date.now() - recallStart}ms`;
+          log.debug(`recall: ${Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+          return result;
+        }
       }
     }
 
@@ -823,9 +907,7 @@ export class Orchestrator {
     const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
     log.debug(`recall: ${timingParts}`);
 
-    if (sections.length === 0) return "";
-
-    return sections.join("\n\n---\n\n");
+    return assembled;
   }
 
   async processTurn(
@@ -1454,11 +1536,14 @@ export class Orchestrator {
     }
 
     // Auto-consolidate profile.md if it exceeds max lines
-    if (await this.storage.profileNeedsConsolidation()) {
+    const profileEntry = this.config.recallPipelineConfig.pipeline.find((e) => e.id === "profile");
+    const triggerLines = profileEntry?.consolidateTriggerLines ?? 100;
+    const targetLines = profileEntry?.consolidateTargetLines ?? 50;
+    if (await this.storage.profileNeedsConsolidation(triggerLines)) {
       log.info("profile.md exceeds max lines — running smart consolidation");
       const currentProfile = await this.storage.readProfile();
       if (currentProfile) {
-        const profileResult = await this.extraction.consolidateProfile(currentProfile);
+        const profileResult = await this.extraction.consolidateProfile(currentProfile, targetLines);
         if (profileResult) {
           await this.storage.writeProfile(profileResult.consolidatedProfile);
           log.info(`profile.md consolidated: removed ${profileResult.removedCount} items — ${profileResult.summary}`);

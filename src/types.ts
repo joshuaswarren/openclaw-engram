@@ -232,6 +232,9 @@ export interface PluginConfig {
   entityAliasesEnabled: boolean;
   entitySummaryEnabled: boolean;
 
+  // Recall pipeline
+  recallPipelineConfig: RecallPipelineConfig;
+
   // v6.0 Fact deduplication & archival
   /** Enable content-hash deduplication to prevent storing semantically identical facts. */
   factDeduplicationEnabled: boolean;
@@ -603,4 +606,42 @@ export interface HourlySummary {
   bullets: string[];
   turnCount: number;
   generatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Recall Pipeline (configurable injection order + budget)
+// ---------------------------------------------------------------------------
+
+export interface RecallSectionConfig {
+  id: string;
+  enabled: boolean;
+  maxChars?: number | null;
+  // Profile section
+  consolidateTriggerLines?: number;
+  consolidateTargetLines?: number;
+  // Knowledge index section
+  maxEntities?: number;
+  // Memories section
+  maxResults?: number;
+  // Transcript section
+  maxTurns?: number;
+  maxTokens?: number;
+  lookbackHours?: number;
+  // Summaries section
+  maxCount?: number;
+  // Conversation recall section
+  topK?: number;
+  timeoutMs?: number;
+  // Compounding section
+  maxPatterns?: number;
+}
+
+export interface RecallPipelineConfig {
+  recallBudgetChars: number;
+  pipeline: RecallSectionConfig[];
+}
+
+export interface SectionFetchResult {
+  header: string;
+  body: string;
 }
