@@ -47,7 +47,7 @@ import {
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
-import { decideLifecycleTransition, resolveLifecycleState } from "./lifecycle.js";
+import { decideLifecycleTransition, resolveLifecycleState, type LifecycleSignals } from "./lifecycle.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -4024,6 +4024,66 @@ export class Orchestrator {
     }
   }
 
+  private actionOutcomePriorDelta(event: MemoryActionEvent): number {
+    if (event.outcome === "failed") return -0.3;
+    if (event.policyDecision === "deny") return -0.22;
+    if (event.policyDecision === "defer") return -0.14;
+    if (event.outcome === "skipped") return -0.1;
+
+    if (event.outcome !== "applied") return 0;
+    switch (event.action) {
+      case "store_episode":
+      case "store_note":
+      case "update_note":
+        return 0.08;
+      case "create_artifact":
+      case "summarize_node":
+      case "link_graph":
+        return 0.04;
+      case "discard":
+        return -0.03;
+      default:
+        return 0;
+    }
+  }
+
+  private async buildLifecycleActionPriors(): Promise<Map<string, number>> {
+    const events = await this.storage.readMemoryActionEvents(1200);
+    if (events.length === 0) return new Map<string, number>();
+
+    const nowMs = Date.now();
+    const windowMs = 14 * 24 * 60 * 60 * 1000;
+    const byMemory = new Map<string, Array<{ weightedDelta: number; weight: number }>>();
+
+    for (const event of events) {
+      if (typeof event.memoryId !== "string" || event.memoryId.trim().length === 0) continue;
+      const ts = Date.parse(event.timestamp);
+      if (!Number.isFinite(ts)) continue;
+      const ageMs = nowMs - ts;
+      if (ageMs < 0 || ageMs > windowMs) continue;
+
+      const delta = this.actionOutcomePriorDelta(event);
+      if (delta === 0) continue;
+
+      const recencyWeight = Math.max(0.2, 1 - ageMs / windowMs);
+      const list = byMemory.get(event.memoryId) ?? [];
+      if (list.length >= 8) list.shift();
+      list.push({ weightedDelta: delta * recencyWeight, weight: recencyWeight });
+      byMemory.set(event.memoryId, list);
+    }
+
+    const out = new Map<string, number>();
+    for (const [memoryId, deltas] of byMemory.entries()) {
+      if (deltas.length === 0) continue;
+      const weightedSum = deltas.reduce((sum, item) => sum + item.weightedDelta, 0);
+      const weightTotal = deltas.reduce((sum, item) => sum + item.weight, 0);
+      if (weightTotal <= 0) continue;
+      const score = weightedSum / weightTotal;
+      out.set(memoryId, Math.max(-0.25, Math.min(0.15, score)));
+    }
+    return out;
+  }
+
   private async runLifecyclePolicyPass(allMemories: MemoryFile[]): Promise<void> {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -4045,6 +4105,7 @@ export class Orchestrator {
       archiveDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
       protectedCategories: this.config.lifecycleProtectedCategories,
     };
+    const actionPriors = await this.buildLifecycleActionPriors();
 
     for (const memory of allMemories) {
       if (memory.frontmatter.status === "superseded") {
@@ -4052,7 +4113,12 @@ export class Orchestrator {
       }
       evaluatedCount += 1;
       const currentState = resolveLifecycleState(memory.frontmatter);
-      const decision = decideLifecycleTransition(memory, policy, now);
+      const actionPriorScore = actionPriors.get(memory.frontmatter.id);
+      const signals: LifecycleSignals | undefined =
+        typeof actionPriorScore === "number" && Number.isFinite(actionPriorScore)
+          ? { actionPriorScore }
+          : undefined;
+      const decision = decideLifecycleTransition(memory, policy, now, signals);
       const nextState: LifecycleState = memory.frontmatter.status === "archived"
         ? "archived"
         : decision.nextState;

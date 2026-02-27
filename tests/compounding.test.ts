@@ -200,6 +200,53 @@ test("v5 compounding extracts patterns from feedback learning/rejections", async
   assert.ok(mistakes!.patterns.some((p) => p.includes("client-health: WRONG DATA")));
 });
 
+test("v5 compounding ingests failing memory-action patterns", async () => {
+  const memoryDir = tmpDir("engram-compound-mem-actions");
+  const sharedDir = tmpDir("engram-compound-shared-actions");
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  const nowIso = new Date().toISOString();
+  const actionPath = path.join(memoryDir, "state", "memory-actions.jsonl");
+  await writeFile(
+    actionPath,
+    [
+      JSON.stringify({
+        timestamp: nowIso,
+        action: "discard",
+        outcome: "skipped",
+        namespace: "team-alpha",
+        policyDecision: "deny",
+        reason: "policy:deny | high_importance_requires_manual_review",
+      }),
+      JSON.stringify({
+        timestamp: nowIso,
+        action: "store_note",
+        outcome: "applied",
+        namespace: "team-alpha",
+        policyDecision: "allow",
+      }),
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(cfg);
+  await eng.synthesizeWeekly();
+  const mistakes = await eng.readMistakes();
+  assert.ok(mistakes);
+  assert.ok(
+    mistakes!.patterns.some((p) =>
+      p.includes("memory-action/team-alpha: discard skipped/deny"),
+    ),
+  );
+  assert.equal(
+    mistakes!.patterns.some((p) => p.includes("store_note applied")),
+    false,
+  );
+});
+
 test("v5 compounding does not read continuity audit references when audits are disabled", async () => {
   const memoryDir = tmpDir("engram-compound-no-audit-");
   const sharedDir = tmpDir("engram-compound-no-audit-shared-");
