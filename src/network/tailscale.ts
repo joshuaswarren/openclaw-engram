@@ -139,7 +139,13 @@ const defaultCommandRunner: TailscaleCommandRunner = (command, args, options) =>
 
     const timeout = setTimeout(() => {
       if (settled) return;
+      settled = true;
       child.kill("SIGKILL");
+      resolve({
+        code: 124,
+        stdout,
+        stderr: stderr || "command timed out",
+      });
     }, options?.timeoutMs ?? 10_000);
 
     child.stdout.on("data", (chunk: Buffer) => {
