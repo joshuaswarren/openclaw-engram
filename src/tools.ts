@@ -1031,6 +1031,11 @@ Best for:
             description: "Optional namespace. Defaults to defaultNamespace.",
           }),
         ),
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description: "When true, validate and report without persisting telemetry.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
         if (!orchestrator.config.contextCompressionActionsEnabled) {
@@ -1038,31 +1043,42 @@ Best for:
             "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
           );
         }
-        const { action, outcome, reason, memoryId, sourcePrompt, namespace } = params as {
+        const { action, outcome, reason, memoryId, sourcePrompt, namespace, dryRun } = params as {
           action: MemoryActionType;
           outcome?: "applied" | "skipped" | "failed";
           reason?: string;
           memoryId?: string;
           sourcePrompt?: string;
           namespace?: string;
+          dryRun?: boolean;
         };
         const ns =
           typeof namespace === "string" && namespace.length > 0
             ? namespace
             : orchestrator.config.defaultNamespace;
-        const wrote = await orchestrator.appendMemoryActionEvent({
+        const event = {
           action,
           outcome: outcome ?? "applied",
           namespace: ns,
           reason,
           memoryId,
           promptHash: promptHashForTelemetry(sourcePrompt),
-        });
+        };
+
+        const preview = orchestrator.previewMemoryActionEvent(event);
+
+        if (dryRun === true) {
+          return toolResult(
+            `Dry run: memory action would be recorded with action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}, policy=${preview.policyDecision}.`,
+          );
+        }
+
+        const wrote = await orchestrator.appendMemoryActionEvent(event);
         if (!wrote) {
           return toolResult("Memory action telemetry write failed (fail-open).");
         }
         return toolResult(
-          `Recorded memory action telemetry: action=${action}, outcome=${outcome ?? "applied"}, namespace=${ns}.`,
+          `Recorded memory action telemetry: action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}.`,
         );
       },
     },

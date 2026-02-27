@@ -132,6 +132,35 @@ test("appendMemoryActionEvent keeps default unknown-eligibility callers applied 
   }
 });
 
+test("previewMemoryActionEvent applies policy normalization for dry-run parity", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-preview-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      contextCompressionActionsEnabled: true,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    const preview = orchestrator.previewMemoryActionEvent({
+      action: "discard",
+      outcome: "applied",
+      policyEligibility: {
+        confidence: 0.9,
+        lifecycleState: "active",
+        importance: 0.95,
+        source: "manual",
+      },
+    });
+
+    assert.equal(preview.policyDecision, "deny");
+    assert.equal(preview.outcome, "skipped");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("appendMemoryActionEvent enforces zero-limit defer semantics for summarize_node", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-zero-limit-"));
   try {

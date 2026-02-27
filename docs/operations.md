@@ -55,6 +55,7 @@ openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
 openclaw engram conversation-index-health  # Backend health + index stats
 openclaw engram graph-health        # Graph edge-file integrity + coverage
+openclaw engram action-audit        # Namespace-aware memory action policy audit
 ```
 
 Compatibility diagnostics:
@@ -66,6 +67,11 @@ Graph diagnostics:
 - `openclaw engram graph-health` reports per-edge-file integrity (`entity/time/causal`), corruption counts, and unique node coverage.
 - Add `--repair-guidance` to include non-destructive remediation suggestions when corruption or empty-graph conditions are detected.
 
+Memory action diagnostics:
+- `openclaw engram action-audit` reports namespace-aware action totals by action, outcome, and policy decision.
+- Use `--namespace <name>` to scope the report to a single namespace.
+- Use `--limit <n>` to cap event reads per namespace (`0` preserves zero-limit semantics).
+
 Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.
 - Rules are applied at write-time for extracted facts before persistence.
@@ -73,12 +79,16 @@ Routing behavior notes:
 
 ## Compression Guideline Optimizer Tool (v8.11)
 
-Agent tool name:
+Agent tool names:
 - `compression_guidelines_optimize`
+- `memory_action_apply`
 
-Parameters:
+`compression_guidelines_optimize` parameters:
 - `dryRun` (optional, default `false`): compute candidate and summary without persisting files.
 - `eventLimit` (optional, default `500`): max telemetry rows from `state/memory-actions.jsonl`.
+
+`memory_action_apply` safe mode:
+- `dryRun` (optional, default `false`): validate and report an action without persisting telemetry.
 
 Summary output fields:
 - previous guideline version

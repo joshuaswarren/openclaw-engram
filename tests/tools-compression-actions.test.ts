@@ -13,6 +13,7 @@ type RegisteredTool = {
 function buildHarness(options?: {
   contextCompressionActionsEnabled?: boolean;
   appendMemoryActionEventResult?: boolean;
+  previewMemoryActionEvent?: (event: any) => any;
 }) {
   const tools = new Map<string, RegisteredTool>();
   const capturedEvents: any[] = [];
@@ -32,6 +33,14 @@ function buildHarness(options?: {
       sharedContextEnabled: false,
       compoundingEnabled: false,
     },
+    previewMemoryActionEvent:
+      options?.previewMemoryActionEvent ??
+      ((event: any) => ({
+        ...event,
+        namespace: event.namespace ?? "default",
+        outcome: event.outcome ?? "applied",
+        policyDecision: "allow",
+      })),
     appendMemoryActionEvent: async (event: unknown) => {
       capturedEvents.push(event);
       return options?.appendMemoryActionEventResult ?? true;
@@ -122,6 +131,24 @@ test("context_checkpoint logs summarize_node telemetry in requested namespace", 
   assert.match(capturedEvents[0].reason, /^context_checkpoint:/);
 });
 
+test("memory_action_apply dryRun reports without writing telemetry", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc4", {
+    action: "link_graph",
+    dryRun: true,
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /Dry run:/i);
+  assert.match(toolText(result), /policy=allow/i);
+  assert.equal(capturedEvents.length, 0);
+});
+
 test("memory_action_apply fails open when telemetry write fails", async () => {
   const { tools } = buildHarness({
     contextCompressionActionsEnabled: true,
@@ -130,10 +157,32 @@ test("memory_action_apply fails open when telemetry write fails", async () => {
   const tool = tools.get("memory_action_apply");
   assert.ok(tool);
 
-  const result = await tool.execute("tc4", {
+  const result = await tool.execute("tc5", {
     action: "discard",
     outcome: "failed",
   });
 
   assert.match(toolText(result), /fail-open/i);
+});
+
+test("memory_action_apply reports normalized outcome for persisted telemetry", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    previewMemoryActionEvent: (event) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: "skipped",
+      policyDecision: "deny",
+    }),
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc6", {
+    action: "discard",
+    outcome: "applied",
+  });
+
+  assert.match(toolText(result), /outcome=skipped/i);
+  assert.equal(capturedEvents.length, 1);
 });
