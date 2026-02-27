@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { URL } from "node:url";
 
@@ -40,7 +40,6 @@ interface AllowedRoot {
 export class WebDavServer {
   private readonly options: Required<Omit<WebDavServerOptions, "auth">> & Pick<WebDavServerOptions, "auth">;
   private readonly allowedRoots: AllowedRoot[];
-  private readonly timingKey: Buffer;
   private server: Server | null = null;
 
   private constructor(
@@ -49,7 +48,6 @@ export class WebDavServer {
   ) {
     this.options = options;
     this.allowedRoots = allowedRoots;
-    this.timingKey = randomBytes(32);
   }
 
   static async create(input: WebDavServerOptions): Promise<WebDavServer> {
@@ -207,16 +205,27 @@ export class WebDavServer {
       const password = decoded.slice(separator + 1);
       const usernameOk = this.timingSafeStringEqual(username, this.options.auth.username);
       const passwordOk = this.timingSafeStringEqual(password, this.options.auth.password);
-      return usernameOk && passwordOk;
+      return Boolean((usernameOk ? 1 : 0) & (passwordOk ? 1 : 0));
     } catch {
       return false;
     }
   }
 
   private timingSafeStringEqual(a: string, b: string): boolean {
-    const left = createHmac("sha256", this.timingKey).update(a, "utf-8").digest();
-    const right = createHmac("sha256", this.timingKey).update(b, "utf-8").digest();
+    const left = this.encodeAuthField(a);
+    const right = this.encodeAuthField(b);
+    if (!left || !right) return false;
     return timingSafeEqual(left, right);
+  }
+
+  private encodeAuthField(value: string): Buffer | null {
+    const maxBytes = 512;
+    const encoded = Buffer.from(value, "utf-8");
+    if (encoded.length > maxBytes) return null;
+    const out = Buffer.alloc(2 + maxBytes);
+    out.writeUInt16BE(encoded.length, 0);
+    encoded.copy(out, 2);
+    return out;
   }
 
   private async resolvePath(requestPathname: string): Promise<
