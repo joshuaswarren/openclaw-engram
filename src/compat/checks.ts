@@ -135,7 +135,7 @@ function parseHookRegistrations(source: string): Set<string> {
       continue;
     }
 
-    if (source.startsWith("api.on", i)) {
+    if (source.startsWith("api.on", i) && (i === 0 || !/[a-zA-Z0-9_$\.]/.test(source[i - 1]))) {
       let j = i + "api.on".length;
       while (j < source.length && /\s/.test(source[j])) j += 1;
       if (source[j] !== "(") {
@@ -175,7 +175,7 @@ function parseHookRegistrations(source: string): Set<string> {
 }
 
 function hasServiceStartRegistration(source: string): boolean {
-  return /api\.registerService\s*\(\s*\{[\s\S]*?\bstart\s*:/m.test(source);
+  return /api\.registerService\s*\(\s*\{[\s\S]*?\bstart\s*(?::|\()/m.test(source);
 }
 
 function hasCliRegistration(source: string): boolean {

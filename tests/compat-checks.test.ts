@@ -153,3 +153,32 @@ test("compat checks ignore commented hook/startup/cli snippets", async () => {
   assert.equal(byId.get("hook-registration-core")?.level, "error");
   assert.equal(byId.get("cli-registration")?.level, "warn");
 });
+
+test("compat checks support method-style service start and enforce api.on boundary", async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "engram-compat-boundary-"));
+  await writeRepoFixture(repoRoot, {
+    pluginJson: JSON.stringify({ id: "openclaw-engram", kind: "memory" }),
+    packageJson: JSON.stringify({
+      engines: { node: ">=22.12.0" },
+      openclaw: {
+        plugin: "./openclaw.plugin.json",
+        extensions: ["./dist/index.js"],
+      },
+    }),
+    indexTs: [
+      'myapi.on("before_agent_start", async () => {});',
+      'api.on("before_agent_start", async () => {});',
+      'api.on("agent_end", async () => {});',
+      "registerCli(api as unknown as Foo, orchestrator);",
+      "api.registerService({ id: \"openclaw-engram\", async start() {}, stop() {} });",
+    ].join("\n"),
+  });
+
+  const report = await runCompatChecks({
+    repoRoot,
+    runner: { commandExists: async () => true },
+  });
+
+  const byId = new Map(report.checks.map((check) => [check.id, check]));
+  assert.equal(byId.get("hook-registration-core")?.level, "ok");
+});
