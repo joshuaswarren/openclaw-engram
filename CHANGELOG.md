@@ -86,6 +86,10 @@ All notable changes to this project will be documented in this file.
   - Extended `memory_action_apply` tool with `dryRun` support for safe no-write validation.
   - Added `tests/cli-memory-action-audit.test.ts` and expanded `tests/tools-compression-actions.test.ts` for dry-run behavior.
   - Updated `docs/api.md` and `docs/operations.md` with action-audit and dry-run usage guidance.
+- v8.13 action-policy Task 4 (lifecycle + compounding feedback loop):
+  - Added bounded memory-action outcome priors to lifecycle evaluation so recent action outcomes can gently influence transition scoring without changing baseline behavior when telemetry is absent.
+  - Added compounding ingestion of denied/deferred/skipped/failed memory-action events into weekly mistake-pattern synthesis.
+  - Added `tests/memory-action-lifecycle-integration.test.ts` and expanded `tests/compounding.test.ts` coverage for bounded-prior behavior and compounding pattern extraction.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.
