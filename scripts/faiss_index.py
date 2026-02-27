@@ -119,11 +119,21 @@ def load_vector_dependencies() -> tuple[Any, Any]:
     return np, faiss
 
 
+def sentence_transformers_enabled() -> bool:
+    value = os.environ.get("ENGRAM_FAISS_ENABLE_ST", "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
 def normalize_model_id(model_id: str) -> str:
     cleaned = (model_id or "").strip()
     if not cleaned:
-        return "sentence-transformers/all-MiniLM-L6-v2"
-    return MODEL_ID_ALIASES.get(cleaned, cleaned)
+        cleaned = "sentence-transformers/all-MiniLM-L6-v2"
+    resolved = MODEL_ID_ALIASES.get(cleaned, cleaned)
+    if resolved in ("__hash__", "hash"):
+        return "__hash__"
+    if not sentence_transformers_enabled():
+        return "__hash__"
+    return resolved
 
 
 def get_embedder(model_id: str) -> Any:

@@ -15,6 +15,11 @@ source .venv-faiss/bin/activate
 pip install -r scripts/faiss_requirements.txt
 ```
 
+## Runtime Modes
+
+- Default mode uses deterministic `__hash__` embeddings to avoid heavy model initialization on per-command subprocess calls.
+- To enable sentence-transformers models, set `ENGRAM_FAISS_ENABLE_ST=1` in the sidecar environment.
+
 ## Contract
 
 The sidecar reads one JSON payload from stdin and writes exactly one JSON object to stdout.
