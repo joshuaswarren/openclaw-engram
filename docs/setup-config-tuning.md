@@ -349,6 +349,7 @@ Latency:
 Recall quality:
 - Increase `conversationRecallTopK` gradually (3 -> 4 -> 6) and watch prompt bloat.
 - Keep `conversationRecallMaxChars` bounded (1500-3000) to avoid drowning current context.
+- For v8.12 graph assist evaluation in `full` mode, set `graphAssistShadowEvalEnabled: true` first to capture overlap/delta telemetry without changing injected recall output.
 
 Storage growth:
 - Keep `conversationIndexRetentionDays` finite.

@@ -734,6 +734,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     graphRecallEnabled: cfg.graphRecallEnabled === true,
     graphExpandedIntentEnabled: cfg.graphExpandedIntentEnabled !== false,
     graphAssistInFullModeEnabled: cfg.graphAssistInFullModeEnabled !== false,
+    graphAssistShadowEvalEnabled: cfg.graphAssistShadowEvalEnabled === true,
     graphAssistMinSeedResults:
       typeof cfg.graphAssistMinSeedResults === "number"
         ? Math.max(1, Math.floor(cfg.graphAssistMinSeedResults))

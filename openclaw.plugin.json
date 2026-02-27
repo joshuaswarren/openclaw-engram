@@ -411,6 +411,11 @@
         "default": true,
         "description": "Run bounded graph expansion during full recall mode when seed results exist."
       },
+      "graphAssistShadowEvalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "In full mode, compute graph assist for comparison telemetry and snapshots but keep injected recall output baseline-identical."
+      },
       "graphAssistMinSeedResults": {
         "type": "number",
         "default": 3,

@@ -32,6 +32,14 @@ test("parseConfig keeps graphRecallEnabled opt-in", () => {
   assert.equal(enabled.graphRecallEnabled, true);
 });
 
+test("parseConfig keeps graphAssistShadowEvalEnabled opt-in", () => {
+  const defaults = parseConfig({ openaiApiKey: "sk-test" });
+  const enabled = parseConfig({ openaiApiKey: "sk-test", graphAssistShadowEvalEnabled: true });
+
+  assert.equal(defaults.graphAssistShadowEvalEnabled, false);
+  assert.equal(enabled.graphAssistShadowEvalEnabled, true);
+});
+
 test("parseConfig applies graph expansion scoring defaults and clamps bounds", () => {
   const defaults = parseConfig({ openaiApiKey: "sk-test" });
   assert.equal(defaults.graphExpansionActivationWeight, 0.65);

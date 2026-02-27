@@ -352,6 +352,8 @@ export interface PluginConfig {
   graphExpandedIntentEnabled?: boolean;
   /** Run bounded graph expansion in full mode when enough recall seeds exist. */
   graphAssistInFullModeEnabled?: boolean;
+  /** In full mode, compute graph assist for telemetry/snapshotting but do not inject merged results. */
+  graphAssistShadowEvalEnabled?: boolean;
   /** Minimum seed results required before full-mode graph assist runs. */
   graphAssistMinSeedResults?: number;
   entityGraphEnabled: boolean;

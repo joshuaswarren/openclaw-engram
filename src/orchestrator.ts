@@ -376,6 +376,42 @@ export function blendGraphExpandedRecallScore(options: {
   return Math.max(minBound, Math.min(maxBound, blended));
 }
 
+export function summarizeGraphShadowComparison(
+  baseline: QmdSearchResult[],
+  merged: QmdSearchResult[],
+  topN: number,
+): {
+  baselineCount: number;
+  graphCount: number;
+  overlapCount: number;
+  overlapRatio: number;
+  averageOverlapDelta: number;
+} {
+  const limit = Math.max(0, Math.floor(topN));
+  const baselineTop = limit > 0 ? baseline.slice(0, limit) : [];
+  const graphTop = limit > 0 ? merged.slice(0, limit) : [];
+  const baselineByPath = new Map(baselineTop.map((item) => [item.path, item.score]));
+  const graphByPath = new Map(graphTop.map((item) => [item.path, item.score]));
+
+  let overlapCount = 0;
+  let overlapDeltaSum = 0;
+  for (const [p, baselineScore] of baselineByPath.entries()) {
+    const graphScore = graphByPath.get(p);
+    if (typeof graphScore !== "number") continue;
+    overlapCount += 1;
+    overlapDeltaSum += graphScore - baselineScore;
+  }
+
+  const baselineCount = baselineTop.length;
+  return {
+    baselineCount,
+    graphCount: graphTop.length,
+    overlapCount,
+    overlapRatio: baselineCount > 0 ? overlapCount / baselineCount : 0,
+    averageOverlapDelta: overlapCount > 0 ? overlapDeltaSum / overlapCount : 0,
+  };
+}
+
 export function mergeArtifactRecallCandidates(
   candidatesByNamespace: MemoryFile[][],
   limit: number,
@@ -1907,13 +1943,19 @@ export class Orchestrator {
       // Artifacts are injected through dedicated verbatim recall flow only.
       memoryResults = memoryResults.filter((r) => !isArtifactMemoryPath(r.path));
 
+      const isFullModeGraphAssist =
+        this.config.multiGraphMemoryEnabled &&
+        this.config.graphAssistInFullModeEnabled !== false &&
+        recallMode === "full" &&
+        memoryResults.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3);
       const shouldRunGraphExpansion =
         recallMode === "graph_mode" ||
-        (this.config.multiGraphMemoryEnabled &&
-          this.config.graphAssistInFullModeEnabled !== false &&
-          recallMode === "full" &&
-          memoryResults.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3));
+        isFullModeGraphAssist;
+      const graphShadowEvalEnabled =
+        isFullModeGraphAssist &&
+        this.config.graphAssistShadowEvalEnabled === true;
       if (shouldRunGraphExpansion) {
+        const baselineMemoryResults = memoryResults;
         const {
           merged,
           seedPaths,
@@ -1923,7 +1965,20 @@ export class Orchestrator {
           recallNamespaces,
           recallResultLimit,
         });
-        memoryResults = merged;
+        memoryResults = graphShadowEvalEnabled ? baselineMemoryResults : merged;
+
+        if (graphShadowEvalEnabled) {
+          const comparison = summarizeGraphShadowComparison(
+            baselineMemoryResults,
+            merged,
+            recallResultLimit,
+          );
+          timings.graphShadow =
+            `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
+            `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
+            `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`;
+        }
+
         await this.recordLastGraphRecallSnapshot({
           storage: profileStorage,
           prompt: retrievalQuery,

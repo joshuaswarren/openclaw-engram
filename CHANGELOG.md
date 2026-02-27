@@ -81,6 +81,12 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.12 graph retrieval phase 2 Task 3 (shadow-eval assist mode in full recall):
+  - Added `graphAssistShadowEvalEnabled` config flag (default `false`) to run full-mode graph assist as compare-only shadow evaluation.
+  - Kept full-mode injected recall output baseline-identical when shadow mode is enabled, while still computing graph-expanded candidates.
+  - Added shadow comparison telemetry in recall timings (`graphShadow`) with baseline/graph overlap and average score delta.
+  - Added `tests/graph-shadow-eval.test.ts` for baseline-preservation and telemetry emission coverage.
+  - Updated config + tuning docs (`docs/config-reference.md`, `docs/setup-config-tuning.md`) and plugin schema.
 - v8.12 graph retrieval phase 2 Task 2 (richer graph provenance snapshots):
   - Extended graph spreading-activation outputs to include per-result provenance (`seed`, `hopDepth`, `decayedWeight`, `graphType`).
   - Persisted bounded provenance in `last_graph_recall.json` with capped seed/expanded arrays for high-traffic safety.

@@ -274,6 +274,7 @@ See [compounding.md](compounding.md).
 | `graphRecallEnabled` | `false` | Enable planner `graph_mode` expansion |
 | `graphExpandedIntentEnabled` | `true` | Escalate broader causal/timeline prompts into `graph_mode` |
 | `graphAssistInFullModeEnabled` | `true` | Run bounded graph expansion during `full` recall mode |
+| `graphAssistShadowEvalEnabled` | `false` | In `full` mode, run graph assist as shadow-eval (compute + snapshot + telemetry, no injection change) |
 | `graphAssistMinSeedResults` | `3` | Minimum seed recalls required for full-mode graph assist |
 | `graphWriteSessionAdjacencyEnabled` | `true` | Write fallback time edges between consecutive extracted memories |
 | `entityGraphEnabled` | `true` | Enable entity co-reference edges |
