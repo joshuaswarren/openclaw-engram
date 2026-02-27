@@ -1,7 +1,7 @@
 import { log } from "./logger.js";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
@@ -1118,6 +1118,77 @@ export class Orchestrator {
       used += chunk.length;
     }
     return used > 0 ? lines.join("\n") : null;
+  }
+
+  private async countConversationChunkDocs(dir: string): Promise<number> {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      let total = 0;
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          total += await this.countConversationChunkDocs(fullPath);
+          continue;
+        }
+        if (entry.isFile() && entry.name.endsWith(".md")) {
+          total += 1;
+        }
+      }
+      return total;
+    } catch {
+      return 0;
+    }
+  }
+
+  async getConversationIndexHealth(): Promise<{
+    enabled: boolean;
+    backend: "qmd" | "faiss";
+    status: "ok" | "degraded" | "disabled";
+    chunkDocCount: number;
+    lastUpdateAt: string | null;
+    qmdAvailable?: boolean;
+    faiss?: {
+      ok: boolean;
+      status: "ok" | "degraded" | "error";
+      indexPath: string;
+      message?: string;
+    };
+  }> {
+    const chunkDocCount = await this.countConversationChunkDocs(this.conversationIndexDir);
+    const lastUpdateAtMs = Math.max(0, ...this.conversationIndexLastUpdateAtMs.values());
+    const lastUpdateAt = lastUpdateAtMs > 0 ? new Date(lastUpdateAtMs).toISOString() : null;
+
+    if (!this.config.conversationIndexEnabled) {
+      return {
+        enabled: false,
+        backend: this.config.conversationIndexBackend,
+        status: "disabled",
+        chunkDocCount,
+        lastUpdateAt,
+      };
+    }
+
+    if (this.config.conversationIndexBackend === "faiss") {
+      const faiss = await failOpenFaissHealth(this.conversationFaiss);
+      return {
+        enabled: true,
+        backend: "faiss",
+        status: faiss.ok ? "ok" : "degraded",
+        chunkDocCount,
+        lastUpdateAt,
+        faiss,
+      };
+    }
+
+    const qmdAvailable = !!this.conversationQmd?.isAvailable();
+    return {
+      enabled: true,
+      backend: "qmd",
+      status: qmdAvailable ? "ok" : "degraded",
+      chunkDocCount,
+      lastUpdateAt,
+      qmdAvailable,
+    };
   }
 
   async updateConversationIndex(

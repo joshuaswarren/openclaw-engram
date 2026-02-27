@@ -254,6 +254,23 @@ interface TailscaleHelperLike {
   syncDirectory(options: TailscaleSyncOptions): Promise<void>;
 }
 
+export interface ConversationIndexHealthCliOrchestrator {
+  getConversationIndexHealth(): Promise<{
+    enabled: boolean;
+    backend: "qmd" | "faiss";
+    status: "ok" | "degraded" | "disabled";
+    chunkDocCount: number;
+    lastUpdateAt: string | null;
+    qmdAvailable?: boolean;
+    faiss?: {
+      ok: boolean;
+      status: "ok" | "degraded" | "error";
+      indexPath: string;
+      message?: string;
+    };
+  }>;
+}
+
 export interface TailscaleStatusCliCommandOptions {
   helper?: TailscaleHelperLike;
   timeoutMs?: number;
@@ -403,6 +420,25 @@ export async function runMigrateObservationsCliCommand(
     dryRun: options.write !== true,
     now: options.now,
   });
+}
+
+export async function runConversationIndexHealthCliCommand(
+  orchestrator: ConversationIndexHealthCliOrchestrator,
+): Promise<{
+  enabled: boolean;
+  backend: "qmd" | "faiss";
+  status: "ok" | "degraded" | "disabled";
+  chunkDocCount: number;
+  lastUpdateAt: string | null;
+  qmdAvailable?: boolean;
+  faiss?: {
+    ok: boolean;
+    status: "ok" | "degraded" | "error";
+    indexPath: string;
+    message?: string;
+  };
+}> {
+  return orchestrator.getConversationIndexHealth();
 }
 
 export async function runTailscaleStatusCliCommand(
@@ -1188,6 +1224,15 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ... and ${summary.warnings.length - 20} more`);
             }
           }
+          console.log("OK");
+        });
+
+      cmd
+        .command("conversation-index-health")
+        .description("Show conversation index backend health and index stats")
+        .action(async () => {
+          const health = await runConversationIndexHealthCliCommand(orchestrator);
+          console.log(JSON.stringify(health, null, 2));
           console.log("OK");
         });
 

@@ -177,6 +177,12 @@ Operational checks after enabling guideline learning:
 - Verify fail-open behavior by temporarily making state unwritable and confirming consolidation still completes.
 - If guidance quality regresses, keep telemetry enabled and disable only `compressionGuidelineLearningEnabled`.
 
+Conversation index health check command:
+
+```bash
+openclaw engram conversation-index-health
+```
+
 QMD collection (`~/.config/qmd/index.yml`):
 
 ```yaml
