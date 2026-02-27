@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
+  - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
+  - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.
+  - Persisted policy decision traces (`policyDecision`, `policyRationale`, `policyEligibility`) on action events for observability.
+  - Added `tests/memory-action-policy.test.ts` coverage for precedence, disabled-flag behavior, and zero-limit semantics.
 - v8.13 action-policy Task 1 (taxonomy + eligibility contracts):
   - Added typed action-policy contracts in `src/types.ts` (`MemoryActionPolicyDecision`, eligibility context/source/lifecycle unions, and policy result contract).
   - Added strict schemas in `src/schemas.ts` for action taxonomy and eligibility context, plus fail-open parse helpers with default-safe fallbacks.
