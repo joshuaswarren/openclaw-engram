@@ -113,6 +113,16 @@ test("webdav serve wrapper requires both auth fields when either is set", async 
       }),
     /requires both username and password/i,
   );
+
+  await assert.rejects(
+    () =>
+      runWebDavServeCliCommand({
+        allowlistDirs: [root],
+        authUsername: "   ",
+        authPassword: "   ",
+      }),
+    /must be non-empty/i,
+  );
 });
 
 test("webdav serve serializes concurrent startups and reuses singleton", async () => {

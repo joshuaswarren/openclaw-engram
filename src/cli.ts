@@ -432,8 +432,15 @@ export async function runWebDavServeCliCommand(
       throw new Error("webdav allowlist requires at least one directory");
     }
 
+    const usernameProvided = options.authUsername !== undefined;
+    const passwordProvided = options.authPassword !== undefined;
     const username = options.authUsername?.trim();
     const password = options.authPassword?.trim();
+
+    if ((usernameProvided && !username) || (passwordProvided && !password)) {
+      throw new Error("webdav auth username/password must be non-empty when provided");
+    }
+
     if ((username && !password) || (!username && password)) {
       throw new Error("webdav auth requires both username and password");
     }
