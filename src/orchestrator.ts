@@ -1022,49 +1022,55 @@ export class Orchestrator {
     return this.storageRouter.storageFor(ns);
   }
 
-  async appendMemoryActionEvent(
+  previewMemoryActionEvent(
     event: Omit<MemoryActionEvent, "timestamp"> & { timestamp?: string },
-  ): Promise<boolean> {
+  ): MemoryActionEvent {
     const namespace =
       typeof event.namespace === "string" && event.namespace.length > 0
         ? event.namespace
         : this.config.defaultNamespace;
+    const eligibility = parseMemoryActionEligibilityContext(event.policyEligibility);
+    const policy = evaluateMemoryActionPolicy({
+      action: event.action,
+      eligibility,
+      options: {
+        actionsEnabled: this.config.contextCompressionActionsEnabled,
+        maxCompressionTokensPerHour: this.config.maxCompressionTokensPerHour,
+      },
+    });
+
+    const normalizedOutcome =
+      policy.decision === "allow"
+        ? event.outcome
+        : event.outcome === "failed"
+          ? "failed"
+          : "skipped";
+
+    const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    );
+
+    return {
+      ...event,
+      outcome: normalizedOutcome,
+      reason: reasonParts.join(" | "),
+      namespace,
+      timestamp:
+        typeof event.timestamp === "string" && event.timestamp.length > 0
+          ? event.timestamp
+          : new Date().toISOString(),
+      policyDecision: policy.decision,
+      policyRationale: policy.rationale,
+      policyEligibility: eligibility,
+    };
+  }
+
+  async appendMemoryActionEvent(
+    event: Omit<MemoryActionEvent, "timestamp"> & { timestamp?: string },
+  ): Promise<boolean> {
     try {
-      const storage = await this.getStorage(namespace);
-      const eligibility = parseMemoryActionEligibilityContext(event.policyEligibility);
-      const policy = evaluateMemoryActionPolicy({
-        action: event.action,
-        eligibility,
-        options: {
-          actionsEnabled: this.config.contextCompressionActionsEnabled,
-          maxCompressionTokensPerHour: this.config.maxCompressionTokensPerHour,
-        },
-      });
-
-      const normalizedOutcome =
-        policy.decision === "allow"
-          ? event.outcome
-          : event.outcome === "failed"
-            ? "failed"
-            : "skipped";
-
-      const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
-        (part): part is string => typeof part === "string" && part.length > 0,
-      );
-
-      const toWrite: MemoryActionEvent = {
-        ...event,
-        outcome: normalizedOutcome,
-        reason: reasonParts.join(" | "),
-        namespace,
-        timestamp:
-          typeof event.timestamp === "string" && event.timestamp.length > 0
-            ? event.timestamp
-            : new Date().toISOString(),
-        policyDecision: policy.decision,
-        policyRationale: policy.rationale,
-        policyEligibility: eligibility,
-      };
+      const toWrite = this.previewMemoryActionEvent(event);
+      const storage = await this.getStorage(toWrite.namespace);
       await storage.appendMemoryActionEvents([toWrite]);
       return true;
     } catch (err) {

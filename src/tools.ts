@@ -1056,20 +1056,23 @@ Best for:
           typeof namespace === "string" && namespace.length > 0
             ? namespace
             : orchestrator.config.defaultNamespace;
-        if (dryRun === true) {
-          return toolResult(
-            `Dry run: memory action would be recorded with action=${action}, outcome=${outcome ?? "applied"}, namespace=${ns}.`,
-          );
-        }
-
-        const wrote = await orchestrator.appendMemoryActionEvent({
+        const event = {
           action,
           outcome: outcome ?? "applied",
           namespace: ns,
           reason,
           memoryId,
           promptHash: promptHashForTelemetry(sourcePrompt),
-        });
+        };
+
+        if (dryRun === true) {
+          const preview = orchestrator.previewMemoryActionEvent(event);
+          return toolResult(
+            `Dry run: memory action would be recorded with action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}, policy=${preview.policyDecision}.`,
+          );
+        }
+
+        const wrote = await orchestrator.appendMemoryActionEvent(event);
         if (!wrote) {
           return toolResult("Memory action telemetry write failed (fail-open).");
         }

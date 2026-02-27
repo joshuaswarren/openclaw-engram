@@ -32,6 +32,12 @@ function buildHarness(options?: {
       sharedContextEnabled: false,
       compoundingEnabled: false,
     },
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: event.outcome ?? "applied",
+      policyDecision: "allow",
+    }),
     appendMemoryActionEvent: async (event: unknown) => {
       capturedEvents.push(event);
       return options?.appendMemoryActionEventResult ?? true;
@@ -136,6 +142,7 @@ test("memory_action_apply dryRun reports without writing telemetry", async () =>
   });
 
   assert.match(toolText(result), /Dry run:/i);
+  assert.match(toolText(result), /policy=allow/i);
   assert.equal(capturedEvents.length, 0);
 });
 
