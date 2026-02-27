@@ -52,7 +52,13 @@ openclaw engram route test ...      # Test routing rule match
 openclaw engram export              # Export memory store
 openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
+openclaw engram compat              # Run local compatibility diagnostics
 ```
+
+Compatibility diagnostics:
+- `openclaw engram compat` reports `ok|warn|error` checks for manifest wiring, startup hooks/service registration, CLI wiring, Node engine floor, and qmd availability.
+- Use `openclaw engram compat --json` for CI/automation consumers.
+- Use `openclaw engram compat --strict` to fail with non-zero exit code on warnings or errors.
 
 Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.

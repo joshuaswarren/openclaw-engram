@@ -59,6 +59,18 @@ kill -USR1 $(pgrep openclaw-gateway)
 - **Verbatim Artifacts** (`verbatimArtifactsEnabled`) — High-confidence decisions/constraints stored as trusted retrieval anchors.
 - **Recall Planner** (`recallPlannerEnabled`, default `true`) — Lightweight retrieve-vs-think gating.
 
+## Compatibility Diagnostics
+
+Use the built-in compatibility check before rollouts or after plugin wiring changes:
+
+```bash
+openclaw engram compat
+openclaw engram compat --json
+openclaw engram compat --strict
+```
+
+`--strict` exits non-zero when any warning/error is present.
+
 ## Agent Tools
 
 | Tool | Description |
