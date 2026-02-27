@@ -363,6 +363,52 @@ class QmdDaemonSession {
 }
 
 // ---------------------------------------------------------------------------
+// MCP tool result parser (shared by all daemon search methods)
+// ---------------------------------------------------------------------------
+
+function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
+  const resultObj = result as Record<string, unknown> | null;
+  if (!resultObj) return [];
+
+  const results: QmdSearchResult[] = [];
+  const pushDocs = (docs: unknown[]) => {
+    for (const doc of docs) {
+      const d = doc as Record<string, unknown>;
+      results.push({
+        docid: typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "",
+        path: typeof d.file === "string" ? d.file : (typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "unknown"),
+        snippet: typeof d.snippet === "string" ? d.snippet : "",
+        score: typeof d.score === "number" ? d.score : 0,
+      });
+    }
+  };
+
+  // Top-level structuredContent
+  const topStructured = resultObj.structuredContent as Record<string, unknown> | undefined;
+  const topDocs = topStructured?.results ?? topStructured?.documents;
+  if (Array.isArray(topDocs)) pushDocs(topDocs);
+
+  // Content array items (text or nested structuredContent)
+  const content = resultObj.content;
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      const structured = item?.structuredContent;
+      const docResults = structured?.results ?? structured?.documents;
+      if (Array.isArray(docResults)) pushDocs(docResults);
+      if (typeof item?.text === "string") {
+        try {
+          const parsed = JSON.parse(item.text);
+          const textResults = parsed?.results ?? parsed?.documents;
+          if (Array.isArray(textResults)) pushDocs(textResults);
+        } catch { /* Not JSON text */ }
+      }
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Shared daemon session (singleton — one child process for all collections)
 // ---------------------------------------------------------------------------
 
@@ -606,6 +652,14 @@ export class QmdClient {
     const col = collection ?? this.collection;
     const n = maxResults ?? this.maxResults;
 
+    // Try daemon first — keeps models warm, avoids cold subprocess loads
+    await this.maybeProbeDaemon();
+    if (this.daemonAvailable && this.daemonSession) {
+      const results = await this.vsearchViaDaemon(trimmed, col, n);
+      if (results !== null) return results;
+    }
+
+    // Subprocess fallback
     if (this.available === false) return [];
     const startedAtMs = Date.now();
     try {
@@ -693,54 +747,7 @@ export class QmdClient {
         );
       }
 
-      // Parse MCP tool result. QMD returns:
-      //   { content: [{type:"text", text:"..."}], structuredContent: {results: [...]} }
-      const resultObj = result as Record<string, unknown> | null;
-      if (!resultObj) return null;
-
-      const results: QmdSearchResult[] = [];
-
-      const pushDocs = (docs: unknown[]) => {
-        for (const doc of docs) {
-          const d = doc as Record<string, unknown>;
-          results.push({
-            docid: typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "",
-            path: typeof d.file === "string" ? d.file : (typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "unknown"),
-            snippet: typeof d.snippet === "string" ? d.snippet : "",
-            score: typeof d.score === "number" ? d.score : 0,
-          });
-        }
-      };
-
-      // Try top-level structuredContent first (direct MCP response)
-      const topStructured = resultObj.structuredContent as Record<string, unknown> | undefined;
-      const topDocs = topStructured?.results ?? topStructured?.documents;
-      if (Array.isArray(topDocs)) {
-        pushDocs(topDocs);
-      }
-
-      // Also parse content array items (text or nested structuredContent)
-      const content = resultObj.content;
-      if (Array.isArray(content)) {
-        for (const item of content) {
-          const structured = item?.structuredContent;
-          const docResults = structured?.results ?? structured?.documents;
-          if (Array.isArray(docResults)) {
-            pushDocs(docResults);
-          }
-          if (typeof item?.text === "string") {
-            try {
-              const parsed = JSON.parse(item.text);
-              const textResults = parsed?.results ?? parsed?.documents;
-              if (Array.isArray(textResults)) {
-                pushDocs(textResults);
-              }
-            } catch {
-              // Not JSON text, ignore
-            }
-          }
-        }
-      }
+      const results = parseMcpSearchResult(result);
 
       log.debug(`QMD daemon search: ${results.length} results in ${durationMs}ms`);
       return results;
@@ -778,46 +785,45 @@ export class QmdClient {
       );
       const durationMs = Date.now() - startedAtMs;
 
-      const resultObj = result as Record<string, unknown> | null;
-      if (!resultObj) return null;
-
-      const results: QmdSearchResult[] = [];
-      const pushDocs = (docs: unknown[]) => {
-        for (const doc of docs) {
-          const d = doc as Record<string, unknown>;
-          results.push({
-            docid: typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "",
-            path: typeof d.file === "string" ? d.file : (typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "unknown"),
-            snippet: typeof d.snippet === "string" ? d.snippet : "",
-            score: typeof d.score === "number" ? d.score : 0,
-          });
-        }
-      };
-
-      const topStructured = resultObj.structuredContent as Record<string, unknown> | undefined;
-      const topDocs = topStructured?.results ?? topStructured?.documents;
-      if (Array.isArray(topDocs)) pushDocs(topDocs);
-
-      const content = resultObj.content;
-      if (Array.isArray(content)) {
-        for (const item of content) {
-          const structured = item?.structuredContent;
-          const docResults = structured?.results ?? structured?.documents;
-          if (Array.isArray(docResults)) pushDocs(docResults);
-          if (typeof item?.text === "string") {
-            try {
-              const parsed = JSON.parse(item.text);
-              const textResults = parsed?.results ?? parsed?.documents;
-              if (Array.isArray(textResults)) pushDocs(textResults);
-            } catch { /* Not JSON text */ }
-          }
-        }
-      }
+      const results = parseMcpSearchResult(result);
 
       log.debug(`QMD daemon bm25: ${results.length} results in ${durationMs}ms`);
       return results;
     } catch (err) {
       log.debug(`QMD daemon bm25 failed: ${err}`);
+      return null;
+    }
+  }
+
+  /** Vector search via daemon — uses warm models (~100-500ms vs 8-28s cold subprocess). */
+  private async vsearchViaDaemon(
+    query: string,
+    collection: string,
+    maxResults: number,
+  ): Promise<QmdSearchResult[] | null> {
+    if (!this.daemonSession || !this.daemonAvailable) return null;
+
+    const startedAtMs = Date.now();
+    try {
+      const result = await this.daemonSession.callTool(
+        "vsearch",
+        { query, limit: maxResults, collection },
+        QMD_DAEMON_TIMEOUT_MS,
+      );
+      const durationMs = Date.now() - startedAtMs;
+
+      const results = parseMcpSearchResult(result);
+
+      log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms`);
+      return results;
+    } catch (err) {
+      const errMsg = String(err);
+      if (errMsg.includes("timed out")) {
+        log.debug(`QMD daemon vsearch timed out, falling back to subprocess`);
+        return null;
+      }
+      log.debug(`QMD daemon vsearch failed: ${err}`);
+      this.daemonAvailable = false;
       return null;
     }
   }
