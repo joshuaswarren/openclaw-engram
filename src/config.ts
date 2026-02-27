@@ -397,6 +397,42 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.conversationIndexMinUpdateIntervalMs
         : 15 * 60_000,
     conversationIndexEmbedOnUpdate: cfg.conversationIndexEmbedOnUpdate === true,
+    conversationIndexFaissScriptPath:
+      typeof cfg.conversationIndexFaissScriptPath === "string" && cfg.conversationIndexFaissScriptPath.trim().length > 0
+        ? cfg.conversationIndexFaissScriptPath.trim()
+        : undefined,
+    conversationIndexFaissPythonBin:
+      typeof cfg.conversationIndexFaissPythonBin === "string" && cfg.conversationIndexFaissPythonBin.trim().length > 0
+        ? cfg.conversationIndexFaissPythonBin.trim()
+        : undefined,
+    conversationIndexFaissModelId:
+      typeof cfg.conversationIndexFaissModelId === "string" && cfg.conversationIndexFaissModelId.trim().length > 0
+        ? cfg.conversationIndexFaissModelId.trim()
+        : "text-embedding-3-small",
+    conversationIndexFaissIndexDir:
+      typeof cfg.conversationIndexFaissIndexDir === "string" && cfg.conversationIndexFaissIndexDir.trim().length > 0
+        ? cfg.conversationIndexFaissIndexDir.trim()
+        : "state/conversation-index/faiss",
+    conversationIndexFaissUpsertTimeoutMs:
+      typeof cfg.conversationIndexFaissUpsertTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissUpsertTimeoutMs))
+        : 30_000,
+    conversationIndexFaissSearchTimeoutMs:
+      typeof cfg.conversationIndexFaissSearchTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissSearchTimeoutMs))
+        : 5_000,
+    conversationIndexFaissHealthTimeoutMs:
+      typeof cfg.conversationIndexFaissHealthTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissHealthTimeoutMs))
+        : 2_000,
+    conversationIndexFaissMaxBatchSize:
+      typeof cfg.conversationIndexFaissMaxBatchSize === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissMaxBatchSize))
+        : 512,
+    conversationIndexFaissMaxSearchK:
+      typeof cfg.conversationIndexFaissMaxSearchK === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissMaxSearchK))
+        : 50,
     conversationRecallTopK:
       typeof cfg.conversationRecallTopK === "number" ? cfg.conversationRecallTopK : 3,
     conversationRecallMaxChars:

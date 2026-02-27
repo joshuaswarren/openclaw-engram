@@ -57,6 +57,13 @@ All notable changes to this project will be documented in this file.
   - Added fixture catalog under `tests/compat-fixtures/` for healthy, missing-manifest, and empty-package repository states.
   - Added `tests/compat-fixtures.test.ts` to validate deterministic check outcomes across fixture scenarios.
   - Added fixture usage notes in `tests/compat-fixtures/README.md`.
+- v8.9 compatibility diagnostics Task 4 (docs + rollout guidance):
+  - Updated `docs/operations.md` CLI runbook with `openclaw engram compat` usage and strict/json mode guidance.
+  - Updated `README.md` with compatibility diagnostics quickstart commands for operator rollout checks.
+- v8.10 FAISS conversation index Task 1 (config contracts + docs):
+  - Added FAISS backend config fields to plugin config contracts and schema (`conversationIndexFaiss*`) while keeping `conversationIndexBackend` default as `qmd`.
+  - Added strict parsing/clamping tests in `tests/config-conversation-index-faiss.test.ts`, including zero-safe semantics and malformed input handling.
+  - Updated `docs/config-reference.md` and `docs/context-retention.md` with FAISS backend configuration and rollout notes.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
