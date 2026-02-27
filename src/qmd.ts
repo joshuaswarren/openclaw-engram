@@ -363,6 +363,19 @@ class QmdDaemonSession {
 }
 
 // ---------------------------------------------------------------------------
+// Shared daemon session (singleton — one child process for all collections)
+// ---------------------------------------------------------------------------
+
+let _sharedDaemonSession: QmdDaemonSession | null = null;
+
+function getSharedDaemonSession(qmdPath: string): QmdDaemonSession {
+  if (!_sharedDaemonSession) {
+    _sharedDaemonSession = new QmdDaemonSession(qmdPath);
+  }
+  return _sharedDaemonSession;
+}
+
+// ---------------------------------------------------------------------------
 // QmdClient
 // ---------------------------------------------------------------------------
 
@@ -413,9 +426,8 @@ export class QmdClient {
   private async probeDaemon(): Promise<boolean> {
     this.lastDaemonCheckAtMs = Date.now();
 
-    if (!this.daemonSession) {
-      this.daemonSession = new QmdDaemonSession(this.qmdPath);
-    }
+    // Use shared singleton — all QmdClient instances share one child process
+    this.daemonSession = getSharedDaemonSession(this.qmdPath);
 
     try {
       const ok = await this.daemonSession.start();
@@ -424,7 +436,7 @@ export class QmdClient {
         this.daemonAvailable = false;
         return false;
       }
-      log.info("QMD daemon: stdio session active");
+      log.info(`QMD daemon: stdio session active (collection=${this.collection})`);
       this.daemonAvailable = true;
       return true;
     } catch (err) {
@@ -545,6 +557,14 @@ export class QmdClient {
     const col = collection ?? this.collection;
     const n = maxResults ?? this.maxResults;
 
+    // Try daemon first — BM25 via daemon is ~2ms vs ~100ms subprocess
+    await this.maybeProbeDaemon();
+    if (this.daemonAvailable && this.daemonSession) {
+      const results = await this.bm25SearchViaDaemon(trimmed, col, n);
+      if (results !== null) return results;
+    }
+
+    // Subprocess fallback
     if (this.available === false) return [];
     const startedAtMs = Date.now();
     try {
@@ -733,10 +753,71 @@ export class QmdClient {
         log.debug(`QMD daemon search timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
-      // Connection error: invalidate session and mark unavailable
+      // Connection error: mark unavailable, maybeProbeDaemon() will restart
+      // Don't invalidate shared session — other clients may still be using it
       log.debug(`QMD daemon search failed after ${durationMs}ms: ${err}`);
-      this.daemonSession.invalidate();
       this.daemonAvailable = false;
+      return null;
+    }
+  }
+
+  /** BM25 search via daemon — fast (~2ms), no model loading. */
+  private async bm25SearchViaDaemon(
+    query: string,
+    collection: string,
+    maxResults: number,
+  ): Promise<QmdSearchResult[] | null> {
+    if (!this.daemonSession || !this.daemonAvailable) return null;
+
+    const startedAtMs = Date.now();
+    try {
+      const result = await this.daemonSession.callTool(
+        "search",
+        { query, limit: maxResults, collection },
+        QMD_TIMEOUT_MS,
+      );
+      const durationMs = Date.now() - startedAtMs;
+
+      const resultObj = result as Record<string, unknown> | null;
+      if (!resultObj) return null;
+
+      const results: QmdSearchResult[] = [];
+      const pushDocs = (docs: unknown[]) => {
+        for (const doc of docs) {
+          const d = doc as Record<string, unknown>;
+          results.push({
+            docid: typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "",
+            path: typeof d.file === "string" ? d.file : (typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "unknown"),
+            snippet: typeof d.snippet === "string" ? d.snippet : "",
+            score: typeof d.score === "number" ? d.score : 0,
+          });
+        }
+      };
+
+      const topStructured = resultObj.structuredContent as Record<string, unknown> | undefined;
+      const topDocs = topStructured?.results ?? topStructured?.documents;
+      if (Array.isArray(topDocs)) pushDocs(topDocs);
+
+      const content = resultObj.content;
+      if (Array.isArray(content)) {
+        for (const item of content) {
+          const structured = item?.structuredContent;
+          const docResults = structured?.results ?? structured?.documents;
+          if (Array.isArray(docResults)) pushDocs(docResults);
+          if (typeof item?.text === "string") {
+            try {
+              const parsed = JSON.parse(item.text);
+              const textResults = parsed?.results ?? parsed?.documents;
+              if (Array.isArray(textResults)) pushDocs(textResults);
+            } catch { /* Not JSON text */ }
+          }
+        }
+      }
+
+      log.debug(`QMD daemon bm25: ${results.length} results in ${durationMs}ms`);
+      return results;
+    } catch (err) {
+      log.debug(`QMD daemon bm25 failed: ${err}`);
       return null;
     }
   }

@@ -697,7 +697,7 @@ export class Orchestrator {
     const maxChars = Math.max(400, entry.maxChars ?? this.config.conversationRecallMaxChars);
 
     const results = (await Promise.race([
-      this.conversationQmd.search(prompt, undefined, topK),
+      this.conversationQmd.bm25Search(prompt, undefined, topK),
       new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
     ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
 
