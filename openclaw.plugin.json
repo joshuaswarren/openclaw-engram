@@ -1217,6 +1217,16 @@
         "default": false,
         "description": "Enable adaptive compression guideline learning from memory-action outcomes (v8.3, default off)."
       },
+      "compressionGuidelineSemanticRefinementEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable optional semantic refinement pass after deterministic guideline candidate generation (v8.11, default off)."
+      },
+      "compressionGuidelineSemanticTimeoutMs": {
+        "type": "number",
+        "default": 2500,
+        "description": "Hard timeout in milliseconds for semantic refinement; timeout fail-opens to deterministic output."
+      },
       "maxProactiveQuestionsPerExtraction": {
         "type": "number",
         "default": 2,
@@ -1744,6 +1754,16 @@
     "compressionGuidelineLearningEnabled": {
       "label": "Compression Guideline Learning",
       "help": "Enable adaptive compression guideline learning from action outcomes (v8.3, default off)"
+    },
+    "compressionGuidelineSemanticRefinementEnabled": {
+      "label": "Compression Semantic Refinement",
+      "advanced": true,
+      "help": "Enable optional semantic refinement after deterministic guideline generation (v8.11, default off)"
+    },
+    "compressionGuidelineSemanticTimeoutMs": {
+      "label": "Compression Semantic Timeout (ms)",
+      "advanced": true,
+      "placeholder": "2500"
     },
     "maxProactiveQuestionsPerExtraction": {
       "label": "Max Proactive Questions / Extraction",

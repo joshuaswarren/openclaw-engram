@@ -34,6 +34,7 @@ import { buildRecallQueryPolicy } from "./recall-query-policy.js";
 import {
   buildCompressionGuidelinesMarkdown as buildCompressionGuidelinesMarkdownV2,
   computeCompressionGuidelineCandidate,
+  refineCompressionGuidelineCandidateSemantically,
   renderCompressionGuidelinesMarkdown,
 } from "./compression-optimizer.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
@@ -86,6 +87,7 @@ import type {
   IdentityInjectionMode,
   LifecycleState,
   MemoryActionEvent,
+  MemoryActionType,
   MemoryLink,
   MemoryFile,
   MemoryFrontmatter,
@@ -3706,18 +3708,103 @@ export class Orchestrator {
         generatedAtIso: generatedAt,
         previousState,
       });
-      const content = renderCompressionGuidelinesMarkdown(candidate);
+      const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
+        enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
+        timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+        runRefinement: async (baseline) => {
+          const prompt = [
+            "You refine compression policy suggestions conservatively.",
+            "Return JSON only in this shape:",
+            '{"updates":[{"action":"summarize_node","delta":0.02,"confidence":"medium","note":"..."}]}',
+            "Constraints:",
+            "- Keep updates sparse and conservative.",
+            "- delta must stay between -0.15 and 0.15.",
+            "- Only include actions present in the input.",
+            "Input candidate:",
+            JSON.stringify(baseline),
+          ].join("\n");
+
+          const response = await this.localLlm.chatCompletion(
+            [
+              { role: "system", content: "Respond with strict JSON only. No markdown." },
+              { role: "user", content: prompt },
+            ],
+            {
+              temperature: 0.1,
+              maxTokens: 400,
+              timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+              operation: "compression_guideline_semantic_refinement",
+            },
+          );
+
+          return this.parseCompressionSemanticRefinement(response?.content ?? "");
+        },
+      });
+      const content = renderCompressionGuidelinesMarkdown(refinedCandidate);
       await this.storage.writeCompressionGuidelines(content);
       await this.storage.writeCompressionGuidelineOptimizerState({
-        version: candidate.optimizerVersion,
-        updatedAt: candidate.generatedAt,
-        sourceWindow: candidate.sourceWindow,
-        eventCounts: candidate.eventCounts,
-        guidelineVersion: candidate.guidelineVersion,
+        version: refinedCandidate.optimizerVersion,
+        updatedAt: refinedCandidate.generatedAt,
+        sourceWindow: refinedCandidate.sourceWindow,
+        eventCounts: refinedCandidate.eventCounts,
+        guidelineVersion: refinedCandidate.guidelineVersion,
       });
       log.info(`compression guideline learning updated (${events.length} events)`);
     } catch (err) {
       log.warn(`compression guideline learning failed (ignored): ${err}`);
+    }
+  }
+
+  private parseCompressionSemanticRefinement(
+    raw: string,
+  ): {
+    updates: Array<{
+      action: MemoryActionType;
+      delta?: number;
+      confidence?: "low" | "medium" | "high";
+      note?: string;
+    }>;
+  } | null {
+    if (typeof raw !== "string" || raw.trim().length === 0) return null;
+    const trimmed = raw.trim();
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+
+    try {
+      const parsed = JSON.parse(trimmed.slice(start, end + 1)) as {
+        updates?: Array<{ action?: unknown; delta?: unknown; confidence?: unknown; note?: unknown }>;
+      };
+      if (!Array.isArray(parsed?.updates)) return null;
+
+      const validActions = new Set<MemoryActionType>([
+        "store_episode",
+        "store_note",
+        "update_note",
+        "create_artifact",
+        "summarize_node",
+        "discard",
+        "link_graph",
+      ]);
+
+      const updates = parsed.updates
+        .filter((item) => item && typeof item.action === "string" && validActions.has(item.action as MemoryActionType))
+        .map((item) => {
+          const confidence: "low" | "medium" | "high" | undefined =
+            item.confidence === "low" || item.confidence === "medium" || item.confidence === "high"
+              ? item.confidence
+              : undefined;
+          return {
+            action: item.action as MemoryActionType,
+            delta: typeof item.delta === "number" && Number.isFinite(item.delta) ? item.delta : undefined,
+            confidence,
+            note: typeof item.note === "string" ? item.note : undefined,
+          };
+        });
+
+      return { updates };
+    } catch {
+      return null;
     }
   }
 

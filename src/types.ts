@@ -308,6 +308,8 @@ export interface PluginConfig {
   proactiveExtractionEnabled: boolean;
   contextCompressionActionsEnabled: boolean;
   compressionGuidelineLearningEnabled: boolean;
+  compressionGuidelineSemanticRefinementEnabled: boolean;
+  compressionGuidelineSemanticTimeoutMs: number;
   maxProactiveQuestionsPerExtraction: number;
   maxCompressionTokensPerHour: number;
   // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts

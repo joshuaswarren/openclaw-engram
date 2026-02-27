@@ -81,6 +81,12 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.11 compression optimizer Task 3 (optional semantic refinement pass):
+  - Added optional semantic refinement pipeline in `src/compression-optimizer.ts` behind explicit enable flag + hard timeout fail-open behavior.
+  - Added config surface for refinement gating: `compressionGuidelineSemanticRefinementEnabled` and `compressionGuidelineSemanticTimeoutMs` (with schema/UI wiring and parse-time clamping).
+  - Wired orchestrator guideline-learning to run deterministic baseline first, then optional semantic refinement via bounded local-LLM runner before persisting outputs.
+  - Added `tests/compression-optimizer-semantic.test.ts` coverage for disabled, timeout, runner-error fail-open behavior, and bounded update application.
+  - Updated `docs/setup-config-tuning.md` with rollout guidance for semantic refinement.
 - v8.11 compression optimizer Task 2 (deterministic engine + orchestrator wiring):
   - Added `src/compression-optimizer.ts` with deterministic telemetry aggregation, bounded rule-delta computation, and conservative sparse-sample behavior.
   - Included downstream recall-quality marker parsing from telemetry notes to inform per-action confidence and direction.

@@ -670,6 +670,12 @@ export function parseConfig(raw: unknown): PluginConfig {
     proactiveExtractionEnabled: cfg.proactiveExtractionEnabled === true,
     contextCompressionActionsEnabled: cfg.contextCompressionActionsEnabled === true,
     compressionGuidelineLearningEnabled: cfg.compressionGuidelineLearningEnabled === true,
+    compressionGuidelineSemanticRefinementEnabled:
+      cfg.compressionGuidelineSemanticRefinementEnabled === true,
+    compressionGuidelineSemanticTimeoutMs:
+      typeof cfg.compressionGuidelineSemanticTimeoutMs === "number"
+        ? Math.max(1, Math.floor(cfg.compressionGuidelineSemanticTimeoutMs))
+        : 2500,
     maxProactiveQuestionsPerExtraction:
       typeof cfg.maxProactiveQuestionsPerExtraction === "number"
         ? Math.max(0, Math.floor(cfg.maxProactiveQuestionsPerExtraction))
