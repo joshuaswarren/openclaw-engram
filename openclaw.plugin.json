@@ -889,7 +889,7 @@
         "type": "string",
         "enum": ["qmd", "faiss"],
         "default": "qmd",
-        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss reserved/experimental."
+        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss is predeclared for follow-on adapter tasks and should remain disabled in this release."
       },
       "conversationIndexQmdCollection": {
         "type": "string",
@@ -910,6 +910,51 @@
         "type": "boolean",
         "default": false,
         "description": "If true, conversation_index_update also runs QMD embed by default. Keep false for lower load."
+      },
+      "conversationIndexFaissScriptPath": {
+        "type": "string",
+        "default": "",
+        "description": "Optional absolute path to FAISS sidecar script. If unset, uses built-in default script location."
+      },
+      "conversationIndexFaissPythonBin": {
+        "type": "string",
+        "default": "",
+        "description": "Optional Python executable used to run the FAISS sidecar (for example python3.11)."
+      },
+      "conversationIndexFaissModelId": {
+        "type": "string",
+        "default": "text-embedding-3-small",
+        "description": "Embedding model identifier expected by the FAISS sidecar."
+      },
+      "conversationIndexFaissIndexDir": {
+        "type": "string",
+        "default": "state/conversation-index/faiss",
+        "description": "Relative directory under memoryDir where FAISS sidecar index artifacts are stored."
+      },
+      "conversationIndexFaissUpsertTimeoutMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Timeout (ms) for FAISS upsert operations."
+      },
+      "conversationIndexFaissSearchTimeoutMs": {
+        "type": "number",
+        "default": 5000,
+        "description": "Timeout (ms) for FAISS search operations."
+      },
+      "conversationIndexFaissHealthTimeoutMs": {
+        "type": "number",
+        "default": 2000,
+        "description": "Timeout (ms) for FAISS health checks."
+      },
+      "conversationIndexFaissMaxBatchSize": {
+        "type": "number",
+        "default": 512,
+        "description": "Maximum transcript chunk batch size per FAISS upsert call."
+      },
+      "conversationIndexFaissMaxSearchK": {
+        "type": "number",
+        "default": 50,
+        "description": "Maximum top-K allowed for FAISS search requests."
       },
       "conversationRecallTopK": {
         "type": "number",

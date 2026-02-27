@@ -169,6 +169,15 @@ export interface PluginConfig {
   conversationIndexRetentionDays: number;
   conversationIndexMinUpdateIntervalMs: number;
   conversationIndexEmbedOnUpdate: boolean;
+  conversationIndexFaissScriptPath?: string;
+  conversationIndexFaissPythonBin?: string;
+  conversationIndexFaissModelId: string;
+  conversationIndexFaissIndexDir: string;
+  conversationIndexFaissUpsertTimeoutMs: number;
+  conversationIndexFaissSearchTimeoutMs: number;
+  conversationIndexFaissHealthTimeoutMs: number;
+  conversationIndexFaissMaxBatchSize: number;
+  conversationIndexFaissMaxSearchK: number;
   conversationRecallTopK: number;
   conversationRecallMaxChars: number;
   conversationRecallTimeoutMs: number;
