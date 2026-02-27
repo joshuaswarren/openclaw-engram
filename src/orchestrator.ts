@@ -454,7 +454,10 @@ export class Orchestrator {
     if (!this.config.knowledgeIndexEnabled) return null;
     const t0 = Date.now();
     try {
-      const ki = await this.storage.buildKnowledgeIndex(this.config);
+      const kiOverrides: { maxEntities?: number; maxChars?: number } = {};
+      if (entry.maxEntities != null) kiOverrides.maxEntities = entry.maxEntities;
+      if (entry.maxChars != null) kiOverrides.maxChars = entry.maxChars;
+      const ki = await this.storage.buildKnowledgeIndex(this.config, kiOverrides);
       timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
       if (!ki.result) return null;
       log.debug(`Knowledge Index: ${ki.result.split("\n").length - 4} entities, ${ki.result.length} chars${ki.cached ? " (cached)" : ""}`);
@@ -728,10 +731,12 @@ export class Orchestrator {
     timings: Record<string, string>,
   ): Promise<SectionFetchResult | null> {
     if (!this.compounding || !this.config.compoundingInjectEnabled) return null;
+    const t0 = Date.now();
 
     const maxPatterns = entry.maxPatterns ?? 40;
     const mistakes = await this.compounding.readMistakes();
     if (!mistakes || !Array.isArray(mistakes.patterns) || mistakes.patterns.length === 0) {
+      timings.compounding = `${Date.now() - t0}ms`;
       return null;
     }
 
@@ -739,20 +744,27 @@ export class Orchestrator {
       "Avoid repeating these patterns:",
       ...mistakes.patterns.slice(0, maxPatterns).map((p) => `- ${p}`),
     ].join("\n");
+    timings.compounding = `${Date.now() - t0}ms`;
     return { header: "## Institutional Learning (Compounded)", body };
   }
 
   private async fetchQuestions(
     entry: RecallSectionConfig,
     profileStorage: StorageManager,
+    timings: Record<string, string>,
   ): Promise<SectionFetchResult | null> {
     if (!this.config.injectQuestions) return null;
+    const t0 = Date.now();
 
     const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
-    if (questions.length === 0) return null;
+    if (questions.length === 0) {
+      timings.questions = `${Date.now() - t0}ms`;
+      return null;
+    }
 
     const topQuestion = questions[0]; // Already sorted by priority desc
     const body = `Something I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`;
+    timings.questions = `${Date.now() - t0}ms`;
     return { header: "## Open Question", body };
   }
 
@@ -855,7 +867,7 @@ export class Orchestrator {
           fetchers.set(entry.id, () => this.fetchCompounding(entry, timings));
           break;
         case "questions":
-          fetchers.set(entry.id, () => this.fetchQuestions(entry, profileStorage));
+          fetchers.set(entry.id, () => this.fetchQuestions(entry, profileStorage, timings));
           break;
         default:
           log.debug(`recall: unknown pipeline section "${entry.id}", skipping`);

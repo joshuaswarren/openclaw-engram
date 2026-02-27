@@ -1432,7 +1432,7 @@ export class StorageManager {
    * Build the Knowledge Index: a compact markdown table of top-scored entities.
    * Respects maxEntities and maxChars limits from config.
    */
-  async buildKnowledgeIndex(config: PluginConfig): Promise<{ result: string; cached: boolean }> {
+  async buildKnowledgeIndex(config: PluginConfig, overrides?: { maxEntities?: number; maxChars?: number }): Promise<{ result: string; cached: boolean }> {
     // Return cached index if still fresh
     if (
       this.knowledgeIndexCache &&
@@ -1459,7 +1459,7 @@ export class StorageManager {
 
     // Sort by score descending, take top N
     scored.sort((a, b) => b.score - a.score);
-    const topN = scored.slice(0, config.knowledgeIndexMaxEntities);
+    const topN = scored.slice(0, overrides?.maxEntities ?? config.knowledgeIndexMaxEntities);
 
     if (topN.length === 0) {
       this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
@@ -1478,7 +1478,7 @@ export class StorageManager {
         : "—";
       const row = `| ${entity.name} | ${entity.type} | ${summary} | ${connected} |`;
 
-      if (totalChars + row.length + 1 > config.knowledgeIndexMaxChars) break;
+      if (totalChars + row.length + 1 > (overrides?.maxChars ?? config.knowledgeIndexMaxChars)) break;
       rows.push(row);
       totalChars += row.length + 1;
     }
