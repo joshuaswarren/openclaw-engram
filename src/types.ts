@@ -713,6 +713,9 @@ export interface MemoryActionEvent {
   memoryId?: string;
   namespace?: string;
   promptHash?: string;
+  policyDecision?: MemoryActionPolicyDecision;
+  policyRationale?: string;
+  policyEligibility?: MemoryActionEligibilityContext;
 }
 
 export interface CompressionGuidelineOptimizerSourceWindow {

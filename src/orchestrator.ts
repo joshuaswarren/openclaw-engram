@@ -36,6 +36,8 @@ import {
   planRecallMode,
 } from "./intent.js";
 import { buildRecallQueryPolicy } from "./recall-query-policy.js";
+import { parseMemoryActionEligibilityContext } from "./schemas.js";
+import { evaluateMemoryActionPolicy } from "./memory-action-policy.js";
 import {
   buildCompressionGuidelinesMarkdown as buildCompressionGuidelinesMarkdownV2,
   computeCompressionGuidelineCandidate,
@@ -1029,13 +1031,39 @@ export class Orchestrator {
         : this.config.defaultNamespace;
     try {
       const storage = await this.getStorage(namespace);
+      const eligibility = parseMemoryActionEligibilityContext(event.policyEligibility);
+      const policy = evaluateMemoryActionPolicy({
+        action: event.action,
+        eligibility,
+        options: {
+          actionsEnabled: this.config.contextCompressionActionsEnabled,
+          maxCompressionTokensPerHour: this.config.maxCompressionTokensPerHour,
+        },
+      });
+
+      const normalizedOutcome =
+        policy.decision === "allow"
+          ? event.outcome
+          : event.outcome === "failed"
+            ? "failed"
+            : "skipped";
+
+      const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
+        (part): part is string => typeof part === "string" && part.length > 0,
+      );
+
       const toWrite: MemoryActionEvent = {
         ...event,
+        outcome: normalizedOutcome,
+        reason: reasonParts.join(" | "),
         namespace,
         timestamp:
           typeof event.timestamp === "string" && event.timestamp.length > 0
             ? event.timestamp
             : new Date().toISOString(),
+        policyDecision: policy.decision,
+        policyRationale: policy.rationale,
+        policyEligibility: eligibility,
       };
       await storage.appendMemoryActionEvents([toWrite]);
       return true;
