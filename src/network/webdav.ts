@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { URL } from "node:url";
 
@@ -40,6 +40,7 @@ interface AllowedRoot {
 export class WebDavServer {
   private readonly options: Required<Omit<WebDavServerOptions, "auth">> & Pick<WebDavServerOptions, "auth">;
   private readonly allowedRoots: AllowedRoot[];
+  private readonly timingKey: Buffer;
   private server: Server | null = null;
 
   private constructor(
@@ -48,6 +49,7 @@ export class WebDavServer {
   ) {
     this.options = options;
     this.allowedRoots = allowedRoots;
+    this.timingKey = randomBytes(32);
   }
 
   static async create(input: WebDavServerOptions): Promise<WebDavServer> {
@@ -212,9 +214,8 @@ export class WebDavServer {
   }
 
   private timingSafeStringEqual(a: string, b: string): boolean {
-    const left = Buffer.from(a, "utf-8");
-    const right = Buffer.from(b, "utf-8");
-    if (left.length !== right.length) return false;
+    const left = createHmac("sha256", this.timingKey).update(a, "utf-8").digest();
+    const right = createHmac("sha256", this.timingKey).update(b, "utf-8").digest();
     return timingSafeEqual(left, right);
   }
 
