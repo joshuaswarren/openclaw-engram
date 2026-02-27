@@ -30,25 +30,147 @@ function summarize(checks: CompatCheckResult[]): { ok: number; warn: number; err
   return out;
 }
 
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1 ");
-}
+function stripCommentsAndStrings(source: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
 
-function stripStringLiterals(source: string): string {
-  return source
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")
-    .replace(/`(?:\\.|[^`\\])*`/g, "``");
+    if (ch === "/" && next === "/") {
+      out.push(" ", " ");
+      i += 2;
+      while (i < source.length && source[i] !== "\n") {
+        out.push(" ");
+        i += 1;
+      }
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      out.push(" ", " ");
+      i += 2;
+      while (i < source.length) {
+        const c = source[i];
+        const n = source[i + 1];
+        out.push(c === "\n" ? "\n" : " ");
+        i += 1;
+        if (c === "*" && n === "/") {
+          out.push(" ");
+          i += 1;
+          break;
+        }
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      out.push(" ");
+      i += 1;
+      while (i < source.length) {
+        const c = source[i];
+        if (c === "\\") {
+          out.push(" ");
+          i += 1;
+          if (i < source.length) {
+            out.push(source[i] === "\n" ? "\n" : " ");
+            i += 1;
+          }
+          continue;
+        }
+        out.push(c === "\n" ? "\n" : " ");
+        i += 1;
+        if (c === quote) break;
+      }
+      continue;
+    }
+
+    out.push(ch);
+    i += 1;
+  }
+  return out.join("");
 }
 
 function parseHookRegistrations(source: string): Set<string> {
   const hooks = new Set<string>();
-  const re = /api\.on\(\s*"([a-z_]+)"/g;
-  for (let match = re.exec(source); match !== null; match = re.exec(source)) {
-    hooks.add(match[1]);
+  let i = 0;
+
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (ch === "/" && next === "/") {
+      i += 2;
+      while (i < source.length && source[i] !== "\n") i += 1;
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      i += 2;
+      while (i + 1 < source.length) {
+        if (source[i] === "*" && source[i + 1] === "/") {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (source[i] === quote) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+
+    if (source.startsWith("api.on", i)) {
+      let j = i + "api.on".length;
+      while (j < source.length && /\s/.test(source[j])) j += 1;
+      if (source[j] !== "(") {
+        i += 1;
+        continue;
+      }
+
+      j += 1;
+      while (j < source.length && /\s/.test(source[j])) j += 1;
+      const quote = source[j];
+      if (quote !== '"' && quote !== "'") {
+        i += 1;
+        continue;
+      }
+
+      j += 1;
+      const start = j;
+      while (j < source.length && source[j] !== quote) {
+        if (source[j] === "\\") {
+          j += 2;
+        } else {
+          j += 1;
+        }
+      }
+      if (j < source.length) {
+        const hook = source.slice(start, j);
+        if (/^[a-z_]+$/.test(hook)) hooks.add(hook);
+        i = j + 1;
+        continue;
+      }
+    }
+
+    i += 1;
   }
+
   return hooks;
 }
 
@@ -222,9 +344,8 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
   try {
     await access(indexPath);
     const indexRaw = await readFile(indexPath, "utf-8");
-    const withoutComments = stripComments(indexRaw);
-    const structuralSource = stripStringLiterals(withoutComments);
-    const hooks = parseHookRegistrations(withoutComments);
+    const structuralSource = stripCommentsAndStrings(indexRaw);
+    const hooks = parseHookRegistrations(indexRaw);
     const missingHooks = REQUIRED_HOOKS.filter((hook) => !hooks.has(hook));
     const hasGatewayStartHook = hooks.has("gateway_start");
     const hasServiceStart = hasServiceStartRegistration(structuralSource);
