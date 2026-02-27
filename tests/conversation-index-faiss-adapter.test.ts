@@ -93,6 +93,23 @@ test("faiss adapter upsertChunks success path parses JSON output", async () => {
   assert.equal(payload.chunks.length, 1);
 });
 
+test("faiss adapter short-circuits upsert when maxBatchSize is zero", async () => {
+  let spawnCalls = 0;
+  const spawnFn: typeof childProcess.spawn = () => {
+    spawnCalls += 1;
+    return new FakeProcess() as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    maxBatchSize: 0,
+  });
+
+  const upserted = await adapter.upsertChunks(sampleChunks());
+  assert.equal(upserted, 0);
+  assert.equal(spawnCalls, 0);
+});
+
 test("faiss adapter searchChunks returns typed results", async () => {
   const proc = new FakeProcess();
   const spawnFn: typeof childProcess.spawn = () => {
@@ -133,6 +150,25 @@ test("faiss adapter throws timeout error and kills process", async () => {
     return true;
   });
   assert.equal(proc.killSignal, "SIGKILL");
+});
+
+test("faiss adapter honors zero timeout as no timeout", async () => {
+  const proc = new FakeProcess();
+  const spawnFn: typeof childProcess.spawn = () => {
+    setTimeout(() => {
+      proc.stdout.emit("data", JSON.stringify({ ok: true, status: "ok" }));
+      proc.emit("close", 0);
+    }, 20);
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    healthTimeoutMs: 0,
+  });
+
+  const health = await adapter.health();
+  assert.equal(health.status, "ok");
 });
 
 test("faiss adapter throws non-zero exit with stderr context", async () => {

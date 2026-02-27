@@ -78,7 +78,8 @@ export class FaissConversationIndexAdapter {
   }
 
   async upsertChunks(chunks: ConversationChunk[]): Promise<number> {
-    const bounded = this.config.maxBatchSize > 0 ? chunks.slice(0, this.config.maxBatchSize) : [];
+    if (this.config.maxBatchSize <= 0) return 0;
+    const bounded = chunks.slice(0, this.config.maxBatchSize);
     const payload = {
       modelId: this.config.modelId,
       indexPath: this.indexPath,
@@ -141,10 +142,12 @@ export class FaissConversationIndexAdapter {
     const stderrChunks: Buffer[] = [];
     let timedOut = false;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, Math.max(1, timeoutMs));
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs)
+      : undefined;
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -172,7 +175,7 @@ export class FaissConversationIndexAdapter {
       const msg = err instanceof Error ? err.message : String(err);
       throw new FaissAdapterError(`FAISS sidecar stream/process error (${command}): ${msg}`, "non_zero_exit");
     } finally {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     }
 
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8").trim();
