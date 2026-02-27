@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -241,6 +242,26 @@ def read_lock_owner_pid(lock_path: Path) -> int | None:
 
 
 def is_process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+
+    if os.name == "nt":
+        try:
+            probe = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except Exception:
+            return False
+        output = probe.stdout.strip()
+        if not output:
+            return False
+        if output.startswith("INFO:"):
+            return False
+        return f'"{pid}"' in output
+
     try:
         os.kill(pid, 0)
         return True
@@ -248,6 +269,8 @@ def is_process_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        return False
 
 
 def acquire_index_lock(index_dir: Path) -> Path:
