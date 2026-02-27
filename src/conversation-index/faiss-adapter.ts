@@ -47,10 +47,17 @@ interface SidecarResult {
   }>;
 }
 
-function defaultFaissScriptPath(): string {
-  const currentFile = fileURLToPath(import.meta.url);
-  const srcDir = path.resolve(path.dirname(currentFile), "..");
-  return path.join(srcDir, "..", "scripts", "faiss_index.py");
+export function resolveDefaultFaissScriptPath(fromModuleUrl: string = import.meta.url): string {
+  const currentFile = fileURLToPath(fromModuleUrl);
+  const moduleDir = path.dirname(currentFile);
+
+  // Source runtime: src/conversation-index/faiss-adapter.ts
+  if (moduleDir.endsWith(`${path.sep}conversation-index`)) {
+    return path.resolve(moduleDir, "..", "..", "scripts", "faiss_index.py");
+  }
+
+  // Bundled runtime: dist/index.js (or neighboring dist chunks)
+  return path.resolve(moduleDir, "..", "scripts", "faiss_index.py");
 }
 
 export class FaissConversationIndexAdapter {
@@ -63,7 +70,7 @@ export class FaissConversationIndexAdapter {
     this.pythonBin = config.pythonBin && config.pythonBin.trim().length > 0 ? config.pythonBin.trim() : "python3";
     this.scriptPath = config.scriptPath && config.scriptPath.trim().length > 0
       ? config.scriptPath.trim()
-      : defaultFaissScriptPath();
+      : resolveDefaultFaissScriptPath();
     this.indexPath = path.isAbsolute(config.indexDir)
       ? config.indexDir
       : path.join(config.memoryDir, config.indexDir);
@@ -169,10 +176,16 @@ export class FaissConversationIndexAdapter {
         "non_zero_exit",
       );
     }
+    if (stdout.length === 0) {
+      throw new FaissAdapterError(
+        `FAISS sidecar produced empty output (${command})`,
+        "malformed_output",
+      );
+    }
 
     let parsed: SidecarResult;
     try {
-      parsed = stdout.length > 0 ? JSON.parse(stdout) as SidecarResult : {};
+      parsed = JSON.parse(stdout) as SidecarResult;
     } catch {
       throw new FaissAdapterError(
         `FAISS sidecar produced malformed JSON (${command})`,

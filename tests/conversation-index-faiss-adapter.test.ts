@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { pathToFileURL } from "node:url";
+import path from "node:path";
 import type * as childProcess from "node:child_process";
 import {
   FaissAdapterError,
   FaissConversationIndexAdapter,
+  resolveDefaultFaissScriptPath,
   type FaissAdapterConfig,
 } from "../src/conversation-index/faiss-adapter.js";
 import { upsertConversationChunksFailOpen } from "../src/conversation-index/indexer.js";
@@ -58,6 +61,14 @@ function sampleChunks(): ConversationChunk[] {
     },
   ];
 }
+
+test("resolveDefaultFaissScriptPath handles src and dist module locations", () => {
+  const srcUrl = pathToFileURL("/tmp/repo/src/conversation-index/faiss-adapter.ts").toString();
+  const distUrl = pathToFileURL("/tmp/repo/dist/index.js").toString();
+
+  assert.equal(resolveDefaultFaissScriptPath(srcUrl), path.resolve("/tmp/repo/scripts/faiss_index.py"));
+  assert.equal(resolveDefaultFaissScriptPath(distUrl), path.resolve("/tmp/repo/scripts/faiss_index.py"));
+});
 
 test("faiss adapter upsertChunks success path parses JSON output", async () => {
   const proc = new FakeProcess();
@@ -141,24 +152,33 @@ test("faiss adapter throws non-zero exit with stderr context", async () => {
   });
 });
 
-test("faiss adapter throws malformed output when JSON parse fails", async () => {
-  const proc = new FakeProcess();
-  const spawnFn: typeof childProcess.spawn = () => {
+test("faiss adapter throws malformed output for invalid or empty payloads", async () => {
+  const invalid = new FakeProcess();
+  const invalidSpawn: typeof childProcess.spawn = () => {
     process.nextTick(() => {
-      proc.stdout.emit("data", "not-json");
-      proc.emit("close", 0);
+      invalid.stdout.emit("data", "not-json");
+      invalid.emit("close", 0);
     });
-    return proc as unknown as childProcess.ChildProcess;
+    return invalid as unknown as childProcess.ChildProcess;
   };
 
-  const adapter = new FaissConversationIndexAdapter(baseConfig(spawnFn));
-  await assert.rejects(async () => {
-    await adapter.health();
-  }, (err: unknown) => {
-    assert.ok(err instanceof FaissAdapterError);
-    assert.equal(err.code, "malformed_output");
-    return true;
-  });
+  const empty = new FakeProcess();
+  const emptySpawn: typeof childProcess.spawn = () => {
+    process.nextTick(() => {
+      empty.emit("close", 0);
+    });
+    return empty as unknown as childProcess.ChildProcess;
+  };
+
+  await assert.rejects(
+    () => new FaissConversationIndexAdapter(baseConfig(invalidSpawn)).health(),
+    (err: unknown) => err instanceof FaissAdapterError && err.code === "malformed_output",
+  );
+
+  await assert.rejects(
+    () => new FaissConversationIndexAdapter(baseConfig(emptySpawn)).health(),
+    (err: unknown) => err instanceof FaissAdapterError && err.code === "malformed_output",
+  );
 });
 
 test("fail-open wrappers return safe defaults on adapter errors", async () => {
