@@ -3,6 +3,7 @@ import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
 
 export function hostToUrlAuthority(host: string): string {
@@ -41,6 +42,7 @@ export class WebDavServer {
   private readonly options: Required<Omit<WebDavServerOptions, "auth">> & Pick<WebDavServerOptions, "auth">;
   private readonly allowedRoots: AllowedRoot[];
   private server: Server | null = null;
+  private boundPort: number;
 
   private constructor(
     options: Required<Omit<WebDavServerOptions, "auth">> & Pick<WebDavServerOptions, "auth">,
@@ -48,6 +50,7 @@ export class WebDavServer {
   ) {
     this.options = options;
     this.allowedRoots = allowedRoots;
+    this.boundPort = options.port;
   }
 
   static async create(input: WebDavServerOptions): Promise<WebDavServer> {
@@ -125,7 +128,7 @@ export class WebDavServer {
 
     const address = server.address();
     if (address && typeof address !== "string") {
-      this.options.port = address.port;
+      this.boundPort = address.port;
     }
 
     return this.status();
@@ -135,6 +138,7 @@ export class WebDavServer {
     if (!this.server) return;
     const server = this.server;
     this.server = null;
+    this.boundPort = this.options.port;
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -144,7 +148,7 @@ export class WebDavServer {
     return {
       running: this.server !== null,
       host: this.options.host,
-      port: this.options.port,
+      port: this.boundPort,
       rootCount: this.allowedRoots.length,
     };
   }
@@ -310,12 +314,7 @@ export class WebDavServer {
       return;
     }
 
-    await new Promise<void>((resolve, reject) => {
-      const stream = createReadStream(absolutePath);
-      stream.on("error", reject);
-      stream.on("end", () => resolve());
-      stream.pipe(res);
-    });
+    await pipeline(createReadStream(absolutePath), res);
   }
 
   private async handlePropfind(absolutePath: string, displayPath: string, res: ServerResponse): Promise<void> {
@@ -332,18 +331,19 @@ export class WebDavServer {
     if (info.isDirectory()) {
       const children = await readdir(absolutePath, { withFileTypes: true });
       for (const child of children) {
+        const childHref = toEncodedHref(`${displayPath.replace(/\/$/, "")}/${child.name}`);
         entries.push(`
   <d:response>
-    <d:href>${xmlEscape(`${displayPath.replace(/\/$/, "")}/${child.name}`)}</d:href>
+    <d:href>${xmlEscape(childHref)}</d:href>
     <d:propstat><d:prop><d:resourcetype>${child.isDirectory() ? "<d:collection/>" : ""}</d:resourcetype></d:prop></d:propstat>
   </d:response>`);
       }
     }
 
-    const xml = `<?xml version="1.0" encoding="utf-8"?>
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:">
   <d:response>
-    <d:href>${xmlEscape(displayPath)}</d:href>
+    <d:href>${xmlEscape(toEncodedHref(displayPath))}</d:href>
     <d:propstat><d:prop><d:resourcetype>${info.isDirectory() ? "<d:collection/>" : ""}</d:resourcetype></d:prop></d:propstat>
   </d:response>${entries.join("")}
 </d:multistatus>`;
@@ -368,4 +368,11 @@ function xmlEscape(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+function toEncodedHref(pathname: string): string {
+  return pathname
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }

@@ -103,6 +103,27 @@ test("webdav blocks traversal and supports PROPFIND", async () => {
   }
 });
 
+test("webdav PROPFIND hrefs are URI-encoded", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-propfind-encode-"));
+  await writeFile(path.join(root, "my file#1?.txt"), "a", "utf-8");
+
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [root],
+  });
+  const started = await server.start();
+  const alias = path.basename(root);
+
+  try {
+    const propfind = await httpRequest("PROPFIND", started.port, `/${alias}`);
+    assert.equal(propfind.status, 207);
+    assert.match(propfind.body, /\/my%20file%231%3F\.txt/);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("webdav enforces optional basic auth", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-auth-"));
   await writeFile(path.join(root, "secret.txt"), "top-secret", "utf-8");
@@ -190,6 +211,24 @@ test("webdav start resets state after listen failure and supports retry", async 
   const secondStarted = await second.start();
   assert.equal(secondStarted.running, true);
   await second.stop();
+});
+
+test("webdav restart with port 0 rebinds to a fresh ephemeral port", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-ephemeral-"));
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [root],
+  });
+
+  const first = await server.start();
+  assert.ok(first.port > 0);
+  await server.stop();
+  assert.equal(server.status().port, 0);
+
+  const second = await server.start();
+  assert.ok(second.port > 0);
+  await server.stop();
 });
 
 test("hostToUrlAuthority brackets IPv6 host literals", () => {
