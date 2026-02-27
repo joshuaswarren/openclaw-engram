@@ -54,12 +54,17 @@ openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
 openclaw engram conversation-index-health  # Backend health + index stats
+openclaw engram graph-health        # Graph edge-file integrity + coverage
 ```
 
 Compatibility diagnostics:
 - `openclaw engram compat` reports `ok|warn|error` checks for manifest wiring, startup hooks/service registration, CLI wiring, Node engine floor, and qmd availability.
 - Use `openclaw engram compat --json` for CI/automation consumers.
 - Use `openclaw engram compat --strict` to fail with non-zero exit code on warnings or errors.
+
+Graph diagnostics:
+- `openclaw engram graph-health` reports per-edge-file integrity (`entity/time/causal`), corruption counts, and unique node coverage.
+- Add `--repair-guidance` to include non-destructive remediation suggestions when corruption or empty-graph conditions are detected.
 
 Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.
@@ -112,6 +117,9 @@ openclaw engram webdav-stop
 
 # Show conversation-index backend health and basic index stats
 openclaw engram conversation-index-health
+
+# Show graph health with optional repair guidance notes
+openclaw engram graph-health --repair-guidance
 ```
 
 Operational safety notes:
