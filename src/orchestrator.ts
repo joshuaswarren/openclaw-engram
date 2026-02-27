@@ -4067,9 +4067,8 @@ export class Orchestrator {
 
       const recencyWeight = Math.max(0.2, 1 - ageMs / windowMs);
       const list = byMemory.get(event.memoryId) ?? [];
-      if (list.length < 8) {
-        list.push({ weightedDelta: delta * recencyWeight, weight: recencyWeight });
-      }
+      if (list.length >= 8) list.shift();
+      list.push({ weightedDelta: delta * recencyWeight, weight: recencyWeight });
       byMemory.set(event.memoryId, list);
     }
 

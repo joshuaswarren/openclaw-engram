@@ -98,3 +98,46 @@ test("memory-action priors influence lifecycle scores without circular amplifica
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("lifecycle action prior cap keeps newest per-memory events", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memact-prior-cap-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memact-prior-cap-workspace-"));
+  try {
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      topicExtractionEnabled: false,
+      summarizationEnabled: false,
+      identityEnabled: false,
+      entitySummaryEnabled: false,
+      lifecyclePolicyEnabled: true,
+      lifecycleMetricsEnabled: false,
+    });
+
+    const orchestrator = new Orchestrator(config) as any;
+    const storage = orchestrator.storage;
+    const memoryId = await storage.writeMemory("fact", "prior-cap-memory", { source: "test" });
+
+    const base = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    const events = Array.from({ length: 10 }, (_, idx) => {
+      const recentFail = idx >= 8;
+      return {
+        timestamp: new Date(base + idx * 60_000).toISOString(),
+        action: recentFail ? "discard" : "store_note",
+        outcome: recentFail ? "failed" : "applied",
+        namespace: "default",
+        memoryId,
+        policyDecision: recentFail ? "deny" : "allow",
+      };
+    });
+    await storage.appendMemoryActionEvents(events);
+
+    const priors = await orchestrator.buildLifecycleActionPriors();
+    assert.ok((priors.get(memoryId) ?? 0) < 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
