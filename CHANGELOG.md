@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.11 compression optimizer Task 5 (runtime integration + guardrails):
+  - Added runtime recall integration for active compression guidelines via a guarded section injected only when context-compression actions and guideline learning are both enabled.
+  - Added fail-open guideline parsing/extraction helper (`formatCompressionGuidelinesForRecall`) that reads only the suggested-guidelines block for recall usage.
+  - Preserved zero-change path behavior when optimizer learning is disabled by short-circuiting before guideline/state reads.
+  - Added `tests/recall-compression-guideline-application.test.ts` coverage for disabled (byte-equivalent guard), enabled, and malformed guideline/state cases.
 - v8.11 compression optimizer Task 4 (optimizer tool + cron-safe entry point):
   - Added public orchestrator entry point `optimizeCompressionGuidelines(...)` with `dryRun` + `eventLimit` controls and explicit optimization summary fields.
   - Added `compression_guidelines_optimize` tool with dry-run support and summary output including old/new guideline versions and changed-rule count.
