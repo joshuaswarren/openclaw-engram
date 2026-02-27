@@ -53,6 +53,10 @@ All notable changes to this project will be documented in this file.
   - Added `openclaw engram compat [--json] [--strict]` in `src/cli.ts` for local compatibility diagnostics.
   - Added strict-mode exit behavior (`exitCode=1` when warnings/errors are present) and machine-readable JSON output mode.
   - Added `runCompatCliCommand` wrapper plus `tests/cli-compat.test.ts` coverage for default vs strict exit behavior.
+- v8.9 compatibility diagnostics Task 3 (fixture-backed diagnostics tests):
+  - Added fixture catalog under `tests/compat-fixtures/` for healthy, missing-manifest, and empty-package repository states.
+  - Added `tests/compat-fixtures.test.ts` to validate deterministic check outcomes across fixture scenarios.
+  - Added fixture usage notes in `tests/compat-fixtures/README.md`.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
