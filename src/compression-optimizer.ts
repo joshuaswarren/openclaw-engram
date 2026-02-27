@@ -147,8 +147,6 @@ export function computeCompressionGuidelineCandidate(
       notes.push("Good recall quality markers support this action.");
     } else if (direction === "decrease" && summary.quality.poor > summary.quality.good) {
       notes.push("Poor recall quality markers exceed good markers.");
-    } else if (direction === "increase" && summary.outcomes.failed > summary.outcomes.applied) {
-      notes.push("Quality markers offset failure-heavy outcomes; bounded increase remains conservative.");
     } else {
       notes.push("Outcomes are stable; keep bounded adjustments.");
     }
