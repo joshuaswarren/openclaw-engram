@@ -136,6 +136,21 @@ export function buildCompressionGuidelinesMarkdown(
   return buildCompressionGuidelinesMarkdownV2(events, generatedAtIso);
 }
 
+export function formatCompressionGuidelinesForRecall(raw: string, maxLines: number = 5): string | null {
+  if (typeof raw !== "string" || raw.trim().length === 0) return null;
+  const sectionMatch = raw.match(/## Suggested Guidelines\s*\n([\s\S]*?)(?:\n##\s+|\s*$)/i);
+  if (!sectionMatch) return null;
+
+  const lines = sectionMatch[1]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .slice(0, Math.max(1, Math.floor(maxLines)));
+  if (lines.length === 0) return null;
+
+  return lines.join("\n");
+}
+
 export function filterRecallCandidates(
   candidates: QmdSearchResult[],
   options: {
@@ -2171,6 +2186,12 @@ export class Orchestrator {
       }
     }
 
+    // 2.5. Compression guideline recall section (v8.11 Task 5)
+    const compressionGuidelineSection = await this.buildCompressionGuidelineRecallSection();
+    if (compressionGuidelineSection) {
+      sections.push(compressionGuidelineSection);
+    }
+
     // 3. TRANSCRIPT INJECTION (NEW)
     const transcriptT0 = Date.now();
     log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
@@ -3807,6 +3828,27 @@ export class Orchestrator {
     } catch (err) {
       log.warn(`compression guideline learning failed (ignored): ${err}`);
     }
+  }
+
+  private async buildCompressionGuidelineRecallSection(): Promise<string | null> {
+    if (!this.config.contextCompressionActionsEnabled) return null;
+    if (!this.config.compressionGuidelineLearningEnabled) return null;
+
+    const state = await this.storage.readCompressionGuidelineOptimizerState().catch(() => null);
+    if (!state || state.guidelineVersion <= 0) return null;
+
+    const raw = await this.storage.readCompressionGuidelines().catch(() => null);
+    const summary = raw ? formatCompressionGuidelinesForRecall(raw, 5) : null;
+    if (!summary) return null;
+
+    return [
+      "## Active Compression Guidelines",
+      "",
+      `Guideline version: ${state.guidelineVersion}`,
+      `Updated: ${state.updatedAt}`,
+      "",
+      summary,
+    ].join("\n");
   }
 
   private parseCompressionSemanticRefinement(
