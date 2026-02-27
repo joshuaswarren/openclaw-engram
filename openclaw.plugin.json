@@ -889,7 +889,7 @@
         "type": "string",
         "enum": ["qmd", "faiss"],
         "default": "qmd",
-        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss uses the sidecar adapter and should be rolled out incrementally."
+        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss is predeclared for follow-on adapter tasks and should remain disabled in this release."
       },
       "conversationIndexQmdCollection": {
         "type": "string",
