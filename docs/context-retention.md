@@ -27,9 +27,9 @@ Engram intentionally does not silently modify `~/.openclaw/cron/jobs.json` unles
 
 Config (default off):
 - `conversationIndexEnabled`
-- `conversationIndexBackend` (`qmd` default, `faiss` optional)
+- `conversationIndexBackend` (`qmd` default; `faiss` is predeclared for upcoming adapter wiring)
 - `conversationIndexQmdCollection` (must exist in `~/.config/qmd/index.yml` when backend is `qmd`)
-- `conversationIndexFaissScriptPath`, `conversationIndexFaissPythonBin`, `conversationIndexFaissModelId`, `conversationIndexFaissIndexDir` (used when backend is `faiss`)
+- `conversationIndexFaissScriptPath`, `conversationIndexFaissPythonBin`, `conversationIndexFaissModelId`, `conversationIndexFaissIndexDir` (config contract fields for upcoming FAISS backend tasks)
 - `conversationIndexFaissUpsertTimeoutMs`, `conversationIndexFaissSearchTimeoutMs`, `conversationIndexFaissHealthTimeoutMs`
 - `conversationIndexFaissMaxBatchSize`, `conversationIndexFaissMaxSearchK`
 - `conversationIndexRetentionDays`
@@ -40,12 +40,10 @@ Config (default off):
 How it works:
 1. `conversation_index_update` chunks transcript history into markdown docs under:
    - `memoryDir/conversation-index/chunks/<sessionKey>/<YYYY-MM-DD>/*.md`
-2. Backend-specific indexing runs best-effort:
-   - `qmd`: indexes those docs through QMD.
-   - `faiss`: uses the FAISS sidecar for upsert/search artifacts under the configured FAISS index directory.
-3. On each new prompt, Engram runs a timeboxed semantic query via the selected backend and injects top-K snippets.
+2. Current runtime path is QMD-backed indexing/search.
+3. FAISS fields in this release are config-contract-only and become runtime-active in follow-on tasks once the adapter/sidecar wiring lands.
 
 Notes:
 - This feature is designed to be fail-open. If indexing/search fails or times out, no context is injected.
-- Keep `conversationIndexBackend: "qmd"` as baseline; enable `faiss` incrementally during rollout.
+- Keep `conversationIndexBackend: "qmd"` until FAISS adapter implementation is merged.
 
