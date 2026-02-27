@@ -124,3 +124,32 @@ test("compat checks treat empty manifest and package files as invalid", async ()
   assert.equal(byId.get("plugin-manifest-shape")?.level, "error");
   assert.equal(byId.get("package-json-parse")?.level, "error");
 });
+
+test("compat checks ignore commented hook/startup/cli snippets", async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "engram-compat-commented-snippets-"));
+  await writeRepoFixture(repoRoot, {
+    pluginJson: JSON.stringify({ id: "openclaw-engram", kind: "memory" }),
+    packageJson: JSON.stringify({
+      engines: { node: ">=22.12.0" },
+      openclaw: {
+        plugin: "./openclaw.plugin.json",
+        extensions: ["./dist/index.js"],
+      },
+    }),
+    indexTs: [
+      '// api.on("before_agent_start", async () => {});',
+      '/* api.on("agent_end", async () => {}); */',
+      '// api.registerService({ start: async () => {}, stop: () => {} });',
+      'const sample = "registerCli(api, orchestrator)";',
+    ].join("\n"),
+  });
+
+  const report = await runCompatChecks({
+    repoRoot,
+    runner: { commandExists: async () => true },
+  });
+
+  const byId = new Map(report.checks.map((check) => [check.id, check]));
+  assert.equal(byId.get("hook-registration-core")?.level, "error");
+  assert.equal(byId.get("cli-registration")?.level, "warn");
+});

@@ -30,6 +30,19 @@ function summarize(checks: CompatCheckResult[]): { ok: number; warn: number; err
   return out;
 }
 
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1 ");
+}
+
+function stripStringLiterals(source: string): string {
+  return source
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/`(?:\\.|[^`\\])*`/g, "``");
+}
+
 function parseHookRegistrations(source: string): Set<string> {
   const hooks = new Set<string>();
   const re = /api\.on\(\s*"([a-z_]+)"/g;
@@ -44,7 +57,7 @@ function hasServiceStartRegistration(source: string): boolean {
 }
 
 function hasCliRegistration(source: string): boolean {
-  return /registerCli\s*\([\s\S]*?orchestrator\s*\)/m.test(source);
+  return /registerCli\s*\([^)]*\borchestrator\b[^)]*\)/m.test(source);
 }
 
 function parseNodeMinVersion(raw: string | undefined): [number, number, number] | null {
@@ -209,10 +222,12 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
   try {
     await access(indexPath);
     const indexRaw = await readFile(indexPath, "utf-8");
-    const hooks = parseHookRegistrations(indexRaw);
+    const withoutComments = stripComments(indexRaw);
+    const structuralSource = stripStringLiterals(withoutComments);
+    const hooks = parseHookRegistrations(withoutComments);
     const missingHooks = REQUIRED_HOOKS.filter((hook) => !hooks.has(hook));
     const hasGatewayStartHook = hooks.has("gateway_start");
-    const hasServiceStart = hasServiceStartRegistration(indexRaw);
+    const hasServiceStart = hasServiceStartRegistration(structuralSource);
     if (missingHooks.length === 0 && (hasGatewayStartHook || hasServiceStart)) {
       checks.push({
         id: "hook-registration-core",
@@ -237,7 +252,7 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
       });
     }
 
-    const cliWired = hasCliRegistration(indexRaw);
+    const cliWired = hasCliRegistration(structuralSource);
     checks.push({
       id: "cli-registration",
       title: "CLI registration wiring",
