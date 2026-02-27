@@ -33,6 +33,7 @@ import { TailscaleHelper, type TailscaleSyncOptions } from "./network/tailscale.
 import { WebDavServer } from "./network/webdav.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
+import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
 
 interface CliApi {
   registerCli(
@@ -271,6 +272,14 @@ export interface ConversationIndexHealthCliOrchestrator {
   }>;
 }
 
+export interface GraphHealthCliCommandOptions {
+  memoryDir: string;
+  entityGraphEnabled?: boolean;
+  timeGraphEnabled?: boolean;
+  causalGraphEnabled?: boolean;
+  includeRepairGuidance?: boolean;
+}
+
 export interface TailscaleStatusCliCommandOptions {
   helper?: TailscaleHelperLike;
   timeoutMs?: number;
@@ -439,6 +448,17 @@ export async function runConversationIndexHealthCliCommand(
   };
 }> {
   return orchestrator.getConversationIndexHealth();
+}
+
+export async function runGraphHealthCliCommand(
+  options: GraphHealthCliCommandOptions,
+): Promise<GraphHealthReport> {
+  return analyzeGraphHealth(options.memoryDir, {
+    entityGraphEnabled: options.entityGraphEnabled,
+    timeGraphEnabled: options.timeGraphEnabled,
+    causalGraphEnabled: options.causalGraphEnabled,
+    includeRepairGuidance: options.includeRepairGuidance,
+  });
 }
 
 export async function runTailscaleStatusCliCommand(
@@ -1233,6 +1253,23 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async () => {
           const health = await runConversationIndexHealthCliCommand(orchestrator);
           console.log(JSON.stringify(health, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("graph-health")
+        .description("Show graph edge-file integrity, node coverage, and corruption counts")
+        .option("--repair-guidance", "Include non-destructive repair guidance")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runGraphHealthCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            entityGraphEnabled: orchestrator.config.entityGraphEnabled,
+            timeGraphEnabled: orchestrator.config.timeGraphEnabled,
+            causalGraphEnabled: orchestrator.config.causalGraphEnabled,
+            includeRepairGuidance: options.repairGuidance === true,
+          });
+          console.log(JSON.stringify(report, null, 2));
           console.log("OK");
         });
 

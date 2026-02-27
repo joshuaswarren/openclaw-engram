@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.12 graph retrieval phase 2 Task 4 (graph health diagnostics command):
+  - Added `analyzeGraphHealth(...)` in `src/graph.ts` to report per-edge-file integrity, corruption counts, valid edge totals, and unique node coverage.
+  - Added CLI wrapper/command `openclaw engram graph-health` with optional `--repair-guidance` for non-destructive remediation hints.
+  - Added `tests/cli-graph-health.test.ts` coverage for corruption detection, coverage reporting, and repair-guidance gating.
+  - Updated `docs/operations.md` with graph-health command usage and diagnostics guidance.
 - v8.12 graph retrieval phase 2 Task 3 (shadow-eval assist mode in full recall):
   - Added `graphAssistShadowEvalEnabled` config flag (default `false`) to run full-mode graph assist as compare-only shadow evaluation.
   - Kept full-mode injected recall output baseline-identical when shadow mode is enabled, while still computing graph-expanded candidates.

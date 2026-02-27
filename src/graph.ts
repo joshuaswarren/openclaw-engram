@@ -101,6 +101,140 @@ export async function readAllEdges(
   return parts.flat();
 }
 
+export interface GraphHealthFileStats {
+  type: GraphType;
+  filePath: string;
+  exists: boolean;
+  totalLines: number;
+  validEdges: number;
+  corruptLines: number;
+  uniqueNodes: number;
+}
+
+export interface GraphHealthReport {
+  generatedAt: string;
+  enabledTypes: GraphType[];
+  totals: {
+    totalLines: number;
+    validEdges: number;
+    corruptLines: number;
+    uniqueNodes: number;
+  };
+  files: GraphHealthFileStats[];
+  repairGuidance?: string[];
+}
+
+function isValidGraphEdge(raw: unknown, expectedType: GraphType): raw is GraphEdge {
+  if (!raw || typeof raw !== "object") return false;
+  const edge = raw as Record<string, unknown>;
+  return (
+    edge.type === expectedType &&
+    typeof edge.from === "string" && edge.from.length > 0 &&
+    typeof edge.to === "string" && edge.to.length > 0 &&
+    typeof edge.weight === "number" && Number.isFinite(edge.weight) &&
+    typeof edge.label === "string" &&
+    typeof edge.ts === "string"
+  );
+}
+
+export async function analyzeGraphHealth(
+  memoryDir: string,
+  options?: {
+    entityGraphEnabled?: boolean;
+    timeGraphEnabled?: boolean;
+    causalGraphEnabled?: boolean;
+    includeRepairGuidance?: boolean;
+  },
+): Promise<GraphHealthReport> {
+  const enabledTypes: GraphType[] = [];
+  if (options?.entityGraphEnabled !== false) enabledTypes.push("entity");
+  if (options?.timeGraphEnabled !== false) enabledTypes.push("time");
+  if (options?.causalGraphEnabled !== false) enabledTypes.push("causal");
+
+  const files: GraphHealthFileStats[] = [];
+  const globalNodes = new Set<string>();
+
+  for (const type of enabledTypes) {
+    const filePath = graphFilePath(memoryDir, type);
+    let exists = true;
+    let totalLines = 0;
+    let validEdges = 0;
+    let corruptLines = 0;
+    const nodes = new Set<string>();
+
+    try {
+      const raw = await readFile(filePath, "utf8");
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        totalLines += 1;
+        try {
+          const parsed = JSON.parse(trimmed) as unknown;
+          if (!isValidGraphEdge(parsed, type)) {
+            corruptLines += 1;
+            continue;
+          }
+          validEdges += 1;
+          nodes.add(parsed.from);
+          nodes.add(parsed.to);
+          globalNodes.add(parsed.from);
+          globalNodes.add(parsed.to);
+        } catch {
+          corruptLines += 1;
+        }
+      }
+    } catch {
+      exists = false;
+    }
+
+    files.push({
+      type,
+      filePath,
+      exists,
+      totalLines,
+      validEdges,
+      corruptLines,
+      uniqueNodes: nodes.size,
+    });
+  }
+
+  const totals = files.reduce(
+    (acc, item) => {
+      acc.totalLines += item.totalLines;
+      acc.validEdges += item.validEdges;
+      acc.corruptLines += item.corruptLines;
+      return acc;
+    },
+    {
+      totalLines: 0,
+      validEdges: 0,
+      corruptLines: 0,
+      uniqueNodes: globalNodes.size,
+    },
+  );
+  totals.uniqueNodes = globalNodes.size;
+
+  const report: GraphHealthReport = {
+    generatedAt: new Date().toISOString(),
+    enabledTypes,
+    totals,
+    files,
+  };
+
+  if (options?.includeRepairGuidance === true) {
+    const guidance: string[] = [];
+    if (totals.corruptLines > 0) {
+      guidance.push("Corrupt graph lines detected: back up memory/state/graphs, then rebuild graphs from clean memory replay/extraction runs.");
+    }
+    if (totals.validEdges === 0) {
+      guidance.push("No valid edges detected yet: run normal extraction traffic (or replay ingestion) to seed graph files.");
+    }
+    if (guidance.length > 0) report.repairGuidance = guidance;
+  }
+
+  return report;
+}
+
 /**
  * Detect causal signal phrases in text. Returns the first matched phrase, or null.
  */
