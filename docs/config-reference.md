@@ -207,7 +207,17 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |
 | `hourlySummariesIncludeToolStats` | `false` | Include tool usage stats in summaries |
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
+| `conversationIndexBackend` | `qmd` | Conversation index backend (`qmd` or `faiss`) |
 | `conversationIndexQmdCollection` | `openclaw-engram-conversations` | QMD collection for conversation index |
+| `conversationIndexFaissScriptPath` | `(unset)` | Optional absolute path to FAISS sidecar script |
+| `conversationIndexFaissPythonBin` | `(unset)` | Optional Python executable for FAISS sidecar |
+| `conversationIndexFaissModelId` | `text-embedding-3-small` | Embedding model id for FAISS backend |
+| `conversationIndexFaissIndexDir` | `state/conversation-index/faiss` | Relative FAISS artifact directory under `memoryDir` |
+| `conversationIndexFaissUpsertTimeoutMs` | `30000` | Timeout for FAISS upsert operations |
+| `conversationIndexFaissSearchTimeoutMs` | `5000` | Timeout for FAISS search operations |
+| `conversationIndexFaissHealthTimeoutMs` | `2000` | Timeout for FAISS health checks |
+| `conversationIndexFaissMaxBatchSize` | `512` | Max chunk batch size sent per FAISS upsert |
+| `conversationIndexFaissMaxSearchK` | `50` | Max top-K allowed for FAISS search |
 | `conversationRecallTopK` | `3` | Top-K relevant transcript chunks to inject |
 | `conversationRecallMaxChars` | `2500` | Max characters of conversation context to inject |
 | `conversationRecallTimeoutMs` | `800` | Timeout for conversation recall (ms) |
