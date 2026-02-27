@@ -66,6 +66,25 @@ Routing behavior notes:
 - Rules are applied at write-time for extracted facts before persistence.
 - Rule targets may override `category`, `namespace`, or both; invalid targets fail-open to default writes.
 
+## Compression Guideline Optimizer Tool (v8.11)
+
+Agent tool name:
+- `compression_guidelines_optimize`
+
+Parameters:
+- `dryRun` (optional, default `false`): compute candidate and summary without persisting files.
+- `eventLimit` (optional, default `500`): max telemetry rows from `state/memory-actions.jsonl`.
+
+Summary output fields:
+- previous guideline version
+- next guideline version
+- changed rule count
+- semantic refinement applied flag
+
+Cron-safe usage pattern:
+- Call the tool in an isolated cron session to avoid blocking interactive turns.
+- Prefer `dryRun=true` for first-pass checks, then run with `dryRun=false` when stable.
+
 ## Network Sync and WebDAV (v8.8)
 
 Network features are opt-in and not started by default.

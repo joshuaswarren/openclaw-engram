@@ -81,6 +81,12 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.11 compression optimizer Task 4 (optimizer tool + cron-safe entry point):
+  - Added public orchestrator entry point `optimizeCompressionGuidelines(...)` with `dryRun` + `eventLimit` controls and explicit optimization summary fields.
+  - Added `compression_guidelines_optimize` tool with dry-run support and summary output including old/new guideline versions and changed-rule count.
+  - Kept runtime fail-open behavior by reusing deterministic baseline + optional semantic refinement pipeline in the shared optimizer path.
+  - Added `tests/tools-compression-optimize.test.ts` coverage for disabled gate handling, parameter passthrough, and summary output.
+  - Updated `docs/operations.md` with tool usage and cron-safe execution guidance.
 - v8.11 compression optimizer Task 3 (optional semantic refinement pass):
   - Added optional semantic refinement pipeline in `src/compression-optimizer.ts` behind explicit enable flag + hard timeout fail-open behavior.
   - Added config surface for refinement gating: `compressionGuidelineSemanticRefinementEnabled` and `compressionGuidelineSemanticTimeoutMs` (with schema/UI wiring and parse-time clamping).

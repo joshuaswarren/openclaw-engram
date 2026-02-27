@@ -1071,6 +1071,57 @@ Best for:
 
   api.registerTool(
     {
+      name: "compression_guidelines_optimize",
+      label: "Optimize Compression Guidelines",
+      description:
+        "Run compression guideline optimizer and optionally persist the new guideline/state (v8.11).",
+      parameters: Type.Object({
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description: "When true, compute candidate/output but do not persist changes.",
+          }),
+        ),
+        eventLimit: Type.Optional(
+          Type.Number({
+            description: "Max telemetry events to analyze (default: 500).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { dryRun, eventLimit } = params as {
+          dryRun?: boolean;
+          eventLimit?: number;
+        };
+
+        const result = await orchestrator.optimizeCompressionGuidelines({
+          dryRun: dryRun === true,
+          eventLimit,
+        });
+
+        if (!result.enabled) {
+          return toolResult(
+            "Compression guideline learning is disabled. Enable `compressionGuidelineLearningEnabled: true` to run optimizer.",
+          );
+        }
+
+        return toolResult(
+          [
+            "Compression guideline optimization complete.",
+            `dryRun=${result.dryRun}`,
+            `persisted=${result.persisted}`,
+            `eventCount=${result.eventCount}`,
+            `guidelineVersion: ${result.previousGuidelineVersion ?? "none"} -> ${result.nextGuidelineVersion}`,
+            `changedRules=${result.changedRules}`,
+            `semanticRefinementApplied=${result.semanticRefinementApplied}`,
+          ].join("\n"),
+        );
+      },
+    },
+    { name: "compression_guidelines_optimize" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_store",
       label: "Store Memory",
       description: `Explicitly store a memory. Use this when the user directly asks you to remember something, or when you identify critical information that the automatic extraction might miss.

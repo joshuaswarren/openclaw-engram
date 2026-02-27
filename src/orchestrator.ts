@@ -3698,49 +3698,85 @@ export class Orchestrator {
     return { memoriesProcessed: allMemories.length, merged, invalidated };
   }
 
-  private async runCompressionGuidelineLearningPass(): Promise<void> {
-    if (!this.config.compressionGuidelineLearningEnabled) return;
-    try {
-      const previousState = await this.storage.readCompressionGuidelineOptimizerState();
-      const events = await this.storage.readMemoryActionEvents(500);
-      const generatedAt = new Date().toISOString();
-      const candidate = computeCompressionGuidelineCandidate(events, {
-        generatedAtIso: generatedAt,
-        previousState,
-      });
-      const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
-        enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
-        timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
-        runRefinement: async (baseline) => {
-          const prompt = [
-            "You refine compression policy suggestions conservatively.",
-            "Return JSON only in this shape:",
-            '{"updates":[{"action":"summarize_node","delta":0.02,"confidence":"medium","note":"..."}]}',
-            "Constraints:",
-            "- Keep updates sparse and conservative.",
-            "- delta must stay between -0.15 and 0.15.",
-            "- Only include actions present in the input.",
-            "Input candidate:",
-            JSON.stringify(baseline),
-          ].join("\n");
+  async optimizeCompressionGuidelines(options?: {
+    dryRun?: boolean;
+    eventLimit?: number;
+  }): Promise<{
+    enabled: boolean;
+    dryRun: boolean;
+    eventCount: number;
+    previousGuidelineVersion: number | null;
+    nextGuidelineVersion: number;
+    changedRules: number;
+    semanticRefinementApplied: boolean;
+    persisted: boolean;
+  }> {
+    const dryRun = options?.dryRun === true;
+    const eventLimit =
+      typeof options?.eventLimit === "number"
+        ? Math.max(0, Math.floor(options.eventLimit))
+        : 500;
 
-          const response = await this.localLlm.chatCompletion(
-            [
-              { role: "system", content: "Respond with strict JSON only. No markdown." },
-              { role: "user", content: prompt },
-            ],
-            {
-              temperature: 0.1,
-              maxTokens: 400,
-              timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
-              operation: "compression_guideline_semantic_refinement",
-            },
-          );
+    const previousState = await this.storage.readCompressionGuidelineOptimizerState();
 
-          return this.parseCompressionSemanticRefinement(response?.content ?? "");
-        },
-      });
-      const content = renderCompressionGuidelinesMarkdown(refinedCandidate);
+    if (!this.config.compressionGuidelineLearningEnabled) {
+      return {
+        enabled: false,
+        dryRun,
+        eventCount: 0,
+        previousGuidelineVersion: previousState?.guidelineVersion ?? null,
+        nextGuidelineVersion: previousState?.guidelineVersion ?? 0,
+        changedRules: 0,
+        semanticRefinementApplied: false,
+        persisted: false,
+      };
+    }
+
+    const events = await this.storage.readMemoryActionEvents(eventLimit);
+    const generatedAt = new Date().toISOString();
+    const candidate = computeCompressionGuidelineCandidate(events, {
+      generatedAtIso: generatedAt,
+      previousState,
+    });
+    const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
+      enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
+      timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+      runRefinement: async (baseline) => {
+        const prompt = [
+          "You refine compression policy suggestions conservatively.",
+          "Return JSON only in this shape:",
+          '{"updates":[{"action":"summarize_node","delta":0.02,"confidence":"medium","note":"..."}]}',
+          "Constraints:",
+          "- Keep updates sparse and conservative.",
+          "- delta must stay between -0.15 and 0.15.",
+          "- Only include actions present in the input.",
+          "Input candidate:",
+          JSON.stringify(baseline),
+        ].join("\n");
+
+        const response = await this.localLlm.chatCompletion(
+          [
+            { role: "system", content: "Respond with strict JSON only. No markdown." },
+            { role: "user", content: prompt },
+          ],
+          {
+            temperature: 0.1,
+            maxTokens: 400,
+            timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+            operation: "compression_guideline_semantic_refinement",
+          },
+        );
+
+        return this.parseCompressionSemanticRefinement(response?.content ?? "");
+      },
+    });
+
+    const content = renderCompressionGuidelinesMarkdown(refinedCandidate);
+    const semanticRefinementApplied =
+      JSON.stringify(refinedCandidate.ruleUpdates) !== JSON.stringify(candidate.ruleUpdates);
+    const changedRules = refinedCandidate.ruleUpdates.filter((rule) => rule.delta !== 0).length;
+
+    if (!dryRun) {
       await this.storage.writeCompressionGuidelines(content);
       await this.storage.writeCompressionGuidelineOptimizerState({
         version: refinedCandidate.optimizerVersion,
@@ -3749,7 +3785,25 @@ export class Orchestrator {
         eventCounts: refinedCandidate.eventCounts,
         guidelineVersion: refinedCandidate.guidelineVersion,
       });
-      log.info(`compression guideline learning updated (${events.length} events)`);
+    }
+
+    return {
+      enabled: true,
+      dryRun,
+      eventCount: events.length,
+      previousGuidelineVersion: previousState?.guidelineVersion ?? null,
+      nextGuidelineVersion: refinedCandidate.guidelineVersion,
+      changedRules,
+      semanticRefinementApplied,
+      persisted: !dryRun,
+    };
+  }
+
+  private async runCompressionGuidelineLearningPass(): Promise<void> {
+    if (!this.config.compressionGuidelineLearningEnabled) return;
+    try {
+      const result = await this.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 500 });
+      log.info(`compression guideline learning updated (${result.eventCount} events)`);
     } catch (err) {
       log.warn(`compression guideline learning failed (ignored): ${err}`);
     }
