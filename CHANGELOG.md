@@ -64,6 +64,10 @@ All notable changes to this project will be documented in this file.
   - Added FAISS backend config fields to plugin config contracts and schema (`conversationIndexFaiss*`) while keeping `conversationIndexBackend` default as `qmd`.
   - Added strict parsing/clamping tests in `tests/config-conversation-index-faiss.test.ts`, including zero-safe semantics and malformed input handling.
   - Updated `docs/config-reference.md` and `docs/context-retention.md` with FAISS backend configuration and rollout notes.
+- v8.10 FAISS conversation index Task 2 (adapter interface + fail-open wrappers):
+  - Added `src/conversation-index/faiss-adapter.ts` with subprocess-backed FAISS adapter APIs (`upsertChunks`, `searchChunks`, `health`) and bounded timeout/stderr/JSON error handling.
+  - Added fail-open helper wrappers in `src/conversation-index/indexer.ts` and `src/conversation-index/search.ts` so adapter failures degrade to no-op/empty recall instead of throwing into hook paths.
+  - Added `tests/conversation-index-faiss-adapter.test.ts` coverage for success, timeout, non-zero exit, malformed payload, and fail-open wrapper behavior.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
