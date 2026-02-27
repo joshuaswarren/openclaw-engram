@@ -5,12 +5,17 @@ import type { CompatCheckOptions, CompatCheckResult, CompatReport, CompatRunner 
 
 const REQUIRED_HOOKS = ["gateway_start", "before_agent_start", "agent_end"];
 
+function isSafeCommandToken(command: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(command);
+}
+
 const defaultRunner: CompatRunner = {
   async commandExists(command: string): Promise<boolean> {
-    const args = process.platform === "win32" ? ["/c", "where", command] : ["-lc", `command -v ${command}`];
-    const shell = process.platform === "win32" ? "cmd.exe" : "bash";
+    if (!isSafeCommandToken(command)) return false;
+    const binary = process.platform === "win32" ? "where" : "which";
+    const args = [command];
     return new Promise<boolean>((resolve) => {
-      const child = spawn(shell, args, { stdio: "ignore" });
+      const child = spawn(binary, args, { stdio: "ignore" });
       child.on("error", () => resolve(false));
       child.on("close", (code) => resolve(code === 0));
     });
