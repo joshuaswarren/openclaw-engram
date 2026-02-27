@@ -58,7 +58,11 @@ export function evaluateMemoryActionPolicy(input: {
     };
   }
 
-  if (eligibility.confidence < LOW_CONFIDENCE_DEFER_THRESHOLD && action !== "discard") {
+  if (
+    eligibility.source !== "unknown" &&
+    eligibility.confidence < LOW_CONFIDENCE_DEFER_THRESHOLD &&
+    action !== "discard"
+  ) {
     return {
       action,
       decision: "defer",

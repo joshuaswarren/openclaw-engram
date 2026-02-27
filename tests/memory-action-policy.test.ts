@@ -55,6 +55,22 @@ test("evaluateMemoryActionPolicy applies deterministic precedence", () => {
   });
   assert.equal(zeroLimit.decision, "defer");
   assert.equal(zeroLimit.rationale, "maxCompressionTokensPerHour=0");
+
+  const unknownLowConfidence = evaluateMemoryActionPolicy({
+    action: "store_note",
+    eligibility: {
+      confidence: 0,
+      importance: 0,
+      lifecycleState: "candidate",
+      source: "unknown",
+    },
+    options: {
+      actionsEnabled: true,
+      maxCompressionTokensPerHour: 1500,
+    },
+  });
+  assert.equal(unknownLowConfidence.decision, "allow");
+  assert.equal(unknownLowConfidence.rationale, "eligible");
 });
 
 test("appendMemoryActionEvent persists policy denial trace when actions are disabled", async () => {
@@ -82,6 +98,35 @@ test("appendMemoryActionEvent persists policy denial trace when actions are disa
     assert.equal(events[0]?.policyRationale, "contextCompressionActionsEnabled=false");
     assert.equal(events[0]?.outcome, "skipped");
     assert.match(events[0]?.reason ?? "", /policy:deny/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("appendMemoryActionEvent keeps default unknown-eligibility callers applied when enabled", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-default-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      contextCompressionActionsEnabled: true,
+      maxCompressionTokensPerHour: 1500,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    const wrote = await orchestrator.appendMemoryActionEvent({
+      action: "store_note",
+      outcome: "applied",
+      reason: "default-caller",
+    });
+    assert.equal(wrote, true);
+
+    const storage = await orchestrator.getStorage();
+    const events = await storage.readMemoryActionEvents(1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.policyDecision, "allow");
+    assert.equal(events[0]?.outcome, "applied");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
