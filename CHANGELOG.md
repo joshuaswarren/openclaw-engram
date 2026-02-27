@@ -76,6 +76,11 @@ All notable changes to this project will be documented in this file.
   - Wired orchestrator conversation-index flow to select `qmd` or `faiss` backend paths for startup health checks, index updates, and semantic recall queries.
   - Preserved fail-open recall behavior for FAISS search/upsert failures and kept semantic-recall section formatting backend-agnostic via shared formatter logic.
   - Added `tests/conversation-index-integration.test.ts` coverage for backend routing (`qmd` vs `faiss`), FAISS fail-open recall, formatting parity, and FAISS update-path routing.
+- v8.10 FAISS conversation index Task 5 (ops health command + docs):
+  - Added orchestrator `getConversationIndexHealth()` with backend-aware status (`qmd`/`faiss`), chunk-doc counts, and last-update metadata.
+  - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
+  - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
+  - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).

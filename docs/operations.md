@@ -53,6 +53,7 @@ openclaw engram export              # Export memory store
 openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
+openclaw engram conversation-index-health  # Backend health + index stats
 ```
 
 Compatibility diagnostics:
@@ -89,6 +90,9 @@ openclaw engram webdav-serve \
 
 # Stop WebDAV service in the running gateway process
 openclaw engram webdav-stop
+
+# Show conversation-index backend health and basic index stats
+openclaw engram conversation-index-health
 ```
 
 Operational safety notes:
