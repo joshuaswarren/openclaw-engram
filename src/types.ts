@@ -684,13 +684,6 @@ export type MemoryActionOutcome = "applied" | "skipped" | "failed";
 
 export type MemoryActionPolicyDecision = "allow" | "defer" | "deny";
 
-export type MemoryActionEligibilityLifecycleState =
-  | "active"
-  | "validated"
-  | "candidate"
-  | "stale"
-  | "archived";
-
 export type MemoryActionEligibilitySource =
   | "extraction"
   | "consolidation"
@@ -700,7 +693,7 @@ export type MemoryActionEligibilitySource =
 
 export interface MemoryActionEligibilityContext {
   confidence: number;
-  lifecycleState: MemoryActionEligibilityLifecycleState;
+  lifecycleState: LifecycleState;
   importance: number;
   source: MemoryActionEligibilitySource;
 }
