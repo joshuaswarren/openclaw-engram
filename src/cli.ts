@@ -259,7 +259,6 @@ export interface TailscaleStatusCliCommandOptions {
 
 export interface TailscaleSyncCliCommandOptions extends TailscaleSyncOptions {
   helper?: TailscaleHelperLike;
-  timeoutMs?: number;
 }
 
 interface WebDavServerLike {
@@ -404,7 +403,7 @@ export async function runTailscaleStatusCliCommand(
 export async function runTailscaleSyncCliCommand(
   options: TailscaleSyncCliCommandOptions,
 ): Promise<{ ok: true }> {
-  const helper = options.helper ?? new TailscaleHelper({ timeoutMs: options.timeoutMs });
+  const helper = options.helper ?? new TailscaleHelper();
   await helper.syncDirectory({
     sourceDir: options.sourceDir,
     destination: options.destination,
@@ -1131,7 +1130,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--delete", "Delete destination entries that do not exist in source")
         .option("--dry-run", "Show what would change without writing")
         .option("--extra-args <csv>", "Additional rsync args as comma-separated values")
-        .option("--timeout-ms <n>", "Command timeout in milliseconds", "10000")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const sourceDir = typeof options.sourceDir === "string" ? options.sourceDir.trim() : "";
@@ -1142,7 +1140,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (!destination) {
             throw new Error("missing --destination");
           }
-          const timeoutMsRaw = parseInt(String(options.timeoutMs ?? "10000"), 10);
           const extraArgs = typeof options.extraArgs === "string"
             ? options.extraArgs
                 .split(",")
@@ -1156,7 +1153,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             delete: options.delete === true,
             dryRun: options.dryRun === true,
             extraArgs,
-            timeoutMs: Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 10_000,
           });
           console.log("OK");
         });
