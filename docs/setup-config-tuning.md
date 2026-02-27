@@ -182,43 +182,8 @@ Operational checks after enabling guideline learning:
 - If guidance quality regresses, keep telemetry enabled and disable only `compressionGuidelineLearningEnabled`.
 
 v8.13 action-policy rollout presets:
-
-`conservative` (baseline-equivalent):
-
-```jsonc
-{
-  "contextCompressionActionsEnabled": false,
-  "proactiveExtractionEnabled": false,
-  "compressionGuidelineLearningEnabled": false,
-  "compressionGuidelineSemanticRefinementEnabled": false,
-  "maxCompressionTokensPerHour": 0
-}
-```
-
-`balanced` (default production recommendation):
-
-```jsonc
-{
-  "contextCompressionActionsEnabled": true,
-  "proactiveExtractionEnabled": true,
-  "compressionGuidelineLearningEnabled": true,
-  "compressionGuidelineSemanticRefinementEnabled": false,
-  "maxCompressionTokensPerHour": 1500
-}
-```
-
-`research` (higher-change experimentation):
-
-```jsonc
-{
-  "contextCompressionActionsEnabled": true,
-  "proactiveExtractionEnabled": true,
-  "compressionGuidelineLearningEnabled": true,
-  "compressionGuidelineSemanticRefinementEnabled": true,
-  "compressionGuidelineSemanticTimeoutMs": 2500,
-  "maxCompressionTokensPerHour": 3000
-}
-```
+- Canonical preset JSON lives in `docs/config-reference.md` under `v8.13 Action-Policy Rollout Presets`.
+- Use `conservative` for baseline-equivalent mode, `balanced` for default production rollout, and `research` for high-change experiments.
 
 Operator hardening checklist before promotion:
 - Keep `contextCompressionActionsEnabled=true` only after tool traces stay stable and review-clean for one full daily cycle.
