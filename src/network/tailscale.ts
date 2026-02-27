@@ -112,7 +112,7 @@ export class TailscaleHelper {
     const sourceWithTrailingSlash = options.sourceDir.endsWith("/") ? options.sourceDir : `${options.sourceDir}/`;
     args.push(sourceWithTrailingSlash, options.destination);
 
-    const result = await this.runner(this.rsyncBinary, args, { timeoutMs: this.timeoutMs });
+    const result = await this.runner(this.rsyncBinary, args);
     if (result.code !== 0) {
       const stderr = result.stderr.trim();
       throw new Error(stderr ? `rsync failed: ${stderr}` : "rsync failed");
@@ -137,16 +137,19 @@ const defaultCommandRunner: TailscaleCommandRunner = (command, args, options) =>
     let stderr = "";
     let settled = false;
 
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill("SIGKILL");
-      resolve({
-        code: 124,
-        stdout,
-        stderr: stderr || "command timed out",
-      });
-    }, options?.timeoutMs ?? 10_000);
+    const timeoutMs = options?.timeoutMs;
+    const timeout = typeof timeoutMs === "number" && timeoutMs > 0
+      ? setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          child.kill("SIGKILL");
+          resolve({
+            code: 124,
+            stdout,
+            stderr: stderr || "command timed out",
+          });
+        }, timeoutMs)
+      : null;
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf-8");
@@ -158,14 +161,14 @@ const defaultCommandRunner: TailscaleCommandRunner = (command, args, options) =>
     child.on("error", () => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       resolve({ code: 1, stdout, stderr });
     });
 
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       resolve({ code: code ?? 1, stdout, stderr });
     });
   });

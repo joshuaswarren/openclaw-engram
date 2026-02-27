@@ -9,8 +9,14 @@ import {
   type TailscaleCommandRunner,
 } from "../src/network/tailscale.ts";
 
-function createRunner(mapper: (command: string, args: string[]) => TailscaleCommandResult): TailscaleCommandRunner {
-  return async (command, args) => mapper(command, args);
+function createRunner(
+  mapper: (
+    command: string,
+    args: string[],
+    options?: { timeoutMs?: number },
+  ) => TailscaleCommandResult,
+): TailscaleCommandRunner {
+  return async (command, args, options) => mapper(command, args, options);
 }
 
 test("tailscale status returns unavailable when binary check fails", async () => {
@@ -101,11 +107,11 @@ test("tailscale sync requires running daemon", async () => {
 
 test("tailscale sync executes rsync with expected args when running", async () => {
   const sourceDir = await mkdtemp(path.join(os.tmpdir(), "engram-ts-sync-ok-"));
-  const commands: Array<{ command: string; args: string[] }> = [];
+  const commands: Array<{ command: string; args: string[]; options?: { timeoutMs?: number } }> = [];
 
   const helper = new TailscaleHelper({
-    runner: createRunner((command, args) => {
-      commands.push({ command, args });
+    runner: createRunner((command, args, options) => {
+      commands.push({ command, args, options });
       if (command === "tailscale" && args[0] === "version") {
         return { code: 0, stdout: "1.80.0", stderr: "" };
       }
@@ -132,4 +138,5 @@ test("tailscale sync executes rsync with expected args when running", async () =
   assert.deepEqual(rsyncCall.args.slice(0, 4), ["-az", "--delete", "--dry-run", "--numeric-ids"]);
   assert.equal(rsyncCall.args[4], `${sourceDir}/`);
   assert.equal(rsyncCall.args[5], "engram-peer:/srv/engram");
+  assert.equal(rsyncCall.options, undefined);
 });
