@@ -100,3 +100,27 @@ test("compat checks fail when package.json is missing", async () => {
   assert.equal(byId.get("package-json-present")?.level, "error");
   assert.equal(byId.get("plugin-manifest-present")?.level, "ok");
 });
+
+test("compat checks treat empty manifest and package files as invalid", async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "engram-compat-empty-files-"));
+  await writeRepoFixture(repoRoot, {
+    pluginJson: "",
+    packageJson: "",
+    indexTs: [
+      'api.on("gateway_start", async () => {});',
+      'api.on("before_agent_start", async () => {});',
+      'api.on("agent_end", async () => {});',
+      "registerCli(api, orchestrator);",
+    ].join("\n"),
+  });
+
+  const report = await runCompatChecks({
+    repoRoot,
+    runner: { commandExists: async () => true },
+  });
+
+  const byId = new Map(report.checks.map((check) => [check.id, check]));
+  assert.equal(byId.get("plugin-manifest-present")?.level, "ok");
+  assert.equal(byId.get("plugin-manifest-shape")?.level, "error");
+  assert.equal(byId.get("package-json-parse")?.level, "error");
+});

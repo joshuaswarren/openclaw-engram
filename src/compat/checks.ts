@@ -69,8 +69,10 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
   const indexPath = path.join(options.repoRoot, "src", "index.ts");
 
   let pluginRaw = "";
+  let pluginManifestPresent = false;
   try {
     pluginRaw = await readFile(pluginJsonPath, "utf-8");
+    pluginManifestPresent = true;
     checks.push({
       id: "plugin-manifest-present",
       title: "Plugin manifest present",
@@ -87,7 +89,7 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
     });
   }
 
-  if (pluginRaw) {
+  if (pluginManifestPresent) {
     try {
       const plugin = JSON.parse(pluginRaw) as { id?: string; kind?: string };
       if (plugin.id === "openclaw-engram" && plugin.kind === "memory") {
@@ -118,8 +120,10 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
   }
 
   let packageRaw = "";
+  let packageJsonPresent = false;
   try {
     packageRaw = await readFile(packageJsonPath, "utf-8");
+    packageJsonPresent = true;
   } catch {
     checks.push({
       id: "package-json-present",
@@ -130,7 +134,7 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
     });
   }
 
-  if (packageRaw) {
+  if (packageJsonPresent) {
     try {
       const pkg = JSON.parse(packageRaw) as {
         openclaw?: { plugin?: string; extensions?: string[] };
