@@ -287,6 +287,16 @@ export interface WebDavServeCliCommandOptions {
 }
 
 let activeWebDavServer: WebDavServerLike | null = null;
+let webDavOperationChain: Promise<void> = Promise.resolve();
+
+async function withWebDavLock<T>(operation: () => Promise<T>): Promise<T> {
+  const run = webDavOperationChain.then(operation, operation);
+  webDavOperationChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 function isRoutePatternType(value: string | undefined): value is RoutePatternType {
   return value === "keyword" || value === "regex";
@@ -417,49 +427,56 @@ export async function runTailscaleSyncCliCommand(
 export async function runWebDavServeCliCommand(
   options: WebDavServeCliCommandOptions,
 ): Promise<{ running: boolean; host: string; port: number; rootCount: number }> {
-  if (!Array.isArray(options.allowlistDirs) || options.allowlistDirs.length === 0) {
-    throw new Error("webdav allowlist requires at least one directory");
-  }
-
-  const username = options.authUsername?.trim();
-  const password = options.authPassword?.trim();
-  if ((username && !password) || (!username && password)) {
-    throw new Error("webdav auth requires both username and password");
-  }
-
-  if (activeWebDavServer?.status().running) {
-    return activeWebDavServer.status();
-  }
-
-  const createServer = options.createServer ?? WebDavServer.create;
-  const server = await createServer({
-    enabled: options.enabled ?? true,
-    host: options.host,
-    port: options.port ?? 8080,
-    allowlistDirs: options.allowlistDirs,
-    auth: username && password ? { username, password } : undefined,
-  });
-
-  activeWebDavServer = server;
-  try {
-    return await server.start();
-  } catch (err) {
-    if (activeWebDavServer === server) {
-      activeWebDavServer = null;
+  return withWebDavLock(async () => {
+    if (!Array.isArray(options.allowlistDirs) || options.allowlistDirs.length === 0) {
+      throw new Error("webdav allowlist requires at least one directory");
     }
-    throw err;
-  }
+
+    const username = options.authUsername?.trim();
+    const password = options.authPassword?.trim();
+    if ((username && !password) || (!username && password)) {
+      throw new Error("webdav auth requires both username and password");
+    }
+
+    if (activeWebDavServer) {
+      const current = activeWebDavServer.status();
+      if (current.running) return current;
+    }
+
+    const createServer = options.createServer ?? WebDavServer.create;
+    const server = await createServer({
+      enabled: options.enabled ?? true,
+      host: options.host,
+      port: options.port ?? 8080,
+      allowlistDirs: options.allowlistDirs,
+      auth: username && password ? { username, password } : undefined,
+    });
+
+    activeWebDavServer = server;
+    try {
+      return await server.start();
+    } catch (err) {
+      if (activeWebDavServer === server) {
+        activeWebDavServer = null;
+      }
+      throw err;
+    }
+  });
 }
 
 export async function runWebDavStopCliCommand(): Promise<{ stopped: boolean }> {
-  if (!activeWebDavServer) {
-    return { stopped: false };
-  }
+  return withWebDavLock(async () => {
+    if (!activeWebDavServer) {
+      return { stopped: false };
+    }
 
-  const server = activeWebDavServer;
-  activeWebDavServer = null;
-  await server.stop();
-  return { stopped: true };
+    const server = activeWebDavServer;
+    await server.stop();
+    if (activeWebDavServer === server) {
+      activeWebDavServer = null;
+    }
+    return { stopped: true };
+  });
 }
 
 export async function runRouteCliCommand(options: RouteCliCommandOptions): Promise<unknown> {

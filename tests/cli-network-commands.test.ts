@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   runTailscaleStatusCliCommand,
   runTailscaleSyncCliCommand,
@@ -112,4 +113,77 @@ test("webdav serve wrapper requires both auth fields when either is set", async 
       }),
     /requires both username and password/i,
   );
+});
+
+test("webdav serve serializes concurrent startups and reuses singleton", async () => {
+  await runWebDavStopCliCommand();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-cli-webdav-lock-"));
+  let running = false;
+  let createCount = 0;
+  let startCount = 0;
+
+  const createServer = async () => {
+    createCount += 1;
+    return {
+      async start() {
+        startCount += 1;
+        await delay(25);
+        running = true;
+        return { running: true, host: "127.0.0.1", port: 9000, rootCount: 1 };
+      },
+      async stop() {
+        running = false;
+      },
+      status() {
+        return { running, host: "127.0.0.1", port: 9000, rootCount: 1 };
+      },
+    };
+  };
+
+  const [first, second] = await Promise.all([
+    runWebDavServeCliCommand({ allowlistDirs: [root], createServer }),
+    runWebDavServeCliCommand({ allowlistDirs: [root], createServer }),
+  ]);
+
+  assert.equal(createCount, 1);
+  assert.equal(startCount, 1);
+  assert.equal(first.running, true);
+  assert.equal(second.running, true);
+
+  const stopped = await runWebDavStopCliCommand();
+  assert.deepEqual(stopped, { stopped: true });
+});
+
+test("webdav stop retains active handle when stop fails so retry can succeed", async () => {
+  await runWebDavStopCliCommand();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-cli-webdav-stop-retry-"));
+  let running = false;
+  let stopCalls = 0;
+
+  const createServer = async () => ({
+    async start() {
+      running = true;
+      return { running: true, host: "127.0.0.1", port: 9001, rootCount: 1 };
+    },
+    async stop() {
+      stopCalls += 1;
+      if (stopCalls === 1) {
+        throw new Error("close failed");
+      }
+      running = false;
+    },
+    status() {
+      return { running, host: "127.0.0.1", port: 9001, rootCount: 1 };
+    },
+  });
+
+  await runWebDavServeCliCommand({ allowlistDirs: [root], createServer });
+
+  await assert.rejects(() => runWebDavStopCliCommand(), /close failed/i);
+
+  const secondStop = await runWebDavStopCliCommand();
+  assert.deepEqual(secondStop, { stopped: true });
+  assert.equal(stopCalls, 2);
 });
