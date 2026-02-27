@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { log } from "./logger.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
@@ -385,6 +384,22 @@ export class ExtractionEngine {
       }
     }
 
+    // Try direct OpenAI-compatible client (Scryr, OpenRouter, etc.)
+    if (this.client) {
+      try {
+        const directResult = await this.extractWithDirectClient(conversation, existingEntities);
+        if (directResult) {
+          const durationMs = Date.now() - startTime;
+          this.emit({ kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs });
+          log.debug(`extraction: used direct client (${this.config.model}) — ${directResult.facts.length} facts, ${directResult.entities.length} entities`);
+          return directResult;
+        }
+        log.info("extraction: direct client returned no result, falling back to gateway AI");
+      } catch (err) {
+        log.info("extraction: direct client failed, falling back to gateway AI:", err);
+      }
+    }
+
     // Fall back to gateway's default AI
     log.info("extraction: falling back to gateway default AI");
 
@@ -604,6 +619,85 @@ ${truncatedConversation}`;
       log.debug(`extractWithLocalLlm: JSON parse error: ${errMsg}`);
       return null;
     }
+  }
+
+  /**
+   * Extract memories using direct OpenAI-compatible client (Chat Completions API).
+   * Works with Scryr, OpenRouter, and other OpenAI-compatible endpoints.
+   */
+  private async extractWithDirectClient(
+    conversation: string,
+    existingEntities?: string[],
+  ): Promise<ExtractionResult | null> {
+    if (!this.client) return null;
+
+    log.debug(`extractWithDirectClient: calling ${this.config.model}...`);
+
+    const response = await this.client.chat.completions.create({
+      model: this.config.model,
+      messages: [
+        {
+          role: "system",
+          content:
+            this.buildExtractionInstructions(existingEntities) +
+            "\n\nRespond with valid JSON only.",
+        },
+        { role: "user", content: conversation },
+      ],
+      temperature: 0.3,
+      max_tokens: 4096,
+    });
+
+    const content = response.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      log.debug("extractWithDirectClient: empty response");
+      return null;
+    }
+
+    log.debug(
+      `extractWithDirectClient: got response, length=${content.length}`,
+    );
+
+    for (const candidate of extractJsonCandidates(content)) {
+      try {
+        const parsed = JSON.parse(candidate);
+
+        const entities = Array.isArray(parsed.entities)
+          ? parsed.entities
+              .map((e: any) => ({
+                name: typeof e?.name === "string" ? e.name : "",
+                type: typeof e?.type === "string" ? e.type : "other",
+                facts: Array.isArray(e?.facts)
+                  ? e.facts.filter((f: any) => typeof f === "string")
+                  : [],
+              }))
+              .filter((e: any) => e.name.length > 0)
+          : [];
+
+        return {
+          facts: Array.isArray(parsed.facts) ? parsed.facts : [],
+          entities,
+          profileUpdates: Array.isArray(parsed.profileUpdates)
+            ? parsed.profileUpdates
+            : [],
+          questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+          identityReflection: parsed.identityReflection ?? undefined,
+          relationships: Array.isArray(parsed.relationships)
+            ? parsed.relationships.filter(
+                (r: any) =>
+                  typeof r?.source === "string" &&
+                  typeof r?.target === "string" &&
+                  typeof r?.label === "string",
+              )
+            : undefined,
+        } as ExtractionResult;
+      } catch {
+        // keep trying candidates
+      }
+    }
+
+    log.debug("extractWithDirectClient: failed to parse JSON from response");
+    return null;
   }
 
   /**
@@ -836,16 +930,8 @@ Consolidate the new memories against existing ones.`,
       return { items: [], profileUpdates: [], entityUpdates: [] };
     }
 
-    const reasoningParam =
-      this.config.reasoningEffort !== "none"
-        ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
-        : {};
-
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        ...reasoningParam,
-        instructions: `You are a memory consolidation system. Compare new memories against existing ones and decide what to do with each.
+      const systemPrompt = `You are a memory consolidation system. Compare new memories against existing ones and decide what to do with each.
 
 Actions:
 - ADD: Keep the new memory as-is (no duplicate exists)
@@ -865,29 +951,51 @@ Existing memories:
 ${existingList || "(none)"}
 
 New memories to consolidate:
-${newList}`,
-        input: "Consolidate the new memories against existing ones.",
-        text: {
-          format: zodTextFormat(
-            ConsolidationResultSchema,
-            "consolidation_result",
-          ),
-        },
+${newList}
+
+Respond with valid JSON only.`;
+
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: "Consolidate the new memories against existing ones." },
+        ],
+        temperature: 0.3,
+        max_tokens: 4096,
       });
 
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
       const cDurationMs = Date.now() - cStartTime;
       const cUsage = (response as any).usage;
+
+      let parsed: any = null;
+      if (rawContent) {
+        for (const candidate of extractJsonCandidates(rawContent)) {
+          try {
+            parsed = JSON.parse(candidate);
+            break;
+          } catch {
+            // keep trying candidates
+          }
+        }
+      }
+
       this.emit({
         kind: "llm_end", traceId: cTraceId, model: this.config.model, operation: "consolidation", durationMs: cDurationMs,
-        output: response.output_parsed ? JSON.stringify(response.output_parsed).slice(0, 2000) : undefined,
-        tokenUsage: cUsage ? { input: cUsage.input_tokens, output: cUsage.output_tokens, total: cUsage.total_tokens } : undefined,
+        output: parsed ? JSON.stringify(parsed).slice(0, 2000) : undefined,
+        tokenUsage: cUsage ? { input: cUsage.prompt_tokens, output: cUsage.completion_tokens, total: cUsage.total_tokens } : undefined,
       });
 
-      if (response.output_parsed) {
+      if (parsed && Array.isArray(parsed.items)) {
         log.debug(
-          `consolidation: ${response.output_parsed.items.length} decisions`,
+          `consolidation: ${parsed.items.length} decisions`,
         );
-        return this.sanitizeConsolidationResult(response.output_parsed as ConsolidationResult);
+        return this.sanitizeConsolidationResult({
+          items: parsed.items,
+          profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
+          entityUpdates: Array.isArray(parsed.entityUpdates) ? parsed.entityUpdates : [],
+        } as ConsolidationResult);
       }
 
       log.warn("consolidation returned no parsed output");
@@ -1059,16 +1167,8 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
       return null;
     }
 
-    const reasoningParam =
-      this.config.reasoningEffort !== "none"
-        ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
-        : {};
-
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        ...reasoningParam,
-        instructions: `You are a profile consolidation system. You are given a behavioral profile (markdown) that has grown too large. Your job is to produce a CONSOLIDATED version that:
+      const systemPrompt = `You are a profile consolidation system. You are given a behavioral profile (markdown) that has grown too large. Your job is to produce a CONSOLIDATED version that:
 
 1. PRESERVES all ## section headers and their structure
 2. MERGES duplicate or near-duplicate bullet points into single, clear statements
@@ -1078,26 +1178,56 @@ The output should be the COMPLETE consolidated profile as valid markdown, starti
 6. Target roughly ${targetLines} lines — this is a soft target, prioritize quality over length
 7. Write in the same style as the existing profile — concise bullets, no fluff
 
-The output should be the COMPLETE consolidated profile as valid markdown, starting with "# Behavioral Profile".`,
-        input: fullProfileContent,
-        text: {
-          format: zodTextFormat(buildProfileConsolidationResultSchema(targetLines), "profile_consolidation_result"),
-        },
+The output should be the COMPLETE consolidated profile as valid markdown, starting with "# Behavioral Profile".
+
+Respond with valid JSON matching this schema:
+{
+  "consolidatedProfile": "# Behavioral Profile\\n\\n... (complete markdown)",
+  "removedCount": 42,
+  "summary": "brief summary of what was consolidated"
+}`;
+
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: fullProfileContent },
+        ],
+        temperature: 0.3,
+        max_tokens: 4096,
       });
 
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
       const pDurationMs = Date.now() - pStartTime;
       const pUsage = (response as any).usage;
+
+      let parsed: any = null;
+      if (rawContent) {
+        for (const candidate of extractJsonCandidates(rawContent)) {
+          try {
+            parsed = JSON.parse(candidate);
+            break;
+          } catch {
+            // keep trying candidates
+          }
+        }
+      }
+
       this.emit({
         kind: "llm_end", traceId: pTraceId, model: this.config.model, operation: "profile_consolidation", durationMs: pDurationMs,
-        output: response.output_parsed ? response.output_parsed.summary : undefined,
-        tokenUsage: pUsage ? { input: pUsage.input_tokens, output: pUsage.output_tokens, total: pUsage.total_tokens } : undefined,
+        output: parsed ? parsed.summary : undefined,
+        tokenUsage: pUsage ? { input: pUsage.prompt_tokens, output: pUsage.completion_tokens, total: pUsage.total_tokens } : undefined,
       });
 
-      if (response.output_parsed) {
+      if (parsed && typeof parsed.consolidatedProfile === "string") {
         log.debug(
-          `profile consolidation: removed ${response.output_parsed.removedCount} items — ${response.output_parsed.summary}`,
+          `profile consolidation: removed ${parsed.removedCount ?? 0} items — ${parsed.summary ?? ""}`,
         );
-        return response.output_parsed;
+        return {
+          consolidatedProfile: parsed.consolidatedProfile,
+          removedCount: Number(parsed.removedCount || 0),
+          summary: String(parsed.summary || ""),
+        };
       }
 
       log.warn("profile consolidation returned no parsed output");
@@ -1251,16 +1381,8 @@ The goal is to reduce a bloated file to a compact, high-signal set of learned pa
       return null;
     }
 
-    const reasoningParam =
-      this.config.reasoningEffort !== "none"
-        ? { reasoning: { effort: this.config.reasoningEffort as "low" | "medium" | "high" } }
-        : {};
-
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        ...reasoningParam,
-        instructions: `You are an identity consolidation system. You are given the full contents of an IDENTITY.md file that contains many individual reflection entries. Your job is to:
+      const systemPrompt = `You are an identity consolidation system. You are given the full contents of an IDENTITY.md file that contains many individual reflection entries. Your job is to:
 
 1. Read all the reflection entries (sections starting with "## Reflection")
 2. Extract the most important, durable behavioral patterns and lessons learned
@@ -1269,29 +1391,54 @@ The goal is to reduce a bloated file to a compact, high-signal set of learned pa
 5. Prioritize patterns that are actionable and recurring over one-off observations
 6. Write a brief summary paragraph
 
-The goal is to reduce a bloated file to a compact, high-signal set of learned patterns while preserving all genuinely useful self-knowledge.`,
-        input: fullIdentityContent,
-        text: {
-          format: zodTextFormat(
-            IdentityConsolidationResultSchema,
-            "identity_consolidation_result",
-          ),
-        },
+The goal is to reduce a bloated file to a compact, high-signal set of learned patterns while preserving all genuinely useful self-knowledge.
+
+Respond with valid JSON matching this schema:
+{
+  "learnedPatterns": ["pattern 1", "pattern 2", "pattern 3"],
+  "summary": "brief summary of consolidation"
+}`;
+
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: fullIdentityContent },
+        ],
+        temperature: 0.3,
+        max_tokens: 4096,
       });
 
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
       const iDurationMs = Date.now() - iStartTime;
       const iUsage = (response as any).usage;
+
+      let parsed: any = null;
+      if (rawContent) {
+        for (const candidate of extractJsonCandidates(rawContent)) {
+          try {
+            parsed = JSON.parse(candidate);
+            break;
+          } catch {
+            // keep trying candidates
+          }
+        }
+      }
+
       this.emit({
         kind: "llm_end", traceId: iTraceId, model: this.config.model, operation: "identity_consolidation", durationMs: iDurationMs,
-        output: response.output_parsed ? response.output_parsed.summary : undefined,
-        tokenUsage: iUsage ? { input: iUsage.input_tokens, output: iUsage.output_tokens, total: iUsage.total_tokens } : undefined,
+        output: parsed ? parsed.summary : undefined,
+        tokenUsage: iUsage ? { input: iUsage.prompt_tokens, output: iUsage.completion_tokens, total: iUsage.total_tokens } : undefined,
       });
 
-      if (response.output_parsed) {
+      if (parsed && Array.isArray(parsed.learnedPatterns)) {
         log.debug(
-          `identity consolidation: ${response.output_parsed.learnedPatterns.length} patterns`,
+          `identity consolidation: ${parsed.learnedPatterns.length} patterns`,
         );
-        return response.output_parsed;
+        return {
+          learnedPatterns: parsed.learnedPatterns,
+          summary: String(parsed.summary || ""),
+        };
       }
 
       log.warn("identity consolidation returned no parsed output");
@@ -1395,9 +1542,7 @@ Category: ${newMemory.category}
 Content: ${newMemory.content}`;
 
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        instructions: `You are a contradiction detection system. Analyze whether two memories contradict each other.
+      const systemPrompt = `You are a contradiction detection system. Analyze whether two memories contradict each other.
 
 IMPORTANT: Not all similar memories are contradictions!
 - "User likes TypeScript" and "User likes Python" are NOT contradictions (preferences can coexist)
@@ -1410,18 +1555,45 @@ Only mark as contradiction if the two statements CANNOT both be true at the same
 If they ARE contradictory, determine which represents the more recent/current state based on:
 - Explicit time references ("now", "currently", "used to", "no longer")
 - The fact that newer corrections often start with "actually" or "correction"
-- Context clues about change over time`,
-        input,
-        text: {
-          format: zodTextFormat(ContradictionVerificationSchema, "contradiction_verification"),
-        },
+- Context clues about change over time
+
+Respond with valid JSON matching this schema:
+{
+  "isContradiction": true,
+  "confidence": 0.95,
+  "explanation": "why they contradict or don't",
+  "winner": "new" or "existing" or "neither",
+  "mergedContent": "optional merged content if applicable"
+}`;
+
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: input },
+        ],
+        temperature: 0.3,
+        max_tokens: 2048,
       });
 
-      if (response.output_parsed) {
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
+      let parsed: any = null;
+      if (rawContent) {
+        for (const candidate of extractJsonCandidates(rawContent)) {
+          try {
+            parsed = JSON.parse(candidate);
+            break;
+          } catch {
+            // keep trying candidates
+          }
+        }
+      }
+
+      if (parsed && typeof parsed.isContradiction === "boolean") {
         log.debug(
-          `contradiction check: ${response.output_parsed.isContradiction ? "YES" : "NO"} (confidence: ${response.output_parsed.confidence})`,
+          `contradiction check: ${parsed.isContradiction ? "YES" : "NO"} (confidence: ${parsed.confidence})`,
         );
-        return response.output_parsed as ContradictionVerificationResult;
+        return parsed as ContradictionVerificationResult;
       }
 
       return null;
@@ -1460,9 +1632,7 @@ Candidate memories to link to:
 ${candidateList}`;
 
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        instructions: `You are a memory linking system. Analyze the new memory and suggest relationships to existing memories.
+      const systemPrompt = `You are a memory linking system. Analyze the new memory and suggest relationships to existing memories.
 
 Link types:
 - follows: This memory is a continuation or next step (e.g., decision follows discussion)
@@ -1475,16 +1645,39 @@ Rules:
 - Only suggest links with strength > 0.5
 - Quality over quantity — 0-3 links is typical
 - Prefer specific link types over generic "related"
-- Consider entity references, topics, and causal relationships`,
-        input,
-        text: {
-          format: zodTextFormat(SuggestedLinksSchema, "suggested_links"),
-        },
+- Consider entity references, topics, and causal relationships
+
+Respond with valid JSON matching this schema:
+{
+  "links": [{"targetId": "memory-id", "type": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
+}`;
+
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: input },
+        ],
+        temperature: 0.3,
+        max_tokens: 2048,
       });
 
-      if (response.output_parsed) {
-        log.debug(`suggested ${response.output_parsed.links.length} links`);
-        return response.output_parsed as SuggestedLinks;
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
+      let parsed: any = null;
+      if (rawContent) {
+        for (const candidate of extractJsonCandidates(rawContent)) {
+          try {
+            parsed = JSON.parse(candidate);
+            break;
+          } catch {
+            // keep trying candidates
+          }
+        }
+      }
+
+      if (parsed && Array.isArray(parsed.links)) {
+        log.debug(`suggested ${parsed.links.length} links`);
+        return parsed as SuggestedLinks;
       }
 
       return { links: [] };
@@ -1512,9 +1705,7 @@ Rules:
       .join("\n\n");
 
     try {
-      const response = await this.client.responses.parse({
-        model: this.config.model,
-        instructions: `You are a memory summarization system. You are given a batch of old memories that need to be compressed into a summary.
+      const systemPrompt = `You are a memory summarization system. You are given a batch of old memories that need to be compressed into a summary.
 
 Your task:
 1. Write a concise summary paragraph (2-4 sentences) capturing the essence of these memories
@@ -1525,16 +1716,41 @@ Guidelines:
 - Preserve specific, actionable information
 - Merge redundant details into single statements
 - Focus on durable insights, not transient details
-- Maintain any preferences, decisions, or corrections as key facts`,
-        input: `Summarize these ${memories.length} memories:\n\n${memoryList}`,
-        text: {
-          format: zodTextFormat(MemorySummarySchema, "memory_summary"),
-        },
+- Maintain any preferences, decisions, or corrections as key facts
+
+Respond with valid JSON matching this schema:
+{
+  "summary": "concise summary paragraph",
+  "keyFacts": ["fact 1", "fact 2"],
+  "entities": ["entity-1", "entity-2"]
+}`;
+
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
+        ],
+        temperature: 0.3,
+        max_tokens: 4096,
       });
 
-      if (response.output_parsed) {
-        log.debug(`summarized ${memories.length} memories into ${response.output_parsed.keyFacts.length} key facts`);
-        return response.output_parsed as MemorySummaryResult;
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
+      let parsed: any = null;
+      if (rawContent) {
+        for (const candidate of extractJsonCandidates(rawContent)) {
+          try {
+            parsed = JSON.parse(candidate);
+            break;
+          } catch {
+            // keep trying candidates
+          }
+        }
+      }
+
+      if (parsed && typeof parsed.summary === "string") {
+        log.debug(`summarized ${memories.length} memories into ${(parsed.keyFacts ?? []).length} key facts`);
+        return parsed as MemorySummaryResult;
       }
 
       return null;
