@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.13 action-policy Task 3 (tooling + namespace-aware action audit):
+  - Added CLI helper/command `openclaw engram action-audit` to report namespace-aware action totals by action, outcome, and policy decision.
+  - Extended `memory_action_apply` tool with `dryRun` support for safe no-write validation.
+  - Added `tests/cli-memory-action-audit.test.ts` and expanded `tests/tools-compression-actions.test.ts` for dry-run behavior.
+  - Updated `docs/api.md` and `docs/operations.md` with action-audit and dry-run usage guidance.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.

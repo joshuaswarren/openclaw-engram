@@ -1031,6 +1031,11 @@ Best for:
             description: "Optional namespace. Defaults to defaultNamespace.",
           }),
         ),
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description: "When true, validate and report without persisting telemetry.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
         if (!orchestrator.config.contextCompressionActionsEnabled) {
@@ -1038,18 +1043,25 @@ Best for:
             "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
           );
         }
-        const { action, outcome, reason, memoryId, sourcePrompt, namespace } = params as {
+        const { action, outcome, reason, memoryId, sourcePrompt, namespace, dryRun } = params as {
           action: MemoryActionType;
           outcome?: "applied" | "skipped" | "failed";
           reason?: string;
           memoryId?: string;
           sourcePrompt?: string;
           namespace?: string;
+          dryRun?: boolean;
         };
         const ns =
           typeof namespace === "string" && namespace.length > 0
             ? namespace
             : orchestrator.config.defaultNamespace;
+        if (dryRun === true) {
+          return toolResult(
+            `Dry run: memory action would be recorded with action=${action}, outcome=${outcome ?? "applied"}, namespace=${ns}.`,
+          );
+        }
+
         const wrote = await orchestrator.appendMemoryActionEvent({
           action,
           outcome: outcome ?? "applied",

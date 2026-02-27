@@ -2,7 +2,7 @@ import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
-import type { ContinuityIncidentRecord, TranscriptEntry } from "./types.js";
+import type { ContinuityIncidentRecord, MemoryActionEvent, TranscriptEntry } from "./types.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -280,6 +280,43 @@ export interface GraphHealthCliCommandOptions {
   includeRepairGuidance?: boolean;
 }
 
+export interface MemoryActionAuditCliCommandOptions {
+  namespace?: string;
+  limit?: number;
+}
+
+export interface MemoryActionAuditCliNamespaceSummary {
+  namespace: string;
+  eventCount: number;
+  actions: Record<string, number>;
+  outcomes: Record<string, number>;
+  policyDecisions: Record<string, number>;
+}
+
+export interface MemoryActionAuditCliReport {
+  generatedAt: string;
+  limit: number;
+  namespaces: MemoryActionAuditCliNamespaceSummary[];
+  totals: {
+    eventCount: number;
+    actions: Record<string, number>;
+    outcomes: Record<string, number>;
+    policyDecisions: Record<string, number>;
+  };
+}
+
+interface MemoryActionAuditCliOrchestrator {
+  config: {
+    defaultNamespace: string;
+    sharedNamespace: string;
+    namespacesEnabled: boolean;
+    namespacePolicies: Array<{ name: string }>;
+  };
+  getStorage(namespace?: string): Promise<{
+    readMemoryActionEvents(limit?: number): Promise<MemoryActionEvent[]>;
+  }>;
+}
+
 export interface TailscaleStatusCliCommandOptions {
   helper?: TailscaleHelperLike;
   timeoutMs?: number;
@@ -459,6 +496,84 @@ export async function runGraphHealthCliCommand(
     causalGraphEnabled: options.causalGraphEnabled,
     includeRepairGuidance: options.includeRepairGuidance,
   });
+}
+
+function incrementCounter(target: Record<string, number>, key: string): void {
+  const normalized = key && key.length > 0 ? key : "unknown";
+  target[normalized] = (target[normalized] ?? 0) + 1;
+}
+
+function resolveAuditNamespaces(
+  orchestrator: MemoryActionAuditCliOrchestrator,
+  namespace?: string,
+): string[] {
+  if (namespace && namespace.length > 0) {
+    return [namespace];
+  }
+
+  const names = new Set<string>([orchestrator.config.defaultNamespace]);
+  if (orchestrator.config.namespacesEnabled) {
+    names.add(orchestrator.config.sharedNamespace);
+    for (const policy of orchestrator.config.namespacePolicies) {
+      if (policy?.name) names.add(policy.name);
+    }
+  }
+
+  return [...names];
+}
+
+export async function runMemoryActionAuditCliCommand(
+  orchestrator: MemoryActionAuditCliOrchestrator,
+  options: MemoryActionAuditCliCommandOptions = {},
+): Promise<MemoryActionAuditCliReport> {
+  const limit = Math.max(0, Math.floor(options.limit ?? 200));
+  const namespaces = resolveAuditNamespaces(orchestrator, options.namespace);
+
+  const namespaceSummaries: MemoryActionAuditCliNamespaceSummary[] = [];
+  const totalsActions: Record<string, number> = {};
+  const totalsOutcomes: Record<string, number> = {};
+  const totalsPolicyDecisions: Record<string, number> = {};
+  let totalEventCount = 0;
+
+  for (const ns of namespaces) {
+    const storage = await orchestrator.getStorage(ns);
+    const events = await storage.readMemoryActionEvents(limit);
+
+    const actions: Record<string, number> = {};
+    const outcomes: Record<string, number> = {};
+    const policyDecisions: Record<string, number> = {};
+
+    for (const event of events) {
+      incrementCounter(actions, event.action);
+      incrementCounter(outcomes, event.outcome);
+      incrementCounter(policyDecisions, event.policyDecision ?? "unknown");
+
+      incrementCounter(totalsActions, event.action);
+      incrementCounter(totalsOutcomes, event.outcome);
+      incrementCounter(totalsPolicyDecisions, event.policyDecision ?? "unknown");
+    }
+
+    totalEventCount += events.length;
+    namespaceSummaries.push({
+      namespace: ns,
+      eventCount: events.length,
+      actions,
+      outcomes,
+      policyDecisions,
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    limit,
+    namespaces: namespaceSummaries,
+    totals: {
+      eventCount: totalEventCount,
+      actions: totalsActions,
+      outcomes: totalsOutcomes,
+      policyDecisions: totalsPolicyDecisions,
+    },
+  };
 }
 
 export async function runTailscaleStatusCliCommand(
@@ -1268,6 +1383,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             timeGraphEnabled: orchestrator.config.timeGraphEnabled,
             causalGraphEnabled: orchestrator.config.causalGraphEnabled,
             includeRepairGuidance: options.repairGuidance === true,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("action-audit")
+        .description("Show namespace-aware memory action policy outcomes")
+        .option("--namespace <name>", "Filter to a single namespace")
+        .option("--limit <n>", "Max events to read per namespace", "200")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const limitRaw = parseInt(String(options.limit ?? "200"), 10);
+          const report = await runMemoryActionAuditCliCommand(orchestrator, {
+            namespace:
+              typeof options.namespace === "string" && options.namespace.trim().length > 0
+                ? options.namespace.trim()
+                : undefined,
+            limit: Number.isFinite(limitRaw) ? Math.max(0, limitRaw) : 200,
           });
           console.log(JSON.stringify(report, null, 2));
           console.log("OK");

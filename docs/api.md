@@ -78,6 +78,23 @@ Record explicit feedback on a recalled memory.
 
 ---
 
+### `memory_action_apply`
+
+Record a memory-action telemetry event with optional safe dry-run mode.
+
+**Parameters:**
+- `action` (string, required) — One of: `store_episode`, `store_note`, `update_note`, `create_artifact`, `summarize_node`, `discard`, `link_graph`.
+- `outcome` (string, optional, default: `applied`) — One of: `applied`, `skipped`, `failed`.
+- `reason` (string, optional) — Operator rationale or note.
+- `memoryId` (string, optional) — Targeted memory ID if applicable.
+- `namespace` (string, optional) — Namespace to write telemetry into.
+- `sourcePrompt` (string, optional) — Prompt text used only for hash telemetry.
+- `dryRun` (boolean, optional, default: `false`) — Validate/report action without persisting telemetry.
+
+**Returns:** Confirmation text; in dry-run, reports what would be recorded.
+
+---
+
 ### `identity_anchor_get`
 
 Read the identity continuity anchor document used for recovery-safe identity context.
@@ -187,6 +204,7 @@ Run via `openclaw engram <command>`:
 | `continuity incidents [--state open\|closed\|all] [--limit N]` | List continuity incidents |
 | `continuity incident-open --symptom <text> [--trigger-window <text>] [--suspected-cause <text>]` | Open a continuity incident |
 | `continuity incident-close --id <id> --fix-applied <text> --verification-result <text> [--preventive-rule <text>]` | Close a continuity incident |
+| `action-audit [--namespace <name>] [--limit N]` | Show namespace-aware memory action outcomes and policy decisions |
 
 ## Plugin Hooks
 

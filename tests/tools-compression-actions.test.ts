@@ -122,6 +122,23 @@ test("context_checkpoint logs summarize_node telemetry in requested namespace", 
   assert.match(capturedEvents[0].reason, /^context_checkpoint:/);
 });
 
+test("memory_action_apply dryRun reports without writing telemetry", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc4", {
+    action: "link_graph",
+    dryRun: true,
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /Dry run:/i);
+  assert.equal(capturedEvents.length, 0);
+});
+
 test("memory_action_apply fails open when telemetry write fails", async () => {
   const { tools } = buildHarness({
     contextCompressionActionsEnabled: true,
@@ -130,7 +147,7 @@ test("memory_action_apply fails open when telemetry write fails", async () => {
   const tool = tools.get("memory_action_apply");
   assert.ok(tool);
 
-  const result = await tool.execute("tc4", {
+  const result = await tool.execute("tc5", {
     action: "discard",
     outcome: "failed",
   });
