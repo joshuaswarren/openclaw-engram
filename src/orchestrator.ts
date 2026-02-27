@@ -18,7 +18,12 @@ import { expandQuery } from "./retrieval.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
-import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
+import {
+  LastRecallStore,
+  clampGraphRecallExpandedEntries,
+  type GraphRecallExpandedEntry,
+  type LastRecallSnapshot,
+} from "./recall-state.js";
 import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
@@ -105,7 +110,7 @@ export interface GraphRecallSnapshot {
   seedCount: number;
   expandedCount: number;
   seeds: string[];
-  expanded: Array<{ path: string; score: number; namespace: string }>;
+  expanded: GraphRecallExpandedEntry[];
 }
 
 export function isArtifactMemoryPath(filePath: string): boolean {
@@ -1024,16 +1029,7 @@ export class Orchestrator {
         seeds: Array.isArray(parsed.seeds)
           ? parsed.seeds.filter((v): v is string => typeof v === "string")
           : [],
-        expanded: Array.isArray(parsed.expanded)
-          ? parsed.expanded
-            .filter((v): v is { path: string; score: number; namespace: string } =>
-              !!v &&
-              typeof v === "object" &&
-              typeof (v as { path?: unknown }).path === "string" &&
-              typeof (v as { score?: unknown }).score === "number" &&
-              typeof (v as { namespace?: unknown }).namespace === "string",
-            )
-          : [],
+        expanded: clampGraphRecallExpandedEntries(parsed.expanded, 64),
       };
     } catch {
       return null;
@@ -1058,7 +1054,10 @@ export class Orchestrator {
       `Seed paths (${snapshot.seedCount}):`,
       ...snapshot.seeds.map((p) => `- ${p}`),
       `Expanded paths (${snapshot.expandedCount}, showing ${expanded.length}):`,
-      ...expanded.map((e) => `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace})`),
+      ...expanded.map(
+        (e) =>
+          `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType})`,
+      ),
     ].join("\n");
   }
 
@@ -1499,7 +1498,7 @@ export class Orchestrator {
   }): Promise<{
     merged: QmdSearchResult[];
     seedPaths: string[];
-    expandedPaths: Array<{ path: string; score: number; namespace: string }>;
+    expandedPaths: GraphRecallExpandedEntry[];
   }> {
     const byNamespace = new Map<string, QmdSearchResult[]>();
     for (const result of options.memoryResults) {
@@ -1516,7 +1515,7 @@ export class Orchestrator {
     const perNamespaceSeedCap = Math.max(3, options.recallResultLimit);
     const perNamespaceExpandedCap = Math.max(8, options.recallResultLimit * 2);
     const seedPaths: string[] = [];
-    const expandedPaths: Array<{ path: string; score: number; namespace: string }> = [];
+    const expandedPaths: GraphRecallExpandedEntry[] = [];
     const expandedResults: QmdSearchResult[] = [];
 
     for (const [namespace, nsResults] of byNamespace.entries()) {
@@ -1562,6 +1561,10 @@ export class Orchestrator {
           path: memory.path,
           score,
           namespace,
+          seed: path.resolve(storage.dir, candidate.seed),
+          hopDepth: candidate.hopDepth,
+          decayedWeight: candidate.decayedWeight,
+          graphType: candidate.graphType,
         });
       }
     }
@@ -1579,22 +1582,26 @@ export class Orchestrator {
     recallMode: RecallPlanMode;
     recallNamespaces: string[];
     seedPaths: string[];
-    expandedPaths: Array<{ path: string; score: number; namespace: string }>;
+    expandedPaths: GraphRecallExpandedEntry[];
   }): Promise<void> {
     try {
       const snapshotPath = path.join(options.storage.dir, "state", "last_graph_recall.json");
       await mkdir(path.dirname(snapshotPath), { recursive: true });
       const now = new Date().toISOString();
+      const totalSeedCount = options.seedPaths.length;
+      const totalExpandedCount = options.expandedPaths.length;
+      const seeds = options.seedPaths.slice(0, 64);
+      const expanded = clampGraphRecallExpandedEntries(options.expandedPaths, 64);
       const payload = {
         recordedAt: now,
         mode: options.recallMode,
         queryHash: createHash("sha256").update(options.prompt).digest("hex"),
         queryLength: options.prompt.length,
         namespaces: options.recallNamespaces,
-        seedCount: options.seedPaths.length,
-        expandedCount: options.expandedPaths.length,
-        seeds: options.seedPaths,
-        expanded: options.expandedPaths,
+        seedCount: totalSeedCount,
+        expandedCount: totalExpandedCount,
+        seeds,
+        expanded,
       };
       await writeFile(snapshotPath, JSON.stringify(payload, null, 2), "utf-8");
     } catch (err) {

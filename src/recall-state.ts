@@ -15,6 +15,49 @@ export interface LastRecallSnapshot {
   identityInjectionTruncated?: boolean;
 }
 
+export interface GraphRecallExpandedEntry {
+  path: string;
+  score: number;
+  namespace: string;
+  seed: string;
+  hopDepth: number;
+  decayedWeight: number;
+  graphType: "entity" | "time" | "causal";
+}
+
+export function clampGraphRecallExpandedEntries(
+  entries: unknown,
+  maxEntries: number = 64,
+): GraphRecallExpandedEntry[] {
+  const limit = Math.max(1, Math.floor(maxEntries));
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((item) => {
+      const graphType: "entity" | "time" | "causal" =
+        item.graphType === "entity" || item.graphType === "time" || item.graphType === "causal"
+          ? item.graphType
+          : "entity";
+      return {
+        path: typeof item.path === "string" ? item.path : "",
+        score: typeof item.score === "number" && Number.isFinite(item.score) ? item.score : 0,
+        namespace: typeof item.namespace === "string" ? item.namespace : "",
+        seed: typeof item.seed === "string" ? item.seed : "",
+        hopDepth:
+          typeof item.hopDepth === "number" && Number.isFinite(item.hopDepth)
+            ? Math.max(0, Math.floor(item.hopDepth))
+            : 0,
+        decayedWeight:
+          typeof item.decayedWeight === "number" && Number.isFinite(item.decayedWeight)
+            ? Math.max(0, item.decayedWeight)
+            : 0,
+        graphType,
+      };
+    })
+    .filter((item) => item.path.length > 0 && item.namespace.length > 0)
+    .slice(0, limit);
+}
+
 type LastRecallState = Record<string, LastRecallSnapshot>;
 
 export class LastRecallStore {

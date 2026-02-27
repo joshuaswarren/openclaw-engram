@@ -220,7 +220,14 @@ export class GraphIndex {
   async spreadingActivation(
     seeds: string[],
     maxSteps?: number,
-  ): Promise<Array<{ path: string; score: number }>> {
+  ): Promise<Array<{
+    path: string;
+    score: number;
+    seed: string;
+    hopDepth: number;
+    decayedWeight: number;
+    graphType: "entity" | "time" | "causal";
+  }>> {
     if (!this.cfg.multiGraphMemoryEnabled) return [];
     const steps = maxSteps ?? this.cfg.maxGraphTraversalSteps;
     const decay = this.cfg.graphActivationDecay;
@@ -246,13 +253,17 @@ export class GraphIndex {
 
       const seedSet = new Set(seeds);
       const scores = new Map<string, number>(); // candidate path → accumulated activation score
+      const provenance = new Map<
+        string,
+        { seed: string; hopDepth: number; decayedWeight: number; graphType: "entity" | "time" | "causal" }
+      >();
       const visited = new Set<string>(seeds);
 
-      // BFS queue: [nodePath, hop]
-      const queue: Array<[string, number]> = seeds.map((s) => [s, 0]);
+      // BFS queue: [nodePath, hop, seedPath]
+      const queue: Array<[string, number, string]> = seeds.map((s) => [s, 0, s]);
 
       while (queue.length > 0) {
-        const [node, hop] = queue.shift()!;
+        const [node, hop, sourceSeed] = queue.shift()!;
         if (hop >= steps) continue;
 
         const edges = adj.get(node) ?? [];
@@ -263,17 +274,38 @@ export class GraphIndex {
           if (!seedSet.has(neighbor)) {
             const existing = scores.get(neighbor) ?? 0;
             scores.set(neighbor, existing + score);
+
+            const prev = provenance.get(neighbor);
+            if (
+              !prev ||
+              hop + 1 < prev.hopDepth ||
+              (hop + 1 === prev.hopDepth && score > prev.decayedWeight)
+            ) {
+              provenance.set(neighbor, {
+                seed: sourceSeed,
+                hopDepth: hop + 1,
+                decayedWeight: score,
+                graphType: edge.type,
+              });
+            }
           }
 
           if (!visited.has(neighbor)) {
             visited.add(neighbor);
-            queue.push([neighbor, hop + 1]);
+            queue.push([neighbor, hop + 1, sourceSeed]);
           }
         }
       }
 
       return Array.from(scores.entries())
-        .map(([p, score]) => ({ path: p, score }))
+        .map(([p, score]) => ({
+          path: p,
+          score,
+          seed: provenance.get(p)?.seed ?? "",
+          hopDepth: provenance.get(p)?.hopDepth ?? 0,
+          decayedWeight: provenance.get(p)?.decayedWeight ?? 0,
+          graphType: provenance.get(p)?.graphType ?? "entity",
+        }))
         .sort((a, b) => b.score - a.score);
     } catch (err) {
       const { log } = await import("./logger.js");
