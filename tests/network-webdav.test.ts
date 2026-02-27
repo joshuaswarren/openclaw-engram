@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { WebDavServer, hostToUrlAuthority } from "../src/network/webdav.ts";
 
@@ -95,6 +95,7 @@ test("webdav blocks traversal and supports PROPFIND", async () => {
     assert.equal(propfind.status, 207);
     assert.match(propfind.body, /multistatus/);
     assert.match(propfind.body, /a\.txt/);
+    assert.match(propfind.body, /<d:status>HTTP\/1.1 200 OK<\/d:status>/);
 
     const traversal = await httpRequest("GET", started.port, `/${alias}/../etc/passwd`);
     assert.equal(traversal.status, 403);
@@ -158,6 +159,30 @@ test("webdav enforces optional basic auth", async () => {
     assert.equal(lowerScheme.status, 200);
     assert.equal(lowerScheme.body, "top-secret");
   } finally {
+    await server.stop();
+  }
+});
+
+test("webdav does not leak internal errors in 500 response bodies", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-500-redact-"));
+  const blocked = path.join(root, "blocked");
+  await mkdir(blocked, { recursive: true });
+  await chmod(blocked, 0o000);
+
+  const server = await WebDavServer.create({
+    enabled: true,
+    port: 0,
+    allowlistDirs: [root],
+  });
+  const started = await server.start();
+  const alias = path.basename(root);
+
+  try {
+    const res = await httpRequest("PROPFIND", started.port, `/${alias}/blocked`);
+    assert.equal(res.status, 500);
+    assert.equal(res.body, "webdav error");
+  } finally {
+    await chmod(blocked, 0o700).catch(() => {});
     await server.stop();
   }
 });

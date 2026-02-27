@@ -101,7 +101,7 @@ export class WebDavServer {
           return;
         }
         res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(`webdav error: ${(err as Error).message}`);
+        res.end("webdav error");
       });
     });
     this.server = server;
@@ -339,7 +339,7 @@ export class WebDavServer {
         entries.push(`
   <d:response>
     <d:href>${xmlEscape(childHref)}</d:href>
-    <d:propstat><d:prop><d:resourcetype>${child.isDirectory() ? "<d:collection/>" : ""}</d:resourcetype></d:prop></d:propstat>
+    <d:propstat><d:prop><d:resourcetype>${child.isDirectory() ? "<d:collection/>" : ""}</d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
   </d:response>`);
       }
     }
@@ -348,7 +348,7 @@ export class WebDavServer {
 <d:multistatus xmlns:d="DAV:">
   <d:response>
     <d:href>${xmlEscape(toEncodedHref(displayPath))}</d:href>
-    <d:propstat><d:prop><d:resourcetype>${info.isDirectory() ? "<d:collection/>" : ""}</d:resourcetype></d:prop></d:propstat>
+    <d:propstat><d:prop><d:resourcetype>${info.isDirectory() ? "<d:collection/>" : ""}</d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
   </d:response>${entries.join("")}
 </d:multistatus>`;
 

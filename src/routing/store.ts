@@ -265,7 +265,11 @@ export class RoutingRulesStore {
   private isPathInside(root: string, candidate: string): boolean {
     const normalizedRoot = path.resolve(root);
     const normalizedCandidate = path.resolve(candidate);
-    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
+    if (normalizedCandidate === normalizedRoot) return true;
+    if (normalizedRoot === path.parse(normalizedRoot).root) {
+      return normalizedCandidate.startsWith(normalizedRoot);
+    }
+    return normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
   }
 
   private async canonicalizePathWithoutCreating(targetPath: string): Promise<string> {
