@@ -101,7 +101,7 @@ test("recallInternal writes graph recall snapshot in graph_mode", async () => {
       },
     ],
     seedPaths: [seedMemory!.path],
-    expandedPaths: [{ path: expandedMemory!.path, score: 0.8, namespace: "default" }],
+    expandedPaths: [{ path: expandedMemory!.path, score: 0.8, namespace: "default", seed: seedMemory!.path, hopDepth: 1, decayedWeight: 0.7, graphType: "entity" }],
   });
 
   const out = await (orchestrator as any).recallInternal(
@@ -170,7 +170,7 @@ test("recallInternal runs bounded graph assist in full mode when enabled", async
       },
     ],
     seedPaths: [seedMemory!.path],
-    expandedPaths: [{ path: expandedMemory!.path, score: 0.8, namespace: "default" }],
+    expandedPaths: [{ path: expandedMemory!.path, score: 0.8, namespace: "default", seed: seedMemory!.path, hopDepth: 1, decayedWeight: 0.7, graphType: "entity" }],
   });
 
   const out = await (orchestrator as any).recallInternal(
@@ -211,7 +211,7 @@ test("getLastGraphRecallSnapshot reads persisted snapshot", async () => {
         seedCount: 1,
         expandedCount: 1,
         seeds: ["/tmp/memory/default/facts/a.md"],
-        expanded: [{ path: "/tmp/memory/default/facts/b.md", score: 0.7, namespace: "default" }],
+        expanded: [{ path: "/tmp/memory/default/facts/b.md", score: 0.7, namespace: "default", seed: "/tmp/memory/default/facts/a.md", hopDepth: 1, decayedWeight: 0.7, graphType: "entity" }],
       },
       null,
       2,
@@ -249,8 +249,8 @@ test("explainLastGraphRecall returns human-readable graph explanation", async ()
         expandedCount: 2,
         seeds: ["/tmp/memory/default/facts/a.md"],
         expanded: [
-          { path: "/tmp/memory/default/facts/b.md", score: 0.7, namespace: "default" },
-          { path: "/tmp/memory/default/facts/c.md", score: 0.6, namespace: "default" },
+          { path: "/tmp/memory/default/facts/b.md", score: 0.7, namespace: "default", seed: "/tmp/memory/default/facts/a.md", hopDepth: 1, decayedWeight: 0.7, graphType: "entity" },
+          { path: "/tmp/memory/default/facts/c.md", score: 0.6, namespace: "default", seed: "/tmp/memory/default/facts/a.md", hopDepth: 2, decayedWeight: 0.49, graphType: "time" },
         ],
       },
       null,
@@ -263,4 +263,5 @@ test("explainLastGraphRecall returns human-readable graph explanation", async ()
   assert.match(explanation, /Last Graph Recall/);
   assert.match(explanation, /Mode: graph_mode/);
   assert.match(explanation, /showing 1/);
+  assert.match(explanation, /seed=.*hop=.*type=/);
 });

@@ -71,7 +71,7 @@ The planner classifies each request and selects a recall mode before any search:
 | `no_recall` | Acknowledgements, simple acks | Skip search entirely |
 | `minimal` | Short operational commands | QMD capped at `recallPlannerMaxQmdResultsMinimal` |
 | `full` | Normal requests | Standard pipeline |
-| `graph_mode` | Timeline / history queries | Extended graph traversal (future) |
+| `graph_mode` | Timeline / history queries | Extended graph traversal + provenance snapshot (seed/hop/type) |
 
 Config: `recallPlannerEnabled` (default `true`).
 
@@ -114,6 +114,11 @@ Recall telemetry (`recall_summary`) includes identity fields:
 - `identityInjectionMode`
 - `identityInjectedChars`
 - `identityInjectionTruncated`
+
+Graph recall explainability (`memory_graph_explain_last_recall`):
+- snapshot persists bounded seed and expanded path sets (max 64 each)
+- expanded entries include provenance: `seed`, `hopDepth`, `decayedWeight`, `graphType`
+- output remains concise by honoring `maxExpanded` and rendering a compact per-entry provenance line
 
 ## Namespace Routing (v3.0)
 

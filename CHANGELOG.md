@@ -81,6 +81,12 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.12 graph retrieval phase 2 Task 2 (richer graph provenance snapshots):
+  - Extended graph spreading-activation outputs to include per-result provenance (`seed`, `hopDepth`, `decayedWeight`, `graphType`).
+  - Persisted bounded provenance in `last_graph_recall.json` with capped seed/expanded arrays for high-traffic safety.
+  - Updated graph explain output (`memory_graph_explain_last_recall`) to include concise per-result provenance details.
+  - Added parsing/bounding helper in `src/recall-state.ts` and expanded graph integration tests for provenance fields.
+  - Updated `docs/architecture/retrieval-pipeline.md` with graph provenance snapshot behavior.
 - v8.12 graph retrieval phase 2 Task 1 (expansion scoring controls):
   - Added graph expansion scoring config knobs: `graphExpansionActivationWeight`, `graphExpansionBlendMin`, and `graphExpansionBlendMax` with clamped parse-time handling.
   - Added bounded blend function for graph-expanded candidate scoring to combine normalized activation with seed QMD signal while enforcing configurable score bounds.
