@@ -1065,8 +1065,9 @@ Best for:
           promptHash: promptHashForTelemetry(sourcePrompt),
         };
 
+        const preview = orchestrator.previewMemoryActionEvent(event);
+
         if (dryRun === true) {
-          const preview = orchestrator.previewMemoryActionEvent(event);
           return toolResult(
             `Dry run: memory action would be recorded with action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}, policy=${preview.policyDecision}.`,
           );
@@ -1077,7 +1078,7 @@ Best for:
           return toolResult("Memory action telemetry write failed (fail-open).");
         }
         return toolResult(
-          `Recorded memory action telemetry: action=${action}, outcome=${outcome ?? "applied"}, namespace=${ns}.`,
+          `Recorded memory action telemetry: action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}.`,
         );
       },
     },
