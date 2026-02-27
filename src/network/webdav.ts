@@ -93,9 +93,11 @@ export class WebDavServer {
 
     const server = createServer((req, res) => {
       this.handle(req, res).catch((err) => {
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        if (res.headersSent) {
+          res.destroy(err as Error);
+          return;
         }
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
         res.end(`webdav error: ${(err as Error).message}`);
       });
     });
@@ -195,10 +197,12 @@ export class WebDavServer {
   private isAuthorized(req: IncomingMessage): boolean {
     if (!this.options.auth) return true;
     const raw = req.headers.authorization;
-    if (!raw || !raw.startsWith("Basic ")) return false;
+    if (!raw) return false;
+    const match = raw.match(/^basic\s+(.+)$/i);
+    if (!match || !match[1]) return false;
 
     try {
-      const decoded = Buffer.from(raw.slice("Basic ".length), "base64").toString("utf-8");
+      const decoded = Buffer.from(match[1], "base64").toString("utf-8");
       const separator = decoded.indexOf(":");
       if (separator < 0) return false;
       const username = decoded.slice(0, separator);

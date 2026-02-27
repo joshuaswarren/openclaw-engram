@@ -130,6 +130,12 @@ test("webdav enforces optional basic auth", async () => {
 
     assert.equal(allowed.status, 200);
     assert.equal(allowed.body, "top-secret");
+
+    const lowerScheme = await httpRequest("GET", started.port, `/${alias}/secret.txt`, {
+      Authorization: authHeader.replace("Basic ", "basic "),
+    });
+    assert.equal(lowerScheme.status, 200);
+    assert.equal(lowerScheme.body, "top-secret");
   } finally {
     await server.stop();
   }
