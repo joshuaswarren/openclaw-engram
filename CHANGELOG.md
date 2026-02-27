@@ -49,6 +49,10 @@ All notable changes to this project will be documented in this file.
   - Added `src/compat/types.ts` for compatibility report/check contracts (`ok|warn|error` + summary metadata).
   - Added `src/compat/checks.ts` with deterministic offline compatibility checks for plugin manifest shape, package wiring, core hook registration, Node runtime floor, and QMD binary availability.
   - Added `tests/compat-checks.test.ts` coverage for healthy fixtures, malformed/missing files, and warn/error remediation paths.
+- v8.9 compatibility diagnostics Task 2 (CLI command surface):
+  - Added `openclaw engram compat [--json] [--strict]` in `src/cli.ts` for local compatibility diagnostics.
+  - Added strict-mode exit behavior (`exitCode=1` when warnings/errors are present) and machine-readable JSON output mode.
+  - Added `runCompatCliCommand` wrapper plus `tests/cli-compat.test.ts` coverage for default vs strict exit behavior.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
