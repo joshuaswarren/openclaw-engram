@@ -682,6 +682,36 @@ export type MemoryActionType =
 
 export type MemoryActionOutcome = "applied" | "skipped" | "failed";
 
+export type MemoryActionPolicyDecision = "allow" | "defer" | "deny";
+
+export type MemoryActionEligibilityLifecycleState =
+  | "active"
+  | "validated"
+  | "candidate"
+  | "stale"
+  | "archived";
+
+export type MemoryActionEligibilitySource =
+  | "extraction"
+  | "consolidation"
+  | "replay"
+  | "manual"
+  | "unknown";
+
+export interface MemoryActionEligibilityContext {
+  confidence: number;
+  lifecycleState: MemoryActionEligibilityLifecycleState;
+  importance: number;
+  source: MemoryActionEligibilitySource;
+}
+
+export interface MemoryActionPolicyResult {
+  action: MemoryActionType;
+  decision: MemoryActionPolicyDecision;
+  rationale: string;
+  eligibility: MemoryActionEligibilityContext;
+}
+
 export interface MemoryActionEvent {
   timestamp: string;
   action: MemoryActionType;

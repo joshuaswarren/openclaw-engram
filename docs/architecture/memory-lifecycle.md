@@ -78,6 +78,22 @@ When `compressionGuidelineLearningEnabled=true`, each consolidation pass runs a 
 
 This pass never blocks consolidation. On read/write errors, it logs and continues.
 
+### Memory Action Policy Contracts (v8.13 Task 1)
+
+The action-policy layer uses a strict taxonomy and bounded eligibility context:
+
+- Action taxonomy: `store_episode`, `store_note`, `update_note`, `create_artifact`, `summarize_node`, `discard`, `link_graph`
+- Eligibility context fields:
+  - `confidence` (`0..1`)
+  - `lifecycleState` (`active|validated|candidate|stale|archived`)
+  - `importance` (`0..1`)
+  - `source` (`extraction|consolidation|replay|manual|unknown`)
+
+Parsing is strict for schema validation and fail-open in runtime helpers:
+
+- Invalid action values fall back to `discard`.
+- Invalid eligibility payloads fall back to `{ confidence: 0, lifecycleState: "candidate", importance: 0, source: "unknown" }`.
+
 ## Memory States
 
 | Status | Description |

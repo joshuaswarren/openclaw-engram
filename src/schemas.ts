@@ -1,5 +1,42 @@
 import { z } from "zod";
 
+export const MemoryActionTypeSchema = z.enum([
+  "store_episode",
+  "store_note",
+  "update_note",
+  "create_artifact",
+  "summarize_node",
+  "discard",
+  "link_graph",
+]);
+
+export const MemoryActionEligibilityContextSchema = z
+  .object({
+    confidence: z.number().min(0).max(1),
+    lifecycleState: z.enum(["active", "validated", "candidate", "stale", "archived"]),
+    importance: z.number().min(0).max(1),
+    source: z.enum(["extraction", "consolidation", "replay", "manual", "unknown"]),
+  })
+  .strict();
+
+export function parseMemoryActionType(value: unknown): z.infer<typeof MemoryActionTypeSchema> {
+  const parsed = MemoryActionTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : "discard";
+}
+
+export function parseMemoryActionEligibilityContext(
+  value: unknown,
+): z.infer<typeof MemoryActionEligibilityContextSchema> {
+  const parsed = MemoryActionEligibilityContextSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return {
+    confidence: 0,
+    lifecycleState: "candidate",
+    importance: 0,
+    source: "unknown",
+  };
+}
+
 export const ExtractedFactSchema = z.object({
   category: z.enum(["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"]),
   content: z
@@ -212,6 +249,8 @@ export const MemorySummarySchema = z.object({
 
 export type MemorySummaryResult = z.infer<typeof MemorySummarySchema>;
 
+export type MemoryActionTypeParsed = z.infer<typeof MemoryActionTypeSchema>;
+export type MemoryActionEligibilityContextParsed = z.infer<typeof MemoryActionEligibilityContextSchema>;
 export type ExtractedFactParsed = z.infer<typeof ExtractedFactSchema>;
 export type EntityMentionParsed = z.infer<typeof EntityMentionSchema>;
 export type ExtractedQuestionParsed = z.infer<typeof ExtractedQuestionSchema>;

@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.13 action-policy Task 1 (taxonomy + eligibility contracts):
+  - Added typed action-policy contracts in `src/types.ts` (`MemoryActionPolicyDecision`, eligibility context/source/lifecycle unions, and policy result contract).
+  - Added strict schemas in `src/schemas.ts` for action taxonomy and eligibility context, plus fail-open parse helpers with default-safe fallbacks.
+  - Added `tests/memory-action-contracts.test.ts` coverage for taxonomy acceptance, strict-schema rejection, and fallback behavior.
+  - Updated `docs/architecture/memory-lifecycle.md` with v8.13 action-policy contract documentation.
 - v8.12 graph retrieval phase 2 Task 4 (graph health diagnostics command):
   - Added `analyzeGraphHealth(...)` in `src/graph.ts` to report per-edge-file integrity, corruption counts, valid edge totals, and unique node coverage.
   - Added CLI wrapper/command `openclaw engram graph-health` with optional `--repair-guidance` for non-destructive remediation hints.
