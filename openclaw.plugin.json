@@ -848,6 +848,34 @@
         "type": "boolean",
         "default": true,
         "description": "Generate LLM summaries for entities during consolidation"
+      },
+      "recallBudgetChars": {
+        "type": "number",
+        "description": "Hard character cap for the total recall injection. Defaults to maxMemoryTokens * 4."
+      },
+      "recallPipeline": {
+        "type": "array",
+        "description": "Ordered list of recall sections to inject. Each entry controls a section's enabled state, budget, and per-section options.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "description": "Section identifier (shared-context, profile, knowledge-index, memories, transcript, summaries, conversation-recall, compounding, questions)." },
+            "enabled": { "type": "boolean", "default": true },
+            "maxChars": { "type": "number", "description": "Per-section character cap." },
+            "consolidateTriggerLines": { "type": "number", "description": "Profile consolidation trigger (lines). Default 100." },
+            "consolidateTargetLines": { "type": "number", "description": "Profile consolidation target (lines). Default 50." },
+            "maxEntities": { "type": "number", "description": "Max entities for knowledge-index." },
+            "maxResults": { "type": "number", "description": "Max QMD results for memories." },
+            "maxTurns": { "type": "number", "description": "Max turns for transcript." },
+            "maxTokens": { "type": "number", "description": "Max tokens for transcript." },
+            "lookbackHours": { "type": "number", "description": "Lookback window (hours) for transcript or summaries." },
+            "maxCount": { "type": "number", "description": "Max count for summaries." },
+            "topK": { "type": "number", "description": "Top-K for conversation-recall." },
+            "timeoutMs": { "type": "number", "description": "Timeout for conversation-recall (ms)." },
+            "maxPatterns": { "type": "number", "description": "Max patterns for compounding." }
+          },
+          "required": ["id"]
+        }
       }
     }
   },
