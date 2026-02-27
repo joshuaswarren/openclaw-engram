@@ -207,7 +207,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |
 | `hourlySummariesIncludeToolStats` | `false` | Include tool usage stats in summaries |
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
-| `conversationIndexBackend` | `qmd` | Conversation index backend (`qmd` or `faiss`) |
+| `conversationIndexBackend` | `qmd` | Conversation index backend (`qmd` active; `faiss` predeclared for follow-on adapter tasks) |
 | `conversationIndexQmdCollection` | `openclaw-engram-conversations` | QMD collection for conversation index |
 | `conversationIndexFaissScriptPath` | `(unset)` | Optional absolute path to FAISS sidecar script |
 | `conversationIndexFaissPythonBin` | `(unset)` | Optional Python executable for FAISS sidecar |
