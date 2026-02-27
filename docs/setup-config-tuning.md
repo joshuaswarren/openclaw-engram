@@ -161,6 +161,8 @@ Start with all new policy-learning behavior disabled, then enable incrementally:
   "proactiveExtractionEnabled": false,
   "contextCompressionActionsEnabled": false,
   "compressionGuidelineLearningEnabled": false,
+  "compressionGuidelineSemanticRefinementEnabled": false,
+  "compressionGuidelineSemanticTimeoutMs": 2500,
   "maxProactiveQuestionsPerExtraction": 2,
   "maxCompressionTokensPerHour": 1500
 }
@@ -170,6 +172,8 @@ Rollout suggestion:
 - Enable `proactiveExtractionEnabled` first and validate extraction quality/latency.
 - Enable `contextCompressionActionsEnabled` after tool-level validation.
 - Enable `compressionGuidelineLearningEnabled` last, once memory-action telemetry is stable.
+- Keep `compressionGuidelineSemanticRefinementEnabled=false` during initial rollout; enable only after deterministic outputs are stable.
+- If semantic refinement is enabled, keep `compressionGuidelineSemanticTimeoutMs` low (for example, 1500-3000ms) so failures always fail-open quickly.
 
 Operational checks after enabling guideline learning:
 - Confirm telemetry is append-only: `memory/state/memory-actions.jsonl`.
