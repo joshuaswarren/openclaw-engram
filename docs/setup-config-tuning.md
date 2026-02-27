@@ -181,6 +181,51 @@ Operational checks after enabling guideline learning:
 - Verify fail-open behavior by temporarily making state unwritable and confirming consolidation still completes.
 - If guidance quality regresses, keep telemetry enabled and disable only `compressionGuidelineLearningEnabled`.
 
+v8.13 action-policy rollout presets:
+
+`conservative` (baseline-equivalent):
+
+```jsonc
+{
+  "contextCompressionActionsEnabled": false,
+  "proactiveExtractionEnabled": false,
+  "compressionGuidelineLearningEnabled": false,
+  "compressionGuidelineSemanticRefinementEnabled": false,
+  "maxCompressionTokensPerHour": 0
+}
+```
+
+`balanced` (default production recommendation):
+
+```jsonc
+{
+  "contextCompressionActionsEnabled": true,
+  "proactiveExtractionEnabled": true,
+  "compressionGuidelineLearningEnabled": true,
+  "compressionGuidelineSemanticRefinementEnabled": false,
+  "maxCompressionTokensPerHour": 1500
+}
+```
+
+`research` (higher-change experimentation):
+
+```jsonc
+{
+  "contextCompressionActionsEnabled": true,
+  "proactiveExtractionEnabled": true,
+  "compressionGuidelineLearningEnabled": true,
+  "compressionGuidelineSemanticRefinementEnabled": true,
+  "compressionGuidelineSemanticTimeoutMs": 2500,
+  "maxCompressionTokensPerHour": 3000
+}
+```
+
+Operator hardening checklist before promotion:
+- Keep `contextCompressionActionsEnabled=true` only after tool traces stay stable and review-clean for one full daily cycle.
+- Treat `maxCompressionTokensPerHour=0` as an intentional hard disable for policy defers.
+- If regressions appear, first disable `compressionGuidelineSemanticRefinementEnabled`, then disable `compressionGuidelineLearningEnabled`.
+- Confirm disabled-path behavior by toggling all action-policy features off and verifying recall outputs remain baseline-equivalent.
+
 Conversation index health check command:
 
 ```bash

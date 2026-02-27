@@ -90,6 +90,10 @@ All notable changes to this project will be documented in this file.
   - Added bounded memory-action outcome priors to lifecycle evaluation so recent action outcomes can gently influence transition scoring without changing baseline behavior when telemetry is absent.
   - Added compounding ingestion of denied/deferred/skipped/failed memory-action events into weekly mistake-pattern synthesis.
   - Added `tests/memory-action-lifecycle-integration.test.ts` and expanded `tests/compounding.test.ts` coverage for bounded-prior behavior and compounding pattern extraction.
+- v8.13 action-policy Task 5 (rollout + risk controls):
+  - Added conservative/balanced/research rollout preset guidance for action-policy and compression-learning settings.
+  - Added operator hardening checklist for staged promotion and rollback order.
+  - Documented disabled-path compatibility guarantees (`enabled=false` and zero-limit semantics remain hard disables).
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.

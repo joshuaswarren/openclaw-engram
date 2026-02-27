@@ -121,6 +121,52 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
   - optimizer metadata/version state persists to `state/compression-guideline-state.json`
   - synthesis is fail-open and never blocks consolidation
 
+### v8.13 Action-Policy Rollout Presets
+
+Use these as operator presets for progressive rollout. All are baseline-safe when disabled.
+
+`conservative`:
+
+```jsonc
+{
+  "contextCompressionActionsEnabled": false,
+  "proactiveExtractionEnabled": false,
+  "compressionGuidelineLearningEnabled": false,
+  "compressionGuidelineSemanticRefinementEnabled": false,
+  "maxCompressionTokensPerHour": 0
+}
+```
+
+`balanced`:
+
+```jsonc
+{
+  "contextCompressionActionsEnabled": true,
+  "proactiveExtractionEnabled": true,
+  "compressionGuidelineLearningEnabled": true,
+  "compressionGuidelineSemanticRefinementEnabled": false,
+  "maxCompressionTokensPerHour": 1500
+}
+```
+
+`research`:
+
+```jsonc
+{
+  "contextCompressionActionsEnabled": true,
+  "proactiveExtractionEnabled": true,
+  "compressionGuidelineLearningEnabled": true,
+  "compressionGuidelineSemanticRefinementEnabled": true,
+  "compressionGuidelineSemanticTimeoutMs": 2500,
+  "maxCompressionTokensPerHour": 3000
+}
+```
+
+Disabled-path compatibility guarantees:
+- `contextCompressionActionsEnabled=false` keeps action tooling and action-policy telemetry inactive.
+- `maxCompressionTokensPerHour=0` remains a hard disable (no implicit non-zero coercion).
+- `compressionGuidelineLearningEnabled=false` keeps consolidation behavior baseline-equivalent.
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |
