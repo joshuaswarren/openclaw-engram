@@ -165,6 +165,19 @@ test("faiss adapter searchChunks returns typed results", async () => {
   assert.equal(results[0]?.score, 0.9);
 });
 
+test("faiss adapter searchChunks short-circuits NaN topK", async () => {
+  let spawnCalls = 0;
+  const spawnFn: typeof childProcess.spawn = () => {
+    spawnCalls += 1;
+    return new FakeProcess() as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter(baseConfig(spawnFn));
+  const results = await adapter.searchChunks("query", Number.NaN);
+  assert.deepEqual(results, []);
+  assert.equal(spawnCalls, 0);
+});
+
 test("faiss adapter throws timeout error and kills process", async () => {
   const proc = new FakeProcess();
   const spawnFn: typeof childProcess.spawn = () => proc as unknown as childProcess.ChildProcess;

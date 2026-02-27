@@ -105,8 +105,9 @@ export class FaissConversationIndexAdapter {
   }
 
   async searchChunks(query: string, topK: number): Promise<ConversationSearchResult[]> {
+    const requestedTopK = Number.isFinite(topK) ? Math.floor(topK) : 0;
     const boundedTopK = this.config.maxSearchK > 0
-      ? Math.max(0, Math.min(Math.floor(topK), this.config.maxSearchK))
+      ? Math.max(0, Math.min(requestedTopK, this.config.maxSearchK))
       : 0;
     if (boundedTopK <= 0 || query.trim().length === 0) return [];
     const payload = {
