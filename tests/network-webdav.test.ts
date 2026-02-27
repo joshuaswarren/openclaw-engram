@@ -164,6 +164,10 @@ test("webdav enforces optional basic auth", async () => {
 });
 
 test("webdav does not leak internal errors in 500 response bodies", async () => {
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    return;
+  }
+
   const root = await mkdtemp(path.join(os.tmpdir(), "engram-webdav-500-redact-"));
   const blocked = path.join(root, "blocked");
   await mkdir(blocked, { recursive: true });
