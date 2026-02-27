@@ -276,7 +276,11 @@ export class GraphIndex {
             scores.set(neighbor, existing + score);
 
             const prev = provenance.get(neighbor);
-            if (!prev || score > prev.decayedWeight || hop + 1 < prev.hopDepth) {
+            if (
+              !prev ||
+              hop + 1 < prev.hopDepth ||
+              (hop + 1 === prev.hopDepth && score > prev.decayedWeight)
+            ) {
               provenance.set(neighbor, {
                 seed: sourceSeed,
                 hopDepth: hop + 1,

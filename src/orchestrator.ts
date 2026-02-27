@@ -21,6 +21,7 @@ import { NegativeExampleStore } from "./negative.js";
 import {
   LastRecallStore,
   clampGraphRecallExpandedEntries,
+  type GraphRecallExpandedEntry,
   type LastRecallSnapshot,
 } from "./recall-state.js";
 import { SessionObserverState } from "./session-observer-state.js";
@@ -109,15 +110,7 @@ export interface GraphRecallSnapshot {
   seedCount: number;
   expandedCount: number;
   seeds: string[];
-  expanded: Array<{
-    path: string;
-    score: number;
-    namespace: string;
-    seed: string;
-    hopDepth: number;
-    decayedWeight: number;
-    graphType: "entity" | "time" | "causal";
-  }>;
+  expanded: GraphRecallExpandedEntry[];
 }
 
 export function isArtifactMemoryPath(filePath: string): boolean {
@@ -1505,15 +1498,7 @@ export class Orchestrator {
   }): Promise<{
     merged: QmdSearchResult[];
     seedPaths: string[];
-    expandedPaths: Array<{
-      path: string;
-      score: number;
-      namespace: string;
-      seed: string;
-      hopDepth: number;
-      decayedWeight: number;
-      graphType: "entity" | "time" | "causal";
-    }>;
+    expandedPaths: GraphRecallExpandedEntry[];
   }> {
     const byNamespace = new Map<string, QmdSearchResult[]>();
     for (const result of options.memoryResults) {
@@ -1530,15 +1515,7 @@ export class Orchestrator {
     const perNamespaceSeedCap = Math.max(3, options.recallResultLimit);
     const perNamespaceExpandedCap = Math.max(8, options.recallResultLimit * 2);
     const seedPaths: string[] = [];
-    const expandedPaths: Array<{
-      path: string;
-      score: number;
-      namespace: string;
-      seed: string;
-      hopDepth: number;
-      decayedWeight: number;
-      graphType: "entity" | "time" | "causal";
-    }> = [];
+    const expandedPaths: GraphRecallExpandedEntry[] = [];
     const expandedResults: QmdSearchResult[] = [];
 
     for (const [namespace, nsResults] of byNamespace.entries()) {
@@ -1584,7 +1561,7 @@ export class Orchestrator {
           path: memory.path,
           score,
           namespace,
-          seed: candidate.seed,
+          seed: path.resolve(storage.dir, candidate.seed),
           hopDepth: candidate.hopDepth,
           decayedWeight: candidate.decayedWeight,
           graphType: candidate.graphType,
@@ -1605,20 +1582,14 @@ export class Orchestrator {
     recallMode: RecallPlanMode;
     recallNamespaces: string[];
     seedPaths: string[];
-    expandedPaths: Array<{
-      path: string;
-      score: number;
-      namespace: string;
-      seed: string;
-      hopDepth: number;
-      decayedWeight: number;
-      graphType: "entity" | "time" | "causal";
-    }>;
+    expandedPaths: GraphRecallExpandedEntry[];
   }): Promise<void> {
     try {
       const snapshotPath = path.join(options.storage.dir, "state", "last_graph_recall.json");
       await mkdir(path.dirname(snapshotPath), { recursive: true });
       const now = new Date().toISOString();
+      const totalSeedCount = options.seedPaths.length;
+      const totalExpandedCount = options.expandedPaths.length;
       const seeds = options.seedPaths.slice(0, 64);
       const expanded = clampGraphRecallExpandedEntries(options.expandedPaths, 64);
       const payload = {
@@ -1627,8 +1598,8 @@ export class Orchestrator {
         queryHash: createHash("sha256").update(options.prompt).digest("hex"),
         queryLength: options.prompt.length,
         namespaces: options.recallNamespaces,
-        seedCount: seeds.length,
-        expandedCount: expanded.length,
+        seedCount: totalSeedCount,
+        expandedCount: totalExpandedCount,
         seeds,
         expanded,
       };
