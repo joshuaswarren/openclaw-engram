@@ -71,6 +71,7 @@ export class CompoundingEngine {
   private readonly identityAuditWeeklyDir: string;
   private readonly identityAuditMonthlyDir: string;
   private readonly identityImprovementLoopsPath: string;
+  private readonly memoryActionEventsPath: string;
 
   constructor(private readonly config: PluginConfig) {
     this.weeklyDir = path.join(config.memoryDir, "compounding", "weekly");
@@ -81,6 +82,7 @@ export class CompoundingEngine {
     this.identityAuditWeeklyDir = path.join(config.memoryDir, "identity", "audits", "weekly");
     this.identityAuditMonthlyDir = path.join(config.memoryDir, "identity", "audits", "monthly");
     this.identityImprovementLoopsPath = path.join(config.memoryDir, "identity", "improvement-loops.md");
+    this.memoryActionEventsPath = path.join(config.memoryDir, "state", "memory-actions.jsonl");
   }
 
   async ensureDirs(): Promise<void> {
@@ -93,7 +95,8 @@ export class CompoundingEngine {
     const weekId = opts?.weekId ?? isoWeekId(new Date());
 
     const entries = await this.readFeedbackEntriesForWeek(weekId);
-    const mistakes = this.buildMistakes(entries);
+    const actionPatterns = await this.readActionFailurePatternsForWeek(weekId);
+    const mistakes = this.buildMistakes(entries, actionPatterns);
     const continuity = this.config.continuityAuditEnabled
       ? await this.readContinuityAuditReferences(weekId)
       : { monthId: monthIdFromIsoWeek(weekId), weeklyPath: null, monthlyPath: null };
@@ -234,7 +237,51 @@ export class CompoundingEngine {
     return out;
   }
 
-  private buildMistakes(entries: SharedFeedbackEntry[]): MistakesFile {
+  private async readActionFailurePatternsForWeek(weekId: string): Promise<string[]> {
+    const out: string[] = [];
+    try {
+      const raw = await readFile(this.memoryActionEventsPath, "utf-8");
+      const lines = raw.split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as {
+            timestamp?: string;
+            action?: string;
+            outcome?: string;
+            policyDecision?: string;
+            namespace?: string;
+            reason?: string;
+          };
+          if (typeof parsed.timestamp !== "string" || typeof parsed.action !== "string") continue;
+          const ts = new Date(parsed.timestamp);
+          if (!Number.isFinite(ts.getTime()) || isoWeekId(ts) !== weekId) continue;
+          const policy = parsed.policyDecision === "deny" || parsed.policyDecision === "defer"
+            ? parsed.policyDecision
+            : null;
+          const failed = parsed.outcome === "failed" || parsed.outcome === "skipped";
+          if (!failed && policy === null) continue;
+
+          const ns = typeof parsed.namespace === "string" && parsed.namespace.length > 0
+            ? parsed.namespace
+            : "default";
+          const suffix = typeof parsed.reason === "string" && parsed.reason.trim().length > 0
+            ? ` - ${parsed.reason.trim().slice(0, 140)}`
+            : "";
+          out.push(
+            `memory-action/${ns}: ${parsed.action} ${parsed.outcome ?? "unknown"}${policy ? `/${policy}` : ""}${suffix}`,
+          );
+        } catch {
+          // Ignore malformed rows (fail-open).
+        }
+      }
+    } catch {
+      // Missing action telemetry is allowed.
+    }
+    return out;
+  }
+
+  private buildMistakes(entries: SharedFeedbackEntry[], actionPatterns: string[] = []): MistakesFile {
     const patterns: string[] = [];
     for (const e of entries) {
       if (e.learning && e.learning.trim().length > 0) {
@@ -245,6 +292,8 @@ export class CompoundingEngine {
         patterns.push(`${e.agent}: ${e.reason.trim()}`.slice(0, 240));
       }
     }
+
+    patterns.push(...actionPatterns);
 
     const uniq = Array.from(new Set(patterns)).slice(0, 500);
     return { updatedAt: new Date().toISOString(), patterns: uniq };

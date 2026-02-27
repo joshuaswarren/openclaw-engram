@@ -19,6 +19,11 @@ export interface LifecycleSignals {
    * Positive values raise heat.
    */
   feedbackScore?: number;
+  /**
+   * Optional bounded prior derived from memory-action outcomes in [-1, 1].
+   * This is intentionally low-impact to avoid circular amplification.
+   */
+  actionPriorScore?: number;
 }
 
 export interface LifecycleDecision {
@@ -84,8 +89,16 @@ function recencyWeight(frontmatter: MemoryFrontmatter, nowMs: number): number {
 }
 
 function feedbackWeight(signals?: LifecycleSignals): number {
-  const raw = signals?.feedbackScore ?? 0;
+  const raw = (signals?.feedbackScore ?? 0) + (signals?.actionPriorScore ?? 0);
   return clamp01((raw + 1) / 2);
+}
+
+function boundedFeedbackScore(signals?: LifecycleSignals): number {
+  const raw = (signals?.feedbackScore ?? 0) + (signals?.actionPriorScore ?? 0);
+  if (!Number.isFinite(raw)) return 0;
+  if (raw < -1) return -1;
+  if (raw > 1) return 1;
+  return raw;
 }
 
 function isProtectedMemory(
@@ -139,7 +152,7 @@ export function computeDecay(
   const ageRisk = clamp01(ageDays / 180);
   const staleAccessRisk = clamp01(staleAccessDays / 120);
   const confidenceRisk = 1 - confidenceTierWeight(frontmatter);
-  const feedbackRisk = clamp01(((signals?.feedbackScore ?? 0) * -1 + 1) / 2);
+  const feedbackRisk = clamp01((boundedFeedbackScore(signals) * -1 + 1) / 2);
   const heat = computeHeat(memory, now, signals);
 
   const score = (ageRisk * 0.3)
