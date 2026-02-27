@@ -682,6 +682,26 @@ export interface MemoryActionEvent {
   promptHash?: string;
 }
 
+export interface CompressionGuidelineOptimizerSourceWindow {
+  from: string;
+  to: string;
+}
+
+export interface CompressionGuidelineOptimizerEventCounts {
+  total: number;
+  applied: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface CompressionGuidelineOptimizerState {
+  version: number;
+  updatedAt: string;
+  sourceWindow: CompressionGuidelineOptimizerSourceWindow;
+  eventCounts: CompressionGuidelineOptimizerEventCounts;
+  guidelineVersion: number;
+}
+
 export type ContinuityIncidentState = "open" | "closed";
 
 export interface ContinuityIncidentRecord {

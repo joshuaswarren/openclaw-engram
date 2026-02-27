@@ -81,6 +81,11 @@ All notable changes to this project will be documented in this file.
   - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
   - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
   - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.11 compression optimizer Task 1 (state model + versioned storage):
+  - Added typed optimizer state contracts in `src/types.ts` for version, source window, event counts, and guideline version metadata.
+  - Added strict/fail-open storage APIs in `src/storage.ts`: `writeCompressionGuidelineOptimizerState` and `readCompressionGuidelineOptimizerState`.
+  - Added `tests/storage-policy-state.test.ts` coverage for optimizer state round-trip, malformed-state fail-open fallback, and missing-state behavior.
+  - Updated `docs/config-reference.md` to document persisted optimizer state at `state/compression-guideline-state.json`.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).

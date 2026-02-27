@@ -83,3 +83,71 @@ test("StorageManager writes and reads compression guidelines", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("StorageManager writes and reads compression guideline optimizer state", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-policy-opt-state-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const state = {
+      version: 1,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      sourceWindow: {
+        from: "2026-02-26T00:00:00.000Z",
+        to: "2026-02-27T00:00:00.000Z",
+      },
+      eventCounts: {
+        total: 9,
+        applied: 5,
+        skipped: 3,
+        failed: 1,
+      },
+      guidelineVersion: 2,
+    };
+
+    await storage.writeCompressionGuidelineOptimizerState(state);
+    const loaded = await storage.readCompressionGuidelineOptimizerState();
+    assert.deepEqual(loaded, state);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager readCompressionGuidelineOptimizerState fail-opens malformed state", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-policy-opt-malformed-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    await appendFile(
+      path.join(dir, "state", "compression-guideline-state.json"),
+      JSON.stringify({
+        version: "bad",
+        updatedAt: "",
+        sourceWindow: { from: "", to: "" },
+        eventCounts: { total: -1, applied: -1, skipped: -1, failed: -1 },
+        guidelineVersion: "x",
+      }),
+      "utf-8",
+    );
+
+    const loaded = await storage.readCompressionGuidelineOptimizerState();
+    assert.equal(loaded, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager readCompressionGuidelineOptimizerState returns null when state is missing", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-policy-opt-empty-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const loaded = await storage.readCompressionGuidelineOptimizerState();
+    assert.equal(loaded, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

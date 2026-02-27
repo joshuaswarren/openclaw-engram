@@ -118,6 +118,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
   - records append-only action + outcome telemetry in `state/memory-actions.jsonl`
 - `compressionGuidelineLearningEnabled`:
   - consolidation synthesizes/updates `state/compression-guidelines.md`
+  - optimizer metadata/version state persists to `state/compression-guideline-state.json`
   - synthesis is fail-open and never blocks consolidation
 
 ## Local LLM / OpenAI-Compatible Endpoint

@@ -31,6 +31,7 @@ import type {
   MemoryActionEvent,
   MemorySummary,
   MetaState,
+  CompressionGuidelineOptimizerState,
   PluginConfig,
   ScoredEntity,
   TopicScore,
@@ -724,6 +725,9 @@ export class StorageManager {
   }
   private get compressionGuidelinesPath(): string {
     return path.join(this.stateDir, "compression-guidelines.md");
+  }
+  private get compressionGuidelineStatePath(): string {
+    return path.join(this.stateDir, "compression-guideline-state.json");
   }
 
   /**
@@ -1512,6 +1516,61 @@ export class StorageManager {
   async readCompressionGuidelines(): Promise<string | null> {
     try {
       return await readFile(this.compressionGuidelinesPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async writeCompressionGuidelineOptimizerState(
+    state: CompressionGuidelineOptimizerState,
+  ): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.compressionGuidelineStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+  }
+
+  async readCompressionGuidelineOptimizerState(): Promise<CompressionGuidelineOptimizerState | null> {
+    const isFiniteNonNegativeInteger = (value: unknown): value is number =>
+      typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+
+    try {
+      const raw = await readFile(this.compressionGuidelineStatePath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<CompressionGuidelineOptimizerState>;
+      const sourceWindow = parsed?.sourceWindow as Partial<CompressionGuidelineOptimizerState["sourceWindow"]>;
+      const eventCounts = parsed?.eventCounts as Partial<CompressionGuidelineOptimizerState["eventCounts"]>;
+      if (
+        !isFiniteNonNegativeInteger(parsed?.version) ||
+        typeof parsed?.updatedAt !== "string" ||
+        parsed.updatedAt.length === 0 ||
+        !sourceWindow ||
+        typeof sourceWindow.from !== "string" ||
+        sourceWindow.from.length === 0 ||
+        typeof sourceWindow.to !== "string" ||
+        sourceWindow.to.length === 0 ||
+        !eventCounts ||
+        !isFiniteNonNegativeInteger(eventCounts.total) ||
+        !isFiniteNonNegativeInteger(eventCounts.applied) ||
+        !isFiniteNonNegativeInteger(eventCounts.skipped) ||
+        !isFiniteNonNegativeInteger(eventCounts.failed) ||
+        !isFiniteNonNegativeInteger(parsed?.guidelineVersion)
+      ) {
+        return null;
+      }
+
+      return {
+        version: parsed.version,
+        updatedAt: parsed.updatedAt,
+        sourceWindow: {
+          from: sourceWindow.from,
+          to: sourceWindow.to,
+        },
+        eventCounts: {
+          total: eventCounts.total,
+          applied: eventCounts.applied,
+          skipped: eventCounts.skipped,
+          failed: eventCounts.failed,
+        },
+        guidelineVersion: parsed.guidelineVersion,
+      };
     } catch {
       return null;
     }
