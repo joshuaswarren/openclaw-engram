@@ -202,15 +202,19 @@ export class WebDavServer {
     if (!this.options.auth) return true;
     const raw = req.headers.authorization;
     if (!raw) return false;
-    const match = raw.match(/^basic\s+(.+)$/i);
-    if (!match || !match[1]) return false;
+    const separator = raw.indexOf(" ");
+    if (separator <= 0) return false;
+    const scheme = raw.slice(0, separator).toLowerCase();
+    if (scheme !== "basic") return false;
+    const encodedPart = raw.slice(separator + 1).trim();
+    if (!encodedPart) return false;
 
     try {
-      const decoded = Buffer.from(match[1], "base64").toString("utf-8");
-      const separator = decoded.indexOf(":");
-      if (separator < 0) return false;
-      const username = decoded.slice(0, separator);
-      const password = decoded.slice(separator + 1);
+      const decoded = Buffer.from(encodedPart, "base64").toString("utf-8");
+      const credentialSeparator = decoded.indexOf(":");
+      if (credentialSeparator < 0) return false;
+      const username = decoded.slice(0, credentialSeparator);
+      const password = decoded.slice(credentialSeparator + 1);
       const usernameOk = this.timingSafeStringEqual(username, this.options.auth.username);
       const passwordOk = this.timingSafeStringEqual(password, this.options.auth.password);
       return Boolean((usernameOk ? 1 : 0) & (passwordOk ? 1 : 0));
