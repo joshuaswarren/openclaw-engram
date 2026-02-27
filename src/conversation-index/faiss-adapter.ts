@@ -79,20 +79,29 @@ export class FaissConversationIndexAdapter {
 
   async upsertChunks(chunks: ConversationChunk[]): Promise<number> {
     if (this.config.maxBatchSize <= 0) return 0;
-    const bounded = chunks.slice(0, this.config.maxBatchSize);
-    const payload = {
-      modelId: this.config.modelId,
-      indexPath: this.indexPath,
-      chunks: bounded.map((chunk) => ({
-        id: chunk.id,
-        sessionKey: chunk.sessionKey,
-        text: chunk.text,
-        startTs: chunk.startTs,
-        endTs: chunk.endTs,
-      })),
-    };
-    const result = await this.runCommand("upsert", payload, this.config.upsertTimeoutMs);
-    return typeof result.upserted === "number" ? Math.max(0, Math.floor(result.upserted)) : 0;
+    let totalUpserted = 0;
+    for (let offset = 0; offset < chunks.length; offset += this.config.maxBatchSize) {
+      const batch = chunks.slice(offset, offset + this.config.maxBatchSize);
+      if (batch.length === 0) continue;
+      const payload = {
+        modelId: this.config.modelId,
+        indexPath: this.indexPath,
+        chunks: batch.map((chunk) => ({
+          id: chunk.id,
+          sessionKey: chunk.sessionKey,
+          text: chunk.text,
+          startTs: chunk.startTs,
+          endTs: chunk.endTs,
+        })),
+      };
+      const result = await this.runCommand("upsert", payload, this.config.upsertTimeoutMs);
+      const upserted = result.upserted;
+      if (typeof upserted !== "number" || !Number.isFinite(upserted)) {
+        throw new FaissAdapterError("FAISS sidecar produced malformed upsert response", "malformed_output");
+      }
+      totalUpserted += Math.max(0, Math.floor(upserted));
+    }
+    return totalUpserted;
   }
 
   async searchChunks(query: string, topK: number): Promise<ConversationSearchResult[]> {
@@ -107,7 +116,10 @@ export class FaissConversationIndexAdapter {
       topK: boundedTopK,
     };
     const result = await this.runCommand("search", payload, this.config.searchTimeoutMs);
-    const rows = Array.isArray(result.results) ? result.results : [];
+    if (!Array.isArray(result.results)) {
+      throw new FaissAdapterError("FAISS sidecar produced malformed search response", "malformed_output");
+    }
+    const rows = result.results;
     return rows
       .filter((row) =>
         row &&
@@ -124,9 +136,12 @@ export class FaissConversationIndexAdapter {
       indexPath: this.indexPath,
     };
     const result = await this.runCommand("health", payload, this.config.healthTimeoutMs);
+    if (result.status !== "ok" && result.status !== "degraded" && result.status !== "error") {
+      throw new FaissAdapterError("FAISS sidecar produced malformed health response", "malformed_output");
+    }
     return {
       ok: result.ok === true,
-      status: result.status === "degraded" || result.status === "error" ? result.status : "ok",
+      status: result.status,
       indexPath: this.indexPath,
       message: typeof result.error === "string" && result.error.length > 0 ? result.error : undefined,
     };
@@ -215,6 +230,12 @@ export class FaissConversationIndexAdapter {
         ? parsed.error
         : `FAISS sidecar command failed (${command})`;
       throw new FaissAdapterError(message, "non_zero_exit");
+    }
+    if (parsed.ok !== true) {
+      throw new FaissAdapterError(
+        `FAISS sidecar produced malformed success envelope (${command})`,
+        "malformed_output",
+      );
     }
 
     return parsed;

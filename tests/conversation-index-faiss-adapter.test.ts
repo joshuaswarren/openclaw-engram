@@ -54,16 +54,14 @@ function baseConfig(spawnFn?: typeof childProcess.spawn): FaissAdapterConfig {
   };
 }
 
-function sampleChunks(): ConversationChunk[] {
-  return [
-    {
-      id: "chunk-1",
-      sessionKey: "session-A",
-      startTs: "2026-02-27T00:00:00.000Z",
-      endTs: "2026-02-27T00:01:00.000Z",
-      text: "hello world",
-    },
-  ];
+function sampleChunks(count: number = 1): ConversationChunk[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `chunk-${index + 1}`,
+    sessionKey: "session-A",
+    startTs: "2026-02-27T00:00:00.000Z",
+    endTs: "2026-02-27T00:01:00.000Z",
+    text: `hello world ${index + 1}`,
+  }));
 }
 
 test("resolveDefaultFaissScriptPath handles src and dist module locations", () => {
@@ -108,6 +106,40 @@ test("faiss adapter short-circuits upsert when maxBatchSize is zero", async () =
   const upserted = await adapter.upsertChunks(sampleChunks());
   assert.equal(upserted, 0);
   assert.equal(spawnCalls, 0);
+});
+
+test("faiss adapter upserts all chunks by batching across maxBatchSize", async () => {
+  const stdinWrites: string[] = [];
+  let spawnCalls = 0;
+  const spawnFn: typeof childProcess.spawn = () => {
+    spawnCalls += 1;
+    const proc = new FakeProcess();
+    const originalWrite = proc.stdin.write.bind(proc.stdin);
+    proc.stdin.write = (chunk: string) => {
+      stdinWrites.push(chunk);
+      return originalWrite(chunk);
+    };
+
+    process.nextTick(() => {
+      proc.stdout.emit("data", JSON.stringify({ ok: true, upserted: 2 }));
+      proc.emit("close", 0);
+    });
+
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    maxBatchSize: 2,
+  });
+
+  const upserted = await adapter.upsertChunks(sampleChunks(4));
+  assert.equal(upserted, 4);
+  assert.equal(spawnCalls, 2);
+
+  const payloads = stdinWrites.map((chunk) => JSON.parse(chunk));
+  assert.equal(payloads[0].chunks.length, 2);
+  assert.equal(payloads[1].chunks.length, 2);
 });
 
 test("faiss adapter searchChunks returns typed results", async () => {
@@ -210,6 +242,15 @@ test("faiss adapter throws malformed output for invalid or empty payloads", asyn
     return empty as unknown as childProcess.ChildProcess;
   };
 
+  const malformedSuccess = new FakeProcess();
+  const malformedSuccessSpawn: typeof childProcess.spawn = () => {
+    process.nextTick(() => {
+      malformedSuccess.stdout.emit("data", JSON.stringify({}));
+      malformedSuccess.emit("close", 0);
+    });
+    return malformedSuccess as unknown as childProcess.ChildProcess;
+  };
+
   await assert.rejects(
     () => new FaissConversationIndexAdapter(baseConfig(invalidSpawn)).health(),
     (err: unknown) => err instanceof FaissAdapterError && err.code === "malformed_output",
@@ -217,6 +258,11 @@ test("faiss adapter throws malformed output for invalid or empty payloads", asyn
 
   await assert.rejects(
     () => new FaissConversationIndexAdapter(baseConfig(emptySpawn)).health(),
+    (err: unknown) => err instanceof FaissAdapterError && err.code === "malformed_output",
+  );
+
+  await assert.rejects(
+    () => new FaissConversationIndexAdapter(baseConfig(malformedSuccessSpawn)).health(),
     (err: unknown) => err instanceof FaissAdapterError && err.code === "malformed_output",
   );
 });
