@@ -105,9 +105,11 @@ export default {
               : context;
 
           log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
-          return {
-            systemPrompt: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
-          };
+          const memoryBlock = `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+          // Return both: systemPrompt for when the gateway wires it up,
+          // prependContext as workaround since it's the only field that
+          // currently gets injected into the conversation.
+          return { systemPrompt: memoryBlock, prependContext: memoryBlock };
         } catch (err) {
           log.error("recall failed", err);
           return;
