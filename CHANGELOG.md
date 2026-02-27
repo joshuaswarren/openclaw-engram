@@ -38,6 +38,10 @@ All notable changes to this project will be documented in this file.
   - Added `src/network/tailscale.ts` with `TailscaleHelper` status gating (`available` + `running`) and a guarded `syncDirectory(...)` helper.
   - Added default command-runner plumbing for `tailscale version`, `tailscale status --json`, and rsync execution with timeout handling.
   - Added `tests/network-tailscale.test.ts` coverage for availability checks, JSON status parsing, daemon-state enforcement, and sync argument construction.
+- v8.8 network sync Task 3 (CLI command surfaces):
+  - Added network CLI wrappers in `src/cli.ts`: `runTailscaleStatusCliCommand`, `runTailscaleSyncCliCommand`, `runWebDavServeCliCommand`, and `runWebDavStopCliCommand`.
+  - Added command surfaces: `openclaw engram tailscale-status`, `openclaw engram tailscale-sync`, `openclaw engram webdav-serve`, and `openclaw engram webdav-stop`.
+  - Added `tests/cli-network-commands.test.ts` coverage for helper passthrough, WebDAV serve/stop lifecycle, and auth argument validation.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).

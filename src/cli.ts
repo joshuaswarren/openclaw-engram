@@ -29,6 +29,8 @@ import {
   type RouteTarget,
 } from "./routing/engine.js";
 import { RoutingRulesStore } from "./routing/store.js";
+import { TailscaleHelper, type TailscaleSyncOptions } from "./network/tailscale.js";
+import { WebDavServer } from "./network/webdav.js";
 
 interface CliApi {
   registerCli(
@@ -238,6 +240,55 @@ export interface RouteCliCommandOptions {
   id?: string;
 }
 
+interface TailscaleHelperLike {
+  status(): Promise<{
+    available: boolean;
+    running: boolean;
+    backendState?: string;
+    version?: string;
+    selfHostname?: string;
+    selfIp?: string;
+  }>;
+  syncDirectory(options: TailscaleSyncOptions): Promise<void>;
+}
+
+export interface TailscaleStatusCliCommandOptions {
+  helper?: TailscaleHelperLike;
+  timeoutMs?: number;
+}
+
+export interface TailscaleSyncCliCommandOptions extends TailscaleSyncOptions {
+  helper?: TailscaleHelperLike;
+  timeoutMs?: number;
+}
+
+interface WebDavServerLike {
+  start(): Promise<{ running: boolean; host: string; port: number; rootCount: number }>;
+  stop(): Promise<void>;
+  status(): { running: boolean; host: string; port: number; rootCount: number };
+}
+
+export interface WebDavServeCliCommandOptions {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  allowlistDirs: string[];
+  authUsername?: string;
+  authPassword?: string;
+  createServer?: (options: {
+    enabled?: boolean;
+    host?: string;
+    port: number;
+    allowlistDirs: string[];
+    auth?: {
+      username: string;
+      password: string;
+    };
+  }) => Promise<WebDavServerLike>;
+}
+
+let activeWebDavServer: WebDavServerLike | null = null;
+
 function isRoutePatternType(value: string | undefined): value is RoutePatternType {
   return value === "keyword" || value === "regex";
 }
@@ -334,6 +385,82 @@ export async function runMigrateObservationsCliCommand(
     dryRun: options.write !== true,
     now: options.now,
   });
+}
+
+export async function runTailscaleStatusCliCommand(
+  options: TailscaleStatusCliCommandOptions = {},
+): Promise<{
+  available: boolean;
+  running: boolean;
+  backendState?: string;
+  version?: string;
+  selfHostname?: string;
+  selfIp?: string;
+}> {
+  const helper = options.helper ?? new TailscaleHelper({ timeoutMs: options.timeoutMs });
+  return helper.status();
+}
+
+export async function runTailscaleSyncCliCommand(
+  options: TailscaleSyncCliCommandOptions,
+): Promise<{ ok: true }> {
+  const helper = options.helper ?? new TailscaleHelper({ timeoutMs: options.timeoutMs });
+  await helper.syncDirectory({
+    sourceDir: options.sourceDir,
+    destination: options.destination,
+    delete: options.delete,
+    dryRun: options.dryRun,
+    extraArgs: options.extraArgs,
+  });
+  return { ok: true };
+}
+
+export async function runWebDavServeCliCommand(
+  options: WebDavServeCliCommandOptions,
+): Promise<{ running: boolean; host: string; port: number; rootCount: number }> {
+  if (!Array.isArray(options.allowlistDirs) || options.allowlistDirs.length === 0) {
+    throw new Error("webdav allowlist requires at least one directory");
+  }
+
+  const username = options.authUsername?.trim();
+  const password = options.authPassword?.trim();
+  if ((username && !password) || (!username && password)) {
+    throw new Error("webdav auth requires both username and password");
+  }
+
+  if (activeWebDavServer?.status().running) {
+    return activeWebDavServer.status();
+  }
+
+  const createServer = options.createServer ?? WebDavServer.create;
+  const server = await createServer({
+    enabled: options.enabled ?? true,
+    host: options.host,
+    port: options.port ?? 8080,
+    allowlistDirs: options.allowlistDirs,
+    auth: username && password ? { username, password } : undefined,
+  });
+
+  activeWebDavServer = server;
+  try {
+    return await server.start();
+  } catch (err) {
+    if (activeWebDavServer === server) {
+      activeWebDavServer = null;
+    }
+    throw err;
+  }
+}
+
+export async function runWebDavStopCliCommand(): Promise<{ stopped: boolean }> {
+  if (!activeWebDavServer) {
+    return { stopped: false };
+  }
+
+  const server = activeWebDavServer;
+  activeWebDavServer = null;
+  await server.stop();
+  return { stopped: true };
 }
 
 export async function runRouteCliCommand(options: RouteCliCommandOptions): Promise<unknown> {
@@ -979,6 +1106,97 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ... and ${summary.warnings.length - 20} more`);
             }
           }
+          console.log("OK");
+        });
+
+      cmd
+        .command("tailscale-status")
+        .description("Show Tailscale availability and daemon status")
+        .option("--timeout-ms <n>", "Command timeout in milliseconds", "10000")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const timeoutMsRaw = parseInt(String(options.timeoutMs ?? "10000"), 10);
+          const status = await runTailscaleStatusCliCommand({
+            timeoutMs: Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 10_000,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("tailscale-sync")
+        .description("Sync a local memory directory to a Tailscale destination using rsync")
+        .option("--source-dir <path>", "Source directory to sync")
+        .option("--destination <target>", "Rsync destination (for example host:/path)")
+        .option("--delete", "Delete destination entries that do not exist in source")
+        .option("--dry-run", "Show what would change without writing")
+        .option("--extra-args <csv>", "Additional rsync args as comma-separated values")
+        .option("--timeout-ms <n>", "Command timeout in milliseconds", "10000")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const sourceDir = typeof options.sourceDir === "string" ? options.sourceDir.trim() : "";
+          const destination = typeof options.destination === "string" ? options.destination.trim() : "";
+          if (!sourceDir) {
+            throw new Error("missing --source-dir");
+          }
+          if (!destination) {
+            throw new Error("missing --destination");
+          }
+          const timeoutMsRaw = parseInt(String(options.timeoutMs ?? "10000"), 10);
+          const extraArgs = typeof options.extraArgs === "string"
+            ? options.extraArgs
+                .split(",")
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0)
+            : undefined;
+
+          await runTailscaleSyncCliCommand({
+            sourceDir,
+            destination,
+            delete: options.delete === true,
+            dryRun: options.dryRun === true,
+            extraArgs,
+            timeoutMs: Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 10_000,
+          });
+          console.log("OK");
+        });
+
+      cmd
+        .command("webdav-serve")
+        .description("Start local WebDAV service for allowlisted directories")
+        .option("--allowlist <csv>", "Comma-separated directories to expose")
+        .option("--host <host>", "Bind host", "127.0.0.1")
+        .option("--port <n>", "Bind port", "8080")
+        .option("--username <username>", "Optional basic auth username")
+        .option("--password <password>", "Optional basic auth password")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const allowlistRaw = typeof options.allowlist === "string" ? options.allowlist : "";
+          const allowlistDirs = allowlistRaw
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0);
+          if (allowlistDirs.length === 0) {
+            throw new Error("missing --allowlist");
+          }
+          const portRaw = parseInt(String(options.port ?? "8080"), 10);
+          const status = await runWebDavServeCliCommand({
+            allowlistDirs,
+            host: typeof options.host === "string" ? options.host : "127.0.0.1",
+            port: Number.isFinite(portRaw) ? portRaw : 8080,
+            authUsername: typeof options.username === "string" ? options.username : undefined,
+            authPassword: typeof options.password === "string" ? options.password : undefined,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("webdav-stop")
+        .description("Stop the in-process WebDAV service")
+        .action(async () => {
+          const result = await runWebDavStopCliCommand();
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 
