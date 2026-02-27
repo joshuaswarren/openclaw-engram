@@ -38,6 +38,25 @@ export interface CompressionGuidelineCandidate {
   optimizerVersion: number;
 }
 
+export interface CompressionSemanticRuleRefinement {
+  action: MemoryActionType;
+  delta?: number;
+  confidence?: "low" | "medium" | "high";
+  note?: string;
+}
+
+export interface CompressionSemanticRefinementResult {
+  updates: CompressionSemanticRuleRefinement[];
+}
+
+export interface CompressionSemanticRefinementOptions {
+  enabled: boolean;
+  timeoutMs: number;
+  runRefinement?: (
+    candidate: CompressionGuidelineCandidate,
+  ) => Promise<CompressionSemanticRefinementResult | null>;
+}
+
 const MAX_DELTA = 0.15;
 const SPARSE_SAMPLE = 5;
 
@@ -69,6 +88,15 @@ function nextOptimizerVersion(previousState: CompressionGuidelineOptimizerState 
 
 function roundDelta(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+function confidenceForDelta(delta: number): "low" | "medium" | "high" {
+  const magnitude = Math.abs(delta);
+  return magnitude >= 0.09 ? "high" : magnitude >= 0.04 ? "medium" : "low";
+}
+
+function directionForDelta(delta: number): "increase" | "decrease" | "hold" {
+  return delta > 0 ? "increase" : delta < 0 ? "decrease" : "hold";
 }
 
 export function computeCompressionGuidelineCandidate(
@@ -140,7 +168,7 @@ export function computeCompressionGuidelineCandidate(
     const rawDelta = clamp((successRate - failureRate) * 0.12 + qualitySignal * 0.06, -MAX_DELTA, MAX_DELTA);
     const delta = roundDelta(rawDelta);
 
-    const direction = delta > 0 ? "increase" : delta < 0 ? "decrease" : "hold";
+    const direction = directionForDelta(delta);
     if (direction === "decrease" && summary.outcomes.failed > summary.outcomes.applied) {
       notes.push("Failures exceed applied outcomes; conservative down-adjustment.");
     } else if (direction === "increase" && summary.quality.good > summary.quality.poor) {
@@ -151,8 +179,7 @@ export function computeCompressionGuidelineCandidate(
       notes.push("Outcomes are stable; keep bounded adjustments.");
     }
 
-    const magnitude = Math.abs(delta);
-    const confidence = magnitude >= 0.09 ? "high" : magnitude >= 0.04 ? "medium" : "low";
+    const confidence = confidenceForDelta(delta);
     return {
       action: summary.action,
       delta,
@@ -173,6 +200,78 @@ export function computeCompressionGuidelineCandidate(
     ruleUpdates,
     guidelineVersion: nextGuidelineVersion(previousState),
     optimizerVersion: nextOptimizerVersion(previousState),
+  };
+}
+
+export async function refineCompressionGuidelineCandidateSemantically(
+  baseline: CompressionGuidelineCandidate,
+  options: CompressionSemanticRefinementOptions,
+): Promise<CompressionGuidelineCandidate> {
+  if (!options.enabled) return baseline;
+  if (typeof options.runRefinement !== "function") return baseline;
+
+  const timeoutMs = Math.max(1, Math.floor(options.timeoutMs));
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<CompressionSemanticRefinementResult | null>((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), timeoutMs);
+  });
+
+  let refinement: CompressionSemanticRefinementResult | null = null;
+  try {
+    refinement = await Promise.race([options.runRefinement(baseline), timeout]);
+  } catch {
+    if (timeoutId) clearTimeout(timeoutId);
+    return baseline;
+  }
+  if (timeoutId) clearTimeout(timeoutId);
+  if (!refinement || !Array.isArray(refinement.updates) || refinement.updates.length === 0) {
+    return baseline;
+  }
+
+  const updatesByAction = new Map<MemoryActionType, CompressionSemanticRuleRefinement>();
+  for (const update of refinement.updates) {
+    if (!update || typeof update.action !== "string") continue;
+    updatesByAction.set(update.action, update);
+  }
+
+  let changed = false;
+  const ruleUpdates = baseline.ruleUpdates.map((rule) => {
+    const patch = updatesByAction.get(rule.action);
+    if (!patch) return rule;
+
+    const nextDelta =
+      typeof patch.delta === "number" && Number.isFinite(patch.delta)
+        ? roundDelta(clamp(patch.delta, -MAX_DELTA, MAX_DELTA))
+        : rule.delta;
+    const nextConfidence = patch.confidence ?? confidenceForDelta(nextDelta);
+    const nextDirection = directionForDelta(nextDelta);
+    const nextNotes =
+      typeof patch.note === "string" && patch.note.trim().length > 0
+        ? [patch.note.trim()]
+        : rule.notes;
+
+    if (
+      nextDelta !== rule.delta ||
+      nextDirection !== rule.direction ||
+      nextConfidence !== rule.confidence ||
+      nextNotes.join("\n") !== rule.notes.join("\n")
+    ) {
+      changed = true;
+    }
+
+    return {
+      ...rule,
+      delta: nextDelta,
+      direction: nextDirection,
+      confidence: nextConfidence,
+      notes: nextNotes,
+    };
+  });
+
+  if (!changed) return baseline;
+  return {
+    ...baseline,
+    ruleUpdates,
   };
 }
 
