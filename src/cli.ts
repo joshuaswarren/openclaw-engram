@@ -31,6 +31,8 @@ import {
 import { RoutingRulesStore } from "./routing/store.js";
 import { TailscaleHelper, type TailscaleSyncOptions } from "./network/tailscale.js";
 import { WebDavServer } from "./network/webdav.js";
+import { runCompatChecks } from "./compat/checks.js";
+import type { CompatReport, CompatRunner } from "./compat/types.js";
 
 interface CliApi {
   registerCli(
@@ -286,6 +288,13 @@ export interface WebDavServeCliCommandOptions {
   }) => Promise<WebDavServerLike>;
 }
 
+export interface CompatCliCommandOptions {
+  repoRoot?: string;
+  strict?: boolean;
+  runner?: CompatRunner;
+  now?: Date;
+}
+
 let activeWebDavServer: WebDavServerLike | null = null;
 let webDavOperationChain: Promise<void> = Promise.resolve();
 
@@ -484,6 +493,19 @@ export async function runWebDavStopCliCommand(): Promise<{ stopped: boolean }> {
     }
     return { stopped: true };
   });
+}
+
+export async function runCompatCliCommand(
+  options: CompatCliCommandOptions = {},
+): Promise<{ report: CompatReport; exitCode: number }> {
+  const report = await runCompatChecks({
+    repoRoot: options.repoRoot ?? process.cwd(),
+    runner: options.runner,
+    now: options.now,
+  });
+  const hasWarnOrError = report.summary.warn > 0 || report.summary.error > 0;
+  const exitCode = options.strict === true && hasWarnOrError ? 1 : 0;
+  return { report, exitCode };
 }
 
 export async function runRouteCliCommand(options: RouteCliCommandOptions): Promise<unknown> {
@@ -1055,6 +1077,43 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             pluginVersion,
           });
           console.log("OK");
+        });
+
+      cmd
+        .command("compat")
+        .description("Run local compatibility diagnostics for Engram plugin wiring")
+        .option("--json", "Emit JSON output for automation")
+        .option("--strict", "Exit non-zero when warnings or errors are present")
+        .option("--repo-root <path>", "Repository root to inspect", process.cwd())
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const strict = options.strict === true;
+          const jsonOutput = options.json === true;
+          const repoRoot =
+            typeof options.repoRoot === "string" && options.repoRoot.trim().length > 0
+              ? options.repoRoot.trim()
+              : process.cwd();
+
+          const result = await runCompatCliCommand({ repoRoot, strict });
+
+          if (jsonOutput) {
+            console.log(JSON.stringify({ strict, exitCode: result.exitCode, report: result.report }, null, 2));
+          } else {
+            console.log("=== Engram Compatibility Report ===");
+            for (const check of result.report.checks) {
+              console.log(`- [${check.level.toUpperCase()}] ${check.title}: ${check.message}`);
+              if (check.remediation) {
+                console.log(`    remediation: ${check.remediation}`);
+              }
+            }
+            console.log(
+              `Summary: ok=${result.report.summary.ok} warn=${result.report.summary.warn} error=${result.report.summary.error}`,
+            );
+          }
+
+          if (result.exitCode !== 0) {
+            process.exitCode = result.exitCode;
+          }
         });
 
       cmd
