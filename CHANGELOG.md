@@ -45,6 +45,10 @@ All notable changes to this project will be documented in this file.
 - v8.8 network sync Task 4 (security + docs):
   - Updated `docs/operations.md` with network sync/WebDAV command runbook and operational safety notes.
   - Updated `SECURITY.md` with explicit v8.8 network-surface guardrails (opt-in defaults, allowlist-only exposure, loopback bind posture, and auth requirements).
+- v8.9 compatibility diagnostics Task 1 (core checks):
+  - Added `src/compat/types.ts` for compatibility report/check contracts (`ok|warn|error` + summary metadata).
+  - Added `src/compat/checks.ts` with deterministic offline compatibility checks for plugin manifest shape, package wiring, core hook registration, Node runtime floor, and QMD binary availability.
+  - Added `tests/compat-checks.test.ts` coverage for healthy fixtures, malformed/missing files, and warn/error remediation paths.
 - v8.7 custom memory routing rules Task 1 (routing engine):
   - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
   - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
