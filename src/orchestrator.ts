@@ -100,7 +100,7 @@ export class Orchestrator {
         thresholdMs: config.slowLogThresholdMs,
       },
       updateTimeoutMs: config.qmdUpdateTimeoutMs,
-      daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
+      daemonEnabled: config.qmdDaemonEnabled,
       daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
     });
     this.conversationQmd =
@@ -114,7 +114,7 @@ export class Orchestrator {
                 thresholdMs: config.slowLogThresholdMs,
               },
               updateTimeoutMs: config.qmdUpdateTimeoutMs,
-              daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
+              daemonEnabled: config.qmdDaemonEnabled,
               daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
             },
           )

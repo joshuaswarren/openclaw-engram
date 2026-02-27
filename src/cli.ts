@@ -257,6 +257,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
 
+          // Probe QMD if not yet checked (CLI doesn't run service.start/initialize)
+          if (!orchestrator.qmd.isAvailable()) {
+            await orchestrator.qmd.probe();
+          }
+
           if (orchestrator.qmd.isAvailable()) {
             const results = await orchestrator.qmd.search(
               query,
