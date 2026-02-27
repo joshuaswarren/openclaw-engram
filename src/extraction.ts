@@ -579,13 +579,41 @@ ${truncatedConversation}`;
                 .filter((e: any) => e.name.length > 0)
             : [];
 
+          // Normalize facts
+          const facts = Array.isArray((parsed as any).facts)
+            ? (parsed as any).facts
+                .map((f: any) => ({
+                  category: typeof f?.category === "string" ? f.category : "fact",
+                  content: typeof f?.content === "string" ? f.content : typeof f?.text === "string" ? f.text : "",
+                  importance: typeof f?.importance === "number" ? f.importance : 5,
+                  confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
+                  tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
+                  entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
+                }))
+                .filter((f: any) => f.content.length > 0)
+            : [];
+
+          // Normalize questions
+          const questions = Array.isArray((parsed as any).questions)
+            ? (parsed as any).questions
+                .map((q: any) => {
+                  if (typeof q === "string") return { question: q, context: "", priority: 0.5 };
+                  return {
+                    question: typeof q?.question === "string" ? q.question : typeof q?.text === "string" ? q.text : "",
+                    context: typeof q?.context === "string" ? q.context : "",
+                    priority: typeof q?.priority === "number" ? q.priority : 0.5,
+                  };
+                })
+                .filter((q: any) => q.question.length > 0)
+            : [];
+
           const result: ExtractionResult = {
-            facts: Array.isArray((parsed as any).facts) ? (parsed as any).facts : [],
+            facts,
             entities,
             profileUpdates: Array.isArray((parsed as any).profileUpdates)
-              ? (parsed as any).profileUpdates
+              ? (parsed as any).profileUpdates.filter((u: any) => typeof u === "string" && u.trim().length > 0)
               : [],
-            questions: Array.isArray((parsed as any).questions) ? (parsed as any).questions : [],
+            questions,
             identityReflection: (parsed as any).identityReflection ?? undefined,
             relationships: Array.isArray((parsed as any).relationships)
               ? (parsed as any).relationships.filter(
@@ -640,7 +668,14 @@ ${truncatedConversation}`;
           role: "system",
           content:
             this.buildExtractionInstructions(existingEntities) +
-            "\n\nRespond with valid JSON only.",
+            `\n\nRespond with valid JSON matching this schema:
+{
+  "facts": [{"category": "decision", "content": "Chose X over Y because...", "importance": 8, "confidence": 0.9, "tags": ["tag1"]}],
+  "entities": [{"name": "entity-name", "type": "person|company|project|tool|other"}],
+  "profileUpdates": ["User prefers X over Y"],
+  "questions": [{"question": "What is...?", "context": "Came up during discussion of..."}],
+  "relationships": [{"source": "entity-a", "target": "entity-b", "label": "works at"}]
+}`,
         },
         { role: "user", content: conversation },
       ],
@@ -674,13 +709,43 @@ ${truncatedConversation}`;
               .filter((e: any) => e.name.length > 0)
           : [];
 
+        // Normalize facts — LLM may return different field names or formats
+        const facts = Array.isArray(parsed.facts)
+          ? parsed.facts
+              .map((f: any) => ({
+                category: typeof f?.category === "string" ? f.category : "fact",
+                content: typeof f?.content === "string" ? f.content : typeof f?.text === "string" ? f.text : "",
+                importance: typeof f?.importance === "number" ? f.importance : 5,
+                confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
+                tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
+                entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
+              }))
+              .filter((f: any) => f.content.length > 0)
+          : [];
+
+        // Normalize questions — LLM may return strings or different field names
+        const questions = Array.isArray(parsed.questions)
+          ? parsed.questions
+              .map((q: any) => {
+                if (typeof q === "string") {
+                  return { question: q, context: "", priority: 0.5 };
+                }
+                return {
+                  question: typeof q?.question === "string" ? q.question : typeof q?.text === "string" ? q.text : "",
+                  context: typeof q?.context === "string" ? q.context : "",
+                  priority: typeof q?.priority === "number" ? q.priority : 0.5,
+                };
+              })
+              .filter((q: any) => q.question.length > 0)
+          : [];
+
         return {
-          facts: Array.isArray(parsed.facts) ? parsed.facts : [],
+          facts,
           entities,
           profileUpdates: Array.isArray(parsed.profileUpdates)
-            ? parsed.profileUpdates
+            ? parsed.profileUpdates.filter((u: any) => typeof u === "string" && u.trim().length > 0)
             : [],
-          questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+          questions,
           identityReflection: parsed.identityReflection ?? undefined,
           relationships: Array.isArray(parsed.relationships)
             ? parsed.relationships.filter(
