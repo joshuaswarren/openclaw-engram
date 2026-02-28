@@ -100,6 +100,31 @@ test("disabled extraction tier migration skips status state writes on hot path",
   }
 });
 
+test("enabled extraction tier migration skips status writes when no memory changes", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-noop-status-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-noop-status-workspace-"));
+  try {
+    const config = buildConfig(memoryDir, workspaceDir, true);
+    (config as any).qmdTierDemotionMinAgeDays = 365000;
+    const orchestrator = new Orchestrator(config) as any;
+    orchestrator.qmd = {
+      updateCollection: async () => {},
+      embedCollection: async () => {},
+    };
+    const storage = orchestrator.storage;
+    await storage.writeMemory("fact", "keep hot and unchanged", { source: "test" });
+
+    const summary = await orchestrator.runTierMigrationCycle(storage, "extraction");
+    assert.equal(summary.migrated, 0);
+
+    const statusPath = path.join(memoryDir, "state", "tier-migration-status.json");
+    await assert.rejects(() => access(statusPath));
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("tier migration cycle is bounded per maintenance pass", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-bounded-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-bounded-workspace-"));

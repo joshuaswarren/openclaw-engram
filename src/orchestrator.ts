@@ -3019,7 +3019,8 @@ export class Orchestrator {
         limit,
         dryRun,
       };
-      await this.tierMigrationStatus.recordCycle(summary);
+      const shouldPersistCycle = trigger === "manual" || migrated > 0;
+      if (shouldPersistCycle) await this.tierMigrationStatus.recordCycle(summary);
       return summary;
     } catch (err) {
       this.lastTierMigrationRunAtMs = Date.now();
