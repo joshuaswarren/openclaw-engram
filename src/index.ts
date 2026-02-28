@@ -158,11 +158,14 @@ export default {
               ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
               : context;
 
+          const memoryContextPrompt =
+            `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+
           log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
           return {
-            systemPrompt: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
+            systemPrompt: memoryContextPrompt,
             // Backward-compat path for gateway builds that consume prependContext.
-            prependContext: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
+            prependContext: memoryContextPrompt,
           };
         } catch (err) {
           log.error("recall failed", err);
