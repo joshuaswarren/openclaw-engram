@@ -1275,10 +1275,12 @@ export class StorageManager {
           throw err;
         }
       }
+      this.bumpMemoryStatusVersion();
       return { changed: false, targetPath };
     }
 
     await this.moveMemoryToPath(memory, targetPath);
+    this.bumpMemoryStatusVersion();
     return { changed: true, targetPath };
   }
 

@@ -997,10 +997,10 @@ export class QmdClient {
     const globalState = getGlobalQmdState();
     const now = Date.now();
     if (
-      this.lastEmbedFailAtMs &&
-      now - this.lastEmbedFailAtMs < QMD_EMBED_BACKOFF_MS
+      globalState.lastGlobalEmbedFailAtMs &&
+      now - globalState.lastGlobalEmbedFailAtMs < QMD_EMBED_BACKOFF_MS
     ) {
-      log.debug(`QMD embed: suppressed due to recent failures (backoff) (${name})`);
+      log.debug(`QMD embed: suppressed by global failure backoff (${name})`);
       return;
     }
     const lastCollectionRun = globalState.lastEmbedByCollectionMs[name];
@@ -1026,7 +1026,6 @@ export class QmdClient {
       globalState.lastGlobalEmbedRunAtMs = at;
     } catch (err) {
       const at = Date.now();
-      this.lastEmbedFailAtMs = at;
       globalState.lastEmbedFailByCollectionMs[name] = at;
       globalState.lastGlobalEmbedFailAtMs = at;
       const msg = err instanceof Error ? err.message : String(err);
