@@ -66,6 +66,13 @@ export interface PluginConfig {
   qmdColdTierEnabled?: boolean;
   qmdColdCollection?: string;
   qmdColdMaxResults?: number;
+  qmdTierMigrationEnabled: boolean;
+  qmdTierDemotionMinAgeDays: number;
+  qmdTierDemotionValueThreshold: number;
+  qmdTierPromotionValueThreshold: number;
+  qmdTierParityGraphEnabled: boolean;
+  qmdTierParityHiMemEnabled: boolean;
+  qmdTierAutoBackfillEnabled: boolean;
   embeddingFallbackEnabled: boolean;
   embeddingFallbackProvider: "auto" | "openai" | "local";
   /** Optional absolute path to qmd binary. If unset, PATH/fallback discovery is used. */

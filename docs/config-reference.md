@@ -167,6 +167,18 @@ Disabled-path compatibility guarantees:
 - `maxCompressionTokensPerHour=0` remains a hard disable (no implicit non-zero coercion).
 - `compressionGuidelineLearningEnabled=false` keeps consolidation behavior baseline-equivalent.
 
+## v8.14 Hot/Cold Tier Parity + Migration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `qmdTierMigrationEnabled` | `false` | Enable value-aware migration between hot and cold QMD tiers. |
+| `qmdTierDemotionMinAgeDays` | `14` | Minimum age (days) before a hot memory can be considered for demotion. |
+| `qmdTierDemotionValueThreshold` | `0.35` | Value threshold at/below which hot memories are eligible for cold demotion. |
+| `qmdTierPromotionValueThreshold` | `0.7` | Value threshold at/above which cold memories are eligible for hot promotion. |
+| `qmdTierParityGraphEnabled` | `true` | Keep graph-assist behavior parity between hot and cold retrieval paths. |
+| `qmdTierParityHiMemEnabled` | `true` | Keep HiMem episode/note handling parity between hot and cold retrieval paths. |
+| `qmdTierAutoBackfillEnabled` | `false` | Enable automated cold-tier parity backfill jobs. |
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |

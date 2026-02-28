@@ -94,6 +94,10 @@ All notable changes to this project will be documented in this file.
   - Added conservative/balanced/research rollout preset guidance for action-policy and compression-learning settings.
   - Added operator hardening checklist for staged promotion and rollback order.
   - Documented disabled-path compatibility guarantees (`enabled=false` and zero-limit semantics remain hard disables).
+- v8.14 hot/cold parity Task 1 (tier-parity config contract):
+  - Added tier migration/parity config keys and defaults (`qmdTierMigrationEnabled`, demotion/promotion thresholds, parity toggles, auto-backfill flag).
+  - Added parser coverage in `tests/config-cold-qmd.test.ts` for defaults and explicit zero-preservation semantics.
+  - Updated plugin schema/UI surface and config reference documentation for the new tier controls.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.

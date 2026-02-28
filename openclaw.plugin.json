@@ -85,6 +85,41 @@
         "default": 8,
         "description": "Max cold-tier QMD results considered before final recall cap"
       },
+      "qmdTierMigrationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable value-aware migration between hot and cold QMD tiers"
+      },
+      "qmdTierDemotionMinAgeDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Minimum hot-memory age in days before tier demotion is eligible"
+      },
+      "qmdTierDemotionValueThreshold": {
+        "type": "number",
+        "default": 0.35,
+        "description": "Value-score threshold at or below which hot memories are eligible for cold demotion"
+      },
+      "qmdTierPromotionValueThreshold": {
+        "type": "number",
+        "default": 0.7,
+        "description": "Value-score threshold at or above which cold memories are eligible for hot promotion"
+      },
+      "qmdTierParityGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply graph-assist parity checks across hot and cold retrieval tiers"
+      },
+      "qmdTierParityHiMemEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply HiMem episode/note parity checks across hot and cold retrieval tiers"
+      },
+      "qmdTierAutoBackfillEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Allow automated cold-tier backfill jobs to repair parity gaps"
+      },
       "embeddingFallbackEnabled": {
         "type": "boolean",
         "default": true,
@@ -1388,6 +1423,39 @@
       "label": "Cold QMD Max Results",
       "advanced": true,
       "placeholder": "8"
+    },
+    "qmdTierMigrationEnabled": {
+      "label": "Enable Tier Migration",
+      "advanced": true,
+      "help": "Enable value-aware hot/cold migration controls"
+    },
+    "qmdTierDemotionMinAgeDays": {
+      "label": "Tier Demotion Min Age Days",
+      "advanced": true,
+      "placeholder": "14"
+    },
+    "qmdTierDemotionValueThreshold": {
+      "label": "Tier Demotion Value Threshold",
+      "advanced": true,
+      "placeholder": "0.35"
+    },
+    "qmdTierPromotionValueThreshold": {
+      "label": "Tier Promotion Value Threshold",
+      "advanced": true,
+      "placeholder": "0.7"
+    },
+    "qmdTierParityGraphEnabled": {
+      "label": "Tier Parity Graph Checks",
+      "advanced": true
+    },
+    "qmdTierParityHiMemEnabled": {
+      "label": "Tier Parity HiMem Checks",
+      "advanced": true
+    },
+    "qmdTierAutoBackfillEnabled": {
+      "label": "Tier Auto Backfill",
+      "advanced": true,
+      "help": "Enable automated cold-tier backfill runs for parity repair"
     },
     "embeddingFallbackEnabled": {
       "label": "Embedding Fallback",

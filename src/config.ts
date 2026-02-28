@@ -230,6 +230,22 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram-cold",
     qmdColdMaxResults:
       typeof cfg.qmdColdMaxResults === "number" ? cfg.qmdColdMaxResults : 8,
+    qmdTierMigrationEnabled: cfg.qmdTierMigrationEnabled === true,
+    qmdTierDemotionMinAgeDays:
+      typeof cfg.qmdTierDemotionMinAgeDays === "number"
+        ? Math.max(0, Math.floor(cfg.qmdTierDemotionMinAgeDays))
+        : 14,
+    qmdTierDemotionValueThreshold:
+      typeof cfg.qmdTierDemotionValueThreshold === "number"
+        ? Math.max(0, Math.min(1, cfg.qmdTierDemotionValueThreshold))
+        : 0.35,
+    qmdTierPromotionValueThreshold:
+      typeof cfg.qmdTierPromotionValueThreshold === "number"
+        ? Math.max(0, Math.min(1, cfg.qmdTierPromotionValueThreshold))
+        : 0.7,
+    qmdTierParityGraphEnabled: cfg.qmdTierParityGraphEnabled !== false,
+    qmdTierParityHiMemEnabled: cfg.qmdTierParityHiMemEnabled !== false,
+    qmdTierAutoBackfillEnabled: cfg.qmdTierAutoBackfillEnabled === true,
     embeddingFallbackEnabled: cfg.embeddingFallbackEnabled !== false,
     embeddingFallbackProvider:
       cfg.embeddingFallbackProvider === "openai"
