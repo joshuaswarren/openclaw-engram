@@ -255,7 +255,7 @@ export const BehaviorLoopAdjustmentSchema = z.object({
   previousValue: z.number(),
   nextValue: z.number(),
   delta: z.number(),
-  evidenceCount: z.number().min(0),
+  evidenceCount: z.number().int().min(0),
   confidence: z.number().min(0).max(1),
   reason: z.string(),
   appliedAt: z.string(),
