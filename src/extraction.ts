@@ -675,9 +675,9 @@ ${truncatedConversation}`;
             `\n\nRespond with valid JSON matching this schema:
 {
   "facts": [{"category": "decision", "content": "Chose X over Y because...", "importance": 8, "confidence": 0.9, "tags": ["tag1"]}],
-  "entities": [{"name": "entity-name", "type": "person|company|project|tool|other"}],
+  "entities": [{"name": "entity-name", "type": "person"}],
   "profileUpdates": ["User prefers X over Y"],
-  "questions": [{"question": "What is...?", "context": "Came up during discussion of..."}],
+  "questions": [{"question": "What is...?", "context": "Came up during discussion of...", "priority": 0.5}],
   "relationships": [{"source": "entity-a", "target": "entity-b", "label": "works at"}]
 }`,
         },
@@ -969,14 +969,14 @@ Respond with valid JSON only, matching this schema:
   "items": [
     {
       "existingId": "id",
-      "action": "ADD|MERGE|UPDATE|INVALIDATE|SKIP",
+      "action": "ADD",
       "mergeWith": "optional-existing-id",
       "updatedContent": "optional replacement content",
       "reason": "brief reason for this action"
     }
   ],
   "profileUpdates": ["optional profile update"],
-  "entityUpdates": [{"name": "entity-name", "type": "person|project|tool|company|place|other", "facts": ["optional fact"]}]
+  "entityUpdates": [{"name": "entity-name", "type": "person", "facts": ["optional fact"]}]
 }`;
 
       const response = await this.client.chat.completions.create({
