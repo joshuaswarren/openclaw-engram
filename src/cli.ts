@@ -592,7 +592,10 @@ function clampMigrateLimit(limit: number | undefined, cap: number, fallback: num
   return Math.max(1, Math.min(cap, Math.floor(limit)));
 }
 
-async function readMigrateCandidateMemories(storage: MigrateMemoryStorage, limit: number): Promise<MemoryFile[]> {
+async function readMigrateCandidateMemories(
+  storage: MigrateMemoryStorage,
+  options: { includeArchived: boolean },
+): Promise<MemoryFile[]> {
   const merged = new Map<string, MemoryFile>();
   const addMany = (items: MemoryFile[]) => {
     for (const item of items) {
@@ -601,10 +604,11 @@ async function readMigrateCandidateMemories(storage: MigrateMemoryStorage, limit
     }
   };
   addMany(await storage.readAllMemories());
-  addMany(await storage.readArchivedMemories());
+  if (options.includeArchived) {
+    addMany(await storage.readArchivedMemories());
+  }
   return [...merged.values()]
-    .sort((a, b) => a.path.localeCompare(b.path))
-    .slice(0, limit);
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function sameImportance(a: MemoryFile["frontmatter"]["importance"], b: MemoryFile["frontmatter"]["importance"]): boolean {
@@ -634,7 +638,8 @@ export async function runMigrateNormalizeFrontmatterCliCommand(
 ): Promise<MigrateCliReport> {
   const limit = clampMigrateLimit(options.limit, MIGRATE_LIMIT_CAP, 200);
   const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
-  const candidates = await readMigrateCandidateMemories(storage, limit);
+  const candidates = (await readMigrateCandidateMemories(storage, { includeArchived: true }))
+    .slice(0, limit);
   if (options.write === true) {
     for (const memory of candidates) {
       await storage.writeMemoryFrontmatter(memory, {});
@@ -656,7 +661,8 @@ export async function runMigrateRescoreImportanceCliCommand(
 ): Promise<MigrateCliReport> {
   const limit = clampMigrateLimit(options.limit, MIGRATE_LIMIT_CAP, 200);
   const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
-  const candidates = await readMigrateCandidateMemories(storage, limit);
+  const candidates = (await readMigrateCandidateMemories(storage, { includeArchived: true }))
+    .slice(0, limit);
   let changed = 0;
   for (const memory of candidates) {
     const nextImportance = rescoreMemoryImportance(memory);
@@ -686,8 +692,9 @@ export async function runMigrateRechunkCliCommand(
 ): Promise<MigrateCliReport> {
   const limit = clampMigrateLimit(options.limit, MIGRATE_LIMIT_CAP, 200);
   const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
-  const candidates = (await readMigrateCandidateMemories(storage, limit))
-    .filter((memory) => memory.frontmatter.parentId === undefined);
+  const candidates = (await readMigrateCandidateMemories(storage, { includeArchived: false }))
+    .filter((memory) => memory.frontmatter.parentId === undefined)
+    .slice(0, limit);
 
   let changed = 0;
   for (const memory of candidates) {
@@ -758,7 +765,7 @@ export async function runMigrateReextractCliCommand(
   }
   const limit = clampMigrateLimit(options.limit, REEXTRACT_LIMIT_CAP, 100);
   const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
-  const candidates = (await readMigrateCandidateMemories(storage, limit))
+  const candidates = (await readMigrateCandidateMemories(storage, { includeArchived: false }))
     .filter((memory) => memory.frontmatter.parentId === undefined);
   const selected = candidates.slice(0, limit);
   let queued = 0;
@@ -776,7 +783,7 @@ export async function runMigrateReextractCliCommand(
   return {
     action: "reextract",
     dryRun: options.write !== true,
-    scanned: candidates.length,
+    scanned: selected.length,
     changed: selected.length,
     queued,
     limit,

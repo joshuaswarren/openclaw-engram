@@ -84,6 +84,27 @@ test("migrate rechunk writes chunk files for long parent content", async () => {
   }
 });
 
+test("migrate rechunk skips archived parents to avoid orphan active chunks", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-rechunk-archived-"));
+  try {
+    const storage = new StorageManager(dir);
+    const parentId = await storage.writeMemory("fact", longChunkCandidate(), { source: "test" });
+    const parent = await storage.getMemoryById(parentId);
+    assert.ok(parent);
+    await storage.archiveMemory(parent!);
+
+    const report = await runMigrateRechunkCliCommand(buildMigrateOrchestrator(storage), {
+      write: true,
+      limit: 10,
+    });
+    assert.equal(report.scanned, 0);
+    assert.equal(report.changed, 0);
+    assert.equal(report.dryRun, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("migrate reextract enforces explicit model and queues bounded jobs", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-reextract-"));
   try {
@@ -113,6 +134,28 @@ test("migrate reextract enforces explicit model and queues bounded jobs", async 
     const jobs = await storage.readReextractJobs(10);
     assert.equal(jobs.length, 2);
     assert.equal(jobs.every((job) => job.model === "gpt-5-mini"), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrate reextract applies limit after filtering out chunk memories", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-reextract-limit-"));
+  try {
+    const storage = new StorageManager(dir);
+    const parentId = await storage.writeMemory("fact", longChunkCandidate(), { source: "test" });
+    await runMigrateRechunkCliCommand(buildMigrateOrchestrator(storage), { write: true, limit: 10 });
+
+    const report = await runMigrateReextractCliCommand(buildMigrateOrchestrator(storage), {
+      model: "gpt-5-mini",
+      write: true,
+      limit: 1,
+    });
+
+    assert.equal(report.queued, 1);
+    const jobs = await storage.readReextractJobs(10);
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0]?.memoryId, parentId);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
