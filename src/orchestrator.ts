@@ -728,6 +728,20 @@ export class Orchestrator {
       this.config.cronRecallInstructionHeavyTokenCap;
   }
 
+  private currentPolicyVersion(): string {
+    const thresholds = this.effectiveLifecycleThresholds();
+    const payload = {
+      recencyWeight: this.effectiveRecencyWeight(),
+      lifecyclePromoteHeatThreshold: thresholds.promoteHeatThreshold,
+      lifecycleStaleDecayThreshold: thresholds.staleDecayThreshold,
+      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
+    };
+    return createHash("sha256")
+      .update(JSON.stringify(payload))
+      .digest("hex")
+      .slice(0, 12);
+  }
+
   private effectiveLifecycleThresholds(): {
     promoteHeatThreshold: number;
     staleDecayThreshold: number;
@@ -1762,6 +1776,7 @@ export class Orchestrator {
     });
     const retrievalQuery = queryPolicy.retrievalQuery || prompt;
     const retrievalQueryHash = createHash("sha256").update(retrievalQuery).digest("hex");
+    const policyVersion = this.currentPolicyVersion();
     let impressionRecorded = false;
     let recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan" = "none";
     let recalledMemoryCount = 0;
@@ -1827,6 +1842,7 @@ export class Orchestrator {
         recalledMemoryCount,
         injected: false,
         contextChars: 0,
+        policyVersion,
         identityInjectionMode: identityInjectionModeUsed,
         identityInjectedChars,
         identityInjectionTruncated,
@@ -2520,6 +2536,7 @@ export class Orchestrator {
           sessionKey,
           query: retrievalQuery,
           memoryIds: [],
+          policyVersion,
           identityInjection: {
             mode: identityInjectionModeUsed,
             injectedChars: identityInjectedChars,
@@ -2551,6 +2568,7 @@ export class Orchestrator {
       recalledMemoryCount,
       injected: context.length > 0,
       contextChars: context.length,
+      policyVersion,
       identityInjectionMode: identityInjectionModeUsed,
       identityInjectedChars,
       identityInjectionTruncated,
@@ -4836,6 +4854,7 @@ export class Orchestrator {
           sessionKey: options.sessionKey,
           query: options.retrievalQuery,
           memoryIds: unique,
+          policyVersion: this.currentPolicyVersion(),
           identityInjection: options.identityInjection,
         })
         .catch((err) => log.debug(`last recall record failed: ${err}`));

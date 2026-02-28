@@ -10,6 +10,7 @@ export interface LastRecallSnapshot {
   queryHash: string;
   queryLen: number;
   memoryIds: string[];
+  policyVersion?: string;
   identityInjectionMode?: IdentityInjectionMode | "none";
   identityInjectedChars?: number;
   identityInjectionTruncated?: boolean;
@@ -137,6 +138,7 @@ export class LastRecallStore {
     sessionKey: string;
     query: string;
     memoryIds: string[];
+    policyVersion?: string;
     identityInjection?: {
       mode: IdentityInjectionMode | "none";
       injectedChars: number;
@@ -152,6 +154,7 @@ export class LastRecallStore {
       queryHash,
       queryLen: opts.query.length,
       memoryIds: opts.memoryIds,
+      policyVersion: opts.policyVersion,
       identityInjectionMode: opts.identityInjection?.mode,
       identityInjectedChars: opts.identityInjection?.injectedChars,
       identityInjectionTruncated: opts.identityInjection?.truncated,

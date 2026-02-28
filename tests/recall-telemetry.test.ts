@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { Orchestrator } from "../src/orchestrator.js";
 import { parseConfig } from "../src/config.js";
@@ -25,6 +26,21 @@ async function makeOrchestrator(prefix: string): Promise<Orchestrator> {
   return new Orchestrator(cfg);
 }
 
+function expectedPolicyVersion(orchestrator: Orchestrator): string {
+  const cfg = orchestrator.config;
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        recencyWeight: cfg.recencyWeight,
+        lifecyclePromoteHeatThreshold: cfg.lifecyclePromoteHeatThreshold,
+        lifecycleStaleDecayThreshold: Math.min(cfg.lifecycleStaleDecayThreshold, cfg.lifecycleArchiveDecayThreshold),
+        cronRecallInstructionHeavyTokenCap: cfg.cronRecallInstructionHeavyTokenCap,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 12);
+}
+
 test("recall telemetry emits for no_recall short-circuit", async () => {
   const orchestrator = await makeOrchestrator("engram-telemetry-no-recall-");
   const events: EngramTraceEvent[] = [];
@@ -44,6 +60,9 @@ test("recall telemetry emits for no_recall short-circuit", async () => {
   assert.equal(recallEvent.source, "none");
   assert.equal(recallEvent.recalledMemoryCount, 0);
   assert.equal(recallEvent.injected, false);
+  assert.equal(typeof recallEvent.policyVersion, "string");
+  assert.equal((recallEvent.policyVersion ?? "").length, 12);
+  assert.equal(recallEvent.policyVersion, expectedPolicyVersion(orchestrator));
   assert.equal(recallEvent.identityInjectionMode, "none");
   assert.equal(recallEvent.identityInjectedChars, 0);
   assert.equal(recallEvent.identityInjectionTruncated, false);
@@ -90,4 +109,7 @@ test("recall telemetry emits source/count for recent-scan fallback", async () =>
   assert.equal(recallEvent.source, "recent_scan");
   assert.equal(recallEvent.recalledMemoryCount, 1);
   assert.equal(recallEvent.injected, true);
+  assert.equal(typeof recallEvent.policyVersion, "string");
+  assert.equal((recallEvent.policyVersion ?? "").length, 12);
+  assert.equal(recallEvent.policyVersion, expectedPolicyVersion(orchestrator));
 });

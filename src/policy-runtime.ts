@@ -11,7 +11,7 @@ export interface RuntimePolicyValues {
   cronRecallInstructionHeavyTokenCap?: number;
 }
 
-interface RuntimePolicySnapshot {
+export interface RuntimePolicySnapshot {
   version: number;
   updatedAt: string;
   values: RuntimePolicyValues;
@@ -22,7 +22,7 @@ const RUNTIME_POLICY_VERSION = 1;
 const RUNTIME_POLICY_FILE = "policy-runtime.json";
 const RUNTIME_POLICY_PREV_FILE = "policy-runtime.prev.json";
 
-function sanitizeRuntimePolicyValues(
+export function sanitizeRuntimePolicyValues(
   values: RuntimePolicyValues,
   options?: { maxStaleDecayThreshold?: number },
 ): RuntimePolicyValues {
@@ -57,7 +57,10 @@ function isRuntimeParameter(parameter: string): parameter is keyof RuntimePolicy
   );
 }
 
-async function readSnapshot(filePath: string): Promise<RuntimePolicySnapshot | null> {
+export async function readRuntimePolicySnapshot(
+  filePath: string,
+  options?: { maxStaleDecayThreshold?: number },
+): Promise<RuntimePolicySnapshot | null> {
   try {
     const raw = await readFile(filePath, "utf-8");
     const parsed = JSON.parse(raw) as Partial<RuntimePolicySnapshot>;
@@ -76,7 +79,9 @@ async function readSnapshot(filePath: string): Promise<RuntimePolicySnapshot | n
     return {
       version: parsed.version,
       updatedAt: parsed.updatedAt,
-      values: sanitizeRuntimePolicyValues(parsed.values),
+      values: sanitizeRuntimePolicyValues(parsed.values, {
+        maxStaleDecayThreshold: options?.maxStaleDecayThreshold,
+      }),
       sourceAdjustmentCount: parsed.sourceAdjustmentCount,
     };
   } catch {
@@ -105,15 +110,17 @@ export class PolicyRuntimeManager {
   }
 
   async loadRuntimeValues(): Promise<RuntimePolicyValues | null> {
-    const snapshot = await readSnapshot(this.runtimePath);
-    if (!snapshot) return null;
-    return sanitizeRuntimePolicyValues(snapshot.values, {
+    const snapshot = await readRuntimePolicySnapshot(this.runtimePath, {
       maxStaleDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
     });
+    if (!snapshot) return null;
+    return snapshot.values;
   }
 
   async rollback(): Promise<boolean> {
-    const previous = await readSnapshot(this.runtimePrevPath);
+    const previous = await readRuntimePolicySnapshot(this.runtimePrevPath, {
+      maxStaleDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+    });
     if (!previous) return false;
     await writeSnapshotAtomic(this.runtimePath, {
       ...previous,
@@ -134,7 +141,9 @@ export class PolicyRuntimeManager {
       ...this.config.behaviorLoopProtectedParams,
       ...state.protectedParams,
     ]);
-    const existing = await readSnapshot(this.runtimePath);
+    const existing = await readRuntimePolicySnapshot(this.runtimePath, {
+      maxStaleDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+    });
     const candidate: RuntimePolicyValues = {
       recencyWeight: existing?.values.recencyWeight ?? this.config.recencyWeight,
       lifecyclePromoteHeatThreshold:

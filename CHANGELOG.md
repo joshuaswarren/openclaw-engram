@@ -48,6 +48,11 @@ All notable changes to this project will be documented in this file.
   - Added guarded runtime application path with invalid-adjustment rollback and protected-parameter enforcement.
   - Wired orchestrator retrieval/lifecycle consumers to load and apply runtime policy overrides fail-open.
   - Added `tests/policy-runtime-application.test.ts` coverage for runtime apply/load, recall-mode contract safety, and rollback restoration on invalid updates.
+- v8.15 behavior-loop Task 5 (policy observability + rollback CLI):
+  - Added CLI commands `openclaw engram policy-status`, `openclaw engram policy-diff --since <window>`, and `openclaw engram policy-rollback`.
+  - Added runtime policy snapshot/diff helpers with evidence counts and top contributing behavior-signal summaries.
+  - Added per-turn recall telemetry policy version tagging in recall summary events and last-recall impressions.
+  - Added `tests/cli-policy-tuning.test.ts` and expanded `tests/recall-telemetry.test.ts` for policy-version and CLI report coverage.
 - v8.8 network sync Task 1 (WebDAV module):
   - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
   - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.
