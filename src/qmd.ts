@@ -415,6 +415,25 @@ function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
   return results;
 }
 
+function parseQmdSearchStdout(stdout: string): QmdSearchResult[] {
+  const trimmedOut = stdout.trim();
+  if (!trimmedOut || trimmedOut === "No results found.") return [];
+  const parsed = JSON.parse(trimmedOut);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map(
+    (entry: Record<string, unknown>): QmdSearchResult => ({
+      docid: (entry.docid as string) ?? "",
+      path:
+        (entry.file as string) ??
+        (entry.path as string) ??
+        (entry.docid as string) ??
+        "unknown",
+      snippet: (entry.snippet as string) ?? "",
+      score: typeof entry.score === "number" ? entry.score : 0,
+    }),
+  );
+}
+
 let _sharedDaemonSession: QmdDaemonSession | null = null;
 let _sharedDaemonSessionPath: string | null = null;
 
@@ -855,12 +874,13 @@ export class QmdClient {
       log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms`);
       return results;
     } catch (err) {
+      const durationMs = Date.now() - startedAtMs;
       const errMsg = String(err);
       if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
-        log.debug("QMD daemon vsearch timed out, falling back to subprocess");
+        log.debug(`QMD daemon vsearch timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
-      log.debug(`QMD daemon vsearch failed: ${err}`);
+      log.debug(`QMD daemon vsearch failed after ${durationMs}ms: ${err}`);
       this.daemonSession.invalidate();
       this.daemonAvailable = false;
       return null;
@@ -888,23 +908,7 @@ export class QmdClient {
         );
       }
 
-      const trimmedOut = stdout.trim();
-      if (!trimmedOut || trimmedOut === "No results found.") return [];
-      const parsed = JSON.parse(trimmedOut);
-      if (!Array.isArray(parsed)) return [];
-
-      return parsed.map(
-        (entry: Record<string, unknown>): QmdSearchResult => ({
-          docid: (entry.docid as string) ?? "",
-          path:
-            (entry.file as string) ??
-            (entry.path as string) ??
-            (entry.docid as string) ??
-            "unknown",
-          snippet: (entry.snippet as string) ?? "",
-          score: typeof entry.score === "number" ? entry.score : 0,
-        }),
-      );
+      return parseQmdSearchStdout(stdout);
     } catch (err) {
       log.debug(`QMD search failed: ${err}`);
       return [];
@@ -925,22 +929,7 @@ export class QmdClient {
         this.qmdPath,
       );
       log.debug(`QMD bm25: ${Date.now() - startedAtMs}ms`);
-      const trimmedOut = stdout.trim();
-      if (!trimmedOut || trimmedOut === "No results found.") return [];
-      const parsed = JSON.parse(trimmedOut);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(
-        (entry: Record<string, unknown>): QmdSearchResult => ({
-          docid: (entry.docid as string) ?? "",
-          path:
-            (entry.file as string) ??
-            (entry.path as string) ??
-            (entry.docid as string) ??
-            "unknown",
-          snippet: (entry.snippet as string) ?? "",
-          score: typeof entry.score === "number" ? entry.score : 0,
-        }),
-      );
+      return parseQmdSearchStdout(stdout);
     } catch (err) {
       log.debug(`QMD bm25 search failed: ${err}`);
       return [];
@@ -961,22 +950,7 @@ export class QmdClient {
         this.qmdPath,
       );
       log.debug(`QMD vsearch: ${Date.now() - startedAtMs}ms`);
-      const trimmedOut = stdout.trim();
-      if (!trimmedOut || trimmedOut === "No results found.") return [];
-      const parsed = JSON.parse(trimmedOut);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(
-        (entry: Record<string, unknown>): QmdSearchResult => ({
-          docid: (entry.docid as string) ?? "",
-          path:
-            (entry.file as string) ??
-            (entry.path as string) ??
-            (entry.docid as string) ??
-            "unknown",
-          snippet: (entry.snippet as string) ?? "",
-          score: typeof entry.score === "number" ? entry.score : 0,
-        }),
-      );
+      return parseQmdSearchStdout(stdout);
     } catch (err) {
       log.debug(`QMD vsearch failed: ${err}`);
       return [];
@@ -1003,23 +977,7 @@ export class QmdClient {
         );
       }
 
-      const trimmedOut = stdout.trim();
-      if (!trimmedOut || trimmedOut === "No results found.") return [];
-      const parsed = JSON.parse(trimmedOut);
-      if (!Array.isArray(parsed)) return [];
-
-      return parsed.map(
-        (entry: Record<string, unknown>): QmdSearchResult => ({
-          docid: (entry.docid as string) ?? "",
-          path:
-            (entry.file as string) ??
-            (entry.path as string) ??
-            (entry.docid as string) ??
-            "unknown",
-          snippet: (entry.snippet as string) ?? "",
-          score: typeof entry.score === "number" ? entry.score : 0,
-        }),
-      );
+      return parseQmdSearchStdout(stdout);
     } catch (err) {
       log.debug(`QMD global search failed: ${err}`);
       return [];
