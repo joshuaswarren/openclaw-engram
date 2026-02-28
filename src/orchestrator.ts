@@ -2119,6 +2119,7 @@ export class Orchestrator {
             prompt: retrievalQuery,
             recallNamespaces,
             recallResultLimit,
+            recallMode,
           });
           if (longTerm.length > 0) {
             recallSource = "cold_fallback";
@@ -2252,6 +2253,7 @@ export class Orchestrator {
               prompt: retrievalQuery,
               recallNamespaces,
               recallResultLimit,
+              recallMode,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -2276,6 +2278,7 @@ export class Orchestrator {
             prompt: retrievalQuery,
             recallNamespaces,
             recallResultLimit,
+            recallMode,
           });
           if (longTerm.length > 0) {
             recallSource = "cold_fallback";
@@ -4698,6 +4701,7 @@ export class Orchestrator {
     prompt: string;
     recallNamespaces: string[];
     recallResultLimit: number;
+    recallMode: RecallPlanMode;
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
     const coldCollection = this.config.qmdColdCollection ?? "openclaw-engram-cold";
@@ -4743,8 +4747,37 @@ export class Orchestrator {
     }
     if (longTerm.length === 0) return [];
 
-    let results = await this.boostSearchResults(
-      longTerm,
+    let results = longTerm;
+    if (this.config.namespacesEnabled) {
+      results = results.filter((r) =>
+        options.recallNamespaces.includes(this.namespaceFromPath(r.path)),
+      );
+    }
+    // Artifact isolation contract: generic recall paths must exclude artifacts.
+    results = results.filter((r) => !isArtifactMemoryPath(r.path));
+    if (results.length === 0) return [];
+
+    const isFullModeGraphAssist =
+      this.config.qmdTierParityGraphEnabled &&
+      this.config.multiGraphMemoryEnabled &&
+      this.config.graphAssistInFullModeEnabled !== false &&
+      options.recallMode === "full" &&
+      results.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3);
+    const shouldRunGraphExpansion =
+      this.config.qmdTierParityGraphEnabled &&
+      (options.recallMode === "graph_mode" || isFullModeGraphAssist);
+
+    if (shouldRunGraphExpansion) {
+      const { merged } = await this.expandResultsViaGraph({
+        memoryResults: results,
+        recallNamespaces: options.recallNamespaces,
+        recallResultLimit: options.recallResultLimit,
+      });
+      results = merged;
+    }
+
+    results = await this.boostSearchResults(
+      results,
       options.recallNamespaces,
       options.prompt,
       undefined,

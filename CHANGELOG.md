@@ -112,6 +112,10 @@ All notable changes to this project will be documented in this file.
   - Wired orchestrator tier migration cycle into extraction completion and maintenance/consolidation paths with fail-open behavior.
   - Added bounded migration cycle budgeting (`limit`, `scanLimit`, `minIntervalMs`) via `CompoundingEngine.tierMigrationCycleBudget(...)`.
   - Added `tests/orchestrator-tier-migration.test.ts` and `tests/compounding-tier-migration.test.ts` coverage for enabled/disabled wiring and non-vacuous maintenance bounds.
+- v8.14 hot/cold parity Task 5 (retrieval parity enforcement):
+  - Enforced artifact-path isolation in cold fallback generic recall so `artifacts/` memories remain exclusive to the dedicated verbatim artifact path.
+  - Added graph-expansion parity for cold fallback retrieval when `qmdTierParityGraphEnabled` is enabled.
+  - Added regression coverage in `tests/retrieval-hot-cold-parity.test.ts` and `tests/graph-cold-tier-parity.test.ts`.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.
