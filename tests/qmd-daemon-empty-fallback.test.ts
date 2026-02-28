@@ -165,3 +165,35 @@ test("vectorSearch falls back to subprocess when daemon returns empty results", 
   assert.equal(out.length, 1);
   assert.equal(out[0]?.docid, "fact-vsearch-fallback");
 });
+
+test("daemon parser uses path field when file is absent", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      structuredContent: {
+        results: [
+          {
+            docid: "fact-daemon-path",
+            path: "/tmp/facts/fact-daemon-path.md",
+            snippet: "daemon path field",
+            score: 0.91,
+          },
+        ],
+      },
+    }),
+  };
+
+  let subprocessCalls = 0;
+  client.searchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [];
+  };
+
+  const out = await client.search("daemon parser path test", undefined, 3);
+  assert.equal(subprocessCalls, 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.path, "/tmp/facts/fact-daemon-path.md");
+});

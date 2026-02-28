@@ -384,6 +384,8 @@ function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
         docid: typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "",
         path: typeof d.file === "string"
           ? d.file
+          : typeof d.path === "string"
+          ? d.path
           : (typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "unknown"),
         snippet: typeof d.snippet === "string" ? d.snippet : "",
         score: typeof d.score === "number" ? d.score : 0,
@@ -414,10 +416,18 @@ function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
 }
 
 let _sharedDaemonSession: QmdDaemonSession | null = null;
+let _sharedDaemonSessionPath: string | null = null;
 
 function getSharedDaemonSession(qmdPath: string): QmdDaemonSession {
+  const normalizedPath = qmdPath.trim() || "qmd";
+  if (_sharedDaemonSession && _sharedDaemonSessionPath !== normalizedPath) {
+    _sharedDaemonSession.invalidate();
+    _sharedDaemonSession = null;
+    _sharedDaemonSessionPath = null;
+  }
   if (!_sharedDaemonSession) {
-    _sharedDaemonSession = new QmdDaemonSession(qmdPath);
+    _sharedDaemonSession = new QmdDaemonSession(normalizedPath);
+    _sharedDaemonSessionPath = normalizedPath;
   }
   return _sharedDaemonSession;
 }
