@@ -101,3 +101,67 @@ test("hybridSearch always runs bm25+vector merge (no daemon short-circuit)", asy
   assert.equal(vectorCalls, 1);
   assert.equal(daemonCalls, 0);
 });
+
+test("bm25Search falls back to subprocess when daemon returns empty results", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.daemonSession = {};
+  client.maybeProbeDaemon = async () => {};
+
+  let daemonCalls = 0;
+  let subprocessCalls = 0;
+  client.bm25SearchViaDaemon = async () => {
+    daemonCalls += 1;
+    return [];
+  };
+  client.bm25SearchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [
+      {
+        docid: "fact-bm25-fallback",
+        path: "/tmp/facts/fact-bm25-fallback.md",
+        snippet: "fallback",
+        score: 0.77,
+      },
+    ];
+  };
+
+  const out = await client.bm25Search("needle", undefined, 3);
+  assert.equal(daemonCalls, 1);
+  assert.equal(subprocessCalls, 1);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.docid, "fact-bm25-fallback");
+});
+
+test("vectorSearch falls back to subprocess when daemon returns empty results", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.daemonSession = {};
+  client.maybeProbeDaemon = async () => {};
+
+  let daemonCalls = 0;
+  let subprocessCalls = 0;
+  client.vsearchViaDaemon = async () => {
+    daemonCalls += 1;
+    return [];
+  };
+  client.vsearchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [
+      {
+        docid: "fact-vsearch-fallback",
+        path: "/tmp/facts/fact-vsearch-fallback.md",
+        snippet: "fallback",
+        score: 0.88,
+      },
+    ];
+  };
+
+  const out = await client.vectorSearch("needle", undefined, 3);
+  assert.equal(daemonCalls, 1);
+  assert.equal(subprocessCalls, 1);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.docid, "fact-vsearch-fallback");
+});

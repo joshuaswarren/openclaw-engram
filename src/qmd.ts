@@ -676,38 +676,12 @@ export class QmdClient {
     await this.maybeProbeDaemon();
     if (this.daemonAvailable && this.daemonSession) {
       const results = await this.bm25SearchViaDaemon(trimmed, col, n);
-      if (results !== null) return results;
+      if (results !== null) {
+        if (results.length > 0) return results;
+        log.debug("QMD daemon bm25 returned 0 results; falling back to subprocess query");
+      }
     }
-
-    if (this.available === false) return [];
-    const startedAtMs = Date.now();
-    try {
-      const { stdout } = await runQmd(
-        ["search", trimmed, "-c", col, "--json", "-n", String(n)],
-        QMD_TIMEOUT_MS,
-        this.qmdPath,
-      );
-      log.debug(`QMD bm25: ${Date.now() - startedAtMs}ms`);
-      const trimmedOut = stdout.trim();
-      if (!trimmedOut || trimmedOut === "No results found.") return [];
-      const parsed = JSON.parse(trimmedOut);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(
-        (entry: Record<string, unknown>): QmdSearchResult => ({
-          docid: (entry.docid as string) ?? "",
-          path:
-            (entry.file as string) ??
-            (entry.path as string) ??
-            (entry.docid as string) ??
-            "unknown",
-          snippet: (entry.snippet as string) ?? "",
-          score: typeof entry.score === "number" ? entry.score : 0,
-        }),
-      );
-    } catch (err) {
-      log.debug(`QMD bm25 search failed: ${err}`);
-      return [];
-    }
+    return this.bm25SearchViaSubprocess(trimmed, col, n);
   }
 
   /**
@@ -728,38 +702,12 @@ export class QmdClient {
     await this.maybeProbeDaemon();
     if (this.daemonAvailable && this.daemonSession) {
       const results = await this.vsearchViaDaemon(trimmed, col, n);
-      if (results !== null) return results;
+      if (results !== null) {
+        if (results.length > 0) return results;
+        log.debug("QMD daemon vsearch returned 0 results; falling back to subprocess query");
+      }
     }
-
-    if (this.available === false) return [];
-    const startedAtMs = Date.now();
-    try {
-      const { stdout } = await runQmd(
-        ["vsearch", trimmed, "-c", col, "--json", "-n", String(n)],
-        QMD_TIMEOUT_MS,
-        this.qmdPath,
-      );
-      log.debug(`QMD vsearch: ${Date.now() - startedAtMs}ms`);
-      const trimmedOut = stdout.trim();
-      if (!trimmedOut || trimmedOut === "No results found.") return [];
-      const parsed = JSON.parse(trimmedOut);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(
-        (entry: Record<string, unknown>): QmdSearchResult => ({
-          docid: (entry.docid as string) ?? "",
-          path:
-            (entry.file as string) ??
-            (entry.path as string) ??
-            (entry.docid as string) ??
-            "unknown",
-          snippet: (entry.snippet as string) ?? "",
-          score: typeof entry.score === "number" ? entry.score : 0,
-        }),
-      );
-    } catch (err) {
-      log.debug(`QMD vsearch failed: ${err}`);
-      return [];
-    }
+    return this.vsearchViaSubprocess(trimmed, col, n);
   }
 
   /**
@@ -949,6 +897,78 @@ export class QmdClient {
       );
     } catch (err) {
       log.debug(`QMD search failed: ${err}`);
+      return [];
+    }
+  }
+
+  private async bm25SearchViaSubprocess(
+    query: string,
+    collection: string,
+    maxResults: number,
+  ): Promise<QmdSearchResult[]> {
+    if (this.available === false) return [];
+    const startedAtMs = Date.now();
+    try {
+      const { stdout } = await runQmd(
+        ["search", query, "-c", collection, "--json", "-n", String(maxResults)],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      log.debug(`QMD bm25: ${Date.now() - startedAtMs}ms`);
+      const trimmedOut = stdout.trim();
+      if (!trimmedOut || trimmedOut === "No results found.") return [];
+      const parsed = JSON.parse(trimmedOut);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(
+        (entry: Record<string, unknown>): QmdSearchResult => ({
+          docid: (entry.docid as string) ?? "",
+          path:
+            (entry.file as string) ??
+            (entry.path as string) ??
+            (entry.docid as string) ??
+            "unknown",
+          snippet: (entry.snippet as string) ?? "",
+          score: typeof entry.score === "number" ? entry.score : 0,
+        }),
+      );
+    } catch (err) {
+      log.debug(`QMD bm25 search failed: ${err}`);
+      return [];
+    }
+  }
+
+  private async vsearchViaSubprocess(
+    query: string,
+    collection: string,
+    maxResults: number,
+  ): Promise<QmdSearchResult[]> {
+    if (this.available === false) return [];
+    const startedAtMs = Date.now();
+    try {
+      const { stdout } = await runQmd(
+        ["vsearch", query, "-c", collection, "--json", "-n", String(maxResults)],
+        QMD_TIMEOUT_MS,
+        this.qmdPath,
+      );
+      log.debug(`QMD vsearch: ${Date.now() - startedAtMs}ms`);
+      const trimmedOut = stdout.trim();
+      if (!trimmedOut || trimmedOut === "No results found.") return [];
+      const parsed = JSON.parse(trimmedOut);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(
+        (entry: Record<string, unknown>): QmdSearchResult => ({
+          docid: (entry.docid as string) ?? "",
+          path:
+            (entry.file as string) ??
+            (entry.path as string) ??
+            (entry.docid as string) ??
+            "unknown",
+          snippet: (entry.snippet as string) ?? "",
+          score: typeof entry.score === "number" ? entry.score : 0,
+        }),
+      );
+    } catch (err) {
+      log.debug(`QMD vsearch failed: ${err}`);
       return [];
     }
   }
