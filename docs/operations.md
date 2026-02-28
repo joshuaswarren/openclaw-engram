@@ -56,6 +56,8 @@ openclaw engram compat              # Run local compatibility diagnostics
 openclaw engram conversation-index-health  # Backend health + index stats
 openclaw engram graph-health        # Graph edge-file integrity + coverage
 openclaw engram action-audit        # Namespace-aware memory action policy audit
+openclaw engram tier-status         # Tier migration telemetry + last-cycle summary
+openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run default)
 ```
 
 Compatibility diagnostics:
@@ -71,6 +73,11 @@ Memory action diagnostics:
 - `openclaw engram action-audit` reports namespace-aware action totals by action, outcome, and policy decision.
 - Use `--namespace <name>` to scope the report to a single namespace.
 - Use `--limit <n>` to cap event reads per namespace (`0` preserves zero-limit semantics).
+
+Tier migration diagnostics:
+- `openclaw engram tier-status` reports the latest migration cycle summary plus cumulative counters (cycles/scanned/migrated/promoted/demoted/errors).
+- `openclaw engram tier-migrate` runs one manual maintenance migration pass.
+- `tier-migrate` defaults to dry-run; pass `--write` to apply mutations and `--limit <n>` to bound this pass.
 
 Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.
@@ -130,6 +137,10 @@ openclaw engram conversation-index-health
 
 # Show graph health with optional repair guidance notes
 openclaw engram graph-health --repair-guidance
+
+# Show tier migration telemetry and run a dry-run migration pass
+openclaw engram tier-status
+openclaw engram tier-migrate --dry-run --limit 50
 ```
 
 Operational safety notes:

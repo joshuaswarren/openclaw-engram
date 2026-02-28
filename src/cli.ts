@@ -34,6 +34,7 @@ import { WebDavServer } from "./network/webdav.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
+import type { TierMigrationCycleSummary, TierMigrationStatusSnapshot } from "./recall-state.js";
 
 interface CliApi {
   registerCli(
@@ -280,6 +281,11 @@ export interface GraphHealthCliCommandOptions {
   includeRepairGuidance?: boolean;
 }
 
+export interface TierMigrationCliOrchestrator {
+  getTierMigrationStatus(): Promise<TierMigrationStatusSnapshot>;
+  runTierMigrationNow(options?: { dryRun?: boolean; limit?: number }): Promise<TierMigrationCycleSummary>;
+}
+
 export interface MemoryActionAuditCliCommandOptions {
   namespace?: string;
   limit?: number;
@@ -495,6 +501,22 @@ export async function runGraphHealthCliCommand(
     timeGraphEnabled: options.timeGraphEnabled,
     causalGraphEnabled: options.causalGraphEnabled,
     includeRepairGuidance: options.includeRepairGuidance,
+  });
+}
+
+export async function runTierStatusCliCommand(
+  orchestrator: TierMigrationCliOrchestrator,
+): Promise<TierMigrationStatusSnapshot> {
+  return orchestrator.getTierMigrationStatus();
+}
+
+export async function runTierMigrateCliCommand(
+  orchestrator: TierMigrationCliOrchestrator,
+  options: { dryRun?: boolean; limit?: number } = {},
+): Promise<TierMigrationCycleSummary> {
+  return orchestrator.runTierMigrationNow({
+    dryRun: options.dryRun === true,
+    limit: options.limit,
   });
 }
 
@@ -1385,6 +1407,32 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             includeRepairGuidance: options.repairGuidance === true,
           });
           console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("tier-status")
+        .description("Show tier migration telemetry and last-cycle summary")
+        .action(async () => {
+          const status = await runTierStatusCliCommand(orchestrator);
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("tier-migrate")
+        .description("Run one tier migration pass (dry-run by default)")
+        .option("--dry-run", "Evaluate and report moves without writing")
+        .option("--write", "Apply migration writes (default: dry-run)")
+        .option("--limit <n>", "Override migration move limit for this run")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const limitRaw = parseInt(String(options.limit ?? ""), 10);
+          const summary = await runTierMigrateCliCommand(orchestrator, {
+            dryRun: options.write !== true,
+            limit: Number.isFinite(limitRaw) ? Math.max(0, limitRaw) : undefined,
+          });
+          console.log(JSON.stringify(summary, null, 2));
           console.log("OK");
         });
 

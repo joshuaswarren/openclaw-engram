@@ -116,6 +116,10 @@ All notable changes to this project will be documented in this file.
   - Enforced artifact-path isolation in cold fallback generic recall so `artifacts/` memories remain exclusive to the dedicated verbatim artifact path.
   - Added graph-expansion parity for cold fallback retrieval when `qmdTierParityGraphEnabled` is enabled.
   - Added regression coverage in `tests/retrieval-hot-cold-parity.test.ts` and `tests/graph-cold-tier-parity.test.ts`.
+- v8.14 hot/cold parity Task 6 (tier telemetry + operator CLI controls):
+  - Added persisted tier migration telemetry state (`state/tier-migration-status.json`) with cumulative counters and last-cycle summary.
+  - Added CLI command surfaces: `openclaw engram tier-status` and `openclaw engram tier-migrate` (`--dry-run`, `--write`, `--limit`).
+  - Added `tests/cli-tier-status.test.ts` plus dry-run orchestration coverage for manual bounded migration passes.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.

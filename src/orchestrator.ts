@@ -20,9 +20,12 @@ import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
   LastRecallStore,
+  TierMigrationStatusStore,
   clampGraphRecallExpandedEntries,
   type GraphRecallExpandedEntry,
   type LastRecallSnapshot,
+  type TierMigrationCycleSummary,
+  type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
 import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
@@ -546,6 +549,7 @@ export class Orchestrator {
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
   readonly lastRecall: LastRecallStore;
+  readonly tierMigrationStatus: TierMigrationStatusStore;
   readonly embeddingFallback: EmbeddingFallback;
   private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
@@ -656,6 +660,7 @@ export class Orchestrator {
     this.relevance = new RelevanceStore(config.memoryDir);
     this.negatives = new NegativeExampleStore(config.memoryDir);
     this.lastRecall = new LastRecallStore(config.memoryDir);
+    this.tierMigrationStatus = new TierMigrationStatusStore(config.memoryDir);
     this.sessionObserver = new SessionObserverState({
       memoryDir: config.memoryDir,
       debounceMs: config.sessionObserverDebounceMs ?? 120_000,
@@ -831,6 +836,7 @@ export class Orchestrator {
     await this.relevance.load();
     await this.negatives.load();
     await this.lastRecall.load();
+    await this.tierMigrationStatus.load();
     await this.sessionObserver.load();
 
     // Initialize content-hash dedup index
@@ -2867,15 +2873,76 @@ export class Orchestrator {
   private async runTierMigrationCycle(
     storage: StorageManager,
     trigger: "extraction" | "maintenance",
-  ): Promise<void> {
-    if (!this.config.qmdTierMigrationEnabled) return;
-    if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled) return;
-    if (this.tierMigrationInFlight) return;
+    options?: {
+      dryRun?: boolean;
+      limitOverride?: number;
+      force?: boolean;
+    },
+  ): Promise<TierMigrationCycleSummary> {
+    const dryRun = options?.dryRun === true;
+    if (!this.config.qmdTierMigrationEnabled && options?.force !== true) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit: 0,
+        dryRun,
+        skipped: "tier_migration_disabled",
+      };
+      await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
+    if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled && options?.force !== true) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit: 0,
+        dryRun,
+        skipped: "maintenance_backfill_disabled",
+      };
+      await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
+    if (this.tierMigrationInFlight) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit: 0,
+        dryRun,
+        skipped: "migration_in_flight",
+      };
+      await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
 
     const budget = this.compounding?.tierMigrationCycleBudget(trigger)
       ?? defaultTierMigrationCycleBudget(this.config, trigger);
+    const limit = options?.limitOverride !== undefined
+      ? Math.max(0, Math.floor(options.limitOverride))
+      : budget.limit;
     const nowMs = Date.now();
-    if (nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs) return;
+    if (options?.force !== true && nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit,
+        dryRun,
+        skipped: "min_interval",
+      };
+      await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
 
     const policy = {
       enabled: this.config.qmdTierMigrationEnabled,
@@ -2916,30 +2983,75 @@ export class Orchestrator {
       });
 
       let migrated = 0;
+      let promoted = 0;
+      let demoted = 0;
       for (const candidate of candidates) {
-        if (migrated >= budget.limit) break;
+        if (migrated >= limit) break;
         const decision = decideTierTransition(candidate.memory, candidate.tier, policy, now);
         if (!decision.changed) continue;
 
-        const res = await migration.migrateMemory({
-          memory: candidate.memory,
-          fromTier: candidate.tier,
-          toTier: decision.nextTier,
-          reason: `${trigger}:${decision.reason}`,
-        });
-        if (res.changed) migrated += 1;
+        if (!dryRun) {
+          const res = await migration.migrateMemory({
+            memory: candidate.memory,
+            fromTier: candidate.tier,
+            toTier: decision.nextTier,
+            reason: `${trigger}:${decision.reason}`,
+          });
+          if (!res.changed) continue;
+        }
+        migrated += 1;
+        if (decision.nextTier === "cold") demoted += 1;
+        if (decision.nextTier === "hot") promoted += 1;
       }
 
       this.lastTierMigrationRunAtMs = Date.now();
       log.debug(
-        `tier migration cycle completed: trigger=${trigger} scanned=${candidates.length} migrated=${migrated} limit=${budget.limit}`,
+        `tier migration cycle completed: trigger=${trigger} scanned=${candidates.length} migrated=${migrated} limit=${limit}${dryRun ? " dryRun=true" : ""}`,
       );
+      const summary: TierMigrationCycleSummary = {
+        trigger,
+        scanned: candidates.length,
+        migrated,
+        promoted,
+        demoted,
+        limit,
+        dryRun,
+      };
+      await this.tierMigrationStatus.recordCycle(summary);
+      return summary;
     } catch (err) {
       this.lastTierMigrationRunAtMs = Date.now();
       log.warn(`tier migration cycle failed (${trigger}, fail-open): ${err}`);
+      const failed: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit,
+        dryRun,
+        errorCount: 1,
+      };
+      await this.tierMigrationStatus.recordCycle(failed);
+      return failed;
     } finally {
       this.tierMigrationInFlight = false;
     }
+  }
+
+  async getTierMigrationStatus(): Promise<TierMigrationStatusSnapshot> {
+    return this.tierMigrationStatus.get();
+  }
+
+  async runTierMigrationNow(options?: {
+    dryRun?: boolean;
+    limit?: number;
+  }): Promise<TierMigrationCycleSummary> {
+    return this.runTierMigrationCycle(this.storage, "maintenance", {
+      dryRun: options?.dryRun === true,
+      limitOverride: options?.limit,
+      force: true,
+    });
   }
 
   private maybeScheduleConsolidation(nonZeroExtraction: boolean): void {

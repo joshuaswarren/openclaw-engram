@@ -60,6 +60,44 @@ export function clampGraphRecallExpandedEntries(
 
 type LastRecallState = Record<string, LastRecallSnapshot>;
 
+export interface TierMigrationCycleSummary {
+  trigger: "extraction" | "maintenance" | "manual";
+  scanned: number;
+  migrated: number;
+  promoted: number;
+  demoted: number;
+  limit: number;
+  dryRun: boolean;
+  skipped?: string;
+  errorCount?: number;
+}
+
+export interface TierMigrationStatusSnapshot {
+  updatedAt: string;
+  lastCycle: TierMigrationCycleSummary | null;
+  totals: {
+    cycles: number;
+    scanned: number;
+    migrated: number;
+    promoted: number;
+    demoted: number;
+    errors: number;
+  };
+}
+
+const DEFAULT_TIER_MIGRATION_STATUS: TierMigrationStatusSnapshot = {
+  updatedAt: new Date(0).toISOString(),
+  lastCycle: null,
+  totals: {
+    cycles: 0,
+    scanned: 0,
+    migrated: 0,
+    promoted: 0,
+    demoted: 0,
+    errors: 0,
+  },
+};
+
 export class LastRecallStore {
   private readonly statePath: string;
   private readonly impressionsPath: string;
@@ -144,6 +182,80 @@ export class LastRecallStore {
       await appendFile(this.impressionsPath, JSON.stringify(snapshot) + "\n", "utf-8");
     } catch (err) {
       log.debug(`recall impressions append failed: ${err}`);
+    }
+  }
+}
+
+export class TierMigrationStatusStore {
+  private readonly statePath: string;
+  private state: TierMigrationStatusSnapshot = structuredClone(DEFAULT_TIER_MIGRATION_STATUS);
+
+  constructor(memoryDir: string) {
+    this.statePath = path.join(memoryDir, "state", "tier-migration-status.json");
+  }
+
+  async load(): Promise<void> {
+    try {
+      const raw = await readFile(this.statePath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<TierMigrationStatusSnapshot> | null;
+      if (!parsed || typeof parsed !== "object") {
+        this.state = structuredClone(DEFAULT_TIER_MIGRATION_STATUS);
+        return;
+      }
+      const totals = parsed.totals && typeof parsed.totals === "object"
+        ? parsed.totals
+        : DEFAULT_TIER_MIGRATION_STATUS.totals;
+      this.state = {
+        updatedAt:
+          typeof parsed.updatedAt === "string" && parsed.updatedAt.length > 0
+            ? parsed.updatedAt
+            : DEFAULT_TIER_MIGRATION_STATUS.updatedAt,
+        lastCycle:
+          parsed.lastCycle && typeof parsed.lastCycle === "object"
+            ? (parsed.lastCycle as TierMigrationCycleSummary)
+            : null,
+        totals: {
+          cycles: typeof totals.cycles === "number" && Number.isFinite(totals.cycles) ? totals.cycles : 0,
+          scanned: typeof totals.scanned === "number" && Number.isFinite(totals.scanned) ? totals.scanned : 0,
+          migrated: typeof totals.migrated === "number" && Number.isFinite(totals.migrated) ? totals.migrated : 0,
+          promoted: typeof totals.promoted === "number" && Number.isFinite(totals.promoted) ? totals.promoted : 0,
+          demoted: typeof totals.demoted === "number" && Number.isFinite(totals.demoted) ? totals.demoted : 0,
+          errors: typeof totals.errors === "number" && Number.isFinite(totals.errors) ? totals.errors : 0,
+        },
+      };
+    } catch {
+      this.state = structuredClone(DEFAULT_TIER_MIGRATION_STATUS);
+    }
+  }
+
+  get(): TierMigrationStatusSnapshot {
+    return {
+      updatedAt: this.state.updatedAt,
+      lastCycle: this.state.lastCycle ? { ...this.state.lastCycle } : null,
+      totals: { ...this.state.totals },
+    };
+  }
+
+  async recordCycle(summary: TierMigrationCycleSummary): Promise<void> {
+    const now = new Date().toISOString();
+    const next: TierMigrationStatusSnapshot = {
+      updatedAt: now,
+      lastCycle: { ...summary },
+      totals: {
+        cycles: this.state.totals.cycles + 1,
+        scanned: this.state.totals.scanned + Math.max(0, summary.scanned),
+        migrated: this.state.totals.migrated + Math.max(0, summary.migrated),
+        promoted: this.state.totals.promoted + Math.max(0, summary.promoted),
+        demoted: this.state.totals.demoted + Math.max(0, summary.demoted),
+        errors: this.state.totals.errors + Math.max(0, summary.errorCount ?? 0),
+      },
+    };
+    this.state = next;
+    try {
+      await mkdir(path.dirname(this.statePath), { recursive: true });
+      await writeFile(this.statePath, JSON.stringify(next, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`tier migration status write failed: ${err}`);
     }
   }
 }
