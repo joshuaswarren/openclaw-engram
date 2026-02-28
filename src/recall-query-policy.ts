@@ -2,6 +2,8 @@ export type RecallPromptShape = "standard" | "instruction_heavy";
 export type CronConversationRecallMode = "auto" | "always" | "never";
 export type RecallBudgetMode = "full" | "minimal";
 
+export const RECALL_QUERY_POLICY_TUNABLE_PARAMETERS = ["cronRecallInstructionHeavyTokenCap"] as const;
+
 export interface RecallQueryPolicyConfig {
   cronRecallPolicyEnabled: boolean;
   cronRecallNormalizedQueryMaxChars: number;
@@ -168,6 +170,11 @@ function buildInstructionHeavyQuery(
   return compact.slice(0, maxChars).trim();
 }
 
+export function clampInstructionHeavyTokenCap(value: number): number {
+  if (!Number.isFinite(value)) return 8;
+  return Math.max(8, Math.floor(value));
+}
+
 function buildStandardQuery(prompt: string, maxChars: number): string {
   const trimmed = collapseWhitespace(prompt);
   if (trimmed.length <= maxChars) return trimmed;
@@ -192,7 +199,7 @@ export function buildRecallQueryPolicy(
 
   const promptShape = classifyRecallPromptShape(prompt);
   const maxChars = Math.max(120, cfg.cronRecallNormalizedQueryMaxChars);
-  const tokenCap = Math.max(8, cfg.cronRecallInstructionHeavyTokenCap);
+  const tokenCap = clampInstructionHeavyTokenCap(cfg.cronRecallInstructionHeavyTokenCap);
   const retrievalQuery =
     promptShape === "instruction_heavy"
       ? buildInstructionHeavyQuery(prompt, tokenCap, maxChars)

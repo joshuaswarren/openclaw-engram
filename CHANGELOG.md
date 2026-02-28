@@ -38,6 +38,11 @@ All notable changes to this project will be documented in this file.
   - Added append-only behavior signal ledger support in storage (`state/behavior-signals.jsonl`) with fail-open reads and persisted dedupe by `memoryId+signalHash`.
   - Wired extraction persistence to emit namespace-safe correction/preference behavior signals per target storage namespace.
   - Added `tests/behavior-signals.test.ts` and expanded `tests/storage-policy-state.test.ts` for signal generation, timestamp/namespace safety, and dedupe invariants.
+- v8.15 behavior-loop Task 3 (bounded policy learner):
+  - Added `src/behavior-learner.ts` with deterministic, bounded policy adjustment proposals over behavior-signal windows.
+  - Added strict tunable-parameter allowlist and protected-parameter enforcement to prevent mutation of guarded config contracts.
+  - Added clamp helpers in lifecycle/recall query policy modules for learner-consistent threshold/token-cap bounds.
+  - Added `tests/behavior-learner.test.ts` coverage for tunable-only updates, protected-parameter immutability, min-signal gating, and max-delta enforcement.
 - v8.8 network sync Task 1 (WebDAV module):
   - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
   - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.
