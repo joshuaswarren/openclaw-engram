@@ -858,7 +858,7 @@ export class QmdClient {
       const result = await this.daemonSession.callTool(
         "search",
         { query, limit: maxResults, collection },
-        QMD_TIMEOUT_MS,
+        QMD_DAEMON_TIMEOUT_MS,
       );
       const durationMs = Date.now() - startedAtMs;
       const results = parseMcpSearchResult(result);
