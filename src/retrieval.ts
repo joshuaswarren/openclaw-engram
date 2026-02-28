@@ -1,6 +1,12 @@
+import { clamp01 } from "./lifecycle.js";
+
 export interface QueryExpansionOptions {
   maxQueries: number;
   minTokenLen: number;
+}
+
+export interface RuntimeRetrievalPolicy {
+  recencyWeight?: number;
 }
 
 const DEFAULT_STOPWORDS = new Set([
@@ -40,6 +46,17 @@ function tokenize(query: string, minTokenLen: number): string[] {
     .map((t) => t.trim())
     .filter((t) => t.length >= minTokenLen)
     .filter((t) => !DEFAULT_STOPWORDS.has(t));
+}
+
+export function applyRuntimeRetrievalPolicy(
+  base: { recencyWeight: number },
+  runtime: RuntimeRetrievalPolicy | null,
+): { recencyWeight: number } {
+  const fromRuntime = runtime?.recencyWeight;
+  if (typeof fromRuntime !== "number") {
+    return { recencyWeight: clamp01(base.recencyWeight) };
+  }
+  return { recencyWeight: clamp01(fromRuntime) };
 }
 
 /**

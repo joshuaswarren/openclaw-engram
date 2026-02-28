@@ -14,7 +14,7 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
-import { expandQuery } from "./retrieval.js";
+import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
@@ -91,12 +91,14 @@ import { TierMigrationExecutor } from "./tier-migration.js";
 import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
 import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
 import { RoutingRulesStore } from "./routing/store.js";
+import { PolicyRuntimeManager, type RuntimePolicyValues } from "./policy-runtime.js";
 import {
   buildBehaviorSignalsForMemory,
   dedupeBehaviorSignalsByMemoryAndHash,
 } from "./behavior-signals.js";
 import type {
   AccessTrackingEntry,
+  BehaviorLoopPolicyState,
   BehaviorSignalEvent,
   BootstrapOptions,
   BootstrapResult,
@@ -604,6 +606,8 @@ export class Orchestrator {
   private lastRecallFailureLogAtMs = 0;
   private lastRecallFailureAtMs = 0;
   private suppressedRecallFailures = 0;
+  private readonly policyRuntime: PolicyRuntimeManager;
+  private runtimePolicyValues: RuntimePolicyValues | null = null;
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -672,6 +676,7 @@ export class Orchestrator {
       bands: config.sessionObserverBands ?? [],
     });
     this.embeddingFallback = new EmbeddingFallback(config);
+    this.policyRuntime = new PolicyRuntimeManager(config.memoryDir, config);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
@@ -709,6 +714,38 @@ export class Orchestrator {
       }));
     }
     return this.boxBuilders.get(dir)!;
+  }
+
+  private effectiveRecencyWeight(): number {
+    return applyRuntimeRetrievalPolicy(
+      { recencyWeight: this.config.recencyWeight },
+      this.runtimePolicyValues,
+    ).recencyWeight;
+  }
+
+  private effectiveCronRecallInstructionHeavyTokenCap(): number {
+    return this.runtimePolicyValues?.cronRecallInstructionHeavyTokenCap ??
+      this.config.cronRecallInstructionHeavyTokenCap;
+  }
+
+  private effectiveLifecycleThresholds(): {
+    promoteHeatThreshold: number;
+    staleDecayThreshold: number;
+    archiveDecayThreshold: number;
+  } {
+    const archiveDecayThreshold = this.config.lifecycleArchiveDecayThreshold;
+    const staleDecayThreshold = Math.min(
+      this.runtimePolicyValues?.lifecycleStaleDecayThreshold ??
+        this.config.lifecycleStaleDecayThreshold,
+      archiveDecayThreshold,
+    );
+    return {
+      promoteHeatThreshold:
+        this.runtimePolicyValues?.lifecyclePromoteHeatThreshold ??
+        this.config.lifecyclePromoteHeatThreshold,
+      staleDecayThreshold,
+      archiveDecayThreshold,
+    };
   }
 
   private routeEngineOptions(): RoutingEngineOptions {
@@ -843,6 +880,7 @@ export class Orchestrator {
     await this.lastRecall.load();
     await this.tierMigrationStatus.load();
     await this.sessionObserver.load();
+    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
 
     // Initialize content-hash dedup index
     if (this.config.factDeduplicationEnabled) {
@@ -936,6 +974,20 @@ export class Orchestrator {
       this.resolveInit();
       this.resolveInit = null;
     }
+  }
+
+  async applyBehaviorRuntimePolicy(
+    state: BehaviorLoopPolicyState,
+  ): Promise<{ applied: boolean; rolledBack: boolean; values: RuntimePolicyValues | null; reason: string }> {
+    const result = await this.policyRuntime.applyFromBehaviorState(state);
+    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    return result;
+  }
+
+  async rollbackBehaviorRuntimePolicy(): Promise<boolean> {
+    const rolledBack = await this.policyRuntime.rollback();
+    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    return rolledBack;
   }
 
   async maybeRunFileHygiene(): Promise<void> {
@@ -1705,7 +1757,7 @@ export class Orchestrator {
     const queryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
       cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
       cronRecallNormalizedQueryMaxChars: this.config.cronRecallNormalizedQueryMaxChars,
-      cronRecallInstructionHeavyTokenCap: this.config.cronRecallInstructionHeavyTokenCap,
+      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
       cronConversationRecallMode: this.config.cronConversationRecallMode,
     });
     const retrievalQuery = queryPolicy.retrievalQuery || prompt;
@@ -4352,10 +4404,11 @@ export class Orchestrator {
     let disputedCount = 0;
     let evaluatedCount = 0;
 
+    const thresholds = this.effectiveLifecycleThresholds();
     const policy = {
-      promoteHeatThreshold: this.config.lifecyclePromoteHeatThreshold,
-      staleDecayThreshold: this.config.lifecycleStaleDecayThreshold,
-      archiveDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+      promoteHeatThreshold: thresholds.promoteHeatThreshold,
+      staleDecayThreshold: thresholds.staleDecayThreshold,
+      archiveDecayThreshold: thresholds.archiveDecayThreshold,
       protectedCategories: this.config.lifecycleProtectedCategories,
     };
     const actionPriors = await this.buildLifecycleActionPriors();
@@ -4420,9 +4473,9 @@ export class Orchestrator {
       staleRatio: total > 0 ? countsByState.stale / total : 0,
       disputedRatio: total > 0 ? disputedCount / total : 0,
       policy: {
-        promoteHeatThreshold: this.config.lifecyclePromoteHeatThreshold,
-        staleDecayThreshold: this.config.lifecycleStaleDecayThreshold,
-        archiveDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+        promoteHeatThreshold: thresholds.promoteHeatThreshold,
+        staleDecayThreshold: thresholds.staleDecayThreshold,
+        archiveDecayThreshold: thresholds.archiveDecayThreshold,
         protectedCategories: this.config.lifecycleProtectedCategories,
       },
     };
@@ -5134,6 +5187,7 @@ export class Orchestrator {
 
     let lifecycleFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
+    const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
       const memory = memoryByPath.get(r.path);
       let score = r.score;
@@ -5151,15 +5205,15 @@ export class Orchestrator {
         }
 
         // Recency boost: exponential decay over 7 days
-        if (this.config.recencyWeight > 0) {
+        if (recencyWeight > 0) {
           const createdAt = new Date(memory.frontmatter.created).getTime();
           const ageMs = now - createdAt;
           const ageDays = ageMs / (1000 * 60 * 60 * 24);
           const halfLifeDays = 7;
           const recencyScore = Math.pow(0.5, ageDays / halfLifeDays);
           score =
-            score * (1 - this.config.recencyWeight) +
-            recencyScore * this.config.recencyWeight;
+            score * (1 - recencyWeight) +
+            recencyScore * recencyWeight;
         }
 
         // Access count boost: log scale, capped
