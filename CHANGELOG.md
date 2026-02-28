@@ -43,6 +43,11 @@ All notable changes to this project will be documented in this file.
   - Added strict tunable-parameter allowlist and protected-parameter enforcement to prevent mutation of guarded config contracts.
   - Added clamp helpers in lifecycle/recall query policy modules for learner-consistent threshold/token-cap bounds.
   - Added `tests/behavior-learner.test.ts` coverage for tunable-only updates, protected-parameter immutability, min-signal gating, and max-delta enforcement.
+- v8.15 behavior-loop Task 4 (runtime application + rollback):
+  - Added `src/policy-runtime.ts` with atomic runtime snapshot files (`state/policy-runtime.json`, `state/policy-runtime.prev.json`).
+  - Added guarded runtime application path with invalid-adjustment rollback and protected-parameter enforcement.
+  - Wired orchestrator retrieval/lifecycle consumers to load and apply runtime policy overrides fail-open.
+  - Added `tests/policy-runtime-application.test.ts` coverage for runtime apply/load, recall-mode contract safety, and rollback restoration on invalid updates.
 - v8.8 network sync Task 1 (WebDAV module):
   - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
   - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.

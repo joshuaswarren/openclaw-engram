@@ -3,6 +3,10 @@ export interface QueryExpansionOptions {
   minTokenLen: number;
 }
 
+export interface RuntimeRetrievalPolicy {
+  recencyWeight?: number;
+}
+
 const DEFAULT_STOPWORDS = new Set([
   "a",
   "an",
@@ -40,6 +44,24 @@ function tokenize(query: string, minTokenLen: number): string[] {
     .map((t) => t.trim())
     .filter((t) => t.length >= minTokenLen)
     .filter((t) => !DEFAULT_STOPWORDS.has(t));
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+export function applyRuntimeRetrievalPolicy(
+  base: { recencyWeight: number },
+  runtime: RuntimeRetrievalPolicy | null,
+): { recencyWeight: number } {
+  const fromRuntime = runtime?.recencyWeight;
+  if (typeof fromRuntime !== "number") {
+    return { recencyWeight: clamp01(base.recencyWeight) };
+  }
+  return { recencyWeight: clamp01(fromRuntime) };
 }
 
 /**
