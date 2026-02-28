@@ -865,7 +865,13 @@ export class QmdClient {
       log.debug(`QMD daemon bm25: ${results.length} results in ${durationMs}ms`);
       return results;
     } catch (err) {
-      log.debug(`QMD daemon bm25 failed: ${err}`);
+      const durationMs = Date.now() - startedAtMs;
+      const errMsg = String(err);
+      if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
+        log.debug(`QMD daemon bm25 timed out after ${durationMs}ms, falling back to subprocess`);
+        return null;
+      }
+      log.debug(`QMD daemon bm25 failed after ${durationMs}ms: ${err}`);
       this.daemonSession.invalidate();
       this.daemonAvailable = false;
       return null;
