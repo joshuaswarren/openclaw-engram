@@ -177,6 +177,7 @@ class QmdDaemonSession {
   private child: ChildProcess | null = null;
   private initialized = false;
   private buffer = "";
+  private startPromise: Promise<boolean> | null = null;
   private pendingRequests = new Map<
     number,
     {
@@ -196,51 +197,67 @@ class QmdDaemonSession {
     if (this.child && !this.child.killed && this.initialized) {
       return true;
     }
-    if (this.child) {
-      this.cleanup();
+    if (this.startPromise) {
+      return this.startPromise;
     }
-    try {
-      this.child = spawn(this.qmdPath, ["mcp"], {
-        env: { ...process.env, NO_COLOR: "1" },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      this.buffer = "";
+    this.startPromise = (async () => {
+      if (this.child) {
+        this.cleanup({ killChild: true });
+      }
+      try {
+        const child = spawn(this.qmdPath, ["mcp"], {
+          env: { ...process.env, NO_COLOR: "1" },
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        this.child = child;
+        this.buffer = "";
 
-      this.child.stdout?.on("data", (data: Buffer) => {
-        this.handleStdoutData(data);
-      });
-      this.child.stderr?.on("data", (data: Buffer) => {
-        const msg = data.toString().trim();
-        if (msg) log.debug(`QMD mcp stderr: ${stripControlChars(msg)}`);
-      });
-      this.child.on("error", (err) => {
-        log.debug(`QMD mcp process error: ${err.message}`);
-        this.cleanup();
-      });
-      this.child.on("close", (code) => {
-        log.debug(`QMD mcp process exited (code ${code})`);
-        this.cleanup();
-      });
+        child.stdout?.on("data", (data: Buffer) => {
+          if (this.child !== child) return;
+          this.handleStdoutData(data);
+        });
+        child.stderr?.on("data", (data: Buffer) => {
+          if (this.child !== child) return;
+          const msg = data.toString().trim();
+          if (msg) log.debug(`QMD mcp stderr: ${stripControlChars(msg)}`);
+        });
+        child.on("error", (err) => {
+          if (this.child !== child) return;
+          log.debug(`QMD mcp process error: ${err.message}`);
+          this.cleanup({ child });
+        });
+        child.on("close", (code) => {
+          if (this.child !== child) return;
+          log.debug(`QMD mcp process exited (code ${code})`);
+          this.cleanup({ child });
+        });
 
-      const result = await this.sendRequest(
-        "initialize",
-        {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "openclaw-engram", version: "1.0.0" },
-        },
-        15_000,
-      );
-      if (!result) return false;
-      this.sendNotification("notifications/initialized");
-      this.initialized = true;
-      log.debug("QMD mcp: stdio session initialized");
-      return true;
-    } catch (err) {
-      log.debug(`QMD mcp: failed to start stdio session: ${err}`);
-      this.cleanup();
-      return false;
-    }
+        const result = await this.sendRequest(
+          "initialize",
+          {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: { name: "openclaw-engram", version: "1.0.0" },
+          },
+          15_000,
+        );
+        if (!result) {
+          this.cleanup({ killChild: true, child });
+          return false;
+        }
+        this.sendNotification("notifications/initialized");
+        this.initialized = true;
+        log.debug("QMD mcp: stdio session initialized");
+        return true;
+      } catch (err) {
+        log.debug(`QMD mcp: failed to start stdio session: ${err}`);
+        this.cleanup({ killChild: true });
+        return false;
+      } finally {
+        this.startPromise = null;
+      }
+    })();
+    return this.startPromise;
   }
 
   /** Call an MCP tool and return the parsed result. */
@@ -257,10 +274,7 @@ class QmdDaemonSession {
 
   /** Kill stdio process and clear state so the next probe can restart. */
   invalidate(): void {
-    if (this.child && !this.child.killed) {
-      this.child.kill("SIGTERM");
-    }
-    this.cleanup();
+    this.cleanup({ killChild: true });
   }
 
   isActive(): boolean {
@@ -338,13 +352,22 @@ class QmdDaemonSession {
     }
   }
 
-  private cleanup(): void {
+  private cleanup(opts?: { killChild?: boolean; child?: ChildProcess | null }): void {
+    const target = opts?.child ?? this.child;
+    if (!target) return;
+    if (opts?.child && this.child !== opts.child) {
+      return;
+    }
+    if (opts?.killChild && !target.killed) {
+      target.kill("SIGTERM");
+    }
     this.initialized = false;
     for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
       pending.reject(new Error("QMD mcp process terminated"));
     }
     this.pendingRequests.clear();
+    this.startPromise = null;
     this.child = null;
     this.buffer = "";
   }
@@ -555,8 +578,8 @@ export class QmdClient {
   /** Re-probe daemon if it was down and recheck interval has elapsed. */
   private async maybeProbeDaemon(): Promise<void> {
     if (!this.daemonEnabled) return;
-    // If still active, nothing to do.
-    if (this.daemonSession?.isActive()) return;
+    // If daemon is marked healthy and session is active, nothing to do.
+    if (this.daemonAvailable && this.daemonSession?.isActive()) return;
     // If recently checked and failed, respect the recheck interval.
     if (this.daemonAvailable === false) {
       const elapsed = Date.now() - this.lastDaemonCheckAtMs;
@@ -817,6 +840,7 @@ export class QmdClient {
       }
       // Connection error: mark unavailable, maybeProbeDaemon() will restart.
       log.debug(`QMD daemon search failed after ${durationMs}ms: ${err}`);
+      this.daemonSession.invalidate();
       this.daemonAvailable = false;
       return null;
     }
@@ -842,6 +866,8 @@ export class QmdClient {
       return results;
     } catch (err) {
       log.debug(`QMD daemon bm25 failed: ${err}`);
+      this.daemonSession.invalidate();
+      this.daemonAvailable = false;
       return null;
     }
   }
@@ -871,6 +897,7 @@ export class QmdClient {
         return null;
       }
       log.debug(`QMD daemon vsearch failed: ${err}`);
+      this.daemonSession.invalidate();
       this.daemonAvailable = false;
       return null;
     }
