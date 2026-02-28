@@ -35,12 +35,23 @@ test("policy runtime applies and loads bounded values", async () => {
           reason: "test",
           appliedAt: "2026-02-28T00:00:00.000Z",
         },
+        {
+          parameter: "lifecycleStaleDecayThreshold",
+          previousValue: 0.65,
+          nextValue: 0.99,
+          delta: 0.34,
+          evidenceCount: 20,
+          confidence: 0.7,
+          reason: "test",
+          appliedAt: "2026-02-28T00:00:00.000Z",
+        },
       ],
     });
 
     assert.equal(result.applied, true);
     const loaded = await runtime.loadRuntimeValues();
     assert.equal(loaded?.recencyWeight, 0.35);
+    assert.equal(loaded?.lifecycleStaleDecayThreshold, cfg.lifecycleArchiveDecayThreshold);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

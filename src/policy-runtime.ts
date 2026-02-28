@@ -22,7 +22,10 @@ const RUNTIME_POLICY_VERSION = 1;
 const RUNTIME_POLICY_FILE = "policy-runtime.json";
 const RUNTIME_POLICY_PREV_FILE = "policy-runtime.prev.json";
 
-function sanitizeRuntimePolicyValues(values: RuntimePolicyValues): RuntimePolicyValues {
+function sanitizeRuntimePolicyValues(
+  values: RuntimePolicyValues,
+  options?: { maxStaleDecayThreshold?: number },
+): RuntimePolicyValues {
   const out: RuntimePolicyValues = {};
   if (typeof values.recencyWeight === "number") {
     out.recencyWeight = clamp01(values.recencyWeight);
@@ -31,7 +34,11 @@ function sanitizeRuntimePolicyValues(values: RuntimePolicyValues): RuntimePolicy
     out.lifecyclePromoteHeatThreshold = clampLifecycleThreshold(values.lifecyclePromoteHeatThreshold);
   }
   if (typeof values.lifecycleStaleDecayThreshold === "number") {
-    out.lifecycleStaleDecayThreshold = clampLifecycleThreshold(values.lifecycleStaleDecayThreshold);
+    const staleDecayThreshold = clampLifecycleThreshold(values.lifecycleStaleDecayThreshold);
+    const maxStaleDecayThreshold = typeof options?.maxStaleDecayThreshold === "number"
+      ? clampLifecycleThreshold(options.maxStaleDecayThreshold)
+      : 1;
+    out.lifecycleStaleDecayThreshold = Math.min(staleDecayThreshold, maxStaleDecayThreshold);
   }
   if (typeof values.cronRecallInstructionHeavyTokenCap === "number") {
     out.cronRecallInstructionHeavyTokenCap = clampInstructionHeavyTokenCap(
@@ -100,7 +107,9 @@ export class PolicyRuntimeManager {
   async loadRuntimeValues(): Promise<RuntimePolicyValues | null> {
     const snapshot = await readSnapshot(this.runtimePath);
     if (!snapshot) return null;
-    return snapshot.values;
+    return sanitizeRuntimePolicyValues(snapshot.values, {
+      maxStaleDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+    });
   }
 
   async rollback(): Promise<boolean> {
@@ -173,7 +182,9 @@ export class PolicyRuntimeManager {
       candidate[adjustment.parameter] = adjustment.nextValue;
     }
 
-    const sanitized = sanitizeRuntimePolicyValues(candidate);
+    const sanitized = sanitizeRuntimePolicyValues(candidate, {
+      maxStaleDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+    });
     if (existing) {
       await writeSnapshotAtomic(this.runtimePrevPath, existing);
     }

@@ -733,14 +733,18 @@ export class Orchestrator {
     staleDecayThreshold: number;
     archiveDecayThreshold: number;
   } {
+    const archiveDecayThreshold = this.config.lifecycleArchiveDecayThreshold;
+    const staleDecayThreshold = Math.min(
+      this.runtimePolicyValues?.lifecycleStaleDecayThreshold ??
+        this.config.lifecycleStaleDecayThreshold,
+      archiveDecayThreshold,
+    );
     return {
       promoteHeatThreshold:
         this.runtimePolicyValues?.lifecyclePromoteHeatThreshold ??
         this.config.lifecyclePromoteHeatThreshold,
-      staleDecayThreshold:
-        this.runtimePolicyValues?.lifecycleStaleDecayThreshold ??
-        this.config.lifecycleStaleDecayThreshold,
-      archiveDecayThreshold: this.config.lifecycleArchiveDecayThreshold,
+      staleDecayThreshold,
+      archiveDecayThreshold,
     };
   }
 
