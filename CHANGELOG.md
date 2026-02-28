@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.16 Task 2 (deterministic shared cross-signals):
+  - Added deterministic cross-signal generation in shared-context daily curation from agent outputs plus feedback decision aggregates.
+  - Added persisted daily report artifact at `shared-context/cross-signals/<YYYY-MM-DD>.json`.
+  - Added roundtable `Cross-Signals` summary section with overlap highlights and generated artifact path.
+  - Updated `shared_context_curate_daily` tool response to return both roundtable and cross-signal artifact paths.
+  - Added `tests/shared-context-cross-signals.test.ts` for empty-day, single-source, and multi-source overlap coverage.
 - v8.16 Task 1 (migration CLI command group):
   - Added `openclaw engram migrate` subcommands: `normalize-frontmatter`, `rescore-importance`, `rechunk`, and `reextract --model <id>` (dry-run by default).
   - Added bounded migration wrappers in `src/cli.ts` with hard caps and explicit `--write` semantics.

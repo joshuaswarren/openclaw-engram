@@ -29,6 +29,99 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+const CROSS_SIGNAL_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "this",
+  "to",
+  "was",
+  "were",
+  "with",
+  "agent",
+  "output",
+  "today",
+  "daily",
+  "notes",
+  "note",
+  "summary",
+]);
+
+function extractTopicTokens(text: string, maxTokens: number = 12): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4)
+    .filter((token) => !CROSS_SIGNAL_STOPWORDS.has(token));
+
+  for (const token of tokens) {
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+    if (out.length >= maxTokens) break;
+  }
+  return out;
+}
+
+function stripYamlFrontmatter(text: string): string {
+  if (!text.startsWith("---\n")) return text;
+  const closing = text.indexOf("\n---\n", 4);
+  if (closing === -1) return text;
+  return text.slice(closing + 5);
+}
+
+interface SharedCrossSignalSource {
+  agent: string;
+  path: string;
+  title: string;
+  topics: string[];
+}
+
+interface SharedCrossSignalOverlap {
+  token: string;
+  agents: string[];
+  sourcePaths: string[];
+  agentCount: number;
+}
+
+interface SharedCrossSignalReport {
+  date: string;
+  generatedAt: string;
+  sourceCount: number;
+  feedbackCount: number;
+  feedbackByDecision: Record<"approved" | "approved_with_feedback" | "rejected", number>;
+  sources: SharedCrossSignalSource[];
+  overlaps: SharedCrossSignalOverlap[];
+}
+
+export interface SharedDailyCurationResult {
+  date: string;
+  roundtablePath: string;
+  crossSignalsPath: string;
+  overlapCount: number;
+}
+
 export class SharedContextManager {
   readonly dir: string;
   private readonly prioritiesPath: string;
@@ -170,12 +263,12 @@ export class SharedContextManager {
     await appendFile(this.prioritiesInboxPath, lines, "utf-8");
   }
 
-  async curateDaily(opts: { date?: string; maxChars?: number }): Promise<string> {
+  async curateDaily(opts: { date?: string; maxChars?: number }): Promise<SharedDailyCurationResult> {
     const date = opts.date ?? ymd(new Date());
     const maxChars = Math.max(2_000, opts.maxChars ?? 20_000);
 
     // Collect outputs for the day (best-effort).
-    const outputs: Array<{ path: string; title: string }> = [];
+    const outputs: Array<{ agent: string; path: string; title: string; raw: string }> = [];
     try {
       const agents = await readdir(this.outputsDir, { withFileTypes: true });
       for (const a of agents) {
@@ -187,7 +280,7 @@ export class SharedContextManager {
             const p = path.join(dayDir, f);
             const raw = await readFile(p, "utf-8");
             const title = (raw.match(/^title:\s*(.+)$/m)?.[1] ?? f).trim();
-            outputs.push({ path: p, title });
+            outputs.push({ agent: a.name, path: p, title, raw });
           }
         } catch {
           // no outputs for this agent/date
@@ -216,11 +309,72 @@ export class SharedContextManager {
       // ignore
     }
 
+    const sources: SharedCrossSignalSource[] = outputs.map((output) => {
+      const body = stripYamlFrontmatter(output.raw);
+      return {
+        agent: output.agent,
+        path: output.path,
+        title: output.title,
+        topics: extractTopicTokens(`${output.title}\n${body}`),
+      };
+    });
+
+    const overlapMap = new Map<string, { agents: Set<string>; sourcePaths: Set<string> }>();
+    for (const source of sources) {
+      for (const token of source.topics) {
+        const existing = overlapMap.get(token);
+        if (existing) {
+          existing.agents.add(source.agent);
+          existing.sourcePaths.add(source.path);
+        } else {
+          overlapMap.set(token, {
+            agents: new Set([source.agent]),
+            sourcePaths: new Set([source.path]),
+          });
+        }
+      }
+    }
+
+    const overlaps: SharedCrossSignalOverlap[] = [...overlapMap.entries()]
+      .map(([token, v]) => ({
+        token,
+        agents: [...v.agents].sort(),
+        sourcePaths: [...v.sourcePaths].sort(),
+        agentCount: v.agents.size,
+      }))
+      .filter((entry) => entry.agentCount >= 2)
+      .sort((a, b) => b.agentCount - a.agentCount || a.token.localeCompare(b.token));
+
+    const feedbackByDecision: SharedCrossSignalReport["feedbackByDecision"] = {
+      approved: 0,
+      approved_with_feedback: 0,
+      rejected: 0,
+    };
+    for (const entry of feedback) {
+      feedbackByDecision[entry.decision] += 1;
+    }
+
+    const crossSignalReport: SharedCrossSignalReport = {
+      date,
+      generatedAt: new Date().toISOString(),
+      sourceCount: sources.length,
+      feedbackCount: feedback.length,
+      feedbackByDecision,
+      sources,
+      overlaps,
+    };
+    const crossSignalsPath = path.join(this.crossSignalsDir, `${date}.json`);
+    await writeFile(crossSignalsPath, `${JSON.stringify(crossSignalReport, null, 2)}\n`, "utf-8");
+
+    const overlapBullets = overlaps.length === 0
+      ? ["- No multi-agent topic overlap detected."]
+      : overlaps.slice(0, 8).map((entry) => `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")})`);
+
     const md: string[] = [
       `# Roundtable — ${date}`,
       "",
       "## Notable Agent Outputs",
-      ...(outputs.length === 0 ? ["- (none)"] : outputs.map((o) => `- ${o.title} (${o.path})`)),
+      ...(sources.length === 0 ? ["- (none)"] : sources.map((o) => `- ${o.title} (${o.path})`)),
       "",
       "## Feedback (Approve/Reject)",
       ...(feedback.length === 0
@@ -228,18 +382,26 @@ export class SharedContextManager {
         : feedback.map((f) => `- [${f.agent}] ${f.decision}: ${f.reason}`)),
       "",
       "## Cross-Signals",
-      "- (baseline) not computed in deterministic mode",
+      `- Source outputs analyzed: ${sources.length}`,
+      `- Feedback entries analyzed: ${feedback.length}`,
+      `- Decision totals: approved=${feedbackByDecision.approved}, approved_with_feedback=${feedbackByDecision.approved_with_feedback}, rejected=${feedbackByDecision.rejected}`,
+      `- Cross-signals file: ${crossSignalsPath}`,
+      ...overlapBullets,
       "",
     ];
 
     const out = md.join("\n");
     const trimmed = out.length > maxChars ? out.slice(0, maxChars) + "\n\n...(trimmed)\n" : out;
 
-    const fp = path.join(this.roundtableDir, `${date}.md`);
-    await writeFile(fp, trimmed, "utf-8");
+    const roundtablePath = path.join(this.roundtableDir, `${date}.md`);
+    await writeFile(roundtablePath, trimmed, "utf-8");
 
-    log.info(`shared-context curated daily roundtable: ${fp}`);
-    return fp;
+    log.info(`shared-context curated daily roundtable: ${roundtablePath}`);
+    return {
+      date,
+      roundtablePath,
+      crossSignalsPath,
+      overlapCount: overlaps.length,
+    };
   }
 }
-

@@ -1954,8 +1954,14 @@ Best for:
           );
         }
         const { date } = params as { date?: string };
-        const fp = await orchestrator.sharedContext.curateDaily({ date });
-        return toolResult(`Wrote: ${fp}`);
+        const result = await orchestrator.sharedContext.curateDaily({ date });
+        return toolResult(
+          [
+            `Roundtable: ${result.roundtablePath}`,
+            `Cross-signals: ${result.crossSignalsPath}`,
+            `Overlap count: ${result.overlapCount}`,
+          ].join("\n"),
+        );
       },
     },
     { name: "shared_context_curate_daily" },
