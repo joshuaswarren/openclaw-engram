@@ -723,6 +723,11 @@ export class Orchestrator {
     ).recencyWeight;
   }
 
+  private effectiveCronRecallInstructionHeavyTokenCap(): number {
+    return this.runtimePolicyValues?.cronRecallInstructionHeavyTokenCap ??
+      this.config.cronRecallInstructionHeavyTokenCap;
+  }
+
   private effectiveLifecycleThresholds(): {
     promoteHeatThreshold: number;
     staleDecayThreshold: number;
@@ -1748,7 +1753,7 @@ export class Orchestrator {
     const queryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
       cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
       cronRecallNormalizedQueryMaxChars: this.config.cronRecallNormalizedQueryMaxChars,
-      cronRecallInstructionHeavyTokenCap: this.config.cronRecallInstructionHeavyTokenCap,
+      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
       cronConversationRecallMode: this.config.cronConversationRecallMode,
     });
     const retrievalQuery = queryPolicy.retrievalQuery || prompt;
@@ -5178,6 +5183,7 @@ export class Orchestrator {
 
     let lifecycleFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
+    const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
       const memory = memoryByPath.get(r.path);
       let score = r.score;
@@ -5195,7 +5201,6 @@ export class Orchestrator {
         }
 
         // Recency boost: exponential decay over 7 days
-        const recencyWeight = this.effectiveRecencyWeight();
         if (recencyWeight > 0) {
           const createdAt = new Date(memory.frontmatter.created).getTime();
           const ageMs = now - createdAt;

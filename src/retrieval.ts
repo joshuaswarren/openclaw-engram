@@ -1,3 +1,5 @@
+import { clamp01 } from "./lifecycle.js";
+
 export interface QueryExpansionOptions {
   maxQueries: number;
   minTokenLen: number;
@@ -44,13 +46,6 @@ function tokenize(query: string, minTokenLen: number): string[] {
     .map((t) => t.trim())
     .filter((t) => t.length >= minTokenLen)
     .filter((t) => !DEFAULT_STOPWORDS.has(t));
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
 }
 
 export function applyRuntimeRetrievalPolicy(
