@@ -104,3 +104,37 @@ test("tier migration cycle is bounded per maintenance pass", async () => {
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("tier migration extraction scan prioritizes oldest hot memories for demotion", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-oldest-first-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-oldest-first-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(buildConfig(memoryDir, workspaceDir, true, true)) as any;
+    orchestrator.qmd = {
+      updateCollection: async () => {},
+      embedCollection: async () => {},
+    };
+    const storage = orchestrator.storage;
+
+    const ids: string[] = [];
+    for (let i = 0; i < 60; i += 1) {
+      ids.push(await storage.writeMemory("fact", `memory-${i}`, { source: "test" }));
+    }
+
+    const oldIds = ids.slice(0, 12);
+    for (const id of oldIds) {
+      await storage.updateMemoryFrontmatter(id, {
+        updated: "2001-01-01T00:00:00.000Z",
+      });
+    }
+
+    await orchestrator.runTierMigrationCycle(storage, "extraction");
+
+    const cold = await new StorageManager(path.join(storage.dir, "cold")).readAllMemories();
+    const movedIds = new Set(cold.map((m) => m.frontmatter.id));
+    assert.equal(oldIds.some((id) => movedIds.has(id)), true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});

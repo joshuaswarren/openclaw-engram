@@ -80,7 +80,10 @@ import {
   resolvePrincipal,
 } from "./namespaces/principal.js";
 import { SharedContextManager } from "./shared-context/manager.js";
-import { CompoundingEngine } from "./compounding/engine.js";
+import {
+  CompoundingEngine,
+  defaultTierMigrationCycleBudget,
+} from "./compounding/engine.js";
 import { TierMigrationExecutor } from "./tier-migration.js";
 import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
 import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
@@ -2866,15 +2869,8 @@ export class Orchestrator {
     if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled) return;
     if (this.tierMigrationInFlight) return;
 
-    const fallbackBudget =
-      trigger === "extraction"
-        ? { limit: 12, scanLimit: 48, minIntervalMs: 60_000 }
-        : {
-            limit: this.config.qmdTierAutoBackfillEnabled ? 200 : 50,
-            scanLimit: this.config.qmdTierAutoBackfillEnabled ? 800 : 200,
-            minIntervalMs: this.config.qmdTierAutoBackfillEnabled ? 120_000 : 300_000,
-          };
-    const budget = this.compounding?.tierMigrationCycleBudget(trigger) ?? fallbackBudget;
+    const budget = this.compounding?.tierMigrationCycleBudget(trigger)
+      ?? defaultTierMigrationCycleBudget(this.config, trigger);
     const nowMs = Date.now();
     if (nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs) return;
 
@@ -2893,16 +2889,20 @@ export class Orchestrator {
         coldStorage.readAllMemories(),
       ]);
       const now = new Date();
-      const candidates = [
-        ...hotMemories.map((memory) => ({ memory, tier: "hot" as MemoryTier })),
-        ...coldMemories.map((memory) => ({ memory, tier: "cold" as MemoryTier })),
-      ]
-        .sort((a, b) => {
-          const aTs = Date.parse(a.memory.frontmatter.updated ?? a.memory.frontmatter.created);
-          const bTs = Date.parse(b.memory.frontmatter.updated ?? b.memory.frontmatter.created);
-          return bTs - aTs;
-        })
-        .slice(0, Math.max(0, Math.floor(budget.scanLimit)));
+      const scanLimit = Math.max(0, Math.floor(budget.scanLimit));
+      const hotScanLimit = Math.min(hotMemories.length, Math.ceil(scanLimit * 0.75));
+      const coldScanLimit = Math.min(coldMemories.length, Math.max(0, scanLimit - hotScanLimit));
+      const toTimestamp = (memory: MemoryFile): number =>
+        Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);
+      const hotCandidates = hotMemories
+        .map((memory) => ({ memory, tier: "hot" as MemoryTier }))
+        .sort((a, b) => toTimestamp(a.memory) - toTimestamp(b.memory))
+        .slice(0, hotScanLimit);
+      const coldCandidates = coldMemories
+        .map((memory) => ({ memory, tier: "cold" as MemoryTier }))
+        .sort((a, b) => toTimestamp(b.memory) - toTimestamp(a.memory))
+        .slice(0, coldScanLimit);
+      const candidates = [...hotCandidates, ...coldCandidates];
 
       const migration = new TierMigrationExecutor({
         storage,
