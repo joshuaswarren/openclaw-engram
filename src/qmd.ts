@@ -24,6 +24,8 @@ type QmdGlobalState = {
   lastGlobalEmbedRunAtMs: number | null;
   lastGlobalEmbedFailAtMs: number | null;
   lastCliWarnAtMs: number | null;
+  lastEmbedByCollectionMs: Record<string, number>;
+  lastEmbedFailByCollectionMs: Record<string, number>;
 };
 
 function getGlobalQmdState(): QmdGlobalState {
@@ -36,6 +38,8 @@ function getGlobalQmdState(): QmdGlobalState {
       lastGlobalEmbedRunAtMs: null,
       lastGlobalEmbedFailAtMs: null,
       lastCliWarnAtMs: null,
+      lastEmbedByCollectionMs: {},
+      lastEmbedFailByCollectionMs: {},
     } satisfies QmdGlobalState;
   }
   return g[QMD_GLOBAL_STATE_KEY] as QmdGlobalState;
@@ -994,9 +998,33 @@ export class QmdClient {
     if (this.available === false) return;
     const name = collection.trim();
     if (!name) return;
+    const globalState = getGlobalQmdState();
+    const now = Date.now();
+    const lastCollectionRun = globalState.lastEmbedByCollectionMs[name];
+    if (
+      Number.isFinite(lastCollectionRun) &&
+      now - lastCollectionRun < this.updateMinIntervalMs
+    ) {
+      log.debug(`QMD embed: suppressed by per-collection min-interval gate (${name})`);
+      return;
+    }
+    const lastCollectionFail = globalState.lastEmbedFailByCollectionMs[name];
+    if (
+      Number.isFinite(lastCollectionFail) &&
+      now - lastCollectionFail < QMD_EMBED_BACKOFF_MS
+    ) {
+      log.debug(`QMD embed: suppressed by per-collection failure backoff (${name})`);
+      return;
+    }
     try {
       await runQmd(["embed", "-c", name], 300_000, this.qmdPath);
+      const at = Date.now();
+      globalState.lastEmbedByCollectionMs[name] = at;
+      globalState.lastGlobalEmbedRunAtMs = at;
     } catch (err) {
+      const at = Date.now();
+      globalState.lastEmbedFailByCollectionMs[name] = at;
+      globalState.lastGlobalEmbedFailAtMs = at;
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD embed failed for collection ${name}: ${msg}`);
     }
