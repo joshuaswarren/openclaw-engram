@@ -1428,8 +1428,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const limitRaw = parseInt(String(options.limit ?? ""), 10);
+          const explicitDryRun = options.dryRun === true;
           const summary = await runTierMigrateCliCommand(orchestrator, {
-            dryRun: options.write !== true,
+            dryRun: explicitDryRun || options.write !== true,
             limit: Number.isFinite(limitRaw) ? Math.max(0, limitRaw) : undefined,
           });
           console.log(JSON.stringify(summary, null, 2));

@@ -2872,7 +2872,7 @@ export class Orchestrator {
 
   private async runTierMigrationCycle(
     storage: StorageManager,
-    trigger: "extraction" | "maintenance",
+    trigger: "extraction" | "maintenance" | "manual",
     options?: {
       dryRun?: boolean;
       limitOverride?: number;
@@ -2880,6 +2880,7 @@ export class Orchestrator {
     },
   ): Promise<TierMigrationCycleSummary> {
     const dryRun = options?.dryRun === true;
+    const persistSkipped = options?.force === true || trigger === "manual";
     if (!this.config.qmdTierMigrationEnabled && options?.force !== true) {
       const skipped: TierMigrationCycleSummary = {
         trigger,
@@ -2891,7 +2892,7 @@ export class Orchestrator {
         dryRun,
         skipped: "tier_migration_disabled",
       };
-      await this.tierMigrationStatus.recordCycle(skipped);
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
       return skipped;
     }
     if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled && options?.force !== true) {
@@ -2905,7 +2906,7 @@ export class Orchestrator {
         dryRun,
         skipped: "maintenance_backfill_disabled",
       };
-      await this.tierMigrationStatus.recordCycle(skipped);
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
       return skipped;
     }
     if (this.tierMigrationInFlight) {
@@ -2919,12 +2920,13 @@ export class Orchestrator {
         dryRun,
         skipped: "migration_in_flight",
       };
-      await this.tierMigrationStatus.recordCycle(skipped);
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
       return skipped;
     }
 
-    const budget = this.compounding?.tierMigrationCycleBudget(trigger)
-      ?? defaultTierMigrationCycleBudget(this.config, trigger);
+    const budgetTrigger = trigger === "manual" ? "maintenance" : trigger;
+    const budget = this.compounding?.tierMigrationCycleBudget(budgetTrigger)
+      ?? defaultTierMigrationCycleBudget(this.config, budgetTrigger);
     const limit = options?.limitOverride !== undefined
       ? Math.max(0, Math.floor(options.limitOverride))
       : budget.limit;
@@ -2940,7 +2942,7 @@ export class Orchestrator {
         dryRun,
         skipped: "min_interval",
       };
-      await this.tierMigrationStatus.recordCycle(skipped);
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
       return skipped;
     }
 
@@ -3047,10 +3049,10 @@ export class Orchestrator {
     dryRun?: boolean;
     limit?: number;
   }): Promise<TierMigrationCycleSummary> {
-    return this.runTierMigrationCycle(this.storage, "maintenance", {
+    return this.runTierMigrationCycle(this.storage, "manual", {
       dryRun: options?.dryRun === true,
       limitOverride: options?.limit,
-      force: true,
+      force: false,
     });
   }
 

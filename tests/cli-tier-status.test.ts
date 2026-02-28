@@ -113,7 +113,7 @@ test("orchestrator runTierMigrationNow dry-run reports candidates without moving
     const hot = await storage.readAllMemories();
     const cold = await new StorageManager(path.join(storage.dir, "cold")).readAllMemories();
 
-    assert.equal(summary.trigger, "maintenance");
+    assert.equal(summary.trigger, "manual");
     assert.equal(summary.dryRun, true);
     assert.equal(summary.migrated, 1);
     assert.equal(hot.length, 1);

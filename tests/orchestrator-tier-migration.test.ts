@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import { StorageManager } from "../src/storage.js";
@@ -72,6 +72,28 @@ test("tier migration cycle is no-op when disabled", async () => {
     const cold = await new StorageManager(path.join(storage.dir, "cold")).readAllMemories();
     assert.equal(hot.length, 1);
     assert.equal(cold.length, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("disabled extraction tier migration skips status state writes on hot path", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-disabled-status-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-disabled-status-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(buildConfig(memoryDir, workspaceDir, false)) as any;
+    orchestrator.qmd = {
+      updateCollection: async () => {},
+      embedCollection: async () => {},
+    };
+    const storage = orchestrator.storage;
+    await storage.writeMemory("fact", "stay hot", { source: "test" });
+
+    await orchestrator.runTierMigrationCycle(storage, "extraction");
+
+    const statusPath = path.join(memoryDir, "state", "tier-migration-status.json");
+    await assert.rejects(() => access(statusPath));
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });
