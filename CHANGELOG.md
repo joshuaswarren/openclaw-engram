@@ -98,6 +98,11 @@ All notable changes to this project will be documented in this file.
   - Added tier migration/parity config keys and defaults (`qmdTierMigrationEnabled`, demotion/promotion thresholds, parity toggles, auto-backfill flag).
   - Added parser coverage in `tests/config-cold-qmd.test.ts` for defaults and explicit zero-preservation semantics.
   - Updated plugin schema/UI surface and config reference documentation for the new tier controls.
+- v8.14 hot/cold parity Task 2 (value-aware tier routing):
+  - Added `src/tier-routing.ts` with deterministic `computeTierValueScore(...)` and `decideTierTransition(...)` helpers.
+  - Reused lifecycle value inputs from `src/lifecycle.ts` to avoid duplicated weighting logic.
+  - Added `tests/tier-routing.test.ts` coverage for scoring signals, threshold boundaries, and disabled-path no-op behavior.
+  - Updated `docs/architecture/memory-lifecycle.md` with tier-routing signal/decision contracts.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.

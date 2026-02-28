@@ -94,6 +94,17 @@ Parsing is strict for schema validation and fail-open in runtime helpers:
 - Invalid action values fall back to `discard`.
 - Invalid eligibility payloads fall back to `{ confidence: 0, lifecycleState: "candidate", importance: 0, source: "unknown" }`.
 
+### Hot/Cold Tier Routing Signals (v8.14 Task 2)
+
+Tier routing reuses lifecycle value inputs so demotion/promotion decisions stay consistent with lifecycle scoring:
+
+- `computeLifecycleValueInputs(...)` (in `src/lifecycle.ts`) provides normalized confidence/access/recency/importance/feedback signals plus disputed penalty.
+- `computeTierValueScore(...)` (in `src/tier-routing.ts`) derives a bounded value score from those inputs, adding correction/confirmation boosts and disputed penalties.
+- `decideTierTransition(...)` applies deterministic threshold rules:
+  - hot -> cold when age >= `qmdTierDemotionMinAgeDays` and value <= demotion threshold
+  - cold -> hot when value >= promotion threshold
+  - no-op when migration is disabled
+
 ## Memory States
 
 | Status | Description |
