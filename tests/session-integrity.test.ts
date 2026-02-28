@@ -224,3 +224,32 @@ test("session repair reports remove_checkpoint failures except ENOENT", async ()
   assert.equal(result.actionsApplied, 0);
   assert.equal(result.errors.length, 1);
 });
+
+test("analyzeSessionIntegrity handles unparseable timestamps deterministically", async () => {
+  const memoryDir = await buildMemoryDir("engram-session-bad-timestamp-");
+  const transcriptPath = path.join(memoryDir, "transcripts", "main", "default", "2026-03-01.jsonl");
+  await writeFile(
+    transcriptPath,
+    [
+      JSON.stringify({
+        timestamp: "not-a-date",
+        role: "user",
+        content: "bad timestamp turn",
+        sessionKey: "agent:generalist:main",
+        turnId: "turn-1",
+      }),
+      JSON.stringify({
+        timestamp: "2026-03-01T10:00:00.000Z",
+        role: "assistant",
+        content: "good timestamp turn",
+        sessionKey: "agent:generalist:main",
+        turnId: "turn-1",
+      }),
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const report = await analyzeSessionIntegrity({ memoryDir });
+  const codes = new Set(report.issues.map((issue) => issue.code));
+  assert.equal(codes.has("transcript_duplicate_turn_id"), true);
+});

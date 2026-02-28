@@ -189,11 +189,19 @@ function analyzeSessionEntries(
   sessionKey: string,
   refs: SessionEntryRef[],
 ): { stats: SessionTranscriptStats; issues: SessionIntegrityIssue[] } {
+  function parseTimestampForSort(timestamp: string): number {
+    const parsed = Date.parse(timestamp);
+    if (Number.isFinite(parsed)) return parsed;
+    return Number.MAX_SAFE_INTEGER;
+  }
+
   const issues: SessionIntegrityIssue[] = [];
   const sorted = [...refs].sort((a, b) => {
-    const tsA = Date.parse(a.entry.timestamp);
-    const tsB = Date.parse(b.entry.timestamp);
+    const tsA = parseTimestampForSort(a.entry.timestamp);
+    const tsB = parseTimestampForSort(b.entry.timestamp);
     if (tsA !== tsB) return tsA - tsB;
+    const rawTimestampCmp = a.entry.timestamp.localeCompare(b.entry.timestamp);
+    if (rawTimestampCmp !== 0) return rawTimestampCmp;
     return a.entry.turnId.localeCompare(b.entry.turnId);
   });
   const turnIdSeen = new Set<string>();
