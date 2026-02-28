@@ -859,6 +859,13 @@ export class QmdClient {
     const globalState = getGlobalQmdState();
     const now = Date.now();
     if (options.perCollectionThrottle) {
+      if (
+        globalState.lastGlobalUpdateFailAtMs &&
+        now - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+      ) {
+        log.debug("QMD update: suppressed by global failure backoff");
+        return;
+      }
       const lastCollectionRun = globalState.lastUpdateByCollectionMs[name];
       if (
         Number.isFinite(lastCollectionRun) &&
@@ -921,6 +928,7 @@ export class QmdClient {
       const at = Date.now();
       if (options.perCollectionThrottle) {
         globalState.lastUpdateByCollectionMs[name] = at;
+        globalState.lastGlobalUpdateRunAtMs = at;
       } else {
         this.lastUpdateRunAtMs = at;
         globalState.lastGlobalUpdateRunAtMs = at;
@@ -930,6 +938,7 @@ export class QmdClient {
       const at = Date.now();
       if (options.perCollectionThrottle) {
         globalState.lastUpdateFailByCollectionMs[name] = at;
+        globalState.lastGlobalUpdateFailAtMs = at;
       } else {
         this.lastUpdateFailAtMs = at;
         globalState.lastGlobalUpdateFailAtMs = at;

@@ -2,8 +2,9 @@ import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { MemoryFile } from "./types.js";
 import { StorageManager } from "./storage.js";
+import type { MemoryTier } from "./tier-routing.js";
 
-export type MemoryTier = "hot" | "cold";
+export type { MemoryTier } from "./tier-routing.js";
 
 export interface TierMigrationRequest {
   memory: MemoryFile;
