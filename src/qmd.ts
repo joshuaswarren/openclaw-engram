@@ -24,6 +24,10 @@ type QmdGlobalState = {
   lastGlobalEmbedRunAtMs: number | null;
   lastGlobalEmbedFailAtMs: number | null;
   lastCliWarnAtMs: number | null;
+  lastUpdateByCollectionMs: Record<string, number>;
+  lastUpdateFailByCollectionMs: Record<string, number>;
+  lastEmbedByCollectionMs: Record<string, number>;
+  lastEmbedFailByCollectionMs: Record<string, number>;
 };
 
 function getGlobalQmdState(): QmdGlobalState {
@@ -36,6 +40,10 @@ function getGlobalQmdState(): QmdGlobalState {
       lastGlobalEmbedRunAtMs: null,
       lastGlobalEmbedFailAtMs: null,
       lastCliWarnAtMs: null,
+      lastUpdateByCollectionMs: {},
+      lastUpdateFailByCollectionMs: {},
+      lastEmbedByCollectionMs: {},
+      lastEmbedFailByCollectionMs: {},
     } satisfies QmdGlobalState;
   }
   return g[QMD_GLOBAL_STATE_KEY] as QmdGlobalState;
@@ -834,35 +842,75 @@ export class QmdClient {
   }
 
   async update(): Promise<void> {
+    await this.runUpdateForCollection(this.collection, { perCollectionThrottle: false });
+  }
+
+  async updateCollection(collection: string): Promise<void> {
+    await this.runUpdateForCollection(collection, { perCollectionThrottle: true });
+  }
+
+  private async runUpdateForCollection(
+    collection: string,
+    options: { perCollectionThrottle: boolean },
+  ): Promise<void> {
     if (this.available === false) return;
+    const name = collection.trim();
+    if (!name) return;
     const globalState = getGlobalQmdState();
-    if (
-      this.lastUpdateRunAtMs &&
-      Date.now() - this.lastUpdateRunAtMs < this.updateMinIntervalMs
-    ) {
-      log.debug("QMD update: suppressed due to min-interval gate");
-      return;
-    }
-    if (
-      this.lastUpdateFailAtMs &&
-      Date.now() - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
-    ) {
-      log.debug("QMD update: suppressed due to recent failures (backoff)");
-      return;
-    }
-    if (
-      globalState.lastGlobalUpdateRunAtMs &&
-      Date.now() - globalState.lastGlobalUpdateRunAtMs < this.updateMinIntervalMs
-    ) {
-      log.debug("QMD update: suppressed by global min-interval gate");
-      return;
-    }
-    if (
-      globalState.lastGlobalUpdateFailAtMs &&
-      Date.now() - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
-    ) {
-      log.debug("QMD update: suppressed by global failure backoff");
-      return;
+    const now = Date.now();
+    if (options.perCollectionThrottle) {
+      if (
+        globalState.lastGlobalUpdateFailAtMs &&
+        now - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+      ) {
+        log.debug("QMD update: suppressed by global failure backoff");
+        return;
+      }
+      const lastCollectionRun = globalState.lastUpdateByCollectionMs[name];
+      if (
+        Number.isFinite(lastCollectionRun) &&
+        now - lastCollectionRun < this.updateMinIntervalMs
+      ) {
+        log.debug(`QMD update: suppressed by per-collection min-interval gate (${name})`);
+        return;
+      }
+      const lastCollectionFail = globalState.lastUpdateFailByCollectionMs[name];
+      if (
+        Number.isFinite(lastCollectionFail) &&
+        now - lastCollectionFail < QMD_UPDATE_BACKOFF_MS
+      ) {
+        log.debug(`QMD update: suppressed by per-collection failure backoff (${name})`);
+        return;
+      }
+    } else {
+      if (
+        this.lastUpdateRunAtMs &&
+        now - this.lastUpdateRunAtMs < this.updateMinIntervalMs
+      ) {
+        log.debug("QMD update: suppressed due to min-interval gate");
+        return;
+      }
+      if (
+        this.lastUpdateFailAtMs &&
+        now - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+      ) {
+        log.debug("QMD update: suppressed due to recent failures (backoff)");
+        return;
+      }
+      if (
+        globalState.lastGlobalUpdateRunAtMs &&
+        now - globalState.lastGlobalUpdateRunAtMs < this.updateMinIntervalMs
+      ) {
+        log.debug("QMD update: suppressed by global min-interval gate");
+        return;
+      }
+      if (
+        globalState.lastGlobalUpdateFailAtMs &&
+        now - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+      ) {
+        log.debug("QMD update: suppressed by global failure backoff");
+        return;
+      }
     }
     try {
       if (!globalState.warnedGlobalUpdateBehavior) {
@@ -872,21 +920,31 @@ export class QmdClient {
         );
       }
       const startedAtMs = Date.now();
-      await runQmd(["update", "-c", this.collection], this.updateTimeoutMs, this.qmdPath);
+      await runQmd(["update", "-c", name], this.updateTimeoutMs, this.qmdPath);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
       }
-      const now = Date.now();
-      this.lastUpdateRunAtMs = now;
-      globalState.lastGlobalUpdateRunAtMs = now;
-      log.debug("QMD update completed");
+      const at = Date.now();
+      if (options.perCollectionThrottle) {
+        globalState.lastUpdateByCollectionMs[name] = at;
+        globalState.lastGlobalUpdateRunAtMs = at;
+      } else {
+        this.lastUpdateRunAtMs = at;
+        globalState.lastGlobalUpdateRunAtMs = at;
+      }
+      log.debug(`QMD update completed for collection=${name}`);
     } catch (err) {
-      const now = Date.now();
-      this.lastUpdateFailAtMs = now;
-      globalState.lastGlobalUpdateFailAtMs = now;
+      const at = Date.now();
+      if (options.perCollectionThrottle) {
+        globalState.lastUpdateFailByCollectionMs[name] = at;
+        globalState.lastGlobalUpdateFailAtMs = at;
+      } else {
+        this.lastUpdateFailAtMs = at;
+        globalState.lastGlobalUpdateFailAtMs = at;
+      }
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`QMD update failed: ${msg}`);
+      log.warn(`QMD update failed for collection ${name}: ${msg}`);
     }
   }
 
@@ -929,6 +987,49 @@ export class QmdClient {
       globalState.lastGlobalEmbedFailAtMs = now;
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD embed failed: ${msg}`);
+    }
+  }
+
+  async embedCollection(collection: string): Promise<void> {
+    if (this.available === false) return;
+    const name = collection.trim();
+    if (!name) return;
+    const globalState = getGlobalQmdState();
+    const now = Date.now();
+    if (
+      globalState.lastGlobalEmbedFailAtMs &&
+      now - globalState.lastGlobalEmbedFailAtMs < QMD_EMBED_BACKOFF_MS
+    ) {
+      log.debug(`QMD embed: suppressed by global failure backoff (${name})`);
+      return;
+    }
+    const lastCollectionRun = globalState.lastEmbedByCollectionMs[name];
+    if (
+      Number.isFinite(lastCollectionRun) &&
+      now - lastCollectionRun < this.updateMinIntervalMs
+    ) {
+      log.debug(`QMD embed: suppressed by per-collection min-interval gate (${name})`);
+      return;
+    }
+    const lastCollectionFail = globalState.lastEmbedFailByCollectionMs[name];
+    if (
+      Number.isFinite(lastCollectionFail) &&
+      now - lastCollectionFail < QMD_EMBED_BACKOFF_MS
+    ) {
+      log.debug(`QMD embed: suppressed by per-collection failure backoff (${name})`);
+      return;
+    }
+    try {
+      await runQmd(["embed", "-c", name], 300_000, this.qmdPath);
+      const at = Date.now();
+      globalState.lastEmbedByCollectionMs[name] = at;
+      globalState.lastGlobalEmbedRunAtMs = at;
+    } catch (err) {
+      const at = Date.now();
+      globalState.lastEmbedFailByCollectionMs[name] = at;
+      globalState.lastGlobalEmbedFailAtMs = at;
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`QMD embed failed for collection ${name}: ${msg}`);
     }
   }
 

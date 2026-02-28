@@ -103,6 +103,11 @@ All notable changes to this project will be documented in this file.
   - Reused lifecycle value inputs from `src/lifecycle.ts` to avoid duplicated weighting logic.
   - Added `tests/tier-routing.test.ts` coverage for scoring signals, threshold boundaries, and disabled-path no-op behavior.
   - Updated `docs/architecture/memory-lifecycle.md` with tier-routing signal/decision contracts.
+- v8.14 hot/cold parity Task 3 (migration executor + parity metadata):
+  - Added `src/tier-migration.ts` with per-memory journaling and deterministic hot/cold migration execution.
+  - Added storage migration primitives in `src/storage.ts` for tier-path resolution and atomic move/copy writes.
+  - Added collection-targeted QMD sync helpers in `src/qmd.ts` (`updateCollection`, `embedCollection`) for tier-specific reindexing.
+  - Added `tests/tier-migration.test.ts` coverage for demotion/promotion routing, metadata parity retention, and idempotent reruns.
 - v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
   - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
   - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.
