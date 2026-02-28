@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #75 recall pipeline adaptation for current v8 main:
+  - Added `recallBudgetChars` and ordered `recallPipeline` config contracts with per-section enable/limits and profile consolidation thresholds.
+  - Refactored recall assembly to section-bucket ordering with section-level caps while preserving existing v8 retrieval semantics.
+  - Fixed knowledge-index override caching so per-call override requests do not reuse stale default-cache snapshots.
+  - Added tests for recall pipeline config parsing/defaults and knowledge-index override cache behavior.
 - v8.16 Task 5 hardening update:
   - Added a compounding-artifact review checklist to `docs/ops/pr-review-hardening-playbook.md` covering provenance integrity, advisory-only promotion contract, outcome-summary consistency, and duplicate parsing drift prevention.
 - PR #57 work extraction boundary hardening:
