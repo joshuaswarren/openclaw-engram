@@ -1292,6 +1292,38 @@
         "default": 1500,
         "description": "Hourly token budget for compression actions/guideline generation (0 disables budgeted compression work)."
       },
+      "behaviorLoopAutoTuneEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable runtime behavior-loop policy auto-tuning (v8.15, default off)."
+      },
+      "behaviorLoopLearningWindowDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Rolling signal window used for behavior-loop policy learning (days; 0 allowed)."
+      },
+      "behaviorLoopMinSignalCount": {
+        "type": "number",
+        "default": 10,
+        "description": "Minimum signal volume required before behavior-loop adjustments are emitted (0 allowed)."
+      },
+      "behaviorLoopMaxDeltaPerCycle": {
+        "type": "number",
+        "default": 0.1,
+        "description": "Maximum absolute parameter delta allowed per learning cycle (0-1)."
+      },
+      "behaviorLoopProtectedParams": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [
+          "maxMemoryTokens",
+          "qmdMaxResults",
+          "qmdColdMaxResults",
+          "recallPlannerMaxQmdResultsMinimal",
+          "verbatimArtifactsMaxRecall"
+        ],
+        "description": "Runtime parameters that auto-tuning must never modify."
+      },
       "qmdDaemonEnabled": {
         "type": "boolean",
         "default": true,
@@ -1862,6 +1894,30 @@
       "label": "Max Compression Tokens / Hour",
       "advanced": true,
       "placeholder": "1500"
+    },
+    "behaviorLoopAutoTuneEnabled": {
+      "label": "Behavior Loop Auto-Tune",
+      "help": "Enable bounded runtime policy auto-tuning from correction/preference signals (v8.15, default off)"
+    },
+    "behaviorLoopLearningWindowDays": {
+      "label": "Behavior Learning Window (days)",
+      "advanced": true,
+      "placeholder": "14"
+    },
+    "behaviorLoopMinSignalCount": {
+      "label": "Behavior Min Signal Count",
+      "advanced": true,
+      "placeholder": "10"
+    },
+    "behaviorLoopMaxDeltaPerCycle": {
+      "label": "Behavior Max Delta / Cycle",
+      "advanced": true,
+      "placeholder": "0.1"
+    },
+    "behaviorLoopProtectedParams": {
+      "label": "Behavior Protected Params",
+      "advanced": true,
+      "help": "Parameter keys that auto-tuning must never change"
     },
     "knowledgeIndexEnabled": {
       "label": "Knowledge Index",

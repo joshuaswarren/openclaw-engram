@@ -249,6 +249,31 @@ export const MemorySummarySchema = z.object({
 
 export type MemorySummaryResult = z.infer<typeof MemorySummarySchema>;
 
+// v8.15 behavior-loop auto-tuning state contracts
+export const BehaviorLoopAdjustmentSchema = z.object({
+  parameter: z.string().min(1),
+  previousValue: z.number(),
+  nextValue: z.number(),
+  delta: z.number(),
+  evidenceCount: z.number().min(0),
+  confidence: z.number().min(0).max(1),
+  reason: z.string(),
+  appliedAt: z.string(),
+});
+
+export const BehaviorLoopPolicyStateSchema = z.object({
+  version: z.number().int().min(0),
+  windowDays: z.number().int().min(0),
+  minSignalCount: z.number().int().min(0),
+  maxDeltaPerCycle: z.number().min(0).max(1),
+  protectedParams: z.array(z.string()),
+  adjustments: z.array(BehaviorLoopAdjustmentSchema),
+  updatedAt: z.string(),
+});
+
+export type BehaviorLoopAdjustmentParsed = z.infer<typeof BehaviorLoopAdjustmentSchema>;
+export type BehaviorLoopPolicyStateParsed = z.infer<typeof BehaviorLoopPolicyStateSchema>;
+
 export type MemoryActionTypeParsed = z.infer<typeof MemoryActionTypeSchema>;
 export type MemoryActionEligibilityContextParsed = z.infer<typeof MemoryActionEligibilityContextSchema>;
 export type ExtractedFactParsed = z.infer<typeof ExtractedFactSchema>;
