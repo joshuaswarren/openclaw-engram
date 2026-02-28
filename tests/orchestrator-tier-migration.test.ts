@@ -138,3 +138,42 @@ test("tier migration extraction scan prioritizes oldest hot memories for demotio
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("consolidation refreshes corpus after maintenance migration before archival", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-refresh-corpus-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-refresh-corpus-workspace-"));
+  try {
+    const config = buildConfig(memoryDir, workspaceDir, true, true);
+    (config as any).factArchivalEnabled = true;
+    (config as any).identityEnabled = false;
+    (config as any).summarizationEnabled = false;
+    (config as any).topicExtractionEnabled = false;
+    (config as any).entitySummaryEnabled = false;
+    const orchestrator = new Orchestrator(config) as any;
+    const storage = orchestrator.storage;
+    const movedId = await storage.writeMemory("fact", "migrate-before-archival", { source: "test" });
+    for (let i = 0; i < 4; i += 1) {
+      await storage.writeMemory("fact", `filler-${i}`, { source: "test" });
+    }
+
+    orchestrator.extraction = {
+      consolidate: async () => ({ items: [], profileUpdates: [], entityUpdates: [] }),
+    };
+    orchestrator.qmd = {
+      updateCollection: async () => {},
+      embedCollection: async () => {},
+    };
+
+    let archivalSawMoved = false;
+    orchestrator.runFactArchival = async (memories: Array<{ frontmatter: { id: string } }>) => {
+      archivalSawMoved = memories.some((m) => m.frontmatter.id === movedId);
+      return 0;
+    };
+
+    await orchestrator.runConsolidationNow();
+    assert.equal(archivalSawMoved, false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});

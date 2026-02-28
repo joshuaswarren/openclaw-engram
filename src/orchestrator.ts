@@ -3667,7 +3667,7 @@ export class Orchestrator {
       await this.flushAccessTracking();
     }
 
-    const allMemories = await this.storage.readAllMemories();
+    let allMemories = await this.storage.readAllMemories();
     if (allMemories.length < 5) {
       return { memoriesProcessed: allMemories.length, merged, invalidated };
     }
@@ -3851,6 +3851,7 @@ export class Orchestrator {
     await this.runCompressionGuidelineLearningPass();
 
     await this.runTierMigrationCycle(this.storage, "maintenance");
+    allMemories = await this.storage.readAllMemories();
 
     // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
     if (this.config.factArchivalEnabled) {
