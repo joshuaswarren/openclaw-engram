@@ -93,15 +93,19 @@ function stripYamlFrontmatter(text: string): string {
 
 function semanticRoot(token: string): string {
   let root = token.toLowerCase();
+  if (root.endsWith("izations") && root.length > 9) {
+    return `${root.slice(0, -8)}ize`;
+  }
   if (root.endsWith("ization") && root.length > 8) {
     return `${root.slice(0, -7)}ize`;
+  }
+  if (root.endsWith("isations") && root.length > 9) {
+    return `${root.slice(0, -8)}ise`;
   }
   if (root.endsWith("isation") && root.length > 8) {
     return `${root.slice(0, -7)}ise`;
   }
   const suffixes = [
-    "izations",
-    "ization",
     "ations",
     "ation",
     "ments",
@@ -157,13 +161,16 @@ function mergeOverlaps(
     .sort((a, b) => b.agentCount - a.agentCount || a.token.localeCompare(b.token));
 }
 
-function computeSemanticOverlapCandidates(
+async function computeSemanticOverlapCandidates(
   sources: SharedCrossSignalSource[],
   maxCandidates: number,
-): { overlaps: SharedCrossSignalOverlap[]; candidateCount: number } {
+  timeoutAtMs: number,
+): Promise<{ overlaps: SharedCrossSignalOverlap[]; candidateCount: number; timedOut: boolean }> {
   const tokenRows: Array<{ token: string; agent: string; path: string }> = [];
   for (const source of sources) {
     for (const token of source.topics) {
+      if (Date.now() >= timeoutAtMs) return { overlaps: [], candidateCount: tokenRows.length, timedOut: true };
+      await new Promise<void>((resolve) => setImmediate(resolve));
       tokenRows.push({ token, agent: source.agent, path: source.path });
       if (tokenRows.length >= maxCandidates) break;
     }
@@ -172,6 +179,8 @@ function computeSemanticOverlapCandidates(
 
   const byRoot = new Map<string, Map<string, { agents: Set<string>; paths: Set<string> }>>();
   for (const row of tokenRows) {
+    if (Date.now() >= timeoutAtMs) return { overlaps: [], candidateCount: tokenRows.length, timedOut: true };
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const root = semanticRoot(row.token);
     if (root.length < 4) continue;
     const rootGroup = byRoot.get(root) ?? new Map<string, { agents: Set<string>; paths: Set<string> }>();
@@ -184,6 +193,8 @@ function computeSemanticOverlapCandidates(
 
   const overlaps: SharedCrossSignalOverlap[] = [];
   for (const [root, tokenMap] of byRoot.entries()) {
+    if (Date.now() >= timeoutAtMs) return { overlaps: [], candidateCount: tokenRows.length, timedOut: true };
+    await new Promise<void>((resolve) => setImmediate(resolve));
     if (tokenMap.size < 2) continue;
     const agents = new Set<string>();
     const sourcePaths = new Set<string>();
@@ -204,6 +215,7 @@ function computeSemanticOverlapCandidates(
   return {
     overlaps,
     candidateCount: tokenRows.length,
+    timedOut: false,
   };
 }
 
@@ -217,21 +229,8 @@ async function computeSemanticOverlapsWithTimeout(
   if (safeMaxCandidates === 0 || sources.length === 0) {
     return { overlaps: [], candidateCount: 0, timedOut: false };
   }
-
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), safeTimeoutMs);
-  });
-  const computePromise = (async () => {
-    // Keep an explicit async boundary so timeout behavior is deterministic under tests.
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    return computeSemanticOverlapCandidates(sources, safeMaxCandidates);
-  })();
-
-  const raced = await Promise.race([computePromise, timeoutPromise]);
-  if (timer) clearTimeout(timer);
-  if (raced === null) return { overlaps: [], candidateCount: 0, timedOut: true };
-  return { overlaps: raced.overlaps, candidateCount: raced.candidateCount, timedOut: false };
+  const timeoutAtMs = Date.now() + safeTimeoutMs;
+  return computeSemanticOverlapCandidates(sources, safeMaxCandidates, timeoutAtMs);
 }
 
 interface SharedCrossSignalSource {

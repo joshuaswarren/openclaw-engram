@@ -72,16 +72,18 @@ test("shared-context semantic cross-signals fail-open on timeout", async () => {
   });
   try {
     const date = "2026-03-05";
+    const largeA = Array.from({ length: 8000 }, (_, i) => `optimization${i}`).join(" ");
+    const largeB = Array.from({ length: 8000 }, (_, i) => `optimize${i}`).join(" ");
     await manager.writeAgentOutput({
       agentId: "generalist",
       title: "Optimization roadmap",
-      content: "Planned optimization milestones for cache and batching.",
+      content: largeA,
       createdAt: isoForDate(date, "09:00:00"),
     });
     await manager.writeAgentOutput({
       agentId: "oracle",
       title: "Optimize cache tuning",
-      content: "We should optimize cache warmups with staged rollout.",
+      content: largeB,
       createdAt: isoForDate(date, "09:05:00"),
     });
 
