@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import {
   runPolicyDiffCliCommand,
@@ -21,7 +22,7 @@ async function writeRuntimeSnapshots(memoryDir: string): Promise<void> {
       values: {
         recencyWeight: 0.2,
         lifecyclePromoteHeatThreshold: 0.7,
-        lifecycleStaleDecayThreshold: 0.65,
+        lifecycleStaleDecayThreshold: 0.85,
         cronRecallInstructionHeavyTokenCap: 350,
       },
       sourceAdjustmentCount: 12,
@@ -36,13 +37,32 @@ async function writeRuntimeSnapshots(memoryDir: string): Promise<void> {
       values: {
         recencyWeight: 0.35,
         lifecyclePromoteHeatThreshold: 0.75,
-        lifecycleStaleDecayThreshold: 0.7,
+        lifecycleStaleDecayThreshold: 0.9,
         cronRecallInstructionHeavyTokenCap: 380,
       },
       sourceAdjustmentCount: 21,
     }),
     "utf-8",
   );
+}
+
+function expectedPolicyVersionWithArchiveCap(values: {
+  recencyWeight: number;
+  lifecyclePromoteHeatThreshold: number;
+  lifecycleStaleDecayThreshold: number;
+  cronRecallInstructionHeavyTokenCap: number;
+}, archiveThreshold: number): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        recencyWeight: values.recencyWeight,
+        lifecyclePromoteHeatThreshold: values.lifecyclePromoteHeatThreshold,
+        lifecycleStaleDecayThreshold: Math.min(values.lifecycleStaleDecayThreshold, archiveThreshold),
+        cronRecallInstructionHeavyTokenCap: values.cronRecallInstructionHeavyTokenCap,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 12);
 }
 
 function buildSignal(
@@ -80,6 +100,7 @@ test("runPolicyStatusCliCommand returns policy snapshots and contributing signal
         namespacesEnabled: true,
         behaviorLoopAutoTuneEnabled: true,
         behaviorLoopLearningWindowDays: 14,
+        lifecycleArchiveDecayThreshold: 0.8,
         namespacePolicies: [],
       },
       async getStorage(namespace?: string) {
@@ -100,6 +121,18 @@ test("runPolicyStatusCliCommand returns policy snapshots and contributing signal
     assert.ok(status.previous);
     assert.equal((status.current?.policyVersion ?? "").length, 12);
     assert.equal((status.previous?.policyVersion ?? "").length, 12);
+    assert.equal(
+      status.current?.policyVersion,
+      expectedPolicyVersionWithArchiveCap(
+        {
+          recencyWeight: 0.35,
+          lifecyclePromoteHeatThreshold: 0.75,
+          lifecycleStaleDecayThreshold: 0.9,
+          cronRecallInstructionHeavyTokenCap: 380,
+        },
+        0.8,
+      ),
+    );
     assert.equal(status.topContributingSignals[0]?.count, 2);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
@@ -125,6 +158,7 @@ test("runPolicyDiffCliCommand reports deltas and applies --since window to signa
         namespacesEnabled: false,
         behaviorLoopAutoTuneEnabled: true,
         behaviorLoopLearningWindowDays: 14,
+        lifecycleArchiveDecayThreshold: 0.8,
         namespacePolicies: [],
       },
       async getStorage() {
@@ -163,6 +197,7 @@ test("runPolicyRollbackCliCommand executes rollback and returns current snapshot
         namespacesEnabled: false,
         behaviorLoopAutoTuneEnabled: true,
         behaviorLoopLearningWindowDays: 14,
+        lifecycleArchiveDecayThreshold: 0.8,
         namespacePolicies: [],
       },
       async getStorage() {

@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
 import type { BehaviorSignalEvent, ContinuityIncidentRecord, MemoryActionEvent, TranscriptEntry } from "./types.js";
+import { clamp01, clampLifecycleThreshold } from "./lifecycle.js";
+import { clampInstructionHeavyTokenCap } from "./recall-query-policy.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -576,6 +578,7 @@ export interface PolicyTuningCliOrchestrator {
     namespacesEnabled: boolean;
     behaviorLoopAutoTuneEnabled: boolean;
     behaviorLoopLearningWindowDays: number;
+    lifecycleArchiveDecayThreshold: number;
     namespacePolicies: Array<{ name: string }>;
   };
   getStorage(namespace?: string): Promise<{
@@ -584,9 +587,45 @@ export interface PolicyTuningCliOrchestrator {
   rollbackBehaviorRuntimePolicy(): Promise<boolean>;
 }
 
-function policyVersionForValues(values: RuntimePolicyValues): string {
+function normalizedPolicyValuesForVersion(
+  values: RuntimePolicyValues,
+  options: { lifecycleArchiveDecayThreshold: number },
+): RuntimePolicyValues {
+  const out: RuntimePolicyValues = {};
+  if (typeof values.recencyWeight === "number" && Number.isFinite(values.recencyWeight)) {
+    out.recencyWeight = clamp01(values.recencyWeight);
+  }
+  if (
+    typeof values.lifecyclePromoteHeatThreshold === "number" &&
+    Number.isFinite(values.lifecyclePromoteHeatThreshold)
+  ) {
+    out.lifecyclePromoteHeatThreshold = clampLifecycleThreshold(values.lifecyclePromoteHeatThreshold);
+  }
+  if (
+    typeof values.lifecycleStaleDecayThreshold === "number" &&
+    Number.isFinite(values.lifecycleStaleDecayThreshold)
+  ) {
+    out.lifecycleStaleDecayThreshold = Math.min(
+      clampLifecycleThreshold(values.lifecycleStaleDecayThreshold),
+      clampLifecycleThreshold(options.lifecycleArchiveDecayThreshold),
+    );
+  }
+  if (
+    typeof values.cronRecallInstructionHeavyTokenCap === "number" &&
+    Number.isFinite(values.cronRecallInstructionHeavyTokenCap)
+  ) {
+    out.cronRecallInstructionHeavyTokenCap = clampInstructionHeavyTokenCap(values.cronRecallInstructionHeavyTokenCap);
+  }
+  return out;
+}
+
+function policyVersionForValues(
+  values: RuntimePolicyValues,
+  options: { lifecycleArchiveDecayThreshold: number },
+): string {
+  const normalized = normalizedPolicyValuesForVersion(values, options);
   return createHash("sha256")
-    .update(JSON.stringify(values))
+    .update(JSON.stringify(normalized))
     .digest("hex")
     .slice(0, 12);
 }
@@ -707,10 +746,20 @@ export async function runPolicyStatusCliCommand(
     generatedAt: now.toISOString(),
     autoTuneEnabled: orchestrator.config.behaviorLoopAutoTuneEnabled,
     current: current
-      ? { ...current, policyVersion: policyVersionForValues(current.values) }
+      ? {
+        ...current,
+        policyVersion: policyVersionForValues(current.values, {
+          lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
+        }),
+      }
       : null,
     previous: previous
-      ? { ...previous, policyVersion: policyVersionForValues(previous.values) }
+      ? {
+        ...previous,
+        policyVersion: policyVersionForValues(previous.values, {
+          lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
+        }),
+      }
       : null,
     topContributingSignals: summarizeTopSignals(signals, cutoffIso),
   };
@@ -753,8 +802,16 @@ export async function runPolicyDiffCliCommand(
     generatedAt: new Date().toISOString(),
     since,
     sinceIso,
-    currentPolicyVersion: current ? policyVersionForValues(current.values) : null,
-    previousPolicyVersion: previous ? policyVersionForValues(previous.values) : null,
+    currentPolicyVersion: current
+      ? policyVersionForValues(current.values, {
+        lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
+      })
+      : null,
+    previousPolicyVersion: previous
+      ? policyVersionForValues(previous.values, {
+        lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
+      })
+      : null,
     deltas,
     topContributingSignals: summarizeTopSignals(signals, sinceIso),
   };
@@ -768,7 +825,14 @@ export async function runPolicyRollbackCliCommand(
   return {
     generatedAt: new Date().toISOString(),
     rolledBack,
-    current: current ? { ...current, policyVersion: policyVersionForValues(current.values) } : null,
+    current: current
+      ? {
+        ...current,
+        policyVersion: policyVersionForValues(current.values, {
+          lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
+        }),
+      }
+      : null,
   };
 }
 
