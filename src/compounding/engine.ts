@@ -620,7 +620,9 @@ export class CompoundingEngine {
           lines.push("- No rubric deltas this week.");
         } else {
           for (const item of learnings) {
-            const note = (item.entry.learning ?? item.entry.reason).trim();
+            const note = ((item.entry.learning && item.entry.learning.trim().length > 0)
+              ? item.entry.learning
+              : item.entry.reason).trim();
             lines.push(`- ${note} _(source: ${path.basename(item.sourcePath)}:L${item.sourceLine}#${item.entryId})_`);
           }
         }
