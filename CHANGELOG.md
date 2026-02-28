@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #82 follow-up recall injection compatibility:
+  - Return both `systemPrompt` and `prependContext` from `before_agent_start` so memory context is injected across gateway variants.
 - PR #110 QMD daemon reliability and warm-path parity:
   - Replaced unreachable HTTP daemon transport with a managed stdio `qmd mcp` session.
   - Corrected daemon query tool/argument usage to `query` with `limit`.
