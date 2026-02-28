@@ -1990,7 +1990,7 @@ Best for:
         const { weekId } = params as { weekId?: string };
         const res = await orchestrator.compounding.synthesizeWeekly({ weekId });
         return toolResult(
-          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nmistakes: ${res.mistakesCount} patterns`,
+          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nrubrics: ${res.rubricsPath}\nmistakes: ${res.mistakesCount} patterns\npromotionCandidates: ${res.promotionCandidateCount}`,
         );
       },
     },
