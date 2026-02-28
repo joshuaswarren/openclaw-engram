@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #110 QMD daemon reliability and warm-path parity:
+  - Replaced unreachable HTTP daemon transport with a managed stdio `qmd mcp` session.
+  - Corrected daemon query tool/argument usage to `query` with `limit`.
+  - Added daemon fast paths for BM25 and vector search to reduce cold subprocess latency.
+  - Hardened subprocess parsing for `No results found.` outputs and preserved fail-open fallback behavior.
 - PR #75 recall pipeline adaptation for current v8 main:
   - Added `recallBudgetChars` and ordered `recallPipeline` config contracts with per-section enable/limits and profile consolidation thresholds.
   - Refactored recall assembly to section-bucket ordering with section-level caps while preserving existing v8 retrieval semantics.
