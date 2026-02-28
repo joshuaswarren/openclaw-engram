@@ -543,6 +543,7 @@ type MigrateMemoryStorage = {
   writeMemoryFrontmatter(memory: MemoryFile, patch: Partial<MemoryFile["frontmatter"]>): Promise<boolean>;
   getChunksForParent(parentId: string): Promise<MemoryFile[]>;
   updateMemory(id: string, newContent: string): Promise<boolean>;
+  updateMemoryFrontmatter(id: string, patch: Partial<MemoryFile["frontmatter"]>): Promise<boolean>;
   writeChunk(
     parentId: string,
     chunkIndex: number,
@@ -698,10 +699,19 @@ export async function runMigrateRechunkCliCommand(
 
   let changed = 0;
   for (const memory of candidates) {
-    const chunked = chunkContent(memory.content);
-    if (!chunked.chunked) continue;
-    const desired = chunked.chunks.map((chunk) => chunk.content);
     const existing = await storage.getChunksForParent(memory.frontmatter.id);
+    const chunked = chunkContent(memory.content);
+    if (!chunked.chunked) {
+      if (existing.length === 0) continue;
+      changed += 1;
+      if (options.write === true) {
+        for (const stale of existing) {
+          await storage.invalidateMemory(stale.frontmatter.id);
+        }
+      }
+      continue;
+    }
+    const desired = chunked.chunks.map((chunk) => chunk.content);
     if (sameChunkContent(existing, desired)) continue;
     changed += 1;
     if (options.write !== true) continue;
@@ -711,7 +721,7 @@ export async function runMigrateRechunkCliCommand(
       const existingChunk = existing[chunk.index];
       if (existingChunk) {
         await storage.updateMemory(existingChunk.frontmatter.id, chunk.content);
-        await storage.writeMemoryFrontmatter(existingChunk, {
+        await storage.updateMemoryFrontmatter(existingChunk.frontmatter.id, {
           chunkIndex: chunk.index,
           chunkTotal: total,
           updated: new Date().toISOString(),

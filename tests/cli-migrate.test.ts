@@ -215,6 +215,9 @@ test("migrate rechunk does not invalidate existing chunks before replacement wri
       updateCalls += 1;
       return true;
     },
+    async updateMemoryFrontmatter() {
+      return true;
+    },
     async writeChunk() {
       writeCalls += 1;
       throw new Error("simulated write failure");
@@ -243,4 +246,43 @@ test("migrate rechunk does not invalidate existing chunks before replacement wri
   assert.equal(updateCalls >= 1, true);
   assert.equal(writeCalls >= 1, true);
   assert.equal(invalidateCalls, 0);
+});
+
+test("migrate rechunk removes orphan chunks when parent no longer needs chunking", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-rechunk-orphan-"));
+  try {
+    const storage = new StorageManager(dir);
+    const parentId = await storage.writeMemory("fact", "short content", { source: "test" });
+    await storage.writeChunk(parentId, 0, 1, "fact", "stale chunk", { source: "test" });
+    assert.equal((await storage.getChunksForParent(parentId)).length, 1);
+
+    const report = await runMigrateRechunkCliCommand(buildMigrateOrchestrator(storage), {
+      write: true,
+      limit: 10,
+    });
+    assert.equal(report.changed >= 1, true);
+    assert.equal((await storage.getChunksForParent(parentId)).length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrate rechunk updates existing chunk content instead of restoring stale content", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-rechunk-content-"));
+  try {
+    const storage = new StorageManager(dir);
+    const parentId = await storage.writeMemory("fact", longChunkCandidate(), { source: "test" });
+    await storage.writeChunk(parentId, 0, 1, "fact", "stale chunk content", { source: "test" });
+
+    await runMigrateRechunkCliCommand(buildMigrateOrchestrator(storage), {
+      write: true,
+      limit: 10,
+    });
+
+    const firstChunk = (await storage.getChunksForParent(parentId)).find((chunk) => chunk.frontmatter.chunkIndex === 0);
+    assert.ok(firstChunk);
+    assert.notEqual(firstChunk?.content.trim(), "stale chunk content");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
