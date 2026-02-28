@@ -3,7 +3,15 @@ import { access, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
-import type { BehaviorSignalEvent, ContinuityIncidentRecord, MemoryActionEvent, TranscriptEntry } from "./types.js";
+import type {
+  BehaviorSignalEvent,
+  ContinuityIncidentRecord,
+  MemoryActionEvent,
+  MemoryFile,
+  TranscriptEntry,
+} from "./types.js";
+import { chunkContent } from "./chunking.js";
+import { rescoreMemoryImportance } from "./importance.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -524,6 +532,241 @@ export async function runTierMigrateCliCommand(
     dryRun: options.dryRun === true,
     limit: options.limit,
   });
+}
+
+const MIGRATE_LIMIT_CAP = 2000;
+const REEXTRACT_LIMIT_CAP = 500;
+
+type MigrateMemoryStorage = {
+  readAllMemories(): Promise<MemoryFile[]>;
+  readArchivedMemories(): Promise<MemoryFile[]>;
+  writeMemoryFrontmatter(memory: MemoryFile, patch: Partial<MemoryFile["frontmatter"]>): Promise<boolean>;
+  getChunksForParent(parentId: string): Promise<MemoryFile[]>;
+  writeChunk(
+    parentId: string,
+    chunkIndex: number,
+    chunkTotal: number,
+    category: MemoryFile["frontmatter"]["category"],
+    content: string,
+    options?: {
+      confidence?: number;
+      tags?: string[];
+      entityRef?: string;
+      source?: string;
+      importance?: MemoryFile["frontmatter"]["importance"];
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
+      memoryKind?: MemoryFile["frontmatter"]["memoryKind"];
+    },
+  ): Promise<string>;
+  invalidateMemory(id: string): Promise<boolean>;
+  appendReextractJobs(events: Array<{
+    memoryId: string;
+    model: string;
+    requestedAt: string;
+    source: "cli-migrate";
+  }>): Promise<number>;
+};
+
+export interface MigrateCliOrchestrator {
+  config: {
+    defaultNamespace: string;
+  };
+  getStorage(namespace?: string): Promise<MigrateMemoryStorage>;
+}
+
+export interface MigrateCliReport {
+  action: "normalize-frontmatter" | "rescore-importance" | "rechunk" | "reextract";
+  dryRun: boolean;
+  scanned: number;
+  changed: number;
+  queued: number;
+  limit: number;
+  model?: string;
+}
+
+function clampMigrateLimit(limit: number | undefined, cap: number, fallback: number): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return fallback;
+  return Math.max(1, Math.min(cap, Math.floor(limit)));
+}
+
+async function readMigrateCandidateMemories(storage: MigrateMemoryStorage, limit: number): Promise<MemoryFile[]> {
+  const merged = new Map<string, MemoryFile>();
+  const addMany = (items: MemoryFile[]) => {
+    for (const item of items) {
+      if (!item.frontmatter?.id) continue;
+      merged.set(item.path, item);
+    }
+  };
+  addMany(await storage.readAllMemories());
+  addMany(await storage.readArchivedMemories());
+  return [...merged.values()]
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .slice(0, limit);
+}
+
+function sameImportance(a: MemoryFile["frontmatter"]["importance"], b: MemoryFile["frontmatter"]["importance"]): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (Math.abs(a.score - b.score) > 0.000001) return false;
+  if (a.level !== b.level) return false;
+  if (a.reasons.join("|") !== b.reasons.join("|")) return false;
+  if (a.keywords.join("|") !== b.keywords.join("|")) return false;
+  return true;
+}
+
+function sameChunkContent(existing: MemoryFile[], desired: string[]): boolean {
+  if (existing.length !== desired.length) return false;
+  for (let i = 0; i < desired.length; i += 1) {
+    const current = existing[i]?.content?.trim() ?? "";
+    if (current !== desired[i]?.trim()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function runMigrateNormalizeFrontmatterCliCommand(
+  orchestrator: MigrateCliOrchestrator,
+  options: { write?: boolean; limit?: number } = {},
+): Promise<MigrateCliReport> {
+  const limit = clampMigrateLimit(options.limit, MIGRATE_LIMIT_CAP, 200);
+  const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
+  const candidates = await readMigrateCandidateMemories(storage, limit);
+  if (options.write === true) {
+    for (const memory of candidates) {
+      await storage.writeMemoryFrontmatter(memory, {});
+    }
+  }
+  return {
+    action: "normalize-frontmatter",
+    dryRun: options.write !== true,
+    scanned: candidates.length,
+    changed: candidates.length,
+    queued: 0,
+    limit,
+  };
+}
+
+export async function runMigrateRescoreImportanceCliCommand(
+  orchestrator: MigrateCliOrchestrator,
+  options: { write?: boolean; limit?: number } = {},
+): Promise<MigrateCliReport> {
+  const limit = clampMigrateLimit(options.limit, MIGRATE_LIMIT_CAP, 200);
+  const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
+  const candidates = await readMigrateCandidateMemories(storage, limit);
+  let changed = 0;
+  for (const memory of candidates) {
+    const nextImportance = rescoreMemoryImportance(memory);
+    if (sameImportance(memory.frontmatter.importance, nextImportance)) continue;
+    changed += 1;
+    if (options.write === true) {
+      await storage.writeMemoryFrontmatter(memory, {
+        importance: nextImportance,
+        updated: new Date().toISOString(),
+      });
+    }
+  }
+
+  return {
+    action: "rescore-importance",
+    dryRun: options.write !== true,
+    scanned: candidates.length,
+    changed,
+    queued: 0,
+    limit,
+  };
+}
+
+export async function runMigrateRechunkCliCommand(
+  orchestrator: MigrateCliOrchestrator,
+  options: { write?: boolean; limit?: number } = {},
+): Promise<MigrateCliReport> {
+  const limit = clampMigrateLimit(options.limit, MIGRATE_LIMIT_CAP, 200);
+  const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
+  const candidates = (await readMigrateCandidateMemories(storage, limit))
+    .filter((memory) => memory.frontmatter.parentId === undefined);
+
+  let changed = 0;
+  for (const memory of candidates) {
+    const chunked = chunkContent(memory.content);
+    if (!chunked.chunked) continue;
+    const desired = chunked.chunks.map((chunk) => chunk.content);
+    const existing = await storage.getChunksForParent(memory.frontmatter.id);
+    if (sameChunkContent(existing, desired)) continue;
+    changed += 1;
+    if (options.write !== true) continue;
+
+    for (const chunk of existing) {
+      await storage.invalidateMemory(chunk.frontmatter.id);
+    }
+    for (const chunk of chunked.chunks) {
+      await storage.writeChunk(
+        memory.frontmatter.id,
+        chunk.index,
+        chunked.chunks.length,
+        memory.frontmatter.category,
+        chunk.content,
+        {
+          confidence: memory.frontmatter.confidence,
+          tags: memory.frontmatter.tags,
+          entityRef: memory.frontmatter.entityRef,
+          source: "migration-rechunk",
+          importance: memory.frontmatter.importance,
+          intentGoal: memory.frontmatter.intentGoal,
+          intentActionType: memory.frontmatter.intentActionType,
+          intentEntityTypes: memory.frontmatter.intentEntityTypes,
+          memoryKind: memory.frontmatter.memoryKind,
+        },
+      );
+    }
+  }
+
+  return {
+    action: "rechunk",
+    dryRun: options.write !== true,
+    scanned: candidates.length,
+    changed,
+    queued: 0,
+    limit,
+  };
+}
+
+export async function runMigrateReextractCliCommand(
+  orchestrator: MigrateCliOrchestrator,
+  options: { model: string; write?: boolean; limit?: number },
+): Promise<MigrateCliReport> {
+  const model = options.model.trim();
+  if (model.length === 0) {
+    throw new Error("missing --model for migrate reextract");
+  }
+  const limit = clampMigrateLimit(options.limit, REEXTRACT_LIMIT_CAP, 100);
+  const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
+  const candidates = (await readMigrateCandidateMemories(storage, limit))
+    .filter((memory) => memory.frontmatter.parentId === undefined);
+  const selected = candidates.slice(0, limit);
+  let queued = 0;
+  if (options.write === true && selected.length > 0) {
+    queued = await storage.appendReextractJobs(
+      selected.map((memory) => ({
+        memoryId: memory.frontmatter.id,
+        model,
+        requestedAt: new Date().toISOString(),
+        source: "cli-migrate",
+      })),
+    );
+  }
+
+  return {
+    action: "reextract",
+    dryRun: options.write !== true,
+    scanned: candidates.length,
+    changed: selected.length,
+    queued,
+    limit,
+    model,
+  };
 }
 
 interface RuntimePolicySnapshotPayload {
@@ -1752,6 +1995,77 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .description("Roll back runtime behavior policy to the previous snapshot")
         .action(async () => {
           const report = await runPolicyRollbackCliCommand(orchestrator);
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      const migrateCmd = cmd
+        .command("migrate")
+        .description("Run memory migration helpers (dry-run by default)");
+
+      migrateCmd
+        .command("normalize-frontmatter")
+        .description("Normalize memory frontmatter serialization")
+        .option("--write", "Apply frontmatter rewrites (default: dry-run)")
+        .option("--limit <n>", "Maximum memories to scan", "200")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const limitRaw = parseInt(String(options.limit ?? "200"), 10);
+          const report = await runMigrateNormalizeFrontmatterCliCommand(orchestrator, {
+            write: options.write === true,
+            limit: Number.isFinite(limitRaw) ? limitRaw : 200,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      migrateCmd
+        .command("rescore-importance")
+        .description("Recompute memory importance scores using current local heuristics")
+        .option("--write", "Apply frontmatter updates (default: dry-run)")
+        .option("--limit <n>", "Maximum memories to scan", "200")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const limitRaw = parseInt(String(options.limit ?? "200"), 10);
+          const report = await runMigrateRescoreImportanceCliCommand(orchestrator, {
+            write: options.write === true,
+            limit: Number.isFinite(limitRaw) ? limitRaw : 200,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      migrateCmd
+        .command("rechunk")
+        .description("Rebuild chunk files from current chunking heuristics")
+        .option("--write", "Apply chunk rewrites (default: dry-run)")
+        .option("--limit <n>", "Maximum parent memories to scan", "200")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const limitRaw = parseInt(String(options.limit ?? "200"), 10);
+          const report = await runMigrateRechunkCliCommand(orchestrator, {
+            write: options.write === true,
+            limit: Number.isFinite(limitRaw) ? limitRaw : 200,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      migrateCmd
+        .command("reextract")
+        .description("Queue bounded memory re-extraction jobs for an explicit model")
+        .option("--model <id>", "Model id used for re-extraction request")
+        .option("--write", "Queue re-extraction jobs (default: dry-run)")
+        .option("--limit <n>", "Maximum memories to queue", "100")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const model = typeof options.model === "string" ? options.model : "";
+          const limitRaw = parseInt(String(options.limit ?? "100"), 10);
+          const report = await runMigrateReextractCliCommand(orchestrator, {
+            model,
+            write: options.write === true,
+            limit: Number.isFinite(limitRaw) ? limitRaw : 100,
+          });
           console.log(JSON.stringify(report, null, 2));
           console.log("OK");
         });

@@ -79,6 +79,13 @@ const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "with",
 ]);
 
+export interface ReextractJobRequest {
+  memoryId: string;
+  model: string;
+  requestedAt: string;
+  source: "cli-migrate";
+}
+
 function tokenizeArtifactSearchText(input: string): string[] {
   return input
     .toLowerCase()
@@ -1614,6 +1621,56 @@ export class StorageManager {
     const payload = deduped.map((event) => `${JSON.stringify(event)}\n`).join("");
     await appendFile(this.behaviorSignalsPath, payload, "utf-8");
     return deduped.length;
+  }
+
+  async appendReextractJobs(events: ReextractJobRequest[]): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+    const filePath = path.join(this.stateDir, "reextract-jobs.jsonl");
+    const lines = events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+    try {
+      await appendFile(filePath, lines, "utf-8");
+      return events.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  async readReextractJobs(limit: number = 200): Promise<ReextractJobRequest[]> {
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 200;
+    const filePath = path.join(this.stateDir, "reextract-jobs.jsonl");
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+      const parsed: ReextractJobRequest[] = [];
+      for (const line of lines) {
+        try {
+          const record = JSON.parse(line) as Partial<ReextractJobRequest>;
+          if (
+            typeof record.memoryId !== "string" ||
+            record.memoryId.length === 0 ||
+            typeof record.model !== "string" ||
+            record.model.length === 0 ||
+            typeof record.requestedAt !== "string" ||
+            record.requestedAt.length === 0 ||
+            record.source !== "cli-migrate"
+          ) {
+            continue;
+          }
+          parsed.push({
+            memoryId: record.memoryId,
+            model: record.model,
+            requestedAt: record.requestedAt,
+            source: "cli-migrate",
+          });
+        } catch {
+          continue;
+        }
+      }
+      return parsed.slice(-safeLimit);
+    } catch {
+      return [];
+    }
   }
 
   async readBehaviorSignals(limit: number = 200): Promise<BehaviorSignalEvent[]> {

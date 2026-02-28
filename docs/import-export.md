@@ -44,3 +44,20 @@ Notes:
 - Backups are intended to be driven by your scheduler (OpenClaw cron, launchd, systemd, etc.).
 - Use `--include-transcripts` only if you are comfortable backing up full transcripts.
 
+## Migration Helpers (v8.16 Task 1)
+
+Engram includes bounded migration helpers under `openclaw engram migrate`:
+
+```bash
+openclaw engram migrate normalize-frontmatter
+openclaw engram migrate rescore-importance
+openclaw engram migrate rechunk
+openclaw engram migrate reextract --model gpt-5-mini
+```
+
+All migration helpers default to dry-run. Add `--write` to apply changes and `--limit <n>` to cap scanned items.
+
+`reextract` behavior:
+- Requires explicit `--model`.
+- Queues requests into `state/reextract-jobs.jsonl`.
+- Applies a hard queue cap for safety; it does not directly run extraction in the CLI process.

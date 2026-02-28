@@ -1,0 +1,119 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import {
+  runMigrateNormalizeFrontmatterCliCommand,
+  runMigrateRechunkCliCommand,
+  runMigrateReextractCliCommand,
+  runMigrateRescoreImportanceCliCommand,
+} from "../src/cli.js";
+import { StorageManager } from "../src/storage.js";
+
+function buildMigrateOrchestrator(storage: StorageManager) {
+  return {
+    config: { defaultNamespace: "default" },
+    async getStorage() {
+      return storage;
+    },
+  };
+}
+
+function longChunkCandidate(): string {
+  return Array.from({ length: 120 }, (_, idx) => `Sentence ${idx + 1} adds deterministic chunking coverage.`).join(" ");
+}
+
+test("migrate normalize-frontmatter defaults to dry-run", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-normalize-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.writeMemory("fact", "Normalize this frontmatter.", { source: "test" });
+
+    const report = await runMigrateNormalizeFrontmatterCliCommand(buildMigrateOrchestrator(storage), { limit: 10 });
+    assert.equal(report.action, "normalize-frontmatter");
+    assert.equal(report.dryRun, true);
+    assert.equal(report.scanned >= 1, true);
+    assert.equal(report.changed, report.scanned);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrate rescore-importance writes recalculated scores", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-importance-"));
+  try {
+    const storage = new StorageManager(dir);
+    const id = await storage.writeMemory("fact", "hello", { source: "test" });
+    const before = await storage.getMemoryById(id);
+    assert.equal(before?.frontmatter.importance, undefined);
+
+    const report = await runMigrateRescoreImportanceCliCommand(buildMigrateOrchestrator(storage), {
+      write: true,
+      limit: 10,
+    });
+    assert.equal(report.action, "rescore-importance");
+    assert.equal(report.dryRun, false);
+    assert.equal(report.changed >= 1, true);
+
+    const after = await storage.getMemoryById(id);
+    assert.equal(Boolean(after?.frontmatter.importance), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrate rechunk writes chunk files for long parent content", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-rechunk-"));
+  try {
+    const storage = new StorageManager(dir);
+    const parentId = await storage.writeMemory("fact", longChunkCandidate(), { source: "test" });
+
+    const report = await runMigrateRechunkCliCommand(buildMigrateOrchestrator(storage), {
+      write: true,
+      limit: 10,
+    });
+    assert.equal(report.action, "rechunk");
+    assert.equal(report.dryRun, false);
+    assert.equal(report.changed >= 1, true);
+
+    const chunks = await storage.getChunksForParent(parentId);
+    assert.equal(chunks.length > 1, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrate reextract enforces explicit model and queues bounded jobs", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-migrate-reextract-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.writeMemory("fact", "Memory one", { source: "test" });
+    await storage.writeMemory("fact", "Memory two", { source: "test" });
+    await storage.writeMemory("fact", "Memory three", { source: "test" });
+
+    await assert.rejects(
+      runMigrateReextractCliCommand(buildMigrateOrchestrator(storage), {
+        model: "",
+        write: true,
+      }),
+      /missing --model/,
+    );
+
+    const report = await runMigrateReextractCliCommand(buildMigrateOrchestrator(storage), {
+      model: "gpt-5-mini",
+      write: true,
+      limit: 2,
+    });
+    assert.equal(report.action, "reextract");
+    assert.equal(report.dryRun, false);
+    assert.equal(report.queued, 2);
+    assert.equal(report.model, "gpt-5-mini");
+
+    const jobs = await storage.readReextractJobs(10);
+    assert.equal(jobs.length, 2);
+    assert.equal(jobs.every((job) => job.model === "gpt-5-mini"), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

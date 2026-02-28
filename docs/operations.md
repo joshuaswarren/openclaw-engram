@@ -61,6 +61,10 @@ openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run
 openclaw engram policy-status       # Runtime policy snapshot + top contributing signals
 openclaw engram policy-diff --since 7d  # Parameter deltas + evidence window
 openclaw engram policy-rollback     # Roll back to previous runtime policy snapshot
+openclaw engram migrate normalize-frontmatter  # Canonical frontmatter rewrite (dry-run default)
+openclaw engram migrate rescore-importance     # Recompute local importance scores
+openclaw engram migrate rechunk                # Rebuild chunk files from current chunking heuristics
+openclaw engram migrate reextract --model gpt-5-mini  # Queue bounded re-extraction requests
 ```
 
 Compatibility diagnostics:
@@ -86,6 +90,14 @@ Behavior-loop policy diagnostics:
 - `openclaw engram policy-status` reports current/previous runtime policy snapshots plus top contributing behavior signals in the current learning window.
 - `openclaw engram policy-diff --since <window>` reports per-parameter deltas (`previousValue`, `nextValue`, `delta`) and associated evidence counts.
 - `openclaw engram policy-rollback` restores the previous runtime policy snapshot and prints the resulting current snapshot.
+
+Migration diagnostics:
+- `openclaw engram migrate <subcommand>` defaults to dry-run; add `--write` to apply mutations.
+- `normalize-frontmatter` performs safe frontmatter round-trip normalization.
+- `rescore-importance` recomputes `importanceScore`/`importanceLevel` from current local heuristics.
+- `rechunk` uses current sentence-overlap chunking heuristics to rebuild child chunks for long parent memories.
+- `reextract --model <id>` queues bounded re-extraction jobs in `state/reextract-jobs.jsonl` (hard-capped, no direct extraction side effects).
+- Use `--limit <n>` to bound scanned/queued items for every subcommand.
 
 Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.

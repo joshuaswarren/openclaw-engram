@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.16 Task 1 (migration CLI command group):
+  - Added `openclaw engram migrate` subcommands: `normalize-frontmatter`, `rescore-importance`, `rechunk`, and `reextract --model <id>` (dry-run by default).
+  - Added bounded migration wrappers in `src/cli.ts` with hard caps and explicit `--write` semantics.
+  - Added re-extraction request queue persistence in storage (`state/reextract-jobs.jsonl`) via append/read helpers.
+  - Added `tests/cli-migrate.test.ts` coverage for dry-run behavior and write-path correctness.
+  - Updated `docs/operations.md` and `docs/import-export.md` with migration runbook guidance.
 - v8.15 behavior-loop Task 1 (config + state contracts):
   - Added behavior-loop auto-tuning config keys with bounded defaults and explicit zero-safe parsing semantics.
   - Added typed behavior-loop policy contracts in `src/types.ts` and corresponding Zod schemas in `src/schemas.ts`.
