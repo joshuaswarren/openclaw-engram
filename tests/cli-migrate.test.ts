@@ -117,3 +117,87 @@ test("migrate reextract enforces explicit model and queues bounded jobs", async 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("migrate rechunk does not invalidate existing chunks before replacement writes", async () => {
+  const parent = {
+    path: "/tmp/fact-parent.md",
+    frontmatter: {
+      id: "fact-parent",
+      category: "fact",
+      created: "2026-02-28T00:00:00.000Z",
+      updated: "2026-02-28T00:00:00.000Z",
+      source: "test",
+      confidence: 0.9,
+      confidenceTier: "high",
+      tags: [],
+    },
+    content: longChunkCandidate(),
+  } as any;
+
+  const existingChunk = {
+    path: "/tmp/fact-parent-chunk-0.md",
+    frontmatter: {
+      id: "fact-parent-chunk-0",
+      category: "fact",
+      created: "2026-02-28T00:00:00.000Z",
+      updated: "2026-02-28T00:00:00.000Z",
+      source: "chunking",
+      confidence: 0.9,
+      confidenceTier: "high",
+      tags: [],
+      parentId: "fact-parent",
+      chunkIndex: 0,
+      chunkTotal: 1,
+    },
+    content: "old content",
+  } as any;
+
+  let invalidateCalls = 0;
+  let updateCalls = 0;
+  let writeCalls = 0;
+  const storage = {
+    async readAllMemories() {
+      return [parent];
+    },
+    async readArchivedMemories() {
+      return [];
+    },
+    async writeMemoryFrontmatter() {
+      return true;
+    },
+    async getChunksForParent() {
+      return [existingChunk];
+    },
+    async updateMemory() {
+      updateCalls += 1;
+      return true;
+    },
+    async writeChunk() {
+      writeCalls += 1;
+      throw new Error("simulated write failure");
+    },
+    async invalidateMemory() {
+      invalidateCalls += 1;
+      return true;
+    },
+    async appendReextractJobs() {
+      return 0;
+    },
+  };
+
+  await assert.rejects(
+    runMigrateRechunkCliCommand(
+      {
+        config: { defaultNamespace: "default" },
+        async getStorage() {
+          return storage as any;
+        },
+      },
+      { write: true, limit: 10 },
+    ),
+    /simulated write failure/,
+  );
+  assert.equal(updateCalls >= 1, true);
+  assert.equal(writeCalls >= 1, true);
+  assert.equal(invalidateCalls, 0);
+});

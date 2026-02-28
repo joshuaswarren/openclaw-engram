@@ -542,6 +542,7 @@ type MigrateMemoryStorage = {
   readArchivedMemories(): Promise<MemoryFile[]>;
   writeMemoryFrontmatter(memory: MemoryFile, patch: Partial<MemoryFile["frontmatter"]>): Promise<boolean>;
   getChunksForParent(parentId: string): Promise<MemoryFile[]>;
+  updateMemory(id: string, newContent: string): Promise<boolean>;
   writeChunk(
     parentId: string,
     chunkIndex: number,
@@ -698,14 +699,22 @@ export async function runMigrateRechunkCliCommand(
     changed += 1;
     if (options.write !== true) continue;
 
-    for (const chunk of existing) {
-      await storage.invalidateMemory(chunk.frontmatter.id);
-    }
+    const total = chunked.chunks.length;
     for (const chunk of chunked.chunks) {
+      const existingChunk = existing[chunk.index];
+      if (existingChunk) {
+        await storage.updateMemory(existingChunk.frontmatter.id, chunk.content);
+        await storage.writeMemoryFrontmatter(existingChunk, {
+          chunkIndex: chunk.index,
+          chunkTotal: total,
+          updated: new Date().toISOString(),
+        });
+        continue;
+      }
       await storage.writeChunk(
         memory.frontmatter.id,
         chunk.index,
-        chunked.chunks.length,
+        total,
         memory.frontmatter.category,
         chunk.content,
         {
@@ -720,6 +729,12 @@ export async function runMigrateRechunkCliCommand(
           memoryKind: memory.frontmatter.memoryKind,
         },
       );
+    }
+    for (let idx = total; idx < existing.length; idx += 1) {
+      const stale = existing[idx];
+      if (stale?.frontmatter?.id) {
+        await storage.invalidateMemory(stale.frontmatter.id);
+      }
     }
   }
 
