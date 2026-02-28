@@ -78,6 +78,14 @@ const VALID_MEMORY_CATEGORIES = new Set([
   "skill",
 ]);
 
+const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [
+  "maxMemoryTokens",
+  "qmdMaxResults",
+  "qmdColdMaxResults",
+  "recallPlannerMaxQmdResultsMinimal",
+  "verbatimArtifactsMaxRecall",
+];
+
 export function parseConfig(raw: unknown): PluginConfig {
   const cfg =
     raw && typeof raw === "object" && !Array.isArray(raw)
@@ -700,6 +708,23 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.maxCompressionTokensPerHour === "number"
         ? Math.max(0, Math.floor(cfg.maxCompressionTokensPerHour))
         : 1500,
+    behaviorLoopAutoTuneEnabled: cfg.behaviorLoopAutoTuneEnabled === true,
+    behaviorLoopLearningWindowDays:
+      typeof cfg.behaviorLoopLearningWindowDays === "number"
+        ? Math.max(0, Math.floor(cfg.behaviorLoopLearningWindowDays))
+        : 14,
+    behaviorLoopMinSignalCount:
+      typeof cfg.behaviorLoopMinSignalCount === "number"
+        ? Math.max(0, Math.floor(cfg.behaviorLoopMinSignalCount))
+        : 10,
+    behaviorLoopMaxDeltaPerCycle:
+      typeof cfg.behaviorLoopMaxDeltaPerCycle === "number"
+        ? Math.min(1, Math.max(0, cfg.behaviorLoopMaxDeltaPerCycle))
+        : 0.1,
+    behaviorLoopProtectedParams: Array.isArray(cfg.behaviorLoopProtectedParams)
+      ? (cfg.behaviorLoopProtectedParams as unknown[])
+          .filter((param): param is string => typeof param === "string" && param.trim().length > 0)
+      : [...DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS],
     // v8.0 phase 1
     recallPlannerEnabled: cfg.recallPlannerEnabled !== false,
     recallPlannerMaxQmdResultsMinimal:

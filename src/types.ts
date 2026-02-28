@@ -319,6 +319,11 @@ export interface PluginConfig {
   compressionGuidelineSemanticTimeoutMs: number;
   maxProactiveQuestionsPerExtraction: number;
   maxCompressionTokensPerHour: number;
+  behaviorLoopAutoTuneEnabled: boolean;
+  behaviorLoopLearningWindowDays: number;
+  behaviorLoopMinSignalCount: number;
+  behaviorLoopMaxDeltaPerCycle: number;
+  behaviorLoopProtectedParams: string[];
   // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts
   recallPlannerEnabled: boolean;
   recallPlannerMaxQmdResultsMinimal: number;
@@ -428,6 +433,27 @@ export interface BufferState {
   turns: BufferTurn[];
   lastExtractionAt: string | null;
   extractionCount: number;
+}
+
+export interface BehaviorLoopAdjustment {
+  parameter: string;
+  previousValue: number;
+  nextValue: number;
+  delta: number;
+  evidenceCount: number;
+  confidence: number;
+  reason: string;
+  appliedAt: string;
+}
+
+export interface BehaviorLoopPolicyState {
+  version: number;
+  windowDays: number;
+  minSignalCount: number;
+  maxDeltaPerCycle: number;
+  protectedParams: string[];
+  adjustments: BehaviorLoopAdjustment[];
+  updatedAt: string;
 }
 
 /** Memory status for lifecycle management */

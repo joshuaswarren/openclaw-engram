@@ -11,6 +11,17 @@ test("parseConfig sets proactive/policy-learning defaults", () => {
   assert.equal(cfg.compressionGuidelineSemanticTimeoutMs, 2500);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 2);
   assert.equal(cfg.maxCompressionTokensPerHour, 1500);
+  assert.equal(cfg.behaviorLoopAutoTuneEnabled, false);
+  assert.equal(cfg.behaviorLoopLearningWindowDays, 14);
+  assert.equal(cfg.behaviorLoopMinSignalCount, 10);
+  assert.equal(cfg.behaviorLoopMaxDeltaPerCycle, 0.1);
+  assert.deepEqual(cfg.behaviorLoopProtectedParams, [
+    "maxMemoryTokens",
+    "qmdMaxResults",
+    "qmdColdMaxResults",
+    "recallPlannerMaxQmdResultsMinimal",
+    "verbatimArtifactsMaxRecall",
+  ]);
 });
 
 test("parseConfig supports explicit proactive/policy-learning settings and preserves zero limits", () => {
@@ -23,6 +34,11 @@ test("parseConfig supports explicit proactive/policy-learning settings and prese
     compressionGuidelineSemanticTimeoutMs: 1,
     maxProactiveQuestionsPerExtraction: 0,
     maxCompressionTokensPerHour: 0,
+    behaviorLoopAutoTuneEnabled: true,
+    behaviorLoopLearningWindowDays: 0,
+    behaviorLoopMinSignalCount: 0,
+    behaviorLoopMaxDeltaPerCycle: 0,
+    behaviorLoopProtectedParams: ["a", "", "b"],
   });
 
   assert.equal(cfg.proactiveExtractionEnabled, true);
@@ -32,6 +48,11 @@ test("parseConfig supports explicit proactive/policy-learning settings and prese
   assert.equal(cfg.compressionGuidelineSemanticTimeoutMs, 1);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 0);
   assert.equal(cfg.maxCompressionTokensPerHour, 0);
+  assert.equal(cfg.behaviorLoopAutoTuneEnabled, true);
+  assert.equal(cfg.behaviorLoopLearningWindowDays, 0);
+  assert.equal(cfg.behaviorLoopMinSignalCount, 0);
+  assert.equal(cfg.behaviorLoopMaxDeltaPerCycle, 0);
+  assert.deepEqual(cfg.behaviorLoopProtectedParams, ["a", "b"]);
 });
 
 test("parseConfig clamps proactive/policy-learning numeric limits to non-negative integers", () => {
@@ -40,9 +61,23 @@ test("parseConfig clamps proactive/policy-learning numeric limits to non-negativ
     compressionGuidelineSemanticTimeoutMs: -50,
     maxProactiveQuestionsPerExtraction: -1.7,
     maxCompressionTokensPerHour: -500.9,
+    behaviorLoopLearningWindowDays: -1,
+    behaviorLoopMinSignalCount: -7.9,
+    behaviorLoopMaxDeltaPerCycle: 4,
   });
 
   assert.equal(cfg.compressionGuidelineSemanticTimeoutMs, 1);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 0);
   assert.equal(cfg.maxCompressionTokensPerHour, 0);
+  assert.equal(cfg.behaviorLoopLearningWindowDays, 0);
+  assert.equal(cfg.behaviorLoopMinSignalCount, 0);
+  assert.equal(cfg.behaviorLoopMaxDeltaPerCycle, 1);
+});
+
+test("parseConfig returns a fresh default behaviorLoopProtectedParams array per call", () => {
+  const first = parseConfig({ openaiApiKey: "sk-test" });
+  first.behaviorLoopProtectedParams.push("mutated-default");
+
+  const second = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(second.behaviorLoopProtectedParams.includes("mutated-default"), false);
 });

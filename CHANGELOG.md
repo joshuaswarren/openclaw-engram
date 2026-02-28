@@ -29,6 +29,10 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.15 behavior-loop Task 1 (config + state contracts):
+  - Added behavior-loop auto-tuning config keys with bounded defaults and explicit zero-safe parsing semantics.
+  - Added typed behavior-loop policy contracts in `src/types.ts` and corresponding Zod schemas in `src/schemas.ts`.
+  - Extended `tests/config-proactive-policy.test.ts` to cover defaults, explicit zero overrides, and numeric clamping for behavior-loop settings.
 - v8.8 network sync Task 1 (WebDAV module):
   - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
   - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.
