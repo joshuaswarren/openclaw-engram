@@ -81,6 +81,8 @@ import {
 } from "./namespaces/principal.js";
 import { SharedContextManager } from "./shared-context/manager.js";
 import { CompoundingEngine } from "./compounding/engine.js";
+import { TierMigrationExecutor } from "./tier-migration.js";
+import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
 import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
 import { RoutingRulesStore } from "./routing/store.js";
 import type {
@@ -583,6 +585,8 @@ export class Orchestrator {
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
   private lastQmdEmbedAtMs = 0;
+  private tierMigrationInFlight = false;
+  private lastTierMigrationRunAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
   private lastRecallFailureLogAtMs = 0;
@@ -2851,6 +2855,88 @@ export class Orchestrator {
     await storage.saveMeta(meta);
 
     this.requestQmdMaintenance();
+    await this.runTierMigrationCycle(storage, "extraction");
+  }
+
+  private async runTierMigrationCycle(
+    storage: StorageManager,
+    trigger: "extraction" | "maintenance",
+  ): Promise<void> {
+    if (!this.config.qmdTierMigrationEnabled) return;
+    if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled) return;
+    if (this.tierMigrationInFlight) return;
+
+    const fallbackBudget =
+      trigger === "extraction"
+        ? { limit: 12, scanLimit: 48, minIntervalMs: 60_000 }
+        : {
+            limit: this.config.qmdTierAutoBackfillEnabled ? 200 : 50,
+            scanLimit: this.config.qmdTierAutoBackfillEnabled ? 800 : 200,
+            minIntervalMs: this.config.qmdTierAutoBackfillEnabled ? 120_000 : 300_000,
+          };
+    const budget = this.compounding?.tierMigrationCycleBudget(trigger) ?? fallbackBudget;
+    const nowMs = Date.now();
+    if (nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs) return;
+
+    const policy = {
+      enabled: this.config.qmdTierMigrationEnabled,
+      demotionMinAgeDays: this.config.qmdTierDemotionMinAgeDays,
+      demotionValueThreshold: this.config.qmdTierDemotionValueThreshold,
+      promotionValueThreshold: this.config.qmdTierPromotionValueThreshold,
+    };
+
+    this.tierMigrationInFlight = true;
+    try {
+      const coldStorage = new StorageManager(path.join(storage.dir, "cold"));
+      const [hotMemories, coldMemories] = await Promise.all([
+        storage.readAllMemories(),
+        coldStorage.readAllMemories(),
+      ]);
+      const now = new Date();
+      const candidates = [
+        ...hotMemories.map((memory) => ({ memory, tier: "hot" as MemoryTier })),
+        ...coldMemories.map((memory) => ({ memory, tier: "cold" as MemoryTier })),
+      ]
+        .sort((a, b) => {
+          const aTs = Date.parse(a.memory.frontmatter.updated ?? a.memory.frontmatter.created);
+          const bTs = Date.parse(b.memory.frontmatter.updated ?? b.memory.frontmatter.created);
+          return bTs - aTs;
+        })
+        .slice(0, Math.max(0, Math.floor(budget.scanLimit)));
+
+      const migration = new TierMigrationExecutor({
+        storage,
+        qmd: this.qmd,
+        hotCollection: this.config.qmdCollection,
+        coldCollection: this.config.qmdColdCollection ?? `${this.config.qmdCollection}-cold`,
+        autoEmbed: this.config.qmdAutoEmbedEnabled,
+      });
+
+      let migrated = 0;
+      for (const candidate of candidates) {
+        if (migrated >= budget.limit) break;
+        const decision = decideTierTransition(candidate.memory, candidate.tier, policy, now);
+        if (!decision.changed) continue;
+
+        const res = await migration.migrateMemory({
+          memory: candidate.memory,
+          fromTier: candidate.tier,
+          toTier: decision.nextTier,
+          reason: `${trigger}:${decision.reason}`,
+        });
+        if (res.changed) migrated += 1;
+      }
+
+      this.lastTierMigrationRunAtMs = Date.now();
+      log.debug(
+        `tier migration cycle completed: trigger=${trigger} scanned=${candidates.length} migrated=${migrated} limit=${budget.limit}`,
+      );
+    } catch (err) {
+      this.lastTierMigrationRunAtMs = Date.now();
+      log.warn(`tier migration cycle failed (${trigger}, fail-open): ${err}`);
+    } finally {
+      this.tierMigrationInFlight = false;
+    }
   }
 
   private maybeScheduleConsolidation(nonZeroExtraction: boolean): void {
@@ -3763,6 +3849,8 @@ export class Orchestrator {
 
     // v8.3 Compression guideline learning pass (default off, fail-open).
     await this.runCompressionGuidelineLearningPass();
+
+    await this.runTierMigrationCycle(this.storage, "maintenance");
 
     // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
     if (this.config.factArchivalEnabled) {

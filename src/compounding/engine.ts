@@ -212,6 +212,25 @@ export class CompoundingEngine {
     }
   }
 
+  tierMigrationCycleBudget(
+    trigger: "extraction" | "maintenance",
+  ): { limit: number; scanLimit: number; minIntervalMs: number } {
+    if (trigger === "extraction") {
+      const limit = 12;
+      return {
+        limit,
+        scanLimit: limit * 4,
+        minIntervalMs: 60_000,
+      };
+    }
+    const limit = this.config.qmdTierAutoBackfillEnabled ? 200 : 50;
+    return {
+      limit,
+      scanLimit: limit * 4,
+      minIntervalMs: this.config.qmdTierAutoBackfillEnabled ? 120_000 : 300_000,
+    };
+  }
+
   private async readFeedbackEntriesForWeek(weekId: string): Promise<SharedFeedbackEntry[]> {
     // Minimal implementation: includes entries where date starts with any day in the ISO week.
     // We approximate by taking all entries and filtering by computed isoWeekId(date).
