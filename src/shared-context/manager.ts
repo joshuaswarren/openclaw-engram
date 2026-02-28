@@ -84,6 +84,13 @@ function extractTopicTokens(text: string, maxTokens: number = 12): string[] {
   return out;
 }
 
+function stripYamlFrontmatter(text: string): string {
+  if (!text.startsWith("---\n")) return text;
+  const closing = text.indexOf("\n---\n", 4);
+  if (closing === -1) return text;
+  return text.slice(closing + 5);
+}
+
 interface SharedCrossSignalSource {
   agent: string;
   path: string;
@@ -302,12 +309,15 @@ export class SharedContextManager {
       // ignore
     }
 
-    const sources: SharedCrossSignalSource[] = outputs.map((output) => ({
-      agent: output.agent,
-      path: output.path,
-      title: output.title,
-      topics: extractTopicTokens(`${output.title}\n${output.raw}`),
-    }));
+    const sources: SharedCrossSignalSource[] = outputs.map((output) => {
+      const body = stripYamlFrontmatter(output.raw);
+      return {
+        agent: output.agent,
+        path: output.path,
+        title: output.title,
+        topics: extractTopicTokens(`${output.title}\n${body}`),
+      };
+    });
 
     const overlapMap = new Map<string, { agents: Set<string>; sourcePaths: Set<string> }>();
     for (const source of sources) {

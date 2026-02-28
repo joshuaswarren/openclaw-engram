@@ -68,6 +68,34 @@ test("shared-context cross-signals handles single-source day without overlap", a
   }
 });
 
+test("shared-context cross-signals ignores YAML frontmatter boilerplate for overlaps", async () => {
+  const { manager, memoryDir, sharedDir } = await buildManager("engram-shared-frontmatter");
+  try {
+    const date = "2026-03-03";
+    await manager.writeAgentOutput({
+      agentId: "generalist",
+      title: "Alpha topic unique",
+      content: "saturn venus mercury jupiter",
+      createdAt: isoForDate(date, "08:00:00"),
+    });
+    await manager.writeAgentOutput({
+      agentId: "oracle",
+      title: "Beta thread distinct",
+      content: "otter falcon lynx badger",
+      createdAt: isoForDate(date, "08:05:00"),
+    });
+
+    const result = await manager.curateDaily({ date });
+    const raw = JSON.parse(await readFile(result.crossSignalsPath, "utf-8"));
+
+    assert.equal(raw.sourceCount, 2);
+    assert.equal(raw.overlaps.length, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
+  }
+});
+
 test("shared-context cross-signals captures multi-source overlap and feedback counts", async () => {
   const { manager, memoryDir, sharedDir } = await buildManager("engram-shared-overlap");
   try {
