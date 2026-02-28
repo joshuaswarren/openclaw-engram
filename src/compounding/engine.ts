@@ -46,6 +46,15 @@ type PromotionCandidate = {
   provenance: string[];
 };
 
+type WeeklyActionEvent = {
+  line: number;
+  action: string;
+  outcome: "applied" | "skipped" | "failed" | "unknown";
+  policyDecision: "deny" | "defer" | null;
+  namespace: string;
+  reason: string | null;
+};
+
 export type TierMigrationCycleTrigger = "extraction" | "maintenance";
 export interface TierMigrationCycleBudget {
   limit: number;
@@ -331,10 +340,27 @@ export class CompoundingEngine {
 
   private async readActionFailurePatternsForWeek(weekId: string): Promise<string[]> {
     const out: string[] = [];
+    const events = await this.readActionEventsForWeek(weekId);
+    for (const event of events) {
+      const failed = event.outcome === "failed" || event.outcome === "skipped";
+      if (!failed && event.policyDecision === null) continue;
+      const suffix = event.reason && event.reason.trim().length > 0
+        ? ` - ${event.reason.trim().slice(0, 140)}`
+        : "";
+      out.push(
+        `memory-action/${event.namespace}: ${event.action} ${event.outcome}${event.policyDecision ? `/${event.policyDecision}` : ""}${suffix}`,
+      );
+    }
+    return out;
+  }
+
+  private async readActionEventsForWeek(weekId: string): Promise<WeeklyActionEvent[]> {
+    const out: WeeklyActionEvent[] = [];
     try {
       const raw = await readFile(this.memoryActionEventsPath, "utf-8");
       const lines = raw.split("\n");
-      for (const line of lines) {
+      for (let idx = 0; idx < lines.length; idx += 1) {
+        const line = lines[idx];
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line) as {
@@ -348,21 +374,18 @@ export class CompoundingEngine {
           if (typeof parsed.timestamp !== "string" || typeof parsed.action !== "string") continue;
           const ts = new Date(parsed.timestamp);
           if (!Number.isFinite(ts.getTime()) || isoWeekId(ts) !== weekId) continue;
-          const policy = parsed.policyDecision === "deny" || parsed.policyDecision === "defer"
-            ? parsed.policyDecision
-            : null;
-          const failed = parsed.outcome === "failed" || parsed.outcome === "skipped";
-          if (!failed && policy === null) continue;
-
-          const ns = typeof parsed.namespace === "string" && parsed.namespace.length > 0
-            ? parsed.namespace
-            : "default";
-          const suffix = typeof parsed.reason === "string" && parsed.reason.trim().length > 0
-            ? ` - ${parsed.reason.trim().slice(0, 140)}`
-            : "";
-          out.push(
-            `memory-action/${ns}: ${parsed.action} ${parsed.outcome ?? "unknown"}${policy ? `/${policy}` : ""}${suffix}`,
-          );
+          out.push({
+            line: idx + 1,
+            action: parsed.action,
+            outcome: parsed.outcome === "applied" || parsed.outcome === "skipped" || parsed.outcome === "failed"
+              ? parsed.outcome
+              : "unknown",
+            policyDecision: parsed.policyDecision === "deny" || parsed.policyDecision === "defer"
+              ? parsed.policyDecision
+              : null,
+            namespace: typeof parsed.namespace === "string" && parsed.namespace.length > 0 ? parsed.namespace : "default",
+            reason: typeof parsed.reason === "string" ? parsed.reason : null,
+          });
         } catch {
           // Ignore malformed rows (fail-open).
         }
@@ -375,38 +398,19 @@ export class CompoundingEngine {
 
   private async readActionOutcomeSummaryForWeek(weekId: string): Promise<ActionOutcomeSummary[]> {
     const byAction = new Map<string, { counts: ActionOutcomeCounts; provenance: Set<string> }>();
-    try {
-      const raw = await readFile(this.memoryActionEventsPath, "utf-8");
-      const lines = raw.split("\n");
-      for (let idx = 0; idx < lines.length; idx += 1) {
-        const line = lines[idx];
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as {
-            timestamp?: string;
-            action?: string;
-            outcome?: string;
-          };
-          if (typeof parsed.timestamp !== "string" || typeof parsed.action !== "string") continue;
-          const ts = new Date(parsed.timestamp);
-          if (!Number.isFinite(ts.getTime()) || isoWeekId(ts) !== weekId) continue;
-          const key = parsed.action;
-          const acc = byAction.get(key) ?? {
-            counts: { applied: 0, skipped: 0, failed: 0, unknown: 0 },
-            provenance: new Set<string>(),
-          };
-          if (parsed.outcome === "applied") acc.counts.applied += 1;
-          else if (parsed.outcome === "skipped") acc.counts.skipped += 1;
-          else if (parsed.outcome === "failed") acc.counts.failed += 1;
-          else acc.counts.unknown += 1;
-          acc.provenance.add(`${path.basename(this.memoryActionEventsPath)}:L${idx + 1}`);
-          byAction.set(key, acc);
-        } catch {
-          // fail-open
-        }
-      }
-    } catch {
-      // Missing action telemetry is allowed.
+    const events = await this.readActionEventsForWeek(weekId);
+    for (const event of events) {
+      const key = event.action;
+      const acc = byAction.get(key) ?? {
+        counts: { applied: 0, skipped: 0, failed: 0, unknown: 0 },
+        provenance: new Set<string>(),
+      };
+      if (event.outcome === "applied") acc.counts.applied += 1;
+      else if (event.outcome === "skipped") acc.counts.skipped += 1;
+      else if (event.outcome === "failed") acc.counts.failed += 1;
+      else acc.counts.unknown += 1;
+      acc.provenance.add(`${path.basename(this.memoryActionEventsPath)}:L${event.line}`);
+      byAction.set(key, acc);
     }
 
     const out: ActionOutcomeSummary[] = [];
@@ -563,7 +567,7 @@ export class CompoundingEngine {
       } else {
         for (const candidate of promotionCandidates) {
           lines.push(
-            `- ${candidate.action} (score=${candidate.score}): ${candidate.rationale} outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}] _(source: ${candidate.provenance.join(", ")})_`,
+            `- ${candidate.action} (score=${candidate.score}): ${candidate.rationale} outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}, u=${candidate.outcome.unknown}] _(source: ${candidate.provenance.join(", ")})_`,
           );
         }
       }
