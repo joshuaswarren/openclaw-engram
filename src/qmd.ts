@@ -856,7 +856,7 @@ export class QmdClient {
       return results;
     } catch (err) {
       const errMsg = String(err);
-      if (errMsg.includes("timed out")) {
+      if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
         log.debug("QMD daemon vsearch timed out, falling back to subprocess");
         return null;
       }
