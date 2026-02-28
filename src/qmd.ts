@@ -890,6 +890,18 @@ export class QmdClient {
     }
   }
 
+  async updateCollection(collection: string): Promise<void> {
+    if (this.available === false) return;
+    const name = collection.trim();
+    if (!name) return;
+    try {
+      await runQmd(["update", "-c", name], this.updateTimeoutMs, this.qmdPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`QMD update failed for collection ${name}: ${msg}`);
+    }
+  }
+
   async embed(): Promise<void> {
     if (this.available === false) return;
     const globalState = getGlobalQmdState();
@@ -929,6 +941,18 @@ export class QmdClient {
       globalState.lastGlobalEmbedFailAtMs = now;
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD embed failed: ${msg}`);
+    }
+  }
+
+  async embedCollection(collection: string): Promise<void> {
+    if (this.available === false) return;
+    const name = collection.trim();
+    if (!name) return;
+    try {
+      await runQmd(["embed", "-c", name], 300_000, this.qmdPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`QMD embed failed for collection ${name}: ${msg}`);
     }
   }
 

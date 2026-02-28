@@ -1192,6 +1192,91 @@ export class StorageManager {
     }
   }
 
+  private resolveTierRootDir(tier: "hot" | "cold"): string {
+    return tier === "cold" ? path.join(this.baseDir, "cold") : this.baseDir;
+  }
+
+  private resolveMemoryDateDir(memory: MemoryFile): string {
+    const preferred = memory.frontmatter.created || memory.frontmatter.updated;
+    const dateToken = (preferred ?? "").slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(dateToken)
+      ? dateToken
+      : new Date().toISOString().slice(0, 10);
+  }
+
+  buildTierMemoryPath(memory: MemoryFile, tier: "hot" | "cold"): string {
+    const root = this.resolveTierRootDir(tier);
+    if (memory.frontmatter.category === "correction") {
+      return path.join(root, "corrections", `${memory.frontmatter.id}.md`);
+    }
+    return path.join(root, "facts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
+  }
+
+  private async writeMemoryFileAtomic(targetPath: string, memory: MemoryFile): Promise<void> {
+    const fileContent = `${serializeFrontmatter(memory.frontmatter)}\n\n${memory.content}\n`;
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      await writeFile(tempPath, fileContent, "utf-8");
+      await rename(tempPath, targetPath);
+    } catch (err) {
+      try {
+        await unlink(tempPath);
+      } catch {
+        // best-effort cleanup
+      }
+      throw err;
+    }
+  }
+
+  async copyMemoryToPath(memory: MemoryFile, targetPath: string): Promise<void> {
+    await this.writeMemoryFileAtomic(targetPath, memory);
+  }
+
+  async moveMemoryToPath(memory: MemoryFile, targetPath: string): Promise<void> {
+    await this.writeMemoryFileAtomic(targetPath, memory);
+    const sourcePath = path.resolve(memory.path);
+    const destPath = path.resolve(targetPath);
+    if (sourcePath !== destPath) {
+      try {
+        await unlink(memory.path);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes("ENOENT")) {
+          throw err;
+        }
+      }
+    }
+  }
+
+  async migrateMemoryToTier(
+    memory: MemoryFile,
+    targetTier: "hot" | "cold",
+  ): Promise<{ changed: boolean; targetPath: string }> {
+    const targetPath = this.buildTierMemoryPath(memory, targetTier);
+    const sourcePath = path.resolve(memory.path);
+    const destPath = path.resolve(targetPath);
+    if (sourcePath === destPath) {
+      return { changed: false, targetPath };
+    }
+
+    const existing = await this.readMemoryByPath(targetPath);
+    if (existing?.frontmatter.id === memory.frontmatter.id) {
+      try {
+        await unlink(memory.path);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes("ENOENT")) {
+          throw err;
+        }
+      }
+      return { changed: false, targetPath };
+    }
+
+    await this.moveMemoryToPath(memory, targetPath);
+    return { changed: true, targetPath };
+  }
+
   private get archiveDir(): string {
     return path.join(this.baseDir, "archive");
   }
