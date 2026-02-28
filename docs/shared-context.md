@@ -35,13 +35,24 @@ Cross-signal report includes:
 - per-source topic token extraction (from title/body)
 - overlap entries where the same token appears across 2+ agents
 - daily feedback decision totals (`approved`, `approved_with_feedback`, `rejected`)
+- optional semantic overlap enhancement metadata (`semantic.enabled/applied/timedOut`)
 
 Roundtable output includes a `Cross-Signals` section summarizing:
 - number of sources analyzed
 - number of feedback entries analyzed
 - decision totals
+- semantic enhancer status (disabled/applied/no-additional-overlap/timeout fail-open)
 - path to the generated cross-signal JSON
 - top overlap bullets when available
+
+Semantic enhancer settings (all optional):
+- `sharedCrossSignalSemanticEnabled` (default `false`)
+- `sharedCrossSignalSemanticTimeoutMs` (default `4000`)
+- `sharedCrossSignalSemanticMaxCandidates` (default `120`)
+
+Compatibility aliases remain supported:
+- `crossSignalsSemanticEnabled`
+- `crossSignalsSemanticTimeoutMs`
 
 Injection:
 - When enabled, Engram injects `priorities.md` and the latest `roundtable/*.md` into the system prompt (timeboxed and capped by `sharedContextMaxInjectChars`).

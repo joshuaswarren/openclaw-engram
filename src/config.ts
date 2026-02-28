@@ -619,9 +619,27 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.sharedContextDir === "string" && cfg.sharedContextDir.length > 0 ? cfg.sharedContextDir : undefined,
     sharedContextMaxInjectChars:
       typeof cfg.sharedContextMaxInjectChars === "number" ? cfg.sharedContextMaxInjectChars : 4000,
-    crossSignalsSemanticEnabled: cfg.crossSignalsSemanticEnabled === true,
+    sharedCrossSignalSemanticEnabled:
+      cfg.sharedCrossSignalSemanticEnabled === true || cfg.crossSignalsSemanticEnabled === true,
+    sharedCrossSignalSemanticTimeoutMs:
+      typeof cfg.sharedCrossSignalSemanticTimeoutMs === "number"
+        ? Math.max(1, Math.floor(cfg.sharedCrossSignalSemanticTimeoutMs))
+        : typeof cfg.crossSignalsSemanticTimeoutMs === "number"
+          ? Math.max(1, Math.floor(cfg.crossSignalsSemanticTimeoutMs))
+          : 4000,
+    sharedCrossSignalSemanticMaxCandidates:
+      typeof cfg.sharedCrossSignalSemanticMaxCandidates === "number"
+        ? Math.max(0, Math.floor(cfg.sharedCrossSignalSemanticMaxCandidates))
+        : 120,
+    // Backward-compatible aliases.
+    crossSignalsSemanticEnabled:
+      cfg.sharedCrossSignalSemanticEnabled === true || cfg.crossSignalsSemanticEnabled === true,
     crossSignalsSemanticTimeoutMs:
-      typeof cfg.crossSignalsSemanticTimeoutMs === "number" ? cfg.crossSignalsSemanticTimeoutMs : 4000,
+      typeof cfg.sharedCrossSignalSemanticTimeoutMs === "number"
+        ? Math.max(1, Math.floor(cfg.sharedCrossSignalSemanticTimeoutMs))
+        : typeof cfg.crossSignalsSemanticTimeoutMs === "number"
+          ? Math.max(1, Math.floor(cfg.crossSignalsSemanticTimeoutMs))
+          : 4000,
 
     // v5.0 compounding (default off)
     compoundingEnabled: cfg.compoundingEnabled === true,

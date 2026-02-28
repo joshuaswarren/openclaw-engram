@@ -1165,6 +1165,21 @@
         "default": 4000,
         "description": "Timeout for semantic cross-signal grouping (ms)."
       },
+      "sharedCrossSignalSemanticEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable semantic cross-signal enhancer during shared-context daily curation."
+      },
+      "sharedCrossSignalSemanticTimeoutMs": {
+        "type": "number",
+        "default": 4000,
+        "description": "Timeout budget for shared-context semantic cross-signal enhancer (ms)."
+      },
+      "sharedCrossSignalSemanticMaxCandidates": {
+        "type": "number",
+        "default": 120,
+        "description": "Maximum candidate topic tokens considered by semantic cross-signal enhancer."
+      },
       "compoundingEnabled": {
         "type": "boolean",
         "default": false,

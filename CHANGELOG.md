@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.16 Task 3 (optional semantic cross-signal enhancer):
+  - Added optional shared-context semantic overlap enhancement pass behind config gate (`sharedCrossSignalSemanticEnabled`).
+  - Added strict timeout guard (`sharedCrossSignalSemanticTimeoutMs`) and candidate bound (`sharedCrossSignalSemanticMaxCandidates`) with fail-open fallback to deterministic overlaps.
+  - Added backward-compatible config aliases for existing `crossSignalsSemantic*` keys.
+  - Added semantic enhancement metadata to daily `cross-signals/<YYYY-MM-DD>.json` report output.
+  - Added tests: `tests/config-shared-context-semantic.test.ts` and `tests/shared-context-cross-signals-semantic.test.ts`.
 - v8.16 Task 2 (deterministic shared cross-signals):
   - Added deterministic cross-signal generation in shared-context daily curation from agent outputs plus feedback decision aggregates.
   - Added persisted daily report artifact at `shared-context/cross-signals/<YYYY-MM-DD>.json`.

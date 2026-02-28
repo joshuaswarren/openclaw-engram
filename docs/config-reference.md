@@ -303,6 +303,9 @@ See [shared-context.md](shared-context.md).
 | `sharedContextEnabled` | `false` | Enable shared cross-agent context |
 | `sharedContextDir` | `(unset)` | Directory for shared context files |
 | `sharedContextMaxInjectChars` | `4000` | Max chars injected from shared context |
+| `sharedCrossSignalSemanticEnabled` | `false` | Enable optional semantic overlap enhancement during daily curation |
+| `sharedCrossSignalSemanticTimeoutMs` | `4000` | Timeout budget for semantic enhancement pass (fail-open on timeout) |
+| `sharedCrossSignalSemanticMaxCandidates` | `120` | Max topic-token candidates considered by semantic enhancement |
 
 ## v5.0 Compounding
 

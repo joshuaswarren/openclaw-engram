@@ -267,6 +267,9 @@ export interface PluginConfig {
   sharedContextMaxInjectChars: number;
   crossSignalsSemanticEnabled: boolean;
   crossSignalsSemanticTimeoutMs: number;
+  sharedCrossSignalSemanticEnabled?: boolean;
+  sharedCrossSignalSemanticTimeoutMs?: number;
+  sharedCrossSignalSemanticMaxCandidates?: number;
 
   // v5.0 Compounding engine
   compoundingEnabled: boolean;

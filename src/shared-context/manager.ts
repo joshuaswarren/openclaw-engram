@@ -91,6 +91,149 @@ function stripYamlFrontmatter(text: string): string {
   return text.slice(closing + 5);
 }
 
+function semanticRoot(token: string): string {
+  let root = token.toLowerCase();
+  if (root.endsWith("ization") && root.length > 8) {
+    return `${root.slice(0, -7)}ize`;
+  }
+  if (root.endsWith("isation") && root.length > 8) {
+    return `${root.slice(0, -7)}ise`;
+  }
+  const suffixes = [
+    "izations",
+    "ization",
+    "ations",
+    "ation",
+    "ments",
+    "ment",
+    "ingly",
+    "edly",
+    "ings",
+    "ing",
+    "ers",
+    "er",
+    "ies",
+    "ied",
+    "ions",
+    "ion",
+    "es",
+    "ed",
+    "s",
+  ];
+  for (const suffix of suffixes) {
+    if (root.length > suffix.length + 3 && root.endsWith(suffix)) {
+      root = root.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return root;
+}
+
+function mergeOverlaps(
+  base: SharedCrossSignalOverlap[],
+  extra: SharedCrossSignalOverlap[],
+): SharedCrossSignalOverlap[] {
+  const merged = new Map<string, { agents: Set<string>; sourcePaths: Set<string> }>();
+  for (const entry of [...base, ...extra]) {
+    const existing = merged.get(entry.token);
+    if (existing) {
+      for (const agent of entry.agents) existing.agents.add(agent);
+      for (const sourcePath of entry.sourcePaths) existing.sourcePaths.add(sourcePath);
+    } else {
+      merged.set(entry.token, {
+        agents: new Set(entry.agents),
+        sourcePaths: new Set(entry.sourcePaths),
+      });
+    }
+  }
+  return [...merged.entries()]
+    .map(([token, value]) => ({
+      token,
+      agents: [...value.agents].sort(),
+      sourcePaths: [...value.sourcePaths].sort(),
+      agentCount: value.agents.size,
+    }))
+    .filter((entry) => entry.agentCount >= 2)
+    .sort((a, b) => b.agentCount - a.agentCount || a.token.localeCompare(b.token));
+}
+
+function computeSemanticOverlapCandidates(
+  sources: SharedCrossSignalSource[],
+  maxCandidates: number,
+): { overlaps: SharedCrossSignalOverlap[]; candidateCount: number } {
+  const tokenRows: Array<{ token: string; agent: string; path: string }> = [];
+  for (const source of sources) {
+    for (const token of source.topics) {
+      tokenRows.push({ token, agent: source.agent, path: source.path });
+      if (tokenRows.length >= maxCandidates) break;
+    }
+    if (tokenRows.length >= maxCandidates) break;
+  }
+
+  const byRoot = new Map<string, Map<string, { agents: Set<string>; paths: Set<string> }>>();
+  for (const row of tokenRows) {
+    const root = semanticRoot(row.token);
+    if (root.length < 4) continue;
+    const rootGroup = byRoot.get(root) ?? new Map<string, { agents: Set<string>; paths: Set<string> }>();
+    const tokenGroup = rootGroup.get(row.token) ?? { agents: new Set<string>(), paths: new Set<string>() };
+    tokenGroup.agents.add(row.agent);
+    tokenGroup.paths.add(row.path);
+    rootGroup.set(row.token, tokenGroup);
+    byRoot.set(root, rootGroup);
+  }
+
+  const overlaps: SharedCrossSignalOverlap[] = [];
+  for (const [root, tokenMap] of byRoot.entries()) {
+    if (tokenMap.size < 2) continue;
+    const agents = new Set<string>();
+    const sourcePaths = new Set<string>();
+    for (const value of tokenMap.values()) {
+      for (const agent of value.agents) agents.add(agent);
+      for (const sourcePath of value.paths) sourcePaths.add(sourcePath);
+    }
+    if (agents.size < 2) continue;
+    overlaps.push({
+      token: `semantic:${root}`,
+      agents: [...agents].sort(),
+      sourcePaths: [...sourcePaths].sort(),
+      agentCount: agents.size,
+    });
+  }
+
+  overlaps.sort((a, b) => b.agentCount - a.agentCount || a.token.localeCompare(b.token));
+  return {
+    overlaps,
+    candidateCount: tokenRows.length,
+  };
+}
+
+async function computeSemanticOverlapsWithTimeout(
+  sources: SharedCrossSignalSource[],
+  timeoutMs: number,
+  maxCandidates: number,
+): Promise<{ overlaps: SharedCrossSignalOverlap[]; candidateCount: number; timedOut: boolean }> {
+  const safeTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const safeMaxCandidates = Math.max(0, Math.floor(maxCandidates));
+  if (safeMaxCandidates === 0 || sources.length === 0) {
+    return { overlaps: [], candidateCount: 0, timedOut: false };
+  }
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), safeTimeoutMs);
+  });
+  const computePromise = (async () => {
+    // Keep an explicit async boundary so timeout behavior is deterministic under tests.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return computeSemanticOverlapCandidates(sources, safeMaxCandidates);
+  })();
+
+  const raced = await Promise.race([computePromise, timeoutPromise]);
+  if (timer) clearTimeout(timer);
+  if (raced === null) return { overlaps: [], candidateCount: 0, timedOut: true };
+  return { overlaps: raced.overlaps, candidateCount: raced.candidateCount, timedOut: false };
+}
+
 interface SharedCrossSignalSource {
   agent: string;
   path: string;
@@ -113,6 +256,14 @@ interface SharedCrossSignalReport {
   feedbackByDecision: Record<"approved" | "approved_with_feedback" | "rejected", number>;
   sources: SharedCrossSignalSource[];
   overlaps: SharedCrossSignalOverlap[];
+  semantic: {
+    enabled: boolean;
+    applied: boolean;
+    timedOut: boolean;
+    candidateCount: number;
+    maxCandidates: number;
+    addedOverlapCount: number;
+  };
 }
 
 export interface SharedDailyCurationResult {
@@ -345,6 +496,38 @@ export class SharedContextManager {
       .filter((entry) => entry.agentCount >= 2)
       .sort((a, b) => b.agentCount - a.agentCount || a.token.localeCompare(b.token));
 
+    const semanticEnabled =
+      this.config.sharedCrossSignalSemanticEnabled === true
+      || this.config.crossSignalsSemanticEnabled === true;
+    const semanticTimeoutMs =
+      this.config.sharedCrossSignalSemanticTimeoutMs
+      ?? this.config.crossSignalsSemanticTimeoutMs
+      ?? 4000;
+    const semanticMaxCandidates = this.config.sharedCrossSignalSemanticMaxCandidates ?? 120;
+    let semanticApplied = false;
+    let semanticTimedOut = false;
+    let semanticCandidateCount = 0;
+    let semanticAddedOverlapCount = 0;
+    let mergedOverlaps = overlaps;
+    if (semanticEnabled) {
+      try {
+        const semanticResult = await computeSemanticOverlapsWithTimeout(
+          sources,
+          semanticTimeoutMs,
+          semanticMaxCandidates,
+        );
+        semanticTimedOut = semanticResult.timedOut;
+        semanticCandidateCount = semanticResult.candidateCount;
+        if (!semanticResult.timedOut && semanticResult.overlaps.length > 0) {
+          mergedOverlaps = mergeOverlaps(overlaps, semanticResult.overlaps);
+          semanticAddedOverlapCount = Math.max(0, mergedOverlaps.length - overlaps.length);
+          semanticApplied = semanticAddedOverlapCount > 0;
+        }
+      } catch (err) {
+        log.warn(`shared-context semantic cross-signals failed; fail-open to deterministic output: ${err}`);
+      }
+    }
+
     const feedbackByDecision: SharedCrossSignalReport["feedbackByDecision"] = {
       approved: 0,
       approved_with_feedback: 0,
@@ -361,14 +544,22 @@ export class SharedContextManager {
       feedbackCount: feedback.length,
       feedbackByDecision,
       sources,
-      overlaps,
+      overlaps: mergedOverlaps,
+      semantic: {
+        enabled: semanticEnabled,
+        applied: semanticApplied,
+        timedOut: semanticTimedOut,
+        candidateCount: semanticCandidateCount,
+        maxCandidates: Math.max(0, Math.floor(semanticMaxCandidates)),
+        addedOverlapCount: semanticAddedOverlapCount,
+      },
     };
     const crossSignalsPath = path.join(this.crossSignalsDir, `${date}.json`);
     await writeFile(crossSignalsPath, `${JSON.stringify(crossSignalReport, null, 2)}\n`, "utf-8");
 
-    const overlapBullets = overlaps.length === 0
+    const overlapBullets = mergedOverlaps.length === 0
       ? ["- No multi-agent topic overlap detected."]
-      : overlaps.slice(0, 8).map((entry) => `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")})`);
+      : mergedOverlaps.slice(0, 8).map((entry) => `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")})`);
 
     const md: string[] = [
       `# Roundtable — ${date}`,
@@ -385,6 +576,7 @@ export class SharedContextManager {
       `- Source outputs analyzed: ${sources.length}`,
       `- Feedback entries analyzed: ${feedback.length}`,
       `- Decision totals: approved=${feedbackByDecision.approved}, approved_with_feedback=${feedbackByDecision.approved_with_feedback}, rejected=${feedbackByDecision.rejected}`,
+      `- Semantic enhancer: ${semanticEnabled ? (semanticTimedOut ? "enabled (timed out, fail-open)" : semanticApplied ? "enabled (applied)" : "enabled (no additional overlaps)") : "disabled"}`,
       `- Cross-signals file: ${crossSignalsPath}`,
       ...overlapBullets,
       "",
@@ -401,7 +593,7 @@ export class SharedContextManager {
       date,
       roundtablePath,
       crossSignalsPath,
-      overlapCount: overlaps.length,
+      overlapCount: mergedOverlaps.length,
     };
   }
 }
