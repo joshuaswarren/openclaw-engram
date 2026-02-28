@@ -82,13 +82,13 @@ test("tier migration cycle is bounded per maintenance pass", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-bounded-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-bounded-workspace-"));
   try {
-    const orchestrator = new Orchestrator(buildConfig(memoryDir, workspaceDir, true, false)) as any;
+    const orchestrator = new Orchestrator(buildConfig(memoryDir, workspaceDir, true, true)) as any;
     orchestrator.qmd = {
       updateCollection: async () => {},
       embedCollection: async () => {},
     };
     const storage = orchestrator.storage;
-    for (let i = 0; i < 80; i += 1) {
+    for (let i = 0; i < 260; i += 1) {
       await storage.writeMemory("fact", `memory-${i}`, { source: "test" });
     }
 
@@ -96,9 +96,9 @@ test("tier migration cycle is bounded per maintenance pass", async () => {
 
     const hot = await storage.readAllMemories();
     const cold = await new StorageManager(path.join(storage.dir, "cold")).readAllMemories();
-    assert.equal(cold.length <= 80, true);
-    assert.equal(cold.length <= 50, true);
-    assert.equal(hot.length + cold.length, 80);
+    assert.equal(cold.length > 0, true);
+    assert.equal(cold.length <= 200, true);
+    assert.equal(hot.length + cold.length, 260);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });
