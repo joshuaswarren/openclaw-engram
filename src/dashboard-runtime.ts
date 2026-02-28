@@ -85,17 +85,37 @@ export class GraphDashboardServer {
     }
 
     await this.rebuildSnapshot();
-    this.server = createServer((req, res) => {
+    const candidate = createServer((req, res) => {
       void this.handleHttp(req, res);
     });
-    this.server.on("upgrade", (req, socket) => {
+    candidate.on("upgrade", (req, socket) => {
       this.handleUpgrade(req, socket);
     });
-    await new Promise<void>((resolve, reject) => {
-      this.server?.once("error", reject);
-      this.server?.listen(this.requestedPort, this.host, () => resolve());
-    });
-    const addr = this.server.address();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          candidate.off("listening", onListening);
+          reject(err);
+        };
+        const onListening = () => {
+          candidate.off("error", onError);
+          resolve();
+        };
+        candidate.once("error", onError);
+        candidate.once("listening", onListening);
+        candidate.listen(this.requestedPort, this.host);
+      });
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      try {
+        candidate.close();
+      } catch {
+        // no-op
+      }
+      throw err;
+    }
+    this.server = candidate;
+    const addr = candidate.address();
     this.boundPort = typeof addr === "object" && addr ? addr.port : this.requestedPort;
     this.startWatcher();
     return this.status();
@@ -194,7 +214,7 @@ export class GraphDashboardServer {
   }
 
   private handleUpgrade(req: IncomingMessage, socket: Duplex): void {
-    const upgrade = req.headers.upgrade;
+    const upgrade = typeof req.headers.upgrade === "string" ? req.headers.upgrade.toLowerCase() : "";
     const key = req.headers["sec-websocket-key"];
     if (upgrade !== "websocket" || typeof key !== "string") {
       socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");

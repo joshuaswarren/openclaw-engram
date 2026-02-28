@@ -80,7 +80,7 @@ test("dashboard server serves health, graph, static assets, and websocket upgrad
     [
       "GET / HTTP/1.1",
       `Host: ${started.host}:${started.port}`,
-      "Upgrade: websocket",
+      "Upgrade: WebSocket",
       "Connection: Upgrade",
       "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
       "Sec-WebSocket-Version: 13",
@@ -92,5 +92,35 @@ test("dashboard server serves health, graph, static assets, and websocket upgrad
   assert.match(upgradeResponse, /101 Switching Protocols/);
   socket.destroy();
 
+  await server.stop();
+});
+
+test("dashboard server start recovers after listen failure", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-dashboard-server-start-failure-"));
+  await mkdir(path.join(memoryDir, "state", "graphs"), { recursive: true });
+
+  const blocker = net.createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", () => resolve()));
+  const blockerAddr = blocker.address();
+  assert.equal(typeof blockerAddr, "object");
+  assert.ok(blockerAddr && typeof blockerAddr.port === "number");
+
+  const server = new GraphDashboardServer({
+    memoryDir,
+    host: "127.0.0.1",
+    port: blockerAddr.port,
+    publicDir: path.join(process.cwd(), "dashboard", "public"),
+  });
+
+  await assert.rejects(() => server.start());
+  const failedStatus = server.status();
+  assert.equal(failedStatus.running, false);
+  assert.equal(failedStatus.port, 0);
+
+  await new Promise<void>((resolve, reject) => blocker.close((err) => (err ? reject(err) : resolve())));
+
+  const started = await server.start();
+  assert.equal(started.running, true);
+  assert.equal(started.port > 0, true);
   await server.stop();
 });

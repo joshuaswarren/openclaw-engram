@@ -373,6 +373,7 @@ export async function analyzeSessionIntegrity(
 ): Promise<SessionIntegrityReport> {
   const memoryDir = options.memoryDir;
   const reportIssues: SessionIntegrityIssue[] = [];
+  const allSessionRefs = new Map<string, SessionEntryRef[]>();
   const sessions = new Map<string, SessionTranscriptStats>();
 
   const files = await listTranscriptFiles(memoryDir);
@@ -381,22 +382,20 @@ export async function analyzeSessionIntegrity(
     reportIssues.push(...parsed.malformed, ...parsed.invalid);
 
     for (const [sessionKey, refs] of parsed.bySession.entries()) {
-      const analyzed = analyzeSessionEntries(sessionKey, refs);
-      reportIssues.push(...analyzed.issues);
-      const existing = sessions.get(sessionKey);
-      if (!existing) {
-        sessions.set(sessionKey, {
-          ...analyzed.stats,
-          malformedLines: 0,
-          invalidEntries: 0,
-        });
-      } else {
-        existing.entries += analyzed.stats.entries;
-        existing.duplicateTurnIds += analyzed.stats.duplicateTurnIds;
-        existing.brokenChains += analyzed.stats.brokenChains;
-        existing.incompleteTurns += analyzed.stats.incompleteTurns;
-      }
+      const existing = allSessionRefs.get(sessionKey) ?? [];
+      existing.push(...refs);
+      allSessionRefs.set(sessionKey, existing);
     }
+  }
+
+  for (const [sessionKey, refs] of allSessionRefs.entries()) {
+    const analyzed = analyzeSessionEntries(sessionKey, refs);
+    reportIssues.push(...analyzed.issues);
+    sessions.set(sessionKey, {
+      ...analyzed.stats,
+      malformedLines: 0,
+      invalidEntries: 0,
+    });
   }
 
   const checkpoint = await analyzeCheckpoint(memoryDir);
