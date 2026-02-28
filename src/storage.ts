@@ -1204,8 +1204,17 @@ export class StorageManager {
       : new Date().toISOString().slice(0, 10);
   }
 
+  private isArtifactMemory(memory: MemoryFile): boolean {
+    if (memory.frontmatter.source === "artifact") return true;
+    if (memory.frontmatter.artifactType !== undefined) return true;
+    return /[\\/]artifacts[\\/]/.test(memory.path);
+  }
+
   buildTierMemoryPath(memory: MemoryFile, tier: "hot" | "cold"): string {
     const root = this.resolveTierRootDir(tier);
+    if (this.isArtifactMemory(memory)) {
+      return path.join(root, "artifacts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
+    }
     if (memory.frontmatter.category === "correction") {
       return path.join(root, "corrections", `${memory.frontmatter.id}.md`);
     }

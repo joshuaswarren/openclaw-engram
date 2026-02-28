@@ -894,9 +894,55 @@ export class QmdClient {
     if (this.available === false) return;
     const name = collection.trim();
     if (!name) return;
+    const globalState = getGlobalQmdState();
+    if (
+      this.lastUpdateRunAtMs &&
+      Date.now() - this.lastUpdateRunAtMs < this.updateMinIntervalMs
+    ) {
+      log.debug("QMD update: suppressed due to min-interval gate");
+      return;
+    }
+    if (
+      this.lastUpdateFailAtMs &&
+      Date.now() - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+    ) {
+      log.debug("QMD update: suppressed due to recent failures (backoff)");
+      return;
+    }
+    if (
+      globalState.lastGlobalUpdateRunAtMs &&
+      Date.now() - globalState.lastGlobalUpdateRunAtMs < this.updateMinIntervalMs
+    ) {
+      log.debug("QMD update: suppressed by global min-interval gate");
+      return;
+    }
+    if (
+      globalState.lastGlobalUpdateFailAtMs &&
+      Date.now() - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+    ) {
+      log.debug("QMD update: suppressed by global failure backoff");
+      return;
+    }
     try {
+      if (!globalState.warnedGlobalUpdateBehavior) {
+        globalState.warnedGlobalUpdateBehavior = true;
+        log.warn(
+          "QMD update runs globally across collections in current CLI versions; Engram now rate-limits update calls to reduce gateway load.",
+        );
+      }
+      const startedAtMs = Date.now();
       await runQmd(["update", "-c", name], this.updateTimeoutMs, this.qmdPath);
+      const durationMs = Date.now() - startedAtMs;
+      if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
+        log.warn(`SLOW QMD update: durationMs=${durationMs}`);
+      }
+      const now = Date.now();
+      this.lastUpdateRunAtMs = now;
+      globalState.lastGlobalUpdateRunAtMs = now;
     } catch (err) {
+      const now = Date.now();
+      this.lastUpdateFailAtMs = now;
+      globalState.lastGlobalUpdateFailAtMs = now;
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD update failed for collection ${name}: ${msg}`);
     }

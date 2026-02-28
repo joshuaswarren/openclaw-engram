@@ -94,10 +94,13 @@ export class TierMigrationExecutor {
     if (result.changed) {
       const destinationCollection = this.collectionForTier(toTier);
       const sourceCollection = this.collectionForTier(fromTier);
+      // QMD update is effectively global in current CLI versions. One update call is enough.
       await this.qmd.updateCollection(destinationCollection);
-      await this.qmd.updateCollection(sourceCollection);
       if (this.autoEmbed) {
         await this.qmd.embedCollection(destinationCollection);
+        if (sourceCollection !== destinationCollection) {
+          await this.qmd.embedCollection(sourceCollection);
+        }
       }
     }
 

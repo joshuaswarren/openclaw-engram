@@ -116,7 +116,7 @@ test("tier migration demotes hot memory into cold path and cold collection", asy
     const oldPathMemory = await storage.readMemoryByPath(source.path);
     assert.equal(oldPathMemory, null, "expected source hot file to be removed after demotion");
 
-    assert.deepEqual(logs.updates, ["openclaw-engram-cold", "openclaw-engram"]);
+    assert.deepEqual(logs.updates, ["openclaw-engram-cold"]);
     assert.deepEqual(logs.embeds, []);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
@@ -164,7 +164,7 @@ test("tier migration promotes cold memory back into hot path and collection", as
     assert.ok(hotAgain, "expected promoted memory in hot path");
     assert.equal(hotAgain!.frontmatter.id, source.frontmatter.id);
 
-    assert.deepEqual(logs.updates, ["openclaw-engram", "openclaw-engram-cold"]);
+    assert.deepEqual(logs.updates, ["openclaw-engram"]);
     assert.deepEqual(logs.embeds, []);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
@@ -209,6 +209,75 @@ test("tier migration reruns are idempotent and do not duplicate files", async ()
     const journalRaw = await readFile(path.join(memoryDir, "state", "tier-migration-journal.jsonl"), "utf-8");
     const journalLines = journalRaw.trim().split("\n").filter(Boolean);
     assert.equal(journalLines.length, 2);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("tier migration keeps artifact memories on artifact-only paths", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-tier-artifacts-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    const artifactId = await storage.writeArtifact("verbatim artifact body", {
+      artifactType: "decision",
+      tags: ["artifact"],
+    });
+    const artifactFiles = await listMemoryFiles(path.join(memoryDir, "artifacts"), artifactId);
+    assert.equal(artifactFiles.length, 1, "expected one artifact file in hot tier");
+    const hotArtifact = await storage.readMemoryByPath(artifactFiles[0]);
+    assert.ok(hotArtifact, "expected artifact memory in hot tier");
+    assert.match(hotArtifact!.path, /[\\/]artifacts[\\/]/);
+
+    const logs: QmdCallLog = { updates: [], embeds: [] };
+    const executor = new TierMigrationExecutor({
+      storage,
+      qmd: createQmdStub(logs),
+      hotCollection: "openclaw-engram",
+      coldCollection: "openclaw-engram-cold",
+      autoEmbed: false,
+    });
+
+    const moved = await executor.migrateMemory({
+      memory: hotArtifact!,
+      fromTier: "hot",
+      toTier: "cold",
+      reason: "artifact_cold_tier",
+    });
+
+    assert.equal(moved.changed, true);
+    assert.match(moved.targetPath, /[\\/]cold[\\/]artifacts[\\/]/);
+    const coldArtifact = await storage.readMemoryByPath(moved.targetPath);
+    assert.ok(coldArtifact, "expected artifact to stay in artifact path after migration");
+    assert.equal(coldArtifact!.frontmatter.artifactType, "decision");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("tier migration autoEmbed embeds both destination and source collections", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-tier-autoembed-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    const source = await createHotFactWithParityFields(storage);
+
+    const logs: QmdCallLog = { updates: [], embeds: [] };
+    const executor = new TierMigrationExecutor({
+      storage,
+      qmd: createQmdStub(logs),
+      hotCollection: "openclaw-engram",
+      coldCollection: "openclaw-engram-cold",
+      autoEmbed: true,
+    });
+
+    await executor.migrateMemory({
+      memory: source,
+      fromTier: "hot",
+      toTier: "cold",
+      reason: "autoembed",
+    });
+
+    assert.deepEqual(logs.updates, ["openclaw-engram-cold"]);
+    assert.deepEqual(logs.embeds, ["openclaw-engram-cold", "openclaw-engram"]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
