@@ -140,3 +140,32 @@ test("learner rejects updates below min signal count", () => {
 
   assert.equal(state.adjustments.length, 0);
 });
+
+test("learner treats maxDeltaPerCycle=0 as hard no-op for all parameters", () => {
+  const signals = Array.from({ length: 20 }, (_, idx) =>
+    signal({
+      memoryId: `mem-${idx}`,
+      signalHash: `hash-${idx}`,
+      direction: "negative",
+      category: "correction",
+      signalType: "correction_override",
+    }),
+  );
+
+  const state = learnBehaviorPolicyAdjustments({
+    signals,
+    learningWindowDays: 14,
+    minSignalCount: 10,
+    maxDeltaPerCycle: 0,
+    protectedParams: [],
+    currentPolicy: {
+      recencyWeight: 0.4,
+      lifecyclePromoteHeatThreshold: 0.55,
+      lifecycleStaleDecayThreshold: 0.65,
+      cronRecallInstructionHeavyTokenCap: 24,
+    },
+    now: new Date("2026-02-28T00:00:00.000Z"),
+  });
+
+  assert.equal(state.adjustments.length, 0);
+});

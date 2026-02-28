@@ -2,8 +2,6 @@ export type RecallPromptShape = "standard" | "instruction_heavy";
 export type CronConversationRecallMode = "auto" | "always" | "never";
 export type RecallBudgetMode = "full" | "minimal";
 
-export const RECALL_QUERY_POLICY_TUNABLE_PARAMETERS = ["cronRecallInstructionHeavyTokenCap"] as const;
-
 export interface RecallQueryPolicyConfig {
   cronRecallPolicyEnabled: boolean;
   cronRecallNormalizedQueryMaxChars: number;

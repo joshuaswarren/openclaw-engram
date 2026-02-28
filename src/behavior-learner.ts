@@ -44,6 +44,7 @@ function currentValueFor(
 }
 
 function maxDeltaFor(parameter: TunableBehaviorParameter, maxDeltaPerCycle: number): number {
+  if (!Number.isFinite(maxDeltaPerCycle) || maxDeltaPerCycle <= 0) return 0;
   if (parameter === "cronRecallInstructionHeavyTokenCap") {
     return Math.max(1, Math.round(maxDeltaPerCycle * 40));
   }
