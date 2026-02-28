@@ -1238,10 +1238,6 @@ export class StorageManager {
     }
   }
 
-  async copyMemoryToPath(memory: MemoryFile, targetPath: string): Promise<void> {
-    await this.writeMemoryFileAtomic(targetPath, memory);
-  }
-
   async moveMemoryToPath(memory: MemoryFile, targetPath: string): Promise<void> {
     await this.writeMemoryFileAtomic(targetPath, memory);
     const sourcePath = path.resolve(memory.path);

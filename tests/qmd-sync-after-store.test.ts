@@ -21,11 +21,18 @@ test("QmdClient.update() passes collection flag to qmd subprocess", async () => 
     "utf-8",
   );
 
-  // update() must pass -c collection
+  // update() should route through collection-aware update path
   assert.match(
     qmdSource,
-    /runQmd\(\["update",\s*"-c",\s*this\.collection\]/,
-    "update() should pass -c this.collection to scope updates to the engram collection",
+    /async update\(\): Promise<void>\s*\{\s*await this\.runUpdateForCollection\(this\.collection\);/s,
+    "update() should route through runUpdateForCollection(this.collection)",
+  );
+
+  // runUpdateForCollection() must still pass -c collection to qmd
+  assert.match(
+    qmdSource,
+    /runQmd\(\["update",\s*"-c",\s*name\]/,
+    "runUpdateForCollection() should pass -c name to scope updates to the target collection",
   );
 
   // embed() must pass -c collection
