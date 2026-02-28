@@ -65,6 +65,23 @@ function expectedPolicyVersionWithArchiveCap(values: {
     .slice(0, 12);
 }
 
+function basePolicyConfig(memoryDir: string) {
+  return {
+    memoryDir,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    namespacesEnabled: false,
+    behaviorLoopAutoTuneEnabled: true,
+    behaviorLoopLearningWindowDays: 14,
+    lifecycleArchiveDecayThreshold: 0.8,
+    recencyWeight: 0.25,
+    lifecyclePromoteHeatThreshold: 0.6,
+    lifecycleStaleDecayThreshold: 0.7,
+    cronRecallInstructionHeavyTokenCap: 320,
+    namespacePolicies: [],
+  };
+}
+
 function buildSignal(
   timestamp: string,
   overrides: Partial<BehaviorSignalEvent> = {},
@@ -94,14 +111,8 @@ test("runPolicyStatusCliCommand returns policy snapshots and contributing signal
 
     const orchestrator = {
       config: {
-        memoryDir,
-        defaultNamespace: "default",
-        sharedNamespace: "shared",
+        ...basePolicyConfig(memoryDir),
         namespacesEnabled: true,
-        behaviorLoopAutoTuneEnabled: true,
-        behaviorLoopLearningWindowDays: 14,
-        lifecycleArchiveDecayThreshold: 0.8,
-        namespacePolicies: [],
       },
       async getStorage(namespace?: string) {
         return {
@@ -151,16 +162,7 @@ test("runPolicyDiffCliCommand reports deltas and applies --since window to signa
     ];
 
     const orchestrator = {
-      config: {
-        memoryDir,
-        defaultNamespace: "default",
-        sharedNamespace: "shared",
-        namespacesEnabled: false,
-        behaviorLoopAutoTuneEnabled: true,
-        behaviorLoopLearningWindowDays: 14,
-        lifecycleArchiveDecayThreshold: 0.8,
-        namespacePolicies: [],
-      },
+      config: basePolicyConfig(memoryDir),
       async getStorage() {
         return {
           async readBehaviorSignals() {
@@ -190,16 +192,7 @@ test("runPolicyRollbackCliCommand executes rollback and returns current snapshot
     await writeRuntimeSnapshots(memoryDir);
     let rollbackCalls = 0;
     const orchestrator = {
-      config: {
-        memoryDir,
-        defaultNamespace: "default",
-        sharedNamespace: "shared",
-        namespacesEnabled: false,
-        behaviorLoopAutoTuneEnabled: true,
-        behaviorLoopLearningWindowDays: 14,
-        lifecycleArchiveDecayThreshold: 0.8,
-        namespacePolicies: [],
-      },
+      config: basePolicyConfig(memoryDir),
       async getStorage() {
         return {
           async readBehaviorSignals() {
@@ -218,6 +211,59 @@ test("runPolicyRollbackCliCommand executes rollback and returns current snapshot
     assert.equal(rollbackCalls, 1);
     assert.ok(result.current);
     assert.equal((result.current?.policyVersion ?? "").length, 12);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("runPolicyStatusCliCommand hashes complete effective policy when snapshot omits fields", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-policy-partial-"));
+  try {
+    const stateDir = path.join(memoryDir, "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, "policy-runtime.json"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-02-28T01:00:00.000Z",
+        values: {
+          recencyWeight: 0.4,
+          lifecycleStaleDecayThreshold: 0.95,
+        },
+        sourceAdjustmentCount: 3,
+      }),
+      "utf-8",
+    );
+
+    const config = basePolicyConfig(memoryDir);
+    const orchestrator = {
+      config,
+      async getStorage() {
+        return {
+          async readBehaviorSignals() {
+            return [];
+          },
+        };
+      },
+      async rollbackBehaviorRuntimePolicy() {
+        return true;
+      },
+    };
+
+    const status = await runPolicyStatusCliCommand(orchestrator);
+    assert.ok(status.current);
+    assert.equal(
+      status.current?.policyVersion,
+      expectedPolicyVersionWithArchiveCap(
+        {
+          recencyWeight: 0.4,
+          lifecyclePromoteHeatThreshold: config.lifecyclePromoteHeatThreshold,
+          lifecycleStaleDecayThreshold: 0.95,
+          cronRecallInstructionHeavyTokenCap: config.cronRecallInstructionHeavyTokenCap,
+        },
+        config.lifecycleArchiveDecayThreshold,
+      ),
+    );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

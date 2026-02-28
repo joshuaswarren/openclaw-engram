@@ -4,8 +4,6 @@ import { createHash } from "node:crypto";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
 import type { BehaviorSignalEvent, ContinuityIncidentRecord, MemoryActionEvent, TranscriptEntry } from "./types.js";
-import { clamp01, clampLifecycleThreshold } from "./lifecycle.js";
-import { clampInstructionHeavyTokenCap } from "./recall-query-policy.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -38,7 +36,11 @@ import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
 import type { TierMigrationCycleSummary, TierMigrationStatusSnapshot } from "./recall-state.js";
-import type { RuntimePolicyValues } from "./policy-runtime.js";
+import {
+  readRuntimePolicySnapshot as readPolicyRuntimeSnapshot,
+  sanitizeRuntimePolicyValues,
+  type RuntimePolicyValues,
+} from "./policy-runtime.js";
 
 interface CliApi {
   registerCli(
@@ -579,6 +581,10 @@ export interface PolicyTuningCliOrchestrator {
     behaviorLoopAutoTuneEnabled: boolean;
     behaviorLoopLearningWindowDays: number;
     lifecycleArchiveDecayThreshold: number;
+    recencyWeight: number;
+    lifecyclePromoteHeatThreshold: number;
+    lifecycleStaleDecayThreshold: number;
+    cronRecallInstructionHeavyTokenCap: number;
     namespacePolicies: Array<{ name: string }>;
   };
   getStorage(namespace?: string): Promise<{
@@ -587,43 +593,36 @@ export interface PolicyTuningCliOrchestrator {
   rollbackBehaviorRuntimePolicy(): Promise<boolean>;
 }
 
-function normalizedPolicyValuesForVersion(
+function effectivePolicyValuesForVersion(
   values: RuntimePolicyValues,
-  options: { lifecycleArchiveDecayThreshold: number },
-): RuntimePolicyValues {
-  const out: RuntimePolicyValues = {};
-  if (typeof values.recencyWeight === "number" && Number.isFinite(values.recencyWeight)) {
-    out.recencyWeight = clamp01(values.recencyWeight);
-  }
-  if (
-    typeof values.lifecyclePromoteHeatThreshold === "number" &&
-    Number.isFinite(values.lifecyclePromoteHeatThreshold)
-  ) {
-    out.lifecyclePromoteHeatThreshold = clampLifecycleThreshold(values.lifecyclePromoteHeatThreshold);
-  }
-  if (
-    typeof values.lifecycleStaleDecayThreshold === "number" &&
-    Number.isFinite(values.lifecycleStaleDecayThreshold)
-  ) {
-    out.lifecycleStaleDecayThreshold = Math.min(
-      clampLifecycleThreshold(values.lifecycleStaleDecayThreshold),
-      clampLifecycleThreshold(options.lifecycleArchiveDecayThreshold),
-    );
-  }
-  if (
-    typeof values.cronRecallInstructionHeavyTokenCap === "number" &&
-    Number.isFinite(values.cronRecallInstructionHeavyTokenCap)
-  ) {
-    out.cronRecallInstructionHeavyTokenCap = clampInstructionHeavyTokenCap(values.cronRecallInstructionHeavyTokenCap);
-  }
-  return out;
+  config: PolicyTuningCliOrchestrator["config"],
+): Required<RuntimePolicyValues> {
+  const candidate: RuntimePolicyValues = {
+    recencyWeight: values.recencyWeight ?? config.recencyWeight,
+    lifecyclePromoteHeatThreshold: values.lifecyclePromoteHeatThreshold ?? config.lifecyclePromoteHeatThreshold,
+    lifecycleStaleDecayThreshold: values.lifecycleStaleDecayThreshold ?? config.lifecycleStaleDecayThreshold,
+    cronRecallInstructionHeavyTokenCap:
+      values.cronRecallInstructionHeavyTokenCap ?? config.cronRecallInstructionHeavyTokenCap,
+  };
+  const normalized = sanitizeRuntimePolicyValues(candidate, {
+    maxStaleDecayThreshold: config.lifecycleArchiveDecayThreshold,
+  });
+  return {
+    recencyWeight: normalized.recencyWeight ?? config.recencyWeight,
+    lifecyclePromoteHeatThreshold:
+      normalized.lifecyclePromoteHeatThreshold ?? config.lifecyclePromoteHeatThreshold,
+    lifecycleStaleDecayThreshold:
+      normalized.lifecycleStaleDecayThreshold ?? config.lifecycleStaleDecayThreshold,
+    cronRecallInstructionHeavyTokenCap:
+      normalized.cronRecallInstructionHeavyTokenCap ?? config.cronRecallInstructionHeavyTokenCap,
+  };
 }
 
 function policyVersionForValues(
   values: RuntimePolicyValues,
-  options: { lifecycleArchiveDecayThreshold: number },
+  config: PolicyTuningCliOrchestrator["config"],
 ): string {
-  const normalized = normalizedPolicyValuesForVersion(values, options);
+  const normalized = effectivePolicyValuesForVersion(values, config);
   return createHash("sha256")
     .update(JSON.stringify(normalized))
     .digest("hex")
@@ -631,32 +630,20 @@ function policyVersionForValues(
 }
 
 async function readRuntimePolicySnapshot(
-  memoryDir: string,
+  config: PolicyTuningCliOrchestrator["config"],
   fileName: string,
 ): Promise<RuntimePolicySnapshotPayload | null> {
-  const filePath = path.join(memoryDir, "state", fileName);
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<RuntimePolicySnapshotPayload>;
-    if (
-      !parsed ||
-      typeof parsed.version !== "number" ||
-      typeof parsed.updatedAt !== "string" ||
-      !parsed.values ||
-      typeof parsed.values !== "object" ||
-      typeof parsed.sourceAdjustmentCount !== "number"
-    ) {
-      return null;
-    }
-    return {
-      version: parsed.version,
-      updatedAt: parsed.updatedAt,
-      values: parsed.values,
-      sourceAdjustmentCount: Math.max(0, Math.floor(parsed.sourceAdjustmentCount)),
-    };
-  } catch {
-    return null;
-  }
+  const filePath = path.join(config.memoryDir, "state", fileName);
+  const snapshot = await readPolicyRuntimeSnapshot(filePath, {
+    maxStaleDecayThreshold: config.lifecycleArchiveDecayThreshold,
+  });
+  if (!snapshot) return null;
+  return {
+    version: snapshot.version,
+    updatedAt: snapshot.updatedAt,
+    values: snapshot.values,
+    sourceAdjustmentCount: Math.max(0, Math.floor(snapshot.sourceAdjustmentCount)),
+  };
 }
 
 function parseSinceDurationMs(since: string): number {
@@ -736,8 +723,8 @@ export async function runPolicyStatusCliCommand(
   orchestrator: PolicyTuningCliOrchestrator,
 ): Promise<PolicyStatusCliReport> {
   const now = new Date();
-  const current = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.json");
-  const previous = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.prev.json");
+  const current = await readRuntimePolicySnapshot(orchestrator.config, "policy-runtime.json");
+  const previous = await readRuntimePolicySnapshot(orchestrator.config, "policy-runtime.prev.json");
   const signals = await readBehaviorSignalsForNamespaces(orchestrator, 1000);
   const defaultWindowMs = Math.max(0, orchestrator.config.behaviorLoopLearningWindowDays) * 24 * 60 * 60 * 1000;
   const cutoffIso = defaultWindowMs > 0 ? new Date(now.getTime() - defaultWindowMs).toISOString() : undefined;
@@ -748,17 +735,13 @@ export async function runPolicyStatusCliCommand(
     current: current
       ? {
         ...current,
-        policyVersion: policyVersionForValues(current.values, {
-          lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
-        }),
+        policyVersion: policyVersionForValues(current.values, orchestrator.config),
       }
       : null,
     previous: previous
       ? {
         ...previous,
-        policyVersion: policyVersionForValues(previous.values, {
-          lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
-        }),
+        policyVersion: policyVersionForValues(previous.values, orchestrator.config),
       }
       : null,
     topContributingSignals: summarizeTopSignals(signals, cutoffIso),
@@ -772,8 +755,8 @@ export async function runPolicyDiffCliCommand(
   const since = options.since?.trim() || "7d";
   const sinceMs = parseSinceDurationMs(since);
   const sinceIso = new Date(Date.now() - sinceMs).toISOString();
-  const current = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.json");
-  const previous = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.prev.json");
+  const current = await readRuntimePolicySnapshot(orchestrator.config, "policy-runtime.json");
+  const previous = await readRuntimePolicySnapshot(orchestrator.config, "policy-runtime.prev.json");
   const currentValues = current?.values ?? {};
   const previousValues = previous?.values ?? {};
   const parameterKeys = new Set<string>([
@@ -802,16 +785,8 @@ export async function runPolicyDiffCliCommand(
     generatedAt: new Date().toISOString(),
     since,
     sinceIso,
-    currentPolicyVersion: current
-      ? policyVersionForValues(current.values, {
-        lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
-      })
-      : null,
-    previousPolicyVersion: previous
-      ? policyVersionForValues(previous.values, {
-        lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
-      })
-      : null,
+    currentPolicyVersion: current ? policyVersionForValues(current.values, orchestrator.config) : null,
+    previousPolicyVersion: previous ? policyVersionForValues(previous.values, orchestrator.config) : null,
     deltas,
     topContributingSignals: summarizeTopSignals(signals, sinceIso),
   };
@@ -821,16 +796,14 @@ export async function runPolicyRollbackCliCommand(
   orchestrator: PolicyTuningCliOrchestrator,
 ): Promise<PolicyRollbackCliReport> {
   const rolledBack = await orchestrator.rollbackBehaviorRuntimePolicy();
-  const current = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.json");
+  const current = await readRuntimePolicySnapshot(orchestrator.config, "policy-runtime.json");
   return {
     generatedAt: new Date().toISOString(),
     rolledBack,
     current: current
       ? {
         ...current,
-        policyVersion: policyVersionForValues(current.values, {
-          lifecycleArchiveDecayThreshold: orchestrator.config.lifecycleArchiveDecayThreshold,
-        }),
+        policyVersion: policyVersionForValues(current.values, orchestrator.config),
       }
       : null,
   };
