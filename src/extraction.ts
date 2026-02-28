@@ -163,6 +163,64 @@ export class ExtractionEngine {
     return { ...result, facts };
   }
 
+  private normalizeExtractionResultPayload(parsed: any): ExtractionResult {
+    const entities = Array.isArray(parsed?.entities)
+      ? parsed.entities
+          .map((e: any) => ({
+            name: typeof e?.name === "string" ? e.name : "",
+            type: typeof e?.type === "string" ? e.type : "other",
+            facts: Array.isArray(e?.facts)
+              ? e.facts.filter((f: any) => typeof f === "string")
+              : [],
+          }))
+          .filter((e: any) => e.name.length > 0)
+      : [];
+
+    const facts = Array.isArray(parsed?.facts)
+      ? parsed.facts
+          .map((f: any) => ({
+            category: typeof f?.category === "string" ? f.category : "fact",
+            content: typeof f?.content === "string" ? f.content : typeof f?.text === "string" ? f.text : "",
+            importance: typeof f?.importance === "number" ? f.importance : 5,
+            confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
+            tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
+            entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
+          }))
+          .filter((f: any) => f.content.length > 0)
+      : [];
+
+    const questions = Array.isArray(parsed?.questions)
+      ? parsed.questions
+          .map((q: any) => {
+            if (typeof q === "string") return { question: q, context: "", priority: 0.5 };
+            return {
+              question: typeof q?.question === "string" ? q.question : typeof q?.text === "string" ? q.text : "",
+              context: typeof q?.context === "string" ? q.context : "",
+              priority: typeof q?.priority === "number" ? q.priority : 0.5,
+            };
+          })
+          .filter((q: any) => q.question.length > 0)
+      : [];
+
+    return {
+      facts,
+      entities,
+      profileUpdates: Array.isArray(parsed?.profileUpdates)
+        ? parsed.profileUpdates.filter((u: any) => typeof u === "string" && u.trim().length > 0)
+        : [],
+      questions,
+      identityReflection: parsed?.identityReflection ?? undefined,
+      relationships: Array.isArray(parsed?.relationships)
+        ? parsed.relationships.filter(
+            (r: any) =>
+              typeof r?.source === "string" &&
+              typeof r?.target === "string" &&
+              typeof r?.label === "string",
+          )
+        : undefined,
+    };
+  }
+
   private sanitizeConsolidationResult(result: ConsolidationResult): ConsolidationResult {
     const items = result.items.map((item) => {
       if (!item.updatedContent) return item;
@@ -566,62 +624,7 @@ ${truncatedConversation}`;
           log.debug(`extractWithLocalLlm: attempting JSON parse, candidate length=${candidate.length}`);
           const parsed = JSON.parse(candidate);
 
-          // Validate and normalize
-          const entities = Array.isArray((parsed as any).entities)
-            ? (parsed as any).entities
-                .map((e: any) => ({
-                  name: typeof e?.name === "string" ? e.name : "",
-                  type: typeof e?.type === "string" ? e.type : "other",
-                  // Local models frequently omit or malform `facts`; harden to avoid runtime crashes downstream.
-                  facts: Array.isArray(e?.facts)
-                    ? e.facts.filter((f: any) => typeof f === "string")
-                    : [],
-                }))
-                .filter((e: any) => e.name.length > 0)
-            : [];
-
-          // Normalize facts
-          const facts = Array.isArray((parsed as any).facts)
-            ? (parsed as any).facts
-                .map((f: any) => ({
-                  category: typeof f?.category === "string" ? f.category : "fact",
-                  content: typeof f?.content === "string" ? f.content : typeof f?.text === "string" ? f.text : "",
-                  importance: typeof f?.importance === "number" ? f.importance : 5,
-                  confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
-                  tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
-                  entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
-                }))
-                .filter((f: any) => f.content.length > 0)
-            : [];
-
-          // Normalize questions
-          const questions = Array.isArray((parsed as any).questions)
-            ? (parsed as any).questions
-                .map((q: any) => {
-                  if (typeof q === "string") return { question: q, context: "", priority: 0.5 };
-                  return {
-                    question: typeof q?.question === "string" ? q.question : typeof q?.text === "string" ? q.text : "",
-                    context: typeof q?.context === "string" ? q.context : "",
-                    priority: typeof q?.priority === "number" ? q.priority : 0.5,
-                  };
-                })
-                .filter((q: any) => q.question.length > 0)
-            : [];
-
-          const result: ExtractionResult = {
-            facts,
-            entities,
-            profileUpdates: Array.isArray((parsed as any).profileUpdates)
-              ? (parsed as any).profileUpdates.filter((u: any) => typeof u === "string" && u.trim().length > 0)
-              : [],
-            questions,
-            identityReflection: (parsed as any).identityReflection ?? undefined,
-            relationships: Array.isArray((parsed as any).relationships)
-              ? (parsed as any).relationships.filter(
-                  (r: any) => typeof r?.source === "string" && typeof r?.target === "string" && typeof r?.label === "string",
-                )
-              : undefined,
-          };
+          const result: ExtractionResult = this.normalizeExtractionResultPayload(parsed);
 
           log.debug(
             `extractWithLocalLlm: successfully parsed response, facts=${result.facts.length}, entities=${result.entities.length}, profileUpdates=${result.profileUpdates.length}, questions=${result.questions.length}`,
@@ -698,65 +701,7 @@ ${truncatedConversation}`;
       try {
         const parsed = JSON.parse(candidate);
 
-        const entities = Array.isArray(parsed.entities)
-          ? parsed.entities
-              .map((e: any) => ({
-                name: typeof e?.name === "string" ? e.name : "",
-                type: typeof e?.type === "string" ? e.type : "other",
-                facts: Array.isArray(e?.facts)
-                  ? e.facts.filter((f: any) => typeof f === "string")
-                  : [],
-              }))
-              .filter((e: any) => e.name.length > 0)
-          : [];
-
-        // Normalize facts — LLM may return different field names or formats
-        const facts = Array.isArray(parsed.facts)
-          ? parsed.facts
-              .map((f: any) => ({
-                category: typeof f?.category === "string" ? f.category : "fact",
-                content: typeof f?.content === "string" ? f.content : typeof f?.text === "string" ? f.text : "",
-                importance: typeof f?.importance === "number" ? f.importance : 5,
-                confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
-                tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
-                entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
-              }))
-              .filter((f: any) => f.content.length > 0)
-          : [];
-
-        // Normalize questions — LLM may return strings or different field names
-        const questions = Array.isArray(parsed.questions)
-          ? parsed.questions
-              .map((q: any) => {
-                if (typeof q === "string") {
-                  return { question: q, context: "", priority: 0.5 };
-                }
-                return {
-                  question: typeof q?.question === "string" ? q.question : typeof q?.text === "string" ? q.text : "",
-                  context: typeof q?.context === "string" ? q.context : "",
-                  priority: typeof q?.priority === "number" ? q.priority : 0.5,
-                };
-              })
-              .filter((q: any) => q.question.length > 0)
-          : [];
-
-        return {
-          facts,
-          entities,
-          profileUpdates: Array.isArray(parsed.profileUpdates)
-            ? parsed.profileUpdates.filter((u: any) => typeof u === "string" && u.trim().length > 0)
-            : [],
-          questions,
-          identityReflection: parsed.identityReflection ?? undefined,
-          relationships: Array.isArray(parsed.relationships)
-            ? parsed.relationships.filter(
-                (r: any) =>
-                  typeof r?.source === "string" &&
-                  typeof r?.target === "string" &&
-                  typeof r?.label === "string",
-              )
-            : undefined,
-        } as ExtractionResult;
+        return this.normalizeExtractionResultPayload(parsed);
       } catch {
         // keep trying candidates
       }
@@ -1023,14 +968,15 @@ Respond with valid JSON only, matching this schema:
 {
   "items": [
     {
-      "newMemoryId": "id",
+      "existingId": "id",
       "action": "ADD|MERGE|UPDATE|INVALIDATE|SKIP",
       "mergeWith": "optional-existing-id",
-      "updatedContent": "optional replacement content"
+      "updatedContent": "optional replacement content",
+      "reason": "brief reason for this action"
     }
   ],
   "profileUpdates": ["optional profile update"],
-  "entityUpdates": ["optional entity update"]
+  "entityUpdates": [{"name": "entity-name", "type": "person|project|tool|company|place|other", "facts": ["optional fact"]}]
 }`;
 
       const response = await this.client.chat.completions.create({
@@ -1066,13 +1012,38 @@ Respond with valid JSON only, matching this schema:
       });
 
       if (parsed && Array.isArray(parsed.items)) {
+        const normalizedItems = parsed.items
+          .map((item: any) => ({
+            existingId:
+              typeof item?.existingId === "string"
+                ? item.existingId
+                : typeof item?.newMemoryId === "string"
+                  ? item.newMemoryId
+                  : "",
+            action: typeof item?.action === "string" ? item.action : "SKIP",
+            mergeWith: typeof item?.mergeWith === "string" ? item.mergeWith : undefined,
+            updatedContent: typeof item?.updatedContent === "string" ? item.updatedContent : undefined,
+            reason: typeof item?.reason === "string" ? item.reason : "",
+          }))
+          .filter((item: any) => item.existingId.length > 0);
+        const normalizedEntityUpdates = Array.isArray(parsed.entityUpdates)
+          ? parsed.entityUpdates
+              .map((entity: any) => ({
+                name: typeof entity?.name === "string" ? entity.name : "",
+                type: typeof entity?.type === "string" ? entity.type : "other",
+                facts: Array.isArray(entity?.facts)
+                  ? entity.facts.filter((fact: any) => typeof fact === "string")
+                  : [],
+              }))
+              .filter((entity: any) => entity.name.length > 0)
+          : [];
         log.debug(
-          `consolidation: ${parsed.items.length} decisions`,
+          `consolidation: ${normalizedItems.length} decisions`,
         );
         return this.sanitizeConsolidationResult({
-          items: parsed.items,
+          items: normalizedItems,
           profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
-          entityUpdates: Array.isArray(parsed.entityUpdates) ? parsed.entityUpdates : [],
+          entityUpdates: normalizedEntityUpdates,
         } as ConsolidationResult);
       }
 
