@@ -11,6 +11,41 @@ type MistakesFile = {
   patterns: string[];
 };
 
+type FeedbackEntryWithProvenance = {
+  entry: SharedFeedbackEntry;
+  sourceLine: number;
+  sourcePath: string;
+  entryId: string;
+};
+
+type PatternWithProvenance = {
+  pattern: string;
+  provenance: string[];
+};
+
+type ActionOutcomeCounts = {
+  applied: number;
+  skipped: number;
+  failed: number;
+  unknown: number;
+};
+
+type ActionOutcomeSummary = {
+  action: string;
+  counts: ActionOutcomeCounts;
+  total: number;
+  weightedScore: number;
+  provenance: string[];
+};
+
+type PromotionCandidate = {
+  action: string;
+  score: number;
+  rationale: string;
+  outcome: ActionOutcomeCounts;
+  provenance: string[];
+};
+
 export type TierMigrationCycleTrigger = "extraction" | "maintenance";
 export interface TierMigrationCycleBudget {
   limit: number;
@@ -91,6 +126,7 @@ function cadenceStaleWindowMs(cadence: "daily" | "weekly" | "monthly" | "quarter
 
 export class CompoundingEngine {
   private readonly weeklyDir: string;
+  private readonly rubricsPath: string;
   private readonly mistakesPath: string;
   private readonly feedbackInboxPath: string;
   private readonly identityAnchorPath: string;
@@ -102,6 +138,7 @@ export class CompoundingEngine {
 
   constructor(private readonly config: PluginConfig) {
     this.weeklyDir = path.join(config.memoryDir, "compounding", "weekly");
+    this.rubricsPath = path.join(config.memoryDir, "compounding", "rubrics.md");
     this.mistakesPath = path.join(config.memoryDir, "compounding", "mistakes.json");
     this.feedbackInboxPath = path.join(sharedContextDir(config), "feedback", "inbox.jsonl");
     this.identityAnchorPath = path.join(config.memoryDir, "identity", "identity-anchor.md");
@@ -115,14 +152,21 @@ export class CompoundingEngine {
   async ensureDirs(): Promise<void> {
     await mkdir(this.weeklyDir, { recursive: true });
     await mkdir(path.dirname(this.mistakesPath), { recursive: true });
+    await mkdir(path.dirname(this.rubricsPath), { recursive: true });
   }
 
-  async synthesizeWeekly(opts?: { weekId?: string }): Promise<{ weekId: string; reportPath: string; mistakesCount: number }> {
+  async synthesizeWeekly(opts?: {
+    weekId?: string;
+  }): Promise<{ weekId: string; reportPath: string; mistakesCount: number; rubricsPath: string; promotionCandidateCount: number }> {
     await this.ensureDirs();
     const weekId = opts?.weekId ?? isoWeekId(new Date());
 
     const entries = await this.readFeedbackEntriesForWeek(weekId);
     const actionPatterns = await this.readActionFailurePatternsForWeek(weekId);
+    const outcomeSummary = await this.readActionOutcomeSummaryForWeek(weekId);
+    const promotionCandidates = this.config.compoundingSemanticEnabled
+      ? this.derivePromotionCandidates(outcomeSummary)
+      : [];
     const mistakes = this.buildMistakes(entries, actionPatterns);
     const continuity = this.config.continuityAuditEnabled
       ? await this.readContinuityAuditReferences(weekId)
@@ -130,14 +174,22 @@ export class CompoundingEngine {
 
     // Write weekly report (always, even if empty: "day-one outcomes").
     const reportPath = path.join(this.weeklyDir, `${weekId}.md`);
-    const md = this.formatWeeklyReport(weekId, entries, mistakes.patterns, continuity);
+    const md = this.formatWeeklyReport(weekId, entries, mistakes.patterns, mistakes.details, continuity, outcomeSummary, promotionCandidates);
     await writeFile(reportPath, md, "utf-8");
 
-    // Update mistakes.json (always).
-    await writeFile(this.mistakesPath, JSON.stringify(mistakes, null, 2) + "\n", "utf-8");
+    // Write stable rubric artifact.
+    const rubrics = this.formatRubrics(entries, outcomeSummary);
+    await writeFile(this.rubricsPath, rubrics, "utf-8");
 
-    log.info(`compounding: wrote weekly=${reportPath} mistakes=${this.mistakesPath}`);
-    return { weekId, reportPath, mistakesCount: mistakes.patterns.length };
+    // Update mistakes.json (always).
+    await writeFile(
+      this.mistakesPath,
+      JSON.stringify({ updatedAt: mistakes.updatedAt, patterns: mistakes.patterns }, null, 2) + "\n",
+      "utf-8",
+    );
+
+    log.info(`compounding: wrote weekly=${reportPath} rubrics=${this.rubricsPath} mistakes=${this.mistakesPath}`);
+    return { weekId, reportPath, rubricsPath: this.rubricsPath, mistakesCount: mistakes.patterns.length, promotionCandidateCount: promotionCandidates.length };
   }
 
   async synthesizeContinuityAudit(opts?: {
@@ -243,13 +295,15 @@ export class CompoundingEngine {
     return defaultTierMigrationCycleBudget(this.config, trigger);
   }
 
-  private async readFeedbackEntriesForWeek(weekId: string): Promise<SharedFeedbackEntry[]> {
+  private async readFeedbackEntriesForWeek(weekId: string): Promise<FeedbackEntryWithProvenance[]> {
     // Minimal implementation: includes entries where date starts with any day in the ISO week.
     // We approximate by taking all entries and filtering by computed isoWeekId(date).
-    const out: SharedFeedbackEntry[] = [];
+    const out: FeedbackEntryWithProvenance[] = [];
     try {
       const raw = await readFile(this.feedbackInboxPath, "utf-8");
-      for (const line of raw.split("\n")) {
+      const lines = raw.split("\n");
+      for (let idx = 0; idx < lines.length; idx += 1) {
+        const line = lines[idx];
         if (!line.trim()) continue;
         try {
           const obj = JSON.parse(line);
@@ -257,7 +311,14 @@ export class CompoundingEngine {
           if (!parsed.success) continue;
           const d = new Date(parsed.data.date);
           if (!Number.isFinite(d.getTime())) continue;
-          if (isoWeekId(d) === weekId) out.push(parsed.data);
+          if (isoWeekId(d) !== weekId) continue;
+          const sourceLine = idx + 1;
+          out.push({
+            entry: parsed.data,
+            sourceLine,
+            sourcePath: this.feedbackInboxPath,
+            entryId: `${parsed.data.agent}-${parsed.data.date}-${sourceLine}`.replace(/[^a-zA-Z0-9._:-]/g, "_"),
+          });
         } catch {
           // ignore
         }
@@ -312,35 +373,126 @@ export class CompoundingEngine {
     return out;
   }
 
-  private buildMistakes(entries: SharedFeedbackEntry[], actionPatterns: string[] = []): MistakesFile {
-    const patterns: string[] = [];
-    for (const e of entries) {
+  private async readActionOutcomeSummaryForWeek(weekId: string): Promise<ActionOutcomeSummary[]> {
+    const byAction = new Map<string, { counts: ActionOutcomeCounts; provenance: Set<string> }>();
+    try {
+      const raw = await readFile(this.memoryActionEventsPath, "utf-8");
+      const lines = raw.split("\n");
+      for (let idx = 0; idx < lines.length; idx += 1) {
+        const line = lines[idx];
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as {
+            timestamp?: string;
+            action?: string;
+            outcome?: string;
+          };
+          if (typeof parsed.timestamp !== "string" || typeof parsed.action !== "string") continue;
+          const ts = new Date(parsed.timestamp);
+          if (!Number.isFinite(ts.getTime()) || isoWeekId(ts) !== weekId) continue;
+          const key = parsed.action;
+          const acc = byAction.get(key) ?? {
+            counts: { applied: 0, skipped: 0, failed: 0, unknown: 0 },
+            provenance: new Set<string>(),
+          };
+          if (parsed.outcome === "applied") acc.counts.applied += 1;
+          else if (parsed.outcome === "skipped") acc.counts.skipped += 1;
+          else if (parsed.outcome === "failed") acc.counts.failed += 1;
+          else acc.counts.unknown += 1;
+          acc.provenance.add(`${path.basename(this.memoryActionEventsPath)}:L${idx + 1}`);
+          byAction.set(key, acc);
+        } catch {
+          // fail-open
+        }
+      }
+    } catch {
+      // Missing action telemetry is allowed.
+    }
+
+    const out: ActionOutcomeSummary[] = [];
+    for (const [action, data] of byAction.entries()) {
+      const total = data.counts.applied + data.counts.skipped + data.counts.failed + data.counts.unknown;
+      if (total <= 0) continue;
+      // Conservative weighting: reward applied, penalize skipped/failed.
+      const weightedScore = Number((((data.counts.applied * 1) - (data.counts.skipped * 0.5) - (data.counts.failed * 1.5)) / total).toFixed(3));
+      out.push({
+        action,
+        counts: data.counts,
+        total,
+        weightedScore,
+        provenance: [...data.provenance].sort().slice(0, 8),
+      });
+    }
+    out.sort((a, b) => b.total - a.total || b.weightedScore - a.weightedScore || a.action.localeCompare(b.action));
+    return out;
+  }
+
+  private derivePromotionCandidates(summary: ActionOutcomeSummary[]): PromotionCandidate[] {
+    const out: PromotionCandidate[] = [];
+    for (const item of summary) {
+      if (item.total < 3) continue;
+      if (item.weightedScore < 0.3) continue;
+      out.push({
+        action: item.action,
+        score: item.weightedScore,
+        rationale: "High applied ratio with low failure/skips in weekly outcome telemetry.",
+        outcome: item.counts,
+        provenance: item.provenance,
+      });
+    }
+    return out
+      .sort((a, b) => b.score - a.score || a.action.localeCompare(b.action))
+      .slice(0, 10);
+  }
+
+  private buildMistakes(
+    entries: FeedbackEntryWithProvenance[],
+    actionPatterns: string[] = [],
+  ): MistakesFile & { details: PatternWithProvenance[] } {
+    const patterns: PatternWithProvenance[] = [];
+    for (const wrapped of entries) {
+      const e = wrapped.entry;
+      const provenance = [`${path.basename(wrapped.sourcePath)}:L${wrapped.sourceLine}#${wrapped.entryId}`];
       if (e.learning && e.learning.trim().length > 0) {
-        patterns.push(`${e.agent}: ${e.learning.trim()}`);
+        patterns.push({ pattern: `${e.agent}: ${e.learning.trim()}`, provenance });
         continue;
       }
       if (e.decision === "rejected") {
-        patterns.push(`${e.agent}: ${e.reason.trim()}`.slice(0, 240));
+        patterns.push({ pattern: `${e.agent}: ${e.reason.trim()}`.slice(0, 240), provenance });
       }
     }
 
-    patterns.push(...actionPatterns);
+    for (const p of actionPatterns) {
+      patterns.push({ pattern: p, provenance: [`${path.basename(this.memoryActionEventsPath)}:*`] });
+    }
 
-    const uniq = Array.from(new Set(patterns)).slice(0, 500);
-    return { updatedAt: new Date().toISOString(), patterns: uniq };
+    const byPattern = new Map<string, Set<string>>();
+    for (const p of patterns) {
+      const set = byPattern.get(p.pattern) ?? new Set<string>();
+      for (const prov of p.provenance) set.add(prov);
+      byPattern.set(p.pattern, set);
+    }
+
+    const details = [...byPattern.entries()]
+      .map(([pattern, provenance]) => ({ pattern, provenance: [...provenance].sort() }))
+      .slice(0, 500);
+    return { updatedAt: new Date().toISOString(), patterns: details.map((d) => d.pattern), details };
   }
 
   private formatWeeklyReport(
     weekId: string,
-    entries: SharedFeedbackEntry[],
+    entries: FeedbackEntryWithProvenance[],
     patterns: string[],
+    patternDetails: PatternWithProvenance[],
     continuity: { monthId: string; weeklyPath: string | null; monthlyPath: string | null },
+    outcomeSummary: ActionOutcomeSummary[],
+    promotionCandidates: PromotionCandidate[],
   ): string {
-    const byAgent = new Map<string, SharedFeedbackEntry[]>();
-    for (const e of entries) {
-      const list = byAgent.get(e.agent) ?? [];
-      list.push(e);
-      byAgent.set(e.agent, list);
+    const byAgent = new Map<string, FeedbackEntryWithProvenance[]>();
+    for (const wrapped of entries) {
+      const list = byAgent.get(wrapped.entry.agent) ?? [];
+      list.push(wrapped);
+      byAgent.set(wrapped.entry.agent, list);
     }
 
     const lines: string[] = [
@@ -359,13 +511,19 @@ export class CompoundingEngine {
       lines.push("- (none)");
     } else {
       for (const [agent, list] of Array.from(byAgent.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-        const approved = list.filter((e) => e.decision === "approved").length;
-        const awf = list.filter((e) => e.decision === "approved_with_feedback").length;
-        const rejected = list.filter((e) => e.decision === "rejected").length;
+        const approved = list.filter((e) => e.entry.decision === "approved").length;
+        const awf = list.filter((e) => e.entry.decision === "approved_with_feedback").length;
+        const rejected = list.filter((e) => e.entry.decision === "rejected").length;
         lines.push(`### ${agent}`);
         lines.push(`- approved: ${approved}`);
         lines.push(`- approved_with_feedback: ${awf}`);
         lines.push(`- rejected: ${rejected}`);
+        const provenance = list
+          .slice(0, 3)
+          .map((e) => `${path.basename(e.sourcePath)}:L${e.sourceLine}#${e.entryId}`);
+        if (provenance.length > 0) {
+          lines.push(`- provenance: ${provenance.join(", ")}`);
+        }
         lines.push("");
       }
     }
@@ -374,9 +532,46 @@ export class CompoundingEngine {
     if (patterns.length === 0) {
       lines.push("- (none yet)");
     } else {
-      for (const p of patterns.slice(0, 100)) lines.push(`- ${p}`);
+      const detailMap = new Map(patternDetails.map((d) => [d.pattern, d.provenance]));
+      for (const p of patterns.slice(0, 100)) {
+        const provenance = detailMap.get(p) ?? [];
+        if (provenance.length > 0) {
+          lines.push(`- ${p} _(source: ${provenance.join(", ")})_`);
+        } else {
+          lines.push(`- ${p}`);
+        }
+      }
     }
     lines.push("");
+
+    lines.push("## Outcome Weighting");
+    if (outcomeSummary.length === 0) {
+      lines.push("- (no action outcomes recorded this week)");
+    } else {
+      for (const item of outcomeSummary.slice(0, 20)) {
+        lines.push(
+          `- ${item.action}: applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown}, weight=${item.weightedScore} _(source: ${item.provenance.join(", ")})_`,
+        );
+      }
+    }
+    lines.push("");
+
+    if (this.config.compoundingSemanticEnabled) {
+      lines.push("## Promotion Candidates (Advisory)");
+      if (promotionCandidates.length === 0) {
+        lines.push("- (no advisory promotion candidates this week)");
+      } else {
+        for (const candidate of promotionCandidates) {
+          lines.push(
+            `- ${candidate.action} (score=${candidate.score}): ${candidate.rationale} outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}] _(source: ${candidate.provenance.join(", ")})_`,
+          );
+        }
+      }
+      lines.push("");
+      lines.push("_Advisory only: no automatic promotion write is performed by this report._");
+      lines.push("");
+    }
+
     if (this.config.continuityAuditEnabled) {
       lines.push("## Continuity Audits");
       if (continuity.weeklyPath) {
@@ -392,6 +587,58 @@ export class CompoundingEngine {
       lines.push("");
     }
 
+    return lines.join("\n");
+  }
+
+  private formatRubrics(entries: FeedbackEntryWithProvenance[], outcomeSummary: ActionOutcomeSummary[]): string {
+    const lines: string[] = [
+      "# Compounding Rubrics",
+      "",
+      `Generated: ${new Date().toISOString()}`,
+      "",
+      "Stable, deterministic rubric snapshot generated from weekly feedback + action outcomes.",
+      "",
+    ];
+
+    const byAgent = new Map<string, FeedbackEntryWithProvenance[]>();
+    for (const wrapped of entries) {
+      const list = byAgent.get(wrapped.entry.agent) ?? [];
+      list.push(wrapped);
+      byAgent.set(wrapped.entry.agent, list);
+    }
+
+    lines.push("## Agent Rubrics");
+    if (byAgent.size === 0) {
+      lines.push("- (none yet)");
+    } else {
+      for (const [agent, list] of [...byAgent.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        lines.push(`### ${agent}`);
+        const learnings = list
+          .filter((w) => (w.entry.learning ?? "").trim().length > 0 || w.entry.decision === "rejected")
+          .slice(0, 8);
+        if (learnings.length === 0) {
+          lines.push("- No rubric deltas this week.");
+        } else {
+          for (const item of learnings) {
+            const note = (item.entry.learning ?? item.entry.reason).trim();
+            lines.push(`- ${note} _(source: ${path.basename(item.sourcePath)}:L${item.sourceLine}#${item.entryId})_`);
+          }
+        }
+        lines.push("");
+      }
+    }
+
+    lines.push("## Action Outcome Signals");
+    if (outcomeSummary.length === 0) {
+      lines.push("- (none yet)");
+    } else {
+      for (const item of outcomeSummary.slice(0, 20)) {
+        lines.push(
+          `- ${item.action}: weight=${item.weightedScore} (applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown})`,
+        );
+      }
+    }
+    lines.push("");
     return lines.join("\n");
   }
 

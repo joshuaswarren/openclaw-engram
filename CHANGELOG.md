@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.16 Task 4 (compounding artifacts expansion):
+  - Added `compounding/rubrics.md` weekly artifact generation with deterministic agent rubric sections.
+  - Added provenance annotations for feedback-derived weekly patterns and rubric updates (`inbox.jsonl` line + entry key).
+  - Added outcome-aware weekly weighting summaries by action (`applied/skipped/failed/unknown` + conservative weighted score).
+  - Added optional advisory promotion-candidate section (gated by `compoundingSemanticEnabled`; no automatic shared-memory writes).
+  - Added tests: `tests/compounding-weekly-artifacts.test.ts` and `tests/compounding-outcome-weighting.test.ts`.
 - v8.16 Task 3 (optional semantic cross-signal enhancer):
   - Added optional shared-context semantic overlap enhancement pass behind config gate (`sharedCrossSignalSemanticEnabled`).
   - Added strict timeout guard (`sharedCrossSignalSemanticTimeoutMs`) and candidate bound (`sharedCrossSignalSemanticMaxCandidates`) with fail-open fallback to deterministic overlaps.
