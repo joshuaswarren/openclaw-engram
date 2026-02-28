@@ -1,5 +1,10 @@
 import type { MemoryFile } from "./types.js";
-import { computeLifecycleValueInputs, type LifecycleSignals } from "./lifecycle.js";
+import {
+  clamp01,
+  computeLifecycleValueInputs,
+  daysSince,
+  type LifecycleSignals,
+} from "./lifecycle.js";
 
 export type MemoryTier = "hot" | "cold";
 
@@ -16,20 +21,6 @@ export interface TierTransitionDecision {
   valueScore: number;
   changed: boolean;
   reason: string;
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
-}
-
-function daysSince(iso: string | undefined, nowMs: number): number {
-  if (!iso) return 365;
-  const ts = Date.parse(iso);
-  if (!Number.isFinite(ts)) return 365;
-  return Math.max(0, (nowMs - ts) / 86_400_000);
 }
 
 export function computeTierValueScore(

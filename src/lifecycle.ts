@@ -51,7 +51,7 @@ const DEFAULT_POLICY: LifecyclePolicy = {
   protectedCategories: ["decision", "principle", "commitment", "preference"],
 };
 
-function clamp01(value: number): number {
+export function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
   if (value > 1) return 1;
@@ -64,7 +64,7 @@ function parseIsoMs(value?: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function daysSince(value: string | undefined, nowMs: number): number {
+export function daysSince(value: string | undefined, nowMs: number): number {
   const ts = parseIsoMs(value);
   if (ts === null) return 365;
   return Math.max(0, (nowMs - ts) / 86_400_000);
