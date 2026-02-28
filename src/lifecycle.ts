@@ -35,6 +35,15 @@ export interface LifecycleDecision {
   reason: string;
 }
 
+export interface LifecycleValueInputs {
+  confidence: number;
+  access: number;
+  recency: number;
+  importance: number;
+  feedback: number;
+  disputedPenalty: number;
+}
+
 const DEFAULT_POLICY: LifecyclePolicy = {
   promoteHeatThreshold: 0.55,
   staleDecayThreshold: 0.65,
@@ -121,21 +130,31 @@ export function computeHeat(
   const frontmatter = memory.frontmatter;
   if (frontmatter.status === "archived") return 0;
 
-  const nowMs = now.getTime();
-  const confidence = confidenceTierWeight(frontmatter);
-  const access = accessWeight(frontmatter.accessCount);
-  const recency = recencyWeight(frontmatter, nowMs);
-  const importance = clamp01(frontmatter.importance?.score ?? 0.5);
-  const feedback = feedbackWeight(signals);
-
-  const disputedPenalty: number = frontmatter.verificationState === "disputed" ? 0.2 : 0;
-  const score = (confidence * 0.25)
-    + (access * 0.3)
-    + (recency * 0.2)
-    + (importance * 0.15)
-    + (feedback * 0.1)
-    - disputedPenalty;
+  const inputs = computeLifecycleValueInputs(memory, now, signals);
+  const score = (inputs.confidence * 0.25)
+    + (inputs.access * 0.3)
+    + (inputs.recency * 0.2)
+    + (inputs.importance * 0.15)
+    + (inputs.feedback * 0.1)
+    - inputs.disputedPenalty;
   return clamp01(score);
+}
+
+export function computeLifecycleValueInputs(
+  memory: Pick<MemoryFile, "frontmatter">,
+  now: Date,
+  signals?: LifecycleSignals,
+): LifecycleValueInputs {
+  const frontmatter = memory.frontmatter;
+  const nowMs = now.getTime();
+  return {
+    confidence: confidenceTierWeight(frontmatter),
+    access: accessWeight(frontmatter.accessCount),
+    recency: recencyWeight(frontmatter, nowMs),
+    importance: clamp01(frontmatter.importance?.score ?? 0.5),
+    feedback: feedbackWeight(signals),
+    disputedPenalty: frontmatter.verificationState === "disputed" ? 0.2 : 0,
+  };
 }
 
 export function computeDecay(
