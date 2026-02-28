@@ -392,7 +392,8 @@ export class ExtractionEngine {
           const durationMs = Date.now() - startTime;
           this.emit({ kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs });
           log.debug(`extraction: used direct client (${this.config.model}) — ${directResult.facts.length} facts, ${directResult.entities.length} entities`);
-          return directResult;
+          const sanitized = this.sanitizeExtractionResult(directResult);
+          return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
         log.info("extraction: direct client returned no result, falling back to gateway AI");
       } catch (err) {
@@ -1018,7 +1019,19 @@ ${existingList || "(none)"}
 New memories to consolidate:
 ${newList}
 
-Respond with valid JSON only.`;
+Respond with valid JSON only, matching this schema:
+{
+  "items": [
+    {
+      "newMemoryId": "id",
+      "action": "ADD|MERGE|UPDATE|INVALIDATE|SKIP",
+      "mergeWith": "optional-existing-id",
+      "updatedContent": "optional replacement content"
+    }
+  ],
+  "profileUpdates": ["optional profile update"],
+  "entityUpdates": ["optional entity update"]
+}`;
 
       const response = await this.client.chat.completions.create({
         model: this.config.model,
@@ -1626,9 +1639,8 @@ Respond with valid JSON matching this schema:
 {
   "isContradiction": true,
   "confidence": 0.95,
-  "explanation": "why they contradict or don't",
-  "winner": "new" or "existing" or "neither",
-  "mergedContent": "optional merged content if applicable"
+  "reasoning": "why they contradict or don't",
+  "whichIsNewer": "first" or "second" or "unclear"
 }`;
 
       const response = await this.client.chat.completions.create({
@@ -1655,10 +1667,28 @@ Respond with valid JSON matching this schema:
       }
 
       if (parsed && typeof parsed.isContradiction === "boolean") {
+        const rawWhich = parsed.whichIsNewer ?? parsed.winner;
+        const normalizedWhich =
+          rawWhich === "first" || rawWhich === "existing"
+            ? "first"
+            : rawWhich === "second" || rawWhich === "new"
+              ? "second"
+              : "unclear";
+        const normalized: ContradictionVerificationResult = {
+          isContradiction: Boolean(parsed.isContradiction),
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+          reasoning:
+            typeof parsed.reasoning === "string"
+              ? parsed.reasoning
+              : typeof parsed.explanation === "string"
+                ? parsed.explanation
+                : "",
+          whichIsNewer: normalizedWhich,
+        };
         log.debug(
-          `contradiction check: ${parsed.isContradiction ? "YES" : "NO"} (confidence: ${parsed.confidence})`,
+          `contradiction check: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
         );
-        return parsed as ContradictionVerificationResult;
+        return normalized;
       }
 
       return null;
@@ -1714,7 +1744,7 @@ Rules:
 
 Respond with valid JSON matching this schema:
 {
-  "links": [{"targetId": "memory-id", "type": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
+  "links": [{"targetId": "memory-id", "linkType": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
 }`;
 
       const response = await this.client.chat.completions.create({
@@ -1741,8 +1771,26 @@ Respond with valid JSON matching this schema:
       }
 
       if (parsed && Array.isArray(parsed.links)) {
-        log.debug(`suggested ${parsed.links.length} links`);
-        return parsed as SuggestedLinks;
+        const normalizedLinks = parsed.links
+          .map((link: any) => {
+            const rawLinkType = link?.linkType ?? link?.type;
+            return {
+              targetId: typeof link?.targetId === "string" ? link.targetId : "",
+              linkType:
+                rawLinkType === "follows" ||
+                rawLinkType === "references" ||
+                rawLinkType === "contradicts" ||
+                rawLinkType === "supports" ||
+                rawLinkType === "related"
+                  ? rawLinkType
+                  : "related",
+              strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
+              reason: typeof link?.reason === "string" ? link.reason : undefined,
+            };
+          })
+          .filter((link: any) => link.targetId.length > 0);
+        log.debug(`suggested ${normalizedLinks.length} links`);
+        return { links: normalizedLinks };
       }
 
       return { links: [] };
@@ -1785,9 +1833,9 @@ Guidelines:
 
 Respond with valid JSON matching this schema:
 {
-  "summary": "concise summary paragraph",
+  "summaryText": "concise summary paragraph",
   "keyFacts": ["fact 1", "fact 2"],
-  "entities": ["entity-1", "entity-2"]
+  "keyEntities": ["entity-1", "entity-2"]
 }`;
 
       const response = await this.client.chat.completions.create({
@@ -1813,9 +1861,25 @@ Respond with valid JSON matching this schema:
         }
       }
 
-      if (parsed && typeof parsed.summary === "string") {
-        log.debug(`summarized ${memories.length} memories into ${(parsed.keyFacts ?? []).length} key facts`);
-        return parsed as MemorySummaryResult;
+      if (parsed) {
+        const normalized: MemorySummaryResult = {
+          summaryText:
+            typeof parsed.summaryText === "string"
+              ? parsed.summaryText
+              : typeof parsed.summary === "string"
+                ? parsed.summary
+                : "",
+          keyFacts: Array.isArray(parsed.keyFacts) ? parsed.keyFacts.filter((f: unknown) => typeof f === "string") : [],
+          keyEntities: Array.isArray(parsed.keyEntities)
+            ? parsed.keyEntities.filter((e: unknown) => typeof e === "string")
+            : Array.isArray(parsed.entities)
+              ? parsed.entities.filter((e: unknown) => typeof e === "string")
+              : [],
+        };
+        if (normalized.summaryText.length > 0) {
+          log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts`);
+          return normalized;
+        }
       }
 
       return null;
