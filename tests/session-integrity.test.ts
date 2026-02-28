@@ -104,3 +104,38 @@ test("session repair apply rewrites transcript and removes bad checkpoint", asyn
   await assert.rejects(() => access(checkpointPath));
 });
 
+test("session repair plan skips transcript rewrite when only chain/duplicate issues exist", async () => {
+  const memoryDir = await buildMemoryDir("engram-session-repair-plan-");
+  const transcriptPath = path.join(memoryDir, "transcripts", "main", "default", "2026-02-28.jsonl");
+  await writeFile(
+    transcriptPath,
+    [
+      JSON.stringify({
+        timestamp: "2026-02-28T10:00:00.000Z",
+        role: "user",
+        content: "first",
+        sessionKey: "agent:generalist:main",
+        turnId: "turn-1",
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-28T10:01:00.000Z",
+        role: "user",
+        content: "second",
+        sessionKey: "agent:generalist:main",
+        turnId: "turn-2",
+      }),
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const report = await analyzeSessionIntegrity({ memoryDir });
+  const codes = new Set(report.issues.map((issue) => issue.code));
+  assert.equal(codes.has("transcript_broken_chain"), true);
+  assert.equal(codes.has("transcript_incomplete_turn"), true);
+  assert.equal(codes.has("transcript_malformed_line"), false);
+  assert.equal(codes.has("transcript_invalid_entry"), false);
+
+  const plan = planSessionRepair({ report, dryRun: true });
+  const rewriteActions = plan.actions.filter((action) => action.kind === "rewrite_transcript");
+  assert.equal(rewriteActions.length, 0);
+});

@@ -420,9 +420,7 @@ function collectTranscriptRewriteTargets(report: SessionIntegrityReport): string
     if (!issue.filePath) continue;
     if (
       issue.code === "transcript_malformed_line" ||
-      issue.code === "transcript_invalid_entry" ||
-      issue.code === "transcript_duplicate_turn_id" ||
-      issue.code === "transcript_broken_chain"
+      issue.code === "transcript_invalid_entry"
     ) {
       set.add(issue.filePath);
     }

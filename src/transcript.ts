@@ -851,11 +851,13 @@ export class TranscriptManager {
       : report.sessions;
     const incompleteTurns = selectedSessions.reduce((sum, session) => sum + session.incompleteTurns, 0);
     const brokenChains = selectedSessions.reduce((sum, session) => sum + session.brokenChains, 0);
-    const issueCount = report.issues.filter((issue) => !sessionKey || issue.sessionKey === sessionKey).length;
+    const filteredIssues = report.issues.filter((issue) => !sessionKey || issue.sessionKey === sessionKey);
+    const issueCount = filteredIssues.length;
+    const severeIssueCount = filteredIssues.filter((issue) => issue.severity !== "info").length;
     return {
       generatedAt: report.generatedAt,
       sessionKey,
-      healthy: issueCount === 0 && report.checkpoint.healthy,
+      healthy: sessionKey ? severeIssueCount === 0 && report.checkpoint.healthy : report.healthy,
       issueCount,
       incompleteTurns,
       brokenChains,

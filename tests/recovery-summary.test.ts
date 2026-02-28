@@ -41,3 +41,17 @@ test("recovery summary reports broken chain and incomplete turn counts", async (
   assert.equal(summary.healthy, false);
 });
 
+test("recovery summary keeps healthy true for info-only integrity issues", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-recovery-summary-info-only-"));
+  const config = parseConfig({
+    memoryDir,
+    transcriptEnabled: true,
+  });
+  const transcript = new TranscriptManager(config);
+  await transcript.initialize();
+
+  const summary = await transcript.getRecoverySummary();
+  assert.equal(summary.checkpointHealthy, true);
+  assert.equal(summary.issueCount > 0, true);
+  assert.equal(summary.healthy, true);
+});

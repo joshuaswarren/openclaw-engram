@@ -47,7 +47,7 @@ function encodeTextFrame(payload: string): Buffer {
   } else {
     const high = Math.floor(len / 2 ** 32);
     const low = len >>> 0;
-    header.push(127, 0, 0, 0, 0, (high >> 24) & 0xff, (high >> 16) & 0xff, (high >> 8) & 0xff, high & 0xff, (low >> 24) & 0xff, (low >> 16) & 0xff, (low >> 8) & 0xff, low & 0xff);
+    header.push(127, (high >> 24) & 0xff, (high >> 16) & 0xff, (high >> 8) & 0xff, high & 0xff, (low >> 24) & 0xff, (low >> 16) & 0xff, (low >> 8) & 0xff, low & 0xff);
   }
   return Buffer.concat([Buffer.from(header), payloadBuffer]);
 }
