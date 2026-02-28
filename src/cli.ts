@@ -1,8 +1,9 @@
 import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
-import type { ContinuityIncidentRecord, MemoryActionEvent, TranscriptEntry } from "./types.js";
+import type { BehaviorSignalEvent, ContinuityIncidentRecord, MemoryActionEvent, TranscriptEntry } from "./types.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -35,6 +36,7 @@ import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
 import type { TierMigrationCycleSummary, TierMigrationStatusSnapshot } from "./recall-state.js";
+import type { RuntimePolicyValues } from "./policy-runtime.js";
 
 interface CliApi {
   registerCli(
@@ -518,6 +520,256 @@ export async function runTierMigrateCliCommand(
     dryRun: options.dryRun === true,
     limit: options.limit,
   });
+}
+
+interface RuntimePolicySnapshotPayload {
+  version: number;
+  updatedAt: string;
+  values: RuntimePolicyValues;
+  sourceAdjustmentCount: number;
+}
+
+interface PolicySignalContribution {
+  signalType: string;
+  direction: string;
+  count: number;
+  lastSeenAt: string;
+}
+
+export interface PolicyStatusCliReport {
+  generatedAt: string;
+  autoTuneEnabled: boolean;
+  current: (RuntimePolicySnapshotPayload & { policyVersion: string }) | null;
+  previous: (RuntimePolicySnapshotPayload & { policyVersion: string }) | null;
+  topContributingSignals: PolicySignalContribution[];
+}
+
+export interface PolicyDiffEntry {
+  parameter: string;
+  previousValue: number | null;
+  nextValue: number | null;
+  delta: number;
+  evidenceCount: number;
+}
+
+export interface PolicyDiffCliReport {
+  generatedAt: string;
+  since: string;
+  sinceIso: string;
+  currentPolicyVersion: string | null;
+  previousPolicyVersion: string | null;
+  deltas: PolicyDiffEntry[];
+  topContributingSignals: PolicySignalContribution[];
+}
+
+export interface PolicyRollbackCliReport {
+  generatedAt: string;
+  rolledBack: boolean;
+  current: (RuntimePolicySnapshotPayload & { policyVersion: string }) | null;
+}
+
+export interface PolicyTuningCliOrchestrator {
+  config: {
+    memoryDir: string;
+    defaultNamespace: string;
+    sharedNamespace: string;
+    namespacesEnabled: boolean;
+    behaviorLoopAutoTuneEnabled: boolean;
+    behaviorLoopLearningWindowDays: number;
+    namespacePolicies: Array<{ name: string }>;
+  };
+  getStorage(namespace?: string): Promise<{
+    readBehaviorSignals(limit?: number): Promise<BehaviorSignalEvent[]>;
+  }>;
+  rollbackBehaviorRuntimePolicy(): Promise<boolean>;
+}
+
+function policyVersionForValues(values: RuntimePolicyValues): string {
+  return createHash("sha256")
+    .update(JSON.stringify(values))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+async function readRuntimePolicySnapshot(
+  memoryDir: string,
+  fileName: string,
+): Promise<RuntimePolicySnapshotPayload | null> {
+  const filePath = path.join(memoryDir, "state", fileName);
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    const parsed = JSON.parse(raw) as Partial<RuntimePolicySnapshotPayload>;
+    if (
+      !parsed ||
+      typeof parsed.version !== "number" ||
+      typeof parsed.updatedAt !== "string" ||
+      !parsed.values ||
+      typeof parsed.values !== "object" ||
+      typeof parsed.sourceAdjustmentCount !== "number"
+    ) {
+      return null;
+    }
+    return {
+      version: parsed.version,
+      updatedAt: parsed.updatedAt,
+      values: parsed.values,
+      sourceAdjustmentCount: Math.max(0, Math.floor(parsed.sourceAdjustmentCount)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSinceDurationMs(since: string): number {
+  const trimmed = since.trim().toLowerCase();
+  const match = trimmed.match(/^(\d+)\s*([mhd])$/);
+  if (!match) {
+    throw new Error(`invalid --since value: ${since} (expected formats like 30m, 12h, 7d)`);
+  }
+  const amount = Number.parseInt(match[1] ?? "0", 10);
+  const unit = match[2];
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`invalid --since value: ${since}`);
+  }
+  if (unit === "m") return amount * 60 * 1000;
+  if (unit === "h") return amount * 60 * 60 * 1000;
+  return amount * 24 * 60 * 60 * 1000;
+}
+
+function resolvePolicySignalNamespaces(orchestrator: PolicyTuningCliOrchestrator): string[] {
+  const names = new Set<string>([orchestrator.config.defaultNamespace]);
+  if (orchestrator.config.namespacesEnabled) {
+    names.add(orchestrator.config.sharedNamespace);
+    for (const policy of orchestrator.config.namespacePolicies) {
+      if (policy?.name) names.add(policy.name);
+    }
+  }
+  return [...names];
+}
+
+async function readBehaviorSignalsForNamespaces(
+  orchestrator: PolicyTuningCliOrchestrator,
+  limitPerNamespace: number,
+): Promise<BehaviorSignalEvent[]> {
+  const namespaces = resolvePolicySignalNamespaces(orchestrator);
+  const merged: BehaviorSignalEvent[] = [];
+  for (const namespace of namespaces) {
+    const storage = await orchestrator.getStorage(namespace);
+    const events = await storage.readBehaviorSignals(limitPerNamespace);
+    merged.push(...events);
+  }
+  return merged;
+}
+
+function summarizeTopSignals(
+  signals: BehaviorSignalEvent[],
+  cutoffIso?: string,
+  topN: number = 5,
+): PolicySignalContribution[] {
+  const cutoffMs = cutoffIso ? Date.parse(cutoffIso) : Number.NEGATIVE_INFINITY;
+  const grouped = new Map<string, PolicySignalContribution>();
+  for (const signal of signals) {
+    const ts = Date.parse(signal.timestamp);
+    if (Number.isFinite(cutoffMs) && (!Number.isFinite(ts) || ts < cutoffMs)) continue;
+    const key = `${signal.signalType}:${signal.direction}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (signal.timestamp > existing.lastSeenAt) {
+        existing.lastSeenAt = signal.timestamp;
+      }
+    } else {
+      grouped.set(key, {
+        signalType: signal.signalType,
+        direction: signal.direction,
+        count: 1,
+        lastSeenAt: signal.timestamp,
+      });
+    }
+  }
+
+  return [...grouped.values()]
+    .sort((a, b) => b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt))
+    .slice(0, Math.max(1, topN));
+}
+
+export async function runPolicyStatusCliCommand(
+  orchestrator: PolicyTuningCliOrchestrator,
+): Promise<PolicyStatusCliReport> {
+  const now = new Date();
+  const current = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.json");
+  const previous = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.prev.json");
+  const signals = await readBehaviorSignalsForNamespaces(orchestrator, 1000);
+  const defaultWindowMs = Math.max(0, orchestrator.config.behaviorLoopLearningWindowDays) * 24 * 60 * 60 * 1000;
+  const cutoffIso = defaultWindowMs > 0 ? new Date(now.getTime() - defaultWindowMs).toISOString() : undefined;
+
+  return {
+    generatedAt: now.toISOString(),
+    autoTuneEnabled: orchestrator.config.behaviorLoopAutoTuneEnabled,
+    current: current
+      ? { ...current, policyVersion: policyVersionForValues(current.values) }
+      : null,
+    previous: previous
+      ? { ...previous, policyVersion: policyVersionForValues(previous.values) }
+      : null,
+    topContributingSignals: summarizeTopSignals(signals, cutoffIso),
+  };
+}
+
+export async function runPolicyDiffCliCommand(
+  orchestrator: PolicyTuningCliOrchestrator,
+  options: { since?: string } = {},
+): Promise<PolicyDiffCliReport> {
+  const since = options.since?.trim() || "7d";
+  const sinceMs = parseSinceDurationMs(since);
+  const sinceIso = new Date(Date.now() - sinceMs).toISOString();
+  const current = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.json");
+  const previous = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.prev.json");
+  const currentValues = current?.values ?? {};
+  const previousValues = previous?.values ?? {};
+  const parameterKeys = new Set<string>([
+    ...Object.keys(currentValues),
+    ...Object.keys(previousValues),
+  ]);
+  const deltas: PolicyDiffEntry[] = [];
+  for (const parameter of parameterKeys) {
+    const previousRaw = (previousValues as Record<string, unknown>)[parameter];
+    const nextRaw = (currentValues as Record<string, unknown>)[parameter];
+    const previousValue = typeof previousRaw === "number" ? previousRaw : null;
+    const nextValue = typeof nextRaw === "number" ? nextRaw : null;
+    if (previousValue === nextValue) continue;
+    deltas.push({
+      parameter,
+      previousValue,
+      nextValue,
+      delta: (nextValue ?? 0) - (previousValue ?? 0),
+      evidenceCount: current?.sourceAdjustmentCount ?? 0,
+    });
+  }
+  deltas.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.parameter.localeCompare(b.parameter));
+
+  const signals = await readBehaviorSignalsForNamespaces(orchestrator, 1000);
+  return {
+    generatedAt: new Date().toISOString(),
+    since,
+    sinceIso,
+    currentPolicyVersion: current ? policyVersionForValues(current.values) : null,
+    previousPolicyVersion: previous ? policyVersionForValues(previous.values) : null,
+    deltas,
+    topContributingSignals: summarizeTopSignals(signals, sinceIso),
+  };
+}
+
+export async function runPolicyRollbackCliCommand(
+  orchestrator: PolicyTuningCliOrchestrator,
+): Promise<PolicyRollbackCliReport> {
+  const rolledBack = await orchestrator.rollbackBehaviorRuntimePolicy();
+  const current = await readRuntimePolicySnapshot(orchestrator.config.memoryDir, "policy-runtime.json");
+  return {
+    generatedAt: new Date().toISOString(),
+    rolledBack,
+    current: current ? { ...current, policyVersion: policyVersionForValues(current.values) } : null,
+  };
 }
 
 function incrementCounter(target: Record<string, number>, key: string): void {
@@ -1434,6 +1686,36 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             limit: Number.isFinite(limitRaw) ? Math.max(0, limitRaw) : undefined,
           });
           console.log(JSON.stringify(summary, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("policy-status")
+        .description("Show runtime behavior-loop policy status and top contributing signals")
+        .action(async () => {
+          const status = await runPolicyStatusCliCommand(orchestrator);
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("policy-diff")
+        .description("Show runtime policy deltas and evidence since a relative duration (default: 7d)")
+        .option("--since <window>", "Relative duration window like 30m, 12h, 7d", "7d")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const since = typeof options.since === "string" ? options.since : "7d";
+          const report = await runPolicyDiffCliCommand(orchestrator, { since });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("policy-rollback")
+        .description("Roll back runtime behavior policy to the previous snapshot")
+        .action(async () => {
+          const report = await runPolicyRollbackCliCommand(orchestrator);
+          console.log(JSON.stringify(report, null, 2));
           console.log("OK");
         });
 

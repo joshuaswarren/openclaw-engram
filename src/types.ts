@@ -890,6 +890,7 @@ export interface RecallTraceEvent {
   recalledMemoryCount: number;
   injected: boolean;
   contextChars: number;
+  policyVersion?: string;
   identityInjectionMode?: IdentityInjectionMode | "none";
   identityInjectedChars?: number;
   identityInjectionTruncated?: boolean;

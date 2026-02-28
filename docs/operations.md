@@ -58,6 +58,9 @@ openclaw engram graph-health        # Graph edge-file integrity + coverage
 openclaw engram action-audit        # Namespace-aware memory action policy audit
 openclaw engram tier-status         # Tier migration telemetry + last-cycle summary
 openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run default)
+openclaw engram policy-status       # Runtime policy snapshot + top contributing signals
+openclaw engram policy-diff --since 7d  # Parameter deltas + evidence window
+openclaw engram policy-rollback     # Roll back to previous runtime policy snapshot
 ```
 
 Compatibility diagnostics:
@@ -78,6 +81,11 @@ Tier migration diagnostics:
 - `openclaw engram tier-status` reports the latest migration cycle summary plus cumulative counters (cycles/scanned/migrated/promoted/demoted/errors).
 - `openclaw engram tier-migrate` runs one manual maintenance migration pass.
 - `tier-migrate` defaults to dry-run; pass `--write` to apply mutations and `--limit <n>` to bound this pass.
+
+Behavior-loop policy diagnostics:
+- `openclaw engram policy-status` reports current/previous runtime policy snapshots plus top contributing behavior signals in the current learning window.
+- `openclaw engram policy-diff --since <window>` reports per-parameter deltas (`previousValue`, `nextValue`, `delta`) and associated evidence counts.
+- `openclaw engram policy-rollback` restores the previous runtime policy snapshot and prints the resulting current snapshot.
 
 Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.
