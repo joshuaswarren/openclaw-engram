@@ -94,41 +94,43 @@ function stripYamlFrontmatter(text: string): string {
 function semanticRoot(token: string): string {
   let root = token.toLowerCase();
   if (root.endsWith("izations") && root.length > 9) {
-    return `${root.slice(0, -8)}ize`;
+    root = `${root.slice(0, -8)}ize`;
   }
-  if (root.endsWith("ization") && root.length > 8) {
-    return `${root.slice(0, -7)}ize`;
-  }
-  if (root.endsWith("isations") && root.length > 9) {
-    return `${root.slice(0, -8)}ise`;
-  }
-  if (root.endsWith("isation") && root.length > 8) {
-    return `${root.slice(0, -7)}ise`;
-  }
-  const suffixes = [
-    "ations",
-    "ation",
-    "ments",
-    "ment",
-    "ingly",
-    "edly",
-    "ings",
-    "ing",
-    "ers",
-    "er",
-    "ies",
-    "ied",
-    "ions",
-    "ion",
-    "es",
-    "ed",
-    "s",
-  ];
-  for (const suffix of suffixes) {
-    if (root.length > suffix.length + 3 && root.endsWith(suffix)) {
-      root = root.slice(0, -suffix.length);
-      break;
+  else if (root.endsWith("ization") && root.length > 8) {
+    root = `${root.slice(0, -7)}ize`;
+  } else if (root.endsWith("isations") && root.length > 9) {
+    root = `${root.slice(0, -8)}ise`;
+  } else if (root.endsWith("isation") && root.length > 8) {
+    root = `${root.slice(0, -7)}ise`;
+  } else {
+    const suffixes = [
+      "ations",
+      "ation",
+      "ments",
+      "ment",
+      "ingly",
+      "edly",
+      "ings",
+      "ing",
+      "ers",
+      "er",
+      "ies",
+      "ied",
+      "ions",
+      "ion",
+      "es",
+      "ed",
+      "s",
+    ];
+    for (const suffix of suffixes) {
+      if (root.length > suffix.length + 3 && root.endsWith(suffix)) {
+        root = root.slice(0, -suffix.length);
+        break;
+      }
     }
+  }
+  if (root.length > 4 && root.endsWith("e")) {
+    root = root.slice(0, -1);
   }
   return root;
 }

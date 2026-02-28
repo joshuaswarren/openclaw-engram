@@ -49,6 +49,12 @@ test("shared-context semantic cross-signals adds overlap for related token varia
       content: "We should optimize cache warmups with staged rollout.",
       createdAt: isoForDate(date, "09:05:00"),
     });
+    await manager.writeAgentOutput({
+      agentId: "optimizer",
+      title: "Optimized cache rollout",
+      content: "The rollout is optimized for hot paths.",
+      createdAt: isoForDate(date, "09:10:00"),
+    });
 
     const result = await manager.curateDaily({ date });
     const raw = JSON.parse(await readFile(result.crossSignalsPath, "utf-8"));
