@@ -734,7 +734,6 @@ export class Orchestrator {
       recencyWeight: this.effectiveRecencyWeight(),
       lifecyclePromoteHeatThreshold: thresholds.promoteHeatThreshold,
       lifecycleStaleDecayThreshold: thresholds.staleDecayThreshold,
-      lifecycleArchiveDecayThreshold: thresholds.archiveDecayThreshold,
       cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
     };
     return createHash("sha256")
