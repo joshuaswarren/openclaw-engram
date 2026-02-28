@@ -8,6 +8,22 @@ import { Orchestrator } from "../src/orchestrator.js";
 import { StorageManager } from "../src/storage.js";
 import type { QmdSearchResult } from "../src/types.js";
 
+async function rmWithRetries(target: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(target, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== "ENOTEMPTY" && code !== "EBUSY") {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+  await rm(target, { recursive: true, force: true });
+}
+
 test("cold fallback applies graph expansion parity when enabled", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cold-graph-parity-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-cold-graph-parity-workspace-"));
@@ -99,7 +115,7 @@ test("cold fallback applies graph expansion parity when enabled", async () => {
     assert.match(output, /cold graph seed memory/);
     assert.match(output, /cold graph expanded memory/);
   } finally {
-    await rm(memoryDir, { recursive: true, force: true });
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rmWithRetries(memoryDir);
+    await rmWithRetries(workspaceDir);
   }
 });
