@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- v8.16 Task 5 hardening update:
+  - Added a compounding-artifact review checklist to `docs/ops/pr-review-hardening-playbook.md` covering provenance integrity, advisory-only promotion contract, outcome-summary consistency, and duplicate parsing drift prevention.
 - PR #57 work extraction boundary hardening:
   - Preserved linked work payload text containing wrapper-like tokens such as `[WORK_LAYER_CONTEXT link_to_memory=...]`.
   - Escaped wrapper opener/closer tokens during work-layer wrapping and restored them only after boundary cleanup.
