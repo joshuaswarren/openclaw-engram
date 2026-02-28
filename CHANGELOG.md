@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #82 follow-up extraction API compatibility and normalization:
+  - Migrated extraction/consolidation LLM calls from `responses.parse` to `chat.completions.create` for OpenAI-compatible endpoints.
+  - Added direct-client extraction path and retained fail-open fallback behavior for local/gateway extraction paths.
+  - Normalized parsed facts/questions from non-schema-enforced completions output before persistence to avoid malformed question/fact records.
 - PR #82 follow-up recall injection compatibility:
   - Return both `systemPrompt` and `prependContext` from `before_agent_start` so memory context is injected across gateway variants.
 - PR #110 QMD daemon reliability and warm-path parity:
