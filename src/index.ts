@@ -162,7 +162,7 @@ export default {
           return {
             systemPrompt: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
             // Backward-compat path for gateway builds that consume prependContext.
-            prependContext: `## Memory Context (Engram)\n\n${trimmed}`,
+            prependContext: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
           };
         } catch (err) {
           log.error("recall failed", err);
