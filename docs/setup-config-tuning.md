@@ -191,6 +191,44 @@ Operator hardening checklist before promotion:
 - If regressions appear, first disable `compressionGuidelineSemanticRefinementEnabled`, then disable `compressionGuidelineLearningEnabled`.
 - Confirm disabled-path behavior by toggling all action-policy features off and verifying recall outputs remain baseline-equivalent.
 
+## 2e) v8.15 Behavior-Loop Auto-Tuning Rollout
+
+Keep behavior-loop learning disabled by default, then enable in stages:
+
+```jsonc
+{
+  "behaviorLoopAutoTuneEnabled": false,
+  "behaviorLoopLearningWindowDays": 14,
+  "behaviorLoopMinSignalCount": 10,
+  "behaviorLoopMaxDeltaPerCycle": 0.1,
+  "behaviorLoopProtectedParams": [
+    "qmdMaxResults",
+    "maxMemoryTokens",
+    "verbatimArtifactsMaxRecall",
+    "cronRecallInstructionHeavyTokenCap"
+  ]
+}
+```
+
+Recommended rollout:
+- Stage 1 (observe only): keep `behaviorLoopAutoTuneEnabled=false` and monitor `policy-status`/`policy-diff` outputs.
+- Stage 2 (canary namespace): enable auto-tune for a low-risk namespace and monitor policy stability for at least one full cycle.
+- Stage 3 (broader rollout): expand only after policy changes are bounded, stable, and rollback rate stays low.
+
+Operational guardrails:
+- Treat `behaviorLoopAutoTuneEnabled=false` as a hard disable.
+- Treat numeric `0` limits as intentional hard caps/disables; do not rely on implicit coercion.
+- Preserve planner mode behavior (`no_recall`, `minimal`, `full`, `graph_mode`) during rollout verification.
+- If recall quality regresses, run `openclaw engram policy-rollback` and disable auto-tune before further changes.
+
+Policy observability commands:
+
+```bash
+openclaw engram policy-status
+openclaw engram policy-diff --since 7d
+openclaw engram policy-rollback
+```
+
 Conversation index health check command:
 
 ```bash

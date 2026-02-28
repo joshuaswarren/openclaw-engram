@@ -53,6 +53,10 @@ All notable changes to this project will be documented in this file.
   - Added runtime policy snapshot/diff helpers with evidence counts and top contributing behavior-signal summaries.
   - Added per-turn recall telemetry policy version tagging in recall summary events and last-recall impressions.
   - Added `tests/cli-policy-tuning.test.ts` and expanded `tests/recall-telemetry.test.ts` for policy-version and CLI report coverage.
+- v8.15 behavior-loop Task 6 (guardrails + rollout hardening docs):
+  - Added explicit behavior-loop hardening checklist to `docs/ops/pr-review-hardening-playbook.md` (artifact isolation, cap-after-filter ordering, config contract, planner mode reachability, and policy-version parity).
+  - Added v8.15 auto-tuning rollout guidance and operator command runbook to `docs/setup-config-tuning.md`.
+  - Documented rollback-first operator guidance for regression handling during behavior-loop rollout.
 - v8.8 network sync Task 1 (WebDAV module):
   - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
   - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.
