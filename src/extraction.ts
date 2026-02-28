@@ -1013,18 +1013,29 @@ Respond with valid JSON only, matching this schema:
 
       if (parsed && Array.isArray(parsed.items)) {
         const normalizedItems = parsed.items
-          .map((item: any) => ({
+          .map((item: any) => {
+            const rawAction = typeof item?.action === "string" ? item.action.toUpperCase() : "SKIP";
+            const action =
+              rawAction === "ADD" ||
+              rawAction === "MERGE" ||
+              rawAction === "UPDATE" ||
+              rawAction === "INVALIDATE" ||
+              rawAction === "SKIP"
+                ? rawAction
+                : "SKIP";
+            return {
             existingId:
               typeof item?.existingId === "string"
                 ? item.existingId
                 : typeof item?.newMemoryId === "string"
                   ? item.newMemoryId
                   : "",
-            action: typeof item?.action === "string" ? item.action : "SKIP",
+            action,
             mergeWith: typeof item?.mergeWith === "string" ? item.mergeWith : undefined,
             updatedContent: typeof item?.updatedContent === "string" ? item.updatedContent : undefined,
             reason: typeof item?.reason === "string" ? item.reason : "",
-          }))
+          };
+          })
           .filter((item: any) => item.existingId.length > 0);
         const normalizedEntityUpdates = Array.isArray(parsed.entityUpdates)
           ? parsed.entityUpdates
@@ -1611,7 +1622,7 @@ Respond with valid JSON matching this schema:
   "isContradiction": true,
   "confidence": 0.95,
   "reasoning": "why they contradict or don't",
-  "whichIsNewer": "first" or "second" or "unclear"
+  "whichIsNewer": "first"
 }`;
 
       const response = await this.client.chat.completions.create({
