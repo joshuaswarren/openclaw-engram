@@ -31,6 +31,16 @@ All notable changes to this project will be documented in this file.
   - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
 
 ### Added
+- v8.8 live graph dashboard (remaining backlog slice):
+  - Added graph snapshot/diff helpers (`dashboard/lib/graph-parser.ts`, `dashboard/lib/graph-diff.ts`) with deterministic patching behavior.
+  - Added optional dashboard runtime server with API + WebSocket streaming (`src/dashboard-runtime.ts`) and standalone entrypoint/static UI (`dashboard/server.ts`, `dashboard/public/*`).
+  - Added CLI lifecycle wrappers/commands for dashboard process management: `openclaw engram dashboard start|status|stop`.
+  - Added tests: `dashboard/lib/graph-diff.test.ts`, `tests/dashboard-server.test.ts`, and `tests/cli-dashboard.test.ts`.
+- v8.5 session integrity + recovery ops (remaining backlog slice):
+  - Added transcript/checkpoint integrity analyzer + bounded repair planner/apply workflow (`src/session-integrity.ts`).
+  - Added transcript recovery summary surface (`TranscriptManager.getRecoverySummary`) and orchestrator passthrough (`Orchestrator.getRecoverySummary`).
+  - Added CLI command wrappers/surfaces: `openclaw engram session-check` and `openclaw engram session-repair` (`--dry-run`/`--apply`, guarded `--allow-session-file-repair`).
+  - Added tests: `tests/session-integrity.test.ts`, `tests/cli-session-integrity.test.ts`, and `tests/recovery-summary.test.ts`.
 - v8.16 Task 4 (compounding artifacts expansion):
   - Added `compounding/rubrics.md` weekly artifact generation with deterministic agent rubric sections.
   - Added provenance annotations for feedback-derived weekly patterns and rubric updates (`inbox.jsonl` line + entry key).

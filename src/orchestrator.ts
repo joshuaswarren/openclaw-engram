@@ -1319,6 +1319,18 @@ export class Orchestrator {
     };
   }
 
+  async getRecoverySummary(sessionKey?: string): Promise<{
+    generatedAt: string;
+    sessionKey?: string;
+    healthy: boolean;
+    issueCount: number;
+    incompleteTurns: number;
+    brokenChains: number;
+    checkpointHealthy: boolean;
+  }> {
+    return this.transcript.getRecoverySummary(sessionKey);
+  }
+
   async updateConversationIndex(
     sessionKey: string,
     hours: number = 24,

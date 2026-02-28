@@ -55,6 +55,11 @@ openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
 openclaw engram conversation-index-health  # Backend health + index stats
 openclaw engram graph-health        # Graph edge-file integrity + coverage
+openclaw engram session-check       # Transcript/checkpoint continuity diagnostics
+openclaw engram session-repair      # Bounded repair plan/apply (dry-run default)
+openclaw engram dashboard start     # Start live graph dashboard service
+openclaw engram dashboard status    # Dashboard health/status
+openclaw engram dashboard stop      # Stop dashboard service
 openclaw engram action-audit        # Namespace-aware memory action policy audit
 openclaw engram tier-status         # Tier migration telemetry + last-cycle summary
 openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run default)
@@ -75,6 +80,12 @@ Compatibility diagnostics:
 Graph diagnostics:
 - `openclaw engram graph-health` reports per-edge-file integrity (`entity/time/causal`), corruption counts, and unique node coverage.
 - Add `--repair-guidance` to include non-destructive remediation suggestions when corruption or empty-graph conditions are detected.
+
+Session integrity diagnostics:
+- `openclaw engram session-check` reports transcript chain anomalies (malformed lines, invalid entries, duplicate turn IDs, broken role chains, incomplete tail turns) and checkpoint integrity state.
+- `openclaw engram session-repair` is dry-run by default and outputs both plan + apply summary payloads.
+- `session-repair --apply` mutates only Engram-managed files (transcripts/checkpoint) and never rewires OpenClaw pointers/session references.
+- `--allow-session-file-repair` only unlocks an explicit guarded workflow for external session-file paths and still performs no automatic rewiring.
 
 Memory action diagnostics:
 - `openclaw engram action-audit` reports namespace-aware action totals by action, outcome, and policy decision.
@@ -158,6 +169,16 @@ openclaw engram conversation-index-health
 # Show graph health with optional repair guidance notes
 openclaw engram graph-health --repair-guidance
 
+# Session integrity diagnostics + bounded repair
+openclaw engram session-check
+openclaw engram session-repair --dry-run
+openclaw engram session-repair --apply
+
+# Live graph dashboard process
+openclaw engram dashboard start --host 127.0.0.1 --port 4319
+openclaw engram dashboard status
+openclaw engram dashboard stop
+
 # Show tier migration telemetry and run a dry-run migration pass
 openclaw engram tier-status
 openclaw engram tier-migrate --dry-run --limit 50
@@ -168,6 +189,7 @@ Operational safety notes:
 - Use non-empty username/password together; partial or blank auth fields are rejected.
 - WebDAV exposure is limited to the exact allowlist roots you pass via `--allowlist`.
 - `tailscale-sync` requires both `tailscale` and `rsync` availability plus a running Tailscale daemon.
+- Dashboard defaults to loopback bind (`127.0.0.1`) and does not start automatically in gateway hot paths.
 
 ## Hourly Summaries (Cron)
 

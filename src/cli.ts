@@ -40,9 +40,18 @@ import {
 import { RoutingRulesStore } from "./routing/store.js";
 import { TailscaleHelper, type TailscaleSyncOptions } from "./network/tailscale.js";
 import { WebDavServer } from "./network/webdav.js";
+import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
+import {
+  analyzeSessionIntegrity,
+  applySessionRepair,
+  planSessionRepair,
+  type SessionIntegrityReport,
+  type SessionRepairApplyResult,
+  type SessionRepairPlan,
+} from "./session-integrity.js";
 import type { TierMigrationCycleSummary, TierMigrationStatusSnapshot } from "./recall-state.js";
 import {
   readRuntimePolicySnapshot as readPolicyRuntimeSnapshot,
@@ -295,6 +304,18 @@ export interface GraphHealthCliCommandOptions {
   includeRepairGuidance?: boolean;
 }
 
+export interface SessionIntegrityCliCommandOptions {
+  memoryDir: string;
+}
+
+export interface SessionRepairCliCommandOptions {
+  memoryDir: string;
+  apply?: boolean;
+  dryRun?: boolean;
+  allowSessionFileRepair?: boolean;
+  sessionFilesDir?: string;
+}
+
 export interface TierMigrationCliOrchestrator {
   getTierMigrationStatus(): Promise<TierMigrationStatusSnapshot>;
   runTierMigrationNow(options?: { dryRun?: boolean; limit?: number }): Promise<TierMigrationCycleSummary>;
@@ -378,12 +399,42 @@ export interface CompatCliCommandOptions {
   now?: Date;
 }
 
+interface DashboardServerLike {
+  start(): Promise<DashboardStatus>;
+  stop(): Promise<void>;
+  status(): DashboardStatus;
+}
+
+export interface DashboardStartCliCommandOptions {
+  memoryDir: string;
+  host?: string;
+  port?: number;
+  publicDir?: string;
+  createServer?: (options: {
+    memoryDir: string;
+    host?: string;
+    port?: number;
+    publicDir?: string;
+  }) => DashboardServerLike;
+}
+
 let activeWebDavServer: WebDavServerLike | null = null;
 let webDavOperationChain: Promise<void> = Promise.resolve();
+let activeDashboardServer: DashboardServerLike | null = null;
+let dashboardOperationChain: Promise<void> = Promise.resolve();
 
 async function withWebDavLock<T>(operation: () => Promise<T>): Promise<T> {
   const run = webDavOperationChain.then(operation, operation);
   webDavOperationChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function withDashboardLock<T>(operation: () => Promise<T>): Promise<T> {
+  const run = dashboardOperationChain.then(operation, operation);
+  dashboardOperationChain = run.then(
     () => undefined,
     () => undefined,
   );
@@ -516,6 +567,27 @@ export async function runGraphHealthCliCommand(
     causalGraphEnabled: options.causalGraphEnabled,
     includeRepairGuidance: options.includeRepairGuidance,
   });
+}
+
+export async function runSessionCheckCliCommand(
+  options: SessionIntegrityCliCommandOptions,
+): Promise<SessionIntegrityReport> {
+  return analyzeSessionIntegrity({ memoryDir: options.memoryDir });
+}
+
+export async function runSessionRepairCliCommand(
+  options: SessionRepairCliCommandOptions,
+): Promise<{ report: SessionIntegrityReport; plan: SessionRepairPlan; applyResult: SessionRepairApplyResult }> {
+  const report = await analyzeSessionIntegrity({ memoryDir: options.memoryDir });
+  const dryRun = options.apply !== true || options.dryRun === true;
+  const plan = planSessionRepair({
+    report,
+    dryRun,
+    allowSessionFileRepair: options.allowSessionFileRepair === true,
+    sessionFilesDir: options.sessionFilesDir,
+  });
+  const applyResult = await applySessionRepair({ plan });
+  return { report, plan, applyResult };
 }
 
 export async function runTierStatusCliCommand(
@@ -1252,6 +1324,55 @@ export async function runWebDavStopCliCommand(): Promise<{ stopped: boolean }> {
   });
 }
 
+export async function runDashboardStartCliCommand(
+  options: DashboardStartCliCommandOptions,
+): Promise<DashboardStatus> {
+  return withDashboardLock(async () => {
+    if (activeDashboardServer) {
+      const status = activeDashboardServer.status();
+      if (status.running) return status;
+    }
+
+    const createServer = options.createServer ?? ((opts: DashboardStartCliCommandOptions) =>
+      new GraphDashboardServer({
+        memoryDir: opts.memoryDir,
+        host: opts.host,
+        port: opts.port,
+        publicDir: opts.publicDir,
+      }));
+
+    const server = createServer(options);
+    activeDashboardServer = server;
+    try {
+      return await server.start();
+    } catch (err) {
+      if (activeDashboardServer === server) {
+        activeDashboardServer = null;
+      }
+      throw err;
+    }
+  });
+}
+
+export async function runDashboardStopCliCommand(): Promise<{ stopped: boolean }> {
+  return withDashboardLock(async () => {
+    if (!activeDashboardServer) return { stopped: false };
+    const server = activeDashboardServer;
+    await server.stop();
+    if (activeDashboardServer === server) {
+      activeDashboardServer = null;
+    }
+    return { stopped: true };
+  });
+}
+
+export async function runDashboardStatusCliCommand(): Promise<{ running: false } | DashboardStatus> {
+  return withDashboardLock(async () => {
+    if (!activeDashboardServer) return { running: false };
+    return activeDashboardServer.status();
+  });
+}
+
 export async function runCompatCliCommand(
   options: CompatCliCommandOptions = {},
 ): Promise<{ report: CompatReport; exitCode: number }> {
@@ -1975,6 +2096,40 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("session-check")
+        .description("Analyze transcript/checkpoint continuity integrity without mutating files")
+        .action(async () => {
+          const report = await runSessionCheckCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("session-repair")
+        .description("Generate/apply bounded Engram session integrity repairs (dry-run by default)")
+        .option("--apply", "Apply repairs (default: dry-run)")
+        .option("--dry-run", "Force dry-run output")
+        .option("--allow-session-file-repair", "Allow explicit OpenClaw session-file repair path (still no automatic rewiring)")
+        .option("--session-files-dir <path>", "Optional OpenClaw session files directory for guarded repair workflow")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runSessionRepairCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            apply: options.apply === true,
+            dryRun: options.dryRun === true,
+            allowSessionFileRepair: options.allowSessionFileRepair === true,
+            sessionFilesDir:
+              typeof options.sessionFilesDir === "string" && options.sessionFilesDir.trim().length > 0
+                ? options.sessionFilesDir.trim()
+                : undefined,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
         .command("tier-status")
         .description("Show tier migration telemetry and last-cycle summary")
         .action(async () => {
@@ -2206,6 +2361,47 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async () => {
           const result = await runWebDavStopCliCommand();
           console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      const dashboardCmd = cmd
+        .command("dashboard")
+        .description("Manage live graph dashboard service");
+
+      dashboardCmd
+        .command("start")
+        .description("Start dashboard server (localhost by default)")
+        .option("--host <host>", "Bind host", "127.0.0.1")
+        .option("--port <n>", "Bind port", "4319")
+        .option("--public-dir <path>", "Override static dashboard assets path")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const portRaw = parseInt(String(options.port ?? "4319"), 10);
+          const status = await runDashboardStartCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            host: typeof options.host === "string" ? options.host : "127.0.0.1",
+            port: Number.isFinite(portRaw) ? portRaw : 4319,
+            publicDir: typeof options.publicDir === "string" ? options.publicDir : undefined,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      dashboardCmd
+        .command("stop")
+        .description("Stop dashboard server")
+        .action(async () => {
+          const result = await runDashboardStopCliCommand();
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      dashboardCmd
+        .command("status")
+        .description("Show dashboard server status")
+        .action(async () => {
+          const status = await runDashboardStatusCliCommand();
+          console.log(JSON.stringify(status, null, 2));
           console.log("OK");
         });
 

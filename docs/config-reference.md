@@ -220,6 +220,30 @@ Disabled-path compatibility guarantees:
 | `sessionObserverDebounceMs` | `120000` | Minimum milliseconds between observer-triggered extractions per session |
 | `sessionObserverBands` | `[{maxBytes:50000,triggerDeltaBytes:6000,triggerDeltaTokens:1200}, ...]` | Size-band thresholds used to trigger observer extraction when growth exceeds configured byte/token deltas |
 
+### v8.5 Session Integrity + Recovery Ops
+
+Session integrity diagnostics/repair are CLI-driven and intentionally config-light:
+- `openclaw engram session-check`
+- `openclaw engram session-repair --dry-run|--apply`
+
+Safety contract:
+- Repair defaults to dry-run.
+- `--apply` only mutates Engram-managed transcript/checkpoint artifacts.
+- OpenClaw session-file mutation requires explicit `--allow-session-file-repair` plus an explicit path and still does not perform automatic pointer rewiring.
+
+### v8.8 Live Graph Dashboard
+
+Dashboard is an optional, separate process and not part of gateway hot-path config.
+
+CLI defaults:
+- `openclaw engram dashboard start --host 127.0.0.1 --port 4319`
+- `openclaw engram dashboard status`
+- `openclaw engram dashboard stop`
+
+Operational safety:
+- Bind to localhost by default.
+- Explicitly choose non-loopback bind only when network controls are in place.
+
 ## v8.7 Custom Memory Routing Rules
 
 | Setting | Default | Description |

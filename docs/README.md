@@ -26,6 +26,7 @@
 - [Shared Context](shared-context.md) — Cross-agent shared intelligence (v4.0)
 - [Compounding](compounding.md) — Weekly synthesis and mistake learning (v5.0)
 - [Identity Continuity](identity-continuity.md) — Continuity artifacts, templates, and rollout safety model (v8.4)
+- [Graph Dashboard](graph-dashboard.md) — Optional live graph observability server + patch stream (v8.8)
 
 ## Plans / Roadmaps
 
