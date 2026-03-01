@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Changed
+- PR #113 runtime + documentation hardening:
+  - Fixed `openclaw engram conversation-index-health` false-degraded reports by probing conversation-index QMD availability on demand when status is initially unknown.
+  - Added regression test coverage for the on-demand QMD probe path in conversation-index health reporting.
+  - Refreshed `README.md` to reflect current v8.3.x capabilities, validation commands, and operator workflows.
+  - Added `docs/enable-all-v8.md` with an explicit full-profile config for all v8 feature families and post-config verification checklist.
 - PR #82 follow-up extraction API compatibility and normalization:
   - Migrated extraction/consolidation LLM calls from `responses.parse` to `chat.completions.create` for OpenAI-compatible endpoints.
   - Added direct-client extraction path and retained fail-open fallback behavior for local/gateway extraction paths.
