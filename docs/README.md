@@ -3,6 +3,7 @@
 ## Getting Started
 
 - [Getting Started](getting-started.md) — Install, QMD setup, 5-minute config, verification
+- [Enable All v8 Features](enable-all-v8.md) — One explicit profile to turn on all v8 feature families
 - [Config Reference](config-reference.md) — Every setting, default, and description
 
 ## Architecture

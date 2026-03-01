@@ -1309,7 +1309,14 @@ export class Orchestrator {
       };
     }
 
-    const qmdAvailable = !!this.conversationQmd?.isAvailable();
+    let qmdAvailable = !!this.conversationQmd?.isAvailable();
+    if (!qmdAvailable && this.conversationQmd) {
+      try {
+        qmdAvailable = await this.conversationQmd.probe();
+      } catch {
+        qmdAvailable = false;
+      }
+    }
     return {
       enabled: true,
       backend: "qmd",

@@ -68,6 +68,30 @@ test("orchestrator conversation index health reports qmd backend availability", 
   assert.equal(typeof health.chunkDocCount, "number");
 });
 
+test("orchestrator conversation index health probes qmd when availability is unknown", async () => {
+  const orchestrator = await makeOrchestrator({
+    conversationIndexEnabled: true,
+    conversationIndexBackend: "qmd",
+  });
+
+  let probed = 0;
+  (orchestrator as any).conversationQmd = {
+    isAvailable: () => false,
+    async probe() {
+      probed += 1;
+      return true;
+    },
+  };
+
+  const health = await orchestrator.getConversationIndexHealth();
+
+  assert.equal(probed, 1);
+  assert.equal(health.enabled, true);
+  assert.equal(health.backend, "qmd");
+  assert.equal(health.status, "ok");
+  assert.equal(health.qmdAvailable, true);
+});
+
 test("orchestrator conversation index health reports faiss degradation fail-open", async () => {
   const orchestrator = await makeOrchestrator({
     conversationIndexEnabled: true,

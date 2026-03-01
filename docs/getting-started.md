@@ -135,6 +135,7 @@ Fallback: `OPENCLAW_CONFIG_PATH`.
 
 ## Next Steps
 
+- [Enable All v8 Features](enable-all-v8.md) — explicit full-profile config for all v8 feature families
 - [Config Reference](config-reference.md) — full settings list
 - [Operations](operations.md) — backups, exports, hourly summaries
 - [Architecture Overview](architecture/overview.md) — how it all fits together
