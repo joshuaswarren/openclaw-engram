@@ -8,9 +8,6 @@ import {
   IdentityConsolidationResultSchema,
   buildProfileConsolidationResultSchema,
   ProactiveQuestionsResultSchema,
-  ContradictionVerificationSchema,
-  SuggestedLinksSchema,
-  MemorySummarySchema,
   type ContradictionVerificationResult,
   type SuggestedLinks,
   type MemorySummaryResult,
@@ -1492,11 +1489,15 @@ Respond with valid JSON matching this schema:
       });
 
       if (parsed && Array.isArray(parsed.learnedPatterns)) {
+        const learnedPatterns = parsed.learnedPatterns
+          .filter((pattern: unknown) => typeof pattern === "string")
+          .map((pattern: string) => pattern.trim())
+          .filter((pattern: string) => pattern.length > 0);
         log.debug(
-          `identity consolidation: ${parsed.learnedPatterns.length} patterns`,
+          `identity consolidation: ${learnedPatterns.length} patterns`,
         );
         return {
-          learnedPatterns: parsed.learnedPatterns,
+          learnedPatterns,
           summary: String(parsed.summary || ""),
         };
       }
