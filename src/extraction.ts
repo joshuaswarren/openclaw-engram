@@ -178,7 +178,6 @@ export class ExtractionEngine {
           .map((f: any) => ({
             category: typeof f?.category === "string" ? f.category : "fact",
             content: typeof f?.content === "string" ? f.content : typeof f?.text === "string" ? f.text : "",
-            importance: typeof f?.importance === "number" ? f.importance : 5,
             confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
             tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
             entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
@@ -1050,7 +1049,9 @@ Respond with valid JSON only, matching this schema:
         );
         return this.sanitizeConsolidationResult({
           items: normalizedItems,
-          profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
+          profileUpdates: Array.isArray(parsed.profileUpdates)
+            ? parsed.profileUpdates.filter((update: unknown) => typeof update === "string" && update.trim().length > 0)
+            : [],
           entityUpdates: normalizedEntityUpdates,
         } as ConsolidationResult);
       }
