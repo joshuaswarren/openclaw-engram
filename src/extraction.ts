@@ -981,6 +981,7 @@ Respond with valid JSON only, matching this schema:
           { role: "system", content: systemPrompt },
           { role: "user", content: "Consolidate the new memories against existing ones." },
         ],
+        ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
         max_tokens: 4096,
       });
@@ -1251,6 +1252,7 @@ Respond with valid JSON matching this schema:
           { role: "system", content: systemPrompt },
           { role: "user", content: fullProfileContent },
         ],
+        ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
         max_tokens: 4096,
       });
@@ -1463,6 +1465,7 @@ Respond with valid JSON matching this schema:
           { role: "system", content: systemPrompt },
           { role: "user", content: fullIdentityContent },
         ],
+        ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
         max_tokens: 4096,
       });
