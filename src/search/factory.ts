@@ -7,14 +7,14 @@ import { QmdClient } from "../qmd.js";
 /**
  * Create a SearchBackend from plugin config.
  *
- * - "noop" or qmdEnabled=false → NoopSearchBackend
+ * - "noop" → NoopSearchBackend
  * - "remote" → RemoteSearchBackend (HTTP REST)
- * - "qmd" (default) → QmdClient (local hybrid search)
+ * - "qmd" (default) → QmdClient if qmdEnabled, else NoopSearchBackend
  */
 export function createSearchBackend(config: PluginConfig): SearchBackend {
   const backend = config.searchBackend ?? "qmd";
 
-  if (backend === "noop" || !config.qmdEnabled) {
+  if (backend === "noop") {
     return new NoopSearchBackend();
   }
 
@@ -26,7 +26,11 @@ export function createSearchBackend(config: PluginConfig): SearchBackend {
     });
   }
 
-  // Default: QMD
+  // Default: QMD — fall back to noop if qmdEnabled is false
+  if (!config.qmdEnabled) {
+    return new NoopSearchBackend();
+  }
+
   return new QmdClient(config.qmdCollection, config.qmdMaxResults, {
     slowLog: {
       enabled: config.slowLogEnabled,
@@ -51,7 +55,7 @@ export function createConversationSearchBackend(config: PluginConfig): SearchBac
 
   const backend = config.searchBackend ?? "qmd";
 
-  if (backend === "noop" || !config.qmdEnabled) {
+  if (backend === "noop") {
     return new NoopSearchBackend();
   }
 
@@ -61,6 +65,11 @@ export function createConversationSearchBackend(config: PluginConfig): SearchBac
       apiKey: config.remoteSearchApiKey,
       timeoutMs: config.remoteSearchTimeoutMs,
     });
+  }
+
+  // Default: QMD — fall back to noop if qmdEnabled is false
+  if (!config.qmdEnabled) {
+    return new NoopSearchBackend();
   }
 
   return new QmdClient(

@@ -76,11 +76,11 @@ export class RemoteSearchBackend implements SearchBackend {
   }
 
   async update(): Promise<void> {}
-  async updateCollection(): Promise<void> {}
+  async updateCollection(_collection: string): Promise<void> {}
   async embed(): Promise<void> {}
-  async embedCollection(): Promise<void> {}
+  async embedCollection(_collection: string): Promise<void> {}
 
-  async ensureCollection(): Promise<"skipped"> {
+  async ensureCollection(_memoryDir: string): Promise<"skipped"> {
     return "skipped";
   }
 
