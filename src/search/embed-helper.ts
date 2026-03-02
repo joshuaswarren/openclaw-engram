@@ -124,7 +124,7 @@ export class EmbedHelper {
       const payload = (await res.json()) as any;
       const vector = payload?.data?.[0]?.embedding;
       if (!Array.isArray(vector)) return null;
-      return vector.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n));
+      return vector.map((n: unknown) => { const v = Number(n); return Number.isFinite(v) ? v : 0; });
     } catch (err) {
       log.debug(`EmbedHelper error: ${err}`);
       return null;

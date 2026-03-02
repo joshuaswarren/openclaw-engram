@@ -108,8 +108,8 @@ export class LanceDbBackend implements SearchBackend {
     await this.updateCollection(this.collection);
   }
 
-  async updateCollection(_collection: string): Promise<void> {
-    const table = await this.ensureTable();
+  async updateCollection(collection: string): Promise<void> {
+    const table = await this.ensureTableForCollection(collection);
     if (!table) return;
 
     const docs = await scanMemoryDir(this.memoryDir);
@@ -126,16 +126,16 @@ export class LanceDbBackend implements SearchBackend {
     try {
       // Overwrite with fresh data
       const db = await this.ensureDb();
-      await db.dropTable(this.collection).catch(() => {});
-      this.table = null;
-      const newTable = await db.createTable(this.collection, rows);
+      await db.dropTable(collection).catch(() => {});
+      if (collection === this.collection) this.table = null;
+      const newTable = await db.createTable(collection, rows);
       // Create FTS index on content column
       try {
         await newTable.createIndex("content", { config: this.lanceModule.Index.fts() });
       } catch {
         // FTS index creation may fail on some platforms — degrade gracefully
       }
-      this.table = newTable;
+      if (collection === this.collection) this.table = newTable;
     } catch (err) {
       log.debug(`LanceDbBackend update failed: ${err}`);
     }
@@ -145,10 +145,10 @@ export class LanceDbBackend implements SearchBackend {
     await this.embedCollection(this.collection);
   }
 
-  async embedCollection(_collection: string): Promise<void> {
+  async embedCollection(collection: string): Promise<void> {
     if (!this.embedHelper.isAvailable()) return;
 
-    const table = await this.ensureTable();
+    const table = await this.ensureTableForCollection(collection);
     if (!table) return;
 
     try {
@@ -194,6 +194,39 @@ export class LanceDbBackend implements SearchBackend {
     const connect = this.lanceModule.connect ?? this.lanceModule.default?.connect;
     this.db = await connect(this.dbPath);
     return this.db;
+  }
+
+  private async ensureTableForCollection(collection: string): Promise<any> {
+    // For the default collection, use the cached instance
+    if (collection === this.collection) return this.ensureTable();
+
+    const db = await this.ensureDb();
+    const tables = await db.tableNames();
+
+    if (tables.includes(collection)) {
+      return await db.openTable(collection);
+    }
+
+    // Create empty table with schema
+    const emptyRow = {
+      docid: "__placeholder__",
+      path: "",
+      content: "",
+      snippet: "",
+      vector: new Array(this.embeddingDimension).fill(0),
+    };
+    const newTable = await db.createTable(collection, [emptyRow]);
+    try {
+      await newTable.createIndex("content", { config: this.lanceModule.Index.fts() });
+    } catch {
+      // FTS index creation may fail — degrade gracefully
+    }
+    try {
+      await newTable.delete("docid = '__placeholder__'");
+    } catch {
+      // May fail if delete isn't supported on empty-ish tables
+    }
+    return newTable;
   }
 
   private async ensureTable(): Promise<any> {

@@ -105,14 +105,14 @@ export class MeilisearchBackend implements SearchBackend {
     await this.updateCollection(this.collection);
   }
 
-  async updateCollection(_collection: string): Promise<void> {
+  async updateCollection(collection: string): Promise<void> {
     if (!this.autoIndex || !this.memoryDir) return;
     if (!this.available) return;
 
     try {
       const client = await this.ensureClient();
       const docs = await scanMemoryDir(this.memoryDir);
-      const index = client.index(this.collection);
+      const index = client.index(collection);
 
       const meilDocs = docs.map((d) => ({
         id: d.docid,
@@ -131,8 +131,10 @@ export class MeilisearchBackend implements SearchBackend {
     // Meilisearch handles its own embedding when configured with an embedder
   }
 
-  async embedCollection(_collection: string): Promise<void> {
+  async embedCollection(collection: string): Promise<void> {
     // Meilisearch handles its own embedding when configured with an embedder
+    // The collection parameter is accepted for interface compliance but Meilisearch
+    // manages embeddings server-side per index (collection).
   }
 
   async ensureCollection(_memoryDir: string): Promise<"present" | "missing" | "unknown" | "skipped"> {

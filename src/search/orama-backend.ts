@@ -112,8 +112,8 @@ export class OramaBackend implements SearchBackend {
     await this.updateCollection(this.collection);
   }
 
-  async updateCollection(_collection: string): Promise<void> {
-    const db = await this.ensureDb();
+  async updateCollection(collection: string): Promise<void> {
+    const db = await this.ensureDbForCollection(collection);
     if (!db) return;
     const { search: oramaSearch, insert, remove, count } = this.oramaModule;
 
@@ -158,17 +158,17 @@ export class OramaBackend implements SearchBackend {
       }
     }
 
-    await this.persistDb(db);
+    await this.persistDbForCollection(db, collection);
   }
 
   async embed(): Promise<void> {
     await this.embedCollection(this.collection);
   }
 
-  async embedCollection(_collection: string): Promise<void> {
+  async embedCollection(collection: string): Promise<void> {
     if (!this.embedHelper.isAvailable()) return;
 
-    const db = await this.ensureDb();
+    const db = await this.ensureDbForCollection(collection);
     if (!db) return;
     const { search: oramaSearch, update: oramaUpdate, count } = this.oramaModule;
 
@@ -190,7 +190,7 @@ export class OramaBackend implements SearchBackend {
       await oramaUpdate(db, needsEmbed[i].id, { vector: vec });
     }
 
-    await this.persistDb(db);
+    await this.persistDbForCollection(db, collection);
   }
 
   async ensureCollection(_memoryDir: string): Promise<"present" | "missing" | "unknown" | "skipped"> {
@@ -238,11 +238,43 @@ export class OramaBackend implements SearchBackend {
     return this.db;
   }
 
-  private async persistDb(db: any): Promise<void> {
+  private async ensureDbForCollection(collection: string): Promise<any> {
+    // For the default collection, use the cached instance
+    if (collection === this.collection) return this.ensureDb();
+
+    await this.ensureModules();
+    await mkdir(this.dbPath, { recursive: true });
+    const filePath = this.dbFilePath(collection);
+
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      return await this.persistModule.restore("json", raw);
+    } catch {
+      // No existing DB — create fresh
+    }
+
+    const { create } = this.oramaModule;
+    const schema: Record<string, string> = {
+      id: "string",
+      path: "string",
+      content: "string",
+      snippet: "string",
+    };
+    if (this.embedHelper.isAvailable()) {
+      schema.vector = `vector[${this.embeddingDimension}]`;
+    }
+    return await create({ schema });
+  }
+
+  private async persistDbForCollection(db: any, collection: string): Promise<void> {
     const data = await this.persistModule.persist(db, "json");
-    const filePath = this.dbFilePath(this.collection);
+    const filePath = this.dbFilePath(collection);
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, data, "utf-8");
+  }
+
+  private async persistDb(db: any): Promise<void> {
+    await this.persistDbForCollection(db, this.collection);
   }
 
   private dbFilePath(collection: string): string {
