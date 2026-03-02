@@ -58,8 +58,11 @@ export class MeilisearchBackend implements SearchBackend {
     return `backend=meilisearch available=${this.available} host=${this.host}`;
   }
 
-  async search(query: string, _collection?: string, maxResults?: number): Promise<SearchResult[]> {
-    return this.hybridSearch(query, _collection, maxResults);
+  async search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+    // Try hybrid first; fall back to plain FTS if server has no embedder configured
+    const hybrid = await this.hybridSearch(query, collection, maxResults);
+    if (hybrid.length > 0) return hybrid;
+    return this.bm25Search(query, collection, maxResults);
   }
 
   async searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]> {
