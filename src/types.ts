@@ -179,6 +179,12 @@ export interface PluginConfig {
   // Checkpoint
   checkpointEnabled: boolean;
   checkpointTurns: number;
+  // Compaction reset: trigger session reset after compaction instead of continuing degraded
+  compactionResetEnabled: boolean;
+  /** Gateway port for curl fallback if api.resetSession() is unavailable */
+  gatewayPort: number;
+  /** Gateway auth token for curl fallback (empty string = no auth) */
+  gatewayToken: string;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   /** If true, Engram may attempt to auto-register an hourly summary cron job (default off). */

@@ -304,7 +304,7 @@ export default {
     );
 
     // ========================================================================
-    // HOOK: after_compaction — Cleanup and optional recovery
+    // HOOK: after_compaction — Trigger session reset (compaction reset flow)
     // ========================================================================
     api.on(
       "after_compaction",
@@ -315,17 +315,85 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
-          // The checkpoint will be loaded on next recall via orchestrator.recall()
-          // This hook is mainly for logging and any post-compaction cleanup
-          log.debug(`compaction completed for ${sessionKey}`);
+          if (!orchestrator.config.compactionResetEnabled) {
+            log.debug(
+              `compaction completed for ${sessionKey}, reset disabled — skipping`,
+            );
+            return;
+          }
 
-          // Could trigger background tasks here if needed
-          // e.g., immediate summarization of the checkpointed turns
+          log.info(
+            `compaction completed for ${sessionKey}, triggering session reset`,
+          );
+
+          // Write signal file so recall() knows a compaction reset just happened.
+          // This lets the new session inject BOOT.md + compaction context.
+          const workspaceDir =
+            orchestrator.config.workspaceDir ||
+            path.join(os.homedir(), ".openclaw", "workspace");
+          const signalPath = path.join(
+            workspaceDir,
+            ".compaction-reset-signal",
+          );
+          await writeFile(
+            signalPath,
+            JSON.stringify({
+              sessionKey,
+              compactedAt: new Date().toISOString(),
+              messageCount: event.messageCount ?? 0,
+            }),
+            "utf-8",
+          );
+
+          // Prefer api.resetSession() (PR #29985) — clean SDK call
+          if (typeof api.resetSession === "function") {
+            const result = await api.resetSession(sessionKey, "new");
+            if (result.ok) {
+              log.info(
+                `session reset via API for ${sessionKey}, new sessionId=${result.sessionId}`,
+              );
+            } else {
+              log.error(
+                `api.resetSession failed for ${sessionKey}: ${result.error} — trying curl fallback`,
+              );
+              await triggerResetViaCurl(sessionKey, orchestrator.config);
+            }
+          } else {
+            // api.resetSession not available (older gateway without PR #29985)
+            log.warn(
+              `api.resetSession not available — using curl fallback for ${sessionKey}`,
+            );
+            await triggerResetViaCurl(sessionKey, orchestrator.config);
+          }
         } catch (err) {
-          log.error("after_compaction hook failed", err);
+          log.error("after_compaction reset failed", err);
         }
       },
     );
+
+    /**
+     * Fallback: trigger session reset via HTTP POST to gateway.
+     * Used when api.resetSession() is not available (pre-PR #29985 gateways).
+     */
+    async function triggerResetViaCurl(
+      sessionKey: string,
+      config: { gatewayPort: number; gatewayToken: string },
+    ): Promise<void> {
+      try {
+        const port = config.gatewayPort || 18789;
+        const { exec: execCb } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execAsync = promisify(execCb);
+        const tokenHeader = config.gatewayToken
+          ? `-H 'Authorization: Bearer ${config.gatewayToken}'`
+          : "";
+        const cmd = `curl -s -X POST http://localhost:${port}/hooks/agent ${tokenHeader} -H 'Content-Type: application/json' -d '${JSON.stringify({ message: "/new", sessionKey })}'`;
+        await execAsync(cmd);
+        log.info(`session reset via curl fallback for ${sessionKey}`);
+      } catch (err) {
+        log.error(`curl fallback reset also failed for ${sessionKey}:`, err);
+      }
+    }
 
     // ========================================================================
     // Helper: Auto-register hourly summary cron job

@@ -27,5 +27,19 @@ declare module "openclaw/plugin-sdk" {
       start?: () => Promise<void> | void;
       stop?: () => Promise<void> | void;
     }) => void;
+
+    /**
+     * Programmatically reset a session. Requires OC fork with PR #29985.
+     * Falls back gracefully if not available (method may be undefined on older gateways).
+     */
+    resetSession?: (
+      key: string,
+      reason?: "new" | "reset",
+    ) => Promise<{
+      ok: boolean;
+      key: string;
+      sessionId?: string;
+      error?: string;
+    }>;
   }
 }

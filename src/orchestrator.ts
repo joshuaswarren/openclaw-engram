@@ -1,7 +1,8 @@
 import { log } from "./logger.js";
 import path from "node:path";
+import os from "node:os";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
@@ -2094,6 +2095,66 @@ export class Orchestrator {
             // Clear checkpoint after injection
             await this.transcript.clearCheckpoint();
           }
+        }
+      }
+
+      // Inject BOOT.md and compaction signal when a compaction reset just occurred.
+      // This runs after checkpoint recovery — both are additive (checkpoint = raw turns,
+      // BOOT.md = agent-authored working state summary).
+      if (this.config.compactionResetEnabled) {
+        const workspaceDir =
+          this.config.workspaceDir ||
+          path.join(os.homedir(), ".openclaw", "workspace");
+        const signalPath = path.join(workspaceDir, ".compaction-reset-signal");
+        const bootPath = path.join(workspaceDir, "BOOT.md");
+
+        try {
+          const signalStat = await stat(signalPath).catch(() => null);
+          if (signalStat) {
+            const signalAge = Date.now() - signalStat.mtimeMs;
+            const signalData = JSON.parse(
+              await readFile(signalPath, "utf-8"),
+            );
+
+            // Only inject if signal is fresh (< 1 hour) to avoid stale injection
+            if (signalAge < 60 * 60 * 1000) {
+              let bootSection =
+                "\n\n## Session Recovery (Post-Compaction)\n\n";
+              bootSection += `⚠️ A compaction occurred at ${signalData.compactedAt} and this is a fresh session.\n\n`;
+
+              try {
+                const bootContent = await readFile(bootPath, "utf-8");
+                bootSection +=
+                  "### BOOT.md (working state before compaction)\n\n";
+                bootSection += bootContent + "\n";
+              } catch {
+                bootSection += "### ⚠️ BOOT.md is MISSING\n\n";
+                bootSection +=
+                  "The memory flush may not have written BOOT.md before compaction. ";
+                bootSection +=
+                  "Ask the user what you were working on — do not guess.\n";
+              }
+
+              // Append to checkpoint section or create standalone
+              if (section) {
+                section += bootSection;
+              } else {
+                section = bootSection;
+              }
+              log.info(
+                `recall: injected compaction reset context for ${sessionKey}`,
+              );
+            } else {
+              log.debug(
+                `recall: stale compaction signal (${Math.round(signalAge / 1000)}s old), skipping`,
+              );
+            }
+
+            // Consume the signal file — one-shot
+            await unlink(signalPath).catch(() => {});
+          }
+        } catch (err) {
+          log.debug("recall: compaction signal check failed:", err);
         }
       }
 
