@@ -119,30 +119,42 @@ export class OramaBackend implements SearchBackend {
 
     const docs = await scanMemoryDir(this.memoryDir);
     const docMap = new Map(docs.map((d) => [d.docid, d]));
+    const { update: oramaUpdate } = this.oramaModule;
 
-    // Get existing docs to diff
+    // Get existing docs to diff — build a set of known IDs
+    const existingIds = new Set<string>();
     const existingCount = await count(db);
     if (existingCount > 0) {
-      // Remove docs that no longer exist
       const allHits = await oramaSearch(db, { term: "", limit: existingCount + 100 });
       for (const hit of allHits.hits) {
         if (!docMap.has(hit.document.id)) {
           await remove(db, hit.id);
+        } else {
+          existingIds.add(hit.document.id);
         }
       }
     }
 
-    // Insert/update all current docs
+    // Insert new docs, update existing ones
     for (const doc of docs) {
-      try {
-        await insert(db, {
-          id: doc.docid,
-          path: doc.path,
-          content: doc.content,
-          snippet: doc.snippet,
-        });
-      } catch {
-        // Duplicate id — already exists, skip
+      const payload = {
+        id: doc.docid,
+        path: doc.path,
+        content: doc.content,
+        snippet: doc.snippet,
+      };
+      if (existingIds.has(doc.docid)) {
+        // Find the internal orama ID for this doc and update it
+        const match = await oramaSearch(db, { term: doc.docid, properties: ["id"], limit: 1, exact: true });
+        if (match.hits.length > 0) {
+          await oramaUpdate(db, match.hits[0].id, payload);
+        }
+      } else {
+        try {
+          await insert(db, payload);
+        } catch {
+          // Duplicate id edge case — skip
+        }
       }
     }
 
@@ -206,7 +218,7 @@ export class OramaBackend implements SearchBackend {
 
     try {
       const raw = await readFile(filePath, "utf-8");
-      this.db = await this.persistModule.restore(this.persistModule.format === "json" ? "json" : "json", raw);
+      this.db = await this.persistModule.restore("json", raw);
       return this.db;
     } catch {
       // No existing DB — create fresh

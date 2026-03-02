@@ -12,9 +12,11 @@ import { log } from "../logger.js";
 /**
  * Resolve non-QMD backends from config.
  * Returns a SearchBackend for "noop" or "remote", or undefined to signal "use QMD".
+ * @param collectionOverride — used by conversation index to target a different collection
  */
-function resolveNonQmdBackend(config: PluginConfig): SearchBackend | undefined {
+function resolveNonQmdBackend(config: PluginConfig, collectionOverride?: string): SearchBackend | undefined {
   const backend = config.searchBackend ?? "qmd";
+  const collection = collectionOverride ?? config.qmdCollection;
 
   if (backend === "noop") {
     return new NoopSearchBackend();
@@ -36,7 +38,7 @@ function resolveNonQmdBackend(config: PluginConfig): SearchBackend | undefined {
     const embedHelper = new EmbedHelper(config);
     return new LanceDbBackend({
       dbPath: config.lanceDbPath!,
-      collection: config.qmdCollection,
+      collection,
       embedHelper,
       memoryDir: config.memoryDir,
       embeddingDimension: config.lanceEmbeddingDimension!,
@@ -47,7 +49,7 @@ function resolveNonQmdBackend(config: PluginConfig): SearchBackend | undefined {
     return new MeilisearchBackend({
       host: config.meilisearchHost!,
       apiKey: config.meilisearchApiKey,
-      collection: config.qmdCollection,
+      collection,
       timeoutMs: config.meilisearchTimeoutMs,
       autoIndex: config.meilisearchAutoIndex,
       memoryDir: config.memoryDir,
@@ -58,7 +60,7 @@ function resolveNonQmdBackend(config: PluginConfig): SearchBackend | undefined {
     const embedHelper = new EmbedHelper(config);
     return new OramaBackend({
       dbPath: config.oramaDbPath!,
-      collection: config.qmdCollection,
+      collection,
       embedHelper,
       memoryDir: config.memoryDir,
       embeddingDimension: config.oramaEmbeddingDimension!,
@@ -111,7 +113,7 @@ export function createConversationSearchBackend(config: PluginConfig): SearchBac
     return undefined;
   }
 
-  const nonQmd = resolveNonQmdBackend(config);
+  const nonQmd = resolveNonQmdBackend(config, config.conversationIndexQmdCollection);
   // Noop means search is intentionally off — return undefined so conversation init skips entirely.
   if (nonQmd instanceof NoopSearchBackend) return undefined;
   if (nonQmd) return nonQmd;

@@ -281,7 +281,7 @@ export class LanceDbBackend implements SearchBackend {
         docid: row.docid ?? "",
         path: row.path ?? "",
         snippet: row.snippet ?? row.content?.slice(0, 200) ?? "",
-        score: row._relevance_score ?? row._distance != null ? 1 / (1 + (row._distance ?? 0)) : 0.5,
+        score: row._relevance_score ?? (row._distance != null ? 1 / (1 + (row._distance ?? 0)) : 0.5),
       }));
   }
 }
