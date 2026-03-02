@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+### Added
+- SearchBackend port/adapter interface (`src/search/port.ts`) abstracting QMD behind a stable contract so alternative backends (remote HTTP, noop, custom) can replace QMD.
+- `NoopSearchBackend` adapter for graceful degradation when no search engine is available.
+- `RemoteSearchBackend` HTTP REST adapter stub for remote search services.
+- Factory function `createSearchBackend(config)` for config-driven backend selection.
+- Config keys: `searchBackend` (`"qmd"` | `"remote"` | `"noop"`), `remoteSearchBaseUrl`, `remoteSearchApiKey`, `remoteSearchTimeoutMs`.
+
 ### Changed
 - PR #113 runtime + documentation hardening:
   - Fixed `openclaw engram conversation-index-health` false-degraded reports by probing conversation-index QMD availability on demand when status is initially unknown.
