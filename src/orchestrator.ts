@@ -904,6 +904,8 @@ export class Orchestrator {
         } else if (collectionState === "skipped") {
           log.debug("Search collection check skipped (remote or daemon-only mode)");
         }
+      } else if (this.qmd instanceof NoopSearchBackend) {
+        log.debug(`Search backend: noop (search intentionally disabled)`);
       } else {
         log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
       }
