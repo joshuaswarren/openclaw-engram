@@ -124,8 +124,9 @@ export class MeilisearchBackend implements SearchBackend {
         snippet: d.snippet,
       }));
 
-      // Upsert current docs
-      await index.addDocuments(meilDocs, { primaryKey: "id" });
+      // Upsert current docs and wait for the task to complete
+      const addTask = await index.addDocuments(meilDocs, { primaryKey: "id" });
+      await client.waitForTask(addTask.taskUid, { timeOutMs: this.timeoutMs });
 
       // Remove docs that no longer exist on disk
       const currentIds = new Set(docs.map((d) => d.docid));
@@ -135,7 +136,8 @@ export class MeilisearchBackend implements SearchBackend {
           .map((doc: any) => doc.id as string)
           .filter((id: string) => !currentIds.has(id));
         if (staleIds.length > 0) {
-          await index.deleteDocuments(staleIds);
+          const delTask = await index.deleteDocuments(staleIds);
+          await client.waitForTask(delTask.taskUid, { timeOutMs: this.timeoutMs });
         }
       } catch {
         // Deletion cleanup is best-effort

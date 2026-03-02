@@ -180,7 +180,7 @@ export class LanceDbBackend implements SearchBackend {
         const vec = vectors[i];
         if (!vec) continue;
         const docid = needsEmbed[i].docid;
-        await table.update({ vector: vec }, { where: `docid = '${docid.replace(/'/g, "''")}'` });
+        await table.update({ where: `docid = '${docid.replace(/'/g, "''")}'`, values: { vector: vec } });
       }
     } catch (err) {
       log.debug(`LanceDbBackend embed failed: ${err}`);
