@@ -121,7 +121,22 @@ export class MeilisearchBackend implements SearchBackend {
         snippet: d.snippet,
       }));
 
+      // Upsert current docs
       await index.addDocuments(meilDocs, { primaryKey: "id" });
+
+      // Remove docs that no longer exist on disk
+      const currentIds = new Set(docs.map((d) => d.docid));
+      try {
+        const existing = await index.getDocuments({ limit: 10_000, fields: ["id"] });
+        const staleIds = (existing.results ?? [])
+          .map((doc: any) => doc.id as string)
+          .filter((id: string) => !currentIds.has(id));
+        if (staleIds.length > 0) {
+          await index.deleteDocuments(staleIds);
+        }
+      } catch {
+        // Deletion cleanup is best-effort
+      }
     } catch (err) {
       log.debug(`MeilisearchBackend update failed: ${err}`);
     }

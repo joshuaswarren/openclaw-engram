@@ -13,14 +13,6 @@ export interface OramaBackendOptions {
   embeddingDimension: number;
 }
 
-interface OramaDoc {
-  id: string;
-  path: string;
-  content: string;
-  snippet: string;
-  vector?: number[];
-}
-
 /**
  * Orama search backend — embedded hybrid FTS+vector, pure JS.
  *
@@ -121,8 +113,8 @@ export class OramaBackend implements SearchBackend {
     const docMap = new Map(docs.map((d) => [d.docid, d]));
     const { update: oramaUpdate } = this.oramaModule;
 
-    // Get existing docs to diff — build a set of known IDs
-    const existingIds = new Set<string>();
+    // Get existing docs to diff — map user doc ID → internal Orama ID
+    const existingInternalIds = new Map<string, string>();
     const existingCount = await count(db);
     if (existingCount > 0) {
       const allHits = await oramaSearch(db, { term: "", limit: existingCount + 100 });
@@ -130,7 +122,7 @@ export class OramaBackend implements SearchBackend {
         if (!docMap.has(hit.document.id)) {
           await remove(db, hit.id);
         } else {
-          existingIds.add(hit.document.id);
+          existingInternalIds.set(hit.document.id, hit.id);
         }
       }
     }
@@ -143,12 +135,9 @@ export class OramaBackend implements SearchBackend {
         content: doc.content,
         snippet: doc.snippet,
       };
-      if (existingIds.has(doc.docid)) {
-        // Find the internal orama ID for this doc and update it
-        const match = await oramaSearch(db, { term: doc.docid, properties: ["id"], limit: 1, exact: true });
-        if (match.hits.length > 0) {
-          await oramaUpdate(db, match.hits[0].id, payload);
-        }
+      const internalId = existingInternalIds.get(doc.docid);
+      if (internalId) {
+        await oramaUpdate(db, internalId, payload);
       } else {
         try {
           await insert(db, payload);
