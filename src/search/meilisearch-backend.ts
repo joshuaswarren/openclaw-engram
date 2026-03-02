@@ -128,13 +128,23 @@ export class MeilisearchBackend implements SearchBackend {
       const addTask = await index.addDocuments(meilDocs, { primaryKey: "id" });
       await client.waitForTask(addTask.taskUid, { timeOutMs: this.timeoutMs });
 
-      // Remove docs that no longer exist on disk
+      // Remove docs that no longer exist on disk (paginated to handle large indexes)
       const currentIds = new Set(docs.map((d) => d.docid));
       try {
-        const existing = await index.getDocuments({ limit: 10_000, fields: ["id"] });
-        const staleIds = (existing.results ?? [])
-          .map((doc: any) => doc.id as string)
-          .filter((id: string) => !currentIds.has(id));
+        const PAGE_SIZE = 1000;
+        let offset = 0;
+        let staleIds: string[] = [];
+        let hasMore = true;
+        while (hasMore) {
+          const page = await index.getDocuments({ limit: PAGE_SIZE, offset, fields: ["id"] });
+          const results = page.results ?? [];
+          for (const doc of results) {
+            const id = doc.id as string;
+            if (!currentIds.has(id)) staleIds.push(id);
+          }
+          offset += results.length;
+          hasMore = results.length === PAGE_SIZE;
+        }
         if (staleIds.length > 0) {
           const delTask = await index.deleteDocuments(staleIds);
           await client.waitForTask(delTask.taskUid, { timeOutMs: this.timeoutMs });
