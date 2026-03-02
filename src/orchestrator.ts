@@ -8,6 +8,7 @@ import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
 import type { SearchBackend } from "./search/port.js";
 import { createSearchBackend, createConversationSearchBackend } from "./search/factory.js";
+import { NoopSearchBackend } from "./search/noop-backend.js";
 import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
@@ -544,7 +545,7 @@ export function resolvePersistedMemoryRelativePath(options: {
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
-  readonly qmd: SearchBackend;
+  qmd: SearchBackend;
   private readonly conversationQmd?: SearchBackend;
   private readonly conversationFaiss?: FaissConversationIndexAdapter;
   readonly sharedContext?: SharedContextManager;
@@ -894,8 +895,9 @@ export class Orchestrator {
         log.info(`Search backend: available (mode: ${mode}) ${this.qmd.debugStatus()}`);
         const collectionState = await this.qmd.ensureCollection(this.config.memoryDir);
         if (collectionState === "missing") {
+          this.qmd = new NoopSearchBackend();
           log.warn(
-            "Search collection missing for Engram memory store; search retrieval may be degraded (fallback retrieval remains enabled)",
+            "Search collection missing for Engram memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
           );
         } else if (collectionState === "unknown") {
           log.warn("Search collection check unavailable; keeping search retrieval enabled for fail-open behavior");
@@ -1355,7 +1357,6 @@ export class Orchestrator {
     } else {
       // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
       const q = this.conversationQmd ?? this.qmd;
-      const usingPrimaryQmdClient = q === this.qmd;
       if (q.isAvailable()) {
         await q.update();
         if (shouldEmbed) {
