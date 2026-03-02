@@ -349,7 +349,9 @@ export default {
             "utf-8",
           );
 
-          // Prefer api.resetSession() (PR #29985) — clean SDK call
+          // Use api.resetSession() (PR #29985) — the only supported path.
+          // No curl fallback: it bypasses the cooldown protection in the registry
+          // and could cause infinite reset loops.
           if (typeof api.resetSession === "function") {
             const result = await api.resetSession(sessionKey, "new");
             if (result.ok) {
@@ -358,46 +360,20 @@ export default {
               );
             } else {
               log.error(
-                `api.resetSession failed for ${sessionKey}: ${result.error} — trying curl fallback`,
+                `api.resetSession failed for ${sessionKey}: ${result.error}`,
               );
-              await triggerResetViaCurl(sessionKey, orchestrator.config);
             }
           } else {
-            // api.resetSession not available (older gateway without PR #29985)
-            log.warn(
-              `api.resetSession not available — using curl fallback for ${sessionKey}`,
+            log.error(
+              `api.resetSession not available — compaction reset requires OC fork with PR #29985. ` +
+              `Session ${sessionKey} will continue without reset.`,
             );
-            await triggerResetViaCurl(sessionKey, orchestrator.config);
           }
         } catch (err) {
           log.error("after_compaction reset failed", err);
         }
       },
     );
-
-    /**
-     * Fallback: trigger session reset via HTTP POST to gateway.
-     * Used when api.resetSession() is not available (pre-PR #29985 gateways).
-     */
-    async function triggerResetViaCurl(
-      sessionKey: string,
-      config: { gatewayPort: number; gatewayToken: string },
-    ): Promise<void> {
-      try {
-        const port = config.gatewayPort || 18789;
-        const { exec: execCb } = await import("node:child_process");
-        const { promisify } = await import("node:util");
-        const execAsync = promisify(execCb);
-        const tokenHeader = config.gatewayToken
-          ? `-H 'Authorization: Bearer ${config.gatewayToken}'`
-          : "";
-        const cmd = `curl -s -X POST http://localhost:${port}/hooks/agent ${tokenHeader} -H 'Content-Type: application/json' -d '${JSON.stringify({ message: "/new", sessionKey })}'`;
-        await execAsync(cmd);
-        log.info(`session reset via curl fallback for ${sessionKey}`);
-      } catch (err) {
-        log.error(`curl fallback reset also failed for ${sessionKey}:`, err);
-      }
-    }
 
     // ========================================================================
     // Helper: Auto-register hourly summary cron job

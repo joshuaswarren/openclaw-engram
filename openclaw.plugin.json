@@ -20,13 +20,22 @@
       },
       "reasoningEffort": {
         "type": "string",
-        "enum": ["none", "low", "medium", "high"],
+        "enum": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
         "default": "low",
         "description": "Reasoning effort for extraction"
       },
       "triggerMode": {
         "type": "string",
-        "enum": ["smart", "every_n", "time_based"],
+        "enum": [
+          "smart",
+          "every_n",
+          "time_based"
+        ],
         "default": "smart",
         "description": "Buffer trigger mode"
       },
@@ -47,7 +56,9 @@
       },
       "highSignalPatterns": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Custom regex patterns for immediate extraction"
       },
       "maxMemoryTokens": {
@@ -127,7 +138,11 @@
       },
       "embeddingFallbackProvider": {
         "type": "string",
-        "enum": ["auto", "openai", "local"],
+        "enum": [
+          "auto",
+          "openai",
+          "local"
+        ],
         "default": "auto",
         "description": "Embedding provider selection for semantic fallback"
       },
@@ -156,7 +171,11 @@
       },
       "identityInjectionMode": {
         "type": "string",
-        "enum": ["recovery_only", "minimal", "full"],
+        "enum": [
+          "recovery_only",
+          "minimal",
+          "full"
+        ],
         "default": "recovery_only",
         "description": "Controls when identity continuity context is injected into recall assembly"
       },
@@ -191,16 +210,38 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "maxBytes": { "type": "number" },
-            "triggerDeltaBytes": { "type": "number" },
-            "triggerDeltaTokens": { "type": "number" }
+            "maxBytes": {
+              "type": "number"
+            },
+            "triggerDeltaBytes": {
+              "type": "number"
+            },
+            "triggerDeltaTokens": {
+              "type": "number"
+            }
           },
-          "required": ["maxBytes", "triggerDeltaBytes", "triggerDeltaTokens"]
+          "required": [
+            "maxBytes",
+            "triggerDeltaBytes",
+            "triggerDeltaTokens"
+          ]
         },
         "default": [
-          { "maxBytes": 50000, "triggerDeltaBytes": 4800, "triggerDeltaTokens": 1200 },
-          { "maxBytes": 200000, "triggerDeltaBytes": 9600, "triggerDeltaTokens": 2400 },
-          { "maxBytes": 1000000000, "triggerDeltaBytes": 19200, "triggerDeltaTokens": 4800 }
+          {
+            "maxBytes": 50000,
+            "triggerDeltaBytes": 4800,
+            "triggerDeltaTokens": 1200
+          },
+          {
+            "maxBytes": 200000,
+            "triggerDeltaBytes": 9600,
+            "triggerDeltaTokens": 2400
+          },
+          {
+            "maxBytes": 1000000000,
+            "triggerDeltaBytes": 19200,
+            "triggerDeltaTokens": 4800
+          }
         ]
       },
       "injectQuestions": {
@@ -244,8 +285,13 @@
           },
           "lintPaths": {
             "type": "array",
-            "items": { "type": "string" },
-            "default": ["IDENTITY.md", "MEMORY.md"],
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "IDENTITY.md",
+              "MEMORY.md"
+            ],
             "description": "Workspace-relative paths to lint (or absolute paths)."
           },
           "rotateEnabled": {
@@ -265,8 +311,12 @@
           },
           "rotatePaths": {
             "type": "array",
-            "items": { "type": "string" },
-            "default": ["IDENTITY.md"],
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "IDENTITY.md"
+            ],
             "description": "Workspace-relative paths to rotate (or absolute paths)."
           },
           "archiveDir": {
@@ -300,7 +350,9 @@
             "description": "Workspace-relative index path (if indexEnabled)."
           }
         },
-        "required": ["enabled"]
+        "required": [
+          "enabled"
+        ]
       },
       "accessTrackingEnabled": {
         "type": "boolean",
@@ -366,9 +418,25 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"]
+          "enum": [
+            "fact",
+            "preference",
+            "correction",
+            "entity",
+            "decision",
+            "relationship",
+            "principle",
+            "commitment",
+            "moment",
+            "skill"
+          ]
         },
-        "default": ["decision", "correction", "principle", "commitment"],
+        "default": [
+          "decision",
+          "correction",
+          "principle",
+          "commitment"
+        ],
         "description": "Memory categories eligible for artifact extraction."
       },
       "memoryBoxesEnabled": {
@@ -545,7 +613,10 @@
         "type": "string",
         "default": "local",
         "description": "Re-ranking provider: 'local' uses local LLM only. 'cloud' is reserved/experimental (currently treated as no-op).",
-        "enum": ["local", "cloud"]
+        "enum": [
+          "local",
+          "cloud"
+        ]
       },
       "rerankMaxCandidates": {
         "type": "number",
@@ -664,8 +735,15 @@
       },
       "summarizationProtectedTags": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["commitment", "preference", "decision", "principle"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "commitment",
+          "preference",
+          "decision",
+          "principle"
+        ],
         "description": "Tags that protect memories from compression"
       },
       "topicExtractionEnabled": {
@@ -690,8 +768,12 @@
       },
       "transcriptSkipChannelTypes": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["cron"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "cron"
+        ],
         "description": "Channel types to skip from transcript logging (e.g., cron)"
       },
       "transcriptRecallHours": {
@@ -942,7 +1024,10 @@
       },
       "conversationIndexBackend": {
         "type": "string",
-        "enum": ["qmd", "faiss"],
+        "enum": [
+          "qmd",
+          "faiss"
+        ],
         "default": "qmd",
         "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss is predeclared for follow-on adapter tasks and should remain disabled in this release."
       },
@@ -1043,7 +1128,11 @@
       },
       "principalFromSessionKeyMode": {
         "type": "string",
-        "enum": ["map", "prefix", "regex"],
+        "enum": [
+          "map",
+          "prefix",
+          "regex"
+        ],
         "default": "map",
         "description": "How to derive principal identity from sessionKey."
       },
@@ -1054,10 +1143,17 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "match": { "type": "string" },
-            "principal": { "type": "string" }
+            "match": {
+              "type": "string"
+            },
+            "principal": {
+              "type": "string"
+            }
           },
-          "required": ["match", "principal"]
+          "required": [
+            "match",
+            "principal"
+          ]
         }
       },
       "namespacePolicies": {
@@ -1067,29 +1163,62 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "name": { "type": "string" },
-            "readPrincipals": { "type": "array", "items": { "type": "string" } },
-            "writePrincipals": { "type": "array", "items": { "type": "string" } },
-            "includeInRecallByDefault": { "type": "boolean" }
+            "name": {
+              "type": "string"
+            },
+            "readPrincipals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "writePrincipals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "includeInRecallByDefault": {
+              "type": "boolean"
+            }
           },
-          "required": ["name", "readPrincipals", "writePrincipals"]
+          "required": [
+            "name",
+            "readPrincipals",
+            "writePrincipals"
+          ]
         }
       },
       "defaultRecallNamespaces": {
         "type": "array",
         "description": "Which namespaces to include by default in recall.",
-        "items": { "type": "string", "enum": ["self", "shared"] },
-        "default": ["self", "shared"]
+        "items": {
+          "type": "string",
+          "enum": [
+            "self",
+            "shared"
+          ]
+        },
+        "default": [
+          "self",
+          "shared"
+        ]
       },
       "cronRecallMode": {
         "type": "string",
-        "enum": ["all", "none", "allowlist"],
+        "enum": [
+          "all",
+          "none",
+          "allowlist"
+        ],
         "default": "all",
         "description": "Recall behavior for cron sessions. Use allowlist to opt specific cron sessionKeys in."
       },
       "cronRecallAllowlist": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "default": [],
         "description": "Session-key wildcard patterns (supports *) allowed for recall when cronRecallMode=allowlist."
       },
@@ -1110,7 +1239,11 @@
       },
       "cronConversationRecallMode": {
         "type": "string",
-        "enum": ["auto", "always", "never"],
+        "enum": [
+          "auto",
+          "always",
+          "never"
+        ],
         "default": "auto",
         "description": "Controls conversation semantic recall in cron sessions. auto skips it for instruction-heavy prompts."
       },
@@ -1121,13 +1254,27 @@
       },
       "autoPromoteToSharedCategories": {
         "type": "array",
-        "items": { "type": "string", "enum": ["correction", "decision", "preference"] },
-        "default": ["correction", "decision", "preference"],
+        "items": {
+          "type": "string",
+          "enum": [
+            "correction",
+            "decision",
+            "preference"
+          ]
+        },
+        "default": [
+          "correction",
+          "decision",
+          "preference"
+        ],
         "description": "Categories eligible for auto-promotion to shared."
       },
       "autoPromoteMinConfidenceTier": {
         "type": "string",
-        "enum": ["explicit", "implied"],
+        "enum": [
+          "explicit",
+          "implied"
+        ],
         "default": "explicit",
         "description": "Minimum confidence tier for auto-promotion."
       },
@@ -1232,8 +1379,15 @@
       },
       "factArchivalProtectedCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["commitment", "preference", "decision", "principle"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "commitment",
+          "preference",
+          "decision",
+          "principle"
+        ],
         "description": "Categories that protect a fact from archival regardless of other criteria."
       },
       "lifecyclePolicyEnabled": {
@@ -1263,8 +1417,15 @@
       },
       "lifecycleProtectedCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["decision", "principle", "commitment", "preference"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "decision",
+          "principle",
+          "commitment",
+          "preference"
+        ],
         "description": "Categories that lifecycle policy will not auto-archive."
       },
       "lifecycleMetricsEnabled": {
@@ -1329,7 +1490,9 @@
       },
       "behaviorLoopProtectedParams": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "default": [
           "maxMemoryTokens",
           "qmdMaxResults",
@@ -1460,23 +1623,62 @@
         "items": {
           "type": "object",
           "properties": {
-            "id": { "type": "string" },
-            "enabled": { "type": "boolean", "default": true },
-            "maxChars": { "type": ["number", "null"] },
-            "consolidateTriggerLines": { "type": "number" },
-            "consolidateTargetLines": { "type": "number" },
-            "maxEntities": { "type": "number" },
-            "maxResults": { "type": "number" },
-            "maxTurns": { "type": "number" },
-            "maxTokens": { "type": "number" },
-            "lookbackHours": { "type": "number" },
-            "maxCount": { "type": "number" },
-            "topK": { "type": "number" },
-            "timeoutMs": { "type": "number" },
-            "maxPatterns": { "type": "number" }
+            "id": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "maxChars": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "consolidateTriggerLines": {
+              "type": "number"
+            },
+            "consolidateTargetLines": {
+              "type": "number"
+            },
+            "maxEntities": {
+              "type": "number"
+            },
+            "maxResults": {
+              "type": "number"
+            },
+            "maxTurns": {
+              "type": "number"
+            },
+            "maxTokens": {
+              "type": "number"
+            },
+            "lookbackHours": {
+              "type": "number"
+            },
+            "maxCount": {
+              "type": "number"
+            },
+            "topK": {
+              "type": "number"
+            },
+            "timeoutMs": {
+              "type": "number"
+            },
+            "maxPatterns": {
+              "type": "number"
+            }
           },
-          "required": ["id"]
+          "required": [
+            "id"
+          ]
         }
+      },
+      "compactionResetEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable automatic session reset after compaction (compaction reset feature)"
       }
     }
   },
