@@ -1341,9 +1341,9 @@
       },
       "searchBackend": {
         "type": "string",
-        "enum": ["qmd", "remote", "noop"],
+        "enum": ["qmd", "remote", "noop", "lancedb", "meilisearch", "orama"],
         "default": "qmd",
-        "description": "Search backend: qmd (local hybrid), remote (HTTP REST), or noop (disabled)"
+        "description": "Search backend: qmd (local hybrid), remote (HTTP REST), noop (disabled), lancedb (embedded hybrid), meilisearch (server-based), orama (embedded JS)"
       },
       "remoteSearchBaseUrl": {
         "type": "string",
@@ -1357,6 +1357,43 @@
         "type": "number",
         "default": 30000,
         "description": "Timeout in ms for remote search backend requests"
+      },
+      "lanceDbPath": {
+        "type": "string",
+        "description": "Directory path for LanceDB storage (when searchBackend=lancedb)"
+      },
+      "lanceEmbeddingDimension": {
+        "type": "number",
+        "default": 1536,
+        "description": "Embedding vector dimension for LanceDB (when searchBackend=lancedb)"
+      },
+      "meilisearchHost": {
+        "type": "string",
+        "default": "http://localhost:7700",
+        "description": "Meilisearch server host URL (when searchBackend=meilisearch)"
+      },
+      "meilisearchApiKey": {
+        "type": "string",
+        "description": "API key for Meilisearch (when searchBackend=meilisearch)"
+      },
+      "meilisearchTimeoutMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Timeout in ms for Meilisearch requests (when searchBackend=meilisearch)"
+      },
+      "meilisearchAutoIndex": {
+        "type": "boolean",
+        "default": false,
+        "description": "Automatically push local memory docs to Meilisearch on update (when searchBackend=meilisearch)"
+      },
+      "oramaDbPath": {
+        "type": "string",
+        "description": "Directory path for Orama persistence files (when searchBackend=orama)"
+      },
+      "oramaEmbeddingDimension": {
+        "type": "number",
+        "default": 1536,
+        "description": "Embedding vector dimension for Orama (when searchBackend=orama)"
       },
       "qmdDaemonEnabled": {
         "type": "boolean",

@@ -1,6 +1,6 @@
 {
   "name": "@joshuaswarren/openclaw-engram",
-  "version": "8.3.92",
+  "version": "9.0.0",
   "type": "module",
   "description": "Local-first memory plugin for OpenClaw. LLM-powered extraction, markdown storage, hybrid search via QMD.",
   "keywords": [
@@ -46,10 +46,20 @@
   ],
   "dependencies": {
     "@honcho-ai/sdk": "^2.0.0",
+    "@lancedb/lancedb": "^0.24.1",
+    "@orama/orama": "^3.0.0",
+    "@orama/plugin-data-persistence": "^3.0.0",
     "@sinclair/typebox": "^0.34.0",
     "better-sqlite3": "^12.6.2",
+    "meilisearch": "^0.46.0",
     "openai": "^6.0.0",
     "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@lancedb/lancedb-darwin-arm64": "^0.26.2",
+    "@lancedb/lancedb-darwin-x64": "^0.26.2",
+    "@lancedb/lancedb-linux-arm64-gnu": "^0.26.2",
+    "@lancedb/lancedb-linux-x64-gnu": "^0.26.2"
   },
   "peerDependencies": {
     "openclaw": "*"

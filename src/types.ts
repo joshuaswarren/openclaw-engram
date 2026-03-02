@@ -301,10 +301,24 @@ export interface PluginConfig {
   compoundingInjectEnabled: boolean;
 
   // Search backend abstraction
-  searchBackend?: "qmd" | "remote" | "noop";
+  searchBackend?: "qmd" | "remote" | "noop" | "lancedb" | "meilisearch" | "orama";
   remoteSearchBaseUrl?: string;
   remoteSearchApiKey?: string;
   remoteSearchTimeoutMs?: number;
+
+  // LanceDB backend
+  lanceDbPath?: string;
+  lanceEmbeddingDimension?: number;
+
+  // Meilisearch backend
+  meilisearchHost?: string;
+  meilisearchApiKey?: string;
+  meilisearchTimeoutMs?: number;
+  meilisearchAutoIndex?: boolean;
+
+  // Orama backend
+  oramaDbPath?: string;
+  oramaEmbeddingDimension?: number;
 
   // QMD daemon mode
   qmdDaemonEnabled: boolean;
