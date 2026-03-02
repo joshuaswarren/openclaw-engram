@@ -21,23 +21,23 @@ export class NoopSearchBackend implements SearchBackend {
     return "backend=noop";
   }
 
-  async search(): Promise<SearchResult[]> {
+  async search(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
     return [];
   }
 
-  async searchGlobal(): Promise<SearchResult[]> {
+  async searchGlobal(_query: string, _maxResults?: number): Promise<SearchResult[]> {
     return [];
   }
 
-  async bm25Search(): Promise<SearchResult[]> {
+  async bm25Search(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
     return [];
   }
 
-  async vectorSearch(): Promise<SearchResult[]> {
+  async vectorSearch(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
     return [];
   }
 
-  async hybridSearch(): Promise<SearchResult[]> {
+  async hybridSearch(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
     return [];
   }
 
