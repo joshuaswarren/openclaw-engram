@@ -146,6 +146,8 @@ export default {
           // This is a placeholder - actual compaction detection depends on OpenClaw
           // For now, we'll just call recall with the sessionKey
 
+          // Pass per-agent workspace so compaction reset reads the right BOOT.md
+          orchestrator.setRecallWorkspaceOverride(ctx?.workspaceDir as string | undefined);
           const context = await orchestrator.recall(prompt, sessionKey);
           log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
@@ -328,7 +330,9 @@ export default {
 
           // Write signal file so recall() knows a compaction reset just happened.
           // This lets the new session inject BOOT.md + compaction context.
+          // Use ctx.workspaceDir (per-agent) if available, fall back to config.
           const workspaceDir =
+            (ctx?.workspaceDir as string) ||
             orchestrator.config.workspaceDir ||
             path.join(os.homedir(), ".openclaw", "workspace");
           const signalPath = path.join(

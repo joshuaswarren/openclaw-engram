@@ -573,6 +573,13 @@ export class Orchestrator {
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
   private readonly tmtBuilder: TmtBuilder;
   private readonly rerankCache = new RerankCache();
+  /**
+   * Per-recall workspace override. Set by the caller (before_agent_start hook)
+   * before invoking recall(), so the BOOT.md injection uses the correct
+   * agent workspace instead of the global config default.
+   * Cleared after each recall completes.
+   */
+  private _recallWorkspaceOverride: string | undefined;
   private routingRulesStore: RoutingRulesStore | null = null;
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
@@ -616,6 +623,12 @@ export class Orchestrator {
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
   private resolveInit: (() => void) | null = null;
+
+  /** Set per-agent workspace for the next recall() call (compaction reset). */
+  setRecallWorkspaceOverride(dir: string | undefined): void {
+    this._recallWorkspaceOverride = dir;
+  }
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
@@ -2103,8 +2116,11 @@ export class Orchestrator {
       // BOOT.md = agent-authored working state summary).
       if (this.config.compactionResetEnabled) {
         const workspaceDir =
+          this._recallWorkspaceOverride ||
           this.config.workspaceDir ||
           path.join(os.homedir(), ".openclaw", "workspace");
+        // Clear override after use — it's per-recall
+        this._recallWorkspaceOverride = undefined;
         const signalPath = path.join(workspaceDir, ".compaction-reset-signal");
         const bootPath = path.join(workspaceDir, "BOOT.md");
 
