@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { log } from "../logger.js";
 import type { SearchBackend, SearchResult } from "./port.js";
 import type { EmbedHelper } from "./embed-helper.js";
-import { scanMemoryDir, type IndexableDocument } from "./document-scanner.js";
+import { scanMemoryDir } from "./document-scanner.js";
 
 export interface OramaBackendOptions {
   dbPath: string;
