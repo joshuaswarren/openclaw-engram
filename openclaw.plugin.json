@@ -1339,6 +1339,25 @@
         ],
         "description": "Runtime parameters that auto-tuning must never modify."
       },
+      "searchBackend": {
+        "type": "string",
+        "enum": ["qmd", "remote", "noop"],
+        "default": "qmd",
+        "description": "Search backend: qmd (local hybrid), remote (HTTP REST), or noop (disabled)"
+      },
+      "remoteSearchBaseUrl": {
+        "type": "string",
+        "description": "Base URL for remote search backend (when searchBackend=remote)"
+      },
+      "remoteSearchApiKey": {
+        "type": "string",
+        "description": "API key for remote search backend (when searchBackend=remote)"
+      },
+      "remoteSearchTimeoutMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Timeout in ms for remote search backend requests"
+      },
       "qmdDaemonEnabled": {
         "type": "boolean",
         "default": true,

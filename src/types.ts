@@ -300,6 +300,12 @@ export interface PluginConfig {
   compoundingSynthesisTimeoutMs: number;
   compoundingInjectEnabled: boolean;
 
+  // Search backend abstraction
+  searchBackend?: "qmd" | "remote" | "noop";
+  remoteSearchBaseUrl?: string;
+  remoteSearchApiKey?: string;
+  remoteSearchTimeoutMs?: number;
+
   // QMD daemon mode
   qmdDaemonEnabled: boolean;
   qmdDaemonUrl: string;

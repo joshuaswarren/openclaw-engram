@@ -6,7 +6,8 @@ import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
-import { QmdClient } from "./qmd.js";
+import type { SearchBackend } from "./search/port.js";
+import { createSearchBackend, createConversationSearchBackend } from "./search/factory.js";
 import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
@@ -543,8 +544,8 @@ export function resolvePersistedMemoryRelativePath(options: {
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
-  readonly qmd: QmdClient;
-  private readonly conversationQmd?: QmdClient;
+  readonly qmd: SearchBackend;
+  private readonly conversationQmd?: SearchBackend;
   private readonly conversationFaiss?: FaissConversationIndexAdapter;
   readonly sharedContext?: SharedContextManager;
   readonly compounding?: CompoundingEngine;
@@ -617,35 +618,8 @@ export class Orchestrator {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
     this.storage = new StorageManager(config.memoryDir);
-    this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults, {
-      slowLog: {
-        enabled: config.slowLogEnabled,
-        thresholdMs: config.slowLogThresholdMs,
-      },
-      updateTimeoutMs: config.qmdUpdateTimeoutMs,
-      updateMinIntervalMs: config.qmdUpdateMinIntervalMs,
-      qmdPath: config.qmdPath,
-      daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
-      daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
-    });
-    this.conversationQmd =
-      config.conversationIndexEnabled && config.conversationIndexBackend === "qmd"
-        ? new QmdClient(
-            config.conversationIndexQmdCollection,
-            Math.max(6, config.conversationRecallTopK),
-            {
-              slowLog: {
-                enabled: config.slowLogEnabled,
-                thresholdMs: config.slowLogThresholdMs,
-              },
-              updateTimeoutMs: config.qmdUpdateTimeoutMs,
-              updateMinIntervalMs: config.qmdUpdateMinIntervalMs,
-              qmdPath: config.qmdPath,
-              daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
-              daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
-            },
-          )
-        : undefined;
+    this.qmd = createSearchBackend(config);
+    this.conversationQmd = createConversationSearchBackend(config);
     this.conversationFaiss =
       config.conversationIndexEnabled && config.conversationIndexBackend === "faiss"
         ? new FaissConversationIndexAdapter({

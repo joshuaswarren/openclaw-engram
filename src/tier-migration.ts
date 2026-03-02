@@ -3,6 +3,7 @@ import path from "node:path";
 import type { MemoryFile } from "./types.js";
 import { StorageManager } from "./storage.js";
 import type { MemoryTier } from "./tier-routing.js";
+import type { SearchBackend } from "./search/port.js";
 
 export type { MemoryTier } from "./tier-routing.js";
 
@@ -22,14 +23,9 @@ export interface TierMigrationResult {
   targetPath: string;
 }
 
-export interface TierMigrationQmdClient {
-  updateCollection(collection: string): Promise<void>;
-  embedCollection(collection: string): Promise<void>;
-}
-
 export interface TierMigrationExecutorOptions {
   storage: StorageManager;
-  qmd: TierMigrationQmdClient;
+  qmd: SearchBackend;
   hotCollection: string;
   coldCollection: string;
   autoEmbed?: boolean;
@@ -48,7 +44,7 @@ type TierMigrationJournalEntry = {
 
 export class TierMigrationExecutor {
   private readonly storage: StorageManager;
-  private readonly qmd: TierMigrationQmdClient;
+  private readonly qmd: SearchBackend;
   private readonly hotCollection: string;
   private readonly coldCollection: string;
   private readonly autoEmbed: boolean;

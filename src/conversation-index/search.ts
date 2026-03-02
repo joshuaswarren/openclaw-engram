@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { QmdClient } from "../qmd.js";
+import type { SearchBackend } from "../search/port.js";
 import type { FaissConversationIndexAdapter } from "./faiss-adapter.js";
 
 export interface ConversationSearchResult {
@@ -9,7 +9,7 @@ export interface ConversationSearchResult {
 }
 
 export async function searchConversationIndex(
-  qmd: QmdClient,
+  qmd: SearchBackend,
   query: string,
   maxResults: number,
 ): Promise<ConversationSearchResult[]> {

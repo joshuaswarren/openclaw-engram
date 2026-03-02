@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
+import type { SearchBackend } from "./search/port.js";
 
 const QMD_TIMEOUT_MS = 30_000;
 const QMD_DAEMON_TIMEOUT_MS = 60_000; // Longer timeout for daemon (first call may load models)
@@ -455,7 +456,7 @@ function getSharedDaemonSession(qmdPath: string): QmdDaemonSession {
 // QmdClient
 // ---------------------------------------------------------------------------
 
-export class QmdClient {
+export class QmdClient implements SearchBackend {
   private available: boolean | null = null;
   private lastUpdateFailAtMs: number | null = null;
   private lastEmbedFailAtMs: number | null = null;

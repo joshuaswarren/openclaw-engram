@@ -664,6 +664,12 @@ export function parseConfig(raw: unknown): PluginConfig {
     entityAliasesEnabled: cfg.entityAliasesEnabled !== false,
     entitySummaryEnabled: cfg.entitySummaryEnabled !== false,
 
+    // Search backend abstraction
+    searchBackend: cfg.searchBackend === "remote" || cfg.searchBackend === "noop" ? cfg.searchBackend : "qmd",
+    remoteSearchBaseUrl: typeof cfg.remoteSearchBaseUrl === "string" ? cfg.remoteSearchBaseUrl : undefined,
+    remoteSearchApiKey: typeof cfg.remoteSearchApiKey === "string" ? cfg.remoteSearchApiKey : undefined,
+    remoteSearchTimeoutMs: typeof cfg.remoteSearchTimeoutMs === "number" ? cfg.remoteSearchTimeoutMs : 30_000,
+
     // QMD daemon mode
     qmdDaemonEnabled: cfg.qmdDaemonEnabled !== false,
     qmdDaemonUrl:
