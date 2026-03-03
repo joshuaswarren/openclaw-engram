@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+### Changed
+- **README.md** rewritten with value proposition, feature highlights, search backend comparison, and contributing guide.
+
+### Added
+- `docs/search-backends.md` — comprehensive guide for all 6 search backends with configuration and tradeoffs.
+- `docs/writing-a-search-backend.md` — developer guide for implementing custom `SearchBackend` adapters.
+- Search backend settings table added to `docs/config-reference.md`.
+- v9 search architecture section added to `docs/architecture/overview.md`.
+- All existing docs updated with search backend references and links.
+
 ## [9.0.0] — 2026-03-02
 
 ### Added
