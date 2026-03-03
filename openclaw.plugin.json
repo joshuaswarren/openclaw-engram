@@ -1504,7 +1504,14 @@
       },
       "searchBackend": {
         "type": "string",
-        "enum": ["qmd", "remote", "noop", "lancedb", "meilisearch", "orama"],
+        "enum": [
+          "qmd",
+          "remote",
+          "noop",
+          "lancedb",
+          "meilisearch",
+          "orama"
+        ],
         "default": "qmd",
         "description": "Search backend: qmd (local hybrid), remote (HTTP REST), noop (disabled), lancedb (embedded hybrid), meilisearch (server-based), orama (embedded JS)"
       },

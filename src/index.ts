@@ -84,18 +84,17 @@ export default {
       `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled})`,
     );
 
-    // Hard guard: prevent duplicate hook/tool/CLI registration when plugin register()
-    // is invoked multiple times in the same process context.
-    if ((globalThis as any)[ENGRAM_REGISTERED_GUARD] === true) {
-      log.debug("register called more than once; skipping duplicate hook/tool registration");
-      return;
-    }
-    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
-
-    // Singleton guard: the gateway may call register() twice (gateway + plugin contexts).
-    // Reuse the existing orchestrator if one was already created in this process.
+    // Singleton guard: the gateway calls register() once per agent (each with a
+    // different plugin registry). Reuse the orchestrator (heavy object) but always
+    // re-register hooks — each api.on() call binds to the caller's registry, so
+    // skipping registration leaves later registries with zero hooks.
     const existing = (globalThis as any).__openclawEngramOrchestrator as Orchestrator | undefined;
     const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
+    const isFirstRegistration = !(globalThis as any)[ENGRAM_REGISTERED_GUARD];
+    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
+    if (!isFirstRegistration) {
+      log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
+    }
 
     // Expose for inter-plugin discovery (e.g., langsmith tracing)
     (globalThis as any).__openclawEngramOrchestrator = orchestrator;
@@ -456,15 +455,19 @@ export default {
     }
 
     // ========================================================================
-    // Register tools and CLI
+    // Register tools, CLI, and service (first registration only)
     // ========================================================================
-    registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
-    registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    // Tools, CLI, and services use global registries that don't need per-agent
+    // re-registration. Only register them once to avoid duplicates.
+    if (isFirstRegistration) {
+      registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
+      registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    }
 
     // ========================================================================
     // Register service
     // ========================================================================
-    api.registerService({
+    if (isFirstRegistration) api.registerService({
       id: "openclaw-engram",
       start: async () => {
         log.info("initializing engram memory system...");
@@ -490,7 +493,7 @@ export default {
         log.info("engram memory system ready");
       },
       stop: () => {
-        // Allow register() to run again in-process after a stop/reload cycle.
+        // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         log.info("stopped");
       },
