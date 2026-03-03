@@ -38,6 +38,25 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `extractionMaxQuestionsPerRun` | `3` | Cap on curiosity questions generated per LLM call |
 | `extractionMaxProfileUpdatesPerRun` | `4` | Cap on profile update statements per LLM call |
 
+## Search Backend (v9.0)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `searchBackend` | `"qmd"` | Search engine to use: `"qmd"`, `"orama"`, `"lancedb"`, `"meilisearch"`, `"remote"`, `"noop"` |
+| `lanceDbPath` | `{memoryDir}/lancedb` | LanceDB database directory |
+| `lanceEmbeddingDimension` | `1536` | Vector dimension for LanceDB |
+| `meilisearchHost` | `http://localhost:7700` | Meilisearch server URL |
+| `meilisearchApiKey` | `(none)` | Meilisearch API key |
+| `meilisearchTimeoutMs` | `30000` | Meilisearch request timeout |
+| `meilisearchAutoIndex` | `false` | Auto-push documents to Meilisearch on update |
+| `oramaDbPath` | `{memoryDir}/orama` | Orama database directory |
+| `oramaEmbeddingDimension` | `1536` | Vector dimension for Orama |
+| `remoteSearchBaseUrl` | `http://localhost:8181` | Remote search service URL |
+| `remoteSearchApiKey` | `(none)` | Remote search API key |
+| `remoteSearchTimeoutMs` | `30000` | Remote search request timeout |
+
+See [Search Backends](search-backends.md) for detailed configuration and comparison.
+
 ## Retrieval
 
 | Setting | Default | Description |

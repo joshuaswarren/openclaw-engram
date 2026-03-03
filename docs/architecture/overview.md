@@ -20,7 +20,12 @@ Periodically:          Extract  → LLM call to extract + store new memories
 | Storage | `src/storage.ts` | Read/write markdown files with YAML frontmatter |
 | Buffer | `src/buffer.ts` | Smart turn accumulation with signal-based triggers |
 | Extraction | `src/extraction.ts` | LLM-powered extraction engine (OpenAI Responses API) |
+| Search port | `src/search/port.ts` | Pluggable search backend interface (v9.0) |
+| Search factory | `src/search/factory.ts` | Config-driven backend selection (v9.0) |
 | QMD client | `src/qmd.ts` | Hybrid search client (BM25 + vector + reranking) |
+| LanceDB backend | `src/search/lancedb-backend.ts` | Embedded hybrid search with Arrow bindings (v9.0) |
+| Meilisearch backend | `src/search/meilisearch-backend.ts` | Server-based search via SDK (v9.0) |
+| Orama backend | `src/search/orama-backend.ts` | Embedded pure JS hybrid search (v9.0) |
 | Importance | `src/importance.ts` | Zero-LLM local heuristic importance scoring |
 | Chunking | `src/chunking.ts` | Sentence-boundary splitting for long memories |
 | Threading | `src/threading.ts` | Conversation thread detection |
@@ -145,8 +150,29 @@ api.registerTool()              // memory_search, memory_store, etc.
 api.registerCommand()           // CLI: openclaw engram <command>
 ```
 
+## v9.0 Search Backend Architecture
+
+Engram v9 introduces a port/adapter pattern for search. All backends implement the `SearchBackend` interface (`src/search/port.ts`), which the orchestrator calls for recall, update, and embedding operations.
+
+```
+Orchestrator → SearchBackend (interface)
+                 ├── QmdClient        (default, hybrid BM25+vector+reranking)
+                 ├── OramaBackend     (embedded, pure JS)
+                 ├── LanceDbBackend   (embedded, native Arrow)
+                 ├── MeilisearchBackend (server-based SDK)
+                 ├── RemoteSearchBackend (HTTP REST)
+                 └── NoopSearchBackend   (no-op)
+```
+
+The factory (`src/search/factory.ts`) reads `searchBackend` from config and instantiates the correct adapter. Embedded backends (Orama, LanceDB) share two utilities:
+- `document-scanner.ts` — scans the memory directory for indexable `.md` files
+- `embed-helper.ts` — computes vector embeddings via OpenAI or local LLM
+
+See [Search Backends](../search-backends.md) and [Writing a Search Backend](../writing-a-search-backend.md).
+
 ## See Also
 
 - [Retrieval Pipeline](retrieval-pipeline.md) — how recall works in detail
 - [Memory Lifecycle](memory-lifecycle.md) — write, consolidation, expiry
+- [Search Backends](../search-backends.md) — choosing and configuring search engines
 - [Config Reference](../config-reference.md) — all configuration flags

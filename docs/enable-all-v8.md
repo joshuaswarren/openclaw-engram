@@ -99,9 +99,22 @@ Expected:
 - `tier-status`: returns migration telemetry JSON
 - `policy-status`: returns runtime policy snapshot JSON
 
+## Search Backend (v9.0)
+
+The config above uses QMD (default). To use an alternative backend, add:
+
+```jsonc
+{
+  "searchBackend": "orama"   // or "lancedb", "meilisearch", "remote", "noop"
+}
+```
+
+See [Search Backends](search-backends.md) for full options.
+
 ## Related Docs
 
 - [Getting Started](getting-started.md)
+- [Search Backends](search-backends.md)
 - [Config Reference](config-reference.md)
 - [Operations](operations.md)
 - [Identity Continuity](identity-continuity.md)

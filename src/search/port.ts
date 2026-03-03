@@ -7,9 +7,14 @@ export type SearchResult = QmdSearchResult;
  * Abstract search backend interface.
  *
  * Implementations:
- * - QmdClient (default, local hybrid search)
- * - NoopSearchBackend (graceful degradation)
+ * - QmdClient (default, local hybrid BM25+vector+reranking)
+ * - OramaBackend (embedded, pure JS, hybrid FTS+vector)
+ * - LanceDbBackend (embedded, native Arrow bindings, RRF reranking)
+ * - MeilisearchBackend (server-based SDK, hybrid search)
  * - RemoteSearchBackend (HTTP REST adapter)
+ * - NoopSearchBackend (graceful degradation)
+ *
+ * See docs/writing-a-search-backend.md for the implementation guide.
  */
 export interface SearchBackend {
   // ── Lifecycle ──

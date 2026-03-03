@@ -2,8 +2,9 @@
 
 ## Getting Started
 
-- [Getting Started](getting-started.md) — Install, QMD setup, 5-minute config, verification
-- [Enable All v8 Features](enable-all-v8.md) — One explicit profile to turn on all v8 feature families
+- [Getting Started](getting-started.md) — Install, setup, first-run verification
+- [Search Backends](search-backends.md) — Choosing and configuring search engines (v9.0)
+- [Enable All Features](enable-all-v8.md) — Full-feature config profile
 - [Config Reference](config-reference.md) — Every setting, default, and description
 
 ## Architecture
@@ -11,6 +12,7 @@
 - [Overview](architecture/overview.md) — System design, components, storage layout
 - [Retrieval Pipeline](architecture/retrieval-pipeline.md) — How recall works end-to-end
 - [Memory Lifecycle](architecture/memory-lifecycle.md) — Write, consolidation, expiry
+- [Writing a Search Backend](writing-a-search-backend.md) — Build your own search adapter (v9.0)
 
 ## Operations
 

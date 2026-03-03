@@ -1,16 +1,27 @@
 # openclaw-engram
 
-Local-first long-term memory for [OpenClaw](https://github.com/openclaw/openclaw), with typed extraction, markdown-native storage, and retrieval-time memory injection.
+**Long-term memory for AI agents.** Engram gives your [OpenClaw](https://github.com/openclaw/openclaw) agents persistent, searchable memory that survives across conversations. Every interaction builds a richer understanding of your world — decisions, preferences, facts, relationships, and more — so your agents remember what matters.
 
-Current release line: `8.3.x` (v8 Memory OS series).
+[![npm version](https://img.shields.io/npm/v/@joshuaswarren/openclaw-engram)](https://www.npmjs.com/package/@joshuaswarren/openclaw-engram)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Install
+## Why Engram?
+
+AI agents forget everything between conversations. Engram fixes that.
+
+- **Automatic extraction** — Engram watches conversations and extracts facts, decisions, preferences, corrections, and more. No manual tagging required.
+- **Smart recall** — Before each conversation, Engram injects the most relevant memories into the agent's context. Your agents remember what they need, when they need it.
+- **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
+- **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
+- **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
+
+## Quick Start
 
 ```bash
 openclaw plugins install @joshuaswarren/openclaw-engram --pin
 ```
 
-`openclaw.json` wiring:
+Add to your `openclaw.json`:
 
 ```jsonc
 {
@@ -29,89 +40,159 @@ openclaw plugins install @joshuaswarren/openclaw-engram --pin
 }
 ```
 
-Restart gateway:
+Restart the gateway:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 ```
 
-## Fast Verification
+That's it. Start a conversation — Engram begins learning immediately.
+
+## Verify Installation
 
 ```bash
-openclaw engram compat --strict
-openclaw engram stats
-openclaw engram conversation-index-health
+openclaw engram compat --strict   # Should exit 0
+openclaw engram stats             # Shows memory counts and search status
 ```
 
-Healthy baseline:
-- `compat --strict` exits `0`
-- `stats` reports `QMD: available`
-- `conversation-index-health` reports `status: "ok"` when conversation index is enabled
+## How It Works
 
-## Enable Profiles
+Engram operates in three phases, running automatically in the background:
 
-Use one of these profiles under `plugins.entries.openclaw-engram.config`:
+```
+ Recall    Before each conversation, inject relevant memories
+ Buffer    After each turn, accumulate content until a trigger fires
+ Extract   Periodically, use an LLM to extract structured memories
+```
 
-- Minimal: extraction + core recall only
-- Recommended: production-safe defaults with major v8 capabilities
-- Full v8: all v8 feature families explicitly enabled
+Memories are stored as markdown files with YAML frontmatter:
 
-Full profile guide:
-- [Enable All v8 Features](docs/enable-all-v8.md)
+```yaml
+---
+id: decision-1738789200000-a1b2
+category: decision
+confidence: 0.92
+tags: ["architecture", "search"]
+---
+Decided to use the port/adapter pattern for search backends
+so alternative engines can replace QMD without changing core logic.
+```
 
-## What Engram Does
+Categories include: `fact`, `decision`, `preference`, `correction`, `relationship`, `principle`, `commitment`, `moment`, `skill`, and more.
 
-1. Signals and buffering: identify high-signal turns, batch low-signal turns.
-2. Extraction: create typed memories (`fact`, `decision`, `preference`, `correction`, etc).
-3. Storage: markdown files + frontmatter, local filesystem only.
-4. Recall: assemble multi-section context by ordered recall pipeline.
-5. Maintenance: dedupe, lifecycle transitions, compounding, migration/repair tooling.
+## Search Backends
 
-Architecture details:
-- [Architecture Overview](docs/architecture/overview.md)
-- [Retrieval Pipeline](docs/architecture/retrieval-pipeline.md)
-- [Memory Lifecycle](docs/architecture/memory-lifecycle.md)
+Engram v9 introduces a pluggable search architecture. Set `searchBackend` in your config to switch engines:
 
-## v8 Feature Families (at a glance)
+| Backend | Type | Best For | Config |
+|---------|------|----------|--------|
+| **QMD** (default) | Hybrid BM25+vector+reranking | Best recall quality, production use | `"qmd"` |
+| **Orama** | Embedded, pure JS | Zero native deps, quick setup | `"orama"` |
+| **LanceDB** | Embedded, native Arrow | Large collections, fast vector search | `"lancedb"` |
+| **Meilisearch** | Server-based | Shared search across services | `"meilisearch"` |
+| **Remote** | HTTP REST | Custom search service integration | `"remote"` |
+| **Noop** | No-op | Disable search (extraction only) | `"noop"` |
 
-| Family | Key flags |
-|---|---|
-| Recall planning + assembly | `recallPlannerEnabled`, `recallPipeline`, `recallBudgetChars` |
-| Episodic memory model | `memoryBoxesEnabled`, `traceWeaverEnabled`, `episodeNoteModeEnabled` |
-| Query-aware retrieval | `queryAwareIndexingEnabled`, `graphRecallEnabled`, `graphAssistShadowEvalEnabled` |
-| Lifecycle + action policy | `lifecyclePolicyEnabled`, `contextCompressionActionsEnabled`, `compressionGuidelineLearningEnabled` |
-| Identity continuity | `identityContinuityEnabled`, `continuityAuditEnabled`, `continuityIncidentLoggingEnabled` |
-| Session integrity + replay | `sessionObserverEnabled`, replay/session CLI commands |
-| Routing + work layer | `routingRulesEnabled`, `task`/`project` CLI |
-| Hot/cold tiering | `qmdTierMigrationEnabled`, `qmdTierAutoBackfillEnabled` |
-| Shared intelligence + compounding | `sharedContextEnabled`, `sharedCrossSignalSemanticEnabled`, `compoundingEnabled` |
-| Behavior loop runtime tuning | `behaviorLoopAutoTuneEnabled`, policy CLI commands |
+Example — switch to Orama (zero setup, no external dependencies):
 
-For complete settings and defaults:
-- [Config Reference](docs/config-reference.md)
+```jsonc
+{
+  "searchBackend": "orama"
+}
+```
 
-## Agent/Operator Commands
+See the [Search Backends Guide](docs/search-backends.md) for detailed configuration and tradeoffs.
 
-Common commands:
+Want to build your own? See [Writing a Search Backend](docs/writing-a-search-backend.md).
+
+## Feature Highlights
+
+Engram's capabilities are organized into feature families that you can enable progressively:
+
+| Feature | What It Does |
+|---------|-------------|
+| **Recall Planner** | Lightweight gating that decides whether to retrieve memories or skip recall |
+| **Memory Boxes** | Groups related memories into topic-windowed episodes with trace linking |
+| **Episode/Note Model** | Classifies memories as time-specific events or stable beliefs |
+| **Graph Recall** | Entity-relationship graph for causal and timeline queries |
+| **Lifecycle Policy** | Automatic memory aging: active, validated, stale, archived |
+| **Identity Continuity** | Maintains consistent agent personality across sessions |
+| **Shared Context** | Cross-agent memory sharing for multi-agent setups |
+| **Compounding** | Weekly synthesis that surfaces patterns and recurring mistakes |
+| **Hot/Cold Tiering** | Automatic migration of aging memories to cold storage |
+| **Behavior Loop Tuning** | Runtime self-tuning of extraction and recall parameters |
+
+Start with defaults, then enable features as needed. See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profile.
+
+## Agent & Operator Commands
 
 ```bash
-openclaw engram stats
-openclaw engram search "query"
-openclaw engram compat --strict
-openclaw engram conversation-index-health
-openclaw engram graph-health
-openclaw engram tier-status
-openclaw engram policy-status
+openclaw engram stats                        # Memory counts, search status, health
+openclaw engram search "your query"          # Search memories from CLI
+openclaw engram compat --strict              # Compatibility check
+openclaw engram conversation-index-health    # Conversation index status
+openclaw engram graph-health                 # Entity graph status
+openclaw engram tier-status                  # Hot/cold tier metrics
+openclaw engram policy-status                # Lifecycle policy snapshot
 ```
 
-## Docs Index
+## Configuration
 
-- [Docs Home](docs/README.md)
-- [Getting Started](docs/getting-started.md)
-- [Enable All v8 Features](docs/enable-all-v8.md)
-- [Config Reference](docs/config-reference.md)
-- [Operations](docs/operations.md)
-- [Namespaces](docs/namespaces.md)
-- [Shared Context](docs/shared-context.md)
-- [Compounding](docs/compounding.md)
-- [Identity Continuity](docs/identity-continuity.md)
+All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`. Only `openaiApiKey` is required — everything else has sensible defaults.
+
+Key settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `openaiApiKey` | `(env fallback)` | OpenAI API key or `${ENV_VAR}` reference |
+| `model` | `gpt-5.2` | LLM model for extraction |
+| `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
+| `qmdEnabled` | `true` | Enable QMD hybrid search |
+| `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
+
+Full reference: [Config Reference](docs/config-reference.md)
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — Installation, setup, first-run verification
+- [Search Backends](docs/search-backends.md) — Choosing and configuring search engines
+- [Writing a Search Backend](docs/writing-a-search-backend.md) — Build your own adapter
+- [Config Reference](docs/config-reference.md) — Every setting with defaults
+- [Architecture Overview](docs/architecture/overview.md) — System design and storage layout
+- [Retrieval Pipeline](docs/architecture/retrieval-pipeline.md) — How recall works
+- [Memory Lifecycle](docs/architecture/memory-lifecycle.md) — Write, consolidation, expiry
+- [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
+- [Operations](docs/operations.md) — Backup, export, maintenance
+- [Namespaces](docs/namespaces.md) — Multi-agent memory isolation
+- [Shared Context](docs/shared-context.md) — Cross-agent intelligence
+- [Identity Continuity](docs/identity-continuity.md) — Consistent agent personality
+
+## Developer Install
+
+```bash
+git clone https://github.com/joshuaswarren/openclaw-engram.git \
+  ~/.openclaw/extensions/openclaw-engram
+cd ~/.openclaw/extensions/openclaw-engram
+npm ci && npm run build
+```
+
+Run tests:
+
+```bash
+npm test              # Full suite (672 tests)
+npm run check-types   # TypeScript type checking
+```
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Write tests for new functionality
+4. Ensure `npm test` and `npm run check-types` pass
+5. Submit a pull request
+
+## License
+
+[MIT](LICENSE)
