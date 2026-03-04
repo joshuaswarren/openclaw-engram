@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **local-llm**: Read `reasoning_content` when `content` is empty — fixes thinking models (e.g. Qwen 3.5) returning null for entity summaries, consolidation, and question generation.
+- Add explicit `encoding_format: "float"` to local embedding requests for vLLM/LiteLLM compatibility.
 
 ### Changed
 - **README.md** rewritten with value proposition, feature highlights, search backend comparison, and contributing guide.
