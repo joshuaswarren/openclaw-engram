@@ -84,18 +84,17 @@ export default {
       `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled})`,
     );
 
-    // Hard guard: prevent duplicate hook/tool/CLI registration when plugin register()
-    // is invoked multiple times in the same process context.
-    if ((globalThis as any)[ENGRAM_REGISTERED_GUARD] === true) {
-      log.debug("register called more than once; skipping duplicate hook/tool registration");
-      return;
-    }
-    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
-
-    // Singleton guard: the gateway may call register() twice (gateway + plugin contexts).
-    // Reuse the existing orchestrator if one was already created in this process.
+    // Singleton guard: the gateway calls register() once per agent (each with a
+    // different plugin registry). Reuse the orchestrator (heavy object) but always
+    // re-register hooks — each api.on() call binds to the caller's registry, so
+    // skipping registration leaves later registries with zero hooks.
     const existing = (globalThis as any).__openclawEngramOrchestrator as Orchestrator | undefined;
     const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
+    const isFirstRegistration = !(globalThis as any)[ENGRAM_REGISTERED_GUARD];
+    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
+    if (!isFirstRegistration) {
+      log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
+    }
 
     // Expose for inter-plugin discovery (e.g., langsmith tracing)
     (globalThis as any).__openclawEngramOrchestrator = orchestrator;
@@ -146,6 +145,12 @@ export default {
           // This is a placeholder - actual compaction detection depends on OpenClaw
           // For now, we'll just call recall with the sessionKey
 
+          // Pass per-agent workspace so compaction reset reads the right BOOT.md.
+          // Keyed by sessionKey to prevent concurrent sessions from clobbering each other.
+          const agentWorkspace = ctx?.workspaceDir as string | undefined;
+          if (agentWorkspace) {
+            orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
+          }
           const context = await orchestrator.recall(prompt, sessionKey);
           log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
@@ -304,7 +309,7 @@ export default {
     );
 
     // ========================================================================
-    // HOOK: after_compaction — Cleanup and optional recovery
+    // HOOK: after_compaction — Trigger session reset (compaction reset flow)
     // ========================================================================
     api.on(
       "after_compaction",
@@ -315,14 +320,63 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
-          // The checkpoint will be loaded on next recall via orchestrator.recall()
-          // This hook is mainly for logging and any post-compaction cleanup
-          log.debug(`compaction completed for ${sessionKey}`);
+          if (!orchestrator.config.compactionResetEnabled) {
+            log.debug(
+              `compaction completed for ${sessionKey}, reset disabled — skipping`,
+            );
+            return;
+          }
 
-          // Could trigger background tasks here if needed
-          // e.g., immediate summarization of the checkpointed turns
+          log.info(
+            `compaction completed for ${sessionKey}, triggering session reset`,
+          );
+
+          // Use ctx.workspaceDir (per-agent) if available, fall back to config.
+          const workspaceDir =
+            (ctx?.workspaceDir as string) ||
+            orchestrator.config.workspaceDir ||
+            path.join(os.homedir(), ".openclaw", "workspace");
+
+          // Reset the session first — only write the signal file if reset succeeds.
+          // This prevents the next recall() from injecting recovery content when
+          // no actual reset occurred (e.g., gateway doesn't support resetSession).
+          const apiAny = api as any;
+          if (typeof apiAny.resetSession === "function") {
+            const result = await apiAny.resetSession(sessionKey, "new");
+            if (result.ok) {
+              log.info(
+                `session reset via API for ${sessionKey}, new sessionId=${result.sessionId}`,
+              );
+
+              // Write signal file AFTER successful reset so recall() knows
+              // a compaction reset just happened and can inject BOOT.md.
+              // Signal file is per-session to prevent multi-session overwrites.
+              const signalPath = path.join(
+                workspaceDir,
+                `.compaction-reset-signal-${sessionKey}`,
+              );
+              await writeFile(
+                signalPath,
+                JSON.stringify({
+                  sessionKey,
+                  compactedAt: new Date().toISOString(),
+                  messageCount: event.messageCount ?? 0,
+                }),
+                "utf-8",
+              );
+            } else {
+              log.error(
+                `api.resetSession failed for ${sessionKey}: ${result.error}`,
+              );
+            }
+          } else {
+            log.error(
+              `api.resetSession not available — compaction reset requires OC fork with PR #29985. ` +
+              `Session ${sessionKey} will continue without reset.`,
+            );
+          }
         } catch (err) {
-          log.error("after_compaction hook failed", err);
+          log.error("after_compaction reset failed", err);
         }
       },
     );
@@ -408,15 +462,19 @@ export default {
     }
 
     // ========================================================================
-    // Register tools and CLI
+    // Register tools, CLI, and service (first registration only)
     // ========================================================================
-    registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
-    registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    // Tools, CLI, and services use global registries that don't need per-agent
+    // re-registration. Only register them once to avoid duplicates.
+    if (isFirstRegistration) {
+      registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
+      registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    }
 
     // ========================================================================
     // Register service
     // ========================================================================
-    api.registerService({
+    if (isFirstRegistration) api.registerService({
       id: "openclaw-engram",
       start: async () => {
         log.info("initializing engram memory system...");
@@ -442,7 +500,7 @@ export default {
         log.info("engram memory system ready");
       },
       stop: () => {
-        // Allow register() to run again in-process after a stop/reload cycle.
+        // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         log.info("stopped");
       },

@@ -402,6 +402,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     checkpointEnabled: cfg.checkpointEnabled !== false, // default: true
     checkpointTurns:
       typeof cfg.checkpointTurns === "number" ? cfg.checkpointTurns : 15,
+    // Compaction reset (opt-in, default: false)
+    compactionResetEnabled: cfg.compactionResetEnabled === true,
     // Hourly summaries
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
     hourlySummaryCronAutoRegister: cfg.hourlySummaryCronAutoRegister === true,

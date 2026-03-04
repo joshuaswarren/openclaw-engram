@@ -179,6 +179,9 @@ export interface PluginConfig {
   // Checkpoint
   checkpointEnabled: boolean;
   checkpointTurns: number;
+  // Compaction reset: trigger session reset after compaction instead of continuing degraded.
+  // Requires OC fork with PR #29985 (api.resetSession).
+  compactionResetEnabled: boolean;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   /** If true, Engram may attempt to auto-register an hourly summary cron job (default off). */
