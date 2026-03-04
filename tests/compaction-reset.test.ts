@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { sanitizeSessionKeyForFilename } from "../src/orchestrator.js";
 
 function tmpDir(prefix: string): string {
   return path.join(
@@ -262,4 +263,34 @@ test("signal file cleanup sweeps stale files on startup", async () => {
   for (const f of await readdir(dir)) {
     await unlink(path.join(dir, f));
   }
+});
+
+test("sanitizeSessionKeyForFilename handles colon-delimited keys", () => {
+  assert.equal(
+    sanitizeSessionKeyForFilename("agent:gpucodebot:main"),
+    "agent_gpucodebot_main",
+  );
+});
+
+test("sanitizeSessionKeyForFilename handles path separators", () => {
+  assert.equal(
+    sanitizeSessionKeyForFilename("agent/../../etc/passwd"),
+    "agent_.._.._etc_passwd",
+  );
+  assert.equal(
+    sanitizeSessionKeyForFilename("agent\\windows\\path"),
+    "agent_windows_path",
+  );
+});
+
+test("sanitizeSessionKeyForFilename preserves safe characters", () => {
+  assert.equal(
+    sanitizeSessionKeyForFilename("agent-bot_123.test"),
+    "agent-bot_123.test",
+  );
+});
+
+test("sanitizeSessionKeyForFilename handles empty and simple keys", () => {
+  assert.equal(sanitizeSessionKeyForFilename("default"), "default");
+  assert.equal(sanitizeSessionKeyForFilename(""), "");
 });

@@ -134,6 +134,16 @@ export interface GraphRecallSnapshot {
   expanded: GraphRecallExpandedEntry[];
 }
 
+/**
+ * Sanitize a session key for use in filenames.
+ * Session keys follow colon-delimited forms (e.g., `agent:gpucodebot:main`).
+ * Colons are invalid on Windows and path separators could escape the intended directory.
+ * Replaces any non-alphanumeric/dash/underscore/dot character with an underscore.
+ */
+export function sanitizeSessionKeyForFilename(sessionKey: string): string {
+  return sessionKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
 export function isArtifactMemoryPath(filePath: string): boolean {
   return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
 }
@@ -1933,6 +1943,9 @@ export class Orchestrator {
     const embeddingFetchLimit = computedFetchLimit;
 
     if (recallMode === "no_recall") {
+      // Clean up workspace override before early return to prevent Map leaks.
+      const earlySessionKey = sessionKey ?? "default";
+      this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
       this.emitTrace({
         kind: "recall_summary",
@@ -2164,7 +2177,8 @@ export class Orchestrator {
         compactionWorkspaceDir ||
         this.config.workspaceDir ||
         path.join(os.homedir(), ".openclaw", "workspace");
-      const signalPath = path.join(workspaceDir, `.compaction-reset-signal-${effectiveSessionKey}`);
+      const safeSessionKey = sanitizeSessionKeyForFilename(effectiveSessionKey);
+      const signalPath = path.join(workspaceDir, `.compaction-reset-signal-${safeSessionKey}`);
       const bootPath = path.join(workspaceDir, "BOOT.md");
 
       try {

@@ -2,7 +2,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
-import { Orchestrator } from "./orchestrator.js";
+import { Orchestrator, sanitizeSessionKeyForFilename } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -354,9 +354,10 @@ export default {
               // Write signal file AFTER successful reset so recall() knows
               // a compaction reset just happened and can inject BOOT.md.
               // Signal file is per-session to prevent multi-session overwrites.
+              const safeSessionKey = sanitizeSessionKeyForFilename(sessionKey);
               const signalPath = path.join(
                 workspaceDir,
-                `.compaction-reset-signal-${sessionKey}`,
+                `.compaction-reset-signal-${safeSessionKey}`,
               );
               await writeFile(
                 signalPath,
