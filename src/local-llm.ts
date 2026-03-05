@@ -830,7 +830,7 @@ export class LocalLlmClient {
 
       const data = (await response.json()) as {
         choices?: Array<{
-          message?: { content?: string };
+          message?: { content?: string; reasoning_content?: string };
         }>;
         usage?: {
           prompt_tokens?: number;
@@ -843,7 +843,11 @@ export class LocalLlmClient {
         `local LLM response: choices=${data.choices?.length}, usage=${JSON.stringify(data.usage)}`,
       );
 
-      const content = data.choices?.[0]?.message?.content;
+      // Thinking models (e.g. Qwen 3.5) may put their response in
+      // `reasoning_content` and leave `content` empty. Fall back to
+      // reasoning_content so engram still gets a usable result.
+      const msg = data.choices?.[0]?.message;
+      const content = msg?.content || msg?.reasoning_content || "";
       if (!content) {
         log.warn(`local LLM returned empty content. choices=${JSON.stringify(data.choices)?.slice(0, 200)}`);
         return null;
