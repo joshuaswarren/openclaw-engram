@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+### Fixed
+- **local-llm**: Read `reasoning_content` when `content` is empty — fixes thinking models (e.g. Qwen 3.5) returning null for entity summaries, consolidation, and question generation.
+
 ### Changed
 - **README.md** rewritten with value proposition, feature highlights, search backend comparison, and contributing guide.
 
