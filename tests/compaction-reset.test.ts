@@ -266,31 +266,41 @@ test("signal file cleanup sweeps stale files on startup", async () => {
 });
 
 test("sanitizeSessionKeyForFilename handles colon-delimited keys", () => {
-  assert.equal(
-    sanitizeSessionKeyForFilename("agent:gpucodebot:main"),
-    "agent_gpucodebot_main",
-  );
+  const result = sanitizeSessionKeyForFilename("agent:gpucodebot:main");
+  // Format: <sanitized>-<12-char-hex-hash>
+  assert.match(result, /^agent_gpucodebot_main-[0-9a-f]{12}$/);
 });
 
 test("sanitizeSessionKeyForFilename handles path separators", () => {
-  assert.equal(
-    sanitizeSessionKeyForFilename("agent/../../etc/passwd"),
-    "agent_.._.._etc_passwd",
-  );
-  assert.equal(
-    sanitizeSessionKeyForFilename("agent\\windows\\path"),
-    "agent_windows_path",
-  );
+  const result1 = sanitizeSessionKeyForFilename("agent/../../etc/passwd");
+  assert.match(result1, /^agent_\.\._\.\._etc_passwd-[0-9a-f]{12}$/);
+
+  const result2 = sanitizeSessionKeyForFilename("agent\\windows\\path");
+  assert.match(result2, /^agent_windows_path-[0-9a-f]{12}$/);
 });
 
 test("sanitizeSessionKeyForFilename preserves safe characters", () => {
-  assert.equal(
-    sanitizeSessionKeyForFilename("agent-bot_123.test"),
-    "agent-bot_123.test",
-  );
+  const result = sanitizeSessionKeyForFilename("agent-bot_123.test");
+  assert.match(result, /^agent-bot_123\.test-[0-9a-f]{12}$/);
 });
 
 test("sanitizeSessionKeyForFilename handles empty and simple keys", () => {
-  assert.equal(sanitizeSessionKeyForFilename("default"), "default");
-  assert.equal(sanitizeSessionKeyForFilename(""), "");
+  const result1 = sanitizeSessionKeyForFilename("default");
+  assert.match(result1, /^default-[0-9a-f]{12}$/);
+
+  const result2 = sanitizeSessionKeyForFilename("");
+  assert.match(result2, /^-[0-9a-f]{12}$/);
+});
+
+test("sanitizeSessionKeyForFilename is collision-resistant", () => {
+  // These would collide with naive replace-only sanitization
+  const a = sanitizeSessionKeyForFilename("agent:alpha");
+  const b = sanitizeSessionKeyForFilename("agent/alpha");
+  assert.notEqual(a, b, "different keys must produce different filenames");
+});
+
+test("sanitizeSessionKeyForFilename is deterministic", () => {
+  const a = sanitizeSessionKeyForFilename("agent:gpucodebot:main");
+  const b = sanitizeSessionKeyForFilename("agent:gpucodebot:main");
+  assert.equal(a, b, "same input must produce same output");
 });

@@ -2,7 +2,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
-import { Orchestrator, sanitizeSessionKeyForFilename } from "./orchestrator.js";
+import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -11,6 +11,8 @@ import path from "node:path";
 import os from "node:os";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
+/** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
+const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
@@ -92,6 +94,17 @@ export default {
     const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
     const isFirstRegistration = !(globalThis as any)[ENGRAM_REGISTERED_GUARD];
     (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
+
+    // Per-api hook deduplication: if the same api object calls register() twice
+    // (e.g., during reload edge cases), skip re-binding hooks to avoid double-
+    // fired handlers (double recall, double extraction, double reset).
+    const hookApis: WeakSet<object> = ((globalThis as any)[ENGRAM_HOOK_APIS] ??= new WeakSet());
+    if (hookApis.has(api)) {
+      log.debug("register: this api already has hooks bound — skipping duplicate hook registration");
+      return;
+    }
+    hookApis.add(api);
+
     if (!isFirstRegistration) {
       log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
     }
@@ -177,6 +190,10 @@ export default {
           };
         } catch (err) {
           log.error("recall failed", err);
+          // Clean up workspace override to prevent Map leak on exception.
+          if (orchestrator.config.compactionResetEnabled) {
+            orchestrator.clearRecallWorkspaceOverride(sessionKey);
+          }
           return;
         }
       },
@@ -338,7 +355,7 @@ export default {
           const workspaceDir =
             (ctx?.workspaceDir as string) ||
             orchestrator.config.workspaceDir ||
-            path.join(os.homedir(), ".openclaw", "workspace");
+            defaultWorkspaceDir();
 
           // Reset the session first — only write the signal file if reset succeeds.
           // This prevents the next recall() from injecting recovery content when
@@ -506,6 +523,8 @@ export default {
       stop: () => {
         // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
+        (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
         log.info("stopped");
       },
     });

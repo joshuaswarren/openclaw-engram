@@ -134,14 +134,30 @@ export interface GraphRecallSnapshot {
   expanded: GraphRecallExpandedEntry[];
 }
 
+/** Maximum age (ms) before a compaction-reset signal file is considered stale and removed. */
+const COMPACTION_SIGNAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+/** Default workspace directory when no per-agent or config workspace is available. */
+export function defaultWorkspaceDir(): string {
+  return path.join(os.homedir(), ".openclaw", "workspace");
+}
+
 /**
- * Sanitize a session key for use in filenames.
+ * Produce a collision-resistant, filesystem-safe identifier from a session key.
+ *
  * Session keys follow colon-delimited forms (e.g., `agent:gpucodebot:main`).
- * Colons are invalid on Windows and path separators could escape the intended directory.
- * Replaces any non-alphanumeric/dash/underscore/dot character with an underscore.
+ * A naive replace (`:` → `_`) is lossy: different keys like `agent:alpha` and
+ * `agent/alpha` would collide. Instead we append a short SHA-256 hash of the
+ * original key to the human-readable sanitized prefix, guaranteeing uniqueness
+ * while keeping filenames debuggable.
+ *
+ * Format: `<sanitized>-<12-char-hex-hash>`
+ * Example: `agent:gpucodebot:main` → `agent_gpucodebot_main-a1b2c3d4e5f6`
  */
 export function sanitizeSessionKeyForFilename(sessionKey: string): string {
-  return sessionKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const readable = sessionKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const hash = createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
+  return `${readable}-${hash}`;
 }
 
 export function isArtifactMemoryPath(filePath: string): boolean {
@@ -634,9 +650,14 @@ export class Orchestrator {
   private initPromise: Promise<void> | null = null;
   private resolveInit: (() => void) | null = null;
 
-  /** Set per-session workspace for the next recall() call (compaction reset). */
+  /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
     this._recallWorkspaceOverrides.set(sessionKey, dir);
+  }
+
+  /** Remove a per-session workspace override (cleanup on error or early return). @internal */
+  clearRecallWorkspaceOverride(sessionKey: string): void {
+    this._recallWorkspaceOverrides.delete(sessionKey);
   }
 
   constructor(config: PluginConfig) {
@@ -985,15 +1006,19 @@ export class Orchestrator {
     // Sweep stale compaction-reset signal files (>1 hour old).
     // This prevents orphaned signals from persisting when agents are removed
     // or sessions never call recall() again after a compaction.
+    // NOTE: This sweep only covers the config-level workspace. Per-agent signals
+    // (written to ctx.workspaceDir) are cleaned up by recall() on each session
+    // start, with a 1-hour TTL enforced at read time. Agent-specific workspaces
+    // are not known at initialize() time.
     if (this.config.compactionResetEnabled) {
       try {
-        const wsDir = this.config.workspaceDir || path.join(os.homedir(), ".openclaw", "workspace");
+        const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
         const files = await readdir(wsDir).catch(() => [] as string[]);
         for (const f of files) {
           if (!f.startsWith(".compaction-reset-signal-")) continue;
           const fp = path.join(wsDir, f);
           const s = await stat(fp).catch(() => null);
-          if (s && Date.now() - s.mtimeMs >= 60 * 60 * 1000) {
+          if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
             await unlink(fp).catch(() => {});
             log.debug(`initialize: removed stale compaction signal ${f}`);
           }
@@ -2176,7 +2201,7 @@ export class Orchestrator {
       const workspaceDir =
         compactionWorkspaceDir ||
         this.config.workspaceDir ||
-        path.join(os.homedir(), ".openclaw", "workspace");
+        defaultWorkspaceDir();
       const safeSessionKey = sanitizeSessionKeyForFilename(effectiveSessionKey);
       const signalPath = path.join(workspaceDir, `.compaction-reset-signal-${safeSessionKey}`);
       const bootPath = path.join(workspaceDir, "BOOT.md");
@@ -2189,15 +2214,16 @@ export class Orchestrator {
         const signalData = JSON.parse(await readFile(signalPath, "utf-8"));
 
         // Validate signal belongs to this session (defense-in-depth: filename
-        // is already per-session, but the sessionKey inside provides a second check)
-        if (signalData.sessionKey && signalData.sessionKey !== effectiveSessionKey) {
+        // is already per-session, but the sessionKey inside provides a second check).
+        // Use strict !== so missing/null sessionKey also fails validation.
+        if (signalData.sessionKey !== effectiveSessionKey) {
           log.debug(
             `recall: compaction signal is for ${signalData.sessionKey}, not ${effectiveSessionKey} — skipping`,
           );
           return null;
         }
 
-        if (signalAge >= 60 * 60 * 1000) {
+        if (signalAge >= COMPACTION_SIGNAL_MAX_AGE_MS) {
           log.debug(
             `recall: stale compaction signal (${Math.round(signalAge / 1000)}s old), skipping`,
           );
@@ -2224,6 +2250,9 @@ export class Orchestrator {
         return section;
       } catch (err) {
         log.debug("recall: compaction signal check failed:", err);
+        // Remove corrupt/unreadable signal files so they don't cause repeated
+        // parse failures on every recall() until the 1-hour sweep runs.
+        await unlink(signalPath).catch(() => {});
         return null;
       }
     })();
