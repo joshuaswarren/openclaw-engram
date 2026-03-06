@@ -3244,11 +3244,15 @@ export class Orchestrator {
     // session window and the call is free of expensive full-corpus I/O.
     if (this.config.memoryBoxesEnabled && persistedIds.length > 0) {
       const extractionTopics = deriveTopicsFromExtraction(result);
+      // Derive episodic metadata from buffer turns (REMem-inspired)
+      const firstUserTurn = turns.find((t) => t.role === "user");
+      const boxGoal = firstUserTurn?.content?.slice(0, 100)?.trim() || undefined;
       await this.boxBuilderFor(storage)
         .onExtraction({
           topics: extractionTopics,
           memoryIds: persistedIds,
           timestamp: new Date().toISOString(),
+          goal: boxGoal,
         })
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }

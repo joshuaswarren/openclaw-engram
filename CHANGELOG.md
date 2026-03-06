@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Causal rule extraction** (PlugMem-inspired): opt-in `"rule"` memory category for IF→THEN causal rules mined during extraction and consolidation. Enable via `causalRuleExtractionEnabled`.
+- **Episodic box metadata** (REMem-inspired): memory boxes now capture `goal`, `toolsUsed`, and `outcome` fields. Goal is derived from the first user message in each episode. Enables "the time I debugged X" style retrieval.
 - **De-linearization transform** (SimpleMem-inspired): resolves pronoun coreferences and anchors relative time expressions (yesterday, last week, etc.) to absolute ISO-8601 dates after extraction. Enabled by default via `delinearizeEnabled`.
 - **Recall confidence gate** (Synapse-inspired): opt-in gate that skips memory injection when top recall score is below threshold, preventing noisy low-relevance results. Configurable via `recallConfidenceGateEnabled`, `recallConfidenceGateThreshold`.
 - **Graph lateral inhibition** (Synapse-inspired): competitive suppression prevents hub nodes from dominating spreading activation results. Configurable via `graphLateralInhibitionEnabled`, `graphLateralInhibitionBeta`, `graphLateralInhibitionTopM`.
