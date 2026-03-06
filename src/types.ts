@@ -433,6 +433,12 @@ export interface PluginConfig {
   /** Upper bound for blended graph-expanded recall scores (0-1). */
   graphExpansionBlendMax: number;
   maxEntityGraphEdgesPerMemory: number;
+  /** Synapse-inspired lateral inhibition to suppress hub-node dominance. */
+  graphLateralInhibitionEnabled: boolean;
+  /** Inhibition strength (default 0.15). Higher = more suppression. */
+  graphLateralInhibitionBeta: number;
+  /** Number of top competing nodes considered for inhibition (default 7). */
+  graphLateralInhibitionTopM: number;
   // v8.2: Temporal Memory Tree
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;

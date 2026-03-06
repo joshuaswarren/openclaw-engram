@@ -850,6 +850,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.maxEntityGraphEdgesPerMemory === "number"
         ? Math.max(0, cfg.maxEntityGraphEdgesPerMemory)
         : 10,
+    graphLateralInhibitionEnabled: cfg.graphLateralInhibitionEnabled !== false,
+    graphLateralInhibitionBeta:
+      typeof cfg.graphLateralInhibitionBeta === "number" ? cfg.graphLateralInhibitionBeta : 0.15,
+    graphLateralInhibitionTopM:
+      typeof cfg.graphLateralInhibitionTopM === "number" ? cfg.graphLateralInhibitionTopM : 7,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
     tmtHourlyMinMemories:

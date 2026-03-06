@@ -32,6 +32,9 @@ export interface GraphConfig {
   maxGraphTraversalSteps: number;
   graphActivationDecay: number;
   maxEntityGraphEdgesPerMemory: number;
+  graphLateralInhibitionEnabled: boolean;
+  graphLateralInhibitionBeta: number;
+  graphLateralInhibitionTopM: number;
 }
 
 // Causal signal phrases — order matters (most specific first)
@@ -431,6 +434,17 @@ export class GraphIndex {
         }
       }
 
+      // Apply lateral inhibition if enabled (Synapse-inspired competitive suppression)
+      if (this.cfg.graphLateralInhibitionEnabled && scores.size > 1) {
+        const inhibited = applyLateralInhibition(scores, {
+          beta: this.cfg.graphLateralInhibitionBeta,
+          topM: this.cfg.graphLateralInhibitionTopM,
+        });
+        for (const [k, v] of inhibited) {
+          scores.set(k, v);
+        }
+      }
+
       return Array.from(scores.entries())
         .map(([p, score]) => ({
           path: p,
@@ -447,4 +461,46 @@ export class GraphIndex {
       return [];
     }
   }
+}
+
+/**
+ * Lateral inhibition (Synapse-inspired).
+ *
+ * For each node, the top-M higher-activation competitors exert inhibition
+ * proportional to their activation difference. A sigmoid squash ensures
+ * outputs stay in [0,1] and that mid-range nodes are well-separated.
+ *
+ * Formula: u_hat_i = max(0, u_i - beta * sum_{k in top-M where u_k > u_i}(u_k - u_i))
+ * Then sigmoid: sigma(x) = 1 / (1 + exp(-gamma * (x - theta)))
+ *
+ * When beta=0, returns original scores unchanged (no-op).
+ */
+export function applyLateralInhibition(
+  scores: Map<string, number>,
+  opts: { beta: number; topM: number },
+): Map<string, number> {
+  const { beta, topM } = opts;
+  if (beta === 0) return new Map(scores);
+
+  const gamma = 10;
+  const theta = 0.3;
+
+  const sorted = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
+  const topCompetitors = sorted.slice(0, topM);
+
+  const result = new Map<string, number>();
+  for (const [node, u] of scores) {
+    let inhibition = 0;
+    for (const [, uK] of topCompetitors) {
+      if (uK > u) {
+        inhibition += uK - u;
+      }
+    }
+    const raw = Math.max(0, u - beta * inhibition);
+    // Sigmoid squash
+    const sigma = 1 / (1 + Math.exp(-gamma * (raw - theta)));
+    result.set(node, sigma);
+  }
+
+  return result;
 }
