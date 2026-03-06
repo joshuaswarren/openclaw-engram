@@ -913,7 +913,7 @@ Actions:
 Also:
 - Suggest profile updates based on patterns across memories
 - Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
-- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>" and set its category to "rule" via UPDATE.` : ""}`,
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>".` : ""}`,
         },
         {
           role: "user",
@@ -963,7 +963,7 @@ Actions:
 Also:
 - Suggest profile updates based on patterns across memories
 - Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
-- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>" and set its category to "rule" via UPDATE.` : ""}
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>".` : ""}
 
 Current behavioral profile:
 ${currentProfile || "(empty)"}
@@ -1109,7 +1109,8 @@ Actions:
 
 Also:
 - Suggest profile updates based on patterns across memories
-- Identify entity updates for entity tracking
+- Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>".` : ""}
 
 Current behavioral profile:
 ${currentProfile || "(empty)"}
