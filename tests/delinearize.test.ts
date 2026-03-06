@@ -80,6 +80,13 @@ describe("resolveCoReferences", () => {
     assert.equal(result, "She told him the news");
   });
 
+  it("leaves contractions unchanged (He's, It's, They're)", () => {
+    const fact = "He's a great developer";
+    const entities: EntityMention[] = [{ name: "person-bob", type: "person", facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    assert.equal(result, "He's a great developer"); // contraction, not possessive
+  });
+
   it("resolves coreferential pronoun pairs from the same group", () => {
     const fact = "He organized his files";
     const entities: EntityMention[] = [{ name: "person-bob", type: "person", facts: [] }];

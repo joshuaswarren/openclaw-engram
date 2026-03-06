@@ -46,7 +46,8 @@ export function resolveCoReferences(fact: string, entities: EntityMention[]): st
   const typeToGroups = new Map<string, Set<string>>();
 
   for (const [pronoun, info] of Object.entries(PRONOUN_MAP)) {
-    const regex = new RegExp(`\\b${pronoun}\\b`, "gi");
+    // Negative lookahead for apostrophe prevents matching contractions (He's, It's, They're)
+    const regex = new RegExp(`\\b${pronoun}\\b(?![''\u2019])`, "gi");
     if (!regex.test(fact)) continue;
 
     const candidates = entities.filter((e) => info.types.includes(e.type));
@@ -87,7 +88,7 @@ export function resolveCoReferences(fact: string, entities: EntityMention[]): st
     const replacement = info.possessive ? `${safeEntityName}'s` : safeEntityName;
     placeholders.push(replacement);
     result = result.replace(
-      new RegExp(`\\b${pronoun}\\b`, "gi"),
+      new RegExp(`\\b${pronoun}\\b(?![''\u2019])`, "gi"),
       placeholder,
     );
   }
@@ -177,14 +178,16 @@ export function anchorTemporalExpressions(fact: string, now: Date): string {
 }
 
 /**
- * Full de-linearization pipeline: coreference + temporal anchoring.
+ * Full de-linearization pipeline: temporal anchoring first, then coreference.
+ * Order matters: entity names may contain temporal words (e.g., "project-tomorrow")
+ * which would be corrupted if temporal anchoring ran after coreference insertion.
  */
 export function delinearize(
   factContent: string,
   entities: EntityMention[],
   timestamp: Date,
 ): string {
-  let result = resolveCoReferences(factContent, entities);
-  result = anchorTemporalExpressions(result, timestamp);
+  let result = anchorTemporalExpressions(factContent, timestamp);
+  result = resolveCoReferences(result, entities);
   return result;
 }
