@@ -717,10 +717,14 @@ export class Orchestrator {
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.fastLlm = config.localLlmFastEnabled
-      ? new LocalLlmClient(
-          { ...config, localLlmModel: config.localLlmFastModel || config.localLlmModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
-          this.modelRegistry,
-        )
+      ? (() => {
+          const client = new LocalLlmClient(
+            { ...config, localLlmModel: config.localLlmFastModel || config.localLlmModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
+            this.modelRegistry,
+          );
+          client.disableThinking = true;
+          return client;
+        })()
       : this.localLlm;
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
     this.threading = new ThreadingManager(
