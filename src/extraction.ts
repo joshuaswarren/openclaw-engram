@@ -913,7 +913,7 @@ Actions:
 Also:
 - Suggest profile updates based on patterns across memories
 - Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
-- Look for IF→THEN causal patterns across new and existing memories. When you see "X failed/succeeded because Y" or "doing X led to Y", synthesize a rule memory with category "rule" and content in the form "IF <condition> THEN <action/outcome>". Add these as new items with action "ADD".` : ""}`,
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>" and set its category to "rule" via UPDATE.` : ""}`,
         },
         {
           role: "user",
@@ -962,7 +962,8 @@ Actions:
 
 Also:
 - Suggest profile updates based on patterns across memories
-- Identify entity updates for entity tracking
+- Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>" and set its category to "rule" via UPDATE.` : ""}
 
 Current behavioral profile:
 ${currentProfile || "(empty)"}
