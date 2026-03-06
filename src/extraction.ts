@@ -584,10 +584,10 @@ Also generate:
 
 Output JSON:
 {
-  "facts": [{"category": "decision", "content": "Chose X over Y because...", "importance": 8, "confidence": 0.9}, {"category": "commitment", "content": "Must deliver X by date", "importance": 10, "confidence": 1.0}, {"category": "fact", "content": "X uses Y technology", "importance": 6, "confidence": 0.95}, {"category": "principle", "content": "Always do X to avoid Y", "importance": 8, "confidence": 0.9}],
-  "entities": [{"name": "...", "type": "person|company|project|tool|other"}],
-  "profileUpdates": ["..."],
-  "questions": [{"question": "...", "context": "..."}],
+  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
+  "entities": [{"name": "person-jane-doe", "type": "person", "facts": ["Works at Acme Corp", "Prefers Python over JavaScript"]}, {"name": "project-acme-store", "type": "project", "facts": ["Built with Next.js", "Deployed on Vercel"]}],
+  "profileUpdates": ["User prefers dark mode in all editors"],
+  "questions": [{"question": "Which cloud provider hosts the staging environment?", "context": "Came up during deployment discussion", "priority": 0.5}],
   "relationships": [{"source": "person-jane-doe", "target": "company-acme-corp", "label": "works at"}]
 }
 
@@ -670,11 +670,11 @@ ${truncatedConversation}`;
             this.buildExtractionInstructions(existingEntities) +
             `\n\nRespond with valid JSON matching this schema:
 {
-  "facts": [{"category": "decision", "content": "Chose X over Y because...", "importance": 8, "confidence": 0.9, "tags": ["tag1"]}],
-  "entities": [{"name": "entity-name", "type": "person"}],
-  "profileUpdates": ["User prefers X over Y"],
-  "questions": [{"question": "What is...?", "context": "Came up during discussion of...", "priority": 0.5}],
-  "relationships": [{"source": "entity-a", "target": "entity-b", "label": "works at"}]
+  "facts": [{"category": "decision", "content": "Chose React over Vue for the dashboard rewrite", "importance": 8, "confidence": 0.9, "tags": ["frontend"]}, {"category": "fact", "content": "The API gateway uses rate limiting at 1000 req/min", "importance": 6, "confidence": 0.95, "tags": ["infra"], "entityRef": "project-dashboard"}],
+  "entities": [{"name": "person-sarah-chen", "type": "person", "facts": ["Leads the backend team", "Joined from Google in 2024"]}, {"name": "project-dashboard", "type": "project", "facts": ["React-based admin panel", "Deployed on AWS ECS"]}],
+  "profileUpdates": ["User prefers TypeScript over plain JavaScript"],
+  "questions": [{"question": "What database does the analytics service use?", "context": "Came up during discussion of migration plan", "priority": 0.5}],
+  "relationships": [{"source": "person-sarah-chen", "target": "project-dashboard", "label": "leads development of"}]
 }`,
         },
         { role: "user", content: conversation },
@@ -972,7 +972,7 @@ Respond with valid JSON only, matching this schema:
     }
   ],
   "profileUpdates": ["optional profile update"],
-  "entityUpdates": [{"name": "entity-name", "type": "person", "facts": ["optional fact"]}]
+  "entityUpdates": [{"name": "person-jane-doe", "type": "person", "facts": ["Now leads the backend team", "Recently migrated the user service to TypeScript"]}]
 }`;
 
       const response = await this.client.chat.completions.create({
