@@ -78,6 +78,7 @@ const VALID_MEMORY_CATEGORIES = new Set([
   "commitment",
   "moment",
   "skill",
+  "rule",
 ]);
 
 const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [
