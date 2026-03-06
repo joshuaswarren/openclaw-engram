@@ -72,12 +72,20 @@ describe("resolveCoReferences", () => {
     assert.equal(result, "project-it-works crashed yesterday");
   });
 
-  it("skips resolution when multiple pronouns would resolve to same single entity", () => {
+  it("skips resolution when multiple pronoun groups would resolve to same single entity", () => {
     const fact = "She told him the news";
     const entities: EntityMention[] = [{ name: "person-alice", type: "person", facts: [] }];
     const result = resolveCoReferences(fact, entities);
-    // Both "she" and "him" map to person type, but only one person exists — ambiguous
+    // "she" (fem group) + "him" (masc group) both → person, only one entity — ambiguous
     assert.equal(result, "She told him the news");
+  });
+
+  it("resolves coreferential pronoun pairs from the same group", () => {
+    const fact = "He organized his files";
+    const entities: EntityMention[] = [{ name: "person-bob", type: "person", facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    // "he" + "his" are both "masc" group — same referent, not ambiguous
+    assert.equal(result, "person-bob organized person-bob's files");
   });
 });
 

@@ -8,18 +8,19 @@
 import type { EntityMention } from "./types.js";
 
 // possessive: true means the pronoun is a possessive form (his/her/its/their)
-// and should be replaced with "entity's" or "entity's" form.
-const PRONOUN_MAP: Record<string, { types: string[]; possessive: boolean }> = {
-  "he": { types: ["person"], possessive: false },
-  "she": { types: ["person"], possessive: false },
-  "him": { types: ["person"], possessive: false },
+// and should be replaced with "entity's" form.
+// group: pronouns in the same group are coreferential (he/him/his all refer to the same person)
+const PRONOUN_MAP: Record<string, { types: string[]; possessive: boolean; group: string }> = {
+  "he": { types: ["person"], possessive: false, group: "masc" },
+  "him": { types: ["person"], possessive: false, group: "masc" },
+  "his": { types: ["person"], possessive: true, group: "masc" },
+  "she": { types: ["person"], possessive: false, group: "fem" },
   // "her" omitted — ambiguous between object ("saw her") and possessive ("her stack")
-  "his": { types: ["person"], possessive: true },
-  "they": { types: ["company", "project", "other"], possessive: false },
-  "them": { types: ["company", "project", "other"], possessive: false },
-  "their": { types: ["company", "project", "other"], possessive: true },
-  "it": { types: ["project", "tool", "company"], possessive: false },
-  "its": { types: ["project", "tool", "company"], possessive: true },
+  "they": { types: ["company", "project", "other"], possessive: false, group: "they" },
+  "them": { types: ["company", "project", "other"], possessive: false, group: "they" },
+  "their": { types: ["company", "project", "other"], possessive: true, group: "they" },
+  "it": { types: ["project", "tool", "company"], possessive: false, group: "it" },
+  "its": { types: ["project", "tool", "company"], possessive: true, group: "it" },
 };
 
 /**
@@ -38,10 +39,11 @@ export function resolveCoReferences(fact: string, entities: EntityMention[]): st
   if (entities.length === 0) return fact;
 
   // First pass: collect which pronoun entries match and which entity type they target.
-  // If multiple distinct pronoun groups resolve to the same entity type, skip them all
-  // (e.g., "She told him" with one person entity → ambiguous, leave unchanged).
-  const matchingEntries: Array<{ pronoun: string; info: { types: string[]; possessive: boolean }; entity: EntityMention }> = [];
-  const typeToPronouns = new Map<string, Set<string>>();
+  // If multiple distinct referent groups resolve to the same entity type, skip them all
+  // (e.g., "She told him" has groups "fem" + "masc" both → person → ambiguous).
+  // Coreferential pairs like "he"+"his" share a group ("masc") and are NOT ambiguous.
+  const matchingEntries: Array<{ pronoun: string; info: { types: string[]; possessive: boolean; group: string }; entity: EntityMention }> = [];
+  const typeToGroups = new Map<string, Set<string>>();
 
   for (const [pronoun, info] of Object.entries(PRONOUN_MAP)) {
     const regex = new RegExp(`\\b${pronoun}\\b`, "gi");
@@ -52,18 +54,18 @@ export function resolveCoReferences(fact: string, entities: EntityMention[]): st
 
     matchingEntries.push({ pronoun, info, entity: candidates[0] });
 
-    // Track which pronoun groups target which entity type
+    // Track which referent groups target which entity type
     for (const t of info.types) {
-      if (!typeToPronouns.has(t)) typeToPronouns.set(t, new Set());
-      typeToPronouns.get(t)!.add(pronoun);
+      if (!typeToGroups.has(t)) typeToGroups.set(t, new Set());
+      typeToGroups.get(t)!.add(info.group);
     }
   }
 
-  // Determine which entity types have ambiguous multi-pronoun references
+  // Determine which entity types have ambiguous multi-group references
   const ambiguousTypes = new Set<string>();
-  for (const [type, pronouns] of typeToPronouns) {
+  for (const [type, groups] of typeToGroups) {
     const matchedEntities = entities.filter((e) => e.type === type);
-    if (matchedEntities.length === 1 && pronouns.size > 1) {
+    if (matchedEntities.length === 1 && groups.size > 1) {
       ambiguousTypes.add(type);
     }
   }
