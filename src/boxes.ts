@@ -124,7 +124,7 @@ function serializeBoxFrontmatter(fm: BoxFrontmatter): string {
   ];
   if (fm.sessionKey) lines.push(`sessionKey: ${fm.sessionKey}`);
   if (fm.traceId) lines.push(`traceId: ${fm.traceId}`);
-  if (fm.goal) lines.push(`goal: ${fm.goal}`);
+  if (fm.goal) lines.push(`goal: ${fm.goal.replace(/[\r\n]+/g, " ")}`);
   if (fm.toolsUsed?.length) lines.push(`toolsUsed: [${fm.toolsUsed.map((t) => `"${t}"`).join(", ")}]`);
   if (fm.outcome) lines.push(`outcome: ${fm.outcome}`);
   lines.push("---");
@@ -270,6 +270,10 @@ export class BoxBuilder {
         const topicSet = new Set([...this.openBox.topics, ...newTopics]);
         this.openBox.topics = [...topicSet];
         this.openBox.memoryIds.push(...event.memoryIds);
+        if (event.toolsUsed?.length) {
+          const toolSet = new Set([...(this.openBox.toolsUsed ?? []), ...event.toolsUsed]);
+          this.openBox.toolsUsed = [...toolSet];
+        }
         await this.sealCurrent("max_memories");
       } else if (topicShifted) {
         await this.sealCurrent("topic_shift");
