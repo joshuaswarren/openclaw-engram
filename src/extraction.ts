@@ -224,6 +224,93 @@ export class ExtractionEngine {
     };
   }
 
+  private parseJsonObject(content?: string | null): any | null {
+    const trimmed = content?.trim();
+    if (!trimmed) return null;
+
+    for (const candidate of extractJsonCandidates(trimmed)) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // keep trying candidates
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeContradictionVerificationResult(parsed: any): ContradictionVerificationResult | null {
+    if (!parsed || typeof parsed.isContradiction !== "boolean") return null;
+
+    const rawWhich = parsed.whichIsNewer ?? parsed.winner;
+    const normalizedWhich =
+      rawWhich === "first" || rawWhich === "existing"
+        ? "first"
+        : rawWhich === "second" || rawWhich === "new"
+          ? "second"
+          : "unclear";
+
+    return {
+      isContradiction: Boolean(parsed.isContradiction),
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+      reasoning:
+        typeof parsed.reasoning === "string"
+          ? parsed.reasoning
+          : typeof parsed.explanation === "string"
+            ? parsed.explanation
+            : "",
+      whichIsNewer: normalizedWhich,
+    };
+  }
+
+  private normalizeSuggestedLinksResult(parsed: any): SuggestedLinks {
+    if (!parsed || !Array.isArray(parsed.links)) {
+      return { links: [] };
+    }
+
+    const normalizedLinks = parsed.links
+      .map((link: any) => {
+        const rawLinkType = link?.linkType ?? link?.type;
+        return {
+          targetId: typeof link?.targetId === "string" ? link.targetId : "",
+          linkType:
+            rawLinkType === "follows" ||
+            rawLinkType === "references" ||
+            rawLinkType === "contradicts" ||
+            rawLinkType === "supports" ||
+            rawLinkType === "related"
+              ? rawLinkType
+              : "related",
+          strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
+          reason: typeof link?.reason === "string" ? link.reason : undefined,
+        };
+      })
+      .filter((link: any) => link.targetId.length > 0);
+
+    return { links: normalizedLinks };
+  }
+
+  private normalizeMemorySummaryResult(parsed: any): MemorySummaryResult | null {
+    if (!parsed) return null;
+
+    const normalized: MemorySummaryResult = {
+      summaryText:
+        typeof parsed.summaryText === "string"
+          ? parsed.summaryText
+          : typeof parsed.summary === "string"
+            ? parsed.summary
+            : "",
+      keyFacts: Array.isArray(parsed.keyFacts) ? parsed.keyFacts.filter((f: unknown) => typeof f === "string") : [],
+      keyEntities: Array.isArray(parsed.keyEntities)
+        ? parsed.keyEntities.filter((e: unknown) => typeof e === "string")
+        : Array.isArray(parsed.entities)
+          ? parsed.entities.filter((e: unknown) => typeof e === "string")
+          : [],
+    };
+
+    return normalized.summaryText.length > 0 ? normalized : null;
+  }
+
   private sanitizeConsolidationResult(result: ConsolidationResult): ConsolidationResult {
     const items = result.items.map((item) => {
       if (!item.updatedContent) return item;
@@ -1648,37 +1735,10 @@ Respond with valid JSON matching this schema:
           ],
           { temperature: 0.3, maxTokens: 2048 },
         );
-        const fallbackContent = fallbackResponse?.content?.trim();
-        let fallbackParsed: any = null;
-        if (fallbackContent) {
-          for (const candidate of extractJsonCandidates(fallbackContent)) {
-            try {
-              fallbackParsed = JSON.parse(candidate);
-              break;
-            } catch {
-              // keep trying candidates
-            }
-          }
-        }
-        if (fallbackParsed && typeof fallbackParsed.isContradiction === "boolean") {
-          const rawWhich = fallbackParsed.whichIsNewer ?? fallbackParsed.winner;
-          const normalizedWhich =
-            rawWhich === "first" || rawWhich === "existing"
-              ? "first"
-              : rawWhich === "second" || rawWhich === "new"
-                ? "second"
-                : "unclear";
-          const normalized: ContradictionVerificationResult = {
-            isContradiction: Boolean(fallbackParsed.isContradiction),
-            confidence: typeof fallbackParsed.confidence === "number" ? fallbackParsed.confidence : 0.5,
-            reasoning:
-              typeof fallbackParsed.reasoning === "string"
-                ? fallbackParsed.reasoning
-                : typeof fallbackParsed.explanation === "string"
-                  ? fallbackParsed.explanation
-                  : "",
-            whichIsNewer: normalizedWhich,
-          };
+        const normalized = this.normalizeContradictionVerificationResult(
+          this.parseJsonObject(fallbackResponse?.content),
+        );
+        if (normalized) {
           log.debug(
             `contradiction check via fallback: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
           );
@@ -1698,38 +1758,10 @@ Respond with valid JSON matching this schema:
         max_tokens: 2048,
       });
 
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      let parsed: any = null;
-      if (rawContent) {
-        for (const candidate of extractJsonCandidates(rawContent)) {
-          try {
-            parsed = JSON.parse(candidate);
-            break;
-          } catch {
-            // keep trying candidates
-          }
-        }
-      }
-
-      if (parsed && typeof parsed.isContradiction === "boolean") {
-        const rawWhich = parsed.whichIsNewer ?? parsed.winner;
-        const normalizedWhich =
-          rawWhich === "first" || rawWhich === "existing"
-            ? "first"
-            : rawWhich === "second" || rawWhich === "new"
-              ? "second"
-              : "unclear";
-        const normalized: ContradictionVerificationResult = {
-          isContradiction: Boolean(parsed.isContradiction),
-          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
-          reasoning:
-            typeof parsed.reasoning === "string"
-              ? parsed.reasoning
-              : typeof parsed.explanation === "string"
-                ? parsed.explanation
-                : "",
-          whichIsNewer: normalizedWhich,
-        };
+      const normalized = this.normalizeContradictionVerificationResult(
+        this.parseJsonObject(response.choices?.[0]?.message?.content),
+      );
+      if (normalized) {
         log.debug(
           `contradiction check: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
         );
@@ -1795,39 +1827,10 @@ Respond with valid JSON matching this schema:
           ],
           { temperature: 0.3, maxTokens: 2048 },
         );
-        const fallbackContent = fallbackResponse?.content?.trim();
-        let fallbackParsed: any = null;
-        if (fallbackContent) {
-          for (const candidate of extractJsonCandidates(fallbackContent)) {
-            try {
-              fallbackParsed = JSON.parse(candidate);
-              break;
-            } catch {
-              // keep trying candidates
-            }
-          }
-        }
-        if (fallbackParsed && Array.isArray(fallbackParsed.links)) {
-          const normalizedLinks = fallbackParsed.links
-            .map((link: any) => {
-              const rawLinkType = link?.linkType ?? link?.type;
-              return {
-                targetId: typeof link?.targetId === "string" ? link.targetId : "",
-                linkType:
-                  rawLinkType === "follows" ||
-                  rawLinkType === "references" ||
-                  rawLinkType === "contradicts" ||
-                  rawLinkType === "supports" ||
-                  rawLinkType === "related"
-                    ? rawLinkType
-                    : "related",
-                strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
-                reason: typeof link?.reason === "string" ? link.reason : undefined,
-              };
-            })
-            .filter((link: any) => link.targetId.length > 0);
-          log.debug(`suggested ${normalizedLinks.length} links via fallback`);
-          return { links: normalizedLinks };
+        const normalized = this.normalizeSuggestedLinksResult(this.parseJsonObject(fallbackResponse?.content));
+        if (normalized.links.length > 0) {
+          log.debug(`suggested ${normalized.links.length} links via fallback`);
+          return normalized;
         }
         log.warn("link suggestion skipped — no OpenAI API key and fallback unavailable");
         return { links: [] };
@@ -1843,43 +1846,11 @@ Respond with valid JSON matching this schema:
         max_tokens: 2048,
       });
 
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      let parsed: any = null;
-      if (rawContent) {
-        for (const candidate of extractJsonCandidates(rawContent)) {
-          try {
-            parsed = JSON.parse(candidate);
-            break;
-          } catch {
-            // keep trying candidates
-          }
-        }
-      }
-
-      if (parsed && Array.isArray(parsed.links)) {
-        const normalizedLinks = parsed.links
-          .map((link: any) => {
-            const rawLinkType = link?.linkType ?? link?.type;
-            return {
-              targetId: typeof link?.targetId === "string" ? link.targetId : "",
-              linkType:
-                rawLinkType === "follows" ||
-                rawLinkType === "references" ||
-                rawLinkType === "contradicts" ||
-                rawLinkType === "supports" ||
-                rawLinkType === "related"
-                  ? rawLinkType
-                  : "related",
-              strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
-              reason: typeof link?.reason === "string" ? link.reason : undefined,
-            };
-          })
-          .filter((link: any) => link.targetId.length > 0);
-        log.debug(`suggested ${normalizedLinks.length} links`);
-        return { links: normalizedLinks };
-      }
-
-      return { links: [] };
+      const normalized = this.normalizeSuggestedLinksResult(
+        this.parseJsonObject(response.choices?.[0]?.message?.content),
+      );
+      log.debug(`suggested ${normalized.links.length} links`);
+      return normalized;
     } catch (err) {
       log.error("link suggestion failed", err);
       return { links: [] };
@@ -1927,39 +1898,10 @@ Respond with valid JSON matching this schema:
           ],
           { temperature: 0.3, maxTokens: 4096 },
         );
-        const fallbackContent = fallbackResponse?.content?.trim();
-        let fallbackParsed: any = null;
-        if (fallbackContent) {
-          for (const candidate of extractJsonCandidates(fallbackContent)) {
-            try {
-              fallbackParsed = JSON.parse(candidate);
-              break;
-            } catch {
-              // keep trying candidates
-            }
-          }
-        }
-        if (fallbackParsed) {
-          const normalized: MemorySummaryResult = {
-            summaryText:
-              typeof fallbackParsed.summaryText === "string"
-                ? fallbackParsed.summaryText
-                : typeof fallbackParsed.summary === "string"
-                  ? fallbackParsed.summary
-                  : "",
-            keyFacts: Array.isArray(fallbackParsed.keyFacts)
-              ? fallbackParsed.keyFacts.filter((f: unknown) => typeof f === "string")
-              : [],
-            keyEntities: Array.isArray(fallbackParsed.keyEntities)
-              ? fallbackParsed.keyEntities.filter((e: unknown) => typeof e === "string")
-              : Array.isArray(fallbackParsed.entities)
-                ? fallbackParsed.entities.filter((e: unknown) => typeof e === "string")
-                : [],
-          };
-          if (normalized.summaryText.length > 0) {
-            log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts via fallback`);
-            return normalized;
-          }
+        const normalized = this.normalizeMemorySummaryResult(this.parseJsonObject(fallbackResponse?.content));
+        if (normalized) {
+          log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts via fallback`);
+          return normalized;
         }
         log.warn("summarization skipped — no OpenAI API key and fallback unavailable");
         return null;
@@ -1975,38 +1917,12 @@ Respond with valid JSON matching this schema:
         max_tokens: 4096,
       });
 
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      let parsed: any = null;
-      if (rawContent) {
-        for (const candidate of extractJsonCandidates(rawContent)) {
-          try {
-            parsed = JSON.parse(candidate);
-            break;
-          } catch {
-            // keep trying candidates
-          }
-        }
-      }
-
-      if (parsed) {
-        const normalized: MemorySummaryResult = {
-          summaryText:
-            typeof parsed.summaryText === "string"
-              ? parsed.summaryText
-              : typeof parsed.summary === "string"
-                ? parsed.summary
-                : "",
-          keyFacts: Array.isArray(parsed.keyFacts) ? parsed.keyFacts.filter((f: unknown) => typeof f === "string") : [],
-          keyEntities: Array.isArray(parsed.keyEntities)
-            ? parsed.keyEntities.filter((e: unknown) => typeof e === "string")
-            : Array.isArray(parsed.entities)
-              ? parsed.entities.filter((e: unknown) => typeof e === "string")
-              : [],
-        };
-        if (normalized.summaryText.length > 0) {
-          log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts`);
-          return normalized;
-        }
+      const normalized = this.normalizeMemorySummaryResult(
+        this.parseJsonObject(response.choices?.[0]?.message?.content),
+      );
+      if (normalized) {
+        log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts`);
+        return normalized;
       }
 
       return null;
