@@ -2590,10 +2590,8 @@ export class Orchestrator {
           const knownEntities = await profileStorage.listEntityNames();
           const missing = findUnresolvedEntityRefs(snippets, [], knownEntities);
           if (missing.length > 0) {
-            const expansionLimit = this.config.memoryReconstructionMaxExpansions;
-            // Reserve slots: don't exceed recallResultLimit
-            const slotsAvailable = Math.max(0, recallResultLimit - memoryResults.length);
-            const budget = Math.min(expansionLimit, slotsAvailable);
+            // Allow up to maxExpansions supplementary entities on top of recall results
+            const budget = this.config.memoryReconstructionMaxExpansions;
             let expanded = 0;
             for (const entityName of missing.slice(0, budget)) {
               const raw = await profileStorage.readEntity(entityName);
