@@ -61,6 +61,24 @@ describe("resolveCoReferences", () => {
     const result = resolveCoReferences(fact, entities);
     assert.equal(result, "company-$uper runs the company");
   });
+
+  it("does not corrupt entity names containing pronoun substrings", () => {
+    const fact = "It crashed yesterday";
+    const entities: EntityMention[] = [
+      { name: "project-it-works", type: "project", facts: [] },
+    ];
+    const result = resolveCoReferences(fact, entities);
+    // "It" → project-it-works, but the "it" inside "project-it-works" must not be re-matched
+    assert.equal(result, "project-it-works crashed yesterday");
+  });
+
+  it("skips resolution when multiple pronouns would resolve to same single entity", () => {
+    const fact = "She told him the news";
+    const entities: EntityMention[] = [{ name: "person-alice", type: "person", facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    // Both "she" and "him" map to person type, but only one person exists — ambiguous
+    assert.equal(result, "She told him the news");
+  });
 });
 
 describe("anchorTemporalExpressions", () => {
