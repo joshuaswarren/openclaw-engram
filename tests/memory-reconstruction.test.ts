@@ -49,4 +49,13 @@ describe("findUnresolvedEntityRefs", () => {
     const missing = findUnresolvedEntityRefs(recalledSnippets, recalledEntityRefs, knownEntities);
     assert.equal(missing.length, 1);
   });
+
+  it("avoids substring false positives with longer entity names", () => {
+    const recalledSnippets = ["Met person-alice-chen at the conference"];
+    const recalledEntityRefs: string[] = [];
+    const knownEntities = ["person-alice", "person-alice-chen"];
+    const missing = findUnresolvedEntityRefs(recalledSnippets, recalledEntityRefs, knownEntities);
+    assert.ok(missing.includes("person-alice-chen"));
+    assert.ok(!missing.includes("person-alice"));
+  });
 });
