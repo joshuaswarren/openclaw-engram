@@ -150,7 +150,8 @@ export class ExtractionEngine {
     }
   }
 
-  private sanitizeExtractionResult(result: ExtractionResult): ExtractionResult {
+  private sanitizeExtractionResult(result: ExtractionResult, messageTimestamp?: Date): ExtractionResult {
+    const ts = messageTimestamp ?? new Date();
     const facts = result.facts.map((fact) => {
       const sanitized = sanitizeMemoryContent(fact.content);
       if (!sanitized.clean) {
@@ -159,7 +160,7 @@ export class ExtractionEngine {
       let content = sanitized.text;
       // De-linearize: resolve coreferences + anchor temporal expressions
       if (this.config.delinearizeEnabled) {
-        content = delinearize(content, result.entities, new Date());
+        content = delinearize(content, result.entities, ts);
       }
       return { ...fact, content };
     });
@@ -414,6 +415,10 @@ export class ExtractionEngine {
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     }
 
+    // Use the last turn's timestamp for temporal anchoring (more accurate than wall-clock)
+    const lastTurnTs = boundedTurns.length > 0 ? new Date(boundedTurns[boundedTurns.length - 1].timestamp) : undefined;
+    const messageTimestamp = lastTurnTs && !isNaN(lastTurnTs.getTime()) ? lastTurnTs : undefined;
+
     const traceId = crypto.randomUUID();
     this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
     const startTime = Date.now();
@@ -426,7 +431,7 @@ export class ExtractionEngine {
           const durationMs = Date.now() - startTime;
           this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "extraction", durationMs });
           log.debug(`extraction: used local LLM — ${localResult.facts.length} facts, ${localResult.entities.length} entities`);
-          const sanitized = this.sanitizeExtractionResult(localResult);
+          const sanitized = this.sanitizeExtractionResult(localResult, messageTimestamp);
           return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
         // Local failed, fall back if allowed
@@ -452,7 +457,7 @@ export class ExtractionEngine {
           const durationMs = Date.now() - startTime;
           this.emit({ kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs });
           log.debug(`extraction: used direct client (${this.config.model}) — ${directResult.facts.length} facts, ${directResult.entities.length} entities`);
-          const sanitized = this.sanitizeExtractionResult(directResult);
+          const sanitized = this.sanitizeExtractionResult(directResult, messageTimestamp);
           return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
         log.info("extraction: direct client returned no result, falling back to gateway AI");
@@ -490,7 +495,7 @@ export class ExtractionEngine {
           ...result,
           questions: result.questions ?? [],
           identityReflection: result.identityReflection ?? undefined,
-        } as ExtractionResult);
+        } as ExtractionResult, messageTimestamp);
         return await this.applyProactiveQuestionPass(conversation, sanitized);
       }
 

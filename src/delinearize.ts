@@ -54,11 +54,10 @@ export function resolveCoReferences(fact: string, entities: EntityMention[]): st
 
     matchingEntries.push({ pronoun, info, entity: candidates[0] });
 
-    // Track which referent groups target which entity type
-    for (const t of info.types) {
-      if (!typeToGroups.has(t)) typeToGroups.set(t, new Set());
-      typeToGroups.get(t)!.add(info.group);
-    }
+    // Track which referent groups target the matched entity's actual type (not all candidate types)
+    const matchedType = candidates[0].type;
+    if (!typeToGroups.has(matchedType)) typeToGroups.set(matchedType, new Set());
+    typeToGroups.get(matchedType)!.add(info.group);
   }
 
   // Determine which entity types have ambiguous multi-group references
