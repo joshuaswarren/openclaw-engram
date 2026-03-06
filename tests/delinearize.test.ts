@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resolveCoReferences, anchorTemporalExpressions } from "../src/delinearize.js";
+import type { EntityMention } from "../src/types.js";
 
 describe("resolveCoReferences", () => {
   it("replaces pronouns with entity names when unambiguous", () => {
@@ -29,7 +30,14 @@ describe("resolveCoReferences", () => {
 
   it("replaces possessive pronoun with entity's", () => {
     const fact = "His preferred stack is Python";
-    const entities = [{ name: "person-alice", type: "person" as const, facts: [] }];
+    const entities: EntityMention[] = [{ name: "person-alice", type: "person", facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    assert.equal(result, "person-alice's preferred stack is Python");
+  });
+
+  it("replaces 'her' as possessive with entity's", () => {
+    const fact = "Her preferred stack is Python";
+    const entities: EntityMention[] = [{ name: "person-alice", type: "person", facts: [] }];
     const result = resolveCoReferences(fact, entities);
     assert.equal(result, "person-alice's preferred stack is Python");
   });

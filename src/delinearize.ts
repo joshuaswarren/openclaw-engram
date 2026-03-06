@@ -5,11 +5,7 @@
  * by resolving coreferences and anchoring temporal expressions.
  */
 
-interface EntityRef {
-  name: string;
-  type: "person" | "project" | "tool" | "company" | "place" | "other";
-  facts: string[];
-}
+import type { EntityMention } from "./types.js";
 
 // possessive: true means the pronoun is a possessive form (his/her/its/their)
 // and should be replaced with "entity's" or "entity's" form.
@@ -17,7 +13,7 @@ const PRONOUN_MAP: Record<string, { types: string[]; possessive: boolean }> = {
   "he": { types: ["person"], possessive: false },
   "she": { types: ["person"], possessive: false },
   "him": { types: ["person"], possessive: false },
-  "her": { types: ["person"], possessive: false },
+  "her": { types: ["person"], possessive: true },
   "his": { types: ["person"], possessive: true },
   "they": { types: ["company", "project", "other"], possessive: false },
   "them": { types: ["company", "project", "other"], possessive: false },
@@ -33,7 +29,7 @@ const PRONOUN_MAP: Record<string, { types: string[]; possessive: boolean }> = {
  * Possessive pronouns (his/her/its/their) become "entity's".
  * No verb agreement is attempted — it's too fragile with adverbs/modals.
  */
-export function resolveCoReferences(fact: string, entities: EntityRef[]): string {
+export function resolveCoReferences(fact: string, entities: EntityMention[]): string {
   if (entities.length === 0) return fact;
 
   let result = fact;
@@ -135,7 +131,7 @@ export function anchorTemporalExpressions(fact: string, now: Date): string {
  */
 export function delinearize(
   factContent: string,
-  entities: EntityRef[],
+  entities: EntityMention[],
   timestamp: Date,
 ): string {
   let result = resolveCoReferences(factContent, entities);
