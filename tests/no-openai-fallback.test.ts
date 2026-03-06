@@ -115,6 +115,27 @@ test("suggestLinks preserves a valid empty fallback result when no links are sug
   assert.deepEqual(result, { links: [] });
 });
 
+test("suggestLinks returns null when fallback output cannot be parsed", async () => {
+  const engine = buildEngine();
+  let fallbackCalled = false;
+  (engine as any).fallbackLlm = {
+    chatCompletion: async () => {
+      fallbackCalled = true;
+      return {
+        content: "definitely not json",
+      };
+    },
+  };
+
+  const result = await engine.suggestLinks(
+    { category: "fact", content: "Standalone note with malformed fallback output" },
+    [{ id: "memory-10", category: "fact", content: "Potentially related prior fact" }],
+  );
+
+  assert.equal(fallbackCalled, true);
+  assert.equal(result, null);
+});
+
 test("summarizeMemories falls back to gateway AI when no OpenAI key is configured", async () => {
   const engine = buildEngine();
   let fallbackCalled = false;

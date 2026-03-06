@@ -1833,7 +1833,7 @@ Respond with valid JSON matching this schema:
           return normalized;
         }
         log.warn("link suggestion skipped — no OpenAI API key and fallback unavailable");
-        return { links: [] };
+        return null;
       }
 
       const response = await this.client.chat.completions.create({
@@ -1854,10 +1854,10 @@ Respond with valid JSON matching this schema:
         return normalized;
       }
 
-      return { links: [] };
+      return null;
     } catch (err) {
       log.error("link suggestion failed", err);
-      return { links: [] };
+      return null;
     }
   }
 
