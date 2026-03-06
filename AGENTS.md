@@ -322,7 +322,7 @@ In `openclaw.json`:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `openaiApiKey` | string | env var | OpenAI API key for GPT-5.2 |
+| `openaiApiKey` | string | env var | Optional OpenAI API key for direct-client paths; local/gateway fallback can run without it |
 | `memoryDir` | string | see above | Where to store memories |
 | `workspaceDir` | string | see above | Workspace root |
 | `qmdEnabled` | boolean | `true` | Enable QMD search |

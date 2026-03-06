@@ -134,7 +134,7 @@ export class ExtractionEngine {
       });
     } else {
       this.client = null;
-      log.warn("no OpenAI API key — extraction/consolidation disabled (retrieval still works)");
+      log.warn("no OpenAI API key — direct OpenAI client disabled; local and gateway fallback paths remain available");
     }
     this.localLlm = localLlm ?? new LocalLlmClient(config, modelRegistry);
     this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
@@ -222,6 +222,93 @@ export class ExtractionEngine {
           )
         : undefined,
     };
+  }
+
+  private parseJsonObject(content?: string | null): any | null {
+    const trimmed = content?.trim();
+    if (!trimmed) return null;
+
+    for (const candidate of extractJsonCandidates(trimmed)) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // keep trying candidates
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeContradictionVerificationResult(parsed: any): ContradictionVerificationResult | null {
+    if (!parsed || typeof parsed.isContradiction !== "boolean") return null;
+
+    const rawWhich = parsed.whichIsNewer ?? parsed.winner;
+    const normalizedWhich =
+      rawWhich === "first" || rawWhich === "existing"
+        ? "first"
+        : rawWhich === "second" || rawWhich === "new"
+          ? "second"
+          : "unclear";
+
+    return {
+      isContradiction: Boolean(parsed.isContradiction),
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+      reasoning:
+        typeof parsed.reasoning === "string"
+          ? parsed.reasoning
+          : typeof parsed.explanation === "string"
+            ? parsed.explanation
+            : "",
+      whichIsNewer: normalizedWhich,
+    };
+  }
+
+  private normalizeSuggestedLinksResult(parsed: any): SuggestedLinks | null {
+    if (!parsed || !Array.isArray(parsed.links)) {
+      return null;
+    }
+
+    const normalizedLinks = parsed.links
+      .map((link: any) => {
+        const rawLinkType = link?.linkType ?? link?.type;
+        return {
+          targetId: typeof link?.targetId === "string" ? link.targetId : "",
+          linkType:
+            rawLinkType === "follows" ||
+            rawLinkType === "references" ||
+            rawLinkType === "contradicts" ||
+            rawLinkType === "supports" ||
+            rawLinkType === "related"
+              ? rawLinkType
+              : "related",
+          strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
+          reason: typeof link?.reason === "string" ? link.reason : undefined,
+        };
+      })
+      .filter((link: any) => link.targetId.length > 0);
+
+    return { links: normalizedLinks };
+  }
+
+  private normalizeMemorySummaryResult(parsed: any): MemorySummaryResult | null {
+    if (!parsed) return null;
+
+    const normalized: MemorySummaryResult = {
+      summaryText:
+        typeof parsed.summaryText === "string"
+          ? parsed.summaryText
+          : typeof parsed.summary === "string"
+            ? parsed.summary
+            : "",
+      keyFacts: Array.isArray(parsed.keyFacts) ? parsed.keyFacts.filter((f: unknown) => typeof f === "string") : [],
+      keyEntities: Array.isArray(parsed.keyEntities)
+        ? parsed.keyEntities.filter((e: unknown) => typeof e === "string")
+        : Array.isArray(parsed.entities)
+          ? parsed.entities.filter((e: unknown) => typeof e === "string")
+          : [],
+    };
+
+    return normalized.summaryText.length > 0 ? normalized : null;
   }
 
   private sanitizeConsolidationResult(result: ConsolidationResult): ConsolidationResult {
@@ -1608,11 +1695,6 @@ Respond with valid JSON matching this schema:
     newMemory: { content: string; category: string },
     existingMemory: { id: string; content: string; category: string; created: string },
   ): Promise<ContradictionVerificationResult | null> {
-    if (!this.client) {
-      log.warn("contradiction verification skipped — no OpenAI API key");
-      return null;
-    }
-
     const input = `Memory 1 (existing, created ${existingMemory.created}):
 Category: ${existingMemory.category}
 Content: ${existingMemory.content}
@@ -1645,6 +1727,27 @@ Respond with valid JSON matching this schema:
   "whichIsNewer": "first"
 }`;
 
+      if (!this.client) {
+        const fallbackResponse = await this.fallbackLlm.chatCompletion(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: input },
+          ],
+          { temperature: 0.3, maxTokens: 2048 },
+        );
+        const normalized = this.normalizeContradictionVerificationResult(
+          this.parseJsonObject(fallbackResponse?.content),
+        );
+        if (normalized) {
+          log.debug(
+            `contradiction check via fallback: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
+          );
+          return normalized;
+        }
+        log.warn("contradiction verification skipped — no OpenAI API key and fallback unavailable");
+        return null;
+      }
+
       const response = await this.client.chat.completions.create({
         model: this.config.model,
         messages: [
@@ -1655,38 +1758,10 @@ Respond with valid JSON matching this schema:
         max_tokens: 2048,
       });
 
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      let parsed: any = null;
-      if (rawContent) {
-        for (const candidate of extractJsonCandidates(rawContent)) {
-          try {
-            parsed = JSON.parse(candidate);
-            break;
-          } catch {
-            // keep trying candidates
-          }
-        }
-      }
-
-      if (parsed && typeof parsed.isContradiction === "boolean") {
-        const rawWhich = parsed.whichIsNewer ?? parsed.winner;
-        const normalizedWhich =
-          rawWhich === "first" || rawWhich === "existing"
-            ? "first"
-            : rawWhich === "second" || rawWhich === "new"
-              ? "second"
-              : "unclear";
-        const normalized: ContradictionVerificationResult = {
-          isContradiction: Boolean(parsed.isContradiction),
-          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
-          reasoning:
-            typeof parsed.reasoning === "string"
-              ? parsed.reasoning
-              : typeof parsed.explanation === "string"
-                ? parsed.explanation
-                : "",
-          whichIsNewer: normalizedWhich,
-        };
+      const normalized = this.normalizeContradictionVerificationResult(
+        this.parseJsonObject(response.choices?.[0]?.message?.content),
+      );
+      if (normalized) {
         log.debug(
           `contradiction check: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
         );
@@ -1708,11 +1783,6 @@ Respond with valid JSON matching this schema:
     newMemory: { content: string; category: string },
     candidateMemories: Array<{ id: string; content: string; category: string }>,
   ): Promise<SuggestedLinks | null> {
-    if (!this.client) {
-      log.warn("link suggestion skipped — no OpenAI API key");
-      return null;
-    }
-
     if (candidateMemories.length === 0) {
       return { links: [] };
     }
@@ -1749,6 +1819,23 @@ Respond with valid JSON matching this schema:
   "links": [{"targetId": "memory-id", "linkType": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
 }`;
 
+      if (!this.client) {
+        const fallbackResponse = await this.fallbackLlm.chatCompletion(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: input },
+          ],
+          { temperature: 0.3, maxTokens: 2048 },
+        );
+        const normalized = this.normalizeSuggestedLinksResult(this.parseJsonObject(fallbackResponse?.content));
+        if (normalized) {
+          log.debug(`suggested ${normalized.links.length} links via fallback`);
+          return normalized;
+        }
+        log.warn("link suggestion skipped — no OpenAI API key and fallback unavailable");
+        return null;
+      }
+
       const response = await this.client.chat.completions.create({
         model: this.config.model,
         messages: [
@@ -1759,46 +1846,18 @@ Respond with valid JSON matching this schema:
         max_tokens: 2048,
       });
 
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      let parsed: any = null;
-      if (rawContent) {
-        for (const candidate of extractJsonCandidates(rawContent)) {
-          try {
-            parsed = JSON.parse(candidate);
-            break;
-          } catch {
-            // keep trying candidates
-          }
-        }
+      const normalized = this.normalizeSuggestedLinksResult(
+        this.parseJsonObject(response.choices?.[0]?.message?.content),
+      );
+      if (normalized) {
+        log.debug(`suggested ${normalized.links.length} links`);
+        return normalized;
       }
 
-      if (parsed && Array.isArray(parsed.links)) {
-        const normalizedLinks = parsed.links
-          .map((link: any) => {
-            const rawLinkType = link?.linkType ?? link?.type;
-            return {
-              targetId: typeof link?.targetId === "string" ? link.targetId : "",
-              linkType:
-                rawLinkType === "follows" ||
-                rawLinkType === "references" ||
-                rawLinkType === "contradicts" ||
-                rawLinkType === "supports" ||
-                rawLinkType === "related"
-                  ? rawLinkType
-                  : "related",
-              strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
-              reason: typeof link?.reason === "string" ? link.reason : undefined,
-            };
-          })
-          .filter((link: any) => link.targetId.length > 0);
-        log.debug(`suggested ${normalizedLinks.length} links`);
-        return { links: normalizedLinks };
-      }
-
-      return { links: [] };
+      return null;
     } catch (err) {
       log.error("link suggestion failed", err);
-      return { links: [] };
+      return null;
     }
   }
 
@@ -1808,11 +1867,6 @@ Respond with valid JSON matching this schema:
   async summarizeMemories(
     memories: Array<{ id: string; content: string; category: string; created: string }>,
   ): Promise<MemorySummaryResult | null> {
-    if (!this.client) {
-      log.warn("summarization skipped — no OpenAI API key");
-      return null;
-    }
-
     if (memories.length === 0) return null;
 
     const memoryList = memories
@@ -1840,6 +1894,23 @@ Respond with valid JSON matching this schema:
   "keyEntities": ["entity-1", "entity-2"]
 }`;
 
+      if (!this.client) {
+        const fallbackResponse = await this.fallbackLlm.chatCompletion(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
+          ],
+          { temperature: 0.3, maxTokens: 4096 },
+        );
+        const normalized = this.normalizeMemorySummaryResult(this.parseJsonObject(fallbackResponse?.content));
+        if (normalized) {
+          log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts via fallback`);
+          return normalized;
+        }
+        log.warn("summarization skipped — no OpenAI API key and fallback unavailable");
+        return null;
+      }
+
       const response = await this.client.chat.completions.create({
         model: this.config.model,
         messages: [
@@ -1850,38 +1921,12 @@ Respond with valid JSON matching this schema:
         max_tokens: 4096,
       });
 
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      let parsed: any = null;
-      if (rawContent) {
-        for (const candidate of extractJsonCandidates(rawContent)) {
-          try {
-            parsed = JSON.parse(candidate);
-            break;
-          } catch {
-            // keep trying candidates
-          }
-        }
-      }
-
-      if (parsed) {
-        const normalized: MemorySummaryResult = {
-          summaryText:
-            typeof parsed.summaryText === "string"
-              ? parsed.summaryText
-              : typeof parsed.summary === "string"
-                ? parsed.summary
-                : "",
-          keyFacts: Array.isArray(parsed.keyFacts) ? parsed.keyFacts.filter((f: unknown) => typeof f === "string") : [],
-          keyEntities: Array.isArray(parsed.keyEntities)
-            ? parsed.keyEntities.filter((e: unknown) => typeof e === "string")
-            : Array.isArray(parsed.entities)
-              ? parsed.entities.filter((e: unknown) => typeof e === "string")
-              : [],
-        };
-        if (normalized.summaryText.length > 0) {
-          log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts`);
-          return normalized;
-        }
+      const normalized = this.normalizeMemorySummaryResult(
+        this.parseJsonObject(response.choices?.[0]?.message?.content),
+      );
+      if (normalized) {
+        log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts`);
+        return normalized;
       }
 
       return null;
