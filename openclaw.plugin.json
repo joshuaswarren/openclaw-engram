@@ -972,8 +972,7 @@
       },
       "localLlmFastUrl": {
         "type": "string",
-        "default": "http://localhost:1234/v1",
-        "description": "Endpoint for the fast-tier local LLM. Defaults to the same endpoint as localLlmUrl."
+        "description": "Endpoint for the fast-tier local LLM. Defaults to the same endpoint as localLlmUrl when not set."
       },
       "localLlmFastTimeoutMs": {
         "type": "number",
@@ -1987,8 +1986,8 @@
     "localLlmFastUrl": {
       "label": "Fast LLM URL",
       "advanced": true,
-      "placeholder": "(same as localLlmUrl)",
-      "help": "Endpoint for fast-tier model. Defaults to the primary localLlmUrl."
+      "placeholder": "(defaults to localLlmUrl)",
+      "help": "Endpoint for fast-tier model. When not set, inherits the primary localLlmUrl."
     },
     "localLlmFastTimeoutMs": {
       "label": "Fast LLM Timeout (ms)",
