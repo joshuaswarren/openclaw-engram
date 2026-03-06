@@ -9,6 +9,9 @@ import {
   IdentityConsolidationResultSchema,
   buildProfileConsolidationResultSchema,
   ProactiveQuestionsResultSchema,
+  ContradictionVerificationSchema,
+  SuggestedLinksSchema,
+  MemorySummarySchema,
   type ContradictionVerificationResult,
   type SuggestedLinks,
   type MemorySummaryResult,
@@ -134,7 +137,7 @@ export class ExtractionEngine {
       });
     } else {
       this.client = null;
-      log.warn("no OpenAI API key — extraction/consolidation disabled (retrieval still works)");
+      log.warn("no OpenAI API key — direct OpenAI client disabled; local and gateway fallback paths remain available");
     }
     this.localLlm = localLlm ?? new LocalLlmClient(config, modelRegistry);
     this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
@@ -1608,11 +1611,6 @@ Respond with valid JSON matching this schema:
     newMemory: { content: string; category: string },
     existingMemory: { id: string; content: string; category: string; created: string },
   ): Promise<ContradictionVerificationResult | null> {
-    if (!this.client) {
-      log.warn("contradiction verification skipped — no OpenAI API key");
-      return null;
-    }
-
     const input = `Memory 1 (existing, created ${existingMemory.created}):
 Category: ${existingMemory.category}
 Content: ${existingMemory.content}
@@ -1644,6 +1642,25 @@ Respond with valid JSON matching this schema:
   "reasoning": "why they contradict or don't",
   "whichIsNewer": "first"
 }`;
+
+      if (!this.client) {
+        const fallbackResult = await this.fallbackLlm.parseWithSchema(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: input },
+          ],
+          ContradictionVerificationSchema,
+          { temperature: 0.3, maxTokens: 2048 },
+        );
+        if (fallbackResult) {
+          log.debug(
+            `contradiction check via fallback: ${fallbackResult.isContradiction ? "YES" : "NO"} (confidence: ${fallbackResult.confidence})`,
+          );
+          return fallbackResult;
+        }
+        log.warn("contradiction verification skipped — no OpenAI API key and fallback unavailable");
+        return null;
+      }
 
       const response = await this.client.chat.completions.create({
         model: this.config.model,
@@ -1708,11 +1725,6 @@ Respond with valid JSON matching this schema:
     newMemory: { content: string; category: string },
     candidateMemories: Array<{ id: string; content: string; category: string }>,
   ): Promise<SuggestedLinks | null> {
-    if (!this.client) {
-      log.warn("link suggestion skipped — no OpenAI API key");
-      return null;
-    }
-
     if (candidateMemories.length === 0) {
       return { links: [] };
     }
@@ -1748,6 +1760,23 @@ Respond with valid JSON matching this schema:
 {
   "links": [{"targetId": "memory-id", "linkType": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
 }`;
+
+      if (!this.client) {
+        const fallbackResult = await this.fallbackLlm.parseWithSchema(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: input },
+          ],
+          SuggestedLinksSchema,
+          { temperature: 0.3, maxTokens: 2048 },
+        );
+        if (fallbackResult) {
+          log.debug(`suggested ${fallbackResult.links.length} links via fallback`);
+          return fallbackResult;
+        }
+        log.warn("link suggestion skipped — no OpenAI API key and fallback unavailable");
+        return { links: [] };
+      }
 
       const response = await this.client.chat.completions.create({
         model: this.config.model,
@@ -1808,11 +1837,6 @@ Respond with valid JSON matching this schema:
   async summarizeMemories(
     memories: Array<{ id: string; content: string; category: string; created: string }>,
   ): Promise<MemorySummaryResult | null> {
-    if (!this.client) {
-      log.warn("summarization skipped — no OpenAI API key");
-      return null;
-    }
-
     if (memories.length === 0) return null;
 
     const memoryList = memories
@@ -1839,6 +1863,23 @@ Respond with valid JSON matching this schema:
   "keyFacts": ["fact 1", "fact 2"],
   "keyEntities": ["entity-1", "entity-2"]
 }`;
+
+      if (!this.client) {
+        const fallbackResult = await this.fallbackLlm.parseWithSchema(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
+          ],
+          MemorySummarySchema,
+          { temperature: 0.3, maxTokens: 4096 },
+        );
+        if (fallbackResult) {
+          log.debug(`summarized ${memories.length} memories into ${fallbackResult.keyFacts.length} key facts via fallback`);
+          return fallbackResult;
+        }
+        log.warn("summarization skipped — no OpenAI API key and fallback unavailable");
+        return null;
+      }
 
       const response = await this.client.chat.completions.create({
         model: this.config.model,

@@ -138,13 +138,13 @@ openclaw engram policy-status                # Lifecycle policy snapshot
 
 ## Configuration
 
-All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`. Only `openaiApiKey` is required — everything else has sensible defaults.
+All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`. `openaiApiKey` is optional when local LLM or gateway fallback paths are available.
 
 Key settings:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `openaiApiKey` | `(env fallback)` | OpenAI API key or `${ENV_VAR}` reference |
+| `openaiApiKey` | `(env fallback)` | Optional OpenAI API key or `${ENV_VAR}` reference for direct-client paths |
 | `model` | `gpt-5.2` | LLM model for extraction |
 | `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
 | `qmdEnabled` | `true` | Enable QMD hybrid search |
