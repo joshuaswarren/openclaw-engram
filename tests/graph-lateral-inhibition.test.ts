@@ -37,6 +37,13 @@ describe("applyLateralInhibition", () => {
     }
   });
 
+  it("is a no-op when topM is zero", () => {
+    const scores = new Map([["a", 0.5], ["b", 0.3]]);
+    const result = applyLateralInhibition(scores, { beta: 0.15, topM: 0 });
+    assert.equal(result.get("a"), scores.get("a"));
+    assert.equal(result.get("b"), scores.get("b"));
+  });
+
   it("is a no-op when beta is zero", () => {
     const scores = new Map([["a", 0.5], ["b", 0.3]]);
     const result = applyLateralInhibition(scores, { beta: 0, topM: 7 });

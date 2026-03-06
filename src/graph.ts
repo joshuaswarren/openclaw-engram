@@ -480,7 +480,7 @@ export function applyLateralInhibition(
   opts: { beta: number; topM: number },
 ): Map<string, number> {
   const { beta, topM } = opts;
-  if (beta === 0) return new Map(scores);
+  if (beta === 0 || topM === 0) return new Map(scores);
 
   const gamma = 10;
   const theta = 0.3;
