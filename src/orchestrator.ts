@@ -2567,16 +2567,19 @@ export class Orchestrator {
         log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
       }
 
-      memoryResults = memoryResults.slice(0, recallResultLimit);
-
-      // Synapse-inspired confidence gate: reject low-confidence recall
+      // Synapse-inspired confidence gate: check scores BEFORE slicing so
+      // reranking doesn't affect which score the gate evaluates.
+      let confidenceGateRejected = false;
       if (
         this.config.recallConfidenceGateEnabled &&
         shouldRejectLowConfidenceRecall(memoryResults, this.config.recallConfidenceGateThreshold)
       ) {
         log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score below ${this.config.recallConfidenceGateThreshold})`);
         memoryResults = [];
+        confidenceGateRejected = true;
       }
+
+      memoryResults = memoryResults.slice(0, recallResultLimit);
 
       if (memoryResults.length > 0) {
         recallSource = "hot_qmd";
@@ -2594,7 +2597,10 @@ export class Orchestrator {
           },
         });
         impressionRecorded = true;
-      } else {
+      } else if (!confidenceGateRejected) {
+        // Only attempt fallback paths if the confidence gate did NOT fire.
+        // When the gate rejects, all recall pathways are skipped to prevent
+        // low-relevance results from polluting context.
         const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
         const scopedCandidates = filterRecallCandidates(embeddingResults, {
           namespacesEnabled: this.config.namespacesEnabled,
