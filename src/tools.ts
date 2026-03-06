@@ -1162,8 +1162,8 @@ Best for:
         category: Type.Optional(
           Type.String({
             description:
-              'Category: "fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill" (default: "fact")',
-            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"],
+              'Category: "fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule" (default: "fact")',
+            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"],
           }),
         ),
         tags: Type.Optional(
