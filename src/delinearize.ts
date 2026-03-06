@@ -41,9 +41,11 @@ export function resolveCoReferences(fact: string, entities: EntityMention[]): st
     if (candidates.length !== 1) continue;
 
     const entityName = candidates[0].name;
-    const replacement = info.possessive ? `${entityName}'s` : entityName;
+    // Escape $ in entity names to prevent special replacement sequences ($&, $`, $')
+    const safeEntityName = entityName.replace(/\$/g, "$$$$");
+    const replacement = info.possessive ? `${safeEntityName}'s` : safeEntityName;
     result = result.replace(
-      new RegExp(`\\b${pronoun}\\b`, "i"),
+      new RegExp(`\\b${pronoun}\\b`, "gi"),
       replacement,
     );
   }

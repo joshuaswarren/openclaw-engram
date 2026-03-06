@@ -47,6 +47,20 @@ describe("resolveCoReferences", () => {
     const result = resolveCoReferences(fact, []);
     assert.equal(result, "He said something");
   });
+
+  it("replaces all occurrences of a pronoun, not just the first", () => {
+    const fact = "He said he prefers TypeScript";
+    const entities: EntityMention[] = [{ name: "person-bob", type: "person", facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    assert.equal(result, "person-bob said person-bob prefers TypeScript");
+  });
+
+  it("handles entity names containing $ without corruption", () => {
+    const fact = "He runs the company";
+    const entities: EntityMention[] = [{ name: "company-$uper", type: "person", facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    assert.equal(result, "company-$uper runs the company");
+  });
 });
 
 describe("anchorTemporalExpressions", () => {
