@@ -2586,15 +2586,16 @@ export class Orchestrator {
       if (this.config.memoryReconstructionEnabled && memoryResults.length > 0) {
         try {
           const snippets = memoryResults.map((r) => r.snippet);
-          const entityRefs = memoryResults
-            .map((r) => (r as any).entityRef as string | undefined)
-            .filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
+          // Entity refs from QMD results aren't available — rely on text-based detection only
           const knownEntities = await profileStorage.listEntityNames();
-          const missing = findUnresolvedEntityRefs(snippets, entityRefs, knownEntities);
+          const missing = findUnresolvedEntityRefs(snippets, [], knownEntities);
           if (missing.length > 0) {
             const expansionLimit = this.config.memoryReconstructionMaxExpansions;
+            // Reserve slots: don't exceed recallResultLimit
+            const slotsAvailable = Math.max(0, recallResultLimit - memoryResults.length);
+            const budget = Math.min(expansionLimit, slotsAvailable);
             let expanded = 0;
-            for (const entityName of missing.slice(0, expansionLimit)) {
+            for (const entityName of missing.slice(0, budget)) {
               const raw = await profileStorage.readEntity(entityName);
               if (raw && raw.length > 0) {
                 const snippet = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;

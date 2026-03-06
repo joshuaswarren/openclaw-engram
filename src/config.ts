@@ -860,7 +860,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     causalRuleExtractionEnabled: cfg.causalRuleExtractionEnabled === true,
     memoryReconstructionEnabled: cfg.memoryReconstructionEnabled === true,
     memoryReconstructionMaxExpansions:
-      typeof cfg.memoryReconstructionMaxExpansions === "number" ? cfg.memoryReconstructionMaxExpansions : 3,
+      typeof cfg.memoryReconstructionMaxExpansions === "number" ? Math.max(0, cfg.memoryReconstructionMaxExpansions) : 3,
     graphLateralInhibitionEnabled: cfg.graphLateralInhibitionEnabled !== false,
     graphLateralInhibitionBeta:
       typeof cfg.graphLateralInhibitionBeta === "number"
