@@ -94,7 +94,9 @@ const TEMPORAL_PATTERNS: Array<{
     pattern: /\blast month\b/gi,
     replace: (now) => {
       const d = new Date(now);
-      d.setMonth(d.getMonth() - 1);
+      const targetMonth = d.getMonth() - 1;
+      d.setDate(1); // avoid overflow (e.g. Mar 31 → Feb 31 → Mar 3)
+      d.setMonth(targetMonth);
       return `around ${formatDate(d)}`;
     },
   },
