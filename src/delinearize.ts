@@ -61,7 +61,42 @@ function formatDate(d: Date): string {
 const TEMPORAL_PATTERNS: Array<{
   pattern: RegExp;
   replace: (now: Date) => string;
+// Compound patterns first (longer matches before shorter to avoid partial replacement)
 }> = [
+  {
+    pattern: /\bearlier today\b/gi,
+    replace: (now) => `earlier on ${formatDate(now)}`,
+  },
+  {
+    pattern: /\bthis morning\b/gi,
+    replace: (now) => `on the morning of ${formatDate(now)}`,
+  },
+  {
+    pattern: /\bthis afternoon\b/gi,
+    replace: (now) => `on the afternoon of ${formatDate(now)}`,
+  },
+  {
+    pattern: /\bthis evening\b/gi,
+    replace: (now) => `on the evening of ${formatDate(now)}`,
+  },
+  {
+    pattern: /\blast week\b/gi,
+    replace: (now) => {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 7);
+      return `around ${formatDate(d)}`;
+    },
+  },
+  {
+    pattern: /\blast month\b/gi,
+    replace: (now) => {
+      const d = new Date(now);
+      d.setUTCDate(1); // avoid overflow (e.g. Mar 31 → Feb 31 → Mar 3)
+      d.setUTCMonth(d.getUTCMonth() - 1);
+      return `around ${formatDate(d)}`;
+    },
+  },
+  // Simple patterns last
   {
     pattern: /\byesterday\b/gi,
     replace: (now) => {
@@ -81,39 +116,6 @@ const TEMPORAL_PATTERNS: Array<{
       d.setUTCDate(d.getUTCDate() + 1);
       return `on ${formatDate(d)}`;
     },
-  },
-  {
-    pattern: /\blast week\b/gi,
-    replace: (now) => {
-      const d = new Date(now);
-      d.setUTCDate(d.getUTCDate() - 7);
-      return `around ${formatDate(d)}`;
-    },
-  },
-  {
-    pattern: /\blast month\b/gi,
-    replace: (now) => {
-      const d = new Date(now);
-      d.setUTCDate(1); // avoid overflow (e.g. Mar 31 → Feb 31 → Mar 3)
-      d.setUTCMonth(d.getUTCMonth() - 1);
-      return `around ${formatDate(d)}`;
-    },
-  },
-  {
-    pattern: /\bthis morning\b/gi,
-    replace: (now) => `on the morning of ${formatDate(now)}`,
-  },
-  {
-    pattern: /\bthis afternoon\b/gi,
-    replace: (now) => `on the afternoon of ${formatDate(now)}`,
-  },
-  {
-    pattern: /\bthis evening\b/gi,
-    replace: (now) => `on the evening of ${formatDate(now)}`,
-  },
-  {
-    pattern: /\bearlier today\b/gi,
-    replace: (now) => `earlier on ${formatDate(now)}`,
   },
 ];
 
