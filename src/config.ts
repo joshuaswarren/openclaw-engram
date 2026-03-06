@@ -856,6 +856,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.recallConfidenceGateThreshold === "number"
         ? Math.max(0, Math.min(1, cfg.recallConfidenceGateThreshold))
         : 0.12,
+    causalRuleExtractionEnabled: cfg.causalRuleExtractionEnabled === true,
     graphLateralInhibitionEnabled: cfg.graphLateralInhibitionEnabled !== false,
     graphLateralInhibitionBeta:
       typeof cfg.graphLateralInhibitionBeta === "number"
