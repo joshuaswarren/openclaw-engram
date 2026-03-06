@@ -21,13 +21,15 @@ test("verifyContradiction falls back to gateway AI when no OpenAI key is configu
   const engine = buildEngine();
   let fallbackCalled = false;
   (engine as any).fallbackLlm = {
-    parseWithSchema: async () => {
+    chatCompletion: async () => {
       fallbackCalled = true;
       return {
-        isContradiction: true,
-        confidence: 0.9,
-        reasoning: "these cannot both be true",
-        whichIsNewer: "second",
+        content: JSON.stringify({
+          isContradiction: true,
+          confidence: 0.9,
+          explanation: "these cannot both be true",
+          winner: "new",
+        }),
       };
     },
   };
@@ -55,17 +57,19 @@ test("suggestLinks falls back to gateway AI when no OpenAI key is configured", a
   const engine = buildEngine();
   let fallbackCalled = false;
   (engine as any).fallbackLlm = {
-    parseWithSchema: async () => {
+    chatCompletion: async () => {
       fallbackCalled = true;
       return {
-        links: [
-          {
-            targetId: "memory-2",
-            linkType: "supports",
-            strength: 0.81,
-            reason: "same project, stronger evidence",
-          },
-        ],
+        content: JSON.stringify({
+          links: [
+            {
+              targetId: "memory-2",
+              type: "supports",
+              strength: 0.81,
+              reason: "same project, stronger evidence",
+            },
+          ],
+        }),
       };
     },
   };
@@ -92,12 +96,14 @@ test("summarizeMemories falls back to gateway AI when no OpenAI key is configure
   const engine = buildEngine();
   let fallbackCalled = false;
   (engine as any).fallbackLlm = {
-    parseWithSchema: async () => {
+    chatCompletion: async () => {
       fallbackCalled = true;
       return {
-        summaryText: "Two shipping incidents point to carrier reliability issues.",
-        keyFacts: ["Carrier outage delayed shipments", "Customers were notified about delays"],
-        keyEntities: ["carrier", "customers"],
+        content: JSON.stringify({
+          summary: "Two shipping incidents point to carrier reliability issues.",
+          keyFacts: ["Carrier outage delayed shipments", "Customers were notified about delays"],
+          entities: ["carrier", "customers"],
+        }),
       };
     },
   };

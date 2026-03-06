@@ -9,9 +9,6 @@ import {
   IdentityConsolidationResultSchema,
   buildProfileConsolidationResultSchema,
   ProactiveQuestionsResultSchema,
-  ContradictionVerificationSchema,
-  SuggestedLinksSchema,
-  MemorySummarySchema,
   type ContradictionVerificationResult,
   type SuggestedLinks,
   type MemorySummaryResult,
@@ -1644,19 +1641,48 @@ Respond with valid JSON matching this schema:
 }`;
 
       if (!this.client) {
-        const fallbackResult = await this.fallbackLlm.parseWithSchema(
+        const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: input },
           ],
-          ContradictionVerificationSchema,
           { temperature: 0.3, maxTokens: 2048 },
         );
-        if (fallbackResult) {
+        const fallbackContent = fallbackResponse?.content?.trim();
+        let fallbackParsed: any = null;
+        if (fallbackContent) {
+          for (const candidate of extractJsonCandidates(fallbackContent)) {
+            try {
+              fallbackParsed = JSON.parse(candidate);
+              break;
+            } catch {
+              // keep trying candidates
+            }
+          }
+        }
+        if (fallbackParsed && typeof fallbackParsed.isContradiction === "boolean") {
+          const rawWhich = fallbackParsed.whichIsNewer ?? fallbackParsed.winner;
+          const normalizedWhich =
+            rawWhich === "first" || rawWhich === "existing"
+              ? "first"
+              : rawWhich === "second" || rawWhich === "new"
+                ? "second"
+                : "unclear";
+          const normalized: ContradictionVerificationResult = {
+            isContradiction: Boolean(fallbackParsed.isContradiction),
+            confidence: typeof fallbackParsed.confidence === "number" ? fallbackParsed.confidence : 0.5,
+            reasoning:
+              typeof fallbackParsed.reasoning === "string"
+                ? fallbackParsed.reasoning
+                : typeof fallbackParsed.explanation === "string"
+                  ? fallbackParsed.explanation
+                  : "",
+            whichIsNewer: normalizedWhich,
+          };
           log.debug(
-            `contradiction check via fallback: ${fallbackResult.isContradiction ? "YES" : "NO"} (confidence: ${fallbackResult.confidence})`,
+            `contradiction check via fallback: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
           );
-          return fallbackResult;
+          return normalized;
         }
         log.warn("contradiction verification skipped — no OpenAI API key and fallback unavailable");
         return null;
@@ -1762,17 +1788,46 @@ Respond with valid JSON matching this schema:
 }`;
 
       if (!this.client) {
-        const fallbackResult = await this.fallbackLlm.parseWithSchema(
+        const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: input },
           ],
-          SuggestedLinksSchema,
           { temperature: 0.3, maxTokens: 2048 },
         );
-        if (fallbackResult) {
-          log.debug(`suggested ${fallbackResult.links.length} links via fallback`);
-          return fallbackResult;
+        const fallbackContent = fallbackResponse?.content?.trim();
+        let fallbackParsed: any = null;
+        if (fallbackContent) {
+          for (const candidate of extractJsonCandidates(fallbackContent)) {
+            try {
+              fallbackParsed = JSON.parse(candidate);
+              break;
+            } catch {
+              // keep trying candidates
+            }
+          }
+        }
+        if (fallbackParsed && Array.isArray(fallbackParsed.links)) {
+          const normalizedLinks = fallbackParsed.links
+            .map((link: any) => {
+              const rawLinkType = link?.linkType ?? link?.type;
+              return {
+                targetId: typeof link?.targetId === "string" ? link.targetId : "",
+                linkType:
+                  rawLinkType === "follows" ||
+                  rawLinkType === "references" ||
+                  rawLinkType === "contradicts" ||
+                  rawLinkType === "supports" ||
+                  rawLinkType === "related"
+                    ? rawLinkType
+                    : "related",
+                strength: typeof link?.strength === "number" ? Math.max(0, Math.min(1, link.strength)) : 0.5,
+                reason: typeof link?.reason === "string" ? link.reason : undefined,
+              };
+            })
+            .filter((link: any) => link.targetId.length > 0);
+          log.debug(`suggested ${normalizedLinks.length} links via fallback`);
+          return { links: normalizedLinks };
         }
         log.warn("link suggestion skipped — no OpenAI API key and fallback unavailable");
         return { links: [] };
@@ -1865,17 +1920,46 @@ Respond with valid JSON matching this schema:
 }`;
 
       if (!this.client) {
-        const fallbackResult = await this.fallbackLlm.parseWithSchema(
+        const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
           ],
-          MemorySummarySchema,
           { temperature: 0.3, maxTokens: 4096 },
         );
-        if (fallbackResult) {
-          log.debug(`summarized ${memories.length} memories into ${fallbackResult.keyFacts.length} key facts via fallback`);
-          return fallbackResult;
+        const fallbackContent = fallbackResponse?.content?.trim();
+        let fallbackParsed: any = null;
+        if (fallbackContent) {
+          for (const candidate of extractJsonCandidates(fallbackContent)) {
+            try {
+              fallbackParsed = JSON.parse(candidate);
+              break;
+            } catch {
+              // keep trying candidates
+            }
+          }
+        }
+        if (fallbackParsed) {
+          const normalized: MemorySummaryResult = {
+            summaryText:
+              typeof fallbackParsed.summaryText === "string"
+                ? fallbackParsed.summaryText
+                : typeof fallbackParsed.summary === "string"
+                  ? fallbackParsed.summary
+                  : "",
+            keyFacts: Array.isArray(fallbackParsed.keyFacts)
+              ? fallbackParsed.keyFacts.filter((f: unknown) => typeof f === "string")
+              : [],
+            keyEntities: Array.isArray(fallbackParsed.keyEntities)
+              ? fallbackParsed.keyEntities.filter((e: unknown) => typeof e === "string")
+              : Array.isArray(fallbackParsed.entities)
+                ? fallbackParsed.entities.filter((e: unknown) => typeof e === "string")
+                : [],
+          };
+          if (normalized.summaryText.length > 0) {
+            log.debug(`summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts via fallback`);
+            return normalized;
+          }
         }
         log.warn("summarization skipped — no OpenAI API key and fallback unavailable");
         return null;
