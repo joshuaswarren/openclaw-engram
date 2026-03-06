@@ -35,11 +35,11 @@ describe("resolveCoReferences", () => {
     assert.equal(result, "person-alice's preferred stack is Python");
   });
 
-  it("replaces 'her' as possessive with entity's", () => {
+  it("leaves 'her' unchanged because it is ambiguous (object vs possessive)", () => {
     const fact = "Her preferred stack is Python";
     const entities: EntityMention[] = [{ name: "person-alice", type: "person", facts: [] }];
     const result = resolveCoReferences(fact, entities);
-    assert.equal(result, "person-alice's preferred stack is Python");
+    assert.equal(result, "Her preferred stack is Python"); // ambiguous — no replacement
   });
 
   it("leaves facts unchanged when no entities provided", () => {
