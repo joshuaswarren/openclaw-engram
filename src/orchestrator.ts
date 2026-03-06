@@ -597,6 +597,7 @@ export class Orchestrator {
   readonly sessionObserver: SessionObserverState;
   readonly summarizer: HourlySummarizer;
   readonly localLlm: LocalLlmClient;
+  readonly fastLlm: LocalLlmClient;
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
@@ -715,6 +716,12 @@ export class Orchestrator {
     this.policyRuntime = new PolicyRuntimeManager(config.memoryDir, config);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
+    this.fastLlm = config.localLlmFastEnabled
+      ? new LocalLlmClient(
+          { ...config, localLlmModel: config.localLlmFastModel || config.localLlmModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
+          this.modelRegistry,
+        )
+      : this.localLlm;
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
     this.threading = new ThreadingManager(
       path.join(config.memoryDir, "threads"),
@@ -2541,7 +2548,7 @@ export class Orchestrator {
             id: r.path,
             snippet: r.snippet || r.path,
           })),
-          local: this.localLlm,
+          local: this.fastLlm,
           enabled: true,
           timeoutMs: this.config.rerankTimeoutMs,
           maxCandidates: this.config.rerankMaxCandidates,
@@ -4414,7 +4421,7 @@ export class Orchestrator {
           try {
             const factsText = entity.facts.slice(0, 10).join("; ");
             const prompt = `Summarize this entity in one sentence. Entity: ${entity.name} (${entity.type}). Facts: ${factsText}`;
-            const response = await this.localLlm.chatCompletion(
+            const response = await this.fastLlm.chatCompletion(
               [
                 { role: "system", content: "Respond with a single concise sentence summarizing the entity. No JSON, just plain text." },
                 { role: "user", content: prompt },
@@ -4544,7 +4551,7 @@ export class Orchestrator {
           }));
         await this.tmtBuilder.maybeRebuildNodes(tmtEntries, async (texts, level) => {
           const prompt = `You are a memory archivist. Summarize the following ${level}-level memories into 3–5 sentences, preserving key facts, decisions, and preferences.\n\n${texts.map((t, i) => `[${i + 1}] ${t}`).join("\n\n")}`;
-          const response = await this.localLlm.chatCompletion(
+          const response = await this.fastLlm.chatCompletion(
             [
               { role: "system", content: "Respond with a 3–5 sentence narrative summary. No JSON, just plain prose." },
               { role: "user", content: prompt },
@@ -4622,7 +4629,7 @@ export class Orchestrator {
           JSON.stringify(baseline),
         ].join("\n");
 
-        const response = await this.localLlm.chatCompletion(
+        const response = await this.fastLlm.chatCompletion(
           [
             { role: "system", content: "Respond with strict JSON only. No markdown." },
             { role: "user", content: prompt },
@@ -5432,7 +5439,7 @@ export class Orchestrator {
           id: r.path,
           snippet: r.snippet || r.path,
         })),
-        local: this.localLlm,
+        local: this.fastLlm,
         enabled: true,
         timeoutMs: this.config.rerankTimeoutMs,
         maxCandidates: this.config.rerankMaxCandidates,
