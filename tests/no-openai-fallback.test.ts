@@ -92,6 +92,29 @@ test("suggestLinks falls back to gateway AI when no OpenAI key is configured", a
   });
 });
 
+test("suggestLinks preserves a valid empty fallback result when no links are suggested", async () => {
+  const engine = buildEngine();
+  let fallbackCalled = false;
+  (engine as any).fallbackLlm = {
+    chatCompletion: async () => {
+      fallbackCalled = true;
+      return {
+        content: JSON.stringify({
+          links: [],
+        }),
+      };
+    },
+  };
+
+  const result = await engine.suggestLinks(
+    { category: "fact", content: "Standalone note with no clear relation" },
+    [{ id: "memory-9", category: "fact", content: "Unrelated prior fact" }],
+  );
+
+  assert.equal(fallbackCalled, true);
+  assert.deepEqual(result, { links: [] });
+});
+
 test("summarizeMemories falls back to gateway AI when no OpenAI key is configured", async () => {
   const engine = buildEngine();
   let fallbackCalled = false;

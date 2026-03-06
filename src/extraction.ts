@@ -263,9 +263,9 @@ export class ExtractionEngine {
     };
   }
 
-  private normalizeSuggestedLinksResult(parsed: any): SuggestedLinks {
+  private normalizeSuggestedLinksResult(parsed: any): SuggestedLinks | null {
     if (!parsed || !Array.isArray(parsed.links)) {
-      return { links: [] };
+      return null;
     }
 
     const normalizedLinks = parsed.links
@@ -1828,7 +1828,7 @@ Respond with valid JSON matching this schema:
           { temperature: 0.3, maxTokens: 2048 },
         );
         const normalized = this.normalizeSuggestedLinksResult(this.parseJsonObject(fallbackResponse?.content));
-        if (normalized.links.length > 0) {
+        if (normalized) {
           log.debug(`suggested ${normalized.links.length} links via fallback`);
           return normalized;
         }
@@ -1849,8 +1849,12 @@ Respond with valid JSON matching this schema:
       const normalized = this.normalizeSuggestedLinksResult(
         this.parseJsonObject(response.choices?.[0]?.message?.content),
       );
-      log.debug(`suggested ${normalized.links.length} links`);
-      return normalized;
+      if (normalized) {
+        log.debug(`suggested ${normalized.links.length} links`);
+        return normalized;
+      }
+
+      return { links: [] };
     } catch (err) {
       log.error("link suggestion failed", err);
       return { links: [] };
