@@ -850,6 +850,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.maxEntityGraphEdgesPerMemory === "number"
         ? Math.max(0, cfg.maxEntityGraphEdgesPerMemory)
         : 10,
+    recallConfidenceGateEnabled: cfg.recallConfidenceGateEnabled === true,
+    recallConfidenceGateThreshold:
+      typeof cfg.recallConfidenceGateThreshold === "number"
+        ? Math.max(0, Math.min(1, cfg.recallConfidenceGateThreshold))
+        : 0.12,
     graphLateralInhibitionEnabled: cfg.graphLateralInhibitionEnabled !== false,
     graphLateralInhibitionBeta:
       typeof cfg.graphLateralInhibitionBeta === "number"

@@ -433,6 +433,9 @@ export interface PluginConfig {
   /** Upper bound for blended graph-expanded recall scores (0-1). */
   graphExpansionBlendMax: number;
   maxEntityGraphEdgesPerMemory: number;
+  /** Synapse-inspired confidence gate — skip memory injection when top score is below threshold. */
+  recallConfidenceGateEnabled: boolean;
+  recallConfidenceGateThreshold: number;
   /** Synapse-inspired lateral inhibition to suppress hub-node dominance. */
   graphLateralInhibitionEnabled: boolean;
   /** Inhibition strength (default 0.15). Higher = more suppression. */

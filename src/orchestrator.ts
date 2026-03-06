@@ -569,6 +569,20 @@ export function resolvePersistedMemoryRelativePath(options: {
   return path.join("facts", `${options.memoryId}.md`);
 }
 
+/**
+ * Synapse-inspired confidence gate.
+ * Returns true if the top recall result score is below the threshold,
+ * indicating retrieval is too uncertain to inject.
+ */
+export function shouldRejectLowConfidenceRecall(
+  results: Array<{ score: number }>,
+  threshold: number,
+): boolean {
+  if (results.length === 0) return false;
+  const topScore = Math.max(...results.map((r) => r.score));
+  return topScore < threshold;
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
@@ -2554,6 +2568,15 @@ export class Orchestrator {
       }
 
       memoryResults = memoryResults.slice(0, recallResultLimit);
+
+      // Synapse-inspired confidence gate: reject low-confidence recall
+      if (
+        this.config.recallConfidenceGateEnabled &&
+        shouldRejectLowConfidenceRecall(memoryResults, this.config.recallConfidenceGateThreshold)
+      ) {
+        log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score below ${this.config.recallConfidenceGateThreshold})`);
+        memoryResults = [];
+      }
 
       if (memoryResults.length > 0) {
         recallSource = "hot_qmd";

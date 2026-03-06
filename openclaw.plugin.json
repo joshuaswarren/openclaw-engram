@@ -506,6 +506,16 @@
         "default": 10,
         "description": "Maximum entity graph edges written per memory write. Default 10."
       },
+      "recallConfidenceGateEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Synapse-inspired confidence gate: skip memory injection when top recall score is below threshold"
+      },
+      "recallConfidenceGateThreshold": {
+        "type": "number",
+        "default": 0.12,
+        "description": "Minimum top recall score to inject memories (0-1). Below this, memories are rejected as too uncertain"
+      },
       "graphLateralInhibitionEnabled": {
         "type": "boolean",
         "default": true,
