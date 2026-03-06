@@ -93,6 +93,7 @@ const TRIVIAL_PATTERNS = [
 const CATEGORY_BOOSTS: Record<MemoryCategory, number> = {
   correction: 0.15,    // Corrections are always important
   principle: 0.12,     // Durable rules/values
+  rule: 0.11,          // Causal IF→THEN rules
   preference: 0.10,    // User preferences matter
   commitment: 0.10,    // Promises/obligations
   decision: 0.08,      // Decisions with rationale

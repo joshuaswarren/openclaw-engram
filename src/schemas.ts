@@ -38,7 +38,7 @@ export function parseMemoryActionEligibilityContext(
 }
 
 export const ExtractedFactSchema = z.object({
-  category: z.enum(["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"]),
+  category: z.enum(["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"]),
   content: z
     .string()
     .describe("The memory content — a clear, standalone statement"),

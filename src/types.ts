@@ -1,7 +1,7 @@
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
 export type TriggerMode = "smart" | "every_n" | "time_based";
 export type SignalLevel = "none" | "low" | "medium" | "high";
-export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill";
+export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill" | "rule";
 export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "SKIP";
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
@@ -438,6 +438,8 @@ export interface PluginConfig {
   /** Synapse-inspired confidence gate — skip memory injection when top score is below threshold. */
   recallConfidenceGateEnabled: boolean;
   recallConfidenceGateThreshold: number;
+  /** PlugMem-inspired causal rule extraction: mine IF→THEN rules during consolidation. */
+  causalRuleExtractionEnabled: boolean;
   /** Synapse-inspired lateral inhibition to suppress hub-node dominance. */
   graphLateralInhibitionEnabled: boolean;
   /** Inhibition strength (default 0.15). Higher = more suppression. */

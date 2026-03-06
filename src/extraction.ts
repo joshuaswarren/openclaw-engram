@@ -796,12 +796,13 @@ Memory categories:
 - principle: Durable rules, values, or operating beliefs (e.g., "never use Chat Completions API")
 - commitment: Promises, obligations, or deadlines (e.g., "deploy by Friday", "call accountant Monday")
 - moment: Emotionally significant events or milestones (e.g., "first successful deployment of engram")
-- skill: Capabilities the user or agent has demonstrated (e.g., "user is proficient with Kubernetes")
+- skill: Capabilities the user or agent has demonstrated (e.g., "user is proficient with Kubernetes")${this.config.causalRuleExtractionEnabled ? `
+- rule: Causal rules discovered through experience (format: "IF <condition> THEN <action/outcome>", e.g., "IF Shopify API returns 401 THEN the admin token is missing read_products scope")` : ""}
 
 Rules:
 - Only extract genuinely NEW information worth remembering across sessions
 - Skip transient task details (file paths being edited, current errors, etc.)
-- Priority: corrections > principles > preferences > commitments > decisions > relationships > entities > moments > skills > facts
+- Priority: corrections > principles${this.config.causalRuleExtractionEnabled ? " > rules" : ""} > preferences > commitments > decisions > relationships > entities > moments > skills > facts
 - Corrections (user saying "actually, don't do X" or "I prefer Y") get highest confidence
 - Each fact should be a standalone, self-contained statement
 - Entity references should use normalized names (lowercase, hyphenated: "jane-doe", "acme-corp")
@@ -911,7 +912,8 @@ Actions:
 
 Also:
 - Suggest profile updates based on patterns across memories
-- Identify entity updates for entity tracking`,
+- Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>".` : ""}`,
         },
         {
           role: "user",
@@ -960,7 +962,8 @@ Actions:
 
 Also:
 - Suggest profile updates based on patterns across memories
-- Identify entity updates for entity tracking
+- Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>".` : ""}
 
 Current behavioral profile:
 ${currentProfile || "(empty)"}
@@ -1106,7 +1109,8 @@ Actions:
 
 Also:
 - Suggest profile updates based on patterns across memories
-- Identify entity updates for entity tracking
+- Identify entity updates for entity tracking${this.config.causalRuleExtractionEnabled ? `
+- When merging or updating memories, look for IF→THEN causal patterns. If a memory describes "X failed/succeeded because Y" or "doing X led to Y", rewrite its content to make the causal rule explicit in the form "IF <condition> THEN <action/outcome>".` : ""}
 
 Current behavioral profile:
 ${currentProfile || "(empty)"}

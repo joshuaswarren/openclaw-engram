@@ -521,6 +521,11 @@
         "default": 0.12,
         "description": "Minimum top recall score to inject memories (0-1). Below this, memories are rejected as too uncertain"
       },
+      "causalRuleExtractionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "PlugMem-inspired causal rule extraction: mine IF-THEN rules from conversations during consolidation"
+      },
       "graphLateralInhibitionEnabled": {
         "type": "boolean",
         "default": true,
