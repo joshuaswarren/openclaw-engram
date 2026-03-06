@@ -85,7 +85,7 @@ test("cold fallback excludes artifact paths from generic relevant memory recall"
     assert.match(output, /cold tier fact should remain visible/);
     assert.doesNotMatch(output, /artifact quote should never enter generic recall/);
   } finally {
-    await rm(memoryDir, { recursive: true, force: true });
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(memoryDir, { recursive: true, force: true, maxRetries: 3 });
+    await rm(workspaceDir, { recursive: true, force: true, maxRetries: 3 });
   }
 });
