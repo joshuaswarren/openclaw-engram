@@ -78,12 +78,22 @@ export class LocalLlmClient {
   private consecutive400s: number = 0;
   private cooldownUntilMs: number = 0;
   private modelRegistry?: ModelRegistry;
+  private _disableThinking: boolean = false;
   private static readonly HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
   private static readonly LMS_CACHE_INTERVAL_MS = 30000; // 30 seconds
 
   constructor(config: PluginConfig, modelRegistry?: ModelRegistry) {
     this.config = config;
     this.modelRegistry = modelRegistry;
+  }
+
+  /**
+   * Disable thinking/reasoning mode for models that support it (e.g. Qwen 3.5).
+   * When enabled, adds chat_template_kwargs to suppress chain-of-thought,
+   * reducing latency for fast-tier operations.
+   */
+  set disableThinking(value: boolean) {
+    this._disableThinking = value;
   }
 
   private resolveHomeDir(): string {
@@ -706,6 +716,13 @@ export class LocalLlmClient {
       // Only send if it's json_schema type which some local LLMs support
       if (options.responseFormat?.type === "json_schema") {
         requestBody.response_format = options.responseFormat;
+      }
+
+      // Suppress thinking/reasoning for fast-tier models (e.g. Qwen 3.5 small).
+      // These models default to non-thinking but LM Studio may force thinking via
+      // chat template. Sending this kwarg explicitly disables it.
+      if (this._disableThinking) {
+        requestBody.chat_template_kwargs = { enable_thinking: false };
       }
 
       // Normalize URL (use 127.0.0.1 instead of localhost)

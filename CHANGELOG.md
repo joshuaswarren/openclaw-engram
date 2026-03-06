@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Fallback contradiction verification, link suggestion, and memory summarization now normalize gateway/local LLM JSON aliases the same way as the direct OpenAI client, so `winner`, `type`, `summary`, and `entities` responses continue to work without an OpenAI API key.
 - **local-llm**: Read `reasoning_content` when `content` is empty — fixes thinking models (e.g. Qwen 3.5) returning null for entity summaries, consolidation, and question generation.
+- **fast-tier thinking suppression**: fast LLM client now sends `chat_template_kwargs: { enable_thinking: false }` to suppress chain-of-thought on thinking models (e.g. Qwen 3.5 small series). Prevents fast-tier operations from timing out when LM Studio forces thinking mode via chat template.
 - Add explicit `encoding_format: "float"` to local embedding requests for vLLM/LiteLLM compatibility.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
