@@ -84,6 +84,7 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
     ),
     "utf8",
   );
+  await writeFile(path.join(runsDir, "run-bad.json"), "{\"schemaVersion\":1}", "utf8");
 
   const status = await runBenchmarkStatusCliCommand({
     memoryDir,
@@ -98,7 +99,8 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
   assert.equal(status.benchmarks.invalid, 1);
   assert.equal(status.benchmarks.totalCases, 2);
   assert.deepEqual(status.benchmarks.tags, ["objective-state", "trajectory"]);
-  assert.equal(status.runs.total, 1);
+  assert.equal(status.runs.total, 2);
+  assert.equal(status.runs.invalid, 1);
   assert.equal(status.runs.completed, 1);
   assert.equal(status.runs.failed, 0);
   assert.equal(status.runs.latestRunId, "run-001");

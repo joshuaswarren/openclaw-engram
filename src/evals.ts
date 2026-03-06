@@ -60,6 +60,7 @@ export interface EvalHarnessStatus {
   };
   runs: {
     total: number;
+    invalid: number;
     completed: number;
     failed: number;
     partial: number;
@@ -237,11 +238,12 @@ export async function getEvalHarnessStatus(options: {
   }
 
   const runs: EvalRunSummary[] = [];
+  let invalidRunCount = 0;
   for (const filePath of runFiles) {
     try {
       runs.push(validateEvalRunSummary(await readJsonFile(filePath)));
     } catch {
-      // Ignore malformed run files in the summary; a later slice can expose them explicitly.
+      invalidRunCount += 1;
     }
   }
 
@@ -276,7 +278,8 @@ export async function getEvalHarnessStatus(options: {
       sourceLinks: [...sourceLinks].sort(),
     },
     runs: {
-      total: runs.length,
+      total: runFiles.length,
+      invalid: invalidRunCount,
       completed: runs.filter((run) => run.status === "completed").length,
       failed: runs.filter((run) => run.status === "failed").length,
       partial: runs.filter((run) => run.status === "partial").length,
