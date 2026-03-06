@@ -66,7 +66,7 @@ const TEMPORAL_PATTERNS: Array<{
     pattern: /\byesterday\b/gi,
     replace: (now) => {
       const d = new Date(now);
-      d.setDate(d.getDate() - 1);
+      d.setUTCDate(d.getUTCDate() - 1);
       return `on ${formatDate(d)}`;
     },
   },
@@ -78,7 +78,7 @@ const TEMPORAL_PATTERNS: Array<{
     pattern: /\btomorrow\b/gi,
     replace: (now) => {
       const d = new Date(now);
-      d.setDate(d.getDate() + 1);
+      d.setUTCDate(d.getUTCDate() + 1);
       return `on ${formatDate(d)}`;
     },
   },
@@ -86,7 +86,7 @@ const TEMPORAL_PATTERNS: Array<{
     pattern: /\blast week\b/gi,
     replace: (now) => {
       const d = new Date(now);
-      d.setDate(d.getDate() - 7);
+      d.setUTCDate(d.getUTCDate() - 7);
       return `around ${formatDate(d)}`;
     },
   },
@@ -94,9 +94,8 @@ const TEMPORAL_PATTERNS: Array<{
     pattern: /\blast month\b/gi,
     replace: (now) => {
       const d = new Date(now);
-      const targetMonth = d.getMonth() - 1;
-      d.setDate(1); // avoid overflow (e.g. Mar 31 → Feb 31 → Mar 3)
-      d.setMonth(targetMonth);
+      d.setUTCDate(1); // avoid overflow (e.g. Mar 31 → Feb 31 → Mar 3)
+      d.setUTCMonth(d.getUTCMonth() - 1);
       return `around ${formatDate(d)}`;
     },
   },
