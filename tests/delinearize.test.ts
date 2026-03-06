@@ -24,7 +24,14 @@ describe("resolveCoReferences", () => {
     const fact = "They use Redis for caching";
     const entities = [{ name: "company-acme", type: "company" as const, facts: [] }];
     const result = resolveCoReferences(fact, entities);
-    assert.equal(result, "company-acme uses Redis for caching");
+    assert.equal(result, "company-acme use Redis for caching");
+  });
+
+  it("replaces possessive pronoun with entity's", () => {
+    const fact = "His preferred stack is Python";
+    const entities = [{ name: "person-alice", type: "person" as const, facts: [] }];
+    const result = resolveCoReferences(fact, entities);
+    assert.equal(result, "person-alice's preferred stack is Python");
   });
 
   it("leaves facts unchanged when no entities provided", () => {

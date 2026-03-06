@@ -11,22 +11,27 @@ interface EntityRef {
   facts: string[];
 }
 
-const PRONOUN_MAP: Record<string, { types: string[]; plural: boolean }> = {
-  "he": { types: ["person"], plural: false },
-  "she": { types: ["person"], plural: false },
-  "him": { types: ["person"], plural: false },
-  "her": { types: ["person"], plural: false },
-  "his": { types: ["person"], plural: false },
-  "they": { types: ["company", "project", "other"], plural: true },
-  "them": { types: ["company", "project", "other"], plural: true },
-  "their": { types: ["company", "project", "other"], plural: true },
-  "it": { types: ["project", "tool", "company"], plural: false },
-  "its": { types: ["project", "tool", "company"], plural: false },
+// possessive: true means the pronoun is a possessive form (his/her/its/their)
+// and should be replaced with "entity's" or "entity's" form.
+const PRONOUN_MAP: Record<string, { types: string[]; possessive: boolean }> = {
+  "he": { types: ["person"], possessive: false },
+  "she": { types: ["person"], possessive: false },
+  "him": { types: ["person"], possessive: false },
+  "her": { types: ["person"], possessive: false },
+  "his": { types: ["person"], possessive: true },
+  "they": { types: ["company", "project", "other"], possessive: false },
+  "them": { types: ["company", "project", "other"], possessive: false },
+  "their": { types: ["company", "project", "other"], possessive: true },
+  "it": { types: ["project", "tool", "company"], possessive: false },
+  "its": { types: ["project", "tool", "company"], possessive: true },
 };
 
 /**
  * Replace pronouns with entity names when there's exactly one
  * matching entity of the right type (unambiguous resolution).
+ *
+ * Possessive pronouns (his/her/its/their) become "entity's".
+ * No verb agreement is attempted — it's too fragile with adverbs/modals.
  */
 export function resolveCoReferences(fact: string, entities: EntityRef[]): string {
   if (entities.length === 0) return fact;
@@ -40,27 +45,13 @@ export function resolveCoReferences(fact: string, entities: EntityRef[]): string
     if (candidates.length !== 1) continue;
 
     const entityName = candidates[0].name;
+    const replacement = info.possessive ? `${entityName}'s` : entityName;
     result = result.replace(
       new RegExp(`\\b${pronoun}\\b`, "i"),
-      entityName,
+      replacement,
     );
-
-    // Simple verb agreement fix for "they use" → "entity uses"
-    if (pronoun.toLowerCase() === "they") {
-      result = result.replace(
-        new RegExp(`${escapeRegex(entityName)}\\s+(\\w+)\\b`),
-        (match, verb: string) => {
-          if (verb.endsWith("s") || verb.endsWith("ed") || verb.endsWith("ing")) return match;
-          return `${entityName} ${verb}s`;
-        },
-      );
-    }
   }
   return result;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function formatDate(d: Date): string {
