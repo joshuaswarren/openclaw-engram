@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **De-linearization transform** (SimpleMem-inspired): resolves pronoun coreferences and anchors relative time expressions (yesterday, last week, etc.) to absolute ISO-8601 dates after extraction. Enabled by default via `delinearizeEnabled`.
 - **Recall confidence gate** (Synapse-inspired): opt-in gate that skips memory injection when top recall score is below threshold, preventing noisy low-relevance results. Configurable via `recallConfidenceGateEnabled`, `recallConfidenceGateThreshold`.
 - **Graph lateral inhibition** (Synapse-inspired): competitive suppression prevents hub nodes from dominating spreading activation results. Configurable via `graphLateralInhibitionEnabled`, `graphLateralInhibitionBeta`, `graphLateralInhibitionTopM`.
 - Compaction reset: opt-in session reset after compaction with BOOT.md injection (`compactionResetEnabled` config field).

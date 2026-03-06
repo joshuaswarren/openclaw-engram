@@ -506,6 +506,11 @@
         "default": 10,
         "description": "Maximum entity graph edges written per memory write. Default 10."
       },
+      "delinearizeEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "SimpleMem-inspired de-linearization: resolve pronouns and anchor relative dates in extracted memories"
+      },
       "recallConfidenceGateEnabled": {
         "type": "boolean",
         "default": false,

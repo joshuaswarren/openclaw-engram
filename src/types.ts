@@ -433,6 +433,8 @@ export interface PluginConfig {
   /** Upper bound for blended graph-expanded recall scores (0-1). */
   graphExpansionBlendMax: number;
   maxEntityGraphEdgesPerMemory: number;
+  /** SimpleMem-inspired de-linearization: resolve pronouns and anchor relative dates after extraction. */
+  delinearizeEnabled: boolean;
   /** Synapse-inspired confidence gate — skip memory injection when top score is below threshold. */
   recallConfidenceGateEnabled: boolean;
   recallConfidenceGateThreshold: number;

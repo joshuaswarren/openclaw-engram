@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { log } from "./logger.js";
+import { delinearize } from "./delinearize.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
 import {
@@ -155,7 +156,12 @@ export class ExtractionEngine {
       if (!sanitized.clean) {
         log.warn(`extraction fact sanitized; violations=${sanitized.violations.join(", ")}`);
       }
-      return { ...fact, content: sanitized.text };
+      let content = sanitized.text;
+      // De-linearize: resolve coreferences + anchor temporal expressions
+      if (this.config.delinearizeEnabled) {
+        content = delinearize(content, result.entities, new Date());
+      }
+      return { ...fact, content };
     });
     return { ...result, facts };
   }
