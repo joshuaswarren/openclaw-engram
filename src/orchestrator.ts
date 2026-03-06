@@ -716,9 +716,9 @@ export class Orchestrator {
     this.policyRuntime = new PolicyRuntimeManager(config.memoryDir, config);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
-    this.fastLlm = config.localLlmFastEnabled && config.localLlmFastModel
+    this.fastLlm = config.localLlmFastEnabled
       ? new LocalLlmClient(
-          { ...config, localLlmModel: config.localLlmFastModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
+          { ...config, localLlmModel: config.localLlmFastModel || config.localLlmModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
           this.modelRegistry,
         )
       : this.localLlm;
@@ -5439,7 +5439,7 @@ export class Orchestrator {
           id: r.path,
           snippet: r.snippet || r.path,
         })),
-        local: this.localLlm,
+        local: this.fastLlm,
         enabled: true,
         timeoutMs: this.config.rerankTimeoutMs,
         maxCandidates: this.config.rerankMaxCandidates,
