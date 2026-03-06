@@ -478,6 +478,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.conversationRecallMaxChars === "number" ? cfg.conversationRecallMaxChars : 2500,
     conversationRecallTimeoutMs:
       typeof cfg.conversationRecallTimeoutMs === "number" ? cfg.conversationRecallTimeoutMs : 800,
+    evalHarnessEnabled: cfg.evalHarnessEnabled === true,
+    evalShadowModeEnabled: cfg.evalShadowModeEnabled === true,
+    evalStoreDir:
+      typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
+        ? cfg.evalStoreDir.trim()
+        : path.join(memoryDir, "state", "evals"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:

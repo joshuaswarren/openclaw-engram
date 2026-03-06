@@ -1095,6 +1095,20 @@
         "default": 800,
         "description": "Timeout for semantic conversation recall search (ms). Fail-open on timeout."
       },
+      "evalHarnessEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's benchmark/evaluation harness foundation for tracking benchmark packs and run summaries."
+      },
+      "evalShadowModeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable shadow-mode evaluation workflows so future benchmark instrumentation can measure memory changes without changing live recall output."
+      },
+      "evalStoreDir": {
+        "type": "string",
+        "description": "Override the evaluation harness state directory (defaults to {memoryDir}/state/evals)."
+      },
       "namespacesEnabled": {
         "type": "boolean",
         "default": false,
@@ -1993,6 +2007,21 @@
       "label": "Fast LLM Timeout (ms)",
       "advanced": true,
       "help": "Timeout for fast-tier requests. Lower than primary since fast ops should complete quickly."
+    },
+    "evalHarnessEnabled": {
+      "label": "Evaluation Harness",
+      "help": "Enable Engram's benchmark/evaluation harness foundation and benchmark-status diagnostics."
+    },
+    "evalShadowModeEnabled": {
+      "label": "Evaluation Shadow Mode",
+      "advanced": true,
+      "help": "Reserve shadow-mode measurement paths so future benchmark instrumentation can compare memory behavior without affecting live recall."
+    },
+    "evalStoreDir": {
+      "label": "Evaluation Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/evals",
+      "help": "Override where benchmark packs and run summaries are stored."
     },
     "factDeduplicationEnabled": {
       "label": "Fact Deduplication",

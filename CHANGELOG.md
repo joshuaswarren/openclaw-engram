@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Evaluation harness foundation**: added config/schema flags (`evalHarnessEnabled`, `evalShadowModeEnabled`, `evalStoreDir`), typed benchmark manifest/run summary support, and `openclaw engram benchmark-status` for inspecting benchmark packs and the latest run summary.
+- **Benchmark-first documentation**: added `docs/evaluation-harness.md`, a new benchmark-first roadmap in `docs/plans/2026-03-06-engram-agentic-memory-roadmap.md`, and a first-slice plan in `docs/plans/2026-03-06-engram-pr1-eval-harness-foundation.md`.
 - **Dual-tier local LLM**: route fast operations (rerank, entity_summary, tmt_summary, compression_guideline) to a smaller/faster model while heavy operations (extraction, consolidation, summarization) stay on the primary model. Opt-in via `localLlmFastEnabled`, `localLlmFastModel`, `localLlmFastUrl`, `localLlmFastTimeoutMs`.
 - **Causal rule extraction** (PlugMem-inspired): opt-in `"rule"` memory category for IF→THEN causal rules mined during extraction and consolidation. Enable via `causalRuleExtractionEnabled`.
 - **Episodic box metadata** (REMem-inspired): memory boxes now capture `goal`, `toolsUsed`, and `outcome` fields. Goal is derived from the first user message in each episode. `toolsUsed` merging infrastructure is in place but not yet populated (requires structured tool data in buffer turns). Enables "the time I debugged X" style retrieval.

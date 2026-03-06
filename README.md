@@ -5,6 +5,22 @@
 [![npm version](https://img.shields.io/npm/v/@joshuaswarren/openclaw-engram)](https://www.npmjs.com/package/@joshuaswarren/openclaw-engram)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+## Product Thesis
+
+Engram is being built around three requirements:
+
+- **Memory that improves action outcomes**
+- **Memory that survives long horizons and failures**
+- **Memory that can defend itself**
+
+That product thesis drives the roadmap order:
+
+1. Evaluation harness and shadow-mode measurement
+2. Objective-state and causal trajectory memory
+3. Trust-zoned memory promotion and poisoning defense
+4. Harmonic retrieval over abstractions plus anchors
+5. Creation-memory, commitments, and recoverability
+
 ## Why Engram?
 
 AI agents forget everything between conversations. Engram fixes that.
@@ -13,6 +29,8 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Smart recall** — Before each conversation, Engram injects the most relevant memories into the agent's context. Your agents remember what they need, when they need it.
 - **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
+- **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
+- **Benchmark-first roadmap** — Engram now has an evaluation-harness foundation so memory improvements can be measured on real agent trajectories instead of subjective recall demos.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -121,6 +139,7 @@ Engram's capabilities are organized into feature families that you can enable pr
 | **Compounding** | Weekly synthesis that surfaces patterns and recurring mistakes |
 | **Hot/Cold Tiering** | Automatic migration of aging memories to cold storage |
 | **Behavior Loop Tuning** | Runtime self-tuning of extraction and recall parameters |
+| **Evaluation Harness Foundation** | Tracks benchmark packs and run summaries so future PRs can be gated on memory quality instead of anecdotes |
 
 Start with defaults, then enable features as needed. See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profile.
 
@@ -130,6 +149,7 @@ Start with defaults, then enable features as needed. See [Enable All Features](d
 openclaw engram stats                        # Memory counts, search status, health
 openclaw engram search "your query"          # Search memories from CLI
 openclaw engram compat --strict              # Compatibility check
+openclaw engram benchmark-status             # Benchmark/eval harness packs, runs, latest summary
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -149,6 +169,8 @@ Key settings:
 | `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
 | `qmdEnabled` | `true` | Enable QMD hybrid search |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
+| `evalHarnessEnabled` | `false` | Enable the evaluation harness foundation for benchmark packs and run summaries |
+| `evalShadowModeEnabled` | `false` | Reserve shadow-mode measurement paths for future benchmark instrumentation |
 
 Full reference: [Config Reference](docs/config-reference.md)
 
@@ -158,6 +180,7 @@ Full reference: [Config Reference](docs/config-reference.md)
 - [Search Backends](docs/search-backends.md) — Choosing and configuring search engines
 - [Writing a Search Backend](docs/writing-a-search-backend.md) — Build your own adapter
 - [Config Reference](docs/config-reference.md) — Every setting with defaults
+- [Evaluation Harness](docs/evaluation-harness.md) — Benchmark pack and run-summary format
 - [Architecture Overview](docs/architecture/overview.md) — System design and storage layout
 - [Retrieval Pipeline](docs/architecture/retrieval-pipeline.md) — How recall works
 - [Memory Lifecycle](docs/architecture/memory-lifecycle.md) — Write, consolidation, expiry
@@ -166,6 +189,7 @@ Full reference: [Config Reference](docs/config-reference.md)
 - [Namespaces](docs/namespaces.md) — Multi-agent memory isolation
 - [Shared Context](docs/shared-context.md) — Cross-agent intelligence
 - [Identity Continuity](docs/identity-continuity.md) — Consistent agent personality
+- [Agentic Memory Roadmap](docs/plans/2026-03-06-engram-agentic-memory-roadmap.md) — Benchmark-first roadmap and PR slices
 
 ## Developer Install
 

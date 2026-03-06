@@ -358,6 +358,18 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `conversationRecallMaxChars` | `2500` | Max characters of conversation context to inject |
 | `conversationRecallTimeoutMs` | `800` | Timeout for conversation recall (ms) |
 | `conversationIndexMinUpdateIntervalMs` | `900000` | Min interval between index updates |
+
+## v9.1 Evaluation Harness Foundation
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `evalHarnessEnabled` | `false` | Enable Engram's benchmark/evaluation harness foundation |
+| `evalShadowModeEnabled` | `false` | Reserve shadow-mode measurement paths so future instrumentation can compare memory behavior without changing live recall |
+| `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs and run summaries |
+
+Current foundation slice:
+- `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
+- Future slices will add dataset importers, benchmark runners, shadow recording, and PR regression gates on top of this store format.
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |
 
 ## v3.0 Namespaces

@@ -213,6 +213,10 @@ export interface PluginConfig {
   conversationRecallTopK: number;
   conversationRecallMaxChars: number;
   conversationRecallTimeoutMs: number;
+  // Evaluation harness foundation
+  evalHarnessEnabled: boolean;
+  evalShadowModeEnabled: boolean;
+  evalStoreDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

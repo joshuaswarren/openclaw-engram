@@ -43,6 +43,7 @@ import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
+import { getEvalHarnessStatus, type EvalHarnessStatus } from "./evals.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
 import {
   analyzeSessionIntegrity,
@@ -566,6 +567,20 @@ export async function runGraphHealthCliCommand(
     timeGraphEnabled: options.timeGraphEnabled,
     causalGraphEnabled: options.causalGraphEnabled,
     includeRepairGuidance: options.includeRepairGuidance,
+  });
+}
+
+export async function runBenchmarkStatusCliCommand(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  evalHarnessEnabled: boolean;
+  evalShadowModeEnabled: boolean;
+}): Promise<EvalHarnessStatus> {
+  return getEvalHarnessStatus({
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    enabled: options.evalHarnessEnabled,
+    shadowModeEnabled: options.evalShadowModeEnabled,
   });
 }
 
@@ -2066,6 +2081,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ... and ${summary.warnings.length - 20} more`);
             }
           }
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-status")
+        .description("Show benchmark/evaluation harness status, benchmark packs, and latest run summary")
+        .action(async () => {
+          const status = await runBenchmarkStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            evalHarnessEnabled: orchestrator.config.evalHarnessEnabled,
+            evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
           console.log("OK");
         });
 
