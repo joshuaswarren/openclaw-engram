@@ -563,6 +563,20 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.localLlm400TripThreshold === "number" ? cfg.localLlm400TripThreshold : 5,
     localLlm400CooldownMs:
       typeof cfg.localLlm400CooldownMs === "number" ? cfg.localLlm400CooldownMs : 120_000,
+    // Local LLM fast tier (v9.1)
+    localLlmFastEnabled: cfg.localLlmFastEnabled === true,
+    localLlmFastModel:
+      typeof cfg.localLlmFastModel === "string" && cfg.localLlmFastModel.length > 0
+        ? cfg.localLlmFastModel
+        : "",
+    localLlmFastUrl:
+      typeof cfg.localLlmFastUrl === "string" && cfg.localLlmFastUrl.length > 0
+        ? cfg.localLlmFastUrl
+        : typeof cfg.localLlmUrl === "string" && cfg.localLlmUrl.length > 0
+          ? cfg.localLlmUrl
+          : "http://localhost:1234/v1",
+    localLlmFastTimeoutMs:
+      typeof cfg.localLlmFastTimeoutMs === "number" ? cfg.localLlmFastTimeoutMs : 15_000,
     // Gateway config (passed from index.ts for fallback AI)
     gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
 

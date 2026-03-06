@@ -263,6 +263,11 @@ export interface PluginConfig {
   localLlmRetryBackoffMs: number;
   localLlm400TripThreshold: number;
   localLlm400CooldownMs: number;
+  // Local LLM fast tier (v9.1) — smaller model for quick ops
+  localLlmFastEnabled: boolean;
+  localLlmFastModel: string;
+  localLlmFastUrl: string;
+  localLlmFastTimeoutMs: number;
   // Gateway config for fallback AI
   gatewayConfig?: GatewayConfig;
 

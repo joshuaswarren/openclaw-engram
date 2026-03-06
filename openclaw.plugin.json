@@ -960,6 +960,26 @@
         "type": "number",
         "description": "Override the detected context window for local LLM. Set to 32768 if your LLM server defaults to 32K context despite the model supporting 128K."
       },
+      "localLlmFastEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable a separate smaller/faster local LLM for quick operations (rerank, entity_summary, tmt_summary, compression_guideline)."
+      },
+      "localLlmFastModel": {
+        "type": "string",
+        "default": "",
+        "description": "Model ID for fast-tier local LLM operations. Empty string uses the primary localLlmModel."
+      },
+      "localLlmFastUrl": {
+        "type": "string",
+        "default": "http://localhost:1234/v1",
+        "description": "Endpoint for the fast-tier local LLM. Defaults to the same endpoint as localLlmUrl."
+      },
+      "localLlmFastTimeoutMs": {
+        "type": "number",
+        "default": 15000,
+        "description": "Timeout for fast-tier local LLM requests (ms). Lower than primary since fast ops should complete quickly."
+      },
       "hourlySummaryCronAutoRegister": {
         "type": "boolean",
         "default": false,
@@ -1954,6 +1974,26 @@
       "advanced": true,
       "placeholder": "(auto-detected from model)",
       "help": "Override context window if your LLM server uses smaller default (e.g., 32768 for LM Studio default)"
+    },
+    "localLlmFastEnabled": {
+      "label": "Fast LLM Tier",
+      "help": "Use a separate smaller model for quick operations (rerank, entity summaries, compression guidelines)"
+    },
+    "localLlmFastModel": {
+      "label": "Fast LLM Model",
+      "placeholder": "qwen3.5-4b-mlx",
+      "help": "Model ID for fast-tier operations. Must be loaded in LM Studio alongside the primary model."
+    },
+    "localLlmFastUrl": {
+      "label": "Fast LLM URL",
+      "advanced": true,
+      "placeholder": "(same as localLlmUrl)",
+      "help": "Endpoint for fast-tier model. Defaults to the primary localLlmUrl."
+    },
+    "localLlmFastTimeoutMs": {
+      "label": "Fast LLM Timeout (ms)",
+      "advanced": true,
+      "help": "Timeout for fast-tier requests. Lower than primary since fast ops should complete quickly."
     },
     "factDeduplicationEnabled": {
       "label": "Fact Deduplication",
