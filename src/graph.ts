@@ -467,13 +467,15 @@ export class GraphIndex {
  * Lateral inhibition (Synapse-inspired).
  *
  * For each node, the top-M higher-activation competitors exert inhibition
- * proportional to their activation difference. A sigmoid squash ensures
- * outputs stay in [0,1] and that mid-range nodes are well-separated.
+ * proportional to their activation difference. Output is clamped to [0, ∞).
+ *
+ * No sigmoid is applied here — downstream `normalizeGraphActivationScore`
+ * already applies x/(1+x) soft squash, so adding a sigmoid would double-
+ * normalize and cap graph influence at ~50%.
  *
  * Formula: u_hat_i = max(0, u_i - beta * sum_{k in top-M where u_k > u_i}(u_k - u_i))
- * Then sigmoid: sigma(x) = 1 / (1 + exp(-gamma * (x - theta)))
  *
- * When beta=0, returns original scores unchanged (no-op).
+ * When beta=0 or topM=0, returns original scores unchanged (no-op).
  */
 export function applyLateralInhibition(
   scores: Map<string, number>,
@@ -481,9 +483,6 @@ export function applyLateralInhibition(
 ): Map<string, number> {
   const { beta, topM } = opts;
   if (beta === 0 || topM === 0) return new Map(scores);
-
-  const gamma = 10;
-  const theta = 0.3;
 
   const sorted = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
   const topCompetitors = sorted.slice(0, topM);
@@ -496,10 +495,7 @@ export function applyLateralInhibition(
         inhibition += uK - u;
       }
     }
-    const raw = Math.max(0, u - beta * inhibition);
-    // Sigmoid squash
-    const sigma = 1 / (1 + Math.exp(-gamma * (raw - theta)));
-    result.set(node, sigma);
+    result.set(node, Math.max(0, u - beta * inhibition));
   }
 
   return result;

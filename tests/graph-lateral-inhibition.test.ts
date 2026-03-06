@@ -12,7 +12,7 @@ describe("applyLateralInhibition", () => {
       ["noise-d", 0.1],
     ]);
     const result = applyLateralInhibition(scores, { beta: 0.15, topM: 7 });
-    assert.ok(result.get("noise-d")! < 0.05, "low-activation node should be heavily suppressed");
+    assert.ok(result.get("noise-d")! < scores.get("noise-d")!, "low-activation node should be suppressed");
     assert.ok(result.get("relevant-a")! > result.get("noise-c")!, "relevant node still outranks noise");
     assert.ok(result.get("hub")! > result.get("relevant-a")!, "hub stays on top");
   });
@@ -23,18 +23,20 @@ describe("applyLateralInhibition", () => {
       ["weak", 0.01],
     ]);
     const result = applyLateralInhibition(scores, { beta: 0.15, topM: 7 });
-    assert.ok(result.get("weak")! < 0.05, "very weak node suppressed to near-zero after sigmoid");
+    assert.equal(result.get("weak")!, 0, "very weak node suppressed to zero");
   });
 
-  it("applies sigmoid transform to final scores", () => {
+  it("outputs non-negative values without sigmoid (downstream normalizes)", () => {
     const scores = new Map<string, number>([
       ["a", 0.8],
       ["b", 0.5],
     ]);
     const result = applyLateralInhibition(scores, { beta: 0.15, topM: 7 });
     for (const [, v] of result) {
-      assert.ok(v >= 0 && v <= 1, "sigmoid output in [0,1]");
+      assert.ok(v >= 0, "output is non-negative");
     }
+    // Top node keeps its original score (no competitors above it)
+    assert.equal(result.get("a"), 0.8, "top node unchanged");
   });
 
   it("is a no-op when topM is zero", () => {
