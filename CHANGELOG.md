@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Graph lateral inhibition** (Synapse-inspired): competitive suppression prevents hub nodes from dominating spreading activation results. Configurable via `graphLateralInhibitionEnabled`, `graphLateralInhibitionBeta`, `graphLateralInhibitionTopM`.
 - Compaction reset: opt-in session reset after compaction with BOOT.md injection (`compactionResetEnabled` config field).
 - Per-session signal files and workspace overrides for multi-agent safety.
 - Stale signal cleanup on startup (1-hour TTL).
