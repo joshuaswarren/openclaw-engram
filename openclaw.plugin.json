@@ -506,6 +506,21 @@
         "default": 10,
         "description": "Maximum entity graph edges written per memory write. Default 10."
       },
+      "graphLateralInhibitionEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Synapse-inspired lateral inhibition to suppress hub-node dominance in graph retrieval"
+      },
+      "graphLateralInhibitionBeta": {
+        "type": "number",
+        "default": 0.15,
+        "description": "Inhibition strength (0-1). Higher values suppress weaker nodes more aggressively"
+      },
+      "graphLateralInhibitionTopM": {
+        "type": "number",
+        "default": 7,
+        "description": "Number of top competing nodes considered for lateral inhibition"
+      },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
         "default": false,
