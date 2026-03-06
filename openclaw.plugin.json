@@ -526,6 +526,16 @@
         "default": false,
         "description": "PlugMem-inspired causal rule extraction: mine IF-THEN rules from conversations during consolidation"
       },
+      "memoryReconstructionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "E-Mem-inspired memory reconstruction: targeted secondary retrieval for entity references lacking context in recall"
+      },
+      "memoryReconstructionMaxExpansions": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum number of entity expansions per recall cycle"
+      },
       "graphLateralInhibitionEnabled": {
         "type": "boolean",
         "default": true,

@@ -440,6 +440,10 @@ export interface PluginConfig {
   recallConfidenceGateThreshold: number;
   /** PlugMem-inspired causal rule extraction: mine IF→THEN rules during consolidation. */
   causalRuleExtractionEnabled: boolean;
+  /** E-Mem-inspired memory reconstruction: targeted retrieval for missing entity context. */
+  memoryReconstructionEnabled: boolean;
+  /** Maximum number of entity expansions per recall. */
+  memoryReconstructionMaxExpansions: number;
   /** Synapse-inspired lateral inhibition to suppress hub-node dominance. */
   graphLateralInhibitionEnabled: boolean;
   /** Inhibition strength (default 0.15). Higher = more suppression. */
