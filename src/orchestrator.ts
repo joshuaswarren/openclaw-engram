@@ -7,6 +7,7 @@ import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
+import { findUnresolvedEntityRefs } from "./reconstruct.js";
 import type { SearchBackend } from "./search/port.js";
 import { createSearchBackend, createConversationSearchBackend } from "./search/factory.js";
 import { NoopSearchBackend } from "./search/noop-backend.js";
@@ -2580,6 +2581,40 @@ export class Orchestrator {
       }
 
       memoryResults = memoryResults.slice(0, recallResultLimit);
+
+      // E-Mem-inspired memory reconstruction: fill gaps for referenced entities
+      if (this.config.memoryReconstructionEnabled && memoryResults.length > 0) {
+        try {
+          const snippets = memoryResults.map((r) => r.snippet);
+          const entityRefs = memoryResults
+            .map((r) => (r as any).entityRef as string | undefined)
+            .filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
+          const knownEntities = await profileStorage.listEntityNames();
+          const missing = findUnresolvedEntityRefs(snippets, entityRefs, knownEntities);
+          if (missing.length > 0) {
+            const expansionLimit = this.config.memoryReconstructionMaxExpansions;
+            let expanded = 0;
+            for (const entityName of missing.slice(0, expansionLimit)) {
+              const raw = await profileStorage.readEntity(entityName);
+              if (raw && raw.length > 0) {
+                const snippet = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+                memoryResults.push({
+                  docid: `entity:${entityName}`,
+                  path: `entities/${entityName}.md`,
+                  snippet: `[Entity: ${entityName}] ${snippet}`,
+                  score: 0.1,
+                });
+                expanded++;
+              }
+            }
+            if (expanded > 0) {
+              log.debug(`recall: reconstructed ${expanded} entity contexts`);
+            }
+          }
+        } catch (err) {
+          log.warn("recall: memory reconstruction failed (non-fatal)", err);
+        }
+      }
 
       if (memoryResults.length > 0) {
         recallSource = "hot_qmd";
