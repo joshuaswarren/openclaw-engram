@@ -2586,9 +2586,13 @@ export class Orchestrator {
       if (this.config.memoryReconstructionEnabled && memoryResults.length > 0) {
         try {
           const snippets = memoryResults.map((r) => r.snippet);
-          // Entity refs from QMD results aren't available — rely on text-based detection only
+          // Extract entity paths already present in recall results to avoid duplicates
+          const coveredRefs = memoryResults
+            .map((r) => r.path)
+            .filter((p) => p.startsWith("entities/"))
+            .map((p) => p.replace(/^entities\//, "").replace(/\.md$/, ""));
           const knownEntities = await profileStorage.listEntityNames();
-          const missing = findUnresolvedEntityRefs(snippets, [], knownEntities);
+          const missing = findUnresolvedEntityRefs(snippets, coveredRefs, knownEntities);
           if (missing.length > 0) {
             // Allow up to maxExpansions successful entity expansions
             const budget = this.config.memoryReconstructionMaxExpansions;
