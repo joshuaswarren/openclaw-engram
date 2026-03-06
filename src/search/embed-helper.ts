@@ -119,6 +119,7 @@ export class EmbedHelper {
         body: JSON.stringify({
           model: provider.model,
           input: input.slice(0, 8000),
+          encoding_format: "float",
         }),
         signal: AbortSignal.timeout(30_000),
       });
