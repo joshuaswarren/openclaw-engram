@@ -171,6 +171,41 @@ test("recordObjectiveStateSnapshotsFromAgentMessages does not abort on empty gen
   assert.equal(status.snapshots.invalid, 0);
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages does not claim failed file writes succeeded", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:20.000Z",
+    messages: [
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "call-write",
+            function: {
+              name: "write_file",
+              arguments: JSON.stringify({
+                path: "workspace/failure.txt",
+                content: "never landed",
+              }),
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call-write",
+        name: "write_file",
+        content: JSON.stringify({ ok: false, error: "disk full" }),
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.kind, "file");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+  assert.deepEqual(snapshots[0]?.after, { ref: "workspace/failure.txt" });
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages hashes raw updates payloads once", () => {
   const updates = [{ oldText: "before", newText: "after" }];
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({

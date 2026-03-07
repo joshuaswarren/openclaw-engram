@@ -235,6 +235,19 @@ function buildFileValueRefs(
   const { sourcePath, destinationPath, scope } = fileScopeFromArgs(args);
   const contentHash = fileContentHash(args);
 
+  if (changeKind === "failed") {
+    if (sourcePath && destinationPath && sourcePath !== destinationPath) {
+      return {
+        before: { ref: sourcePath },
+        after: { ref: destinationPath },
+      };
+    }
+    return {
+      before: sourcePath ? { ref: sourcePath } : undefined,
+      after: scope ? { ref: scope } : undefined,
+    };
+  }
+
   if (changeKind === "deleted") {
     return {
       before: scope ? { exists: true, ref: scope } : undefined,
