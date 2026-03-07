@@ -374,8 +374,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `causalTrajectoryStoreDir` | `{memoryDir}/state/causal-trajectories` | Root directory for causal-trajectory records |
 | `causalTrajectoryRecallEnabled` | `false` | Inject prompt-relevant causal trajectories into recall context |
 | `actionGraphRecallEnabled` | `false` | Write action-conditioned causal-stage edges from typed trajectory records into the causal graph |
-| `trustZonesEnabled` | `false` | Enable the trust-zone memory foundation for quarantine, working, and trusted records |
-| `quarantinePromotionEnabled` | `false` | Reserve future promotion flows from quarantine into higher-trust zones |
+| `trustZonesEnabled` | `false` | Enable the trust-zone memory foundation and operator-facing promotion path for quarantine, working, and trusted records |
+| `quarantinePromotionEnabled` | `false` | Allow explicit trust-zone promotions such as `quarantine -> working` and guarded `working -> trusted` |
 | `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
 
 Current foundation slice:
@@ -388,7 +388,8 @@ Current foundation slice:
 - When `causalTrajectoryMemoryEnabled` is on, Engram can persist typed causal chains into a separate store for later graph/retrieval slices.
 - When `causalTrajectoryRecallEnabled` is on, Engram can inject a separate `## Causal Trajectories` recall section sourced from the causal-trajectory store.
 - When `actionGraphRecallEnabled` is also on, each newly recorded causal trajectory emits deterministic `goal -> action -> observation -> outcome -> follow_up` edges into the causal graph without changing retrieval behavior yet.
-- When `trustZonesEnabled` is on, Engram can persist provenance-bearing records into separate `quarantine`, `working`, and `trusted` storage tiers for later promotion and retrieval slices.
+- When `trustZonesEnabled` is on, Engram can persist provenance-bearing records into separate `quarantine`, `working`, and `trusted` storage tiers.
+- When `quarantinePromotionEnabled` is also on, Engram exposes an explicit promotion path that blocks direct `quarantine -> trusted` jumps and requires anchored provenance before promoting risky working records into `trusted`.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |

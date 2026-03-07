@@ -58,7 +58,13 @@ import {
   type CausalTrajectoryStoreStatus,
 } from "./causal-trajectory.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
-import { getTrustZoneStoreStatus, type TrustZoneStoreStatus } from "./trust-zones.js";
+import {
+  getTrustZoneStoreStatus,
+  promoteTrustZoneRecord,
+  type TrustZoneName,
+  type TrustZonePromotionResult,
+  type TrustZoneStoreStatus,
+} from "./trust-zones.js";
 import {
   analyzeSessionIntegrity,
   applySessionRepair,
@@ -667,6 +673,37 @@ export async function runTrustZoneStatusCliCommand(options: {
     enabled: options.trustZonesEnabled,
     promotionEnabled: options.quarantinePromotionEnabled,
   });
+}
+
+export async function runTrustZonePromoteCliCommand(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  trustZonesEnabled: boolean;
+  quarantinePromotionEnabled: boolean;
+  sourceRecordId: string;
+  targetZone: TrustZoneName;
+  promotionReason: string;
+  recordedAt?: string;
+  summary?: string;
+  dryRun?: boolean;
+}): Promise<TrustZonePromotionResult & { dryRun: boolean }> {
+  const result = await promoteTrustZoneRecord({
+    memoryDir: options.memoryDir,
+    trustZoneStoreDir: options.trustZoneStoreDir,
+    enabled: options.trustZonesEnabled,
+    promotionEnabled: options.quarantinePromotionEnabled,
+    sourceRecordId: options.sourceRecordId,
+    targetZone: options.targetZone,
+    recordedAt: options.recordedAt ?? new Date().toISOString(),
+    promotionReason: options.promotionReason,
+    summary: options.summary,
+    dryRun: options.dryRun === true,
+  });
+
+  return {
+    ...result,
+    dryRun: options.dryRun === true,
+  };
 }
 
 export async function runSessionCheckCliCommand(
@@ -2270,6 +2307,33 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             quarantinePromotionEnabled: orchestrator.config.quarantinePromotionEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("trust-zone-promote")
+        .description("Dry-run or apply a trust-zone promotion with provenance enforcement")
+        .requiredOption("--record-id <recordId>", "Source trust-zone record id")
+        .requiredOption("--target-zone <targetZone>", "Promotion target zone (working|trusted)")
+        .requiredOption("--reason <reason>", "Human-readable promotion reason")
+        .option("--recorded-at <isoTimestamp>", "Promotion timestamp (defaults to now)")
+        .option("--summary <summary>", "Optional replacement summary for the promoted record")
+        .option("--dry-run", "Show the promotion plan without writing the promoted record")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runTrustZonePromoteCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            trustZoneStoreDir: orchestrator.config.trustZoneStoreDir,
+            trustZonesEnabled: orchestrator.config.trustZonesEnabled,
+            quarantinePromotionEnabled: orchestrator.config.quarantinePromotionEnabled,
+            sourceRecordId: String(options.recordId ?? ""),
+            targetZone: String(options.targetZone ?? "") as TrustZoneName,
+            promotionReason: String(options.reason ?? ""),
+            recordedAt: typeof options.recordedAt === "string" ? options.recordedAt : undefined,
+            summary: typeof options.summary === "string" ? options.summary : undefined,
+            dryRun: options.dryRun === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 

@@ -34,7 +34,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Objective-state recall** — Engram can now store normalized file, process, and tool outcomes and, when `objectiveStateRecallEnabled` is enabled, inject the most relevant objective-state snapshots back into recall context as a separate `Objective State` section.
 - **Causal trajectory graph foundation** — Engram can now persist typed `goal -> action -> observation -> outcome -> follow-up` chains when `causalTrajectoryMemoryEnabled` is enabled and, with `actionGraphRecallEnabled`, emit deterministic action-conditioned edges into the causal graph for later trajectory-aware retrieval.
 - **Causal trajectory recall** — Engram can now, when `causalTrajectoryRecallEnabled` is enabled, inject prompt-relevant causal chains back into recall context as a separate `Causal Trajectories` section with lightweight match explainability.
-- **Trust-zone store foundation** — Engram can now, when `trustZonesEnabled` is enabled, persist typed quarantine, working, and trusted records with provenance metadata into a dedicated trust-zone store for later promotion and defense slices.
+- **Trust-zone promotion path** — Engram can now, when `trustZonesEnabled` and `quarantinePromotionEnabled` are enabled, persist typed quarantine, working, and trusted records, plan explicit promotions, block direct `quarantine -> trusted` jumps, and require anchored provenance before promoting risky working records into `trusted`.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -160,6 +160,8 @@ openclaw engram benchmark-import <path>      # Import a validated benchmark pack
 openclaw engram benchmark-ci-gate            # Compare base vs candidate eval stores and fail on regressions
 openclaw engram objective-state-status       # Objective-state snapshot counts and latest stored snapshot
 openclaw engram causal-trajectory-status    # Causal-trajectory record counts and latest stored chain
+openclaw engram trust-zone-status           # Trust-zone record counts and latest stored record
+openclaw engram trust-zone-promote          # Dry-run or apply a trust-zone promotion with provenance enforcement
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -190,8 +192,8 @@ Key settings:
 | `causalTrajectoryStoreDir` | `{memoryDir}/state/causal-trajectories` | Root directory for causal-trajectory records |
 | `causalTrajectoryRecallEnabled` | `false` | Inject prompt-relevant causal trajectories into recall context |
 | `actionGraphRecallEnabled` | `false` | Write action-conditioned causal-stage edges from typed trajectory records into the causal graph |
-| `trustZonesEnabled` | `false` | Enable the trust-zone memory foundation for quarantine, working, and trusted records |
-| `quarantinePromotionEnabled` | `false` | Reserve future promotion flows from quarantine into higher-trust zones |
+| `trustZonesEnabled` | `false` | Enable the trust-zone memory foundation and operator-facing promotion path for quarantine, working, and trusted records |
+| `quarantinePromotionEnabled` | `false` | Allow explicit trust-zone promotions such as `quarantine -> working` and guarded `working -> trusted` |
 | `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
 
 Full reference: [Config Reference](docs/config-reference.md)

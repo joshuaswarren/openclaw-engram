@@ -1,73 +1,85 @@
-# Theory: Engram Is Adding Trust Boundaries To The New Memory Surfaces
+# Theory: Trust Zones Need Explicit Promotion Rules Before Retrieval Filtering
 
 ## Problem
 
-Engram now has benchmark storage, objective-state memory, and causal
-trajectories. That progress increases the next risk: those newer memory
-surfaces can accumulate raw tool output, web captures, and subagent traces
-faster than they accumulate trust.
+PR11 created a trust-zone store, but storage alone does not change behavior.
+Without explicit promotion rules, every future writer would still have to invent
+its own ad hoc interpretation of what it means to move something from
+`quarantine` to `working` or from `working` to `trusted`.
 
-The immediate problem is therefore not promotion logic yet. It is establishing
-explicit storage boundaries so later promotion and poisoning-defense work has a
-real substrate. Without separate quarantine, working, and trusted stores,
-future trust logic would still be policy layered over one undifferentiated
-memory mass.
+That would recreate the same ambiguity the store layer was supposed to remove.
+The next step is therefore not retrieval filtering yet. The next step is a
+single promotion contract that defines what is allowed, what is blocked, and
+what provenance is required before higher-trust storage exists.
 
 ## Operating Theory
 
-The roadmap is still working because each new memory surface has arrived in a
-disciplined order:
+The memory-OS roadmap is still working because each new surface is arriving in
+strict order:
 
-1. store the typed source of truth
-2. make the source observable and testable
-3. only then add writers, recall, and ranking behavior
-4. add trust boundaries before aggressive automation
+1. typed store
+2. explicit write/promotion contract
+3. retrieval surface
+4. stronger defenses and automation
 
-That means PR11 should not try to solve promotion or retrieval enforcement in
-one pass. The right first move is a typed trust-zone store:
+For trust zones, that means PR12 should do three things and stop:
 
-- `quarantine` for raw, unpromoted material
-- `working` for operator-useful but not fully trusted state
-- `trusted` for future corroborated/promoted records
+- define promotion eligibility rules
+- enforce minimum provenance for risky promotions
+- write lineage-aware successor records instead of mutating source records
 
-That keeps current behavior stable while making later promotion and retrieval
-enforcement mechanically possible.
+That preserves the value of PR11's storage boundary and creates a stable base
+for PR13 retrieval filters and PR14+ poisoning-defense work.
 
 ## Strategy
 
-The broader thesis remains:
+The product thesis still governs the sequence:
 
 - memory that improves action outcomes
 - memory that survives long horizons and failures
 - memory that can defend itself
 
-For the trust-zone track, the strategy is now:
+For the trust-zone track, that translates to:
 
-1. ship defaults-off storage paths and typed provenance first
-2. keep promotion logic out of this slice
-3. make operator visibility available through status commands
-4. use the stored provenance contract as the base for PR12 and PR13
+1. allow `quarantine -> working`
+2. allow `working -> trusted` only through an explicit guarded path
+3. block `quarantine -> trusted`
+4. require anchored provenance before external/tool-derived material can become
+   `trusted`
+5. keep all of it defaults-off behind the existing flags
 
-This keeps PR11 small and reviewable while preserving the roadmap sequence:
+This keeps the slice small enough for review while making later retrieval and
+defense work less ambiguous.
+
+## Key Discoveries
+
+- Promotion should write a new successor record, not mutate the source. Lineage
+  matters for audits and later poisoning analysis.
+- Direct `quarantine -> trusted` promotion is too permissive for the first
+  trust-aware path. Forcing `working` as an intermediate zone makes later
+  corroboration rules easier to add.
+- Provenance enforcement can start smaller than full corroboration. Requiring
+  anchored provenance (`sourceId` + `evidenceHash`) for risky `working ->
+  trusted` promotions gives the system a real minimum trust floor without
+  front-loading PR15's corroboration logic.
+- A dry-run CLI path is enough operator control for this slice. Automatic
+  promotion can wait until the trust contract has more real-world exposure.
+
+## Next Sequence
+
+The trust-zone roadmap now looks like:
 
 1. PR11: trust-zone schemas and storage
 2. PR12: promotion rules and provenance enforcement
 3. PR13: trust-zone-aware retrieval filters
-
-## Key Discoveries
-
-- The objective-state and causal-trajectory slices already established the
-  right pattern for this work: store contracts first, behavior later.
-- Trust-zone records need provenance fields in the first version; otherwise the
-  later promotion layer would have to backfill missing origin data.
-- A zoned status command is enough operator visibility for this slice. Retrieval
-  behavior can stay untouched until trust-aware filtering exists.
+4. PR14+: trust scoring, corroboration, and poisoning defense
 
 ## Open Questions
 
-- Which stored surfaces should write directly into `working` rather than
-  `quarantine` by default once writers arrive?
-- Should promotion history remain embedded in trust-zone records, or should it
-  become a separate append-only ledger in PR12?
-- Which future retrieval sections should be trust-filtered first: objective
-  state, causal trajectories, or both together?
+- Should future automatic writers target `working` by default for some source
+  classes, or should everything still enter through `quarantine` first?
+- Should promotion reasons remain in record metadata long term, or move into a
+  dedicated append-only promotion ledger in a later slice?
+- When PR13 lands, should trust-zone retrieval filtering apply uniformly across
+  objective-state and causal-trajectory sections, or should the rollout start
+  with one retrieval surface first?

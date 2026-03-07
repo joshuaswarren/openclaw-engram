@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Trust-zone promotion path**: added deterministic trust-zone promotion planning, lineage-aware promoted records, guarded `openclaw engram trust-zone-promote`, direct `quarantine -> trusted` denial, and anchored-provenance enforcement for risky `working -> trusted` promotions.
 - **Trust-zone store foundation**: added `trustZonesEnabled`, `quarantinePromotionEnabled`, `trustZoneStoreDir`, a typed trust-zone record store under `state/trust-zones`, and `openclaw engram trust-zone-status` for inspecting quarantine, working, and trusted records before promotion logic lands.
 - **Causal trajectory recall**: added `causalTrajectoryRecallEnabled`, a separate `causal-trajectories` recall-pipeline section, bounded lexical trajectory search, and `## Causal Trajectories` recall injection with lightweight match explainability.
 - **Causal trajectory store foundation**: added `causalTrajectoryMemoryEnabled`, `causalTrajectoryStoreDir`, a typed causal-trajectory record store under `state/causal-trajectories`, and `openclaw engram causal-trajectory-status` for inspecting stored goal-action-observation-outcome chains.

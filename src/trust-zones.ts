@@ -66,6 +66,23 @@ export interface TrustZoneStoreStatus {
   }>;
 }
 
+export interface TrustZonePromotionPlan {
+  allowed: boolean;
+  reasons: string[];
+  sourceRecordId: string;
+  sourceZone: TrustZoneName;
+  targetZone: TrustZoneName;
+  provenanceAnchored: boolean;
+}
+
+export interface TrustZonePromotionResult {
+  plan: TrustZonePromotionPlan;
+  wroteRecord: boolean;
+  record: TrustZoneRecord;
+  filePath?: string;
+  sourceRecord: TrustZoneRecord;
+}
+
 function validateMetadata(raw: unknown): Record<string, string> | undefined {
   return validateStringRecord(raw, "metadata");
 }
@@ -140,6 +157,155 @@ export async function recordTrustZoneRecord(options: {
   await mkdir(zoneDir, { recursive: true });
   await writeFile(filePath, JSON.stringify(validated, null, 2), "utf8");
   return filePath;
+}
+
+function hasAnchoredProvenance(record: TrustZoneRecord): boolean {
+  return Boolean(record.provenance.sourceId && record.provenance.evidenceHash);
+}
+
+function buildPromotionRecordId(sourceRecordId: string, targetZone: TrustZoneName, recordedAt: string): string {
+  const suffix = recordedAt.replace(/[^0-9]/g, "").slice(0, 14);
+  return `${sourceRecordId}-${targetZone}-${suffix}`;
+}
+
+function dedupeStrings(values: Array<string | undefined>): string[] | undefined {
+  const out = values.filter((value): value is string => typeof value === "string" && value.length > 0);
+  if (out.length === 0) return undefined;
+  return [...new Set(out)];
+}
+
+export function planTrustZonePromotion(options: {
+  record: TrustZoneRecord;
+  targetZone: TrustZoneName;
+}): TrustZonePromotionPlan {
+  const { record, targetZone } = options;
+  const reasons: string[] = [];
+  const provenanceAnchored = hasAnchoredProvenance(record);
+
+  if (record.zone === targetZone) {
+    reasons.push(`record is already in the ${targetZone} zone`);
+  }
+  if (record.zone === "trusted") {
+    reasons.push("trusted records are terminal and cannot be promoted again");
+  }
+  if (record.zone === "quarantine" && targetZone === "trusted") {
+    reasons.push("quarantine records must pass through working before trusted promotion");
+  }
+  if (record.zone === "working" && targetZone === "quarantine") {
+    reasons.push("working records cannot be demoted back into quarantine in this promotion path");
+  }
+  if (record.zone === "quarantine" && targetZone !== "working") {
+    reasons.push("quarantine promotions only support the working zone");
+  }
+  if (record.zone === "working" && targetZone !== "trusted") {
+    reasons.push("working promotions only support the trusted zone");
+  }
+  if (
+    targetZone === "trusted" &&
+    ["tool_output", "web_content", "subagent_trace"].includes(record.provenance.sourceClass) &&
+    provenanceAnchored !== true
+  ) {
+    reasons.push("trusted promotion for external/tool-derived provenance requires both provenance.sourceId and provenance.evidenceHash");
+  }
+
+  return {
+    allowed: reasons.length === 0,
+    reasons,
+    sourceRecordId: record.recordId,
+    sourceZone: record.zone,
+    targetZone,
+    provenanceAnchored,
+  };
+}
+
+async function findTrustZoneRecordById(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  recordId: string;
+}): Promise<TrustZoneRecord | null> {
+  const { records } = await readTrustZoneRecords(options);
+  records.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  return records.find((record) => record.recordId === options.recordId) ?? null;
+}
+
+export async function promoteTrustZoneRecord(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  enabled: boolean;
+  promotionEnabled: boolean;
+  sourceRecordId: string;
+  targetZone: TrustZoneName;
+  recordedAt: string;
+  promotionReason: string;
+  summary?: string;
+  dryRun?: boolean;
+}): Promise<TrustZonePromotionResult> {
+  if (options.enabled !== true) {
+    throw new Error("trust zone promotion requires trustZonesEnabled=true");
+  }
+  if (options.promotionEnabled !== true) {
+    throw new Error("trust zone promotion requires quarantinePromotionEnabled=true");
+  }
+
+  const sourceRecord = await findTrustZoneRecordById({
+    memoryDir: options.memoryDir,
+    trustZoneStoreDir: options.trustZoneStoreDir,
+    recordId: assertSafePathSegment(assertString(options.sourceRecordId, "sourceRecordId"), "sourceRecordId"),
+  });
+  if (!sourceRecord) {
+    throw new Error(`source trust-zone record not found: ${options.sourceRecordId}`);
+  }
+
+  const plan = planTrustZonePromotion({
+    record: sourceRecord,
+    targetZone: options.targetZone,
+  });
+  if (!plan.allowed) {
+    throw new Error(`trust-zone promotion denied: ${plan.reasons.join("; ")}`);
+  }
+
+  const recordedAt = assertIsoRecordedAt(assertString(options.recordedAt, "recordedAt"));
+  const promotionReason = assertString(options.promotionReason, "promotionReason");
+  const nextRecord: TrustZoneRecord = {
+    schemaVersion: 1,
+    recordId: buildPromotionRecordId(sourceRecord.recordId, options.targetZone, recordedAt),
+    zone: options.targetZone,
+    recordedAt,
+    kind: sourceRecord.kind,
+    summary: optionalString(options.summary) ?? sourceRecord.summary,
+    provenance: sourceRecord.provenance,
+    promotedFromZone: sourceRecord.zone,
+    entityRefs: sourceRecord.entityRefs,
+    tags: dedupeStrings([...(sourceRecord.tags ?? []), "promotion"]),
+    metadata: {
+      ...(sourceRecord.metadata ?? {}),
+      sourceRecordId: sourceRecord.recordId,
+      promotionReason,
+    },
+  };
+
+  if (options.dryRun === true) {
+    return {
+      plan,
+      wroteRecord: false,
+      record: nextRecord,
+      sourceRecord,
+    };
+  }
+
+  const filePath = await recordTrustZoneRecord({
+    memoryDir: options.memoryDir,
+    trustZoneStoreDir: options.trustZoneStoreDir,
+    record: nextRecord,
+  });
+
+  return {
+    plan,
+    wroteRecord: true,
+    record: nextRecord,
+    filePath,
+    sourceRecord,
+  };
 }
 
 async function readTrustZoneRecords(options: {
