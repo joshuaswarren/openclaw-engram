@@ -70,6 +70,7 @@ import {
 import { GraphIndex } from "./graph.js";
 import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./causal-trajectory.js";
 import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
+import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zones.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2213,6 +2214,34 @@ export class Orchestrator {
       return results.length > 0 ? this.formatCausalTrajectoryResults(results) : null;
     })();
 
+    const trustZonePromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.trustZonesEnabled ||
+        !this.config.trustZoneRecallEnabled ||
+        !this.isRecallSectionEnabled("trust-zones", this.config.trustZoneRecallEnabled === true)
+      ) {
+        timings.trustZones = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("trust-zones", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.trustZones = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchTrustZoneRecords({
+        memoryDir: this.config.memoryDir,
+        trustZoneStoreDir: this.config.trustZoneStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.trustZones = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatTrustZoneResults(results) : null;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2478,6 +2507,7 @@ export class Orchestrator {
       artifacts,
       objectiveStateSection,
       causalTrajectorySection,
+      trustZoneSection,
       qmdResult,
       transcriptSection,
       compactionSection,
@@ -2492,6 +2522,7 @@ export class Orchestrator {
       artifactsPromise,
       objectiveStatePromise,
       causalTrajectoryPromise,
+      trustZonePromise,
       qmdPromise,
       transcriptPromise,
       compactionPromise,
@@ -2572,6 +2603,10 @@ export class Orchestrator {
 
     if (causalTrajectorySection) {
       this.appendRecallSection(sectionBuckets, "causal-trajectories", causalTrajectorySection);
+    }
+
+    if (trustZoneSection) {
+      this.appendRecallSection(sectionBuckets, "trust-zones", trustZoneSection);
     }
 
     // 2. QMD results — post-process and format
@@ -5301,6 +5336,32 @@ export class Orchestrator {
     });
 
     return `## Causal Trajectories\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatTrustZoneResults(results: TrustZoneSearchResult[]): string {
+    const lines = results.map(({ record, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${record.recordedAt.replace("T", " ").slice(0, 16)}`,
+        record.zone,
+        record.kind,
+      ].join(" | ");
+      const details = [
+        record.summary,
+        `provenance: ${record.provenance.sourceClass}`,
+      ];
+      if (record.entityRefs && record.entityRefs.length > 0) {
+        details.push(`entities: ${record.entityRefs.join(", ")}`);
+      }
+      if (record.tags && record.tags.length > 0) {
+        details.push(`tags: ${record.tags.join(", ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Trust Zones\n\n${lines.join("\n\n")}`;
   }
 
   private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {

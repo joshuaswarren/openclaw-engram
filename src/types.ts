@@ -231,6 +231,7 @@ export interface PluginConfig {
   trustZonesEnabled: boolean;
   quarantinePromotionEnabled: boolean;
   trustZoneStoreDir: string;
+  trustZoneRecallEnabled: boolean;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

@@ -2,6 +2,7 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { listJsonFiles, readJsonFile } from "./json-store.js";
 import type { ObjectiveStateOutcome } from "./objective-state.js";
+import { countRecallTokenOverlap, normalizeRecallTokens } from "./recall-tokenization.js";
 import {
   assertIsoRecordedAt,
   assertSafePathSegment,
@@ -182,25 +183,6 @@ export async function getCausalTrajectoryStoreStatus(options: {
   };
 }
 
-function normalizeTokens(value: string): string[] {
-  const stopWords = new Set(["the", "and", "for", "with", "from", "into", "that", "this", "why", "did", "make"]);
-  return value
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 3 && !stopWords.has(token));
-}
-
-function countOverlap(queryTokens: Set<string>, value: string | undefined): number {
-  if (!value) return 0;
-  const tokens = new Set(normalizeTokens(value));
-  let matches = 0;
-  for (const token of queryTokens) {
-    if (tokens.has(token)) matches += 1;
-  }
-  return matches;
-}
-
 function lexicalScoreCausalTrajectoryRecord(
   record: CausalTrajectoryRecord,
   queryTokens: Set<string>,
@@ -220,7 +202,7 @@ function lexicalScoreCausalTrajectoryRecord(
   let score = 0;
   const matchedFields: string[] = [];
   for (const [field, value, weight] of weightedFields) {
-    const matches = countOverlap(queryTokens, value);
+    const matches = countRecallTokenOverlap(queryTokens, value, ["make"]);
     if (matches > 0) matchedFields.push(field);
     score += matches * weight;
   }
@@ -256,7 +238,7 @@ export async function searchCausalTrajectories(options: {
   const { trajectories } = await readCausalTrajectoryRecords(options);
   if (trajectories.length === 0) return [];
 
-  const queryTokens = new Set(normalizeTokens(options.query));
+  const queryTokens = new Set(normalizeRecallTokens(options.query, ["make"]));
   if (queryTokens.size === 0) return [];
   const scored = trajectories.map((record) => {
     const lexical = lexicalScoreCausalTrajectoryRecord(record, queryTokens);

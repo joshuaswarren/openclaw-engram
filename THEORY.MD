@@ -1,85 +1,78 @@
-# Theory: Trust Zones Need Explicit Promotion Rules Before Retrieval Filtering
+# Theory: Trust-Zone Retrieval Should Surface High-Trust Context Without Leaking Quarantine Noise
 
 ## Problem
 
-PR11 created a trust-zone store, but storage alone does not change behavior.
-Without explicit promotion rules, every future writer would still have to invent
-its own ad hoc interpretation of what it means to move something from
-`quarantine` to `working` or from `working` to `trusted`.
+PR11 created trust-zone storage and PR12 created explicit promotion rules, but
+Engram still could not use those zones at recall time. That left the trust-zone
+track in an awkward middle state: records could be classified and promoted, yet
+the retrieval layer still treated trust as invisible.
 
-That would recreate the same ambiguity the store layer was supposed to remove.
-The next step is therefore not retrieval filtering yet. The next step is a
-single promotion contract that defines what is allowed, what is blocked, and
-what provenance is required before higher-trust storage exists.
+For the trust-zone track to improve agent action outcomes, Engram now needs a
+bounded retrieval surface that can expose higher-trust context without
+accidentally leaking quarantined material back into the prompt.
 
 ## Operating Theory
 
-The memory-OS roadmap is still working because each new surface is arriving in
-strict order:
+The rollout order still matters:
 
-1. typed store
-2. explicit write/promotion contract
-3. retrieval surface
-4. stronger defenses and automation
+1. create the store
+2. define explicit promotion rules
+3. make trust visible at recall time
+4. add trust scoring, corroboration, and poisoning defense
 
-For trust zones, that means PR12 should do three things and stop:
-
-- define promotion eligibility rules
-- enforce minimum provenance for risky promotions
-- write lineage-aware successor records instead of mutating source records
-
-That preserves the value of PR11's storage boundary and creates a stable base
-for PR13 retrieval filters and PR14+ poisoning-defense work.
+This means PR13 should not attempt automatic promotion, trust scoring, or
+cross-surface policy blending. It should do one thing: add a first recall
+surface that only reads `working` and `trusted` records and keeps `quarantine`
+out by default.
 
 ## Strategy
 
-The product thesis still governs the sequence:
+The smallest useful retrieval slice is:
 
-- memory that improves action outcomes
-- memory that survives long horizons and failures
-- memory that can defend itself
+- one new config flag: `trustZoneRecallEnabled`
+- one bounded recall-pipeline section: `trust-zones`
+- one store-side search helper over trust-zone records
+- one formatted recall section: `## Trust Zones`
 
-For the trust-zone track, that translates to:
+The retrieval contract for this slice is intentionally conservative:
 
-1. allow `quarantine -> working`
-2. allow `working -> trusted` only through an explicit guarded path
-3. block `quarantine -> trusted`
-4. require anchored provenance before external/tool-derived material can become
-   `trusted`
-5. keep all of it defaults-off behind the existing flags
+1. never surface `quarantine` records
+2. require lexical overlap for non-empty queries
+3. rank `trusted` above `working` when both are relevant
+4. keep trust-zone recall separate from objective-state and causal recall
 
-This keeps the slice small enough for review while making later retrieval and
-defense work less ambiguous.
+That gives the system immediate value without pretending the later poisoning and
+corroboration work is already done.
 
 ## Key Discoveries
 
-- Promotion should write a new successor record, not mutate the source. Lineage
-  matters for audits and later poisoning analysis.
-- Direct `quarantine -> trusted` promotion is too permissive for the first
-  trust-aware path. Forcing `working` as an intermediate zone makes later
-  corroboration rules easier to add.
-- Provenance enforcement can start smaller than full corroboration. Requiring
-  anchored provenance (`sourceId` + `evidenceHash`) for risky `working ->
-  trusted` promotions gives the system a real minimum trust floor without
-  front-loading PR15's corroboration logic.
-- A dry-run CLI path is enough operator control for this slice. Automatic
-  promotion can wait until the trust contract has more real-world exposure.
+- Trust zones work better as their own recall section first. Blending them
+  directly into semantic memory ranking would hide whether the new signal is
+  actually helping.
+- Excluding `quarantine` by default is the simplest safe default. Operators can
+  still inspect quarantine content through status and promotion tooling without
+  leaking it into model context.
+- Zone priority should be a ranking tie-breaker, not an admission rule. Records
+  still need lexical relevance to appear for a non-empty query.
+- The same rollout pattern used for objective-state and causal trajectories
+  remains the right one here: store, explicit contract, then bounded recall.
 
 ## Next Sequence
 
-The trust-zone roadmap now looks like:
+The trust-zone track now looks like:
 
 1. PR11: trust-zone schemas and storage
 2. PR12: promotion rules and provenance enforcement
-3. PR13: trust-zone-aware retrieval filters
-4. PR14+: trust scoring, corroboration, and poisoning defense
+3. PR13: trust-zone-aware retrieval filters and recall injection
+4. PR14+: provenance scoring, corroboration requirements, and poisoning defense
 
 ## Open Questions
 
-- Should future automatic writers target `working` by default for some source
-  classes, or should everything still enter through `quarantine` first?
-- Should promotion reasons remain in record metadata long term, or move into a
-  dedicated append-only promotion ledger in a later slice?
-- When PR13 lands, should trust-zone retrieval filtering apply uniformly across
-  objective-state and causal-trajectory sections, or should the rollout start
-  with one retrieval surface first?
+- Should future trust-aware retrieval blend trust-zone hits into objective-state
+  or causal sections once benchmark coverage exists, or should trust remain a
+  visibly separate section long term?
+- When provenance scoring lands, should `working` records require a minimum
+  corroboration score before recall, or is zone membership alone enough for the
+  first defense-aware rollout?
+- Should later creation-memory and commitment ledgers write directly to
+  `working`, or always start in `quarantine` unless promoted explicitly?
