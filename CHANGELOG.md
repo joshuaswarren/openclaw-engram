@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Verified rule recall**: when `semanticRuleVerificationEnabled` is enabled, Engram can now re-check promoted semantic rules against their cited source episodes at recall time, downgrade stale provenance before surfacing those rules, inject a dedicated `## Verified Rules` recall section, and preview that surface with `openclaw engram semantic-rule-verify <query>`.
 - **Semantic rule promotion**: when `semanticRulePromotionEnabled` is enabled, Engram can now promote explicit `IF ... THEN ...` rules from verified episodic memories into durable `rule` memories with lineage, source-memory provenance, duplicate suppression, and the operator-facing `openclaw engram semantic-rule-promote --memory-id <id>` CLI.
 - **Verified episodic recall**: added `verifiedRecallEnabled`, `semanticRulePromotionEnabled`, bounded verified-episode search over recent memory boxes, a dedicated `## Verified Episodes` recall section, and `openclaw engram verified-recall-search <query>` for previewing verified episodic matches before semantic-rule promotion lands.
 - **Harmonic retrieval blender**: when `harmonicRetrievalEnabled` is enabled, Engram can now blend abstraction-node evidence and cue-anchor matches into a dedicated `## Harmonic Retrieval` recall section and inspect those blended results with `openclaw engram harmonic-search`.

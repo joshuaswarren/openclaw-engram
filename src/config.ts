@@ -511,6 +511,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     abstractionAnchorsEnabled: cfg.abstractionAnchorsEnabled === true,
     verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
     semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
+    semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
     abstractionNodeStoreDir:
       typeof cfg.abstractionNodeStoreDir === "string" && cfg.abstractionNodeStoreDir.trim().length > 0
         ? cfg.abstractionNodeStoreDir.trim()
@@ -1023,6 +1024,12 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     {
       id: "verified-episodes",
       enabled: cfg.verifiedRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "verified-rules",
+      enabled: cfg.semanticRuleVerificationEnabled === true,
       maxResults: 3,
       maxChars: 1800,
     },

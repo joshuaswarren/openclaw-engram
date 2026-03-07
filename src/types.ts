@@ -241,6 +241,7 @@ export interface PluginConfig {
   // Episodic/semantic split foundation
   verifiedRecallEnabled: boolean;
   semanticRulePromotionEnabled: boolean;
+  semanticRuleVerificationEnabled: boolean;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

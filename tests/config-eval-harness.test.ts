@@ -31,12 +31,14 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.abstractionAnchorsEnabled, false);
   assert.equal(cfg.verifiedRecallEnabled, false);
   assert.equal(cfg.semanticRulePromotionEnabled, false);
+  assert.equal(cfg.semanticRuleVerificationEnabled, false);
   assert.equal(cfg.abstractionNodeStoreDir, path.join(memoryDir, "state", "abstraction-nodes"));
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "causal-trajectories" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "trust-zones" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "harmonic-retrieval" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "verified-episodes" && entry.enabled === false), true);
+  assert.equal(cfg.recallPipeline.some((entry) => entry.id === "verified-rules" && entry.enabled === false), true);
 });
 
 test("evaluation harness config respects explicit flags and custom store dir", () => {
@@ -64,6 +66,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     abstractionAnchorsEnabled: true,
     verifiedRecallEnabled: true,
     semanticRulePromotionEnabled: true,
+    semanticRuleVerificationEnabled: true,
     abstractionNodeStoreDir: "/tmp/abstraction-node-store",
   });
 
@@ -88,7 +91,9 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.abstractionAnchorsEnabled, true);
   assert.equal(cfg.verifiedRecallEnabled, true);
   assert.equal(cfg.semanticRulePromotionEnabled, true);
+  assert.equal(cfg.semanticRuleVerificationEnabled, true);
   assert.equal(cfg.abstractionNodeStoreDir, "/tmp/abstraction-node-store");
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "harmonic-retrieval" && entry.enabled === true), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "verified-episodes" && entry.enabled === true), true);
+  assert.equal(cfg.recallPipeline.some((entry) => entry.id === "verified-rules" && entry.enabled === true), true);
 });

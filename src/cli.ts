@@ -74,6 +74,10 @@ import {
   type VerifiedEpisodeResult,
 } from "./verified-recall.js";
 import {
+  searchVerifiedSemanticRules,
+  type VerifiedSemanticRuleResult,
+} from "./semantic-rule-verifier.js";
+import {
   promoteSemanticRuleFromMemory,
   type SemanticRulePromotionReport,
 } from "./semantic-rule-promotion.js";
@@ -779,6 +783,20 @@ export async function runSemanticRulePromoteCliCommand(options: {
     enabled: options.semanticRulePromotionEnabled,
     sourceMemoryId: options.sourceMemoryId,
     dryRun: options.dryRun,
+  });
+}
+
+export async function runSemanticRuleVerifyCliCommand(options: {
+  memoryDir: string;
+  semanticRuleVerificationEnabled: boolean;
+  query: string;
+  maxResults?: number;
+}): Promise<VerifiedSemanticRuleResult[]> {
+  if (!options.semanticRuleVerificationEnabled) return [];
+  return searchVerifiedSemanticRules({
+    memoryDir: options.memoryDir,
+    query: options.query,
+    maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
   });
 }
 
@@ -2540,6 +2558,27 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             dryRun: options.dryRun === true,
           });
           console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("semantic-rule-verify")
+        .description("Preview verified semantic-rule recall with provenance-aware confidence downgrades")
+        .argument("<query>", "Prompt-like query to evaluate against verified semantic-rule recall")
+        .option("--max-results <count>", "Maximum number of verified semantic rules to return", "3")
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const maxResults = typeof options.maxResults === "string"
+            ? Number.parseInt(options.maxResults, 10)
+            : 3;
+          const results = await runSemanticRuleVerifyCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            semanticRuleVerificationEnabled: orchestrator.config.semanticRuleVerificationEnabled,
+            query,
+            maxResults: Number.isFinite(maxResults) ? maxResults : 3,
+          });
+          console.log(JSON.stringify(results, null, 2));
           console.log("OK");
         });
 

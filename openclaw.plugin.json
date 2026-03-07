@@ -1195,6 +1195,11 @@
         "default": false,
         "description": "Enable deterministic promotion of explicit IF/THEN rules from verified episodic memories."
       },
+      "semanticRuleVerificationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2202,6 +2207,11 @@
       "label": "Semantic Rule Promotion",
       "advanced": true,
       "help": "Promote explicit IF/THEN rules from verified episodic memories into durable rule memories."
+    },
+    "semanticRuleVerificationEnabled": {
+      "label": "Semantic Rule Verification",
+      "advanced": true,
+      "help": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

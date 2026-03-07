@@ -73,6 +73,7 @@ import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "
 import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zones.js";
 import { searchHarmonicRetrieval, type HarmonicRetrievalResult } from "./harmonic-retrieval.js";
 import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-recall.js";
+import { searchVerifiedSemanticRules, type VerifiedSemanticRuleResult } from "./semantic-rule-verifier.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2298,6 +2299,31 @@ export class Orchestrator {
       return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
     })();
 
+    const verifiedRulesPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.semanticRuleVerificationEnabled ||
+        !this.isRecallSectionEnabled("verified-rules", this.config.semanticRuleVerificationEnabled === true)
+      ) {
+        timings.verifiedRules = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("verified-rules", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.verifiedRules = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchVerifiedSemanticRules({
+        memoryDir: this.config.memoryDir,
+        query: retrievalQuery,
+        maxResults,
+      });
+
+      timings.verifiedRules = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatVerifiedSemanticRuleResults(results) : null;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2566,6 +2592,7 @@ export class Orchestrator {
       trustZoneSection,
       harmonicRetrievalSection,
       verifiedRecallSection,
+      verifiedRulesSection,
       qmdResult,
       transcriptSection,
       compactionSection,
@@ -2583,6 +2610,7 @@ export class Orchestrator {
       trustZonePromise,
       harmonicRetrievalPromise,
       verifiedRecallPromise,
+      verifiedRulesPromise,
       qmdPromise,
       transcriptPromise,
       compactionPromise,
@@ -2675,6 +2703,10 @@ export class Orchestrator {
 
     if (verifiedRecallSection) {
       this.appendRecallSection(sectionBuckets, "verified-episodes", verifiedRecallSection);
+    }
+
+    if (verifiedRulesSection) {
+      this.appendRecallSection(sectionBuckets, "verified-rules", verifiedRulesSection);
     }
 
     // 2. QMD results — post-process and format
@@ -5476,6 +5508,26 @@ export class Orchestrator {
     });
 
     return `## Verified Episodes\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatVerifiedSemanticRuleResults(results: VerifiedSemanticRuleResult[]): string {
+    const lines = results.map(({ rule, sourceMemoryId, verificationStatus, effectiveConfidence, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${rule.frontmatter.updated.replace("T", " ").slice(0, 16)}`,
+        verificationStatus,
+        `confidence:${effectiveConfidence.toFixed(2)}`,
+      ].join(" | ");
+      const details = [
+        rule.content,
+        `source memory: ${sourceMemoryId}`,
+      ];
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Verified Rules\n\n${lines.join("\n\n")}`;
   }
 
   private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {

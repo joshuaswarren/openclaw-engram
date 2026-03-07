@@ -1,80 +1,71 @@
-# Theory: Verified Episodes Should Feed Narrow Semantic Rule Promotion
+# Theory: Promoted Rules Need Recall-Time Verification
 
 ## Problem
 
-PR20 proved that Engram can reuse memory boxes for episodic recall while still
-verifying the cited source memories. The next mistake would be to stop there
-and leave semantic memory disconnected from those verified episodes. The memory
-model from the roadmap is not just "retrieve episodes"; it is "retrieve
-episodes, verify them, and separately extract reusable semantic rules."
+PR21 proved Engram can turn explicit `IF ... THEN ...` clauses from verified
+episodes into durable rule memories. That created a new risk: promoted rules
+can outlive the episode that justified them. If Engram treats those rules as
+durable truth forever, semantic memory becomes easier to poison and harder to
+audit.
 
-That means PR21 needs a promotion path from verified episodic material into
-durable rule memory. The danger is scope creep: a broad "semantic rule" system
-would immediately pull in model inference, ranking, downgrade policy, and
-retrieval blending. This slice needs to stay smaller than that.
+The next step is not broad rule retrieval or invalidation. It is narrower:
+re-check promoted rules against their cited source episode at recall time and
+only surface rules whose provenance still carries enough weight.
 
 ## Operating Theory
 
-The rollout pattern that has worked across the memory-OS track is still right:
+The rollout that has worked across the memory-OS track still applies here:
 
-1. keep the new capability bounded and inspectable
-2. reuse existing durable substrates when they already encode the right shape
-3. add verification rules before automation rules
-4. benchmark the verified surface before promoting more abstract behavior
+1. store the durable thing first
+2. verify it again when it matters
+3. downgrade confidence before mutating state
+4. keep the new recall surface separate until it is benchmarked
 
-For semantic rule promotion, the highest-leverage first step is not general
-causal inference. It is deterministic promotion of already-explicit rules from
-verified episodic memories:
+For promoted semantic rules, recall-time verification is the smallest honest
+bridge between episodic truth and semantic reuse:
 
-- episodic memories remain the source of truth
-- promoted `rule` memories become the reusable semantic layer
-- lineage and source-memory provenance keep the semantic layer auditable
+- promoted `rule` memories remain durable and inspectable
+- the cited `sourceMemoryId` remains the audit anchor
+- recall re-checks that source before surfacing the rule
+- missing, archived, or non-episodic sources reduce effective confidence
 
-If the source memory is not a live episode, or if it does not contain an
-explicit `IF ... THEN ...` structure, this slice should do nothing.
+That keeps semantic memory useful without pretending provenance never decays.
 
 ## Strategy
 
-Keep PR21 narrow and legible:
+Keep PR22 bounded and feature-flagged:
 
-- keep everything behind `semanticRulePromotionEnabled`
-- add an operator-facing command:
-  - `openclaw engram semantic-rule-promote --memory-id <id> [--dry-run]`
-- accept only non-archived source memories whose `memoryKind` is `episode`
-- normalize only explicit `IF ... THEN ...` rules
-- write promoted rules as normal `rule` memories with:
-  - `memoryKind: note`
-  - `source: semantic-rule-promotion`
-  - `sourceMemoryId`
-  - `lineage`
-  - support link back to the source episode
-- suppress duplicates by canonicalized rule content
+- add `semanticRuleVerificationEnabled`
+- add a dedicated `## Verified Rules` recall section
+- search only `rule` memories written by `semantic-rule-promotion`
+- re-check the cited `sourceMemoryId` at recall time
+- compute an effective confidence:
+  - verified source: keep anchored confidence
+  - missing/archived/non-episode source: downgrade it
+- filter out downgraded rules below a default confidence floor
+- expose the exact surface through:
+  - `openclaw engram semantic-rule-verify <query>`
 
-This keeps the feature aligned with the human-inspired memory direction without
-pretending the full semantic-rule system exists yet. The first question is
-simply: can Engram take an already-explicit rule from a verified episode and
-promote it into durable semantic memory with provenance intact?
+This keeps the verifier inspectable and benchmarkable before any broader
+semantic blending lands.
 
 ## Key Discoveries
 
-- The repo already had a `rule` memory category and causal-rule-aware
-  extraction prompts, but it still lacked an explicit promotion path from
-  episodic evidence into durable rule memory.
-- The cleanest first semantic-rule slice is deterministic rather than model
-  inferred: promote only explicit `IF ... THEN ...` clauses that are already
-  present in verified episodic memories.
-- Canonicalization matters immediately. If punctuation around the condition
-  clause is not normalized, duplicate suppression will drift and rule memories
-  will split on commas rather than meaning.
-- Provenance needs to be written on day one. `sourceMemoryId`, `lineage`, and a
-  support link back to the episode are the minimum structure that makes later
-  downgrade and verifier work possible.
+- PR21 already wrote the critical provenance fields: `sourceMemoryId`,
+  `lineage`, and a `supports` link. That made PR22 possible without changing
+  storage shape.
+- Confidence downgrade is the right first response to provenance decay. It is
+  cheaper and safer than mutating or deleting rule memories during recall.
+- A separate `Verified Rules` section is cleaner than blending promoted rules
+  into generic recall immediately. It makes the new behavior legible and easier
+  to benchmark.
 
 ## Open Questions
 
-- Should later slices broaden promotion beyond explicit `IF ... THEN ...`
-  phrasing into causal paraphrases like "X failed because Y"?
-- Should semantic-rule recall stay separate from principle/rule recall until
-  downgrade paths exist, or is provenance alone enough for early blending?
-- When PR22 adds verifier and confidence downgrade behavior, should duplicate
-  rule detection also compare lineage sets, or is normalized content enough?
+- Should a future slice record verifier outcomes back onto the rule memory, or
+  should recall stay purely read-only?
+- When broader semantic-rule retrieval arrives, should verified rules blend
+  with principles, or stay in a distinct section until benchmark results prove
+  parity?
+- Do later slices need learned downgrade weights, or is deterministic
+  provenance scoring enough for the semantic-rule track?
