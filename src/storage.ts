@@ -135,7 +135,11 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
     lines.push(`importanceScore: ${fm.importance.score}`);
     lines.push(`importanceLevel: ${fm.importance.level}`);
     if (fm.importance.reasons.length > 0) {
-      lines.push(`importanceReasons: [${fm.importance.reasons.map((r) => `"${r.replace(/"/g, '\\"')}"`).join(", ")}]`);
+      lines.push(
+        `importanceReasons: [${fm.importance.reasons
+          .map((r) => `"${r.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ")}]`,
+      );
     }
     if (fm.importance.keywords.length > 0) {
       lines.push(`importanceKeywords: [${fm.importance.keywords.map((k) => `"${k}"`).join(", ")}]`);
@@ -152,7 +156,9 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       lines.push(`  - targetId: ${link.targetId}`);
       lines.push(`    linkType: ${link.linkType}`);
       lines.push(`    strength: ${link.strength}`);
-      if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
+      if (link.reason) {
+        lines.push(`    reason: "${link.reason.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+      }
     }
   }
   if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
