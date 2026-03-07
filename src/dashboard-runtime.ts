@@ -30,6 +30,15 @@ type WsClient = {
   socket: Duplex;
 };
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+function normalizeOriginHostname(hostname: string): string {
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return hostname.slice(1, -1);
+  }
+  return hostname;
+}
+
 function websocketAcceptKey(clientKey: string): string {
   return createHash("sha1")
     .update(`${clientKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
@@ -216,8 +225,14 @@ export class GraphDashboardServer {
   private handleUpgrade(req: IncomingMessage, socket: Duplex): void {
     const upgrade = typeof req.headers.upgrade === "string" ? req.headers.upgrade.toLowerCase() : "";
     const key = req.headers["sec-websocket-key"];
+    const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
     if (upgrade !== "websocket" || typeof key !== "string") {
       socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    if (!this.isAllowedOrigin(origin)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
     }
@@ -246,6 +261,20 @@ export class GraphDashboardServer {
       graph: this.graphSnapshot,
     });
     socket.write(encodeTextFrame(hello));
+  }
+
+  private isAllowedOrigin(origin: string): boolean {
+    if (!origin) return false;
+    try {
+      const parsed = new URL(origin);
+      const hostname = normalizeOriginHostname(parsed.hostname);
+      if (!LOOPBACK_HOSTS.has(hostname)) return false;
+      if (parsed.protocol !== "http:") return false;
+      const originPort = parsed.port ? Number(parsed.port) : 80;
+      return Number.isFinite(originPort) && originPort === this.boundPort;
+    } catch {
+      return false;
+    }
   }
 
   private broadcast(payload: unknown): void {

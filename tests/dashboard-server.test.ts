@@ -82,6 +82,7 @@ test("dashboard server serves health, graph, static assets, and websocket upgrad
       `Host: ${started.host}:${started.port}`,
       "Upgrade: WebSocket",
       "Connection: Upgrade",
+      `Origin: http://${started.host}:${started.port}`,
       "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
       "Sec-WebSocket-Version: 13",
       "",
@@ -90,6 +91,68 @@ test("dashboard server serves health, graph, static assets, and websocket upgrad
   );
   const upgradeResponse = await waitForSocketChunk(socket);
   assert.match(upgradeResponse, /101 Switching Protocols/);
+  socket.destroy();
+
+  await server.stop();
+});
+
+test("dashboard origin check allows explicit and default http port 80", () => {
+  const server = new GraphDashboardServer({
+    memoryDir: "/tmp",
+    host: "127.0.0.1",
+    port: 80,
+    publicDir: path.join(process.cwd(), "dashboard", "public"),
+  });
+  (server as unknown as { boundPort: number }).boundPort = 80;
+
+  const isAllowedOrigin = (server as unknown as { isAllowedOrigin: (origin: string) => boolean }).isAllowedOrigin.bind(server);
+
+  assert.equal(isAllowedOrigin("http://127.0.0.1:80"), true);
+  assert.equal(isAllowedOrigin("http://127.0.0.1"), true);
+  assert.equal(isAllowedOrigin("http://localhost"), true);
+});
+
+test("dashboard origin check allows IPv6 loopback without brackets in hostname parsing", () => {
+  const server = new GraphDashboardServer({
+    memoryDir: "/tmp",
+    host: "127.0.0.1",
+    port: 8080,
+    publicDir: path.join(process.cwd(), "dashboard", "public"),
+  });
+  (server as unknown as { boundPort: number }).boundPort = 8080;
+
+  const isAllowedOrigin = (server as unknown as { isAllowedOrigin: (origin: string) => boolean }).isAllowedOrigin.bind(server);
+
+  assert.equal(isAllowedOrigin("http://[::1]:8080"), true);
+});
+test("dashboard websocket upgrade rejects non-loopback origin", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-dashboard-server-ws-origin-"));
+  await mkdir(path.join(memoryDir, "state", "graphs"), { recursive: true });
+
+  const server = new GraphDashboardServer({
+    memoryDir,
+    host: "127.0.0.1",
+    port: 0,
+    publicDir: path.join(process.cwd(), "dashboard", "public"),
+  });
+  const started = await server.start();
+
+  const socket = net.createConnection({ host: started.host, port: started.port });
+  socket.write(
+    [
+      "GET / HTTP/1.1",
+      `Host: ${started.host}:${started.port}`,
+      "Upgrade: WebSocket",
+      "Connection: Upgrade",
+      "Origin: http://evil.example",
+      "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
+      "Sec-WebSocket-Version: 13",
+      "",
+      "",
+    ].join("\r\n"),
+  );
+  const upgradeResponse = await waitForSocketChunk(socket);
+  assert.match(upgradeResponse, /403 Forbidden/);
   socket.destroy();
 
   await server.stop();

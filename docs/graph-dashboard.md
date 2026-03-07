@@ -23,6 +23,7 @@ Default behavior:
 ## Safety Notes
 
 - Keep loopback bind unless you explicitly need remote access.
+- WebSocket upgrades require an explicit `Origin` header that is loopback (`127.0.0.1`, `localhost`, or `::1`) and uses the dashboard's bound HTTP port (`http:` only).
 - If you expose non-loopback binds, place the service behind network controls.
 - Dashboard is read-only and does not mutate memory artifacts.
 
