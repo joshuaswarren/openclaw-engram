@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Fixed
+- Frontmatter parser now unescapes backslashes and escaped quotes for `importanceReasons` and `links[].reason`, preventing backslash doubling across save/load round-trips after serializer hardening.
 - **Objective-state follow-up**: plain-text tool results no longer get marked as failures just because they contain words like `errors` or `failed` inside otherwise successful messages such as `0 errors found` or `previously failed test now passes`.
 - Dashboard websocket origin validation now treats omitted default HTTP port as port 80, so same-origin upgrades on `http://127.0.0.1` and `http://127.0.0.1:80` both pass when the dashboard is bound to port 80; also removed an unreachable bracketed IPv6 loopback host entry.
 - Fallback contradiction verification, link suggestion, and memory summarization now normalize gateway/local LLM JSON aliases the same way as the direct OpenAI client, so `winner`, `type`, `summary`, and `entities` responses continue to work without an OpenAI API key.

@@ -135,7 +135,11 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
     lines.push(`importanceScore: ${fm.importance.score}`);
     lines.push(`importanceLevel: ${fm.importance.level}`);
     if (fm.importance.reasons.length > 0) {
-      lines.push(`importanceReasons: [${fm.importance.reasons.map((r) => `"${r.replace(/"/g, '\\"')}"`).join(", ")}]`);
+      lines.push(
+        `importanceReasons: [${fm.importance.reasons
+          .map((r) => `"${r.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ")}]`,
+      );
     }
     if (fm.importance.keywords.length > 0) {
       lines.push(`importanceKeywords: [${fm.importance.keywords.map((k) => `"${k}"`).join(", ")}]`);
@@ -152,7 +156,9 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       lines.push(`  - targetId: ${link.targetId}`);
       lines.push(`    linkType: ${link.linkType}`);
       lines.push(`    strength: ${link.strength}`);
-      if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
+      if (link.reason) {
+        lines.push(`    reason: "${link.reason.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+      }
     }
   }
   if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
@@ -234,12 +240,21 @@ function parseFrontmatter(
     // Parse importance reasons array
     let reasons: string[] = [];
     const reasonsStr = fm.importanceReasons ?? "";
-    const reasonsMatch = reasonsStr.match(/\[(.*)]/);
-    if (reasonsMatch) {
-      reasons = reasonsMatch[1]
-        .split(/",\s*"/)
-        .map((r) => r.replace(/^"|"$/g, "").replace(/\\"/g, '"'))
-        .filter(Boolean);
+    if (reasonsStr.trim().startsWith("[") && reasonsStr.trim().endsWith("]")) {
+      try {
+        const parsed = JSON.parse(reasonsStr);
+        if (Array.isArray(parsed)) {
+          reasons = parsed.filter((item) => typeof item === "string") as string[];
+        }
+      } catch {
+        const reasonsMatch = reasonsStr.match(/\[(.*)]/);
+        if (reasonsMatch) {
+          reasons = reasonsMatch[1]
+            .split(/",\s*"/)
+            .map((r) => r.replace(/^"|"$/g, "").replace(/\\"/g, '"'))
+            .filter(Boolean);
+        }
+      }
     }
 
     // Parse importance keywords array
@@ -307,15 +322,37 @@ function parseFrontmatter(
   // Note: Simple parsing - for full YAML we'd need a library.
   if (fmBlock.includes("links:")) {
     const links: MemoryLink[] = [];
-    const linkMatches = fmBlock.matchAll(
-      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "([^"]*)")?/g,
+          ? (() => {
+              const s = match[4];
+              let out = "";
+              for (let i = 0; i < s.length; i++) {
+                const ch = s[i];
+                if (ch === "\\" && i + 1 < s.length) {
+                  const next = s[i + 1];
+                  if (next === "\\" || next === '"') {
+                    out += next;
+                    i++; // skip consumed escape char
+                    continue;
+                  }
+                  // For any other escape, drop the backslash and keep the char.
+                  out += next;
+                  i++;
+                } else {
+                  out += ch;
+                }
+              }
+              return out;
+            })()
+      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "((?:\\.|[^"\\])*)")?/g,
     );
     for (const match of linkMatches) {
       links.push({
         targetId: match[1],
         linkType: match[2] as MemoryLink["linkType"],
         strength: parseFloat(match[3]),
-        reason: match[4] || undefined,
+        reason: match[4]
+          ? match[4].replace(/\\\\/g, "\\").replace(/\\"/g, '"')
+          : undefined,
       });
     }
     if (links.length > 0) {
