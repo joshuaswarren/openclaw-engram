@@ -169,6 +169,24 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats common error class n
   assert.equal(snapshots[0]?.changeKind, "failed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats timed out phrases as failures", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:14.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "remote_search",
+        content: "Request timed out after 30 seconds.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
 test("recordObjectiveStateSnapshotsFromAgentMessages does not abort on empty generic tool content", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-empty-tool-"));
   const written = await recordObjectiveStateSnapshotsFromAgentMessages({
