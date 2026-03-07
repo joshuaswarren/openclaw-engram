@@ -31,7 +31,7 @@ import {
   type TierMigrationCycleSummary,
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
-import { recordEvalShadowRecall } from "./evals.js";
+import { recordEvalShadowRecall, type EvalShadowRecallRecord } from "./evals.js";
 import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
@@ -662,6 +662,7 @@ export class Orchestrator {
   private suppressedRecallFailures = 0;
   private readonly policyRuntime: PolicyRuntimeManager;
   private runtimePolicyValues: RuntimePolicyValues | null = null;
+  private evalShadowWriteChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -2004,6 +2005,30 @@ export class Orchestrator {
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
+      if (sessionKey) {
+        this.queueEvalShadowRecall({
+          traceId,
+          recordedAt: new Date().toISOString(),
+          sessionKey,
+          promptHash,
+          promptLength: prompt.length,
+          retrievalQueryHash,
+          retrievalQueryLength: retrievalQuery.length,
+          recallMode,
+          recallResultLimit,
+          source: recallSource,
+          recalledMemoryCount,
+          injected: false,
+          contextChars: 0,
+          memoryIds: [],
+          policyVersion,
+          identityInjectionMode: identityInjectionModeUsed,
+          identityInjectedChars,
+          identityInjectionTruncated,
+          durationMs: Date.now() - recallStart,
+          timings: { ...timings },
+        });
+      }
       this.emitTrace({
         kind: "recall_summary",
         traceId,
@@ -2956,38 +2981,29 @@ export class Orchestrator {
 
     const orderedSections = this.assembleRecallSections(sectionBuckets);
     const context = orderedSections.length === 0 ? "" : orderedSections.join("\n\n---\n\n");
-    if (this.config.evalHarnessEnabled && this.config.evalShadowModeEnabled && sessionKey) {
-      try {
-        await recordEvalShadowRecall({
-          memoryDir: this.config.memoryDir,
-          evalStoreDir: this.config.evalStoreDir,
-          record: {
-            schemaVersion: 1,
-            traceId,
-            recordedAt: new Date().toISOString(),
-            sessionKey,
-            promptHash,
-            promptLength: prompt.length,
-            retrievalQueryHash,
-            retrievalQueryLength: retrievalQuery.length,
-            recallMode,
-            recallResultLimit,
-            source: recallSource,
-            recalledMemoryCount,
-            injected: context.length > 0,
-            contextChars: context.length,
-            memoryIds: recalledMemoryIds,
-            policyVersion,
-            identityInjectionMode: identityInjectionModeUsed,
-            identityInjectedChars,
-            identityInjectionTruncated,
-            durationMs: Date.now() - recallStart,
-            timings: { ...timings },
-          },
-        });
-      } catch (err) {
-        log.debug(`eval shadow recall write failed: ${err}`);
-      }
+    if (sessionKey) {
+      this.queueEvalShadowRecall({
+        traceId,
+        recordedAt: new Date().toISOString(),
+        sessionKey,
+        promptHash,
+        promptLength: prompt.length,
+        retrievalQueryHash,
+        retrievalQueryLength: retrievalQuery.length,
+        recallMode,
+        recallResultLimit,
+        source: recallSource,
+        recalledMemoryCount,
+        injected: context.length > 0,
+        contextChars: context.length,
+        memoryIds: recalledMemoryIds,
+        policyVersion,
+        identityInjectionMode: identityInjectionModeUsed,
+        identityInjectedChars,
+        identityInjectionTruncated,
+        durationMs: Date.now() - recallStart,
+        timings: { ...timings },
+      });
     }
     this.emitTrace({
       kind: "recall_summary",
@@ -5285,6 +5301,28 @@ export class Orchestrator {
     } catch (err) {
       log.debug(`trace callback failed: ${err}`);
     }
+  }
+
+  private queueEvalShadowRecall(
+    record: Omit<EvalShadowRecallRecord, "schemaVersion">,
+  ): void {
+    if (!this.config.evalHarnessEnabled || !this.config.evalShadowModeEnabled) return;
+    this.evalShadowWriteChain = this.evalShadowWriteChain
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await recordEvalShadowRecall({
+            memoryDir: this.config.memoryDir,
+            evalStoreDir: this.config.evalStoreDir,
+            record: {
+              schemaVersion: 1,
+              ...record,
+            },
+          });
+        } catch (err) {
+          log.debug(`eval shadow recall write failed: ${err}`);
+        }
+      });
   }
 
   private publishRecallResults(options: {
