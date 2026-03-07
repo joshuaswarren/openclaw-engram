@@ -301,10 +301,10 @@ function lexicalScoreObjectiveStateSnapshot(
 
 function scoreObjectiveStateSnapshot(
   snapshot: ObjectiveStateSnapshot,
-  queryTokens: Set<string>,
+  lexicalScore: number,
   sessionKey?: string,
 ): number {
-  let score = lexicalScoreObjectiveStateSnapshot(snapshot, queryTokens);
+  let score = lexicalScore;
   if (sessionKey && snapshot.sessionKey === sessionKey) score += 1.5;
 
   const recordedAtMs = Date.parse(snapshot.recordedAt);
@@ -329,14 +329,14 @@ export async function searchObjectiveStateSnapshots(options: {
   if (snapshots.length === 0) return [];
 
   const queryTokens = new Set(normalizeTokens(options.query));
-  const scored = snapshots.map((snapshot) => ({
-    snapshot,
-    lexicalScore: lexicalScoreObjectiveStateSnapshot(snapshot, queryTokens),
-    score:
-      queryTokens.size === 0
-        ? scoreObjectiveStateSnapshot(snapshot, new Set<string>(), options.sessionKey)
-        : scoreObjectiveStateSnapshot(snapshot, queryTokens, options.sessionKey),
-  }));
+  const scored = snapshots.map((snapshot) => {
+    const lexicalScore = lexicalScoreObjectiveStateSnapshot(snapshot, queryTokens);
+    return {
+      snapshot,
+      lexicalScore,
+      score: scoreObjectiveStateSnapshot(snapshot, lexicalScore, options.sessionKey),
+    };
+  });
 
   const filtered = queryTokens.size === 0
     ? scored
