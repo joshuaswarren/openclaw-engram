@@ -203,20 +203,7 @@ export async function getObjectiveStateStoreStatus(options: {
 }): Promise<ObjectiveStateStoreStatus> {
   const rootDir = resolveObjectiveStateStoreDir(options.memoryDir, options.objectiveStateStoreDir);
   const snapshotsDir = path.join(rootDir, "snapshots");
-  const files = await listJsonFiles(snapshotsDir);
-  const snapshots: ObjectiveStateSnapshot[] = [];
-  const invalidSnapshots: Array<{ path: string; error: string }> = [];
-
-  for (const filePath of files) {
-    try {
-      snapshots.push(validateObjectiveStateSnapshot(await readJsonFile(filePath)));
-    } catch (error) {
-      invalidSnapshots.push({
-        path: filePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  const { files, snapshots, invalidSnapshots } = await readObjectiveStateSnapshots(options);
 
   snapshots.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
   const byKind: Partial<Record<ObjectiveStateSnapshotKind, number>> = {};
@@ -250,18 +237,26 @@ export async function getObjectiveStateStoreStatus(options: {
 async function readObjectiveStateSnapshots(options: {
   memoryDir: string;
   objectiveStateStoreDir?: string;
-}): Promise<ObjectiveStateSnapshot[]> {
+}): Promise<{
+  files: string[];
+  snapshots: ObjectiveStateSnapshot[];
+  invalidSnapshots: Array<{ path: string; error: string }>;
+}> {
   const rootDir = resolveObjectiveStateStoreDir(options.memoryDir, options.objectiveStateStoreDir);
   const files = await listJsonFiles(path.join(rootDir, "snapshots"));
   const snapshots: ObjectiveStateSnapshot[] = [];
+  const invalidSnapshots: Array<{ path: string; error: string }> = [];
   for (const filePath of files) {
     try {
       snapshots.push(validateObjectiveStateSnapshot(await readJsonFile(filePath)));
-    } catch {
-      // Ignore invalid snapshot artifacts during recall/ranking. Store status reports them separately.
+    } catch (error) {
+      invalidSnapshots.push({
+        path: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
-  return snapshots;
+  return { files, snapshots, invalidSnapshots };
 }
 
 function normalizeTokens(value: string): string[] {
@@ -325,7 +320,7 @@ export async function searchObjectiveStateSnapshots(options: {
   const maxResults = Math.max(0, Math.floor(options.maxResults));
   if (maxResults === 0) return [];
 
-  const snapshots = await readObjectiveStateSnapshots(options);
+  const { snapshots } = await readObjectiveStateSnapshots(options);
   if (snapshots.length === 0) return [];
 
   const queryTokens = new Set(normalizeTokens(options.query));
