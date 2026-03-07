@@ -195,6 +195,7 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
     const loweredForFailure = lowered
       .replace(/\b(?:previously\s+)?failed tests?\s+now\s+pass(?:ed|es)?\b/g, "");
     const hasZeroErrors = /\b(?:0|no)\s+errors?\b/.test(lowered);
+    const hasNonZeroErrorCounts = /\b[1-9]\d*\s+errors?\b/.test(loweredForFailure);
     const hasNegatedSuccessMarkers =
       /\b(?:not|did not|didn't|doesn't|isn't|aren't|wasn't|weren't|won't|can't|couldn't|shouldn't|wouldn't)\s+(?:ok|pass|passed|passes|succeeded|success)\b/.test(loweredForFailure);
     const hasSuccessMarkers =
@@ -203,6 +204,7 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
     const hasFailureMarkers =
       hasNegatedSuccessMarkers ||
       /\b(exceptions?|failed|failures?|fatal|timeouts?|timed out)\b/.test(loweredForFailure) ||
+      hasNonZeroErrorCounts ||
       (/\berrors?\b/.test(loweredForFailure) && !hasZeroErrors) ||
       /\b[a-z]+error\b/.test(loweredForFailure) ||
       /\b[a-z]+exception\b/.test(loweredForFailure);
