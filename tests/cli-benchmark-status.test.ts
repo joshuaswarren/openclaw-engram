@@ -110,4 +110,7 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
   assert.equal(status.latestRun?.metrics?.actionOutcomeScore, 0.75);
   assert.equal(status.invalidBenchmarks.length, 1);
   assert.match(status.invalidBenchmarks[0]?.error ?? "", /cases must be an array/i);
+  assert.equal(status.invalidRuns.length, 1);
+  assert.equal(path.basename(status.invalidRuns[0]?.path ?? ""), "run-bad.json");
+  assert.match(status.invalidRuns[0]?.error ?? "", /must be a non-empty string/i);
 });

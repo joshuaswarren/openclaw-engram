@@ -74,6 +74,10 @@ export interface EvalHarnessStatus {
     path: string;
     error: string;
   }>;
+  invalidRuns: Array<{
+    path: string;
+    error: string;
+  }>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -224,6 +228,7 @@ export async function getEvalHarnessStatus(options: {
   const runFiles = await listJsonFiles(runsDir);
 
   const invalidBenchmarks: Array<{ path: string; error: string }> = [];
+  const invalidRuns: Array<{ path: string; error: string }> = [];
   const manifests: EvalBenchmarkManifest[] = [];
 
   for (const filePath of benchmarkFiles) {
@@ -238,12 +243,14 @@ export async function getEvalHarnessStatus(options: {
   }
 
   const runs: EvalRunSummary[] = [];
-  let invalidRunCount = 0;
   for (const filePath of runFiles) {
     try {
       runs.push(validateEvalRunSummary(await readJsonFile(filePath)));
-    } catch {
-      invalidRunCount += 1;
+    } catch (error) {
+      invalidRuns.push({
+        path: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -279,7 +286,7 @@ export async function getEvalHarnessStatus(options: {
     },
     runs: {
       total: runFiles.length,
-      invalid: invalidRunCount,
+      invalid: invalidRuns.length,
       completed: runs.filter((run) => run.status === "completed").length,
       failed: runs.filter((run) => run.status === "failed").length,
       partial: runs.filter((run) => run.status === "partial").length,
@@ -290,5 +297,6 @@ export async function getEvalHarnessStatus(options: {
     },
     latestRun,
     invalidBenchmarks,
+    invalidRuns,
   };
 }
