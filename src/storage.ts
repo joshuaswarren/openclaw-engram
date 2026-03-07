@@ -322,7 +322,27 @@ function parseFrontmatter(
   // Note: Simple parsing - for full YAML we'd need a library.
   if (fmBlock.includes("links:")) {
     const links: MemoryLink[] = [];
-    const linkMatches = fmBlock.matchAll(
+          ? (() => {
+              const s = match[4];
+              let out = "";
+              for (let i = 0; i < s.length; i++) {
+                const ch = s[i];
+                if (ch === "\\" && i + 1 < s.length) {
+                  const next = s[i + 1];
+                  if (next === "\\" || next === '"') {
+                    out += next;
+                    i++; // skip consumed escape char
+                    continue;
+                  }
+                  // For any other escape, drop the backslash and keep the char.
+                  out += next;
+                  i++;
+                } else {
+                  out += ch;
+                }
+              }
+              return out;
+            })()
       /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "((?:\\.|[^"\\])*)")?/g,
     );
     for (const match of linkMatches) {
