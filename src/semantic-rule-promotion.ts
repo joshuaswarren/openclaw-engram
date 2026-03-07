@@ -41,7 +41,7 @@ export function extractExplicitIfThenRule(content: string): string | null {
   const match = content.match(/\bif\b([\s\S]+?)\bthen\b([\s\S]+?)(?:[.!?](?:\s|$)|$)/i);
   if (!match) return null;
   const condition = stripTrailingClausePunctuation(normalizeRuleWhitespace(match[1] ?? ""));
-  const outcome = normalizeRuleWhitespace(match[2] ?? "");
+  const outcome = stripTrailingClausePunctuation(normalizeRuleWhitespace(match[2] ?? ""));
   if (condition.length === 0 || outcome.length === 0) return null;
   return `IF ${condition} THEN ${outcome}.`;
 }

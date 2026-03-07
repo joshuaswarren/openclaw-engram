@@ -136,6 +136,47 @@ test("promoteSemanticRuleFromMemory skips non-episodic memories and duplicate pr
   assert.equal(second.skipped[0]?.reason, "duplicate-rule");
 });
 
+test("promoteSemanticRuleFromMemory strips trailing punctuation from THEN outcomes before duplicate checks", async () => {
+  const { memoryDir, storage } = await createStore();
+  const firstEpisodeId = await storage.writeMemory(
+    "fact",
+    "IF deployment drift is detected THEN rollback immediately,",
+    {
+      source: "test",
+      tags: ["deployments"],
+      confidence: 0.89,
+      memoryKind: "episode",
+    },
+  );
+
+  const first = await promoteSemanticRuleFromMemory({
+    memoryDir,
+    enabled: true,
+    sourceMemoryId: firstEpisodeId,
+  });
+  assert.equal(first.promoted.length, 1);
+  assert.equal(first.promoted[0]?.content, "IF deployment drift is detected THEN rollback immediately.");
+
+  const secondEpisodeId = await storage.writeMemory(
+    "fact",
+    "IF deployment drift is detected THEN rollback immediately.",
+    {
+      source: "test",
+      tags: ["deployments"],
+      confidence: 0.89,
+      memoryKind: "episode",
+    },
+  );
+
+  const second = await promoteSemanticRuleFromMemory({
+    memoryDir,
+    enabled: true,
+    sourceMemoryId: secondEpisodeId,
+  });
+  assert.equal(second.promoted.length, 0);
+  assert.equal(second.skipped[0]?.reason, "duplicate-rule");
+});
+
 test("semantic-rule-promote CLI command honors the feature flag", async () => {
   const { memoryDir, storage } = await createStore();
   const sourceMemoryId = await storage.writeMemory(
