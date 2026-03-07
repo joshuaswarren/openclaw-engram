@@ -69,6 +69,11 @@ verified episodic source memories?
   cited `memoryIds` by repeated `getMemoryById()` calls quietly degenerates
   into repeated full-corpus scans, so the verified episodic slice needs one
   preloaded memory map per search rather than per-box lookups.
+- Verified episodic recall also needs to stay aligned with the rest of the
+  recall pipeline about which corpus it searches. Namespace-specific profile
+  storage is the right place for profile documents, but the verified-episode
+  section should search the configured memory root just like the other
+  cross-cutting recall surfaces do.
 - Verified episodic recall fits the existing recall-pipeline model cleanly as a
   separate section. It does not need to mutate generic semantic recall yet.
 - `semanticRulePromotionEnabled` belongs in the config contract now, but only

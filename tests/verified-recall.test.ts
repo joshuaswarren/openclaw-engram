@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir } from "node:fs/promises";
 import { BoxBuilder } from "../src/boxes.js";
 import { parseConfig } from "../src/config.js";
 import { Orchestrator } from "../src/orchestrator.js";
@@ -176,6 +176,47 @@ test("recall injects verified episodes when the feature is enabled", async () =>
   assert.match(context, /## Verified Episodes/);
   assert.match(context, /Merge the PR after review is truly complete/i);
   assert.match(context, /verified episodes: 1/i);
+});
+
+test("recall verified episodes use the configured memory root even when default namespace storage is redirected", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-verified-namespace-"));
+  await seedVerifiedRecallStore(memoryDir);
+  await mkdir(path.join(memoryDir, "namespaces", "default"), { recursive: true });
+
+  const cfg = parseConfig({
+    openaiApiKey: "test-openai-key",
+    memoryDir,
+    qmdEnabled: false,
+    transcriptEnabled: false,
+    sharedContextEnabled: false,
+    conversationIndexEnabled: false,
+    hourlySummariesEnabled: false,
+    injectQuestions: false,
+    memoryBoxesEnabled: true,
+    boxRecallDays: 7,
+    verifiedRecallEnabled: true,
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    namespacePolicies: [],
+    recallPipeline: [
+      {
+        id: "verified-episodes",
+        enabled: true,
+        maxResults: 3,
+        maxChars: 1800,
+      },
+    ],
+  });
+
+  const orchestrator = new Orchestrator(cfg);
+  const context = await (orchestrator as any).recallInternal(
+    "Which episode says we merged the PR after Cursor turned green?",
+    "agent:main:discord:channel:123",
+  );
+
+  assert.match(context, /## Verified Episodes/);
+  assert.match(context, /Merge the PR after review is truly complete/i);
 });
 
 test("recall omits verified episodes when the feature flag is disabled", async () => {

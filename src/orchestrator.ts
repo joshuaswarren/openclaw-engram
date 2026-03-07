@@ -2288,7 +2288,7 @@ export class Orchestrator {
       }
 
       const results = await searchVerifiedEpisodes({
-        memoryDir: profileStorage.dir,
+        memoryDir: this.config.memoryDir,
         query: retrievalQuery,
         maxResults,
         boxRecallDays: this.config.boxRecallDays,
