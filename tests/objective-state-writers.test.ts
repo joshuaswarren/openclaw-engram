@@ -114,6 +114,25 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages does not classify remove-pr
   assert.equal(snapshots[0]?.scope, "remove_entry");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark success text with 'errors' as failure", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:10.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "lint_run",
+        content: "Linting complete: 0 errors found. Previously failed test now passes.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.kind, "tool");
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "observed");
+});
+
 test("recordObjectiveStateSnapshotsFromAgentMessages does not abort on empty generic tool content", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-empty-tool-"));
   const written = await recordObjectiveStateSnapshotsFromAgentMessages({

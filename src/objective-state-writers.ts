@@ -192,7 +192,16 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
   }
   if (typeof parsedPayload === "string") {
     const lowered = parsedPayload.toLowerCase();
-    if (lowered.includes("error") || lowered.includes("failed") || lowered.includes("exception")) {
+    if (
+      /\b(success|succeeded|passes|passed|complete(?:d)?|ok)\b/.test(lowered) ||
+      /\b(?:0|no)\s+errors?\b/.test(lowered)
+    ) {
+      return "success";
+    }
+    if (/\b(exception|exceptions?|failed|failure|fatal|timeout|timed out)\b/.test(lowered)) {
+      return "failure";
+    }
+    if (/\berrors?\b/.test(lowered) && !/\b(?:0|no)\s+errors?\b/.test(lowered)) {
       return "failure";
     }
   }
