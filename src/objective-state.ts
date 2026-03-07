@@ -1,6 +1,16 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { listJsonFiles, readJsonFile } from "./json-store.js";
+import {
+  assertIsoRecordedAt,
+  assertSafePathSegment,
+  assertString,
+  isRecord,
+  optionalString,
+  optionalStringArray,
+  recordStoreDay,
+  validateStringRecord,
+} from "./store-contract.js";
 
 export type ObjectiveStateSnapshotSource = "tool_result" | "cli" | "system" | "manual";
 export type ObjectiveStateSnapshotKind = "tool" | "file" | "process" | "record" | "workspace";
@@ -60,51 +70,6 @@ export interface ObjectiveStateSearchResult {
   score: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function assertString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${field} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function optionalString(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) return undefined;
-  return value.trim();
-}
-
-function assertSafePathSegment(value: string, field: string): string {
-  if (value === "." || value === ".." || value.includes("/") || value.includes("\\")) {
-    throw new Error(`${field} must be a safe path segment`);
-  }
-  return value;
-}
-
-function assertIsoRecordedAt(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
-    throw new Error("recordedAt must be an ISO timestamp");
-  }
-  return value;
-}
-
-function objectiveStateDay(recordedAt: string): string {
-  const day = recordedAt.slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    throw new Error("recordedAt must start with a valid YYYY-MM-DD date");
-  }
-  return day;
-}
-
-function optionalStringArray(value: unknown, field: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error(`${field} must be an array of strings`);
-  const items = value.map((item, index) => assertString(item, `${field}[${index}]`));
-  return items.length > 0 ? items : undefined;
-}
-
 function validateValueRef(raw: unknown, field: string): ObjectiveStateValueRef | undefined {
   if (raw === undefined) return undefined;
   if (!isRecord(raw)) throw new Error(`${field} must be an object`);
@@ -118,14 +83,7 @@ function validateValueRef(raw: unknown, field: string): ObjectiveStateValueRef |
 }
 
 function validateMetadata(raw: unknown): Record<string, string> | undefined {
-  if (raw === undefined) return undefined;
-  if (!isRecord(raw)) throw new Error("metadata must be an object of strings");
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (typeof value !== "string") throw new Error("metadata must be an object of strings");
-    out[key] = value;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
+  return validateStringRecord(raw, "metadata");
 }
 
 export function resolveObjectiveStateStoreDir(memoryDir: string, overrideDir?: string): string {
@@ -187,7 +145,7 @@ export async function recordObjectiveStateSnapshot(options: {
 }): Promise<string> {
   const rootDir = resolveObjectiveStateStoreDir(options.memoryDir, options.objectiveStateStoreDir);
   const validated = validateObjectiveStateSnapshot(options.snapshot);
-  const day = objectiveStateDay(validated.recordedAt);
+  const day = recordStoreDay(validated.recordedAt);
   const snapshotsDir = path.join(rootDir, "snapshots", day);
   const filePath = path.join(snapshotsDir, `${validated.snapshotId}.json`);
   await mkdir(snapshotsDir, { recursive: true });
