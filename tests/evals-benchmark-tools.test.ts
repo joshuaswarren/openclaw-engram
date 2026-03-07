@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { runBenchmarkImportCliCommand, runBenchmarkValidateCliCommand } from "../src/cli.js";
+import {
+  runBenchmarkImportCliCommand,
+  runBenchmarkStatusCliCommand,
+  runBenchmarkValidateCliCommand,
+} from "../src/cli.js";
 
 async function writeManifest(filePath: string, benchmarkId = "ama-memory"): Promise<void> {
   await writeFile(
@@ -80,6 +84,7 @@ test("benchmark-import preserves extra files when importing a directory pack", a
   await mkdir(path.join(packDir, "fixtures"), { recursive: true });
   await writeManifest(path.join(packDir, "manifest.json"));
   await writeFile(path.join(packDir, "fixtures", "notes.md"), "# notes\n", "utf8");
+  await writeFile(path.join(packDir, "fixtures", "case-data.json"), JSON.stringify({ fixture: true }, null, 2), "utf8");
 
   const result = await runBenchmarkImportCliCommand({
     path: packDir,
@@ -87,7 +92,16 @@ test("benchmark-import preserves extra files when importing a directory pack", a
   });
 
   const fixture = await readFile(path.join(result.targetDir, "fixtures", "notes.md"), "utf8");
+  const status = await runBenchmarkStatusCliCommand({
+    memoryDir: tmpDir,
+    evalHarnessEnabled: true,
+    evalShadowModeEnabled: false,
+  });
+
   assert.equal(fixture, "# notes\n");
+  assert.equal(status.benchmarks.total, 1);
+  assert.equal(status.benchmarks.invalid, 0);
+  assert.deepEqual(status.invalidBenchmarks, []);
 });
 
 test("benchmark-import rejects overwrite without force", async () => {

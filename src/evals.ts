@@ -228,6 +228,24 @@ async function listJsonFiles(dir: string): Promise<string[]> {
   }
 }
 
+async function listNamedFiles(dir: string, fileName: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const out: string[] = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...(await listNamedFiles(fullPath, fileName)));
+      } else if (entry.isFile() && entry.name === fileName) {
+        out.push(fullPath);
+      }
+    }
+    return out.sort();
+  } catch {
+    return [];
+  }
+}
+
 async function readJsonFile(filePath: string): Promise<unknown> {
   return JSON.parse(await readFile(filePath, "utf-8")) as unknown;
 }
@@ -318,7 +336,7 @@ export async function getEvalHarnessStatus(options: {
   const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
   const benchmarkDir = path.join(rootDir, "benchmarks");
   const runsDir = path.join(rootDir, "runs");
-  const benchmarkFiles = await listJsonFiles(benchmarkDir);
+  const benchmarkFiles = await listNamedFiles(benchmarkDir, "manifest.json");
   const runFiles = await listJsonFiles(runsDir);
 
   const invalidBenchmarks: Array<{ path: string; error: string }> = [];
