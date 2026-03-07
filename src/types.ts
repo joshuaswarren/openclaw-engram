@@ -217,6 +217,10 @@ export interface PluginConfig {
   evalHarnessEnabled: boolean;
   evalShadowModeEnabled: boolean;
   evalStoreDir: string;
+  // Objective-state memory foundation
+  objectiveStateMemoryEnabled: boolean;
+  objectiveStateSnapshotWritesEnabled: boolean;
+  objectiveStateStoreDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

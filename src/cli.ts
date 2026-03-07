@@ -43,8 +43,17 @@ import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
-import { getEvalHarnessStatus, type EvalHarnessStatus } from "./evals.js";
+import {
+  getEvalHarnessStatus,
+  importEvalBenchmarkPack,
+  type EvalBenchmarkPackSummary,
+  type EvalCiGateReport,
+  type EvalHarnessStatus,
+  runEvalBenchmarkCiGate,
+  validateEvalBenchmarkPack,
+} from "./evals.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
+import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
 import {
   analyzeSessionIntegrity,
   applySessionRepair,
@@ -74,6 +83,7 @@ interface CliProgram {
 interface CliCommand {
   description(desc: string): CliCommand;
   option(flags: string, desc: string, defaultValue?: string): CliCommand;
+  requiredOption(flags: string, desc: string, defaultValue?: string): CliCommand;
   argument(name: string, desc: string): CliCommand;
   action(fn: (...args: unknown[]) => Promise<void> | void): CliCommand;
   command(name: string): CliCommand;
@@ -581,6 +591,50 @@ export async function runBenchmarkStatusCliCommand(options: {
     evalStoreDir: options.evalStoreDir,
     enabled: options.evalHarnessEnabled,
     shadowModeEnabled: options.evalShadowModeEnabled,
+  });
+}
+
+export async function runBenchmarkValidateCliCommand(options: {
+  path: string;
+}): Promise<EvalBenchmarkPackSummary> {
+  return validateEvalBenchmarkPack(options.path);
+}
+
+export async function runBenchmarkImportCliCommand(options: {
+  path: string;
+  memoryDir: string;
+  evalStoreDir?: string;
+  force?: boolean;
+}): Promise<EvalBenchmarkPackSummary & { targetDir: string; overwritten: boolean }> {
+  return importEvalBenchmarkPack({
+    sourcePath: options.path,
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    force: options.force === true,
+  });
+}
+
+export async function runBenchmarkCiGateCliCommand(options: {
+  baseEvalStoreDir: string;
+  candidateEvalStoreDir: string;
+}): Promise<EvalCiGateReport> {
+  return runEvalBenchmarkCiGate({
+    baseEvalStoreDir: options.baseEvalStoreDir,
+    candidateEvalStoreDir: options.candidateEvalStoreDir,
+  });
+}
+
+export async function runObjectiveStateStatusCliCommand(options: {
+  memoryDir: string;
+  objectiveStateStoreDir?: string;
+  objectiveStateMemoryEnabled: boolean;
+  objectiveStateSnapshotWritesEnabled: boolean;
+}): Promise<ObjectiveStateStoreStatus> {
+  return getObjectiveStateStoreStatus({
+    memoryDir: options.memoryDir,
+    objectiveStateStoreDir: options.objectiveStateStoreDir,
+    enabled: options.objectiveStateMemoryEnabled,
+    writesEnabled: options.objectiveStateSnapshotWritesEnabled,
   });
 }
 
@@ -2093,6 +2147,69 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             evalStoreDir: orchestrator.config.evalStoreDir,
             evalHarnessEnabled: orchestrator.config.evalHarnessEnabled,
             evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-validate")
+        .description("Validate a benchmark manifest file or pack directory without importing it")
+        .argument("<path>", "Path to a benchmark manifest JSON file or a directory with manifest.json")
+        .action(async (...args: unknown[]) => {
+          const inputPath = args[0];
+          const summary = await runBenchmarkValidateCliCommand({
+            path: typeof inputPath === "string" ? inputPath : "",
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-import")
+        .description("Validate and import a benchmark manifest file or pack directory into Engram's eval store")
+        .argument("<path>", "Path to a benchmark manifest JSON file or a directory with manifest.json")
+        .option("--force", "Replace an existing imported benchmark pack with the same benchmarkId")
+        .action(async (...args: unknown[]) => {
+          const inputPath = args[0];
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkImportCliCommand({
+            path: typeof inputPath === "string" ? inputPath : "",
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            force: options.force === true,
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-ci-gate")
+        .description("Compare two eval stores and fail when the candidate regresses benchmark outcomes")
+        .requiredOption("--base <path>", "Path to the base eval store directory")
+        .requiredOption("--candidate <path>", "Path to the candidate eval store directory")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkCiGateCliCommand({
+            baseEvalStoreDir: typeof options.base === "string" ? options.base : "",
+            candidateEvalStoreDir: typeof options.candidate === "string" ? options.candidate : "",
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          if (!summary.passed) {
+            throw new Error("benchmark CI gate detected regressions");
+          }
+          console.log("OK");
+        });
+
+      cmd
+        .command("objective-state-status")
+        .description("Show objective-state store status, snapshot counts, and latest stored snapshot")
+        .action(async () => {
+          const status = await runObjectiveStateStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            objectiveStateStoreDir: orchestrator.config.objectiveStateStoreDir,
+            objectiveStateMemoryEnabled: orchestrator.config.objectiveStateMemoryEnabled,
+            objectiveStateSnapshotWritesEnabled: orchestrator.config.objectiveStateSnapshotWritesEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");

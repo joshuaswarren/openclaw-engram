@@ -484,6 +484,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
         ? cfg.evalStoreDir.trim()
         : path.join(memoryDir, "state", "evals"),
+    objectiveStateMemoryEnabled: cfg.objectiveStateMemoryEnabled === true,
+    objectiveStateSnapshotWritesEnabled: cfg.objectiveStateSnapshotWritesEnabled === true,
+    objectiveStateStoreDir:
+      typeof cfg.objectiveStateStoreDir === "string" && cfg.objectiveStateStoreDir.trim().length > 0
+        ? cfg.objectiveStateStoreDir.trim()
+        : path.join(memoryDir, "state", "objective-state"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:

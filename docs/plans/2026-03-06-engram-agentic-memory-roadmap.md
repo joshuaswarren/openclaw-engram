@@ -257,7 +257,6 @@ Sources:
 - All of the above; this is the operationalization layer.
 
 Flags:
-- `evalCiGateEnabled`
 
 PR slices:
 - PR32: benchmark baseline snapshots

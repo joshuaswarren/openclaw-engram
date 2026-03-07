@@ -75,6 +75,7 @@
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
     "test": "tsx --test",
+    "eval:ci-gate": "tsx scripts/eval-ci-gate.ts",
     "preflight": "bash scripts/pr-preflight.sh full",
     "preflight:quick": "bash scripts/pr-preflight.sh quick",
     "review:cursor": "bash scripts/cursor-prepush-review.sh",

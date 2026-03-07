@@ -111,12 +111,14 @@ jobs:
 
       - name: Compute next version from tags
         id: version
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
           SOURCE_MAIN_SHA=$(git rev-parse HEAD)
           echo "source_main_sha=${SOURCE_MAIN_SHA}" >> "$GITHUB_OUTPUT"
 
           # Honor manual version override from workflow_dispatch
-          OVERRIDE="${{ inputs.version_override }}"
+          OVERRIDE="${VERSION_OVERRIDE}"
           if [ -n "${OVERRIDE}" ]; then
             # Strip leading 'v' if provided
             OVERRIDE="${OVERRIDE#v}"
@@ -137,7 +139,9 @@ jobs:
           EXISTING_TAG=""
           while IFS= read -r tag; do
             [ -z "${tag}" ] && continue
-            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}"; then
+            TAG_TARGET_SHA="$(git rev-parse "refs/tags/${tag}^{}")"
+            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}" \
+              && [ "${TAG_TARGET_SHA}" = "${SOURCE_MAIN_SHA}" ]; then
               EXISTING_TAG="${tag}"
               break
             fi

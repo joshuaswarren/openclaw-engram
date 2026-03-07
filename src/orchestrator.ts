@@ -31,6 +31,7 @@ import {
   type TierMigrationCycleSummary,
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
+import { recordEvalShadowRecall, type EvalShadowRecallRecord } from "./evals.js";
 import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
@@ -661,6 +662,7 @@ export class Orchestrator {
   private suppressedRecallFailures = 0;
   private readonly policyRuntime: PolicyRuntimeManager;
   private runtimePolicyValues: RuntimePolicyValues | null = null;
+  private evalShadowWriteChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -1934,6 +1936,10 @@ export class Orchestrator {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
     const promptHash = createHash("sha256").update(prompt).digest("hex");
+    const traceId = createHash("sha256")
+      .update(`${sessionKey ?? "default"}:${recallStart}:${promptHash}`)
+      .digest("hex")
+      .slice(0, 16);
     const sectionBuckets = new Map<string, string[]>();
     const queryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
       cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
@@ -1947,6 +1953,7 @@ export class Orchestrator {
     let impressionRecorded = false;
     let recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan" = "none";
     let recalledMemoryCount = 0;
+    let recalledMemoryIds: string[] = [];
     let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
     let identityInjectedChars = 0;
     let identityInjectionTruncated = false;
@@ -1998,12 +2005,33 @@ export class Orchestrator {
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
+      if (sessionKey) {
+        this.queueEvalShadowRecall({
+          traceId,
+          recordedAt: new Date().toISOString(),
+          sessionKey,
+          promptHash,
+          promptLength: prompt.length,
+          retrievalQueryHash,
+          retrievalQueryLength: retrievalQuery.length,
+          recallMode,
+          recallResultLimit,
+          source: recallSource,
+          recalledMemoryCount,
+          injected: false,
+          contextChars: 0,
+          memoryIds: [],
+          policyVersion,
+          identityInjectionMode: identityInjectionModeUsed,
+          identityInjectedChars,
+          identityInjectionTruncated,
+          durationMs: Date.now() - recallStart,
+          timings: { ...timings },
+        });
+      }
       this.emitTrace({
         kind: "recall_summary",
-        traceId: createHash("sha256")
-          .update(`${sessionKey ?? "default"}:${Date.now()}:${promptHash}`)
-          .digest("hex")
-          .slice(0, 16),
+        traceId,
         operation: "recall",
         sessionKey,
         promptHash,
@@ -2646,6 +2674,7 @@ export class Orchestrator {
             truncated: identityInjectionTruncated,
           },
         });
+        recalledMemoryIds = this.extractMemoryIdsFromResults(memoryResults);
         impressionRecorded = true;
       } else if (!confidenceGateRejected) {
         // Only attempt fallback paths if the confidence gate did NOT fire.
@@ -2677,6 +2706,7 @@ export class Orchestrator {
               truncated: identityInjectionTruncated,
             },
           });
+          recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
           impressionRecorded = true;
         } else {
           const longTerm = await this.applyColdFallbackPipeline({
@@ -2700,6 +2730,7 @@ export class Orchestrator {
                 truncated: identityInjectionTruncated,
               },
             });
+            recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
             impressionRecorded = true;
           }
         }
@@ -2758,6 +2789,7 @@ export class Orchestrator {
             truncated: identityInjectionTruncated,
           },
         });
+        recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
         impressionRecorded = true;
       } else {
         const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
@@ -2811,6 +2843,7 @@ export class Orchestrator {
                 truncated: identityInjectionTruncated,
               },
             });
+            recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
             impressionRecorded = true;
           } else {
             const longTerm = await this.applyColdFallbackPipeline({
@@ -2834,6 +2867,7 @@ export class Orchestrator {
                   truncated: identityInjectionTruncated,
                 },
               });
+              recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
               impressionRecorded = true;
             }
           }
@@ -2850,7 +2884,7 @@ export class Orchestrator {
             this.publishRecallResults({
               title: "Long-Term Memories (Fallback)",
               results: longTerm,
-                sectionBuckets,
+              sectionBuckets,
               retrievalQuery,
               sessionKey,
               identityInjection: {
@@ -2859,6 +2893,7 @@ export class Orchestrator {
                 truncated: identityInjectionTruncated,
               },
             });
+            recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
             impressionRecorded = true;
           }
         }
@@ -2946,12 +2981,33 @@ export class Orchestrator {
 
     const orderedSections = this.assembleRecallSections(sectionBuckets);
     const context = orderedSections.length === 0 ? "" : orderedSections.join("\n\n---\n\n");
+    if (sessionKey) {
+      this.queueEvalShadowRecall({
+        traceId,
+        recordedAt: new Date().toISOString(),
+        sessionKey,
+        promptHash,
+        promptLength: prompt.length,
+        retrievalQueryHash,
+        retrievalQueryLength: retrievalQuery.length,
+        recallMode,
+        recallResultLimit,
+        source: recallSource,
+        recalledMemoryCount,
+        injected: context.length > 0,
+        contextChars: context.length,
+        memoryIds: recalledMemoryIds,
+        policyVersion,
+        identityInjectionMode: identityInjectionModeUsed,
+        identityInjectedChars,
+        identityInjectionTruncated,
+        durationMs: Date.now() - recallStart,
+        timings: { ...timings },
+      });
+    }
     this.emitTrace({
       kind: "recall_summary",
-      traceId: createHash("sha256")
-        .update(`${sessionKey ?? "default"}:${Date.now()}:${promptHash}`)
-        .digest("hex")
-        .slice(0, 16),
+      traceId,
       operation: "recall",
       sessionKey,
       promptHash,
@@ -5245,6 +5301,28 @@ export class Orchestrator {
     } catch (err) {
       log.debug(`trace callback failed: ${err}`);
     }
+  }
+
+  private queueEvalShadowRecall(
+    record: Omit<EvalShadowRecallRecord, "schemaVersion">,
+  ): void {
+    if (!this.config.evalHarnessEnabled || !this.config.evalShadowModeEnabled) return;
+    this.evalShadowWriteChain = this.evalShadowWriteChain
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await recordEvalShadowRecall({
+            memoryDir: this.config.memoryDir,
+            evalStoreDir: this.config.evalStoreDir,
+            record: {
+              schemaVersion: 1,
+              ...record,
+            },
+          });
+        } catch (err) {
+          log.debug(`eval shadow recall write failed: ${err}`);
+        }
+      });
   }
 
   private publishRecallResults(options: {

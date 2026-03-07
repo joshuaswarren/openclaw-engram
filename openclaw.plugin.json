@@ -1109,6 +1109,20 @@
         "type": "string",
         "description": "Override the evaluation harness state directory (defaults to {memoryDir}/state/evals)."
       },
+      "objectiveStateMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's objective-state memory foundation for normalized world/tool state snapshots."
+      },
+      "objectiveStateSnapshotWritesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Allow writing typed objective-state snapshots to the objective-state store."
+      },
+      "objectiveStateStoreDir": {
+        "type": "string",
+        "description": "Override the objective-state memory directory (defaults to {memoryDir}/state/objective-state)."
+      },
       "namespacesEnabled": {
         "type": "boolean",
         "default": false,
@@ -2022,6 +2036,21 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/evals",
       "help": "Override where benchmark packs and run summaries are stored."
+    },
+    "objectiveStateMemoryEnabled": {
+      "label": "Objective-State Memory",
+      "help": "Enable the objective-state memory foundation for normalized world and tool state snapshots."
+    },
+    "objectiveStateSnapshotWritesEnabled": {
+      "label": "Objective-State Snapshot Writes",
+      "advanced": true,
+      "help": "Allow snapshot writers to persist objective-state records into the objective-state store."
+    },
+    "objectiveStateStoreDir": {
+      "label": "Objective-State Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/objective-state",
+      "help": "Override where objective-state snapshots are stored."
     },
     "factDeduplicationEnabled": {
       "label": "Fact Deduplication",

@@ -5,6 +5,7 @@ import { log } from "./logger.js";
 import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
+import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -217,6 +218,7 @@ export default {
           // Extract the last user-assistant exchange
           const messages = event.messages as Array<Record<string, unknown>>;
           const lastTurn = extractLastTurn(messages);
+          const eventTimestamp = new Date().toISOString();
 
           // Best-effort tool usage stats for extended hourly summaries.
           if (orchestrator.config.hourlySummariesIncludeToolStats) {
@@ -237,10 +239,23 @@ export default {
                 }
               }
             }
-            const ts = new Date().toISOString();
             for (const tool of toolNames) {
-              await orchestrator.transcript.appendToolUse({ timestamp: ts, sessionKey, tool });
+              await orchestrator.transcript.appendToolUse({ timestamp: eventTimestamp, sessionKey, tool });
             }
+          }
+
+          try {
+            await recordObjectiveStateSnapshotsFromAgentMessages({
+              memoryDir: orchestrator.config.memoryDir,
+              objectiveStateStoreDir: orchestrator.config.objectiveStateStoreDir,
+              objectiveStateMemoryEnabled: orchestrator.config.objectiveStateMemoryEnabled,
+              objectiveStateSnapshotWritesEnabled: orchestrator.config.objectiveStateSnapshotWritesEnabled,
+              sessionKey,
+              recordedAt: eventTimestamp,
+              messages,
+            });
+          } catch (error) {
+            log.debug(`agent_end objective-state writer skipped due to error: ${error}`);
           }
 
           for (const msg of lastTurn) {
@@ -260,7 +275,7 @@ export default {
             // Append to transcript
             if (orchestrator.config.transcriptEnabled) {
               await orchestrator.transcript.append({
-                timestamp: new Date().toISOString(),
+                timestamp: eventTimestamp,
                 role,
                 content: cleaned,
                 sessionKey,
