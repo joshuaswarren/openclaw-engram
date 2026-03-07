@@ -43,6 +43,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Verified episodic recall** — Engram can now, when `verifiedRecallEnabled` is enabled, inject a dedicated `Verified Episodes` recall section that reuses memory boxes but only surfaces boxes whose cited source memories still verify as non-archived episodes.
 - **Semantic rule promotion** — Engram can now, when `semanticRulePromotionEnabled` is enabled, promote explicit `IF ... THEN ...` rules from verified episodic memories into durable `rule` memories with lineage, source-memory provenance, duplicate suppression, and the operator-facing `openclaw engram semantic-rule-promote` CLI.
 - **Verified rule recall** — Engram can now, when `semanticRuleVerificationEnabled` is enabled, inject a dedicated `Verified Rules` recall section that re-checks promoted rule memories against their cited source episodes at recall time and downgrades stale provenance before the rule can surface.
+- **Creation-memory ledger** — Engram can now, when `creationMemoryEnabled` is enabled, persist a typed work-product ledger for explicit outputs agents create or update, inspect it with `openclaw engram work-product-status`, and write deterministic entries through `openclaw engram work-product-record`.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -172,6 +173,8 @@ openclaw engram trust-zone-status           # Trust-zone record counts and lates
 openclaw engram trust-zone-promote          # Dry-run or apply a trust-zone promotion with provenance/corroboration enforcement
 openclaw engram harmonic-search <query>     # Preview blended harmonic retrieval matches
 openclaw engram verified-recall-search <query> # Preview verified episodic recall matches
+openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
+openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -213,6 +216,8 @@ Key settings:
 | `verifiedRecallEnabled` | `false` | Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes |
 | `semanticRulePromotionEnabled` | `false` | Enable deterministic promotion of explicit `IF ... THEN ...` rules from verified episodic memories via `openclaw engram semantic-rule-promote` |
 | `semanticRuleVerificationEnabled` | `false` | Verify promoted semantic rules against their cited source episodes at recall time and inject a dedicated `Verified Rules` section via `openclaw engram semantic-rule-verify` |
+| `creationMemoryEnabled` | `false` | Enable the creation-memory foundation, including the work-product ledger and operator-facing write/status commands |
+| `workProductLedgerDir` | `{memoryDir}/state/work-product-ledger` | Root directory for typed work-product ledger entries |
 
 Full reference: [Config Reference](docs/config-reference.md)
 

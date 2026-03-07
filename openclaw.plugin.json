@@ -1200,6 +1200,15 @@
         "default": false,
         "description": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
       },
+      "creationMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+      },
+      "workProductLedgerDir": {
+        "type": "string",
+        "description": "Override the work-product ledger directory (defaults to {memoryDir}/state/work-product-ledger)."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2212,6 +2221,17 @@
       "label": "Semantic Rule Verification",
       "advanced": true,
       "help": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+    },
+    "creationMemoryEnabled": {
+      "label": "Creation Memory",
+      "advanced": true,
+      "help": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+    },
+    "workProductLedgerDir": {
+      "label": "Work-Product Ledger Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/work-product-ledger",
+      "help": "Override where work-product ledger entries are stored."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

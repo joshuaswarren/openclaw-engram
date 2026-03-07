@@ -512,6 +512,11 @@ export function parseConfig(raw: unknown): PluginConfig {
     verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
     semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
     semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
+    creationMemoryEnabled: cfg.creationMemoryEnabled === true,
+    workProductLedgerDir:
+      typeof cfg.workProductLedgerDir === "string" && cfg.workProductLedgerDir.trim().length > 0
+        ? cfg.workProductLedgerDir.trim()
+        : path.join(memoryDir, "state", "work-product-ledger"),
     abstractionNodeStoreDir:
       typeof cfg.abstractionNodeStoreDir === "string" && cfg.abstractionNodeStoreDir.trim().length > 0
         ? cfg.abstractionNodeStoreDir.trim()
