@@ -296,6 +296,24 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats bare pass negations 
   assert.equal(snapshots[0]?.changeKind, "failed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats contraction negations as failures", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:14.875Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "Tests didn't pass.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages treats plural failures as failures", () => {
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
     sessionKey: "agent:main",

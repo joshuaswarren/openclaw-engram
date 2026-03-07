@@ -197,7 +197,7 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
       .replace(/\bfailed tests?\s+now\s+pass(?:ed|es)?\b/g, "");
     const hasZeroErrors = /\b(?:0|no)\s+errors?\b/.test(lowered);
     const hasNegatedSuccessMarkers =
-      /\b(?:not|did not)\s+(?:ok|pass|passed|passes|succeeded|success)\b/.test(loweredForFailure);
+      /\b(?:not|did not|didn't|doesn't|isn't|aren't|wasn't|weren't|won't|can't|couldn't|shouldn't|wouldn't)\s+(?:ok|pass|passed|passes|succeeded|success)\b/.test(loweredForFailure);
     const hasSuccessMarkers =
       /\b(success|succeeded|pass|passes|passed|ok)\b/.test(lowered) ||
       hasZeroErrors;
