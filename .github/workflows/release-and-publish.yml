@@ -111,12 +111,14 @@ jobs:
 
       - name: Compute next version from tags
         id: version
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
           SOURCE_MAIN_SHA=$(git rev-parse HEAD)
           echo "source_main_sha=${SOURCE_MAIN_SHA}" >> "$GITHUB_OUTPUT"
 
           # Honor manual version override from workflow_dispatch
-          OVERRIDE="${{ inputs.version_override }}"
+          OVERRIDE="${VERSION_OVERRIDE}"
           if [ -n "${OVERRIDE}" ]; then
             # Strip leading 'v' if provided
             OVERRIDE="${OVERRIDE#v}"
