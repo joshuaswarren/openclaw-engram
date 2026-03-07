@@ -1,5 +1,5 @@
 import path from "node:path";
-import { cp, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 
 export type EvalRunStatus = "running" | "completed" | "failed" | "partial";
 
@@ -44,6 +44,30 @@ export interface EvalRunSummary {
   gitRef?: string;
 }
 
+export interface EvalShadowRecallRecord {
+  schemaVersion: 1;
+  traceId: string;
+  recordedAt: string;
+  sessionKey: string;
+  promptHash: string;
+  promptLength: number;
+  retrievalQueryHash: string;
+  retrievalQueryLength: number;
+  recallMode: "no_recall" | "minimal" | "full" | "graph_mode";
+  recallResultLimit: number;
+  source: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan";
+  recalledMemoryCount: number;
+  injected: boolean;
+  contextChars: number;
+  memoryIds: string[];
+  policyVersion?: string;
+  identityInjectionMode?: "recovery_only" | "minimal" | "full" | "none";
+  identityInjectedChars?: number;
+  identityInjectionTruncated?: boolean;
+  durationMs: number;
+  timings?: Record<string, string>;
+}
+
 export interface EvalHarnessStatus {
   enabled: boolean;
   shadowModeEnabled: boolean;
@@ -69,12 +93,24 @@ export interface EvalHarnessStatus {
     latestBenchmarkId?: string;
     latestCompletedAt?: string;
   };
+  shadows: {
+    total: number;
+    invalid: number;
+    latestTraceId?: string;
+    latestRecordedAt?: string;
+    latestSessionKey?: string;
+  };
   latestRun?: EvalRunSummary;
+  latestShadow?: EvalShadowRecallRecord;
   invalidBenchmarks: Array<{
     path: string;
     error: string;
   }>;
   invalidRuns: Array<{
+    path: string;
+    error: string;
+  }>;
+  invalidShadows: Array<{
     path: string;
     error: string;
   }>;
@@ -210,6 +246,97 @@ export function validateEvalRunSummary(raw: unknown): EvalRunSummary {
   };
 }
 
+export function validateEvalShadowRecallRecord(raw: unknown): EvalShadowRecallRecord {
+  if (!isRecord(raw)) throw new Error("eval shadow recall record must be an object");
+  if (raw.schemaVersion !== 1) throw new Error("schemaVersion must be 1");
+
+  const recallMode = assertString(raw.recallMode, "recallMode");
+  if (!["no_recall", "minimal", "full", "graph_mode"].includes(recallMode)) {
+    throw new Error("recallMode must be one of no_recall|minimal|full|graph_mode");
+  }
+
+  const source = assertString(raw.source, "source");
+  if (!["none", "hot_qmd", "hot_embedding", "cold_fallback", "recent_scan"].includes(source)) {
+    throw new Error("source must be one of none|hot_qmd|hot_embedding|cold_fallback|recent_scan");
+  }
+
+  const promptLength = Number(raw.promptLength);
+  const retrievalQueryLength = Number(raw.retrievalQueryLength);
+  const recallResultLimit = Number(raw.recallResultLimit);
+  const recalledMemoryCount = Number(raw.recalledMemoryCount);
+  const contextChars = Number(raw.contextChars);
+  const durationMs = Number(raw.durationMs);
+
+  for (const [field, value] of [
+    ["promptLength", promptLength],
+    ["retrievalQueryLength", retrievalQueryLength],
+    ["recallResultLimit", recallResultLimit],
+    ["recalledMemoryCount", recalledMemoryCount],
+    ["contextChars", contextChars],
+    ["durationMs", durationMs],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${field} must be a non-negative number`);
+    }
+  }
+
+  const memoryIds = optionalStringArray(raw.memoryIds, "memoryIds") ?? [];
+  if (typeof raw.injected !== "boolean") throw new Error("injected must be a boolean");
+
+  let timings: Record<string, string> | undefined;
+  if (raw.timings !== undefined) {
+    if (!isRecord(raw.timings)) throw new Error("timings must be an object of strings");
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(raw.timings)) {
+      if (typeof value !== "string") throw new Error("timings must be an object of strings");
+      out[key] = value;
+    }
+    timings = out;
+  }
+
+  const identityInjectionModeRaw =
+    typeof raw.identityInjectionMode === "string" && raw.identityInjectionMode.trim().length > 0
+      ? raw.identityInjectionMode.trim()
+      : undefined;
+  if (
+    identityInjectionModeRaw !== undefined &&
+    !["recovery_only", "minimal", "full", "none"].includes(identityInjectionModeRaw)
+  ) {
+    throw new Error("identityInjectionMode must be one of recovery_only|minimal|full|none");
+  }
+
+  return {
+    schemaVersion: 1,
+    traceId: assertString(raw.traceId, "traceId"),
+    recordedAt: assertString(raw.recordedAt, "recordedAt"),
+    sessionKey: assertString(raw.sessionKey, "sessionKey"),
+    promptHash: assertString(raw.promptHash, "promptHash"),
+    promptLength,
+    retrievalQueryHash: assertString(raw.retrievalQueryHash, "retrievalQueryHash"),
+    retrievalQueryLength,
+    recallMode: recallMode as EvalShadowRecallRecord["recallMode"],
+    recallResultLimit,
+    source: source as EvalShadowRecallRecord["source"],
+    recalledMemoryCount,
+    injected: raw.injected,
+    contextChars,
+    memoryIds,
+    policyVersion:
+      typeof raw.policyVersion === "string" && raw.policyVersion.trim().length > 0
+        ? raw.policyVersion.trim()
+        : undefined,
+    identityInjectionMode: identityInjectionModeRaw as EvalShadowRecallRecord["identityInjectionMode"],
+    identityInjectedChars:
+      typeof raw.identityInjectedChars === "number" && Number.isFinite(raw.identityInjectedChars)
+        ? raw.identityInjectedChars
+        : undefined,
+    identityInjectionTruncated:
+      typeof raw.identityInjectionTruncated === "boolean" ? raw.identityInjectionTruncated : undefined,
+    durationMs,
+    timings,
+  };
+}
+
 async function listJsonFiles(dir: string): Promise<string[]> {
   try {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -326,6 +453,21 @@ export async function importEvalBenchmarkPack(options: {
   };
 }
 
+export async function recordEvalShadowRecall(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  record: EvalShadowRecallRecord;
+}): Promise<string> {
+  const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
+  const validated = validateEvalShadowRecallRecord(options.record);
+  const day = validated.recordedAt.slice(0, 10);
+  const shadowDir = path.join(rootDir, "shadow", day);
+  const targetPath = path.join(shadowDir, `${validated.traceId}.json`);
+  await mkdir(shadowDir, { recursive: true });
+  await writeFile(targetPath, JSON.stringify(validated, null, 2), "utf-8");
+  return targetPath;
+}
+
 export async function getEvalHarnessStatus(options: {
   memoryDir: string;
   evalStoreDir?: string;
@@ -335,11 +477,14 @@ export async function getEvalHarnessStatus(options: {
   const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
   const benchmarkDir = path.join(rootDir, "benchmarks");
   const runsDir = path.join(rootDir, "runs");
+  const shadowDir = path.join(rootDir, "shadow");
   const benchmarkFiles = await listNamedFiles(benchmarkDir, "manifest.json");
   const runFiles = await listJsonFiles(runsDir);
+  const shadowFiles = await listJsonFiles(shadowDir);
 
   const invalidBenchmarks: Array<{ path: string; error: string }> = [];
   const invalidRuns: Array<{ path: string; error: string }> = [];
+  const invalidShadows: Array<{ path: string; error: string }> = [];
   const manifests: EvalBenchmarkManifest[] = [];
 
   for (const filePath of benchmarkFiles) {
@@ -365,12 +510,26 @@ export async function getEvalHarnessStatus(options: {
     }
   }
 
+  const shadows: EvalShadowRecallRecord[] = [];
+  for (const filePath of shadowFiles) {
+    try {
+      shadows.push(validateEvalShadowRecallRecord(await readJsonFile(filePath)));
+    } catch (error) {
+      invalidShadows.push({
+        path: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   runs.sort((a, b) => {
     const aTime = Date.parse(a.completedAt ?? a.startedAt);
     const bTime = Date.parse(b.completedAt ?? b.startedAt);
     return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
   });
   const latestRun = runs[0];
+  shadows.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  const latestShadow = shadows[0];
 
   const tags = new Set<string>();
   const sourceLinks = new Set<string>();
@@ -406,8 +565,17 @@ export async function getEvalHarnessStatus(options: {
       latestBenchmarkId: latestRun?.benchmarkId,
       latestCompletedAt: latestRun?.completedAt,
     },
+    shadows: {
+      total: shadowFiles.length,
+      invalid: invalidShadows.length,
+      latestTraceId: latestShadow?.traceId,
+      latestRecordedAt: latestShadow?.recordedAt,
+      latestSessionKey: latestShadow?.sessionKey,
+    },
     latestRun,
+    latestShadow,
     invalidBenchmarks,
     invalidRuns,
+    invalidShadows,
   };
 }

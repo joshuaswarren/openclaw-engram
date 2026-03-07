@@ -30,7 +30,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
 - **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
-- **Benchmark-first roadmap** — Engram now has an evaluation-harness foundation so memory improvements can be measured on real agent trajectories instead of subjective recall demos.
+- **Benchmark-first roadmap** — Engram now has an evaluation harness with live shadow recall recording, so memory improvements can be measured on real agent trajectories instead of subjective recall demos.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -139,7 +139,7 @@ Engram's capabilities are organized into feature families that you can enable pr
 | **Compounding** | Weekly synthesis that surfaces patterns and recurring mistakes |
 | **Hot/Cold Tiering** | Automatic migration of aging memories to cold storage |
 | **Behavior Loop Tuning** | Runtime self-tuning of extraction and recall parameters |
-| **Evaluation Harness Foundation** | Tracks benchmark packs and run summaries so future PRs can be gated on memory quality instead of anecdotes |
+| **Evaluation Harness** | Tracks benchmark packs, run summaries, and live shadow recall records so future PRs can be gated on memory quality instead of anecdotes |
 
 Start with defaults, then enable features as needed. See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profile.
 
@@ -149,7 +149,7 @@ Start with defaults, then enable features as needed. See [Enable All Features](d
 openclaw engram stats                        # Memory counts, search status, health
 openclaw engram search "your query"          # Search memories from CLI
 openclaw engram compat --strict              # Compatibility check
-openclaw engram benchmark-status             # Benchmark/eval harness packs, runs, latest summary
+openclaw engram benchmark-status             # Benchmark/eval harness packs, runs, shadow recalls, latest summaries
 openclaw engram benchmark-validate <path>    # Validate a benchmark manifest or pack directory
 openclaw engram benchmark-import <path>      # Import a validated benchmark pack into the eval store
 openclaw engram conversation-index-health    # Conversation index status
@@ -171,9 +171,9 @@ Key settings:
 | `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
 | `qmdEnabled` | `true` | Enable QMD hybrid search |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
-| `evalHarnessEnabled` | `false` | Enable the evaluation harness foundation for benchmark packs and run summaries |
-| `evalShadowModeEnabled` | `false` | Reserve shadow-mode measurement paths for future benchmark instrumentation |
-| `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs and run summaries |
+| `evalHarnessEnabled` | `false` | Enable the evaluation harness for benchmark packs, run summaries, and shadow recall bookkeeping |
+| `evalShadowModeEnabled` | `false` | Record live recall decisions to the eval store without changing injected output |
+| `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 
 Full reference: [Config Reference](docs/config-reference.md)
 
