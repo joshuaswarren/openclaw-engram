@@ -78,6 +78,12 @@ import {
   type VerifiedSemanticRuleResult,
 } from "./semantic-rule-verifier.js";
 import {
+  getWorkProductLedgerStatus,
+  recordWorkProductLedgerEntry,
+  type WorkProductLedgerEntry,
+  type WorkProductLedgerStatus,
+} from "./work-product-ledger.js";
+import {
   promoteSemanticRuleFromMemory,
   type SemanticRulePromotionReport,
 } from "./semantic-rule-promotion.js";
@@ -797,6 +803,32 @@ export async function runSemanticRuleVerifyCliCommand(options: {
     memoryDir: options.memoryDir,
     query: options.query,
     maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
+  });
+}
+
+export async function runWorkProductStatusCliCommand(options: {
+  memoryDir: string;
+  workProductLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+}): Promise<WorkProductLedgerStatus> {
+  return getWorkProductLedgerStatus({
+    memoryDir: options.memoryDir,
+    workProductLedgerDir: options.workProductLedgerDir,
+    enabled: options.creationMemoryEnabled,
+  });
+}
+
+export async function runWorkProductRecordCliCommand(options: {
+  memoryDir: string;
+  workProductLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  entry: WorkProductLedgerEntry;
+}): Promise<string | null> {
+  if (!options.creationMemoryEnabled) return null;
+  return recordWorkProductLedgerEntry({
+    memoryDir: options.memoryDir,
+    workProductLedgerDir: options.workProductLedgerDir,
+    entry: options.entry,
   });
 }
 
@@ -2491,6 +2523,65 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             sessionKey: typeof options.sessionKey === "string" ? options.sessionKey : undefined,
           });
           console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("work-product-status")
+        .description("Show work-product ledger status, entry counts, and the latest recorded work product")
+        .action(async () => {
+          const status = await runWorkProductStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            workProductLedgerDir: orchestrator.config.workProductLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("work-product-record")
+        .description("Record a work-product ledger entry when creation-memory is enabled")
+        .requiredOption("--entry-id <entryId>", "Ledger entry id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the entry")
+        .requiredOption("--session-key <sessionKey>", "Session key that created the work product")
+        .requiredOption("--source <source>", "Entry source (tool_result|cli|system|manual)")
+        .requiredOption("--kind <kind>", "Entry kind (artifact|file|record|report|workspace)")
+        .requiredOption("--action <action>", "Entry action (created|updated|deleted|referenced|published)")
+        .requiredOption("--scope <scope>", "Primary scope or identifier for the created work product")
+        .requiredOption("--summary <summary>", "Human-readable summary of the work product")
+        .option("--artifact-path <artifactPath>", "Optional path to the created artifact")
+        .option("--tag <tag...>", "Tags to attach to the work-product entry")
+        .option("--entity-ref <entityRef...>", "Entity refs to attach to the work-product entry")
+        .option(
+          "--objective-state-snapshot-ref <objectiveStateSnapshotRef...>",
+          "Objective-state snapshot refs to link to this work product",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const filePath = await runWorkProductRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            workProductLedgerDir: orchestrator.config.workProductLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            entry: {
+              schemaVersion: 1,
+              entryId: String(options.entryId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as WorkProductLedgerEntry["source"],
+              kind: String(options.kind ?? "") as WorkProductLedgerEntry["kind"],
+              action: String(options.action ?? "") as WorkProductLedgerEntry["action"],
+              scope: String(options.scope ?? ""),
+              summary: String(options.summary ?? ""),
+              artifactPath: typeof options.artifactPath === "string" ? options.artifactPath : undefined,
+              tags: Array.isArray(options.tag) ? options.tag.map(String) : undefined,
+              entityRefs: Array.isArray(options.entityRef) ? options.entityRef.map(String) : undefined,
+              objectiveStateSnapshotRefs: Array.isArray(options.objectiveStateSnapshotRef)
+                ? options.objectiveStateSnapshotRef.map(String)
+                : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
           console.log("OK");
         });
 
