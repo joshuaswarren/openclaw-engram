@@ -1,91 +1,80 @@
-# Theory: Verified Episodic Recall Should Reuse Boxes, But Verify The Sources
+# Theory: Verified Episodes Should Feed Narrow Semantic Rule Promotion
 
 ## Problem
 
-Engram already has two different substrates that could plausibly support
-episodic recall:
+PR20 proved that Engram can reuse memory boxes for episodic recall while still
+verifying the cited source memories. The next mistake would be to stop there
+and leave semantic memory disconnected from those verified episodes. The memory
+model from the roadmap is not just "retrieve episodes"; it is "retrieve
+episodes, verify them, and separately extract reusable semantic rules."
 
-- memory boxes, which group related extractions into bounded episodes
-- individual memory files, which still carry the actual `memoryKind` and
-  lifecycle status
-
-The mistake would be to invent a third episodic store just to satisfy the
-paper-level requirement for verified episodic recall. That would duplicate the
-same episode shape in another place, add more drift risk, and make later
-benchmarking harder because it would no longer be obvious which substrate
-should be trusted when they disagree.
-
-PR20 is about proving that Engram can retrieve episodes in a stricter way
-without adding another store: reuse boxes for the retrieval window, but verify
-their cited source memories before surfacing them.
+That means PR21 needs a promotion path from verified episodic material into
+durable rule memory. The danger is scope creep: a broad "semantic rule" system
+would immediately pull in model inference, ranking, downgrade policy, and
+retrieval blending. This slice needs to stay smaller than that.
 
 ## Operating Theory
 
-The rollout pattern that has worked across the memory-OS track is still the
-right one:
+The rollout pattern that has worked across the memory-OS track is still right:
 
 1. keep the new capability bounded and inspectable
 2. reuse existing durable substrates when they already encode the right shape
 3. add verification rules before automation rules
 4. benchmark the verified surface before promoting more abstract behavior
 
-For episodic versus semantic memory, the highest-leverage distinction today is
-not a new schema. It is recall-time verification:
+For semantic rule promotion, the highest-leverage first step is not general
+causal inference. It is deterministic promotion of already-explicit rules from
+verified episodic memories:
 
-- boxes say "this cluster of memories looked like one episode"
-- source memories say "these cited memories are still episodes and not archived"
+- episodic memories remain the source of truth
+- promoted `rule` memories become the reusable semantic layer
+- lineage and source-memory provenance keep the semantic layer auditable
 
-That means the first verified recall slice should admit a box only when at
-least one cited memory still verifies as a live episode. If the box has only
-notes, archived memories, or broken references, it should not surface in the
-verified episodic section even if its topics look relevant.
+If the source memory is not a live episode, or if it does not contain an
+explicit `IF ... THEN ...` structure, this slice should do nothing.
 
 ## Strategy
 
-Keep PR20 narrow and legible:
+Keep PR21 narrow and legible:
 
-- add a dedicated recall section: `verified-episodes`
-- rank recent boxes by lexical overlap over:
-  - topics
-  - goal
-  - tools used
-  - verified episodic memory content
-- verify each candidate box by resolving its `memoryIds` back through storage
-- only admit boxes with at least one non-archived `memoryKind: episode` source
-- expose an operator diagnostic command:
-  - `openclaw engram verified-recall-search <query>`
+- keep everything behind `semanticRulePromotionEnabled`
+- add an operator-facing command:
+  - `openclaw engram semantic-rule-promote --memory-id <id> [--dry-run]`
+- accept only non-archived source memories whose `memoryKind` is `episode`
+- normalize only explicit `IF ... THEN ...` rules
+- write promoted rules as normal `rule` memories with:
+  - `memoryKind: note`
+  - `source: semantic-rule-promotion`
+  - `sourceMemoryId`
+  - `lineage`
+  - support link back to the source episode
+- suppress duplicates by canonicalized rule content
 
 This keeps the feature aligned with the human-inspired memory direction without
-pretending semantic rule promotion is ready yet. The first slice should answer
-one question clearly: can Engram surface episodes that are still grounded in
-verified episodic source memories?
+pretending the full semantic-rule system exists yet. The first question is
+simply: can Engram take an already-explicit rule from a verified episode and
+promote it into durable semantic memory with provenance intact?
 
 ## Key Discoveries
 
-- Memory boxes are already the right retrieval envelope for episodic recall.
-  The missing piece was verification of their cited memories, not another
-  persistence layer.
-- Verification also has to be cheap enough for the recall path. Resolving
-  cited `memoryIds` by repeated `getMemoryById()` calls quietly degenerates
-  into repeated full-corpus scans, so the verified episodic slice needs one
-  preloaded memory map per search rather than per-box lookups.
-- Verified episodic recall also needs to stay aligned with the rest of the
-  recall pipeline about which corpus it searches. Namespace-specific profile
-  storage is the right place for profile documents, but the verified-episode
-  section should search the configured memory root just like the other
-  cross-cutting recall surfaces do.
-- Verified episodic recall fits the existing recall-pipeline model cleanly as a
-  separate section. It does not need to mutate generic semantic recall yet.
-- `semanticRulePromotionEnabled` belongs in the config contract now, but only
-  as a declared future gate. The current slice should not claim semantic-rule
-  extraction or promotion behavior before that surface is benchmarked.
+- The repo already had a `rule` memory category and causal-rule-aware
+  extraction prompts, but it still lacked an explicit promotion path from
+  episodic evidence into durable rule memory.
+- The cleanest first semantic-rule slice is deterministic rather than model
+  inferred: promote only explicit `IF ... THEN ...` clauses that are already
+  present in verified episodic memories.
+- Canonicalization matters immediately. If punctuation around the condition
+  clause is not normalized, duplicate suppression will drift and rule memories
+  will split on commas rather than meaning.
+- Provenance needs to be written on day one. `sourceMemoryId`, `lineage`, and a
+  support link back to the episode are the minimum structure that makes later
+  downgrade and verifier work possible.
 
 ## Open Questions
 
-- Should later slices downgrade partially verified boxes, or should verified
-  recall remain binary until benchmark data says otherwise?
-- When semantic-rule promotion lands, should it derive only from verified
-  episodic memories, or can stable note memories also participate after an
-  explicit verification step?
-- Should a future verified-recall benchmark score source-memory coverage
-  directly, or is box-level admission enough for the first round of evaluation?
+- Should later slices broaden promotion beyond explicit `IF ... THEN ...`
+  phrasing into causal paraphrases like "X failed because Y"?
+- Should semantic-rule recall stay separate from principle/rule recall until
+  downgrade paths exist, or is provenance alone enough for early blending?
+- When PR22 adds verifier and confidence downgrade behavior, should duplicate
+  rule detection also compare lineage sets, or is normalized content enough?

@@ -1193,7 +1193,7 @@
       "semanticRulePromotionEnabled": {
         "type": "boolean",
         "default": false,
-        "description": "Reserve semantic-rule promotion surfaces for a later rollout after verified episodic recall is benchmarked."
+        "description": "Enable deterministic promotion of explicit IF/THEN rules from verified episodic memories."
       },
       "actionGraphRecallEnabled": {
         "type": "boolean",
@@ -2201,7 +2201,7 @@
     "semanticRulePromotionEnabled": {
       "label": "Semantic Rule Promotion",
       "advanced": true,
-      "help": "Reserve future semantic-rule promotion surfaces until verified episodic recall is benchmarked."
+      "help": "Promote explicit IF/THEN rules from verified episodic memories into durable rule memories."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

@@ -73,6 +73,10 @@ import {
   searchVerifiedEpisodes,
   type VerifiedEpisodeResult,
 } from "./verified-recall.js";
+import {
+  promoteSemanticRuleFromMemory,
+  type SemanticRulePromotionReport,
+} from "./semantic-rule-promotion.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
 import {
   getTrustZoneStoreStatus,
@@ -761,6 +765,20 @@ export async function runVerifiedRecallSearchCliCommand(options: {
     query: options.query,
     maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
     boxRecallDays: options.boxRecallDays,
+  });
+}
+
+export async function runSemanticRulePromoteCliCommand(options: {
+  memoryDir: string;
+  semanticRulePromotionEnabled: boolean;
+  sourceMemoryId: string;
+  dryRun?: boolean;
+}): Promise<SemanticRulePromotionReport> {
+  return promoteSemanticRuleFromMemory({
+    memoryDir: options.memoryDir,
+    enabled: options.semanticRulePromotionEnabled,
+    sourceMemoryId: options.sourceMemoryId,
+    dryRun: options.dryRun,
   });
 }
 
@@ -2505,6 +2523,23 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             boxRecallDays: orchestrator.config.boxRecallDays,
           });
           console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("semantic-rule-promote")
+        .description("Promote an explicit IF/THEN rule from a verified episodic memory")
+        .requiredOption("--memory-id <memoryId>", "Verified episodic memory id to promote from")
+        .option("--dry-run", "Preview the promoted semantic rule without writing it")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runSemanticRulePromoteCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            semanticRulePromotionEnabled: orchestrator.config.semanticRulePromotionEnabled,
+            sourceMemoryId: String(options.memoryId ?? ""),
+            dryRun: options.dryRun === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 
