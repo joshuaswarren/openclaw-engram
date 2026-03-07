@@ -498,6 +498,12 @@ export function parseConfig(raw: unknown): PluginConfig {
         : path.join(memoryDir, "state", "causal-trajectories"),
     causalTrajectoryRecallEnabled: cfg.causalTrajectoryRecallEnabled === true,
     actionGraphRecallEnabled: cfg.actionGraphRecallEnabled === true,
+    trustZonesEnabled: cfg.trustZonesEnabled === true,
+    quarantinePromotionEnabled: cfg.quarantinePromotionEnabled === true,
+    trustZoneStoreDir:
+      typeof cfg.trustZoneStoreDir === "string" && cfg.trustZoneStoreDir.trim().length > 0
+        ? cfg.trustZoneStoreDir.trim()
+        : path.join(memoryDir, "state", "trust-zones"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:

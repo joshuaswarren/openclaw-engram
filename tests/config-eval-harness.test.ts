@@ -21,6 +21,9 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.causalTrajectoryStoreDir, path.join(memoryDir, "state", "causal-trajectories"));
   assert.equal(cfg.causalTrajectoryRecallEnabled, false);
   assert.equal(cfg.actionGraphRecallEnabled, false);
+  assert.equal(cfg.trustZonesEnabled, false);
+  assert.equal(cfg.quarantinePromotionEnabled, false);
+  assert.equal(cfg.trustZoneStoreDir, path.join(memoryDir, "state", "trust-zones"));
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "causal-trajectories" && entry.enabled === false), true);
 });
@@ -40,6 +43,9 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     causalTrajectoryStoreDir: "/tmp/causal-trajectory-store",
     causalTrajectoryRecallEnabled: true,
     actionGraphRecallEnabled: true,
+    trustZonesEnabled: true,
+    quarantinePromotionEnabled: true,
+    trustZoneStoreDir: "/tmp/trust-zones-store",
   });
 
   assert.equal(cfg.evalHarnessEnabled, true);
@@ -53,4 +59,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.causalTrajectoryStoreDir, "/tmp/causal-trajectory-store");
   assert.equal(cfg.causalTrajectoryRecallEnabled, true);
   assert.equal(cfg.actionGraphRecallEnabled, true);
+  assert.equal(cfg.trustZonesEnabled, true);
+  assert.equal(cfg.quarantinePromotionEnabled, true);
+  assert.equal(cfg.trustZoneStoreDir, "/tmp/trust-zones-store");
 });

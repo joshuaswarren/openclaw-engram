@@ -374,6 +374,9 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `causalTrajectoryStoreDir` | `{memoryDir}/state/causal-trajectories` | Root directory for causal-trajectory records |
 | `causalTrajectoryRecallEnabled` | `false` | Inject prompt-relevant causal trajectories into recall context |
 | `actionGraphRecallEnabled` | `false` | Write action-conditioned causal-stage edges from typed trajectory records into the causal graph |
+| `trustZonesEnabled` | `false` | Enable the trust-zone memory foundation for quarantine, working, and trusted records |
+| `quarantinePromotionEnabled` | `false` | Reserve future promotion flows from quarantine into higher-trust zones |
+| `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
@@ -385,6 +388,7 @@ Current foundation slice:
 - When `causalTrajectoryMemoryEnabled` is on, Engram can persist typed causal chains into a separate store for later graph/retrieval slices.
 - When `causalTrajectoryRecallEnabled` is on, Engram can inject a separate `## Causal Trajectories` recall section sourced from the causal-trajectory store.
 - When `actionGraphRecallEnabled` is also on, each newly recorded causal trajectory emits deterministic `goal -> action -> observation -> outcome -> follow_up` edges into the causal graph without changing retrieval behavior yet.
+- When `trustZonesEnabled` is on, Engram can persist provenance-bearing records into separate `quarantine`, `working`, and `trusted` storage tiers for later promotion and retrieval slices.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |

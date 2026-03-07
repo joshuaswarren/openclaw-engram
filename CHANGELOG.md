@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Trust-zone store foundation**: added `trustZonesEnabled`, `quarantinePromotionEnabled`, `trustZoneStoreDir`, a typed trust-zone record store under `state/trust-zones`, and `openclaw engram trust-zone-status` for inspecting quarantine, working, and trusted records before promotion logic lands.
 - **Causal trajectory recall**: added `causalTrajectoryRecallEnabled`, a separate `causal-trajectories` recall-pipeline section, bounded lexical trajectory search, and `## Causal Trajectories` recall injection with lightweight match explainability.
 - **Causal trajectory store foundation**: added `causalTrajectoryMemoryEnabled`, `causalTrajectoryStoreDir`, a typed causal-trajectory record store under `state/causal-trajectories`, and `openclaw engram causal-trajectory-status` for inspecting stored goal-action-observation-outcome chains.
 - **Objective-state writers**: when `objectiveStateMemoryEnabled` and `objectiveStateSnapshotWritesEnabled` are both enabled, Engram now derives normalized file/process/tool snapshots from `agent_end` tool activity and persists them into the objective-state store introduced in PR5.

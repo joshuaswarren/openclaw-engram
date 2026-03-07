@@ -58,6 +58,7 @@ import {
   type CausalTrajectoryStoreStatus,
 } from "./causal-trajectory.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
+import { getTrustZoneStoreStatus, type TrustZoneStoreStatus } from "./trust-zones.js";
 import {
   analyzeSessionIntegrity,
   applySessionRepair,
@@ -651,6 +652,20 @@ export async function runCausalTrajectoryStatusCliCommand(options: {
     memoryDir: options.memoryDir,
     causalTrajectoryStoreDir: options.causalTrajectoryStoreDir,
     enabled: options.causalTrajectoryMemoryEnabled,
+  });
+}
+
+export async function runTrustZoneStatusCliCommand(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  trustZonesEnabled: boolean;
+  quarantinePromotionEnabled: boolean;
+}): Promise<TrustZoneStoreStatus> {
+  return getTrustZoneStoreStatus({
+    memoryDir: options.memoryDir,
+    trustZoneStoreDir: options.trustZoneStoreDir,
+    enabled: options.trustZonesEnabled,
+    promotionEnabled: options.quarantinePromotionEnabled,
   });
 }
 
@@ -2239,6 +2254,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             memoryDir: orchestrator.config.memoryDir,
             causalTrajectoryStoreDir: orchestrator.config.causalTrajectoryStoreDir,
             causalTrajectoryMemoryEnabled: orchestrator.config.causalTrajectoryMemoryEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("trust-zone-status")
+        .description("Show trust-zone store status, zoned record counts, and latest stored record")
+        .action(async () => {
+          const status = await runTrustZoneStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            trustZoneStoreDir: orchestrator.config.trustZoneStoreDir,
+            trustZonesEnabled: orchestrator.config.trustZonesEnabled,
+            quarantinePromotionEnabled: orchestrator.config.quarantinePromotionEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");

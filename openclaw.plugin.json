@@ -1142,6 +1142,20 @@
         "default": false,
         "description": "Inject prompt-relevant causal trajectories into recall context."
       },
+      "trustZonesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's trust-zone memory foundation for quarantine, working, and trusted records."
+      },
+      "quarantinePromotionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Reserve future promotion flows from quarantine into higher-trust zones."
+      },
+      "trustZoneStoreDir": {
+        "type": "string",
+        "description": "Override the trust-zone store directory (defaults to {memoryDir}/state/trust-zones)."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2095,6 +2109,21 @@
       "label": "Causal Trajectory Recall",
       "advanced": true,
       "help": "Inject prompt-relevant causal trajectories into recall context."
+    },
+    "trustZonesEnabled": {
+      "label": "Trust Zones",
+      "help": "Enable the trust-zone memory foundation for quarantine, working, and trusted records."
+    },
+    "quarantinePromotionEnabled": {
+      "label": "Quarantine Promotion",
+      "advanced": true,
+      "help": "Reserve future promotion flows from quarantine into higher-trust zones."
+    },
+    "trustZoneStoreDir": {
+      "label": "Trust-Zone Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/trust-zones",
+      "help": "Override where trust-zone records are stored."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

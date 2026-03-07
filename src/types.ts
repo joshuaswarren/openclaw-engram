@@ -227,6 +227,10 @@ export interface PluginConfig {
   causalTrajectoryStoreDir: string;
   causalTrajectoryRecallEnabled: boolean;
   actionGraphRecallEnabled: boolean;
+  // Trust-zone memory foundation
+  trustZonesEnabled: boolean;
+  quarantinePromotionEnabled: boolean;
+  trustZoneStoreDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

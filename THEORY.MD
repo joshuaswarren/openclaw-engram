@@ -1,42 +1,37 @@
-# Theory: Engram Is Converting Stored Trajectories Into Usable Recall
+# Theory: Engram Is Adding Trust Boundaries To The New Memory Surfaces
 
 ## Problem
 
-The causal-memory track is now past the storage-only phase. Engram can persist
-typed goal-action-observation-outcome-follow-up chains and can translate them
-into deterministic graph edges, but neither of those steps helps an agent
-unless recall can surface the right trajectory at the moment a prompt asks for
-it.
+Engram now has benchmark storage, objective-state memory, and causal
+trajectories. That progress increases the next risk: those newer memory
+surfaces can accumulate raw tool output, web captures, and subagent traces
+faster than they accumulate trust.
 
-The immediate problem is therefore not richer graph structure. It is making the
-stored causal evidence usable without overcommitting to a complex retrieval
-system too early. PR10 needs to prove that trajectory-aware recall can be
-useful in a bounded, defaults-off form before later slices add graph traversal,
-cross-linking, or heavier ranking.
+The immediate problem is therefore not promotion logic yet. It is establishing
+explicit storage boundaries so later promotion and poisoning-defense work has a
+real substrate. Without separate quarantine, working, and trusted stores,
+future trust logic would still be policy layered over one undifferentiated
+memory mass.
 
 ## Operating Theory
 
-The causal-memory rollout is working because it has stayed disciplined:
+The roadmap is still working because each new memory surface has arrived in a
+disciplined order:
 
 1. store the typed source of truth
-2. bridge that source into durable graph structure
-3. add a small retrieval surface
-4. benchmark and harden before blending deeper into the main ranking path
+2. make the source observable and testable
+3. only then add writers, recall, and ranking behavior
+4. add trust boundaries before aggressive automation
 
-That means PR10 should not try to “solve causal retrieval” in one pass. The
-right first retrieval layer is store-side lexical search over trajectory fields
-that already carry the useful causal information:
+That means PR11 should not try to solve promotion or retrieval enforcement in
+one pass. The right first move is a typed trust-zone store:
 
-- `goal`
-- `actionSummary`
-- `observationSummary`
-- `outcomeSummary`
-- `followUpSummary`
-- tags / entity refs / objective-state refs
+- `quarantine` for raw, unpromoted material
+- `working` for operator-useful but not fully trusted state
+- `trusted` for future corroborated/promoted records
 
-That gives Engram a prompt-relevant `## Causal Trajectories` section with
-lightweight explainability (`matched: ...`) while keeping the behavior legible
-and easy to benchmark.
+That keeps current behavior stable while making later promotion and retrieval
+enforcement mechanically possible.
 
 ## Strategy
 
@@ -46,36 +41,33 @@ The broader thesis remains:
 - memory that survives long horizons and failures
 - memory that can defend itself
 
-For the causal track, the strategy is now:
+For the trust-zone track, the strategy is now:
 
-1. keep retrieval behind a dedicated flag and recall-pipeline section
-2. use conservative lexical admission rather than premature graph heuristics
-3. surface formatted chains as a separate recall section first
-4. use that bounded surface to inform the later graph-aware retrieval slice
+1. ship defaults-off storage paths and typed provenance first
+2. keep promotion logic out of this slice
+3. make operator visibility available through status commands
+4. use the stored provenance contract as the base for PR12 and PR13
 
-This keeps PR10 small and reviewable while preserving the roadmap sequence:
+This keeps PR11 small and reviewable while preserving the roadmap sequence:
 
-1. PR8: causal trajectory store
-2. PR9: action-conditioned graph writer
-3. PR10: trajectory-aware recall and explainability
+1. PR11: trust-zone schemas and storage
+2. PR12: promotion rules and provenance enforcement
+3. PR13: trust-zone-aware retrieval filters
 
 ## Key Discoveries
 
-- A separate recall section is the cleanest first integration point. It makes
-  the new capability visible to agents without perturbing the existing semantic
-  memory ranking path.
-- The first false positive in trajectory search came from common-language token
-  noise rather than genuine causal similarity. Lightweight stopword filtering
-  is enough for this slice; heavier graph traversal can wait.
-- Explainability does not need a second model pass. Exposing which trajectory
-  fields matched the prompt is sufficient for an operator-facing first version.
+- The objective-state and causal-trajectory slices already established the
+  right pattern for this work: store contracts first, behavior later.
+- Trust-zone records need provenance fields in the first version; otherwise the
+  later promotion layer would have to backfill missing origin data.
+- A zoned status command is enough operator visibility for this slice. Retrieval
+  behavior can stay untouched until trust-aware filtering exists.
 
 ## Open Questions
 
-- When PR11+ introduces trust zones, should causal trajectory recall be filtered
-  by promotion tier before formatting?
-- Should later graph-aware retrieval use the trajectory store as the primary
-  recall source and the graph as expansion support, or should that relationship
-  invert?
-- Which benchmark cases best distinguish useful causal recall from merely
-  plausible-looking chain retrieval?
+- Which stored surfaces should write directly into `working` rather than
+  `quarantine` by default once writers arrive?
+- Should promotion history remain embedded in trust-zone records, or should it
+  become a separate append-only ledger in PR12?
+- Which future retrieval sections should be trust-filtered first: objective
+  state, causal trajectories, or both together?
