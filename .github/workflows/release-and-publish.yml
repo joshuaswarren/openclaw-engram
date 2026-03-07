@@ -138,8 +138,9 @@ jobs:
           while IFS= read -r tag; do
             [ -z "${tag}" ] && continue
             TAG_TARGET_SHA="$(git rev-parse "refs/tags/${tag}^{}")"
+            TAG_PARENT_SHA="$(git rev-parse "${TAG_TARGET_SHA}^" 2>/dev/null || true)"
             if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}" \
-              && [ "${TAG_TARGET_SHA}" = "${SOURCE_MAIN_SHA}" ]; then
+              && [ "${TAG_PARENT_SHA}" = "${SOURCE_MAIN_SHA}" ]; then
               EXISTING_TAG="${tag}"
               break
             fi
