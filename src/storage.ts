@@ -152,7 +152,7 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       lines.push(`  - targetId: ${link.targetId}`);
       lines.push(`    linkType: ${link.linkType}`);
       lines.push(`    strength: ${link.strength}`);
-      if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
+      if (link.reason) lines.push(`    reason: ${JSON.stringify(link.reason)}`);
     }
   }
   if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
