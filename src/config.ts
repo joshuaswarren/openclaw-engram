@@ -506,6 +506,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : path.join(memoryDir, "state", "trust-zones"),
     trustZoneRecallEnabled: cfg.trustZoneRecallEnabled === true,
     memoryPoisoningDefenseEnabled: cfg.memoryPoisoningDefenseEnabled === true,
+    memoryRedTeamBenchEnabled: cfg.memoryRedTeamBenchEnabled === true,
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:

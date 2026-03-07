@@ -11,13 +11,18 @@ export interface EvalBenchmarkCase {
   notes?: string;
 }
 
+export type EvalBenchmarkType = "standard" | "memory-red-team";
+
 export interface EvalBenchmarkManifest {
   schemaVersion: 1;
   benchmarkId: string;
+  benchmarkType?: EvalBenchmarkType;
   title: string;
   description?: string;
   tags?: string[];
   sourceLinks?: string[];
+  attackClass?: string;
+  targetSurface?: string;
   cases: EvalBenchmarkCase[];
 }
 
@@ -79,8 +84,11 @@ export interface EvalHarnessStatus {
     total: number;
     valid: number;
     invalid: number;
+    redTeam: number;
     totalCases: number;
+    attackClasses: string[];
     tags: string[];
+    targetSurfaces: string[];
     sourceLinks: string[];
   };
   runs: {
@@ -156,7 +164,10 @@ export interface EvalBenchmarkPackSummary {
   sourcePath: string;
   manifestPath: string;
   benchmarkId: string;
+  benchmarkType: EvalBenchmarkType;
   title: string;
+  attackClass?: string;
+  targetSurface?: string;
   totalCases: number;
   tags: string[];
   sourceLinks: string[];
@@ -202,10 +213,20 @@ function assertSafeBenchmarkId(benchmarkId: string): string {
   return benchmarkId;
 }
 
-export function validateEvalBenchmarkManifest(raw: unknown): EvalBenchmarkManifest {
+export function validateEvalBenchmarkManifest(
+  raw: unknown,
+  options?: { memoryRedTeamBenchEnabled?: boolean },
+): EvalBenchmarkManifest {
   if (!isRecord(raw)) throw new Error("benchmark manifest must be an object");
   if (raw.schemaVersion !== 1) throw new Error("schemaVersion must be 1");
   if (!Array.isArray(raw.cases)) throw new Error("cases must be an array");
+  const benchmarkTypeRaw =
+    typeof raw.benchmarkType === "string" && raw.benchmarkType.trim().length > 0
+      ? raw.benchmarkType.trim()
+      : "standard";
+  if (!["standard", "memory-red-team"].includes(benchmarkTypeRaw)) {
+    throw new Error("benchmarkType must be one of standard|memory-red-team");
+  }
 
   const cases = raw.cases.map((item, index) => {
     if (!isRecord(item)) throw new Error(`cases[${index}] must be an object`);
@@ -217,9 +238,29 @@ export function validateEvalBenchmarkManifest(raw: unknown): EvalBenchmarkManife
     } satisfies EvalBenchmarkCase;
   });
 
+  const benchmarkType = benchmarkTypeRaw as EvalBenchmarkType;
+  if (benchmarkType === "memory-red-team" && options?.memoryRedTeamBenchEnabled !== true) {
+    throw new Error("memory-red-team benchmark packs require memoryRedTeamBenchEnabled");
+  }
+  const attackClass =
+    typeof raw.attackClass === "string" && raw.attackClass.trim().length > 0
+      ? raw.attackClass.trim()
+      : undefined;
+  const targetSurface =
+    typeof raw.targetSurface === "string" && raw.targetSurface.trim().length > 0
+      ? raw.targetSurface.trim()
+      : undefined;
+  if (benchmarkType === "memory-red-team" && attackClass === undefined) {
+    throw new Error("attackClass must be a non-empty string");
+  }
+  if (benchmarkType === "memory-red-team" && targetSurface === undefined) {
+    throw new Error("targetSurface must be a non-empty string");
+  }
+
   return {
     schemaVersion: 1,
     benchmarkId: assertString(raw.benchmarkId, "benchmarkId"),
+    benchmarkType,
     title: assertString(raw.title, "title"),
     description:
       typeof raw.description === "string" && raw.description.trim().length > 0
@@ -227,6 +268,8 @@ export function validateEvalBenchmarkManifest(raw: unknown): EvalBenchmarkManife
         : undefined,
     tags: optionalStringArray(raw.tags, "tags"),
     sourceLinks: optionalStringArray(raw.sourceLinks, "sourceLinks"),
+    attackClass,
+    targetSurface,
     cases,
   };
 }
@@ -384,6 +427,7 @@ interface EvalStoreSnapshotOptions {
   rootDir: string;
   enabled: boolean;
   shadowModeEnabled: boolean;
+  memoryRedTeamBenchEnabled?: boolean;
 }
 
 const LOWER_IS_BETTER_METRICS = new Set<keyof EvalRunMetrics>(["trustViolationRate"]);
@@ -460,7 +504,11 @@ async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Prom
 
   for (const filePath of benchmarkFiles) {
     try {
-      manifests.push(validateEvalBenchmarkManifest(await readJsonFile(filePath)));
+      manifests.push(
+        validateEvalBenchmarkManifest(await readJsonFile(filePath), {
+          memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
+        }),
+      );
     } catch (error) {
       invalidBenchmarks.push({
         path: filePath,
@@ -501,10 +549,18 @@ async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Prom
   shadows.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
 
   const tags = new Set<string>();
+  const attackClasses = new Set<string>();
   const sourceLinks = new Set<string>();
+  const targetSurfaces = new Set<string>();
   let totalCases = 0;
+  let redTeam = 0;
   for (const manifest of manifests) {
     totalCases += manifest.cases.length;
+    if (manifest.benchmarkType === "memory-red-team") {
+      redTeam += 1;
+      if (manifest.attackClass) attackClasses.add(manifest.attackClass);
+      if (manifest.targetSurface) targetSurfaces.add(manifest.targetSurface);
+    }
     for (const tag of manifest.tags ?? []) tags.add(tag);
     for (const link of manifest.sourceLinks ?? []) sourceLinks.add(link);
   }
@@ -520,8 +576,11 @@ async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Prom
         total: benchmarkFiles.length,
         valid: manifests.length,
         invalid: invalidBenchmarks.length,
+        redTeam,
         totalCases,
+        attackClasses: [...attackClasses].sort(),
         tags: [...tags].sort(),
+        targetSurfaces: [...targetSurfaces].sort(),
         sourceLinks: [...sourceLinks].sort(),
       },
       runs: {
@@ -571,18 +630,26 @@ async function resolveBenchmarkManifestPath(sourcePath: string): Promise<{ sourc
   throw new Error("benchmark pack source must be a file or directory");
 }
 
-export async function validateEvalBenchmarkPack(sourcePath: string): Promise<EvalBenchmarkPackSummary> {
+export async function validateEvalBenchmarkPack(
+  sourcePath: string,
+  options?: { memoryRedTeamBenchEnabled?: boolean },
+): Promise<EvalBenchmarkPackSummary> {
   const trimmedSourcePath = sourcePath.trim();
   if (trimmedSourcePath.length === 0) {
     throw new Error("benchmark pack path must be a non-empty string");
   }
   const { manifestPath } = await resolveBenchmarkManifestPath(trimmedSourcePath);
-  const manifest = validateEvalBenchmarkManifest(await readJsonFile(manifestPath));
+  const manifest = validateEvalBenchmarkManifest(await readJsonFile(manifestPath), {
+    memoryRedTeamBenchEnabled: options?.memoryRedTeamBenchEnabled,
+  });
   return {
     sourcePath: trimmedSourcePath,
     manifestPath,
     benchmarkId: assertSafeBenchmarkId(manifest.benchmarkId),
+    benchmarkType: manifest.benchmarkType ?? "standard",
     title: manifest.title,
+    attackClass: manifest.attackClass,
+    targetSurface: manifest.targetSurface,
     totalCases: manifest.cases.length,
     tags: [...(manifest.tags ?? [])],
     sourceLinks: [...(manifest.sourceLinks ?? [])],
@@ -594,8 +661,11 @@ export async function importEvalBenchmarkPack(options: {
   memoryDir: string;
   evalStoreDir?: string;
   force?: boolean;
+  memoryRedTeamBenchEnabled?: boolean;
 }): Promise<EvalBenchmarkPackSummary & { targetDir: string; overwritten: boolean }> {
-  const summary = await validateEvalBenchmarkPack(options.sourcePath);
+  const summary = await validateEvalBenchmarkPack(options.sourcePath, {
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
+  });
   const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
   const benchmarkDir = path.join(rootDir, "benchmarks");
   const targetDir = path.join(benchmarkDir, summary.benchmarkId);
@@ -650,12 +720,14 @@ export async function getEvalHarnessStatus(options: {
   evalStoreDir?: string;
   enabled: boolean;
   shadowModeEnabled: boolean;
+  memoryRedTeamBenchEnabled?: boolean;
 }): Promise<EvalHarnessStatus> {
   return (
     await collectEvalStoreSnapshot({
       rootDir: resolveEvalStoreDir(options.memoryDir, options.evalStoreDir),
       enabled: options.enabled,
       shadowModeEnabled: options.shadowModeEnabled,
+      memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
     })
   ).status;
 }
@@ -688,11 +760,13 @@ export async function runEvalBenchmarkCiGate(options: {
     rootDir: baseRootDir,
     enabled: true,
     shadowModeEnabled: true,
+    memoryRedTeamBenchEnabled: true,
   });
   const candidateSnapshot = await collectEvalStoreSnapshot({
     rootDir: candidateRootDir,
     enabled: true,
     shadowModeEnabled: true,
+    memoryRedTeamBenchEnabled: true,
   });
 
   const regressions: string[] = [];

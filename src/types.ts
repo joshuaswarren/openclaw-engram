@@ -233,6 +233,7 @@ export interface PluginConfig {
   trustZoneStoreDir: string;
   trustZoneRecallEnabled: boolean;
   memoryPoisoningDefenseEnabled: boolean;
+  memoryRedTeamBenchEnabled: boolean;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

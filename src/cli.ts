@@ -596,19 +596,24 @@ export async function runBenchmarkStatusCliCommand(options: {
   evalStoreDir?: string;
   evalHarnessEnabled: boolean;
   evalShadowModeEnabled: boolean;
+  memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalHarnessStatus> {
   return getEvalHarnessStatus({
     memoryDir: options.memoryDir,
     evalStoreDir: options.evalStoreDir,
     enabled: options.evalHarnessEnabled,
     shadowModeEnabled: options.evalShadowModeEnabled,
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
   });
 }
 
 export async function runBenchmarkValidateCliCommand(options: {
   path: string;
+  memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalBenchmarkPackSummary> {
-  return validateEvalBenchmarkPack(options.path);
+  return validateEvalBenchmarkPack(options.path, {
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
+  });
 }
 
 export async function runBenchmarkImportCliCommand(options: {
@@ -616,12 +621,14 @@ export async function runBenchmarkImportCliCommand(options: {
   memoryDir: string;
   evalStoreDir?: string;
   force?: boolean;
+  memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalBenchmarkPackSummary & { targetDir: string; overwritten: boolean }> {
   return importEvalBenchmarkPack({
     sourcePath: options.path,
     memoryDir: options.memoryDir,
     evalStoreDir: options.evalStoreDir,
     force: options.force === true,
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
   });
 }
 
@@ -2219,6 +2226,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             evalStoreDir: orchestrator.config.evalStoreDir,
             evalHarnessEnabled: orchestrator.config.evalHarnessEnabled,
             evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
+            memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
@@ -2232,6 +2240,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const inputPath = args[0];
           const summary = await runBenchmarkValidateCliCommand({
             path: typeof inputPath === "string" ? inputPath : "",
+            memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
           });
           console.log(JSON.stringify(summary, null, 2));
           console.log("OK");
@@ -2250,6 +2259,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             memoryDir: orchestrator.config.memoryDir,
             evalStoreDir: orchestrator.config.evalStoreDir,
             force: options.force === true,
+            memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
           });
           console.log(JSON.stringify(summary, null, 2));
           console.log("OK");
