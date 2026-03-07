@@ -133,6 +133,24 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark success text 
   assert.equal(snapshots[0]?.changeKind, "observed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats past-tense recovered failures as success", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:11.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "Smoke check complete: failed test now passed.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "observed");
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark failure text with counts as success", () => {
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
     sessionKey: "agent:main",
