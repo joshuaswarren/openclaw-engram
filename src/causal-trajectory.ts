@@ -50,6 +50,12 @@ export interface CausalTrajectoryStoreStatus {
   }>;
 }
 
+export interface CausalTrajectorySearchResult {
+  record: CausalTrajectoryRecord;
+  score: number;
+  matchedFields: string[];
+}
+
 function validateMetadata(raw: unknown): Record<string, string> | undefined {
   return validateStringRecord(raw, "metadata");
 }
@@ -174,4 +180,104 @@ export async function getCausalTrajectoryStoreStatus(options: {
     latestTrajectory: trajectories[0],
     invalidTrajectories,
   };
+}
+
+function normalizeTokens(value: string): string[] {
+  const stopWords = new Set(["the", "and", "for", "with", "from", "into", "that", "this", "why", "did", "make"]);
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stopWords.has(token));
+}
+
+function countOverlap(queryTokens: Set<string>, value: string | undefined): number {
+  if (!value) return 0;
+  const tokens = new Set(normalizeTokens(value));
+  let matches = 0;
+  for (const token of queryTokens) {
+    if (tokens.has(token)) matches += 1;
+  }
+  return matches;
+}
+
+function lexicalScoreCausalTrajectoryRecord(
+  record: CausalTrajectoryRecord,
+  queryTokens: Set<string>,
+): { score: number; matchedFields: string[] } {
+  const weightedFields: Array<[field: string, value: string | undefined, weight: number]> = [
+    ["goal", record.goal, 4],
+    ["action", record.actionSummary, 3],
+    ["observation", record.observationSummary, 3],
+    ["outcome", record.outcomeSummary, 3],
+    ["follow_up", record.followUpSummary, 2],
+    ["outcome_kind", record.outcomeKind, 1],
+    ["tags", record.tags?.join(" "), 2],
+    ["entity_refs", record.entityRefs?.join(" "), 2],
+    ["objective_state_refs", record.objectiveStateSnapshotRefs?.join(" "), 1],
+  ];
+
+  let score = 0;
+  const matchedFields: string[] = [];
+  for (const [field, value, weight] of weightedFields) {
+    const matches = countOverlap(queryTokens, value);
+    if (matches > 0) matchedFields.push(field);
+    score += matches * weight;
+  }
+  return { score, matchedFields };
+}
+
+function scoreCausalTrajectoryRecord(
+  record: CausalTrajectoryRecord,
+  lexicalScore: number,
+  sessionKey?: string,
+): number {
+  let score = lexicalScore;
+  if (sessionKey && record.sessionKey === sessionKey) score += 1.5;
+
+  const recordedAtMs = Date.parse(record.recordedAt);
+  if (Number.isFinite(recordedAtMs)) {
+    const ageHours = Math.max(0, (Date.now() - recordedAtMs) / 3_600_000);
+    score += 1 / (1 + ageHours);
+  }
+  return score;
+}
+
+export async function searchCausalTrajectories(options: {
+  memoryDir: string;
+  causalTrajectoryStoreDir?: string;
+  query: string;
+  maxResults: number;
+  sessionKey?: string;
+}): Promise<CausalTrajectorySearchResult[]> {
+  const maxResults = Math.max(0, Math.floor(options.maxResults));
+  if (maxResults === 0) return [];
+
+  const { trajectories } = await readCausalTrajectoryRecords(options);
+  if (trajectories.length === 0) return [];
+
+  const queryTokens = new Set(normalizeTokens(options.query));
+  if (queryTokens.size === 0) return [];
+  const scored = trajectories.map((record) => {
+    const lexical = lexicalScoreCausalTrajectoryRecord(record, queryTokens);
+    return {
+      record,
+      matchedFields: lexical.matchedFields,
+      lexicalScore: lexical.score,
+      score: scoreCausalTrajectoryRecord(record, lexical.score, options.sessionKey),
+    };
+  });
+
+  const filtered = scored.filter((result) => result.lexicalScore > 0);
+
+  filtered.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    return right.record.recordedAt.localeCompare(left.record.recordedAt);
+  });
+
+  return filtered.slice(0, maxResults).map(({ record, score, matchedFields }) => ({
+    record,
+    score,
+    matchedFields,
+  }));
 }

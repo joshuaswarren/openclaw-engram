@@ -496,6 +496,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.causalTrajectoryStoreDir === "string" && cfg.causalTrajectoryStoreDir.trim().length > 0
         ? cfg.causalTrajectoryStoreDir.trim()
         : path.join(memoryDir, "state", "causal-trajectories"),
+    causalTrajectoryRecallEnabled: cfg.causalTrajectoryRecallEnabled === true,
     actionGraphRecallEnabled: cfg.actionGraphRecallEnabled === true,
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
@@ -983,6 +984,12 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
       enabled: cfg.objectiveStateRecallEnabled === true,
       maxResults: 4,
       maxChars: 1800,
+    },
+    {
+      id: "causal-trajectories",
+      enabled: cfg.causalTrajectoryRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 2200,
     },
     {
       id: "memories",

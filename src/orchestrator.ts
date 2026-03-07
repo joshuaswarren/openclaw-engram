@@ -68,6 +68,7 @@ import {
   extractTagsFromPrompt,
 } from "./temporal-index.js";
 import { GraphIndex } from "./graph.js";
+import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./causal-trajectory.js";
 import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
@@ -2184,6 +2185,34 @@ export class Orchestrator {
       return results.length > 0 ? this.formatObjectiveStateResults(results) : null;
     })();
 
+    const causalTrajectoryPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.causalTrajectoryMemoryEnabled ||
+        !this.config.causalTrajectoryRecallEnabled ||
+        !this.isRecallSectionEnabled("causal-trajectories", this.config.causalTrajectoryRecallEnabled === true)
+      ) {
+        timings.causalTrajectories = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("causal-trajectories", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.causalTrajectories = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchCausalTrajectories({
+        memoryDir: this.config.memoryDir,
+        causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.causalTrajectories = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatCausalTrajectoryResults(results) : null;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2448,6 +2477,7 @@ export class Orchestrator {
       kiResult,
       artifacts,
       objectiveStateSection,
+      causalTrajectorySection,
       qmdResult,
       transcriptSection,
       compactionSection,
@@ -2461,6 +2491,7 @@ export class Orchestrator {
       knowledgeIndexPromise,
       artifactsPromise,
       objectiveStatePromise,
+      causalTrajectoryPromise,
       qmdPromise,
       transcriptPromise,
       compactionPromise,
@@ -2537,6 +2568,10 @@ export class Orchestrator {
 
     if (objectiveStateSection) {
       this.appendRecallSection(sectionBuckets, "objective-state", objectiveStateSection);
+    }
+
+    if (causalTrajectorySection) {
+      this.appendRecallSection(sectionBuckets, "causal-trajectories", causalTrajectorySection);
     }
 
     // 2. QMD results — post-process and format
@@ -5245,6 +5280,27 @@ export class Orchestrator {
       return `${header}\n${detailParts.join(" | ")}`;
     });
     return `## Objective State\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatCausalTrajectoryResults(results: CausalTrajectorySearchResult[]): string {
+    const lines = results.map(({ record, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${record.recordedAt.replace("T", " ").slice(0, 16)}`,
+        record.outcomeKind,
+        record.sessionKey,
+      ].join(" | ");
+      const details = [
+        `goal: ${record.goal}`,
+        `action: ${record.actionSummary}`,
+        `observation: ${record.observationSummary}`,
+        `outcome: ${record.outcomeSummary}`,
+      ];
+      if (record.followUpSummary) details.push(`follow-up: ${record.followUpSummary}`);
+      if (matchedFields.length > 0) details.push(`matched: ${matchedFields.join(", ")}`);
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Causal Trajectories\n\n${lines.join("\n\n")}`;
   }
 
   private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {

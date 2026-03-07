@@ -19,8 +19,10 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.objectiveStateRecallEnabled, false);
   assert.equal(cfg.causalTrajectoryMemoryEnabled, false);
   assert.equal(cfg.causalTrajectoryStoreDir, path.join(memoryDir, "state", "causal-trajectories"));
+  assert.equal(cfg.causalTrajectoryRecallEnabled, false);
   assert.equal(cfg.actionGraphRecallEnabled, false);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
+  assert.equal(cfg.recallPipeline.some((entry) => entry.id === "causal-trajectories" && entry.enabled === false), true);
 });
 
 test("evaluation harness config respects explicit flags and custom store dir", () => {
@@ -36,6 +38,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     objectiveStateRecallEnabled: true,
     causalTrajectoryMemoryEnabled: true,
     causalTrajectoryStoreDir: "/tmp/causal-trajectory-store",
+    causalTrajectoryRecallEnabled: true,
     actionGraphRecallEnabled: true,
   });
 
@@ -48,5 +51,6 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.objectiveStateRecallEnabled, true);
   assert.equal(cfg.causalTrajectoryMemoryEnabled, true);
   assert.equal(cfg.causalTrajectoryStoreDir, "/tmp/causal-trajectory-store");
+  assert.equal(cfg.causalTrajectoryRecallEnabled, true);
   assert.equal(cfg.actionGraphRecallEnabled, true);
 });

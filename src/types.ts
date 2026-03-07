@@ -225,6 +225,7 @@ export interface PluginConfig {
   // Causal trajectory memory foundation
   causalTrajectoryMemoryEnabled: boolean;
   causalTrajectoryStoreDir: string;
+  causalTrajectoryRecallEnabled: boolean;
   actionGraphRecallEnabled: boolean;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;

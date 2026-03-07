@@ -1137,6 +1137,11 @@
         "type": "string",
         "description": "Override the causal-trajectory memory directory (defaults to {memoryDir}/state/causal-trajectories)."
       },
+      "causalTrajectoryRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant causal trajectories into recall context."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2085,6 +2090,11 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/causal-trajectories",
       "help": "Override where causal-trajectory records are stored."
+    },
+    "causalTrajectoryRecallEnabled": {
+      "label": "Causal Trajectory Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant causal trajectories into recall context."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",
