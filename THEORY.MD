@@ -1,64 +1,69 @@
-# Theory: Poisoning Defense Needs Explicit Trust Signals Before Policy
+# Theory: Trust Zones Need Retrieval First and Trust Signals Second
 
 ## Problem
 
-Trust zones now exist as storage, promotion, and retrieval surfaces, but they
-still lack an explicit measure of provenance quality. Without that measure,
-later poisoning-defense work would have to infer trust indirectly from ad hoc
-conditions scattered across promotion rules and retrieval code.
+Trust zones are now a real Engram substrate: storage exists, explicit promotion
+rules exist, and recall can now surface `working` and `trusted` records without
+leaking `quarantine` by default. The next missing piece is still defensive
+clarity. Without an explicit provenance signal, later poisoning-defense work
+would have to infer trust indirectly from scattered promotion logic and zone
+membership alone.
 
-That would make the defense track hard to test, hard to explain, and easy to
-regress. The next step is therefore not full corroboration or adversarial
-benchmarks yet. The next step is to make provenance trust legible.
+That would make the defense track hard to benchmark and easy to regress. The
+right next step is not full corroboration or attack simulation yet. It is to
+make provenance quality measurable.
 
 ## Operating Theory
 
-The memory-OS roadmap continues to work because each new capability is arriving
-in a strict order:
+The trust-zone rollout is working because it has stayed ordered:
 
-1. persist the new memory substrate
-2. expose bounded operator controls
-3. add a measured retrieval surface
-4. add explicit defensive signals
+1. store the trust tiers
+2. define bounded promotion rules
+3. expose a safe retrieval surface
+4. add explicit trust signals
 5. only then automate policy
 
-For the poisoning-defense track, PR14 is the defensive-signal step. The system
-needs one deterministic trust score derived from what is already in the record:
-source class, source identity, evidence anchor, and session anchor.
+PR13 completed step 3 by making trust visible at recall time. PR14 is step 4:
+derive one deterministic trust score from the provenance already stored on each
+record.
 
-That score is useful even before it drives decisions because it turns "trust"
-from a vague intention into a contract that tests, operators, and later PRs can
-all see.
+That score is useful even before it changes decisions because it turns "trust"
+from an implicit idea into a contract that tests, operators, and later PRs can
+all inspect.
 
 ## Strategy
 
-Keep the slice intentionally narrow:
+Keep the slice narrow and defaults-off:
 
-- defaults-off behind a dedicated config flag
-- compute the score from stored provenance only
-- expose the score in trust-zone status, not in automatic promotion behavior
-- leave corroboration and attack simulation for later slices
+- leave the PR13 recall contract intact
+- compute trust from stored provenance only
+- expose the score in trust-zone status, not promotion automation
+- leave corroboration and red-team attack suites for later slices
 
-This preserves the roadmap discipline. PR14 should not try to solve poisoning
-defense end to end. It should create the explicit signal that PR15 and PR16 can
-build on.
+This keeps the roadmap honest. Retrieval answers whether a record should be
+visible at all. Provenance scoring starts answering how strong the evidence is
+behind records that are already visible.
 
 ## Key Discoveries
 
+- Trust-zone recall and trust scoring are complementary, not competing, slices.
+  Recall should stay bounded by zone plus lexical relevance; scoring should stay
+  bounded by provenance quality.
 - Provenance trust should be deterministic for a stored record. If the score
-  depends on wall-clock timing or query context, it becomes harder to benchmark
-  and easier to dispute.
-- The first score does not need model-based judgment. Source class plus explicit
-  anchors (`sourceId`, `evidenceHash`, `sessionKey`) is enough to create a
+  depends on query context or wall-clock timing, benchmark comparisons become
+  harder to trust.
+- The first score does not need model judgment. Source class plus explicit
+  anchors (`sourceId`, `evidenceHash`, `sessionKey`) is enough to establish a
   useful first trust floor.
-- Trust scoring belongs in status output first. That keeps the operator surface
-  inspectable and reviewable before any automated gating starts relying on it.
+- Trust scoring belongs in operator-visible status output first. That makes the
+  defense signal reviewable before later PRs rely on it for policy.
 
 ## Open Questions
 
-- Should PR15 treat trust score as an advisory signal layered on top of
-  corroboration, or as part of the promotion eligibility threshold itself?
-- Should future retrieval slices use trust score only as a tie-breaker, or
-  should low-trust records be filtered from some sections entirely?
-- When PR16 adds red-team benchmarks, should those packs assert on raw trust
+- Should PR15 treat trust score as advisory context layered on top of
+  corroboration, or as part of promotion eligibility itself?
+- Should later retrieval slices use trust score only as a tie-breaker, or
+  should some low-trust material be filtered entirely once benchmark evidence
+  exists?
+- When PR16 adds red-team benchmark packs, should they assert on raw score
   breakdowns, aggregate bands, or downstream promotion/retrieval outcomes?

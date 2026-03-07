@@ -1156,6 +1156,11 @@
         "type": "string",
         "description": "Override the trust-zone store directory (defaults to {memoryDir}/state/trust-zones)."
       },
+      "trustZoneRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant working and trusted trust-zone records into recall context."
+      },
       "memoryPoisoningDefenseEnabled": {
         "type": "boolean",
         "default": false,
@@ -2129,6 +2134,11 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/trust-zones",
       "help": "Override where trust-zone records are stored."
+    },
+    "trustZoneRecallEnabled": {
+      "label": "Trust-Zone Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant working and trusted trust-zone records into recall context."
     },
     "memoryPoisoningDefenseEnabled": {
       "label": "Memory Poisoning Defense",

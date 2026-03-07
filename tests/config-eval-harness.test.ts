@@ -24,9 +24,11 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.trustZonesEnabled, false);
   assert.equal(cfg.quarantinePromotionEnabled, false);
   assert.equal(cfg.trustZoneStoreDir, path.join(memoryDir, "state", "trust-zones"));
+  assert.equal(cfg.trustZoneRecallEnabled, false);
   assert.equal(cfg.memoryPoisoningDefenseEnabled, false);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "causal-trajectories" && entry.enabled === false), true);
+  assert.equal(cfg.recallPipeline.some((entry) => entry.id === "trust-zones" && entry.enabled === false), true);
 });
 
 test("evaluation harness config respects explicit flags and custom store dir", () => {
@@ -47,6 +49,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     trustZonesEnabled: true,
     quarantinePromotionEnabled: true,
     trustZoneStoreDir: "/tmp/trust-zones-store",
+    trustZoneRecallEnabled: true,
     memoryPoisoningDefenseEnabled: true,
   });
 
@@ -64,5 +67,6 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.trustZonesEnabled, true);
   assert.equal(cfg.quarantinePromotionEnabled, true);
   assert.equal(cfg.trustZoneStoreDir, "/tmp/trust-zones-store");
+  assert.equal(cfg.trustZoneRecallEnabled, true);
   assert.equal(cfg.memoryPoisoningDefenseEnabled, true);
 });
