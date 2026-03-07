@@ -307,7 +307,6 @@ export async function importEvalBenchmarkPack(options: {
     await rm(targetDir, { recursive: true, force: true });
   } catch (error) {
     if (!(error instanceof Error) || !("code" in error) || (error as NodeJS.ErrnoException).code !== "ENOENT") {
-      if (error instanceof Error && error.message.includes("rerun with force")) throw error;
       throw error;
     }
   }
