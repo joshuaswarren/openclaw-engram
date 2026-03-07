@@ -260,6 +260,42 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats negated success phra
   assert.equal(snapshots[0]?.changeKind, "failed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats bare pass negations as failures", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:14.750Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "Tests did not pass.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats plural failures as failures", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:15.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "Test suite completed with 3 failures.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
 test("recordObjectiveStateSnapshotsFromAgentMessages does not abort on empty generic tool content", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-empty-tool-"));
   const written = await recordObjectiveStateSnapshotsFromAgentMessages({

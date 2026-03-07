@@ -16,7 +16,9 @@ have been small but serious: a generalized success regex started treating
 phrases like `not ok` as success, and then the tightened parser still missed
 plain success text like `all tests pass`. Either direction corrupts
 objective-state memory, poisons evaluation data, and makes later recall slices
-reason from false state.
+reason from false state. The latest review cycle extended that lesson: once
+bare `pass` became a success marker, the parser also needed to recognize `did
+not pass` as a failure and `failures` as the plural form of `failure`.
 
 ## Operating Theory
 
@@ -30,7 +32,8 @@ That means the right strategy is conservative normalization backed by regression
 tests. Each review comment is treated as a hypothesis about a silent data-quality
 failure. The correct response is not to appease the reviewer but to tighten the
 classification rule, add the narrowest test that proves the scenario, and keep
-the pipeline stable.
+pipeline stable. In practice, that means testing natural-language markers in
+pairs: positive and negated, singular and plural, recovered and unrecovered.
 
 The review loop itself is also part of the operating theory now. A PR is not
 merge-ready when CI is green; it is merge-ready only when the external review
@@ -66,6 +69,9 @@ This keeps Engram aligned with the larger thesis:
   explicitly as failures before success-marker logic runs, but plain success
   phrases like `all tests pass` also need explicit coverage or the parser falls
   back to `unknown`.
+- Parser broadening has a symmetry requirement. Adding `pass` without also
+  covering `did not pass` or adding `failure` without `failures` creates
+  regressions that are subtle in tests but severe in stored state.
 - Test realism matters even for small parser coverage. A literal `\\n` fixture
   can accidentally pass while simulating the wrong runtime shape; multiline test
   data should match actual tool output.
