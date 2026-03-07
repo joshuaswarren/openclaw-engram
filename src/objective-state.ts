@@ -282,10 +282,9 @@ function overlapScore(queryTokens: Set<string>, value: string | undefined, weigh
   return matches * weight;
 }
 
-function scoreObjectiveStateSnapshot(
+function lexicalScoreObjectiveStateSnapshot(
   snapshot: ObjectiveStateSnapshot,
   queryTokens: Set<string>,
-  sessionKey?: string,
 ): number {
   let score = 0;
   score += overlapScore(queryTokens, snapshot.scope, 4);
@@ -297,6 +296,15 @@ function scoreObjectiveStateSnapshot(
   score += overlapScore(queryTokens, snapshot.kind, 1);
   score += overlapScore(queryTokens, snapshot.changeKind, 1);
   score += overlapScore(queryTokens, snapshot.outcome, 1);
+  return score;
+}
+
+function scoreObjectiveStateSnapshot(
+  snapshot: ObjectiveStateSnapshot,
+  queryTokens: Set<string>,
+  sessionKey?: string,
+): number {
+  let score = lexicalScoreObjectiveStateSnapshot(snapshot, queryTokens);
   if (sessionKey && snapshot.sessionKey === sessionKey) score += 1.5;
 
   const recordedAtMs = Date.parse(snapshot.recordedAt);
@@ -323,6 +331,7 @@ export async function searchObjectiveStateSnapshots(options: {
   const queryTokens = new Set(normalizeTokens(options.query));
   const scored = snapshots.map((snapshot) => ({
     snapshot,
+    lexicalScore: lexicalScoreObjectiveStateSnapshot(snapshot, queryTokens),
     score:
       queryTokens.size === 0
         ? scoreObjectiveStateSnapshot(snapshot, new Set<string>(), options.sessionKey)
@@ -331,7 +340,7 @@ export async function searchObjectiveStateSnapshots(options: {
 
   const filtered = queryTokens.size === 0
     ? scored
-    : scored.filter((result) => result.score > 0);
+    : scored.filter((result) => result.lexicalScore > 0);
 
   filtered.sort((left, right) => {
     if (right.score !== left.score) return right.score - left.score;

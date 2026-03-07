@@ -24,11 +24,12 @@ recall helps before it is blended into broader memory scoring.
 
 The right first move is lightweight lexical retrieval over validated snapshots:
 match prompt tokens against snapshot scope, summary, command, tool name, tags,
-and entity refs; add a small recency/session bias; then inject only the top few
-results as a distinct `## Objective State` section. This is intentionally
-smaller than a full causal trajectory system. The goal is to make the stored
-state usable now without prematurely committing to a more complex world-model
-retriever.
+and entity refs; admit only snapshots with actual lexical overlap for non-empty
+queries; then use a small recency/session bias as an ordering tiebreaker before
+injecting the top few results as a distinct `## Objective State` section. This
+is intentionally smaller than a full causal trajectory system. The goal is to
+make the stored state usable now without prematurely committing to a more
+complex world-model retriever.
 
 ## Strategy
 
@@ -56,6 +57,10 @@ This preserves the larger thesis:
 - A separate recall section is a better first slice than immediate score
   blending. It keeps evaluation cleaner and prevents objective-state signals
   from silently distorting the existing semantic-memory path.
+- Retrieval admission and retrieval ordering are different problems. Lexical
+  overlap should decide whether a snapshot is eligible for a non-empty query;
+  recency and same-session affinity should only affect ordering among already
+  relevant candidates.
 - Invalid snapshot artifacts should be ignored during retrieval but still
   surfaced by store-status inspection. That split keeps recall fail-open while
   preserving operator visibility into bad data.

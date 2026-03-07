@@ -194,6 +194,22 @@ test("objective-state search ranks prompt-relevant snapshots and ignores invalid
       tags: ["docs"],
     },
   });
+  await recordObjectiveStateSnapshot({
+    memoryDir,
+    snapshot: {
+      schemaVersion: 1,
+      snapshotId: "snap-irrelevant-newer",
+      recordedAt: "2026-03-07T11:36:00.000Z",
+      sessionKey: "agent:main",
+      source: "tool_result",
+      kind: "workspace",
+      changeKind: "observed",
+      scope: "workspace-root",
+      summary: "Observed the workspace heartbeat after a docs update.",
+      outcome: "success",
+      tags: ["workspace"],
+    },
+  });
   await writeFile(
     path.join(memoryDir, "state", "objective-state", "snapshots", "2026-03-07", "invalid.json"),
     JSON.stringify({ schemaVersion: 1, snapshotId: "" }, null, 2),
@@ -206,9 +222,10 @@ test("objective-state search ranks prompt-relevant snapshots and ignores invalid
     maxResults: 2,
   });
 
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 1);
   assert.equal(results[0]?.snapshot.snapshotId, "snap-verify-failure");
-  assert.ok((results[0]?.score ?? 0) > (results[1]?.score ?? 0));
+  assert.equal(results.some((result) => result.snapshot.snapshotId === "snap-irrelevant-newer"), false);
+  assert.equal(results.some((result) => result.snapshot.snapshotId === "snap-readme-update"), false);
   assert.equal(results.some((result) => result.snapshot.snapshotId === "invalid"), false);
 });
 
