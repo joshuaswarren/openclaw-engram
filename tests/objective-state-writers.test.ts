@@ -314,6 +314,42 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats contraction negation
   assert.equal(snapshots[0]?.changeKind, "failed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats standalone previously failed text as failure", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:14.938Z",
+    messages: [
+      {
+        role: "tool",
+        name: "build_run",
+        content: "Build previously failed.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats previously failed recovery text as success", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:14.969Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "Previously failed tests now pass.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "observed");
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages treats plural failures as failures", () => {
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
     sessionKey: "agent:main",

@@ -193,8 +193,7 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
   if (typeof parsedPayload === "string") {
     const lowered = parsedPayload.toLowerCase();
     const loweredForFailure = lowered
-      .replace(/\bpreviously failed\b/g, "")
-      .replace(/\bfailed tests?\s+now\s+pass(?:ed|es)?\b/g, "");
+      .replace(/\b(?:previously\s+)?failed tests?\s+now\s+pass(?:ed|es)?\b/g, "");
     const hasZeroErrors = /\b(?:0|no)\s+errors?\b/.test(lowered);
     const hasNegatedSuccessMarkers =
       /\b(?:not|did not|didn't|doesn't|isn't|aren't|wasn't|weren't|won't|can't|couldn't|shouldn't|wouldn't)\s+(?:ok|pass|passed|passes|succeeded|success)\b/.test(loweredForFailure);
