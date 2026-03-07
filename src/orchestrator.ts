@@ -68,6 +68,7 @@ import {
   extractTagsFromPrompt,
 } from "./temporal-index.js";
 import { GraphIndex } from "./graph.js";
+import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2155,6 +2156,34 @@ export class Orchestrator {
       return results;
     })();
 
+    const objectiveStatePromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.objectiveStateMemoryEnabled ||
+        !this.config.objectiveStateRecallEnabled ||
+        !this.isRecallSectionEnabled("objective-state", this.config.objectiveStateRecallEnabled === true)
+      ) {
+        timings.objectiveState = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("objective-state", "maxResults") ?? 4;
+      if (maxResults <= 0) {
+        timings.objectiveState = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchObjectiveStateSnapshots({
+        memoryDir: this.config.memoryDir,
+        objectiveStateStoreDir: this.config.objectiveStateStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.objectiveState = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatObjectiveStateResults(results) : null;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2418,6 +2447,7 @@ export class Orchestrator {
       identityContinuity,
       kiResult,
       artifacts,
+      objectiveStateSection,
       qmdResult,
       transcriptSection,
       compactionSection,
@@ -2430,6 +2460,7 @@ export class Orchestrator {
       identityContinuityPromise,
       knowledgeIndexPromise,
       artifactsPromise,
+      objectiveStatePromise,
       qmdPromise,
       transcriptPromise,
       compactionPromise,
@@ -2502,6 +2533,10 @@ export class Orchestrator {
         const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
         this.appendRecallSection(sectionBuckets, "temporal-memory-tree", `## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
       }
+    }
+
+    if (objectiveStateSection) {
+      this.appendRecallSection(sectionBuckets, "objective-state", objectiveStateSection);
     }
 
     // 2. QMD results — post-process and format
@@ -5194,6 +5229,22 @@ export class Orchestrator {
       return `[${i + 1}] ${r.path} (score: ${r.score.toFixed(3)})\n${snippet}`;
     });
     return `## ${title}\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatObjectiveStateResults(results: ObjectiveStateSearchResult[]): string {
+    const lines = results.map(({ snapshot }, index) => {
+      const parts = [
+        snapshot.recordedAt.replace("T", " ").slice(0, 16),
+        `${snapshot.kind}/${snapshot.changeKind}`,
+      ];
+      if (snapshot.outcome) parts.push(snapshot.outcome);
+      const header = `[${index + 1}] ${parts.join(" | ")} | ${snapshot.scope}`;
+      const detailParts = [snapshot.summary];
+      if (snapshot.command) detailParts.push(`command: ${snapshot.command}`);
+      else if (snapshot.toolName) detailParts.push(`tool: ${snapshot.toolName}`);
+      return `${header}\n${detailParts.join(" | ")}`;
+    });
+    return `## Objective State\n\n${lines.join("\n\n")}`;
   }
 
   private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {

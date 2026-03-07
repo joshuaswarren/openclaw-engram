@@ -16,6 +16,8 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.objectiveStateMemoryEnabled, false);
   assert.equal(cfg.objectiveStateSnapshotWritesEnabled, false);
   assert.equal(cfg.objectiveStateStoreDir, path.join(memoryDir, "state", "objective-state"));
+  assert.equal(cfg.objectiveStateRecallEnabled, false);
+  assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
 });
 
 test("evaluation harness config respects explicit flags and custom store dir", () => {
@@ -28,6 +30,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     objectiveStateMemoryEnabled: true,
     objectiveStateSnapshotWritesEnabled: true,
     objectiveStateStoreDir: "/tmp/objective-state-store",
+    objectiveStateRecallEnabled: true,
   });
 
   assert.equal(cfg.evalHarnessEnabled, true);
@@ -36,4 +39,5 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.objectiveStateMemoryEnabled, true);
   assert.equal(cfg.objectiveStateSnapshotWritesEnabled, true);
   assert.equal(cfg.objectiveStateStoreDir, "/tmp/objective-state-store");
+  assert.equal(cfg.objectiveStateRecallEnabled, true);
 });

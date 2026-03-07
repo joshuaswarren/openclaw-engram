@@ -2,82 +2,74 @@
 
 ## Problem
 
-Engram is no longer just trying to retrieve plausible context. The roadmap is
-turning it into a memory system that can prove it improves agent outcomes,
-survives long-running work, and resists bad data. That shift makes review rigor
-part of the product itself. If memory changes can regress subtle outcome
-classification or evaluation behavior, the benchmark foundation becomes noisy
-and later slices lose credibility.
+Engram is trying to become agent memory that improves actual work, not just
+agent memory that can retrieve plausible text. That means the system needs to
+remember objective state: what command ran, what file changed, what tool
+failed, and what the resulting world state became. PR5 and PR6 built the
+objective-state store and the first writer path, but without retrieval that
+state still behaves like an operator ledger instead of agent-usable memory.
 
-The immediate issue is the PR137 follow-up on objective-state outcome inference.
-The code now needs to classify plain-text tool output without inverting obvious
-failure signals or dropping obvious success signals. The specific failure modes
-have been small but serious: a generalized success regex started treating
-phrases like `not ok` as success, and then the tightened parser still missed
-plain success text like `all tests pass`. Either direction corrupts
-objective-state memory, poisons evaluation data, and makes later recall slices
-reason from false state.
+The current problem is therefore no longer outcome parsing itself. The parser
+foundation is now good enough to store normalized file/process/tool snapshots.
+The real gap is that recall still reasons almost entirely over semantic memory
+documents. An agent can write objective-state snapshots and still fail to use
+them in the next turn.
 
 ## Operating Theory
 
-The current leverage point is the objective-state writer path. This is where raw
-agent/tool messages first become structured state snapshots. If inference is too
-loose here, every later layer inherits the error: the store records the wrong
-outcome, the eval harness measures the wrong behavior, and recall surfaces the
-wrong prior state.
+Objective-state retrieval should start as a separate, bounded section rather
+than being mixed directly into the semantic-memory ranking path. That keeps the
+new signal legible and makes it possible to evaluate whether objective-state
+recall helps before it is blended into broader memory scoring.
 
-That means the right strategy is conservative normalization backed by regression
-tests. Each review comment is treated as a hypothesis about a silent data-quality
-failure. The correct response is not to appease the reviewer but to tighten the
-classification rule, add the narrowest test that proves the scenario, and keep
-the pipeline stable.
-
-The review loop itself is also part of the operating theory now. A PR is not
-merge-ready when CI is green; it is merge-ready only when the external review
-systems are terminal and clean on the current head. For Engram work, review
-latency must be tolerated because premature PR churn damages repo continuity and
-obscures whether the underlying slice is actually stable.
+The right first move is lightweight lexical retrieval over validated snapshots:
+match prompt tokens against snapshot scope, summary, command, tool name, tags,
+and entity refs; admit only snapshots with actual lexical overlap for non-empty
+queries; then use a small recency/session bias as an ordering tiebreaker before
+injecting the top few results as a distinct `## Objective State` section. This
+is intentionally smaller than a full causal trajectory system. The goal is to
+make the stored state usable now without prematurely committing to a more
+complex world-model retriever.
 
 ## Strategy
 
-The roadmap remains benchmark-first and flag-first. Each slice should add one
-memory capability behind explicit config gates, then attach enough tests and
-measurement to prove the slice improved the system rather than merely expanded
-it.
+The roadmap is still benchmark-first and flag-first. Each new memory surface
+should be added behind a dedicated flag, covered by tests, and documented as a
+bounded contract before being woven into the rest of recall.
 
-The near-term sequence is:
+For the current objective-state track, the sequence is:
 
-1. Finish the PR137 follow-up cleanly on the existing PR so the objective-state
-   foundation is trustworthy.
-2. Continue the objective-state campaign with recall and retrieval slices, still
-   behind flags.
-3. Use the evaluation harness as the acceptance surface for every later memory
-   feature, especially causal trajectories, trust zoning, and creation-memory.
+1. Keep the writer/store layer conservative and stable.
+2. Add a separate objective-state retrieval surface behind its own recall flag.
+3. Use that retrieval layer as the foundation for later causal-trajectory work,
+   where multiple objective-state records will need to be linked into
+   goal-action-observation-outcome chains.
 
-This keeps Engram aligned with the larger thesis:
+This preserves the larger thesis:
 - memory that improves action outcomes
 - memory that survives long horizons and failures
 - memory that can defend itself
 
 ## Key Discoveries
 
-- Outcome inference for free-form text is easy to misclassify in both
-  directions. Negated success phrases like `not ok` need to be treated
-  explicitly as failures before success-marker logic runs, but plain success
-  phrases like `all tests pass` also need explicit coverage or the parser falls
-  back to `unknown`.
-- Test realism matters even for small parser coverage. A literal `\\n` fixture
-  can accidentally pass while simulating the wrong runtime shape; multiline test
-  data should match actual tool output.
-- PR continuity is an engineering concern, not just a process preference. Slow
-  Cursor reviews are normal, and replacing or closing an active PR creates noise
-  without reducing uncertainty.
+- Objective-state memory becomes agentically useful only when it is recallable
+  as its own surface. Storing snapshots alone is not enough.
+- A separate recall section is a better first slice than immediate score
+  blending. It keeps evaluation cleaner and prevents objective-state signals
+  from silently distorting the existing semantic-memory path.
+- Retrieval admission and retrieval ordering are different problems. Lexical
+  overlap should decide whether a snapshot is eligible for a non-empty query;
+  recency and same-session affinity should only affect ordering among already
+  relevant candidates.
+- Invalid snapshot artifacts should be ignored during retrieval but still
+  surfaced by store-status inspection. That split keeps recall fail-open while
+  preserving operator visibility into bad data.
 
 ## Open Questions
 
-- How much richer should outcome inference become before it needs a more formal
-  parser or scoring model instead of layered regex heuristics?
-- For upcoming objective-state recall, what is the minimum retrieval surface
-  that improves agent behavior without flooding prompt context?
-- Once the objective-state slices land, which benchmark tasks best expose causal
-  memory improvements rather than generic retrieval improvements?
+- At what point should objective-state retrieval graduate from lexical scoring
+  to trajectory-aware ranking?
+- How should future causal-memory slices combine objective-state recall with the
+  existing graph recall path without over-injecting context?
+- Which benchmark tasks will best show whether separate objective-state recall
+  materially improves downstream agent action quality?

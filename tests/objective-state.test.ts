@@ -7,6 +7,7 @@ import {
   getObjectiveStateStoreStatus,
   recordObjectiveStateSnapshot,
   resolveObjectiveStateStoreDir,
+  searchObjectiveStateSnapshots,
   validateObjectiveStateSnapshot,
 } from "../src/objective-state.js";
 import { runObjectiveStateStatusCliCommand } from "../src/cli.js";
@@ -154,6 +155,78 @@ test("objective-state status reports valid and invalid snapshots", async () => {
   assert.equal(status.snapshots.byOutcome.unknown, 1);
   assert.equal(status.latestSnapshot?.snapshotId, "snap-3");
   assert.match(status.invalidSnapshots[0]?.path ?? "", /invalid\.json$/);
+});
+
+test("objective-state search ranks prompt-relevant snapshots and ignores invalid files", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-search-"));
+  await recordObjectiveStateSnapshot({
+    memoryDir,
+    snapshot: {
+      schemaVersion: 1,
+      snapshotId: "snap-verify-failure",
+      recordedAt: "2026-03-07T09:35:00.000Z",
+      sessionKey: "agent:main",
+      source: "tool_result",
+      kind: "process",
+      changeKind: "failed",
+      scope: "npm test",
+      summary: "Verification run failed with 3 test failures in npm test.",
+      toolName: "exec_command",
+      command: "npm test",
+      outcome: "failure",
+      tags: ["verification", "tests"],
+    },
+  });
+  await recordObjectiveStateSnapshot({
+    memoryDir,
+    snapshot: {
+      schemaVersion: 1,
+      snapshotId: "snap-readme-update",
+      recordedAt: "2026-03-07T09:36:00.000Z",
+      sessionKey: "agent:main",
+      source: "tool_result",
+      kind: "file",
+      changeKind: "updated",
+      scope: "README.md",
+      summary: "Updated README examples for objective-state status usage.",
+      toolName: "edit_file",
+      outcome: "success",
+      tags: ["docs"],
+    },
+  });
+  await recordObjectiveStateSnapshot({
+    memoryDir,
+    snapshot: {
+      schemaVersion: 1,
+      snapshotId: "snap-irrelevant-newer",
+      recordedAt: "2026-03-07T11:36:00.000Z",
+      sessionKey: "agent:main",
+      source: "tool_result",
+      kind: "workspace",
+      changeKind: "observed",
+      scope: "workspace-root",
+      summary: "Observed the workspace heartbeat after a docs update.",
+      outcome: "success",
+      tags: ["workspace"],
+    },
+  });
+  await writeFile(
+    path.join(memoryDir, "state", "objective-state", "snapshots", "2026-03-07", "invalid.json"),
+    JSON.stringify({ schemaVersion: 1, snapshotId: "" }, null, 2),
+    "utf8",
+  );
+
+  const results = await searchObjectiveStateSnapshots({
+    memoryDir,
+    query: "Why did npm test fail during verification?",
+    maxResults: 2,
+  });
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.snapshot.snapshotId, "snap-verify-failure");
+  assert.equal(results.some((result) => result.snapshot.snapshotId === "snap-irrelevant-newer"), false);
+  assert.equal(results.some((result) => result.snapshot.snapshotId === "snap-readme-update"), false);
+  assert.equal(results.some((result) => result.snapshot.snapshotId === "invalid"), false);
 });
 
 test("objective-state-status CLI command returns the store summary", async () => {
