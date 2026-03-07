@@ -70,6 +70,48 @@ test("recordObjectiveStateSnapshot persists snapshots into dated objective-state
   );
 });
 
+test("recordObjectiveStateSnapshot rejects unsafe snapshot paths and malformed dates", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-reject-"));
+
+  await assert.rejects(
+    () =>
+      recordObjectiveStateSnapshot({
+        memoryDir,
+        snapshot: {
+          schemaVersion: 1,
+          snapshotId: "../../escape",
+          recordedAt: "2026-03-07T09:31:00.000Z",
+          sessionKey: "agent:main",
+          source: "cli",
+          kind: "process",
+          changeKind: "executed",
+          scope: "npm test",
+          summary: "Attempted invalid snapshot id.",
+        },
+      }),
+    /snapshotId must be a safe path segment/i,
+  );
+
+  await assert.rejects(
+    () =>
+      recordObjectiveStateSnapshot({
+        memoryDir,
+        snapshot: {
+          schemaVersion: 1,
+          snapshotId: "snap-unsafe-date",
+          recordedAt: "not-a-date",
+          sessionKey: "agent:main",
+          source: "cli",
+          kind: "process",
+          changeKind: "executed",
+          scope: "npm test",
+          summary: "Attempted invalid recordedAt.",
+        },
+      }),
+    /recordedAt must be an ISO timestamp/i,
+  );
+});
+
 test("objective-state status reports valid and invalid snapshots", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-status-"));
   await recordObjectiveStateSnapshot({

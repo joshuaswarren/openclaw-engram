@@ -1,5 +1,6 @@
 import path from "node:path";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { listJsonFiles, readJsonFile } from "./json-store.js";
 
 export type ObjectiveStateSnapshotSource = "tool_result" | "cli" | "system" | "manual";
 export type ObjectiveStateSnapshotKind = "tool" | "file" | "process" | "record" | "workspace";
@@ -70,6 +71,28 @@ function optionalString(value: unknown): string | undefined {
   return value.trim();
 }
 
+function assertSafePathSegment(value: string, field: string): string {
+  if (value === "." || value === ".." || value.includes("/") || value.includes("\\")) {
+    throw new Error(`${field} must be a safe path segment`);
+  }
+  return value;
+}
+
+function assertIsoRecordedAt(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    throw new Error("recordedAt must be an ISO timestamp");
+  }
+  return value;
+}
+
+function objectiveStateDay(recordedAt: string): string {
+  const day = recordedAt.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error("recordedAt must start with a valid YYYY-MM-DD date");
+  }
+  return day;
+}
+
 function optionalStringArray(value: unknown, field: string): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new Error(`${field} must be an array of strings`);
@@ -133,8 +156,8 @@ export function validateObjectiveStateSnapshot(raw: unknown): ObjectiveStateSnap
 
   return {
     schemaVersion: 1,
-    snapshotId: assertString(raw.snapshotId, "snapshotId"),
-    recordedAt: assertString(raw.recordedAt, "recordedAt"),
+    snapshotId: assertSafePathSegment(assertString(raw.snapshotId, "snapshotId"), "snapshotId"),
+    recordedAt: assertIsoRecordedAt(assertString(raw.recordedAt, "recordedAt")),
     sessionKey: assertString(raw.sessionKey, "sessionKey"),
     source: source as ObjectiveStateSnapshotSource,
     kind: kind as ObjectiveStateSnapshotKind,
@@ -152,28 +175,6 @@ export function validateObjectiveStateSnapshot(raw: unknown): ObjectiveStateSnap
   };
 }
 
-async function listJsonFiles(dir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    const out: string[] = [];
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        out.push(...(await listJsonFiles(fullPath)));
-      } else if (entry.isFile() && entry.name.endsWith(".json")) {
-        out.push(fullPath);
-      }
-    }
-    return out.sort();
-  } catch {
-    return [];
-  }
-}
-
-async function readJsonFile(filePath: string): Promise<unknown> {
-  return JSON.parse(await readFile(filePath, "utf8")) as unknown;
-}
-
 export async function recordObjectiveStateSnapshot(options: {
   memoryDir: string;
   objectiveStateStoreDir?: string;
@@ -181,7 +182,7 @@ export async function recordObjectiveStateSnapshot(options: {
 }): Promise<string> {
   const rootDir = resolveObjectiveStateStoreDir(options.memoryDir, options.objectiveStateStoreDir);
   const validated = validateObjectiveStateSnapshot(options.snapshot);
-  const day = validated.recordedAt.slice(0, 10);
+  const day = objectiveStateDay(validated.recordedAt);
   const snapshotsDir = path.join(rootDir, "snapshots", day);
   const filePath = path.join(snapshotsDir, `${validated.snapshotId}.json`);
   await mkdir(snapshotsDir, { recursive: true });
