@@ -100,6 +100,11 @@ export interface TrustZonePromotionResult {
   sourceRecord: TrustZoneRecord;
 }
 
+interface TrustZoneCorroborationSummary {
+  count: number;
+  sourceClasses: TrustZoneSourceClass[];
+}
+
 export interface TrustZoneSearchResult {
   record: TrustZoneRecord;
   score: number;
@@ -195,6 +200,42 @@ function dedupeStrings(values: Array<string | undefined>): string[] | undefined 
   const out = values.filter((value): value is string => typeof value === "string" && value.length > 0);
   if (out.length === 0) return undefined;
   return [...new Set(out)];
+}
+
+function hasOverlap(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (!left || !right || left.length === 0 || right.length === 0) return false;
+  const rightSet = new Set(right);
+  return left.some((value) => rightSet.has(value));
+}
+
+function requiresCorroboration(record: TrustZoneRecord, targetZone: TrustZoneName, poisoningDefenseEnabled: boolean): boolean {
+  return (
+    poisoningDefenseEnabled === true
+    && targetZone === "trusted"
+    && record.zone === "working"
+    && ["tool_output", "web_content", "subagent_trace"].includes(record.provenance.sourceClass)
+  );
+}
+
+function summarizeCorroboration(options: {
+  sourceRecord: TrustZoneRecord;
+  records: TrustZoneRecord[];
+}): TrustZoneCorroborationSummary {
+  const corroborating = options.records.filter((candidate) => {
+    if (candidate.recordId === options.sourceRecord.recordId) return false;
+    if (candidate.zone === "quarantine") return false;
+    if (hasAnchoredProvenance(candidate) !== true) return false;
+    if (candidate.provenance.sourceClass === options.sourceRecord.provenance.sourceClass) return false;
+    return (
+      hasOverlap(candidate.entityRefs, options.sourceRecord.entityRefs)
+      || hasOverlap(candidate.tags, options.sourceRecord.tags)
+    );
+  });
+
+  return {
+    count: corroborating.length,
+    sourceClasses: [...new Set(corroborating.map((record) => record.provenance.sourceClass))],
+  };
 }
 
 const SOURCE_CLASS_WEIGHTS: Record<TrustZoneSourceClass, number> = {
@@ -295,6 +336,7 @@ export async function promoteTrustZoneRecord(options: {
   trustZoneStoreDir?: string;
   enabled: boolean;
   promotionEnabled: boolean;
+  poisoningDefenseEnabled?: boolean;
   sourceRecordId: string;
   targetZone: TrustZoneName;
   recordedAt: string;
@@ -326,6 +368,20 @@ export async function promoteTrustZoneRecord(options: {
     throw new Error(`trust-zone promotion denied: ${plan.reasons.join("; ")}`);
   }
 
+  const corroboration = requiresCorroboration(sourceRecord, options.targetZone, options.poisoningDefenseEnabled === true)
+    ? summarizeCorroboration({
+        sourceRecord,
+        records: (await readTrustZoneRecords({
+          memoryDir: options.memoryDir,
+          trustZoneStoreDir: options.trustZoneStoreDir,
+        })).records,
+      })
+    : null;
+
+  if (corroboration && corroboration.count === 0) {
+    throw new Error("trust-zone promotion denied: corroboration is required for risky trusted promotions");
+  }
+
   const recordedAt = assertIsoRecordedAt(assertString(options.recordedAt, "recordedAt"));
   const promotionReason = assertString(options.promotionReason, "promotionReason");
   const nextRecord: TrustZoneRecord = {
@@ -343,6 +399,13 @@ export async function promoteTrustZoneRecord(options: {
       ...(sourceRecord.metadata ?? {}),
       sourceRecordId: sourceRecord.recordId,
       promotionReason,
+      ...(corroboration
+        ? {
+            corroborated: "true",
+            corroborationCount: String(corroboration.count),
+            corroborationSources: corroboration.sourceClasses.join(","),
+          }
+        : {}),
     },
   };
 

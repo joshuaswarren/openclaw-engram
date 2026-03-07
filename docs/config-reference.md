@@ -378,7 +378,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `quarantinePromotionEnabled` | `false` | Allow explicit trust-zone promotions such as `quarantine -> working` and guarded `working -> trusted` |
 | `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
 | `trustZoneRecallEnabled` | `false` | Inject prompt-relevant working and trusted trust-zone records into recall context |
-| `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring in trust-zone status output as the first poisoning-defense signal |
+| `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring and corroboration requirements for risky trusted promotions |
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
@@ -394,6 +394,7 @@ Current foundation slice:
 - When `quarantinePromotionEnabled` is also on, Engram exposes an explicit promotion path that blocks direct `quarantine -> trusted` jumps and requires anchored provenance before promoting risky working records into `trusted`.
 - When `trustZoneRecallEnabled` is also on, Engram injects a separate `## Trust Zones` recall section sourced from `working` and `trusted` trust-zone records while keeping `quarantine` records out of recall by default.
 - When `memoryPoisoningDefenseEnabled` is also on, `openclaw engram trust-zone-status` reports deterministic provenance trust scores derived from source class plus `sourceId` / `evidenceHash` / `sessionKey` anchors so later poisoning defenses can build on explicit signals instead of hidden heuristics.
+- With both `memoryPoisoningDefenseEnabled` and `quarantinePromotionEnabled` enabled, risky `working -> trusted` promotions now require at least one independent non-`quarantine` corroborating record with anchored provenance and overlapping `entityRefs` or `tags`.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |

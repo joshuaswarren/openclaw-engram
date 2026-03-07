@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Risky-promotion corroboration**: when `memoryPoisoningDefenseEnabled` is enabled, risky `working -> trusted` trust-zone promotions now require independent non-`quarantine` corroboration with anchored provenance and overlapping `entityRefs` or `tags`, and successful promotions record corroboration metadata.
 - **Provenance trust scoring**: added `memoryPoisoningDefenseEnabled`, deterministic trust-zone provenance scoring by source class and evidence anchors, and aggregate trust-band reporting in `openclaw engram trust-zone-status` as the first poisoning-defense signal.
 - **Trust-zone recall**: added `trustZoneRecallEnabled`, a separate `trust-zones` recall-pipeline section, bounded trust-zone search over `working` and `trusted` records, and `## Trust Zones` recall injection that excludes `quarantine` material by default.
 - **Trust-zone promotion path**: added deterministic trust-zone promotion planning, lineage-aware promoted records, guarded `openclaw engram trust-zone-promote`, direct `quarantine -> trusted` denial, and anchored-provenance enforcement for risky `working -> trusted` promotions.
