@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Causal trajectory store foundation**: added `causalTrajectoryMemoryEnabled`, `causalTrajectoryStoreDir`, a typed causal-trajectory record store under `state/causal-trajectories`, and `openclaw engram causal-trajectory-status` for inspecting stored goal-action-observation-outcome chains.
 - **Objective-state writers**: when `objectiveStateMemoryEnabled` and `objectiveStateSnapshotWritesEnabled` are both enabled, Engram now derives normalized file/process/tool snapshots from `agent_end` tool activity and persists them into the objective-state store introduced in PR5.
 - **Evaluation harness foundation**: added config/schema flags (`evalHarnessEnabled`, `evalShadowModeEnabled`, `evalStoreDir`), typed benchmark manifest/run summary support, and `openclaw engram benchmark-status` for inspecting benchmark packs and the latest run summary.
 - **Benchmark pack tools**: added `openclaw engram benchmark-validate <path>` and `openclaw engram benchmark-import <path> [--force]` so operators can validate and install benchmark packs into Engram's eval store before later shadow-mode and CI-gating slices land.

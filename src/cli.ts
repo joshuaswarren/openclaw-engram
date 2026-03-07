@@ -53,6 +53,10 @@ import {
   validateEvalBenchmarkPack,
 } from "./evals.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
+import {
+  getCausalTrajectoryStoreStatus,
+  type CausalTrajectoryStoreStatus,
+} from "./causal-trajectory.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
 import {
   analyzeSessionIntegrity,
@@ -635,6 +639,18 @@ export async function runObjectiveStateStatusCliCommand(options: {
     objectiveStateStoreDir: options.objectiveStateStoreDir,
     enabled: options.objectiveStateMemoryEnabled,
     writesEnabled: options.objectiveStateSnapshotWritesEnabled,
+  });
+}
+
+export async function runCausalTrajectoryStatusCliCommand(options: {
+  memoryDir: string;
+  causalTrajectoryStoreDir?: string;
+  causalTrajectoryMemoryEnabled: boolean;
+}): Promise<CausalTrajectoryStoreStatus> {
+  return getCausalTrajectoryStoreStatus({
+    memoryDir: options.memoryDir,
+    causalTrajectoryStoreDir: options.causalTrajectoryStoreDir,
+    enabled: options.causalTrajectoryMemoryEnabled,
   });
 }
 
@@ -2210,6 +2226,19 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             objectiveStateStoreDir: orchestrator.config.objectiveStateStoreDir,
             objectiveStateMemoryEnabled: orchestrator.config.objectiveStateMemoryEnabled,
             objectiveStateSnapshotWritesEnabled: orchestrator.config.objectiveStateSnapshotWritesEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("causal-trajectory-status")
+        .description("Show causal-trajectory store status, record counts, and latest stored chain")
+        .action(async () => {
+          const status = await runCausalTrajectoryStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            causalTrajectoryStoreDir: orchestrator.config.causalTrajectoryStoreDir,
+            causalTrajectoryMemoryEnabled: orchestrator.config.causalTrajectoryMemoryEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");

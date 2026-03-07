@@ -222,6 +222,9 @@ export interface PluginConfig {
   objectiveStateSnapshotWritesEnabled: boolean;
   objectiveStateRecallEnabled: boolean;
   objectiveStateStoreDir: string;
+  // Causal trajectory memory foundation
+  causalTrajectoryMemoryEnabled: boolean;
+  causalTrajectoryStoreDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

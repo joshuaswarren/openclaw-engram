@@ -2,74 +2,76 @@
 
 ## Problem
 
-Engram is trying to become agent memory that improves actual work, not just
-agent memory that can retrieve plausible text. That means the system needs to
-remember objective state: what command ran, what file changed, what tool
-failed, and what the resulting world state became. PR5 and PR6 built the
-objective-state store and the first writer path, but without retrieval that
-state still behaves like an operator ledger instead of agent-usable memory.
+PR7 closed the first objective-state loop: Engram can now recall prompt-relevant
+world-state snapshots as a separate section. That improves access to what
+actually happened, but it still does not capture why a sequence of actions led
+to an outcome. Objective-state snapshots are atomic. Agentic memory needs the
+next layer above them: typed causal chains that preserve goal, action,
+observation, outcome, and intended follow-up.
 
-The current problem is therefore no longer outcome parsing itself. The parser
-foundation is now good enough to store normalized file/process/tool snapshots.
-The real gap is that recall still reasons almost entirely over semantic memory
-documents. An agent can write objective-state snapshots and still fail to use
-them in the next turn.
+The current problem is therefore not retrieval breadth. It is structural memory
+shape. Without a causal-trajectory store, later graph and retrieval work would
+have to infer trajectory records from raw snapshots or transcripts after the
+fact, which is noisy and hard to benchmark.
 
 ## Operating Theory
 
-Objective-state retrieval should start as a separate, bounded section rather
-than being mixed directly into the semantic-memory ranking path. That keeps the
-new signal legible and makes it possible to evaluate whether objective-state
-recall helps before it is blended into broader memory scoring.
+Causal-memory work should begin the same way objective-state memory did: store
+first, use later. A typed on-disk store is the right first move because it
+creates a stable contract for later writers, graph builders, and retrievers
+without forcing premature ranking logic into the live recall path.
 
-The right first move is lightweight lexical retrieval over validated snapshots:
-match prompt tokens against snapshot scope, summary, command, tool name, tags,
-and entity refs; admit only snapshots with actual lexical overlap for non-empty
-queries; then use a small recency/session bias as an ordering tiebreaker before
-injecting the top few results as a distinct `## Objective State` section. This
-is intentionally smaller than a full causal trajectory system. The goal is to
-make the stored state usable now without prematurely committing to a more
-complex world-model retriever.
+The contract for this slice is a normalized causal record:
+
+- goal
+- action summary
+- observation summary
+- outcome kind and outcome summary
+- optional follow-up summary
+- optional refs back to objective-state snapshots and entities
+
+That record is intentionally narrower than a full action graph. The point is to
+preserve causal structure with minimal interpretation so later slices can build
+action-conditioned edges and retrieval on top of a durable source of truth.
 
 ## Strategy
 
-The roadmap is still benchmark-first and flag-first. Each new memory surface
-should be added behind a dedicated flag, covered by tests, and documented as a
-bounded contract before being woven into the rest of recall.
+The roadmap is still benchmark-first, flag-first, and slice-first. Each memory
+surface lands in this order:
 
-For the current objective-state track, the sequence is:
+1. storage contract
+2. writer path
+3. retrieval or planner integration
+4. benchmark tightening
 
-1. Keep the writer/store layer conservative and stable.
-2. Add a separate objective-state retrieval surface behind its own recall flag.
-3. Use that retrieval layer as the foundation for later causal-trajectory work,
-   where multiple objective-state records will need to be linked into
-   goal-action-observation-outcome chains.
+For the causal track, that means:
 
-This preserves the larger thesis:
+1. PR8: causal trajectory schema and storage
+2. PR9: action-conditioned graph construction
+3. PR10: trajectory-aware retrieval and explainability
+
+This keeps the larger thesis intact:
 - memory that improves action outcomes
 - memory that survives long horizons and failures
 - memory that can defend itself
 
 ## Key Discoveries
 
-- Objective-state memory becomes agentically useful only when it is recallable
-  as its own surface. Storing snapshots alone is not enough.
-- A separate recall section is a better first slice than immediate score
-  blending. It keeps evaluation cleaner and prevents objective-state signals
-  from silently distorting the existing semantic-memory path.
-- Retrieval admission and retrieval ordering are different problems. Lexical
-  overlap should decide whether a snapshot is eligible for a non-empty query;
-  recency and same-session affinity should only affect ordering among already
-  relevant candidates.
-- Invalid snapshot artifacts should be ignored during retrieval but still
-  surfaced by store-status inspection. That split keeps recall fail-open while
-  preserving operator visibility into bad data.
+- Objective-state recall made it clearer that snapshots and trajectories solve
+  different problems. Snapshots answer "what changed"; trajectories answer
+  "what chain of intent and consequence produced this state."
+- Starting with a store-only slice is the safest way to add causal structure.
+  It avoids inventing retrieval heuristics before the storage contract is
+  stable.
+- Causal-memory records should link back to objective-state snapshot IDs rather
+  than duplicate snapshot payloads. The trajectory layer should compose the
+  existing state layer, not fork it.
 
 ## Open Questions
 
-- At what point should objective-state retrieval graduate from lexical scoring
-  to trajectory-aware ranking?
-- How should future causal-memory slices combine objective-state recall with the
-  existing graph recall path without over-injecting context?
-- Which benchmark tasks will best show whether separate objective-state recall
-  materially improves downstream agent action quality?
+- Which live hook should become the first causal-trajectory writer in PR9
+  without overfitting to one provider or one transcript shape?
+- How much of the causal chain should be extracted heuristically versus written
+  directly from structured runtime events?
+- Which benchmark cases best expose trajectory-quality regressions once
+  trajectory-aware retrieval lands?

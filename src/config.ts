@@ -491,6 +491,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.objectiveStateStoreDir === "string" && cfg.objectiveStateStoreDir.trim().length > 0
         ? cfg.objectiveStateStoreDir.trim()
         : path.join(memoryDir, "state", "objective-state"),
+    causalTrajectoryMemoryEnabled: cfg.causalTrajectoryMemoryEnabled === true,
+    causalTrajectoryStoreDir:
+      typeof cfg.causalTrajectoryStoreDir === "string" && cfg.causalTrajectoryStoreDir.trim().length > 0
+        ? cfg.causalTrajectoryStoreDir.trim()
+        : path.join(memoryDir, "state", "causal-trajectories"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:
