@@ -369,7 +369,10 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
-- Future slices will add dataset importers, benchmark runners, shadow recording, and PR regression gates on top of this store format.
+- `openclaw engram benchmark-validate <path>` validates a manifest JSON file or a pack directory with a root `manifest.json`.
+- `openclaw engram benchmark-import <path> [--force]` validates first, then imports into `benchmarks/<benchmarkId>/`.
+- Future slices will add benchmark runners, shadow recording, and PR regression gates on top of this store format.
+
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |
 
 ## v3.0 Namespaces

@@ -43,7 +43,13 @@ import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
-import { getEvalHarnessStatus, type EvalHarnessStatus } from "./evals.js";
+import {
+  getEvalHarnessStatus,
+  importEvalBenchmarkPack,
+  type EvalBenchmarkPackSummary,
+  type EvalHarnessStatus,
+  validateEvalBenchmarkPack,
+} from "./evals.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
 import {
   analyzeSessionIntegrity,
@@ -581,6 +587,26 @@ export async function runBenchmarkStatusCliCommand(options: {
     evalStoreDir: options.evalStoreDir,
     enabled: options.evalHarnessEnabled,
     shadowModeEnabled: options.evalShadowModeEnabled,
+  });
+}
+
+export async function runBenchmarkValidateCliCommand(options: {
+  path: string;
+}): Promise<EvalBenchmarkPackSummary> {
+  return validateEvalBenchmarkPack(options.path);
+}
+
+export async function runBenchmarkImportCliCommand(options: {
+  path: string;
+  memoryDir: string;
+  evalStoreDir?: string;
+  force?: boolean;
+}): Promise<EvalBenchmarkPackSummary & { targetDir: string; overwritten: boolean }> {
+  return importEvalBenchmarkPack({
+    sourcePath: options.path,
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    force: options.force === true,
   });
 }
 
@@ -2095,6 +2121,37 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-validate")
+        .description("Validate a benchmark manifest file or pack directory without importing it")
+        .argument("<path>", "Path to a benchmark manifest JSON file or a directory with manifest.json")
+        .action(async (...args: unknown[]) => {
+          const inputPath = args[0];
+          const summary = await runBenchmarkValidateCliCommand({
+            path: typeof inputPath === "string" ? inputPath : "",
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-import")
+        .description("Validate and import a benchmark manifest file or pack directory into Engram's eval store")
+        .argument("<path>", "Path to a benchmark manifest JSON file or a directory with manifest.json")
+        .option("--force", "Replace an existing imported benchmark pack with the same benchmarkId")
+        .action(async (...args: unknown[]) => {
+          const inputPath = args[0];
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkImportCliCommand({
+            path: typeof inputPath === "string" ? inputPath : "",
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            force: options.force === true,
+          });
+          console.log(JSON.stringify(summary, null, 2));
           console.log("OK");
         });
 

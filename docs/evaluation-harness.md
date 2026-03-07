@@ -19,6 +19,8 @@ This slice ships:
 - `evalShadowModeEnabled`
 - `evalStoreDir`
 - `openclaw engram benchmark-status`
+- `openclaw engram benchmark-validate <path>`
+- `openclaw engram benchmark-import <path> [--force]`
 - typed benchmark manifest validation
 - typed run-summary validation
 
@@ -105,6 +107,8 @@ Supported statuses:
 
 ```bash
 openclaw engram benchmark-status
+openclaw engram benchmark-validate ./benchmarks/ama-memory
+openclaw engram benchmark-import ./benchmarks/ama-memory
 ```
 
 The command reports:
@@ -115,6 +119,14 @@ The command reports:
 - invalid benchmark manifests
 - total case counts
 - latest run summary
+
+The validation/import tools:
+
+- accept either a manifest JSON file or a benchmark pack directory with a root `manifest.json`
+- validate the manifest before import
+- import packs into `benchmarks/<benchmarkId>/`
+- preserve extra files when importing a directory pack
+- require `--force` to replace an existing imported benchmark pack
 
 ## Rollout Guidance
 
@@ -128,3 +140,4 @@ See:
 
 - [Agentic Memory Roadmap](plans/2026-03-06-engram-agentic-memory-roadmap.md)
 - [PR1 Eval Harness Foundation Plan](plans/2026-03-06-engram-pr1-eval-harness-foundation.md)
+- [PR2 Benchmark Pack Validator And Import Tools](plans/2026-03-06-engram-pr2-benchmark-tools.md)

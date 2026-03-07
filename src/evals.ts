@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readdir, readFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 
 export type EvalRunStatus = "running" | "completed" | "failed" | "partial";
 
@@ -80,6 +80,16 @@ export interface EvalHarnessStatus {
   }>;
 }
 
+export interface EvalBenchmarkPackSummary {
+  sourcePath: string;
+  manifestPath: string;
+  benchmarkId: string;
+  title: string;
+  totalCases: number;
+  tags: string[];
+  sourceLinks: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -111,6 +121,13 @@ export function resolveEvalStoreDir(memoryDir: string, overrideDir?: string): st
     return overrideDir.trim();
   }
   return path.join(memoryDir, "state", "evals");
+}
+
+function assertSafeBenchmarkId(benchmarkId: string): string {
+  if (benchmarkId === "." || benchmarkId === ".." || benchmarkId.includes("/") || benchmarkId.includes("\\")) {
+    throw new Error("benchmarkId must be a safe path segment");
+  }
+  return benchmarkId;
 }
 
 export function validateEvalBenchmarkManifest(raw: unknown): EvalBenchmarkManifest {
@@ -213,6 +230,83 @@ async function listJsonFiles(dir: string): Promise<string[]> {
 
 async function readJsonFile(filePath: string): Promise<unknown> {
   return JSON.parse(await readFile(filePath, "utf-8")) as unknown;
+}
+
+async function resolveBenchmarkManifestPath(sourcePath: string): Promise<{ sourceKind: "file" | "directory"; manifestPath: string }> {
+  const info = await stat(sourcePath);
+  if (info.isDirectory()) {
+    return {
+      sourceKind: "directory",
+      manifestPath: path.join(sourcePath, "manifest.json"),
+    };
+  }
+  if (info.isFile()) {
+    return {
+      sourceKind: "file",
+      manifestPath: sourcePath,
+    };
+  }
+  throw new Error("benchmark pack source must be a file or directory");
+}
+
+export async function validateEvalBenchmarkPack(sourcePath: string): Promise<EvalBenchmarkPackSummary> {
+  const trimmedSourcePath = sourcePath.trim();
+  if (trimmedSourcePath.length === 0) {
+    throw new Error("benchmark pack path must be a non-empty string");
+  }
+  const { manifestPath } = await resolveBenchmarkManifestPath(trimmedSourcePath);
+  const manifest = validateEvalBenchmarkManifest(await readJsonFile(manifestPath));
+  return {
+    sourcePath: trimmedSourcePath,
+    manifestPath,
+    benchmarkId: assertSafeBenchmarkId(manifest.benchmarkId),
+    title: manifest.title,
+    totalCases: manifest.cases.length,
+    tags: [...(manifest.tags ?? [])],
+    sourceLinks: [...(manifest.sourceLinks ?? [])],
+  };
+}
+
+export async function importEvalBenchmarkPack(options: {
+  sourcePath: string;
+  memoryDir: string;
+  evalStoreDir?: string;
+  force?: boolean;
+}): Promise<EvalBenchmarkPackSummary & { targetDir: string; overwritten: boolean }> {
+  const summary = await validateEvalBenchmarkPack(options.sourcePath);
+  const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
+  const benchmarkDir = path.join(rootDir, "benchmarks");
+  const targetDir = path.join(benchmarkDir, summary.benchmarkId);
+  const { sourceKind, manifestPath } = await resolveBenchmarkManifestPath(summary.sourcePath);
+
+  let overwritten = false;
+  try {
+    await stat(targetDir);
+    if (options.force !== true) {
+      throw new Error(`benchmark pack already exists at ${targetDir}; rerun with force to replace it`);
+    }
+    overwritten = true;
+    await rm(targetDir, { recursive: true, force: true });
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || (error as NodeJS.ErrnoException).code !== "ENOENT") {
+      if (error instanceof Error && error.message.includes("rerun with force")) throw error;
+      throw error;
+    }
+  }
+
+  await mkdir(benchmarkDir, { recursive: true });
+  if (sourceKind === "directory") {
+    await cp(summary.sourcePath, targetDir, { recursive: true });
+  } else {
+    await mkdir(targetDir, { recursive: true });
+    await cp(manifestPath, path.join(targetDir, "manifest.json"));
+  }
+
+  return {
+    ...summary,
+    targetDir,
+    overwritten,
+  };
 }
 
 export async function getEvalHarnessStatus(options: {
