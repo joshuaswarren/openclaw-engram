@@ -65,6 +65,10 @@ verified episodic source memories?
 - Memory boxes are already the right retrieval envelope for episodic recall.
   The missing piece was verification of their cited memories, not another
   persistence layer.
+- Verification also has to be cheap enough for the recall path. Resolving
+  cited `memoryIds` by repeated `getMemoryById()` calls quietly degenerates
+  into repeated full-corpus scans, so the verified episodic slice needs one
+  preloaded memory map per search rather than per-box lookups.
 - Verified episodic recall fits the existing recall-pipeline model cleanly as a
   separate section. It does not need to mutate generic semantic recall yet.
 - `semanticRulePromotionEnabled` belongs in the config contract now, but only

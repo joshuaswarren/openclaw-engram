@@ -123,6 +123,32 @@ test("searchVerifiedEpisodes skips boxes whose cited memories are not verified e
   assert.deepEqual(results, []);
 });
 
+test("searchVerifiedEpisodes reads the memory corpus once per search", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-verified-corpus-"));
+  await seedVerifiedRecallStore(memoryDir);
+  await seedVerifiedRecallStore(memoryDir);
+
+  const originalReadAllMemories = StorageManager.prototype.readAllMemories;
+  let readAllCount = 0;
+  StorageManager.prototype.readAllMemories = async function patchedReadAllMemories(this: StorageManager) {
+    readAllCount += 1;
+    return originalReadAllMemories.call(this);
+  };
+
+  try {
+    const results = await searchVerifiedEpisodes({
+      memoryDir,
+      query: "Which episode says we merged after Cursor turned green?",
+      maxResults: 5,
+    });
+
+    assert.equal(results.length > 0, true);
+    assert.equal(readAllCount, 1);
+  } finally {
+    StorageManager.prototype.readAllMemories = originalReadAllMemories;
+  }
+});
+
 test("verified-recall-search CLI command returns verified episodic matches", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-verified-cli-"));
   await seedVerifiedRecallStore(memoryDir);

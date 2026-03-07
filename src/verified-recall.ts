@@ -64,11 +64,14 @@ function scoreVerifiedEpisodeCandidate(box: BoxFrontmatter, verifiedMemories: Me
   return { score, matchedFields };
 }
 
-async function resolveVerifiedEpisodeMemories(storage: StorageManager, memoryIds: string[]): Promise<MemoryFile[]> {
+function resolveVerifiedEpisodeMemoriesFromMap(
+  memoryById: ReadonlyMap<string, MemoryFile>,
+  memoryIds: string[],
+): MemoryFile[] {
   const verified: MemoryFile[] = [];
   for (const memoryId of memoryIds) {
     try {
-      const memory = await storage.getMemoryById(memoryId);
+      const memory = memoryById.get(memoryId);
       if (!memory) continue;
       if (memory.frontmatter.status === "archived") continue;
       if (memory.frontmatter.memoryKind !== "episode") continue;
@@ -90,13 +93,19 @@ export async function searchVerifiedEpisodes(options: {
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
   const storage = new StorageManager(options.memoryDir);
+  const verifiedMemoryById = new Map(
+    (await storage.readAllMemories())
+      .filter((memory) => memory.frontmatter.status !== "archived")
+      .filter((memory) => memory.frontmatter.memoryKind === "episode")
+      .map((memory) => [memory.frontmatter.id, memory] as const),
+  );
   const boxes = await createReadOnlyBoxBuilder(options.memoryDir)
     .readRecentBoxes(Math.max(1, Math.floor(options.boxRecallDays ?? 3)))
     .catch(() => [] as BoxFrontmatter[]);
 
   const candidates: VerifiedEpisodeCandidate[] = [];
   for (const box of boxes) {
-    const verifiedMemories = await resolveVerifiedEpisodeMemories(storage, box.memoryIds);
+    const verifiedMemories = resolveVerifiedEpisodeMemoriesFromMap(verifiedMemoryById, box.memoryIds);
     if (verifiedMemories.length === 0) continue;
     const { score, matchedFields } = scoreVerifiedEpisodeCandidate(box, verifiedMemories, queryTokens);
     if (score <= 0) continue;
