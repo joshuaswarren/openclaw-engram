@@ -196,10 +196,13 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
       .replace(/\bpreviously failed\b/g, "")
       .replace(/\bfailed tests?\s+now\s+pass(?:es)?\b/g, "");
     const hasZeroErrors = /\b(?:0|no)\s+errors?\b/.test(lowered);
+    const hasNegatedSuccessMarkers =
+      /\bnot\s+(?:ok|passed|passes|succeeded|success)\b/.test(loweredForFailure);
     const hasSuccessMarkers =
       /\b(success|succeeded|passes|passed|ok)\b/.test(lowered) ||
       hasZeroErrors;
     const hasFailureMarkers =
+      hasNegatedSuccessMarkers ||
       /\b(exception|exceptions?|failed|failure|fatal|timeout|timed out)\b/.test(loweredForFailure) ||
       (/\berrors?\b/.test(loweredForFailure) && !hasZeroErrors) ||
       /\b[a-z]+error\b/.test(loweredForFailure) ||
