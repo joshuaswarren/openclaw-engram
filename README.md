@@ -31,7 +31,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
 - **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
 - **Benchmark-first roadmap** — Engram now has an evaluation harness with live shadow recall recording and a CI benchmark delta gate, so memory improvements can be measured and regression-checked instead of argued from anecdotes.
-- **Objective-state foundation** — When `objectiveStateMemoryEnabled` and `objectiveStateSnapshotWritesEnabled` are enabled together, Engram records normalized file, process, and tool outcomes from `agent_end` tool activity into a dedicated objective-state store.
+- **Objective-state recall** — Engram can now store normalized file, process, and tool outcomes and, when `objectiveStateRecallEnabled` is enabled, inject the most relevant objective-state snapshots back into recall context as a separate `Objective State` section.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -141,6 +141,7 @@ Engram's capabilities are organized into feature families that you can enable pr
 | **Hot/Cold Tiering** | Automatic migration of aging memories to cold storage |
 | **Behavior Loop Tuning** | Runtime self-tuning of extraction and recall parameters |
 | **Evaluation Harness** | Tracks benchmark packs, run summaries, live shadow recall records, and CI delta comparisons so future PRs can be gated on memory quality instead of anecdotes |
+| **Objective-State Recall** | Surfaces prompt-relevant file/process/tool state snapshots separately from semantic memory recall |
 
 Start with defaults, then enable features as needed. See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profile.
 
@@ -179,6 +180,7 @@ Key settings:
 | `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 | `objectiveStateMemoryEnabled` | `false` | Enable the objective-state memory foundation for normalized world/tool state snapshots |
 | `objectiveStateSnapshotWritesEnabled` | `false` | Permit objective-state snapshot writers to persist typed state records |
+| `objectiveStateRecallEnabled` | `false` | Inject prompt-relevant objective-state snapshots into recall context |
 | `objectiveStateStoreDir` | `{memoryDir}/state/objective-state` | Root directory for objective-state snapshots |
 
 Full reference: [Config Reference](docs/config-reference.md)

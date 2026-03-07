@@ -486,6 +486,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : path.join(memoryDir, "state", "evals"),
     objectiveStateMemoryEnabled: cfg.objectiveStateMemoryEnabled === true,
     objectiveStateSnapshotWritesEnabled: cfg.objectiveStateSnapshotWritesEnabled === true,
+    objectiveStateRecallEnabled: cfg.objectiveStateRecallEnabled === true,
     objectiveStateStoreDir:
       typeof cfg.objectiveStateStoreDir === "string" && cfg.objectiveStateStoreDir.trim().length > 0
         ? cfg.objectiveStateStoreDir.trim()
@@ -971,6 +972,12 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     { id: "verbatim-artifacts", enabled: cfg.verbatimArtifactsEnabled === true },
     { id: "memory-boxes", enabled: cfg.memoryBoxesEnabled === true },
     { id: "temporal-memory-tree", enabled: cfg.temporalMemoryTreeEnabled === true },
+    {
+      id: "objective-state",
+      enabled: cfg.objectiveStateRecallEnabled === true,
+      maxResults: 4,
+      maxChars: 1800,
+    },
     {
       id: "memories",
       enabled: true,

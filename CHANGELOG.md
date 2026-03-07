@@ -826,3 +826,4 @@ All notable changes to this project will be documented in this file.
 # 2026-03-07
 
 - add PR5 objective-state memory foundation: typed snapshot schema/store, status CLI, feature flags, and docs/tests
+- add PR7 objective-state recall: bounded snapshot search, recall injection flag, objective-state recall section, and docs/tests

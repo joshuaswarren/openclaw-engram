@@ -1119,6 +1119,11 @@
         "default": false,
         "description": "Allow writing typed objective-state snapshots to the objective-state store."
       },
+      "objectiveStateRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant objective-state snapshots into recall context."
+      },
       "objectiveStateStoreDir": {
         "type": "string",
         "description": "Override the objective-state memory directory (defaults to {memoryDir}/state/objective-state)."
@@ -2045,6 +2050,11 @@
       "label": "Objective-State Snapshot Writes",
       "advanced": true,
       "help": "Allow snapshot writers to persist objective-state records into the objective-state store."
+    },
+    "objectiveStateRecallEnabled": {
+      "label": "Objective-State Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant objective-state snapshots into recall context."
     },
     "objectiveStateStoreDir": {
       "label": "Objective-State Store Directory",

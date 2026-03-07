@@ -55,6 +55,11 @@ export interface ObjectiveStateStoreStatus {
   }>;
 }
 
+export interface ObjectiveStateSearchResult {
+  snapshot: ObjectiveStateSnapshot;
+  score: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -240,4 +245,97 @@ export async function getObjectiveStateStoreStatus(options: {
     latestSnapshot: snapshots[0],
     invalidSnapshots,
   };
+}
+
+async function readObjectiveStateSnapshots(options: {
+  memoryDir: string;
+  objectiveStateStoreDir?: string;
+}): Promise<ObjectiveStateSnapshot[]> {
+  const rootDir = resolveObjectiveStateStoreDir(options.memoryDir, options.objectiveStateStoreDir);
+  const files = await listJsonFiles(path.join(rootDir, "snapshots"));
+  const snapshots: ObjectiveStateSnapshot[] = [];
+  for (const filePath of files) {
+    try {
+      snapshots.push(validateObjectiveStateSnapshot(await readJsonFile(filePath)));
+    } catch {
+      // Ignore invalid snapshot artifacts during recall/ranking. Store status reports them separately.
+    }
+  }
+  return snapshots;
+}
+
+function normalizeTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+}
+
+function overlapScore(queryTokens: Set<string>, value: string | undefined, weight: number): number {
+  if (!value) return 0;
+  const tokens = new Set(normalizeTokens(value));
+  let matches = 0;
+  for (const token of queryTokens) {
+    if (tokens.has(token)) matches += 1;
+  }
+  return matches * weight;
+}
+
+function scoreObjectiveStateSnapshot(
+  snapshot: ObjectiveStateSnapshot,
+  queryTokens: Set<string>,
+  sessionKey?: string,
+): number {
+  let score = 0;
+  score += overlapScore(queryTokens, snapshot.scope, 4);
+  score += overlapScore(queryTokens, snapshot.summary, 3);
+  score += overlapScore(queryTokens, snapshot.command, 3);
+  score += overlapScore(queryTokens, snapshot.toolName, 2);
+  score += overlapScore(queryTokens, snapshot.tags?.join(" "), 2);
+  score += overlapScore(queryTokens, snapshot.entityRefs?.join(" "), 2);
+  score += overlapScore(queryTokens, snapshot.kind, 1);
+  score += overlapScore(queryTokens, snapshot.changeKind, 1);
+  score += overlapScore(queryTokens, snapshot.outcome, 1);
+  if (sessionKey && snapshot.sessionKey === sessionKey) score += 1.5;
+
+  const recordedAtMs = Date.parse(snapshot.recordedAt);
+  if (Number.isFinite(recordedAtMs)) {
+    const ageHours = Math.max(0, (Date.now() - recordedAtMs) / 3_600_000);
+    score += 1 / (1 + ageHours);
+  }
+  return score;
+}
+
+export async function searchObjectiveStateSnapshots(options: {
+  memoryDir: string;
+  objectiveStateStoreDir?: string;
+  query: string;
+  maxResults: number;
+  sessionKey?: string;
+}): Promise<ObjectiveStateSearchResult[]> {
+  const maxResults = Math.max(0, Math.floor(options.maxResults));
+  if (maxResults === 0) return [];
+
+  const snapshots = await readObjectiveStateSnapshots(options);
+  if (snapshots.length === 0) return [];
+
+  const queryTokens = new Set(normalizeTokens(options.query));
+  const scored = snapshots.map((snapshot) => ({
+    snapshot,
+    score:
+      queryTokens.size === 0
+        ? scoreObjectiveStateSnapshot(snapshot, new Set<string>(), options.sessionKey)
+        : scoreObjectiveStateSnapshot(snapshot, queryTokens, options.sessionKey),
+  }));
+
+  const filtered = queryTokens.size === 0
+    ? scored
+    : scored.filter((result) => result.score > 0);
+
+  filtered.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    return right.snapshot.recordedAt.localeCompare(left.snapshot.recordedAt);
+  });
+  return filtered.slice(0, maxResults);
 }
