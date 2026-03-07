@@ -1,69 +1,72 @@
-# Theory: Trust Zones Need Retrieval First and Trust Signals Second
+# Theory: Poisoning Defense Needs Independent Evidence Before Trust
 
 ## Problem
 
-Trust zones are now a real Engram substrate: storage exists, explicit promotion
-rules exist, and recall can now surface `working` and `trusted` records without
-leaking `quarantine` by default. The next missing piece is still defensive
-clarity. Without an explicit provenance signal, later poisoning-defense work
-would have to infer trust indirectly from scattered promotion logic and zone
-membership alone.
+Engram now has real trust tiers, explicit promotion rules, bounded trust-zone
+recall, and deterministic provenance trust scoring. That still leaves one
+defensive gap: a risky record can look structurally well-formed and still come
+from a single source.
 
-That would make the defense track hard to benchmark and easy to regress. The
-right next step is not full corroboration or attack simulation yet. It is to
-make provenance quality measurable.
+For poisoning defense, anchored provenance alone is not enough. If `tool_output`,
+`web_content`, or `subagent_trace` material can become `trusted` without any
+independent confirmation, then the trust zone is still too easy to poison with a
+single bad input.
 
 ## Operating Theory
 
 The trust-zone rollout is working because it has stayed ordered:
 
-1. store the trust tiers
-2. define bounded promotion rules
-3. expose a safe retrieval surface
-4. add explicit trust signals
-5. only then automate policy
+1. store trust tiers
+2. define promotion boundaries
+3. expose bounded recall
+4. surface deterministic trust signals
+5. require independent corroboration for risky promotions
+6. only then benchmark attacks and tune policy
 
-PR13 completed step 3 by making trust visible at recall time. PR14 is step 4:
-derive one deterministic trust score from the provenance already stored on each
-record.
+PR14 completed step 4 by making provenance quality measurable. PR15 is step 5:
+consume the existing trust substrate and require independent corroboration
+before risky `working -> trusted` promotions succeed.
 
-That score is useful even before it changes decisions because it turns "trust"
-from an implicit idea into a contract that tests, operators, and later PRs can
-all inspect.
+That keeps the system explainable. Trust is no longer just "did this record
+have anchors?" It becomes "did at least one independent, non-quarantine source
+support the same claim cluster?"
 
 ## Strategy
 
-Keep the slice narrow and defaults-off:
+Keep the corroboration rule narrow and deterministic:
 
-- leave the PR13 recall contract intact
-- compute trust from stored provenance only
-- expose the score in trust-zone status, not promotion automation
-- leave corroboration and red-team attack suites for later slices
+- only gate risky `working -> trusted` promotions
+- leave `quarantine -> working` flow unchanged
+- require corroboration from stored records, not fresh model judgment
+- treat `quarantine` as non-corroborating by design
+- use explicit overlap on `entityRefs` or `tags`, not semantic fuzziness
+- record corroboration metadata on successful promotions
 
-This keeps the roadmap honest. Retrieval answers whether a record should be
-visible at all. Provenance scoring starts answering how strong the evidence is
-behind records that are already visible.
+This preserves small-slice discipline. PR15 is not a full trust engine. It is
+the smallest bounded policy that converts provenance signals into an actual
+promotion defense.
 
 ## Key Discoveries
 
-- Trust-zone recall and trust scoring are complementary, not competing, slices.
-  Recall should stay bounded by zone plus lexical relevance; scoring should stay
-  bounded by provenance quality.
-- Provenance trust should be deterministic for a stored record. If the score
-  depends on query context or wall-clock timing, benchmark comparisons become
-  harder to trust.
-- The first score does not need model judgment. Source class plus explicit
-  anchors (`sourceId`, `evidenceHash`, `sessionKey`) is enough to establish a
-  useful first trust floor.
-- Trust scoring belongs in operator-visible status output first. That makes the
-  defense signal reviewable before later PRs rely on it for policy.
+- The first corroboration rule should be structural, not inferential. Explicit
+  overlap plus anchored provenance is easier to test, explain, and benchmark
+  than semantic similarity or another model call.
+- `quarantine` records cannot count as corroboration without collapsing the
+  trust boundary. The tier only works if low-trust evidence stays low-trust
+  until a cleaner source confirms it.
+- Independent source class matters. Two records from the same source class are
+  weak confirmation for poisoning defense because they often share the same
+  failure mode.
+- Corroboration belongs in promotion policy before retrieval policy. The system
+  should decide what can become `trusted` before it decides how trust should
+  alter ranking or filtering.
 
 ## Open Questions
 
-- Should PR15 treat trust score as advisory context layered on top of
-  corroboration, or as part of promotion eligibility itself?
-- Should later retrieval slices use trust score only as a tie-breaker, or
-  should some low-trust material be filtered entirely once benchmark evidence
-  exists?
-- When PR16 adds red-team benchmark packs, should they assert on raw score
-  breakdowns, aggregate bands, or downstream promotion/retrieval outcomes?
+- Should PR16's attack benchmarks focus first on false promotions, or also on
+  false denials where good evidence lacks enough explicit overlap metadata?
+- Should later slices let multiple medium-trust corroborators outweigh a single
+  high-trust corroborator, or keep the first generation rule purely count-based?
+- Should future retrieval use corroboration metadata only for operator
+  observability, or eventually as a ranking/filtering input once benchmark data
+  justifies it?

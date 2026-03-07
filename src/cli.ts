@@ -682,6 +682,7 @@ export async function runTrustZonePromoteCliCommand(options: {
   trustZoneStoreDir?: string;
   trustZonesEnabled: boolean;
   quarantinePromotionEnabled: boolean;
+  memoryPoisoningDefenseEnabled: boolean;
   sourceRecordId: string;
   targetZone: TrustZoneName;
   promotionReason: string;
@@ -694,6 +695,7 @@ export async function runTrustZonePromoteCliCommand(options: {
     trustZoneStoreDir: options.trustZoneStoreDir,
     enabled: options.trustZonesEnabled,
     promotionEnabled: options.quarantinePromotionEnabled,
+    poisoningDefenseEnabled: options.memoryPoisoningDefenseEnabled,
     sourceRecordId: options.sourceRecordId,
     targetZone: options.targetZone,
     recordedAt: options.recordedAt ?? new Date().toISOString(),
@@ -2329,6 +2331,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             trustZoneStoreDir: orchestrator.config.trustZoneStoreDir,
             trustZonesEnabled: orchestrator.config.trustZonesEnabled,
             quarantinePromotionEnabled: orchestrator.config.quarantinePromotionEnabled,
+            memoryPoisoningDefenseEnabled: orchestrator.config.memoryPoisoningDefenseEnabled,
             sourceRecordId: String(options.recordId ?? ""),
             targetZone: String(options.targetZone ?? "") as TrustZoneName,
             promotionReason: String(options.reason ?? ""),

@@ -36,7 +36,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Causal trajectory recall** — Engram can now, when `causalTrajectoryRecallEnabled` is enabled, inject prompt-relevant causal chains back into recall context as a separate `Causal Trajectories` section with lightweight match explainability.
 - **Trust-zone promotion path** — Engram can now, when `trustZonesEnabled` and `quarantinePromotionEnabled` are enabled, persist typed quarantine, working, and trusted records, plan explicit promotions, block direct `quarantine -> trusted` jumps, and require anchored provenance before promoting risky working records into `trusted`.
 - **Trust-zone recall** — Engram can now, when `trustZoneRecallEnabled` is enabled, inject prompt-relevant `working` and `trusted` trust-zone records into recall context as a separate `Trust Zones` section while keeping `quarantine` material out of recall by default.
-- **Provenance trust scoring** — Engram can now, when `memoryPoisoningDefenseEnabled` is enabled, score trust-zone provenance deterministically from source class and evidence anchors so poisoning defenses start with measurable trust signals instead of opaque heuristics.
+- **Poisoning-defense corroboration** — Engram can now, when `memoryPoisoningDefenseEnabled` is enabled, score trust-zone provenance deterministically and require independent non-quarantine corroboration before risky `working -> trusted` promotions succeed.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -163,7 +163,7 @@ openclaw engram benchmark-ci-gate            # Compare base vs candidate eval st
 openclaw engram objective-state-status       # Objective-state snapshot counts and latest stored snapshot
 openclaw engram causal-trajectory-status    # Causal-trajectory record counts and latest stored chain
 openclaw engram trust-zone-status           # Trust-zone record counts and latest stored record
-openclaw engram trust-zone-promote          # Dry-run or apply a trust-zone promotion with provenance enforcement
+openclaw engram trust-zone-promote          # Dry-run or apply a trust-zone promotion with provenance/corroboration enforcement
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -198,7 +198,7 @@ Key settings:
 | `quarantinePromotionEnabled` | `false` | Allow explicit trust-zone promotions such as `quarantine -> working` and guarded `working -> trusted` |
 | `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
 | `trustZoneRecallEnabled` | `false` | Inject prompt-relevant working and trusted trust-zone records into recall context |
-| `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring in trust-zone status output as the first poisoning-defense signal |
+| `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring and corroboration requirements for risky trusted promotions |
 
 Full reference: [Config Reference](docs/config-reference.md)
 
