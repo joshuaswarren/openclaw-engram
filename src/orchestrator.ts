@@ -72,6 +72,7 @@ import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./c
 import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
 import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zones.js";
 import { searchHarmonicRetrieval, type HarmonicRetrievalResult } from "./harmonic-retrieval.js";
+import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-recall.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2271,6 +2272,32 @@ export class Orchestrator {
       return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
     })();
 
+    const verifiedRecallPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.verifiedRecallEnabled ||
+        !this.isRecallSectionEnabled("verified-episodes", this.config.verifiedRecallEnabled === true)
+      ) {
+        timings.verifiedRecall = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("verified-episodes", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.verifiedRecall = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchVerifiedEpisodes({
+        memoryDir: profileStorage.dir,
+        query: retrievalQuery,
+        maxResults,
+        boxRecallDays: this.config.boxRecallDays,
+      });
+
+      timings.verifiedRecall = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2538,6 +2565,7 @@ export class Orchestrator {
       causalTrajectorySection,
       trustZoneSection,
       harmonicRetrievalSection,
+      verifiedRecallSection,
       qmdResult,
       transcriptSection,
       compactionSection,
@@ -2554,6 +2582,7 @@ export class Orchestrator {
       causalTrajectoryPromise,
       trustZonePromise,
       harmonicRetrievalPromise,
+      verifiedRecallPromise,
       qmdPromise,
       transcriptPromise,
       compactionPromise,
@@ -2642,6 +2671,10 @@ export class Orchestrator {
 
     if (harmonicRetrievalSection) {
       this.appendRecallSection(sectionBuckets, "harmonic-retrieval", harmonicRetrievalSection);
+    }
+
+    if (verifiedRecallSection) {
+      this.appendRecallSection(sectionBuckets, "verified-episodes", verifiedRecallSection);
     }
 
     // 2. QMD results — post-process and format
@@ -5421,6 +5454,28 @@ export class Orchestrator {
     });
 
     return `## Harmonic Retrieval\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatVerifiedEpisodeResults(results: VerifiedEpisodeResult[]): string {
+    const lines = results.map(({ box, verifiedEpisodeCount, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${box.sealedAt.replace("T", " ").slice(0, 16)}`,
+        box.traceId ? `trace:${box.traceId.slice(0, 12)}` : "trace:none",
+      ].join(" | ");
+      const details = [
+        box.goal ?? `topics: ${box.topics.join(", ")}`,
+        `verified episodes: ${verifiedEpisodeCount}`,
+      ];
+      if (box.toolsUsed && box.toolsUsed.length > 0) {
+        details.push(`tools: ${box.toolsUsed.join(", ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Verified Episodes\n\n${lines.join("\n\n")}`;
   }
 
   private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {

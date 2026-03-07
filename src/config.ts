@@ -509,6 +509,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     memoryRedTeamBenchEnabled: cfg.memoryRedTeamBenchEnabled === true,
     harmonicRetrievalEnabled: cfg.harmonicRetrievalEnabled === true,
     abstractionAnchorsEnabled: cfg.abstractionAnchorsEnabled === true,
+    verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
+    semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
     abstractionNodeStoreDir:
       typeof cfg.abstractionNodeStoreDir === "string" && cfg.abstractionNodeStoreDir.trim().length > 0
         ? cfg.abstractionNodeStoreDir.trim()
@@ -1017,6 +1019,12 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
       enabled: cfg.harmonicRetrievalEnabled === true,
       maxResults: 3,
       maxChars: 2200,
+    },
+    {
+      id: "verified-episodes",
+      enabled: cfg.verifiedRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
     },
     {
       id: "memories",

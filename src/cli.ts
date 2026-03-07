@@ -69,6 +69,10 @@ import {
   searchHarmonicRetrieval,
   type HarmonicRetrievalResult,
 } from "./harmonic-retrieval.js";
+import {
+  searchVerifiedEpisodes,
+  type VerifiedEpisodeResult,
+} from "./verified-recall.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
 import {
   getTrustZoneStoreStatus,
@@ -741,6 +745,22 @@ export async function runHarmonicSearchCliCommand(options: {
     maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
     sessionKey: options.sessionKey,
     anchorsEnabled: options.abstractionAnchorsEnabled,
+  });
+}
+
+export async function runVerifiedRecallSearchCliCommand(options: {
+  memoryDir: string;
+  verifiedRecallEnabled: boolean;
+  query: string;
+  maxResults?: number;
+  boxRecallDays?: number;
+}): Promise<VerifiedEpisodeResult[]> {
+  if (!options.verifiedRecallEnabled) return [];
+  return searchVerifiedEpisodes({
+    memoryDir: options.memoryDir,
+    query: options.query,
+    maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
+    boxRecallDays: options.boxRecallDays,
   });
 }
 
@@ -2463,6 +2483,28 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             dryRun: options.dryRun === true,
           });
           console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("verified-recall-search")
+        .description("Preview verified episodic recall over recent memory boxes")
+        .argument("<query>", "Prompt-like query to evaluate against verified episodic recall")
+        .option("--max-results <count>", "Maximum number of verified episodic results to return", "3")
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const maxResults = typeof options.maxResults === "string"
+            ? Number.parseInt(options.maxResults, 10)
+            : 3;
+          const results = await runVerifiedRecallSearchCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            verifiedRecallEnabled: orchestrator.config.verifiedRecallEnabled,
+            query,
+            maxResults: Number.isFinite(maxResults) ? maxResults : 3,
+            boxRecallDays: orchestrator.config.boxRecallDays,
+          });
+          console.log(JSON.stringify(results, null, 2));
           console.log("OK");
         });
 

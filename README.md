@@ -40,6 +40,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Red-team benchmark packs** — Engram's eval harness can now validate and count typed `memory-red-team` benchmark packs so poisoning-defense regression suites stay explicit and reviewable instead of hiding inside generic benchmark metadata.
 - **Cue-anchor index foundation** — Engram can now, when `harmonicRetrievalEnabled` and `abstractionAnchorsEnabled` are enabled, persist typed cue anchors for entities, files, tools, outcomes, constraints, and dates, inspect them with `openclaw engram cue-anchor-status`, and keep harmonic retrieval grounded in explicit abstraction-to-cue links before blending logic lands.
 - **Harmonic retrieval diagnostics** — Engram can now, when `harmonicRetrievalEnabled` is enabled, blend abstraction-node evidence with cue-anchor matches into a dedicated `Harmonic Retrieval` recall section and inspect those blended results with `openclaw engram harmonic-search`.
+- **Verified episodic recall** — Engram can now, when `verifiedRecallEnabled` is enabled, inject a dedicated `Verified Episodes` recall section that reuses memory boxes but only surfaces boxes whose cited source memories still verify as non-archived episodes.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -167,6 +168,8 @@ openclaw engram objective-state-status       # Objective-state snapshot counts a
 openclaw engram causal-trajectory-status    # Causal-trajectory record counts and latest stored chain
 openclaw engram trust-zone-status           # Trust-zone record counts and latest stored record
 openclaw engram trust-zone-promote          # Dry-run or apply a trust-zone promotion with provenance/corroboration enforcement
+openclaw engram harmonic-search <query>     # Preview blended harmonic retrieval matches
+openclaw engram verified-recall-search <query> # Preview verified episodic recall matches
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -203,6 +206,10 @@ Key settings:
 | `trustZoneRecallEnabled` | `false` | Inject prompt-relevant working and trusted trust-zone records into recall context |
 | `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring and corroboration requirements for risky trusted promotions |
 | `memoryRedTeamBenchEnabled` | `false` | Enable typed memory red-team benchmark pack support and status accounting for poisoning-defense suites |
+| `harmonicRetrievalEnabled` | `false` | Enable harmonic retrieval blending over abstraction nodes and cue anchors, including the dedicated recall section and `harmonic-search` diagnostics |
+| `abstractionAnchorsEnabled` | `false` | Enable typed cue-anchor indexing for abstraction nodes and expose the anchor store through status tooling |
+| `verifiedRecallEnabled` | `false` | Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes |
+| `semanticRulePromotionEnabled` | `false` | Reserve semantic-rule promotion surfaces until verified episodic recall has been benchmarked in follow-on slices |
 
 Full reference: [Config Reference](docs/config-reference.md)
 

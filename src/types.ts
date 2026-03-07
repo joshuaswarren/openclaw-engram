@@ -238,6 +238,9 @@ export interface PluginConfig {
   harmonicRetrievalEnabled: boolean;
   abstractionAnchorsEnabled: boolean;
   abstractionNodeStoreDir: string;
+  // Episodic/semantic split foundation
+  verifiedRecallEnabled: boolean;
+  semanticRulePromotionEnabled: boolean;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

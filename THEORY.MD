@@ -1,72 +1,82 @@
-# Theory: Harmonic Retrieval Should Surface Its Blend Before It Tries To Hide It
+# Theory: Verified Episodic Recall Should Reuse Boxes, But Verify The Sources
 
 ## Problem
 
-Engram now has the two substrates harmonic retrieval needs:
+Engram already has two different substrates that could plausibly support
+episodic recall:
 
-- abstraction nodes
-- cue-anchor indexes
+- memory boxes, which group related extractions into bounded episodes
+- individual memory files, which still carry the actual `memoryKind` and
+  lifecycle status
 
-The next mistake would be to jump straight into opaque ranking behavior that
-quietly mixes those signals into generic recall. That would make review harder,
-not easier. If the blend is invisible, reviewers cannot tell whether a result
-won because of abstraction compression, concrete cue matches, or an accidental
-weighting bug.
+The mistake would be to invent a third episodic store just to satisfy the
+paper-level requirement for verified episodic recall. That would duplicate the
+same episode shape in another place, add more drift risk, and make later
+benchmarking harder because it would no longer be obvious which substrate
+should be trusted when they disagree.
 
-PR19 needs to make the blend explicit before it becomes subtle.
+PR20 is about proving that Engram can retrieve episodes in a stricter way
+without adding another store: reuse boxes for the retrieval window, but verify
+their cited source memories before surfacing them.
 
 ## Operating Theory
 
-The rollout pattern that has worked across the memory-OS track is:
+The rollout pattern that has worked across the memory-OS track is still the
+right one:
 
-1. define storage
-2. define writers or indexes
-3. expose a bounded retrieval surface
-4. benchmark before deeper automation
+1. keep the new capability bounded and inspectable
+2. reuse existing durable substrates when they already encode the right shape
+3. add verification rules before automation rules
+4. benchmark the verified surface before promoting more abstract behavior
 
-For harmonic retrieval, that means:
+For episodic versus semantic memory, the highest-leverage distinction today is
+not a new schema. It is recall-time verification:
 
-1. PR17: abstraction-node storage
-2. PR18: cue-anchor indexing
-3. PR19: bounded harmonic retrieval section plus diagnostics
+- boxes say "this cluster of memories looked like one episode"
+- source memories say "these cited memories are still episodes and not archived"
 
-The harmonic blend should not be hidden inside `## Relevant Memories` yet.
-It should ship as its own legible section so operators can inspect exactly what
-the abstraction layer is contributing.
+That means the first verified recall slice should admit a box only when at
+least one cited memory still verifies as a live episode. If the box has only
+notes, archived memories, or broken references, it should not surface in the
+verified episodic section even if its topics look relevant.
 
 ## Strategy
 
-Keep PR19 narrow and explainable:
+Keep PR20 narrow and legible:
 
-- add one dedicated recall section: `harmonic-retrieval`
-- blend abstraction-node lexical relevance with cue-anchor lexical relevance
-- preserve explainability by reporting:
-  - matched anchors
-  - matched fields
-  - node-score vs anchor-score contribution
-- add an operator diagnostic command:
-  - `openclaw engram harmonic-search <query>`
-- do not add writer automation or learned weighting in this slice
+- add a dedicated recall section: `verified-episodes`
+- rank recent boxes by lexical overlap over:
+  - topics
+  - goal
+  - tools used
+  - verified episodic memory content
+- verify each candidate box by resolving its `memoryIds` back through storage
+- only admit boxes with at least one non-archived `memoryKind: episode` source
+- expose an operator diagnostic command:
+  - `openclaw engram verified-recall-search <query>`
 
-This keeps the first harmonic retrieval behavior inspectable. If the blend is
-bad, operators can see why. If it is good, later benchmark work has a concrete
-surface to measure.
+This keeps the feature aligned with the human-inspired memory direction without
+pretending semantic rule promotion is ready yet. The first slice should answer
+one question clearly: can Engram surface episodes that are still grounded in
+verified episodic source memories?
 
 ## Key Discoveries
 
-- Harmonic retrieval is more reviewable as its own recall section before any
-  deeper blending into generic memory recall.
-- Cue anchors and abstraction nodes need separate score components. A blended
-  total without a breakdown is not diagnosable enough for early rollout.
-- The existing recall-pipeline pattern already supports this slice cleanly:
-  objective state, causal trajectories, trust zones, and harmonic retrieval can
-  all coexist as bounded sections without mutating the generic memory path.
+- Memory boxes are already the right retrieval envelope for episodic recall.
+  The missing piece was verification of their cited memories, not another
+  persistence layer.
+- Verified episodic recall fits the existing recall-pipeline model cleanly as a
+  separate section. It does not need to mutate generic semantic recall yet.
+- `semanticRulePromotionEnabled` belongs in the config contract now, but only
+  as a declared future gate. The current slice should not claim semantic-rule
+  extraction or promotion behavior before that surface is benchmarked.
 
 ## Open Questions
 
-- Should PR20 eventually let strong harmonic matches influence generic memory
-  ranking, or should the harmonic section remain permanently separate?
-- Do future harmonic diagnostics need per-anchor weights by type, or is the
-  current structural blend enough until benchmark data says otherwise?
-- Should later abstraction writers emit anchor candidates directly, or should a
-  linker continue to own anchor creation for better reviewability?
+- Should later slices downgrade partially verified boxes, or should verified
+  recall remain binary until benchmark data says otherwise?
+- When semantic-rule promotion lands, should it derive only from verified
+  episodic memories, or can stable note memories also participate after an
+  explicit verification step?
+- Should a future verified-recall benchmark score source-memory coverage
+  directly, or is box-level admission enough for the first round of evaluation?

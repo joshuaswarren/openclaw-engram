@@ -1185,6 +1185,16 @@
         "type": "string",
         "description": "Override the abstraction-node store directory (defaults to {memoryDir}/state/abstraction-nodes)."
       },
+      "verifiedRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes."
+      },
+      "semanticRulePromotionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Reserve semantic-rule promotion surfaces for a later rollout after verified episodic recall is benchmarked."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2183,6 +2193,15 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/abstraction-nodes",
       "help": "Override where abstraction nodes are stored."
+    },
+    "verifiedRecallEnabled": {
+      "label": "Verified Recall",
+      "help": "Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes."
+    },
+    "semanticRulePromotionEnabled": {
+      "label": "Semantic Rule Promotion",
+      "advanced": true,
+      "help": "Reserve future semantic-rule promotion surfaces until verified episodic recall is benchmarked."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",
