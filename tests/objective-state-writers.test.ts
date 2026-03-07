@@ -95,6 +95,63 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages falls back to generic faile
   assert.equal(snapshots[0]?.toolName, "remote_search");
 });
 
+test("recordObjectiveStateSnapshotsFromAgentMessages does not abort on empty generic tool content", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-empty-tool-"));
+  const written = await recordObjectiveStateSnapshotsFromAgentMessages({
+    memoryDir,
+    objectiveStateMemoryEnabled: true,
+    objectiveStateSnapshotWritesEnabled: true,
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:15.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "remote_search",
+        content: "",
+      },
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "call-write",
+            function: {
+              name: "write_file",
+              arguments: JSON.stringify({
+                path: "workspace/notes.txt",
+                content: "hello",
+              }),
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call-write",
+        name: "write_file",
+        content: JSON.stringify({ ok: true }),
+      },
+    ] as Array<Record<string, unknown>>,
+  });
+
+  assert.equal(written.snapshots.length, 2);
+  assert.deepEqual(
+    written.snapshots.map((snapshot) => [snapshot.kind, snapshot.scope]),
+    [
+      ["tool", "remote_search"],
+      ["file", "workspace/notes.txt"],
+    ],
+  );
+  assert.deepEqual(written.snapshots[0]?.after, { exists: true });
+
+  const status = await getObjectiveStateStoreStatus({
+    memoryDir,
+    enabled: true,
+    writesEnabled: true,
+  });
+  assert.equal(status.snapshots.total, 2);
+  assert.equal(status.snapshots.invalid, 0);
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages hashes raw updates payloads once", () => {
   const updates = [{ oldText: "before", newText: "after" }];
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({

@@ -280,6 +280,11 @@ function summarizeSnapshot(
   return `${action} tool result from ${toolName}: ${scope}`;
 }
 
+function buildGenericToolAfterRef(outcome: ObjectiveStateOutcome, parsedPayload: unknown): ObjectiveStateSnapshot["after"] {
+  const valueHash = resultHash(parsedPayload);
+  return valueHash ? { valueHash } : { exists: outcome !== "failure" };
+}
+
 function snapshotIdFor(
   sessionKey: string,
   recordedAt: string,
@@ -335,7 +340,7 @@ export function deriveObjectiveStateSnapshotsFromAgentMessages(options: {
       before = refs.before;
       after = refs.after;
     } else {
-      after = { valueHash: resultHash(parsedPayload) };
+      after = buildGenericToolAfterRef(outcome, parsedPayload);
     }
 
     snapshots.push({
