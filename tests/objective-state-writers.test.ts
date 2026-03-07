@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -92,6 +93,40 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages falls back to generic faile
   assert.equal(snapshots[0]?.outcome, "failure");
   assert.equal(snapshots[0]?.scope, "remote_search");
   assert.equal(snapshots[0]?.toolName, "remote_search");
+});
+
+test("deriveObjectiveStateSnapshotsFromAgentMessages hashes raw updates payloads once", () => {
+  const updates = [{ oldText: "before", newText: "after" }];
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:30.000Z",
+    messages: [
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "call-edit",
+            function: {
+              name: "edit_file",
+              arguments: JSON.stringify({
+                path: "workspace/src/objective-state.ts",
+                updates,
+              }),
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call-edit",
+        name: "edit_file",
+        content: JSON.stringify({ ok: true }),
+      },
+    ],
+  });
+
+  const expectedHash = `sha256:${crypto.createHash("sha256").update(JSON.stringify(updates)).digest("hex")}`;
+  assert.equal(snapshots[0]?.after?.valueHash, expectedHash);
 });
 
 test("recordObjectiveStateSnapshotsFromAgentMessages respects flags and persists derived snapshots", async () => {

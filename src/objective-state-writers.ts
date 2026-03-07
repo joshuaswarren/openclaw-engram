@@ -17,6 +17,10 @@ interface DerivedObjectiveStateResult {
   filePaths: string[];
 }
 
+function hashSha256(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -73,7 +77,7 @@ function resultHash(value: unknown): string | undefined {
   const canonical =
     typeof value === "string" ? value : JSON.stringify(value);
   if (!canonical || canonical.length === 0) return undefined;
-  return `sha256:${crypto.createHash("sha256").update(canonical).digest("hex")}`;
+  return `sha256:${hashSha256(canonical)}`;
 }
 
 function getToolCallContexts(messages: Array<Record<string, unknown>>): Map<string, ToolCallContext> {
@@ -156,9 +160,8 @@ function fileScopeFromArgs(args: Record<string, unknown> | undefined): {
 function fileContentHash(args: Record<string, unknown> | undefined): string | undefined {
   const content =
     pickString(args, ["content", "patch", "diff", "text", "value"]) ??
-    resultHash(args?.updates);
-  if (!content) return undefined;
-  return `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`;
+    args?.updates;
+  return resultHash(content);
 }
 
 function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown): ObjectiveStateOutcome {
@@ -285,7 +288,7 @@ function snapshotIdFor(
   scope: string,
 ): string {
   const digest = crypto
-    .createHash("sha1")
+    .createHash("sha256")
     .update(`${sessionKey}|${recordedAt}|${index}|${toolName}|${scope}`)
     .digest("hex")
     .slice(0, 12);
