@@ -192,18 +192,21 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
   }
   if (typeof parsedPayload === "string") {
     const lowered = parsedPayload.toLowerCase();
-    if (
-      /\b(success|succeeded|passes|passed|complete(?:d)?|ok)\b/.test(lowered) ||
-      /\b(?:0|no)\s+errors?\b/.test(lowered)
-    ) {
-      return "success";
-    }
-    if (/\b(exception|exceptions?|failed|failure|fatal|timeout|timed out)\b/.test(lowered)) {
-      return "failure";
-    }
-    if (/\berrors?\b/.test(lowered) && !/\b(?:0|no)\s+errors?\b/.test(lowered)) {
-      return "failure";
-    }
+    const loweredForFailure = lowered
+      .replace(/\bpreviously failed\b/g, "")
+      .replace(/\bfailed tests?\s+now\s+pass(?:es)?\b/g, "");
+    const hasZeroErrors = /\b(?:0|no)\s+errors?\b/.test(lowered);
+    const hasSuccessMarkers =
+      /\b(success|succeeded|passes|passed|ok)\b/.test(lowered) ||
+      hasZeroErrors;
+    const hasFailureMarkers =
+      /\b(exception|exceptions?|failed|failure|fatal|timeout|timed out)\b/.test(loweredForFailure) ||
+      (/\berrors?\b/.test(loweredForFailure) && !hasZeroErrors) ||
+      /\b[a-z]+error\b/.test(loweredForFailure) ||
+      /\b[a-z]+exception\b/.test(loweredForFailure);
+
+    if (hasFailureMarkers) return "failure";
+    if (hasSuccessMarkers) return "success";
   }
   return "unknown";
 }

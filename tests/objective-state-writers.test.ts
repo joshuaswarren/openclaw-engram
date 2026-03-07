@@ -133,6 +133,42 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark success text 
   assert.equal(snapshots[0]?.changeKind, "observed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark failure text with counts as success", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:12.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "build_run",
+        content: "Build completed with 3 errors.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats common error class names as failures", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:13.000Z",
+    messages: [
+      {
+        role: "tool",
+        name: "exec_command",
+        content: "TypeError: undefined is not a function\\nNullPointerException at Example.run",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
 test("recordObjectiveStateSnapshotsFromAgentMessages does not abort on empty generic tool content", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-objective-state-empty-tool-"));
   const written = await recordObjectiveStateSnapshotsFromAgentMessages({
