@@ -150,6 +150,8 @@ openclaw engram stats                        # Memory counts, search status, hea
 openclaw engram search "your query"          # Search memories from CLI
 openclaw engram compat --strict              # Compatibility check
 openclaw engram benchmark-status             # Benchmark/eval harness packs, runs, latest summary
+openclaw engram benchmark-validate <path>    # Validate a benchmark manifest or pack directory
+openclaw engram benchmark-import <path>      # Import a validated benchmark pack into the eval store
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -171,6 +173,7 @@ Key settings:
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `evalHarnessEnabled` | `false` | Enable the evaluation harness foundation for benchmark packs and run summaries |
 | `evalShadowModeEnabled` | `false` | Reserve shadow-mode measurement paths for future benchmark instrumentation |
+| `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs and run summaries |
 
 Full reference: [Config Reference](docs/config-reference.md)
 
