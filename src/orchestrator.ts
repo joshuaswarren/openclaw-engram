@@ -2884,14 +2884,14 @@ export class Orchestrator {
             this.publishRecallResults({
               title: "Long-Term Memories (Fallback)",
               results: longTerm,
-                sectionBuckets,
+              sectionBuckets,
               retrievalQuery,
               sessionKey,
               identityInjection: {
                 mode: identityInjectionModeUsed,
                 injectedChars: identityInjectedChars,
-                  truncated: identityInjectionTruncated,
-                },
+                truncated: identityInjectionTruncated,
+              },
             });
             recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
             impressionRecorded = true;
