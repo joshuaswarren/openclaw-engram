@@ -223,6 +223,42 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark failure text 
   assert.equal(snapshots[0]?.changeKind, "failed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats zero failures as non-failing output", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:12.250Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "10 passed, 0 failures.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "observed");
+});
+
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats zero exceptions as non-failing output", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:12.500Z",
+    messages: [
+      {
+        role: "tool",
+        name: "exec_command",
+        content: "Validation finished with no exceptions found.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "executed");
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages treats common error class names as failures", () => {
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
     sessionKey: "agent:main",
