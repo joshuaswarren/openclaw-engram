@@ -242,6 +242,24 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats timed out phrases as
   assert.equal(snapshots[0]?.changeKind, "failed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats plural timeouts as failures", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:14.250Z",
+    messages: [
+      {
+        role: "tool",
+        name: "remote_search",
+        content: "3 timeouts occurred during test execution.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "failure");
+  assert.equal(snapshots[0]?.changeKind, "failed");
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages treats negated success phrases as failures", () => {
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
     sessionKey: "agent:main",

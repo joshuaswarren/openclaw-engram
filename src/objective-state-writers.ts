@@ -203,7 +203,7 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
       hasZeroErrors;
     const hasFailureMarkers =
       hasNegatedSuccessMarkers ||
-      /\b(exceptions?|failed|failures?|fatal|timeout|timed out)\b/.test(loweredForFailure) ||
+      /\b(exceptions?|failed|failures?|fatal|timeouts?|timed out)\b/.test(loweredForFailure) ||
       (/\berrors?\b/.test(loweredForFailure) && !hasZeroErrors) ||
       /\b[a-z]+error\b/.test(loweredForFailure) ||
       /\b[a-z]+exception\b/.test(loweredForFailure);
