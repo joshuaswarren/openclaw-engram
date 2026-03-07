@@ -21,9 +21,9 @@ export function assertSafePathSegment(value: string, field: string): string {
   return value;
 }
 
-export function assertIsoRecordedAt(value: string): string {
+export function assertIsoRecordedAt(value: string, field = "recordedAt"): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
-    throw new Error("recordedAt must be an ISO timestamp");
+    throw new Error(`${field} must be an ISO timestamp`);
   }
   return value;
 }

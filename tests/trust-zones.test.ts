@@ -118,6 +118,25 @@ test("recordTrustZoneRecord rejects unsafe ids and malformed timestamps", async 
   );
 });
 
+test("validateTrustZoneRecord reports the observedAt field name for invalid provenance timestamps", () => {
+  assert.throws(
+    () =>
+      validateTrustZoneRecord({
+        schemaVersion: 1,
+        recordId: "tz-bad-observed-at",
+        zone: "working",
+        recordedAt: "2026-03-07T18:01:00.000Z",
+        kind: "state",
+        summary: "invalid observedAt",
+        provenance: {
+          sourceClass: "tool_output",
+          observedAt: "not-an-iso-timestamp",
+        },
+      }),
+    /observedAt/i,
+  );
+});
+
 test("trust-zone status reports valid and invalid records by zone", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-trust-zone-status-"));
   await recordTrustZoneRecord({

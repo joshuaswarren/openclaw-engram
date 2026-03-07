@@ -94,7 +94,7 @@ function validateProvenance(raw: unknown): TrustZoneProvenance {
   }
   return {
     sourceClass: sourceClass as TrustZoneSourceClass,
-    observedAt: assertIsoRecordedAt(assertString(raw.observedAt, "provenance.observedAt")),
+    observedAt: assertIsoRecordedAt(assertString(raw.observedAt, "provenance.observedAt"), "provenance.observedAt"),
     sessionKey: optionalString(raw.sessionKey),
     sourceId: optionalString(raw.sourceId),
     evidenceHash: optionalString(raw.evidenceHash),
