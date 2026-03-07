@@ -11,10 +11,12 @@ and later slices lose credibility.
 
 The immediate issue is the PR137 follow-up on objective-state outcome inference.
 The code now needs to classify plain-text tool output without inverting obvious
-failure signals. The specific failure mode was small but serious: a generalized
-success regex started treating phrases like `not ok` as success. That kind of
-mistake would corrupt objective-state memory, poison evaluation data, and make
-later recall slices reason from false outcomes.
+failure signals or dropping obvious success signals. The specific failure modes
+have been small but serious: a generalized success regex started treating
+phrases like `not ok` as success, and then the tightened parser still missed
+plain success text like `all tests pass`. Either direction corrupts
+objective-state memory, poisons evaluation data, and makes later recall slices
+reason from false state.
 
 ## Operating Theory
 
@@ -59,9 +61,11 @@ This keeps Engram aligned with the larger thesis:
 
 ## Key Discoveries
 
-- Outcome inference for free-form text is easy to overfit toward optimistic
-  signals. Negated success phrases like `not ok` need to be treated explicitly
-  as failures before success-marker logic runs.
+- Outcome inference for free-form text is easy to misclassify in both
+  directions. Negated success phrases like `not ok` need to be treated
+  explicitly as failures before success-marker logic runs, but plain success
+  phrases like `all tests pass` also need explicit coverage or the parser falls
+  back to `unknown`.
 - Test realism matters even for small parser coverage. A literal `\\n` fixture
   can accidentally pass while simulating the wrong runtime shape; multiline test
   data should match actual tool output.

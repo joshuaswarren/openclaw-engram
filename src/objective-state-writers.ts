@@ -199,7 +199,7 @@ function inferOutcome(message: Record<string, unknown>, parsedPayload: unknown):
     const hasNegatedSuccessMarkers =
       /\bnot\s+(?:ok|passed|passes|succeeded|success)\b/.test(loweredForFailure);
     const hasSuccessMarkers =
-      /\b(success|succeeded|passes|passed|ok)\b/.test(lowered) ||
+      /\b(success|succeeded|pass|passes|passed|ok)\b/.test(lowered) ||
       hasZeroErrors;
     const hasFailureMarkers =
       hasNegatedSuccessMarkers ||

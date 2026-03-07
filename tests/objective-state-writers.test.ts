@@ -151,6 +151,42 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats past-tense recovered
   assert.equal(snapshots[0]?.changeKind, "observed");
 });
 
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats bare pass text as success", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:11.250Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "All tests pass.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "observed");
+});
+
+test("deriveObjectiveStateSnapshotsFromAgentMessages treats recovered bare pass text as success", () => {
+  const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
+    sessionKey: "agent:main",
+    recordedAt: "2026-03-07T12:01:11.500Z",
+    messages: [
+      {
+        role: "tool",
+        name: "test_run",
+        content: "Previously failed tests now pass.",
+      },
+    ],
+  });
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.outcome, "success");
+  assert.equal(snapshots[0]?.changeKind, "observed");
+});
+
 test("deriveObjectiveStateSnapshotsFromAgentMessages does not mark failure text with counts as success", () => {
   const snapshots = deriveObjectiveStateSnapshotsFromAgentMessages({
     sessionKey: "agent:main",
