@@ -377,6 +377,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `trustZonesEnabled` | `false` | Enable the trust-zone memory foundation and operator-facing promotion path for quarantine, working, and trusted records |
 | `quarantinePromotionEnabled` | `false` | Allow explicit trust-zone promotions such as `quarantine -> working` and guarded `working -> trusted` |
 | `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
+| `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring in trust-zone status output as the first poisoning-defense signal |
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
@@ -390,6 +391,7 @@ Current foundation slice:
 - When `actionGraphRecallEnabled` is also on, each newly recorded causal trajectory emits deterministic `goal -> action -> observation -> outcome -> follow_up` edges into the causal graph without changing retrieval behavior yet.
 - When `trustZonesEnabled` is on, Engram can persist provenance-bearing records into separate `quarantine`, `working`, and `trusted` storage tiers.
 - When `quarantinePromotionEnabled` is also on, Engram exposes an explicit promotion path that blocks direct `quarantine -> trusted` jumps and requires anchored provenance before promoting risky working records into `trusted`.
+- When `memoryPoisoningDefenseEnabled` is also on, `openclaw engram trust-zone-status` reports deterministic provenance trust scores derived from source class plus `sourceId` / `evidenceHash` / `sessionKey` anchors so later poisoning defenses can build on explicit signals instead of hidden heuristics.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |

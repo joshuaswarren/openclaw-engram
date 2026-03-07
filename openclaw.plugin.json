@@ -1156,6 +1156,11 @@
         "type": "string",
         "description": "Override the trust-zone store directory (defaults to {memoryDir}/state/trust-zones)."
       },
+      "memoryPoisoningDefenseEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic provenance trust scoring for trust-zone records as the first poisoning-defense surface."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2124,6 +2129,11 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/trust-zones",
       "help": "Override where trust-zone records are stored."
+    },
+    "memoryPoisoningDefenseEnabled": {
+      "label": "Memory Poisoning Defense",
+      "advanced": true,
+      "help": "Enable provenance trust scoring in trust-zone status output as the first poisoning-defense signal."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

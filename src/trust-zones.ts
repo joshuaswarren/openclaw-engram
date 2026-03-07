@@ -44,9 +44,22 @@ export interface TrustZoneRecord {
   metadata?: Record<string, string>;
 }
 
+export type TrustZoneScoreBand = "low" | "medium" | "high";
+
+export interface TrustZoneProvenanceScore {
+  total: number;
+  band: TrustZoneScoreBand;
+  anchored: boolean;
+  sourceClassWeight: number;
+  sourceIdBonus: number;
+  evidenceHashBonus: number;
+  sessionKeyBonus: number;
+}
+
 export interface TrustZoneStoreStatus {
   enabled: boolean;
   promotionEnabled: boolean;
+  poisoningDefenseEnabled: boolean;
   rootDir: string;
   zonesDir: string;
   records: {
@@ -58,8 +71,11 @@ export interface TrustZoneStoreStatus {
     latestRecordId?: string;
     latestRecordedAt?: string;
     latestZone?: TrustZoneName;
+    averageTrustScore?: number;
+    byTrustBand?: Partial<Record<TrustZoneScoreBand, number>>;
   };
   latestRecord?: TrustZoneRecord;
+  latestRecordTrustScore?: TrustZoneProvenanceScore;
   invalidRecords: Array<{
     path: string;
     error: string;
@@ -172,6 +188,45 @@ function dedupeStrings(values: Array<string | undefined>): string[] | undefined 
   const out = values.filter((value): value is string => typeof value === "string" && value.length > 0);
   if (out.length === 0) return undefined;
   return [...new Set(out)];
+}
+
+const SOURCE_CLASS_WEIGHTS: Record<TrustZoneSourceClass, number> = {
+  manual: 0.9,
+  system_memory: 0.85,
+  user_input: 0.75,
+  tool_output: 0.55,
+  subagent_trace: 0.45,
+  web_content: 0.35,
+};
+
+function roundTrustScore(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function trustScoreBand(total: number): TrustZoneScoreBand {
+  if (total >= 0.8) return "high";
+  if (total >= 0.5) return "medium";
+  return "low";
+}
+
+export function scoreTrustZoneProvenance(record: TrustZoneRecord): TrustZoneProvenanceScore {
+  const sourceClassWeight = SOURCE_CLASS_WEIGHTS[record.provenance.sourceClass];
+  const sourceIdBonus = typeof record.provenance.sourceId === "string" ? 0.1 : 0;
+  const evidenceHashBonus = typeof record.provenance.evidenceHash === "string" ? 0.2 : 0;
+  const sessionKeyBonus = typeof record.provenance.sessionKey === "string" ? 0.05 : 0;
+  const total = roundTrustScore(
+    Math.min(1, sourceClassWeight + sourceIdBonus + evidenceHashBonus + sessionKeyBonus),
+  );
+
+  return {
+    total,
+    band: trustScoreBand(total),
+    anchored: hasAnchoredProvenance(record),
+    sourceClassWeight,
+    sourceIdBonus,
+    evidenceHashBonus,
+    sessionKeyBonus,
+  };
 }
 
 export function planTrustZonePromotion(options: {
@@ -338,6 +393,7 @@ export async function getTrustZoneStoreStatus(options: {
   trustZoneStoreDir?: string;
   enabled: boolean;
   promotionEnabled: boolean;
+  poisoningDefenseEnabled: boolean;
 }): Promise<TrustZoneStoreStatus> {
   const rootDir = resolveTrustZoneStoreDir(options.memoryDir, options.trustZoneStoreDir);
   const zonesDir = path.join(rootDir, "zones");
@@ -346,14 +402,29 @@ export async function getTrustZoneStoreStatus(options: {
 
   const byZone: Partial<Record<TrustZoneName, number>> = {};
   const byKind: Partial<Record<TrustZoneRecordKind, number>> = {};
+  const byTrustBand: Partial<Record<TrustZoneScoreBand, number>> = {};
+  let trustScoreTotal = 0;
   for (const record of records) {
     byZone[record.zone] = (byZone[record.zone] ?? 0) + 1;
     byKind[record.kind] = (byKind[record.kind] ?? 0) + 1;
+    if (options.poisoningDefenseEnabled === true) {
+      const score = scoreTrustZoneProvenance(record);
+      byTrustBand[score.band] = (byTrustBand[score.band] ?? 0) + 1;
+      trustScoreTotal += score.total;
+    }
   }
+
+  const averageTrustScore =
+    options.poisoningDefenseEnabled === true && records.length > 0
+      ? roundTrustScore(trustScoreTotal / records.length)
+      : undefined;
+  const latestRecordTrustScore =
+    options.poisoningDefenseEnabled === true && records[0] ? scoreTrustZoneProvenance(records[0]) : undefined;
 
   return {
     enabled: options.enabled,
     promotionEnabled: options.promotionEnabled,
+    poisoningDefenseEnabled: options.poisoningDefenseEnabled,
     rootDir,
     zonesDir,
     records: {
@@ -365,8 +436,11 @@ export async function getTrustZoneStoreStatus(options: {
       latestRecordId: records[0]?.recordId,
       latestRecordedAt: records[0]?.recordedAt,
       latestZone: records[0]?.zone,
+      averageTrustScore,
+      byTrustBand: options.poisoningDefenseEnabled === true ? byTrustBand : undefined,
     },
     latestRecord: records[0],
+    latestRecordTrustScore,
     invalidRecords,
   };
 }

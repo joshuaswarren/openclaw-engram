@@ -9,6 +9,7 @@ import {
   promoteTrustZoneRecord,
   recordTrustZoneRecord,
   resolveTrustZoneStoreDir,
+  scoreTrustZoneProvenance,
   validateTrustZoneRecord,
 } from "../src/trust-zones.js";
 import { runTrustZonePromoteCliCommand, runTrustZoneStatusCliCommand } from "../src/cli.js";
@@ -183,6 +184,7 @@ test("trust-zone status reports valid and invalid records by zone", async () => 
     memoryDir,
     enabled: true,
     promotionEnabled: false,
+    poisoningDefenseEnabled: false,
   });
 
   assert.equal(status.records.total, 3);
@@ -193,6 +195,8 @@ test("trust-zone status reports valid and invalid records by zone", async () => 
   assert.equal(status.records.latestRecordId, "tz-5");
   assert.equal(status.latestRecord?.zone, "trusted");
   assert.equal(status.invalidRecords[0]?.path.endsWith("invalid.json"), true);
+  assert.equal(status.records.averageTrustScore, undefined);
+  assert.equal(status.latestRecordTrustScore, undefined);
 });
 
 test("trust-zone-status CLI command returns the store summary", async () => {
@@ -218,9 +222,104 @@ test("trust-zone-status CLI command returns the store summary", async () => {
     memoryDir,
     trustZonesEnabled: true,
     quarantinePromotionEnabled: false,
+    memoryPoisoningDefenseEnabled: false,
   });
   assert.equal(summary.records.valid, 1);
   assert.equal(summary.latestRecord.recordId, "tz-cli-1");
+});
+
+test("scoreTrustZoneProvenance is deterministic and rewards anchored provenance", () => {
+  const anchored = scoreTrustZoneProvenance(
+    validateTrustZoneRecord({
+      schemaVersion: 1,
+      recordId: "tz-score-anchored",
+      zone: "working",
+      recordedAt: "2026-03-07T18:12:00.000Z",
+      kind: "state",
+      summary: "Anchored tool output with explicit evidence.",
+      provenance: {
+        sourceClass: "tool_output",
+        observedAt: "2026-03-07T18:11:30.000Z",
+        sessionKey: "agent:main",
+        sourceId: "tool:deploy",
+        evidenceHash: "sha256:deploy-log",
+      },
+    }),
+  );
+  const unanchored = scoreTrustZoneProvenance(
+    validateTrustZoneRecord({
+      schemaVersion: 1,
+      recordId: "tz-score-unanchored",
+      zone: "working",
+      recordedAt: "2026-03-07T18:12:00.000Z",
+      kind: "state",
+      summary: "Unanchored tool output.",
+      provenance: {
+        sourceClass: "tool_output",
+        observedAt: "2026-03-07T18:11:30.000Z",
+      },
+    }),
+  );
+
+  assert.equal(anchored.total, 0.9);
+  assert.equal(anchored.band, "high");
+  assert.equal(anchored.anchored, true);
+  assert.equal(anchored.sourceClassWeight, 0.55);
+  assert.equal(anchored.sourceIdBonus, 0.1);
+  assert.equal(anchored.evidenceHashBonus, 0.2);
+  assert.equal(anchored.sessionKeyBonus, 0.05);
+  assert.equal(unanchored.total, 0.55);
+  assert.equal(unanchored.band, "medium");
+  assert.equal(unanchored.anchored, false);
+});
+
+test("trust-zone status reports aggregate provenance trust scores when memory poisoning defense is enabled", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-trust-zone-score-status-"));
+  await recordTrustZoneRecord({
+    memoryDir,
+    record: {
+      schemaVersion: 1,
+      recordId: "tz-score-status-1",
+      zone: "working",
+      recordedAt: "2026-03-07T18:13:00.000Z",
+      kind: "state",
+      summary: "Anchored tool output.",
+      provenance: {
+        sourceClass: "tool_output",
+        observedAt: "2026-03-07T18:12:30.000Z",
+        sessionKey: "agent:main",
+        sourceId: "tool:test",
+        evidenceHash: "sha256:test-output",
+      },
+    },
+  });
+  await recordTrustZoneRecord({
+    memoryDir,
+    record: {
+      schemaVersion: 1,
+      recordId: "tz-score-status-2",
+      zone: "quarantine",
+      recordedAt: "2026-03-07T18:14:00.000Z",
+      kind: "external",
+      summary: "Unanchored web content.",
+      provenance: {
+        sourceClass: "web_content",
+        observedAt: "2026-03-07T18:13:30.000Z",
+      },
+    },
+  });
+
+  const status = await getTrustZoneStoreStatus({
+    memoryDir,
+    enabled: true,
+    promotionEnabled: false,
+    poisoningDefenseEnabled: true,
+  });
+
+  assert.equal(status.records.averageTrustScore, 0.625);
+  assert.deepEqual(status.records.byTrustBand, { high: 1, low: 1 });
+  assert.equal(status.latestRecordTrustScore?.total, 0.35);
+  assert.equal(status.latestRecordTrustScore?.band, "low");
 });
 
 test("planTrustZonePromotion blocks direct quarantine to trusted promotion", () => {

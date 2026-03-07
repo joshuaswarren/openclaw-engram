@@ -1,85 +1,64 @@
-# Theory: Trust Zones Need Explicit Promotion Rules Before Retrieval Filtering
+# Theory: Poisoning Defense Needs Explicit Trust Signals Before Policy
 
 ## Problem
 
-PR11 created a trust-zone store, but storage alone does not change behavior.
-Without explicit promotion rules, every future writer would still have to invent
-its own ad hoc interpretation of what it means to move something from
-`quarantine` to `working` or from `working` to `trusted`.
+Trust zones now exist as storage, promotion, and retrieval surfaces, but they
+still lack an explicit measure of provenance quality. Without that measure,
+later poisoning-defense work would have to infer trust indirectly from ad hoc
+conditions scattered across promotion rules and retrieval code.
 
-That would recreate the same ambiguity the store layer was supposed to remove.
-The next step is therefore not retrieval filtering yet. The next step is a
-single promotion contract that defines what is allowed, what is blocked, and
-what provenance is required before higher-trust storage exists.
+That would make the defense track hard to test, hard to explain, and easy to
+regress. The next step is therefore not full corroboration or adversarial
+benchmarks yet. The next step is to make provenance trust legible.
 
 ## Operating Theory
 
-The memory-OS roadmap is still working because each new surface is arriving in
-strict order:
+The memory-OS roadmap continues to work because each new capability is arriving
+in a strict order:
 
-1. typed store
-2. explicit write/promotion contract
-3. retrieval surface
-4. stronger defenses and automation
+1. persist the new memory substrate
+2. expose bounded operator controls
+3. add a measured retrieval surface
+4. add explicit defensive signals
+5. only then automate policy
 
-For trust zones, that means PR12 should do three things and stop:
+For the poisoning-defense track, PR14 is the defensive-signal step. The system
+needs one deterministic trust score derived from what is already in the record:
+source class, source identity, evidence anchor, and session anchor.
 
-- define promotion eligibility rules
-- enforce minimum provenance for risky promotions
-- write lineage-aware successor records instead of mutating source records
-
-That preserves the value of PR11's storage boundary and creates a stable base
-for PR13 retrieval filters and PR14+ poisoning-defense work.
+That score is useful even before it drives decisions because it turns "trust"
+from a vague intention into a contract that tests, operators, and later PRs can
+all see.
 
 ## Strategy
 
-The product thesis still governs the sequence:
+Keep the slice intentionally narrow:
 
-- memory that improves action outcomes
-- memory that survives long horizons and failures
-- memory that can defend itself
+- defaults-off behind a dedicated config flag
+- compute the score from stored provenance only
+- expose the score in trust-zone status, not in automatic promotion behavior
+- leave corroboration and attack simulation for later slices
 
-For the trust-zone track, that translates to:
-
-1. allow `quarantine -> working`
-2. allow `working -> trusted` only through an explicit guarded path
-3. block `quarantine -> trusted`
-4. require anchored provenance before external/tool-derived material can become
-   `trusted`
-5. keep all of it defaults-off behind the existing flags
-
-This keeps the slice small enough for review while making later retrieval and
-defense work less ambiguous.
+This preserves the roadmap discipline. PR14 should not try to solve poisoning
+defense end to end. It should create the explicit signal that PR15 and PR16 can
+build on.
 
 ## Key Discoveries
 
-- Promotion should write a new successor record, not mutate the source. Lineage
-  matters for audits and later poisoning analysis.
-- Direct `quarantine -> trusted` promotion is too permissive for the first
-  trust-aware path. Forcing `working` as an intermediate zone makes later
-  corroboration rules easier to add.
-- Provenance enforcement can start smaller than full corroboration. Requiring
-  anchored provenance (`sourceId` + `evidenceHash`) for risky `working ->
-  trusted` promotions gives the system a real minimum trust floor without
-  front-loading PR15's corroboration logic.
-- A dry-run CLI path is enough operator control for this slice. Automatic
-  promotion can wait until the trust contract has more real-world exposure.
-
-## Next Sequence
-
-The trust-zone roadmap now looks like:
-
-1. PR11: trust-zone schemas and storage
-2. PR12: promotion rules and provenance enforcement
-3. PR13: trust-zone-aware retrieval filters
-4. PR14+: trust scoring, corroboration, and poisoning defense
+- Provenance trust should be deterministic for a stored record. If the score
+  depends on wall-clock timing or query context, it becomes harder to benchmark
+  and easier to dispute.
+- The first score does not need model-based judgment. Source class plus explicit
+  anchors (`sourceId`, `evidenceHash`, `sessionKey`) is enough to create a
+  useful first trust floor.
+- Trust scoring belongs in status output first. That keeps the operator surface
+  inspectable and reviewable before any automated gating starts relying on it.
 
 ## Open Questions
 
-- Should future automatic writers target `working` by default for some source
-  classes, or should everything still enter through `quarantine` first?
-- Should promotion reasons remain in record metadata long term, or move into a
-  dedicated append-only promotion ledger in a later slice?
-- When PR13 lands, should trust-zone retrieval filtering apply uniformly across
-  objective-state and causal-trajectory sections, or should the rollout start
-  with one retrieval surface first?
+- Should PR15 treat trust score as an advisory signal layered on top of
+  corroboration, or as part of the promotion eligibility threshold itself?
+- Should future retrieval slices use trust score only as a tie-breaker, or
+  should low-trust records be filtered from some sections entirely?
+- When PR16 adds red-team benchmarks, should those packs assert on raw trust
+  breakdowns, aggregate bands, or downstream promotion/retrieval outcomes?

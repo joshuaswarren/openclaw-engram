@@ -666,12 +666,14 @@ export async function runTrustZoneStatusCliCommand(options: {
   trustZoneStoreDir?: string;
   trustZonesEnabled: boolean;
   quarantinePromotionEnabled: boolean;
+  memoryPoisoningDefenseEnabled: boolean;
 }): Promise<TrustZoneStoreStatus> {
   return getTrustZoneStoreStatus({
     memoryDir: options.memoryDir,
     trustZoneStoreDir: options.trustZoneStoreDir,
     enabled: options.trustZonesEnabled,
     promotionEnabled: options.quarantinePromotionEnabled,
+    poisoningDefenseEnabled: options.memoryPoisoningDefenseEnabled,
   });
 }
 
@@ -2305,6 +2307,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             trustZoneStoreDir: orchestrator.config.trustZoneStoreDir,
             trustZonesEnabled: orchestrator.config.trustZonesEnabled,
             quarantinePromotionEnabled: orchestrator.config.quarantinePromotionEnabled,
+            memoryPoisoningDefenseEnabled: orchestrator.config.memoryPoisoningDefenseEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
