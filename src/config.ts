@@ -507,6 +507,12 @@ export function parseConfig(raw: unknown): PluginConfig {
     trustZoneRecallEnabled: cfg.trustZoneRecallEnabled === true,
     memoryPoisoningDefenseEnabled: cfg.memoryPoisoningDefenseEnabled === true,
     memoryRedTeamBenchEnabled: cfg.memoryRedTeamBenchEnabled === true,
+    harmonicRetrievalEnabled: cfg.harmonicRetrievalEnabled === true,
+    abstractionAnchorsEnabled: cfg.abstractionAnchorsEnabled === true,
+    abstractionNodeStoreDir:
+      typeof cfg.abstractionNodeStoreDir === "string" && cfg.abstractionNodeStoreDir.trim().length > 0
+        ? cfg.abstractionNodeStoreDir.trim()
+        : path.join(memoryDir, "state", "abstraction-nodes"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:

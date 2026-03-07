@@ -234,6 +234,10 @@ export interface PluginConfig {
   trustZoneRecallEnabled: boolean;
   memoryPoisoningDefenseEnabled: boolean;
   memoryRedTeamBenchEnabled: boolean;
+  // Harmonic retrieval foundation
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+  abstractionNodeStoreDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

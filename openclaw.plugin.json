@@ -1171,6 +1171,20 @@
         "default": false,
         "description": "Enable operator-facing memory red-team benchmark packs and status accounting for poisoning-defense regression suites."
       },
+      "harmonicRetrievalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the harmonic-retrieval foundation for abstraction-node storage and later abstraction-plus-anchor recall slices."
+      },
+      "abstractionAnchorsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Reserve cue-anchor support for later harmonic-retrieval slices while exposing it in abstraction-node status output."
+      },
+      "abstractionNodeStoreDir": {
+        "type": "string",
+        "description": "Override the abstraction-node store directory (defaults to {memoryDir}/state/abstraction-nodes)."
+      },
       "actionGraphRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2154,6 +2168,21 @@
       "label": "Memory Red-Team Benchmarks",
       "advanced": true,
       "help": "Enable operator-facing red-team benchmark pack support and status accounting for poisoning-defense suites."
+    },
+    "harmonicRetrievalEnabled": {
+      "label": "Harmonic Retrieval",
+      "help": "Enable the harmonic-retrieval foundation for abstraction-node storage and later abstraction-plus-anchor recall slices."
+    },
+    "abstractionAnchorsEnabled": {
+      "label": "Abstraction Anchors",
+      "advanced": true,
+      "help": "Reserve cue-anchor support for later harmonic-retrieval slices while exposing anchor readiness in abstraction-node status output."
+    },
+    "abstractionNodeStoreDir": {
+      "label": "Abstraction-Node Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/abstraction-nodes",
+      "help": "Override where abstraction nodes are stored."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

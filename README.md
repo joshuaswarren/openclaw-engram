@@ -38,6 +38,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Trust-zone recall** — Engram can now, when `trustZoneRecallEnabled` is enabled, inject prompt-relevant `working` and `trusted` trust-zone records into recall context as a separate `Trust Zones` section while keeping `quarantine` material out of recall by default.
 - **Poisoning-defense corroboration** — Engram can now, when `memoryPoisoningDefenseEnabled` is enabled, score trust-zone provenance deterministically and require independent non-quarantine corroboration before risky `working -> trusted` promotions succeed.
 - **Red-team benchmark packs** — Engram's eval harness can now validate and count typed `memory-red-team` benchmark packs so poisoning-defense regression suites stay explicit and reviewable instead of hiding inside generic benchmark metadata.
+- **Abstraction-node foundation** — Engram can now, when `harmonicRetrievalEnabled` is enabled, persist typed abstraction nodes for later harmonic retrieval slices, with `abstractionAnchorsEnabled` reserved for the future cue-anchor layer.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start

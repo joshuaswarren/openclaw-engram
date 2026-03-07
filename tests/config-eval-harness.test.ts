@@ -27,6 +27,9 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.trustZoneRecallEnabled, false);
   assert.equal(cfg.memoryPoisoningDefenseEnabled, false);
   assert.equal(cfg.memoryRedTeamBenchEnabled, false);
+  assert.equal(cfg.harmonicRetrievalEnabled, false);
+  assert.equal(cfg.abstractionAnchorsEnabled, false);
+  assert.equal(cfg.abstractionNodeStoreDir, path.join(memoryDir, "state", "abstraction-nodes"));
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "causal-trajectories" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "trust-zones" && entry.enabled === false), true);
@@ -53,6 +56,9 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     trustZoneRecallEnabled: true,
     memoryPoisoningDefenseEnabled: true,
     memoryRedTeamBenchEnabled: true,
+    harmonicRetrievalEnabled: true,
+    abstractionAnchorsEnabled: true,
+    abstractionNodeStoreDir: "/tmp/abstraction-node-store",
   });
 
   assert.equal(cfg.evalHarnessEnabled, true);
@@ -72,4 +78,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.trustZoneRecallEnabled, true);
   assert.equal(cfg.memoryPoisoningDefenseEnabled, true);
   assert.equal(cfg.memoryRedTeamBenchEnabled, true);
+  assert.equal(cfg.harmonicRetrievalEnabled, true);
+  assert.equal(cfg.abstractionAnchorsEnabled, true);
+  assert.equal(cfg.abstractionNodeStoreDir, "/tmp/abstraction-node-store");
 });

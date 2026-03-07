@@ -1,70 +1,64 @@
-# Theory: Poisoning Defense Needs Typed Attack Suites, Not Just Policy
+# Theory: Harmonic Retrieval Needs Abstraction Storage Before It Needs Blending
 
 ## Problem
 
-Engram now has real trust tiers, explicit promotion rules, bounded trust-zone
-recall, deterministic provenance trust scoring, and corroboration rules for
-risky promotions. That closes one policy gap, but it still leaves a measurement
-gap: poisoning-defense regressions can still hide inside generic benchmark packs
-with no explicit attack identity.
+Engram now has a measured evaluation harness, objective-state memory, causal
+trajectories, trust zones, provenance scoring, corroboration rules, and typed
+red-team benchmark packs. The next roadmap step is harmonic retrieval, but
+harmonic retrieval cannot be reviewed sanely if abstraction storage and anchor
+logic arrive in the same PR.
 
-If attack suites are not typed, operators and reviewers cannot tell whether the
-eval harness is actually covering provenance spoofing, subagent contamination,
-or trust-zone promotion failures. The defense exists, but the benchmark surface
-stays too implicit to police over time.
+If abstraction nodes and cue anchors land together, every retrieval regression
+ becomes ambiguous: did the failure come from bad abstraction schema, bad
+ anchor construction, or bad blending logic? The system needs a durable
+ abstraction contract before it needs mixed retrieval heuristics.
 
 ## Operating Theory
 
-The trust-zone rollout is working because it has stayed ordered:
+The memory-OS rollout keeps working when each retrieval family is decomposed
+ into store, writer, retrieval, and policy slices. Harmonic retrieval should
+ follow the same pattern:
 
-1. store trust tiers
-2. define promotion boundaries
-3. expose bounded recall
-4. surface deterministic trust signals
-5. require independent corroboration for risky promotions
-6. make attack suites first-class benchmark assets
-7. only then benchmark attacks at scale and tune policy
+1. define abstraction-node storage
+2. add cue-anchor indexing
+3. blend abstractions and anchors into retrieval
+4. benchmark whether the blend actually improves recall utility
 
-PR14 completed step 4. PR15 completed step 5. PR16 is step 6: teach the eval
-harness to recognize poisoning-defense suites explicitly through typed
-`memory-red-team` benchmark manifests.
+PR17 is step 1. It should do one thing: make abstraction nodes first-class,
+ typed, and inspectable.
 
-That keeps the benchmark layer explainable. A defense suite is no longer just a
-tagged benchmark pack. It becomes an explicit attack surface with a known class
-and target.
+That keeps later retrieval work explainable. Reviewers can inspect whether
+ abstractions are well-formed before debating how much weight they should have
+ against cue anchors or episodic traces.
 
 ## Strategy
 
-Keep the attack-pack contract narrow and deterministic:
+Keep the abstraction-node contract narrow and deterministic:
 
-- preserve backward compatibility for existing standard benchmark packs
-- add one explicit new benchmark type: `memory-red-team`
-- require `attackClass` and `targetSurface`
-- surface those fields in validation, import, and status output
-- avoid adding runner orchestration or replay logic yet
+- add the two roadmap flags now: `harmonicRetrievalEnabled` and `abstractionAnchorsEnabled`
+- add one explicit store directory: `abstractionNodeStoreDir`
+- store typed abstraction nodes by day
+- expose status counts by abstraction kind and level
+- avoid cue-anchor indexing or retrieval blending in this PR
 
-This preserves small-slice discipline. PR16 is not a full red-team runner. It
-is the smallest bounded benchmark-surface change that makes poisoning-defense
-coverage visible and enforceable in review.
+This preserves small-slice discipline. PR17 is not harmonic retrieval. It is
+ the smallest bounded storage change that makes harmonic retrieval data visible
+ and reviewable before scoring logic appears.
 
 ## Key Discoveries
 
-- Poisoning-defense benchmarks need explicit attack identity, not just tags.
-  Tags are useful filters, but they are too weak to serve as the contract for
-  a regression suite the team wants to protect in CI and review.
-- Benchmark typing should stay smaller than runner typing. The harness can
-  become attack-aware before it becomes attack-executing.
-- The first typed attack metadata should live at the manifest level. That is
-  enough to classify and count suites before deciding whether case-level attack
-  annotations are worth the complexity.
-- Benchmark visibility belongs before attack automation. The system should first
-  know what attack coverage exists before it tries to scale execution.
+- Harmonic retrieval needs its own storage substrate before it needs ranking.
+- Abstraction nodes should encode compression structure, not every cue. Cue
+  anchors belong in PR18, where they can be reviewed as their own index layer.
+- Operator-facing status commands keep new stores honest. If a new memory layer
+  cannot report valid, invalid, latest, and per-type counts, it is still too
+  implicit to tune safely.
 
 ## Open Questions
 
-- Should later red-team slices attach attack metadata per case as well as per
-  manifest, or is pack-level classification enough for the first generation?
-- Should future CI gates require minimum red-team coverage by `attackClass` and
-  `targetSurface`, or stay at pass/fail deltas only?
-- When replay execution lands, should `memory-red-team` packs run through the
-  same runner contracts as standard packs or a distinct adversarial path?
+- Should future abstraction writers produce one node per session episode, per
+  topic cluster, or both?
+- Should later abstraction nodes track confidence or source span coverage, or
+  can `sourceMemoryIds` stay sufficient until recall blending lands?
+- When PR19 arrives, should harmonic blending inject a new dedicated recall
+  section first, or blend directly into existing semantic recall ranking?

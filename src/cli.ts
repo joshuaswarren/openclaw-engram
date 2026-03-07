@@ -57,6 +57,10 @@ import {
   getCausalTrajectoryStoreStatus,
   type CausalTrajectoryStoreStatus,
 } from "./causal-trajectory.js";
+import {
+  getAbstractionNodeStoreStatus,
+  type AbstractionNodeStoreStatus,
+} from "./abstraction-nodes.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
 import {
   getTrustZoneStoreStatus,
@@ -681,6 +685,20 @@ export async function runTrustZoneStatusCliCommand(options: {
     enabled: options.trustZonesEnabled,
     promotionEnabled: options.quarantinePromotionEnabled,
     poisoningDefenseEnabled: options.memoryPoisoningDefenseEnabled,
+  });
+}
+
+export async function runAbstractionNodeStatusCliCommand(options: {
+  memoryDir: string;
+  abstractionNodeStoreDir?: string;
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+}): Promise<AbstractionNodeStoreStatus> {
+  return getAbstractionNodeStoreStatus({
+    memoryDir: options.memoryDir,
+    abstractionNodeStoreDir: options.abstractionNodeStoreDir,
+    enabled: options.harmonicRetrievalEnabled,
+    anchorsEnabled: options.abstractionAnchorsEnabled,
   });
 }
 
@@ -2320,6 +2338,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             trustZonesEnabled: orchestrator.config.trustZonesEnabled,
             quarantinePromotionEnabled: orchestrator.config.quarantinePromotionEnabled,
             memoryPoisoningDefenseEnabled: orchestrator.config.memoryPoisoningDefenseEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("abstraction-node-status")
+        .description("Show abstraction-node store status, abstraction counts, and latest stored node")
+        .action(async () => {
+          const status = await runAbstractionNodeStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            abstractionNodeStoreDir: orchestrator.config.abstractionNodeStoreDir,
+            harmonicRetrievalEnabled: orchestrator.config.harmonicRetrievalEnabled,
+            abstractionAnchorsEnabled: orchestrator.config.abstractionAnchorsEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");

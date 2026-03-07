@@ -380,6 +380,9 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `trustZoneRecallEnabled` | `false` | Inject prompt-relevant working and trusted trust-zone records into recall context |
 | `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring and corroboration requirements for risky trusted promotions |
 | `memoryRedTeamBenchEnabled` | `false` | Enable typed `memory-red-team` benchmark packs and status accounting for poisoning-defense regression suites |
+| `harmonicRetrievalEnabled` | `false` | Enable the harmonic-retrieval foundation for abstraction-node storage and later abstraction-plus-anchor recall slices |
+| `abstractionAnchorsEnabled` | `false` | Reserve cue-anchor support for later harmonic-retrieval slices while exposing anchor readiness in abstraction-node status output |
+| `abstractionNodeStoreDir` | `{memoryDir}/state/abstraction-nodes` | Root directory for abstraction-node artifacts |
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
@@ -397,6 +400,8 @@ Current foundation slice:
 - When `memoryPoisoningDefenseEnabled` is also on, `openclaw engram trust-zone-status` reports deterministic provenance trust scores derived from source class plus `sourceId` / `evidenceHash` / `sessionKey` anchors so later poisoning defenses can build on explicit signals instead of hidden heuristics.
 - With both `memoryPoisoningDefenseEnabled` and `quarantinePromotionEnabled` enabled, risky `working -> trusted` promotions now require at least one independent non-`quarantine` corroborating record with anchored provenance and overlapping `entityRefs` or `tags`.
 - When `memoryRedTeamBenchEnabled` is on, benchmark manifests can also declare `benchmarkType: "memory-red-team"` plus `attackClass` and `targetSurface`, and `openclaw engram benchmark-status` reports red-team pack counts and unique attack metadata.
+- When `harmonicRetrievalEnabled` is on, Engram can persist typed abstraction nodes into a separate abstraction-node store for later harmonic retrieval slices.
+- When `abstractionAnchorsEnabled` is also on, `openclaw engram abstraction-node-status` surfaces whether the abstraction-node store is operating with future cue-anchor support enabled.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |
