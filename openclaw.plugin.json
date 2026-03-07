@@ -1128,6 +1128,15 @@
         "type": "string",
         "description": "Override the objective-state memory directory (defaults to {memoryDir}/state/objective-state)."
       },
+      "causalTrajectoryMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's causal-trajectory memory foundation for typed goal-action-observation-outcome chains."
+      },
+      "causalTrajectoryStoreDir": {
+        "type": "string",
+        "description": "Override the causal-trajectory memory directory (defaults to {memoryDir}/state/causal-trajectories)."
+      },
       "namespacesEnabled": {
         "type": "boolean",
         "default": false,
@@ -2061,6 +2070,16 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/objective-state",
       "help": "Override where objective-state snapshots are stored."
+    },
+    "causalTrajectoryMemoryEnabled": {
+      "label": "Causal Trajectory Memory",
+      "help": "Enable the causal-trajectory memory foundation for typed goal-action-observation-outcome chains."
+    },
+    "causalTrajectoryStoreDir": {
+      "label": "Causal Trajectory Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/causal-trajectories",
+      "help": "Override where causal-trajectory records are stored."
     },
     "factDeduplicationEnabled": {
       "label": "Fact Deduplication",

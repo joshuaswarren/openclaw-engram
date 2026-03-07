@@ -32,6 +32,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
 - **Benchmark-first roadmap** — Engram now has an evaluation harness with live shadow recall recording and a CI benchmark delta gate, so memory improvements can be measured and regression-checked instead of argued from anecdotes.
 - **Objective-state recall** — Engram can now store normalized file, process, and tool outcomes and, when `objectiveStateRecallEnabled` is enabled, inject the most relevant objective-state snapshots back into recall context as a separate `Objective State` section.
+- **Causal trajectory store** — Engram can now persist typed `goal -> action -> observation -> outcome -> follow-up` chains when `causalTrajectoryMemoryEnabled` is enabled, creating the storage foundation for later action-conditioned graph and recall work.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -156,6 +157,7 @@ openclaw engram benchmark-validate <path>    # Validate a benchmark manifest or 
 openclaw engram benchmark-import <path>      # Import a validated benchmark pack into the eval store
 openclaw engram benchmark-ci-gate            # Compare base vs candidate eval stores and fail on regressions
 openclaw engram objective-state-status       # Objective-state snapshot counts and latest stored snapshot
+openclaw engram causal-trajectory-status    # Causal-trajectory record counts and latest stored chain
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -182,6 +184,8 @@ Key settings:
 | `objectiveStateSnapshotWritesEnabled` | `false` | Permit objective-state snapshot writers to persist typed state records |
 | `objectiveStateRecallEnabled` | `false` | Inject prompt-relevant objective-state snapshots into recall context |
 | `objectiveStateStoreDir` | `{memoryDir}/state/objective-state` | Root directory for objective-state snapshots |
+| `causalTrajectoryMemoryEnabled` | `false` | Enable the causal-trajectory memory foundation for typed causal chains |
+| `causalTrajectoryStoreDir` | `{memoryDir}/state/causal-trajectories` | Root directory for causal-trajectory records |
 
 Full reference: [Config Reference](docs/config-reference.md)
 
