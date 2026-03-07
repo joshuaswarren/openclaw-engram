@@ -159,7 +159,8 @@ test("deriveObjectiveStateSnapshotsFromAgentMessages treats common error class n
       {
         role: "tool",
         name: "exec_command",
-        content: "TypeError: undefined is not a function\\nNullPointerException at Example.run",
+        content: `TypeError: undefined is not a function
+NullPointerException at Example.run`,
       },
     ],
   });
