@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Fixed
+- **Objective-state follow-up**: plain-text tool results no longer get marked as failures just because they contain words like `errors` or `failed` inside otherwise successful messages such as `0 errors found` or `previously failed test now passes`.
 - Fallback contradiction verification, link suggestion, and memory summarization now normalize gateway/local LLM JSON aliases the same way as the direct OpenAI client, so `winner`, `type`, `summary`, and `entities` responses continue to work without an OpenAI API key.
 - **local-llm**: Read `reasoning_content` when `content` is empty — fixes thinking models (e.g. Qwen 3.5) returning null for entity summaries, consolidation, and question generation.
 - **fast-tier thinking suppression**: fast LLM client now sends `chat_template_kwargs: { enable_thinking: false }` to suppress chain-of-thought on thinking models (e.g. Qwen 3.5 small series). Prevents fast-tier operations from timing out when LM Studio forces thinking mode via chat template.
