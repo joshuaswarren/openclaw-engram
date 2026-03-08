@@ -279,6 +279,38 @@ archivedAt without explicit status
   }
 });
 
+test("StorageManager does not infer archived status from archive in ancestor directories", async () => {
+  const archiveParent = path.join(os.tmpdir(), "archive");
+  await mkdir(archiveParent, { recursive: true });
+  const memoryDir = await mkdtemp(path.join(archiveParent, "engram-storage-live-under-archive-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-active.md",
+      `---
+id: fact-active
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["active"]
+---
+
+active memory under archive-named parent
+`,
+    );
+
+    const storage = new StorageManager(memoryDir);
+    const current = await storage.getProjectedMemoryState("fact-active");
+    assert.ok(current);
+    assert.equal(current?.status, "active");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager projection helpers fail open to markdown and lifecycle ledger", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-projection-fallback-"));
   try {

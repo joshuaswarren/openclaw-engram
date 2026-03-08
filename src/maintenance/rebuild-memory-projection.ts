@@ -11,8 +11,10 @@ import type {
 } from "../types.js";
 import {
   buildLifecycleEventsForMemory,
+  inferMemoryStatus,
   MEMORY_LIFECYCLE_EVENT_SORT_ORDER,
   sortMemoryLifecycleEvents,
+  toMemoryPathRel,
 } from "../memory-lifecycle-ledger-utils.js";
 import {
   getMemoryProjectionPath,
@@ -60,20 +62,12 @@ async function backupExistingProjection(
   return backupPath;
 }
 
-function toProjectionPathRel(memoryDir: string, memoryPath: string): string {
-  return path.relative(memoryDir, memoryPath).split(path.sep).join("/");
-}
-
 function inferProjectedStatus(pathRel: string, memory: MemoryFile): MemoryStatus {
-  if (memory.frontmatter.status && memory.frontmatter.status !== "active") return memory.frontmatter.status;
-  if (memory.frontmatter.archivedAt) return "archived";
-  if (pathRel.startsWith("archive/")) return "archived";
-  if (memory.frontmatter.status) return memory.frontmatter.status;
-  return "active";
+  return inferMemoryStatus(memory.frontmatter, pathRel);
 }
 
 function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProjectionCurrentState {
-  const pathRel = toProjectionPathRel(memoryDir, memory.path);
+  const pathRel = toMemoryPathRel(memoryDir, memory.path);
   return {
     memoryId: memory.frontmatter.id,
     category: memory.frontmatter.category,

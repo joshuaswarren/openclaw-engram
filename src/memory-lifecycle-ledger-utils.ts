@@ -1,8 +1,11 @@
+import path from "node:path";
 import type {
   MemoryFile,
   MemoryLifecycleEvent,
   MemoryLifecycleEventType,
   MemoryLifecycleStateSummary,
+  MemoryFrontmatter,
+  MemoryStatus,
 } from "./types.js";
 
 export const MEMORY_LIFECYCLE_RULE_VERSION = "memory-lifecycle-ledger.v1";
@@ -20,6 +23,27 @@ export const MEMORY_LIFECYCLE_EVENT_SORT_ORDER: Record<MemoryLifecycleEventType,
   rejected: 9,
   archived: 10,
 };
+
+export function toMemoryPathRel(baseDir: string, filePath: string): string {
+  if (!baseDir) return filePath.split(path.sep).join("/");
+  return path.relative(baseDir, filePath).split(path.sep).join("/");
+}
+
+export function isArchivedMemoryPath(pathRel: string): boolean {
+  return pathRel === "archive" || pathRel.startsWith("archive/");
+}
+
+export function inferMemoryStatus(
+  frontmatter: MemoryFrontmatter,
+  pathRel: string,
+  fallbackStatus: MemoryStatus = "active",
+): MemoryStatus {
+  if (frontmatter.status && frontmatter.status !== "active") return frontmatter.status;
+  if (frontmatter.archivedAt) return "archived";
+  if (isArchivedMemoryPath(pathRel)) return "archived";
+  if (frontmatter.status) return frontmatter.status;
+  return fallbackStatus;
+}
 
 export function summarizeMemoryLifecycleState(memory: MemoryFile): MemoryLifecycleStateSummary {
   return {

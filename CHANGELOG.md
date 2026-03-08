@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 - Changelog guard now treats `CHANGELOG.md` as release-workflow owned by default and only validates format when a PR edits the changelog directly.
 - `THEORY.MD` is now ignored and removed from the repo so it does not keep reappearing in commits.
 
+### Fixed
+- Projection and markdown fallback status inference now share one relative-path-based archive/status helper, preventing false `archived` reads when `memoryDir` lives under an ancestor path that happens to contain `/archive/`.
+
 ## [Released after v9.0.0] — 2026-03-07 to 2026-03-08
 
 This project auto-releases on every merge to `main`. The entries below are a consolidated summary of work that has already shipped on the active `v9.x` line but had accumulated incorrectly under `Unreleased`. Detailed per-release notes for the individual auto-generated tags live in GitHub Releases.

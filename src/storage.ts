@@ -47,7 +47,12 @@ import {
   readProjectedMemoryState,
   readProjectedMemoryTimeline,
 } from "./memory-projection-store.js";
-import { sortMemoryLifecycleEvents } from "./memory-lifecycle-ledger-utils.js";
+import {
+  inferMemoryStatus,
+  isArchivedMemoryPath,
+  sortMemoryLifecycleEvents,
+  toMemoryPathRel,
+} from "./memory-lifecycle-ledger-utils.js";
 import {
   closeContinuityIncidentRecord,
   createContinuityIncidentRecord,
@@ -359,8 +364,8 @@ function parseFrontmatter(
   return result;
 }
 
-function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, filePath: string): MemoryFrontmatter {
-  if (/[\\/]archive[\\/]/.test(filePath) && (!frontmatter.status || frontmatter.status === "active")) {
+function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, pathRel: string): MemoryFrontmatter {
+  if (isArchivedMemoryPath(pathRel) && (!frontmatter.status || frontmatter.status === "active")) {
     return {
       ...frontmatter,
       status: "archived",
@@ -372,14 +377,10 @@ function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, filePath: s
 
 function inferCurrentStateStatus(
   frontmatter: MemoryFrontmatter,
-  filePath: string,
+  pathRel: string,
   fallbackStatus: MemoryStatus,
 ): MemoryStatus {
-  if (frontmatter.status && frontmatter.status !== "active") return frontmatter.status;
-  if (frontmatter.archivedAt) return "archived";
-  if (/[\\/]archive[\\/]/.test(filePath)) return "archived";
-  if (frontmatter.status) return frontmatter.status;
-  return fallbackStatus;
+  return inferMemoryStatus(frontmatter, pathRel, fallbackStatus);
 }
 
 /**
@@ -1213,7 +1214,10 @@ export class StorageManager {
               if (parsed) {
                 memories.push({
                   path: fullPath,
-                  frontmatter: normalizeFrontmatterForPath(parsed.frontmatter, fullPath),
+                  frontmatter: normalizeFrontmatterForPath(
+                    parsed.frontmatter,
+                    toMemoryPathRel(this.baseDir, fullPath),
+                  ),
                   content: parsed.content,
                 });
               }
@@ -1254,7 +1258,10 @@ export class StorageManager {
               if (parsed) {
                 memories.push({
                   path: fullPath,
-                  frontmatter: normalizeFrontmatterForPath(parsed.frontmatter, fullPath),
+                  frontmatter: normalizeFrontmatterForPath(
+                    parsed.frontmatter,
+                    toMemoryPathRel(this.baseDir, fullPath),
+                  ),
                   content: parsed.content,
                 });
               }
@@ -1280,7 +1287,10 @@ export class StorageManager {
       if (!parsed) return null;
       return {
         path: filePath,
-        frontmatter: normalizeFrontmatterForPath(parsed.frontmatter, filePath),
+        frontmatter: normalizeFrontmatterForPath(
+          parsed.frontmatter,
+          toMemoryPathRel(this.baseDir, filePath),
+        ),
         content: parsed.content,
       };
     } catch {
@@ -2868,13 +2878,14 @@ export class StorageManager {
     memory: MemoryFile,
     fallbackStatus: MemoryStatus,
   ): MemoryProjectionCurrentState {
+    const pathRel = toMemoryPathRel(this.baseDir, memory.path);
     return {
       memoryId: memory.frontmatter.id,
       category: memory.frontmatter.category,
-      status: inferCurrentStateStatus(memory.frontmatter, memory.path, fallbackStatus),
+      status: inferCurrentStateStatus(memory.frontmatter, pathRel, fallbackStatus),
       lifecycleState: memory.frontmatter.lifecycleState,
       path: memory.path,
-      pathRel: path.relative(this.baseDir, memory.path).split(path.sep).join("/"),
+      pathRel,
       created: memory.frontmatter.created,
       updated: memory.frontmatter.updated,
       archivedAt: memory.frontmatter.archivedAt,
