@@ -203,6 +203,34 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
     : undefined;
 
+  const rawNativeKnowledge =
+    cfg.nativeKnowledge && typeof cfg.nativeKnowledge === "object" && !Array.isArray(cfg.nativeKnowledge)
+      ? (cfg.nativeKnowledge as Record<string, unknown>)
+      : undefined;
+  const nativeKnowledge = rawNativeKnowledge?.enabled === true
+    ? {
+        enabled: true,
+        includeFiles: Array.isArray(rawNativeKnowledge.includeFiles)
+          ? (rawNativeKnowledge.includeFiles as unknown[])
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim())
+            .filter(Boolean)
+          : ["IDENTITY.md", "MEMORY.md"],
+        maxChunkChars:
+          typeof rawNativeKnowledge.maxChunkChars === "number"
+            ? Math.max(200, Math.floor(rawNativeKnowledge.maxChunkChars))
+            : 900,
+        maxResults:
+          typeof rawNativeKnowledge.maxResults === "number"
+            ? Math.max(0, Math.floor(rawNativeKnowledge.maxResults))
+            : 4,
+        maxChars:
+          typeof rawNativeKnowledge.maxChars === "number"
+            ? Math.max(0, Math.floor(rawNativeKnowledge.maxChars))
+            : 2400,
+      }
+    : undefined;
+
   let baseUrl: string | undefined;
   if (typeof cfg.openaiBaseUrl === "string" && cfg.openaiBaseUrl.length > 0) {
     baseUrl = normalizeOpenaiBaseUrl(resolveEnvVars(cfg.openaiBaseUrl), "config");
@@ -306,6 +334,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.workspaceDir
         : DEFAULT_WORKSPACE_DIR,
     fileHygiene,
+    nativeKnowledge,
     // Access tracking (Phase 1A)
     accessTrackingEnabled: cfg.accessTrackingEnabled !== false,
     accessTrackingBufferMaxSize:
@@ -1073,6 +1102,22 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     {
       id: "compression-guidelines",
       enabled: cfg.compressionGuidelineLearningEnabled === true,
+    },
+    {
+      id: "native-knowledge",
+      enabled: cfg.nativeKnowledge && typeof cfg.nativeKnowledge === "object"
+        ? (cfg.nativeKnowledge as Record<string, unknown>).enabled === true
+        : false,
+      maxResults:
+        cfg.nativeKnowledge && typeof cfg.nativeKnowledge === "object" &&
+          typeof (cfg.nativeKnowledge as Record<string, unknown>).maxResults === "number"
+          ? Math.max(0, Math.floor((cfg.nativeKnowledge as Record<string, unknown>).maxResults as number))
+          : 4,
+      maxChars:
+        cfg.nativeKnowledge && typeof cfg.nativeKnowledge === "object" &&
+          typeof (cfg.nativeKnowledge as Record<string, unknown>).maxChars === "number"
+          ? Math.max(0, Math.floor((cfg.nativeKnowledge as Record<string, unknown>).maxChars as number))
+          : 2400,
     },
     {
       id: "transcript",

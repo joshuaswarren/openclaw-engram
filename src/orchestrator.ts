@@ -76,6 +76,11 @@ import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-r
 import { searchVerifiedSemanticRules, type VerifiedSemanticRuleResult } from "./semantic-rule-verifier.js";
 import { applyCommitmentLedgerLifecycle } from "./commitment-ledger.js";
 import { searchWorkProductLedgerEntries, type WorkProductLedgerSearchResult } from "./work-product-ledger.js";
+import {
+  collectNativeKnowledgeChunks,
+  formatNativeKnowledgeSection,
+  searchNativeKnowledge,
+} from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2648,6 +2653,43 @@ export class Orchestrator {
       return section;
     })();
 
+    const nativeKnowledgePromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.nativeKnowledge?.enabled ||
+        !this.isRecallSectionEnabled("native-knowledge", this.config.nativeKnowledge.enabled)
+      ) {
+        timings.nativeKnowledge = "skip";
+        return null;
+      }
+      if (this.config.nativeKnowledge.maxResults === 0 || this.config.nativeKnowledge.maxChars === 0) {
+        timings.nativeKnowledge = "skip(limit=0)";
+        return null;
+      }
+
+      const chunks = await collectNativeKnowledgeChunks({
+        workspaceDir: this.config.workspaceDir,
+        config: this.config.nativeKnowledge,
+        recallNamespaces: this.config.namespacesEnabled ? recallNamespaces : undefined,
+        defaultNamespace: this.config.defaultNamespace,
+      }).catch(() => []);
+      const results = searchNativeKnowledge({
+        query: retrievalQuery,
+        chunks,
+        maxResults:
+          this.getRecallSectionNumber("native-knowledge", "maxResults")
+            ?? this.config.nativeKnowledge.maxResults,
+      });
+      const section = formatNativeKnowledgeSection({
+        results,
+        maxChars:
+          this.getRecallSectionNumber("native-knowledge", "maxChars")
+            ?? this.config.nativeKnowledge.maxChars,
+      });
+      timings.nativeKnowledge = `${Date.now() - t0}ms`;
+      return section;
+    })();
+
     const conversationRecallPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
@@ -2741,6 +2783,7 @@ export class Orchestrator {
       transcriptSection,
       compactionSection,
       summariesSection,
+      nativeKnowledgeSection,
       conversationRecallSection,
       compoundingSection,
     ] = await Promise.all([
@@ -2760,6 +2803,7 @@ export class Orchestrator {
       transcriptPromise,
       compactionPromise,
       summariesPromise,
+      nativeKnowledgePromise,
       conversationRecallPromise,
       compoundingPromise,
     ]);
@@ -2784,6 +2828,10 @@ export class Orchestrator {
     if (kiResult?.result) {
       this.appendRecallSection(sectionBuckets, "knowledge-index", kiResult.result);
       log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+    }
+
+    if (nativeKnowledgeSection) {
+      this.appendRecallSection(sectionBuckets, "native-knowledge", nativeKnowledgeSection);
     }
 
     // 1c. Verbatim artifacts (quote-first anchors)

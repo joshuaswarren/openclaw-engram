@@ -61,6 +61,14 @@ export interface FileHygieneConfig {
   indexPath: string;
 }
 
+export interface NativeKnowledgeConfig {
+  enabled: boolean;
+  includeFiles: string[];
+  maxChunkChars: number;
+  maxResults: number;
+  maxChars: number;
+}
+
 export function confidenceTier(score: number): ConfidenceTier {
   if (score >= 0.95) return "explicit";
   if (score >= 0.70) return "implied";
@@ -114,6 +122,7 @@ export interface PluginConfig {
   commitmentDecayDays: number;
   workspaceDir: string;
   fileHygiene?: FileHygieneConfig;
+  nativeKnowledge?: NativeKnowledgeConfig;
   // Access tracking (Phase 1A)
   accessTrackingEnabled: boolean;
   accessTrackingBufferMaxSize: number;
