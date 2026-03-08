@@ -130,6 +130,41 @@ test("archiveMemory fails open when lifecycle ledger append throws after archive
   }
 });
 
+test("memory write paths fail open when lifecycle ledger append throws", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-lifecycle-write-fail-open-"));
+  try {
+    const storage = new StorageManager(dir);
+    let failCount = 4;
+    (storage as any).appendGeneratedMemoryLifecycleEvent = async () => {
+      if (failCount > 0) {
+        failCount -= 1;
+        throw new Error("simulated ledger failure");
+      }
+    };
+
+    const memoryId = await storage.writeMemory("fact", "Write path memory", { source: "test" });
+    assert.match(memoryId, /^fact-/);
+
+    const memories = await storage.readAllMemories();
+    const memory = memories.find((entry) => entry.frontmatter.id === memoryId);
+    assert.ok(memory);
+
+    const updated = await storage.updateMemory(memoryId, "Updated content");
+    assert.equal(updated, true);
+
+    const frontmatterUpdated = await storage.writeMemoryFrontmatter(memory!, {
+      lifecycleState: "active",
+      updated: "2026-03-08T12:00:00.000Z",
+    });
+    assert.equal(frontmatterUpdated, true);
+
+    const artifactId = await storage.writeArtifact("Important quote", { sourceMemoryId: memoryId });
+    assert.match(artifactId, /^artifact-/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("rebuildMemoryLifecycleLedger dry-run computes inferred events without writing output", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-rebuild-memory-lifecycle-dry-"));
   await writeText(

@@ -879,7 +879,7 @@ export class StorageManager {
     }
 
     await writeFile(filePath, fileContent, "utf-8");
-    await this.appendGeneratedMemoryLifecycleEvent({
+    await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemory", {
       memoryId: id,
       eventType: "created",
       timestamp: fm.created,
@@ -938,7 +938,7 @@ export class StorageManager {
     }
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
-    await this.appendGeneratedMemoryLifecycleEvent({
+    await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeArtifact", {
       memoryId: id,
       eventType: "created",
       timestamp: fm.created,
@@ -1377,18 +1377,14 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
-      try {
-        await this.appendGeneratedMemoryLifecycleEvent({
-          memoryId: memory.frontmatter.id,
-          eventType: "archived",
-          timestamp: updatedFm.archivedAt ?? updatedFm.updated,
-          actor: "storage.archiveMemory",
-          before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
-          after: this.summarizeLifecycleState(updatedFm, destPath),
-        });
-      } catch (appendErr) {
-        log.warn(`archived memory ${memory.frontmatter.id} but failed to append lifecycle event: ${appendErr}`);
-      }
+      await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.archiveMemory", {
+        memoryId: memory.frontmatter.id,
+        eventType: "archived",
+        timestamp: updatedFm.archivedAt ?? updatedFm.updated,
+        actor: "storage.archiveMemory",
+        before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+        after: this.summarizeLifecycleState(updatedFm, destPath),
+      });
       this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
@@ -1522,7 +1518,7 @@ export class StorageManager {
     }
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
-    await this.appendGeneratedMemoryLifecycleEvent({
+    await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {
       memoryId: id,
       eventType: "updated",
       timestamp: updated.updated,
@@ -1555,7 +1551,7 @@ export class StorageManager {
 
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
-    await this.appendGeneratedMemoryLifecycleEvent({
+    await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemoryFrontmatter", {
       memoryId: updated.id,
       eventType: this.frontmatterPatchEventType(memory.frontmatter, updated),
       timestamp: updated.updated ?? new Date().toISOString(),
@@ -2930,7 +2926,7 @@ export class StorageManager {
 
     try {
       await writeFile(oldMemory.path, fileContent, "utf-8");
-      await this.appendGeneratedMemoryLifecycleEvent({
+      await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.supersedeMemory", {
         memoryId: oldMemoryId,
         eventType: "superseded",
         timestamp: now,
@@ -3021,7 +3017,7 @@ export class StorageManager {
 
       try {
         await writeFile(memory.path, fileContent, "utf-8");
-        await this.appendGeneratedMemoryLifecycleEvent({
+        await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.archiveMemories", {
           memoryId: id,
           eventType: "archived",
           timestamp: updatedFm.archivedAt ?? updatedFm.updated,
@@ -3143,5 +3139,16 @@ export class StorageManager {
         ruleVersion: "memory-lifecycle-ledger.v1",
       },
     ]);
+  }
+
+  private async appendGeneratedMemoryLifecycleEventFailOpen(
+    operation: string,
+    input: Omit<MemoryLifecycleEvent, "eventId" | "ruleVersion">,
+  ): Promise<void> {
+    try {
+      await this.appendGeneratedMemoryLifecycleEvent(input);
+    } catch (appendErr) {
+      log.warn(`${operation} completed but failed to append lifecycle event: ${appendErr}`);
+    }
   }
 }

@@ -42,4 +42,17 @@ jobs:
               return;
             }
 
-            core.notice('CHANGELOG.md edited directly in this PR; release workflow ownership check passed.');
+            const changelogFile = files.find(f => f.filename === 'CHANGELOG.md');
+            const patch = changelogFile?.patch || '';
+            const touchedReleaseSection =
+              patch.includes('## [Unreleased]') ||
+              /## \[v?\d+\.\d+\.\d+/.test(patch);
+
+            if (!touchedReleaseSection) {
+              core.setFailed(
+                'CHANGELOG.md was edited directly, but the diff does not update `## [Unreleased]` or a versioned release section. Keep normal PRs out of CHANGELOG.md, or edit the actual release section intentionally.',
+              );
+              return;
+            }
+
+            core.notice('CHANGELOG.md edited directly in a release section; changelog guard passed.');
