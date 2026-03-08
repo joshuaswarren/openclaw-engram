@@ -7,6 +7,7 @@ import type {
   MemoryFile,
   MemoryLifecycleEvent,
   MemoryProjectionCurrentState,
+  MemoryStatus,
 } from "../types.js";
 import {
   buildLifecycleEventsForMemory,
@@ -63,14 +64,22 @@ function toProjectionPathRel(memoryDir: string, memoryPath: string): string {
   return path.relative(memoryDir, memoryPath).split(path.sep).join("/");
 }
 
+function inferProjectedStatus(pathRel: string, memory: MemoryFile): MemoryStatus {
+  if (memory.frontmatter.status) return memory.frontmatter.status;
+  if (memory.frontmatter.archivedAt) return "archived";
+  if (pathRel.startsWith("archive/")) return "archived";
+  return "active";
+}
+
 function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProjectionCurrentState {
+  const pathRel = toProjectionPathRel(memoryDir, memory.path);
   return {
     memoryId: memory.frontmatter.id,
     category: memory.frontmatter.category,
-    status: memory.frontmatter.status ?? "active",
+    status: inferProjectedStatus(pathRel, memory),
     lifecycleState: memory.frontmatter.lifecycleState,
     path: memory.path,
-    pathRel: toProjectionPathRel(memoryDir, memory.path),
+    pathRel,
     created: memory.frontmatter.created,
     updated: memory.frontmatter.updated,
     archivedAt: memory.frontmatter.archivedAt,

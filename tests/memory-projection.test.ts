@@ -142,6 +142,44 @@ alpha
   }
 });
 
+test("rebuildMemoryProjection preserves archived status parity for archived files without explicit status", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-archived-"));
+  try {
+    await writeText(
+      memoryDir,
+      "archive/2026-03-08/fact-archived.md",
+      `---
+id: fact-archived
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+archivedAt: 2026-03-08T02:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["archived"]
+---
+
+archived without explicit status
+`,
+    );
+
+    const result = await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+    assert.equal(result.currentRows, 1);
+
+    const current = readProjectedMemoryState(memoryDir, "fact-archived");
+    assert.ok(current);
+    assert.equal(current?.status, "archived");
+    assert.equal(current?.archivedAt, "2026-03-08T02:00:00.000Z");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager projection helpers fail open to markdown and lifecycle ledger", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-projection-fallback-"));
   try {

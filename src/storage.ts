@@ -359,6 +359,17 @@ function parseFrontmatter(
   return result;
 }
 
+function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, filePath: string): MemoryFrontmatter {
+  if (/[\\/]archive[\\/]/.test(filePath) && frontmatter.status === "active") {
+    return {
+      ...frontmatter,
+      status: "archived",
+    };
+  }
+
+  return frontmatter;
+}
+
 /**
  * Entity alias table loaded from the user's local config.
  * Populated by StorageManager.loadAliases() at startup.
@@ -1190,7 +1201,7 @@ export class StorageManager {
               if (parsed) {
                 memories.push({
                   path: fullPath,
-                  frontmatter: parsed.frontmatter,
+                  frontmatter: normalizeFrontmatterForPath(parsed.frontmatter, fullPath),
                   content: parsed.content,
                 });
               }
@@ -1231,7 +1242,7 @@ export class StorageManager {
               if (parsed) {
                 memories.push({
                   path: fullPath,
-                  frontmatter: parsed.frontmatter,
+                  frontmatter: normalizeFrontmatterForPath(parsed.frontmatter, fullPath),
                   content: parsed.content,
                 });
               }
@@ -1255,7 +1266,11 @@ export class StorageManager {
       const raw = await readFile(filePath, "utf-8");
       const parsed = parseFrontmatter(raw);
       if (!parsed) return null;
-      return { path: filePath, frontmatter: parsed.frontmatter, content: parsed.content };
+      return {
+        path: filePath,
+        frontmatter: normalizeFrontmatterForPath(parsed.frontmatter, filePath),
+        content: parsed.content,
+      };
     } catch {
       return null;
     }
