@@ -106,6 +106,12 @@ import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./ro
 import { RoutingRulesStore } from "./routing/store.js";
 import { PolicyRuntimeManager, type RuntimePolicyValues } from "./policy-runtime.js";
 import {
+  applyUtilityPromotionRuntimePolicy,
+  applyUtilityRankingRuntimeDelta,
+  loadUtilityRuntimeValues,
+  type UtilityRuntimeValues,
+} from "./utility-runtime.js";
+import {
   buildBehaviorSignalsForMemory,
   dedupeBehaviorSignalsByMemoryAndHash,
 } from "./behavior-signals.js";
@@ -670,6 +676,7 @@ export class Orchestrator {
   private suppressedRecallFailures = 0;
   private readonly policyRuntime: PolicyRuntimeManager;
   private runtimePolicyValues: RuntimePolicyValues | null = null;
+  private utilityRuntimeValues: UtilityRuntimeValues | null = null;
   private evalShadowWriteChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
@@ -792,6 +799,10 @@ export class Orchestrator {
       lifecyclePromoteHeatThreshold: thresholds.promoteHeatThreshold,
       lifecycleStaleDecayThreshold: thresholds.staleDecayThreshold,
       cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
+      utilityRankingBoostMultiplier: this.utilityRuntimeValues?.rankingBoostMultiplier ?? 1,
+      utilityRankingSuppressMultiplier: this.utilityRuntimeValues?.rankingSuppressMultiplier ?? 1,
+      utilityPromoteThresholdDelta: this.utilityRuntimeValues?.promoteThresholdDelta ?? 0,
+      utilityDemoteThresholdDelta: this.utilityRuntimeValues?.demoteThresholdDelta ?? 0,
     };
     return createHash("sha256")
       .update(JSON.stringify(payload))
@@ -952,6 +963,11 @@ export class Orchestrator {
     await this.tierMigrationStatus.load();
     await this.sessionObserver.load();
     this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    this.utilityRuntimeValues = await loadUtilityRuntimeValues({
+      memoryDir: this.config.memoryDir,
+      memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
+      promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
+    });
 
     // Initialize content-hash dedup index
     if (this.config.factDeduplicationEnabled) {
@@ -3721,12 +3737,12 @@ export class Orchestrator {
       return skipped;
     }
 
-    const policy = {
+    const policy = applyUtilityPromotionRuntimePolicy({
       enabled: this.config.qmdTierMigrationEnabled,
       demotionMinAgeDays: this.config.qmdTierDemotionMinAgeDays,
       demotionValueThreshold: this.config.qmdTierDemotionValueThreshold,
       promotionValueThreshold: this.config.qmdTierPromotionValueThreshold,
-    };
+    }, this.utilityRuntimeValues);
 
     this.tierMigrationInFlight = true;
     try {
@@ -6144,7 +6160,11 @@ export class Orchestrator {
         // Access count boost: log scale, capped
         if (this.config.boostAccessCount && memory.frontmatter.accessCount) {
           const accessBoost = Math.log10(memory.frontmatter.accessCount + 1) / 3;
-          score += Math.min(accessBoost, 0.1); // Cap at 0.1 boost
+          score += applyUtilityRankingRuntimeDelta(
+            Math.min(accessBoost, 0.1),
+            this.utilityRuntimeValues,
+            "boost",
+          );
         }
 
         // Importance boost (Phase 1B): higher importance = higher rank
@@ -6153,7 +6173,11 @@ export class Orchestrator {
           // Boost important memories, slightly penalize trivial ones
           // Scale: trivial (-0.05) to critical (+0.15)
           const importanceBoost = (importanceScore - 0.4) * 0.25;
-          score += importanceBoost;
+          score += applyUtilityRankingRuntimeDelta(
+            importanceBoost,
+            this.utilityRuntimeValues,
+            importanceBoost >= 0 ? "boost" : "suppress",
+          );
         }
 
         // Feedback bias (v2.2): apply small user-provided up/down vote adjustments.
@@ -6161,7 +6185,12 @@ export class Orchestrator {
           const match = memory.path.match(/([^/]+)\.md$/);
           const memoryId = match ? match[1] : null;
           if (memoryId) {
-            score += this.relevance.adjustment(memoryId);
+            const feedbackDelta = this.relevance.adjustment(memoryId);
+            score += applyUtilityRankingRuntimeDelta(
+              feedbackDelta,
+              this.utilityRuntimeValues,
+              feedbackDelta >= 0 ? "boost" : "suppress",
+            );
           }
         }
 
@@ -6170,10 +6199,15 @@ export class Orchestrator {
           const match = memory.path.match(/([^/]+)\.md$/);
           const memoryId = match ? match[1] : null;
           if (memoryId) {
-            score -= this.negatives.penalty(memoryId, {
+            const negativePenalty = this.negatives.penalty(memoryId, {
               perHit: this.config.negativeExamplesPenaltyPerHit,
               cap: this.config.negativeExamplesPenaltyCap,
             });
+            score -= applyUtilityRankingRuntimeDelta(
+              negativePenalty,
+              this.utilityRuntimeValues,
+              "suppress",
+            );
           }
         }
 
@@ -6187,24 +6221,33 @@ export class Orchestrator {
             actionType: memory.frontmatter.intentActionType,
             entityTypes: memory.frontmatter.intentEntityTypes ?? [],
           });
-          score += compatibility * this.config.intentRoutingBoost;
+          score += applyUtilityRankingRuntimeDelta(
+            compatibility * this.config.intentRoutingBoost,
+            this.utilityRuntimeValues,
+            "boost",
+          );
         }
 
         // v8.1: Temporal + Tag index boost
         // Results that match the detected temporal window or tag query get a small additive boost.
         if (this.config.queryAwareIndexingEnabled && r.path) {
           if (temporalCandidates?.has(r.path)) {
-            score += 0.08; // Temporal match boost (fixed, non-configurable)
+            score += applyUtilityRankingRuntimeDelta(0.08, this.utilityRuntimeValues, "boost");
           }
           if (tagCandidates?.has(r.path)) {
-            score += 0.06; // Tag match boost
+            score += applyUtilityRankingRuntimeDelta(0.06, this.utilityRuntimeValues, "boost");
           }
         }
 
         // v8.3: lifecycle retrieval weighting (fail-open on legacy memories).
-        score += lifecycleRecallScoreAdjustment(memory.frontmatter, {
+        const lifecycleDelta = lifecycleRecallScoreAdjustment(memory.frontmatter, {
           lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
         });
+        score += applyUtilityRankingRuntimeDelta(
+          lifecycleDelta,
+          this.utilityRuntimeValues,
+          lifecycleDelta >= 0 ? "boost" : "suppress",
+        );
       }
 
       boosted.push({ ...r, score });

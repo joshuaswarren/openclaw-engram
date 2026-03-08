@@ -35,6 +35,10 @@ function expectedPolicyVersion(orchestrator: Orchestrator): string {
         lifecyclePromoteHeatThreshold: cfg.lifecyclePromoteHeatThreshold,
         lifecycleStaleDecayThreshold: Math.min(cfg.lifecycleStaleDecayThreshold, cfg.lifecycleArchiveDecayThreshold),
         cronRecallInstructionHeavyTokenCap: cfg.cronRecallInstructionHeavyTokenCap,
+        utilityRankingBoostMultiplier: 1,
+        utilityRankingSuppressMultiplier: 1,
+        utilityPromoteThresholdDelta: 0,
+        utilityDemoteThresholdDelta: 0,
       }),
     )
     .digest("hex")
