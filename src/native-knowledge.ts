@@ -42,7 +42,7 @@ function chunkHeadingAware(options: {
   let currentLines: string[] = [];
   let startLine = 1;
 
-  const flush = (endLine: number) => {
+  const flush = () => {
     const paragraphs: Array<{
       content: string;
       startLine: number;
@@ -131,7 +131,7 @@ function chunkHeadingAware(options: {
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
     if (/^#{1,6}\s+/.test(line) && currentLines.length > 0) {
-      flush(index);
+      flush();
       currentLines = [];
       currentTitle = line.replace(/^#{1,6}\s+/, "").trim() || currentTitle;
       startLine = index + 2;
@@ -145,7 +145,7 @@ function chunkHeadingAware(options: {
     currentLines.push(line);
   }
 
-  flush(lines.length);
+  flush();
   return chunks;
 }
 
