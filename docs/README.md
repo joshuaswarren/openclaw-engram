@@ -28,4 +28,5 @@
 
 ## Plans / Roadmaps
 
-- [v8 Memory OS Roadmap](plans/2026-02-21-engram-memory-os-roadmap.md) — Major roadmap
+- [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1) — Current priority order, blockers, and next work
+- [Plans Index](plans/README.md) — Historical design plans and archive layout

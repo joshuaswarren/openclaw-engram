@@ -87,6 +87,11 @@ kill -USR1 $(pgrep openclaw-gateway)
 | [Compounding](docs/compounding.md) | Weekly synthesis and mistake learning |
 | [Context Retention](docs/context-retention.md) | Transcript indexing and hourly summaries |
 
+## Roadmap
+
+- [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1) — Current issue order, blockers, and next work
+- [Historical Plans Index](docs/plans/README.md) — Design docs and archived completed plans
+
 ## Requirements
 
 - [OpenClaw](https://github.com/openclaw/openclaw) gateway

@@ -2,13 +2,17 @@
 
 This directory contains the TypeScript source for the openclaw-engram plugin.
 
-## Files Currently Under Active Development (v8.2)
+## Active Development References
 
-**Do not modify these files without reading the corresponding plan docs first:**
+Active sequencing and contributor priority live in the GitHub Project:
 
-- `orchestrator.ts` — see `docs/plans/2026-02-22-v8.2-pr17-tmt.md`
+- [Engram Feature Roadmap](https://github.com/users/joshuaswarren/projects/1)
+
+Use the project for current order/blockers, then read the relevant historical design doc before changing these surfaces:
+
+- `orchestrator.ts` — see `docs/plans/README.md` and the relevant v8 design docs under `docs/plans/`
 - `graph.ts` — see `docs/plans/2026-02-22-v8.2-pr18-graph.md`
-- `tmt.ts` (when present) — see tree-graph design doc
+- `tmt.ts` — see `docs/plans/2026-02-22-v8.2-tree-graph-design.md`
 
 ## Critical Invariants (enforce in all changes)
 

@@ -29,8 +29,10 @@ This directory contains requirements, product specs, and design constraints for 
 
 ## Feature Plans
 
-Detailed feature plans live in `docs/plans/`. Current active plans:
+Active roadmap sequencing and contributor priority live in the GitHub Project:
 
-- [v8.2 PR17 — TMT](../plans/2026-02-22-v8.2-pr17-tmt.md)
-- [v8.2 PR18 — Graph](../plans/2026-02-22-v8.2-pr18-graph.md)
-- [Memory OS Roadmap](../plans/2026-02-21-engram-memory-os-roadmap.md)
+- [Engram Feature Roadmap](https://github.com/users/joshuaswarren/projects/1)
+
+Historical design and implementation plans live in:
+
+- [docs/plans/README.md](../plans/README.md)
