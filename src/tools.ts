@@ -1381,8 +1381,10 @@ Best for:
           }),
         ),
       }),
-      async execute() {
-        const profile = await orchestrator.storage.readProfile();
+      async execute(_toolCallId, params) {
+        const namespace = normalizeToolNamespace(orchestrator, params.namespace);
+        const storage = await orchestrator.getStorageForNamespace(namespace);
+        const profile = await storage.readProfile();
         if (!profile) {
           return toolResult(
             "No profile built yet. The profile builds automatically through conversations.",
@@ -1512,7 +1514,13 @@ Best for:
 - Understanding the agent's self-model and growth
 - "What have you learned about yourself?"
 - Reviewing identity development over time`,
-      parameters: Type.Object({}),
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
+      }),
       async execute(_toolCallId, params) {
         const namespace = normalizeToolNamespace(orchestrator, params.namespace);
         const storage = await orchestrator.getStorageForNamespace(namespace);

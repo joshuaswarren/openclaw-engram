@@ -19,10 +19,14 @@ export function namespaceCollectionName(
     return baseCollection;
   }
 
-  const token = trimmed
+  const normalized = trimmed
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || defaultNamespace;
+    .replace(/[^a-z0-9._-]+/g, "-");
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "-") start += 1;
+  while (end > start && normalized[end - 1] === "-") end -= 1;
+  const token = normalized.slice(start, end) || defaultNamespace;
   return `${baseCollection}--ns--${token}`;
 }
 

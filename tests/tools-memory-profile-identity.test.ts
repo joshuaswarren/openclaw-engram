@@ -1,0 +1,104 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { registerTools } from "../src/tools.ts";
+
+type RegisteredTool = {
+  name: string;
+  execute: (
+    toolCallId: string,
+    params: Record<string, unknown>,
+  ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+};
+
+function toolText(result: { content: Array<{ type: string; text: string }> }): string {
+  return result.content.map((c) => c.text).join("\n");
+}
+
+function buildHarness() {
+  const tools = new Map<string, RegisteredTool>();
+  const reads: Array<{ kind: "profile" | "identity"; namespace: string }> = [];
+
+  const api = {
+    registerTool(spec: RegisteredTool) {
+      tools.set(spec.name, spec);
+    },
+  };
+
+  const orchestrator = {
+    config: {
+      defaultNamespace: "default",
+      workspaceDir: "/tmp/workspace",
+      contextCompressionActionsEnabled: false,
+      feedbackEnabled: false,
+      negativeExamplesEnabled: false,
+      conversationIndexEnabled: false,
+      sharedContextEnabled: false,
+      compoundingEnabled: false,
+      identityContinuityEnabled: true,
+    },
+    qmd: {
+      search: async () => [],
+      searchGlobal: async () => [],
+    },
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    storage: {
+      readIdentity: async () => null,
+      readProfile: async () => "default profile",
+      readAllEntities: async () => [],
+      readIdentityAnchor: async () => null,
+      writeIdentityAnchor: async () => {},
+    },
+    getStorageForNamespace: async (namespace?: string) => {
+      const resolved = typeof namespace === "string" && namespace.length > 0 ? namespace : "default";
+      return {
+        readProfile: async () => {
+          reads.push({ kind: "profile", namespace: resolved });
+          return `${resolved} profile`;
+        },
+        readIdentityReflections: async () => {
+          reads.push({ kind: "identity", namespace: resolved });
+          return `${resolved} identity`;
+        },
+      };
+    },
+    summarizer: {
+      runHourly: async () => {},
+    },
+    transcript: {
+      listSessionKeys: async () => [],
+    },
+    sharedContext: null,
+    compounding: null,
+    recordMemoryFeedback: async () => {},
+    recordNotUsefulMemories: async () => {},
+    requestQmdMaintenanceForTool: () => {},
+    appendMemoryActionEvent: async () => true,
+    searchAcrossNamespaces: async () => [],
+  };
+
+  registerTools(api as any, orchestrator as any);
+  return { tools, reads };
+}
+
+test("memory_profile reads from the requested namespace storage", async () => {
+  const { tools, reads } = buildHarness();
+  const tool = tools.get("memory_profile");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc1", { namespace: "shared" });
+  assert.match(toolText(result), /shared profile/);
+  assert.deepEqual(reads, [{ kind: "profile", namespace: "shared" }]);
+});
+
+test("memory_identity accepts namespace and reads namespace-local reflections", async () => {
+  const { tools, reads } = buildHarness();
+  const tool = tools.get("memory_identity");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc2", { namespace: "shared" });
+  assert.match(toolText(result), /shared identity/);
+  assert.deepEqual(reads, [{ kind: "identity", namespace: "shared" }]);
+});

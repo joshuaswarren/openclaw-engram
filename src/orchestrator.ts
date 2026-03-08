@@ -5524,11 +5524,7 @@ export class Orchestrator {
 
   private async autoConsolidateIdentity(): Promise<void> {
     const namespaces = this.config.namespacesEnabled
-      ? Array.from(new Set([
-          this.config.defaultNamespace,
-          this.config.sharedNamespace,
-          ...this.config.namespacePolicies.map((policy) => policy.name),
-        ]))
+      ? this.configuredNamespaces()
       : [this.config.defaultNamespace];
 
     for (const namespace of namespaces) {
