@@ -31,15 +31,15 @@ test("checkForContradiction resolves candidate memory in routed namespace storag
 
   orchestrator.qmd = {
     isAvailable: () => true,
-    search: async () => [
+  };
+  orchestrator.searchAcrossNamespaces = async () => [
       {
         docid: sharedId,
         path: sharedMemory!.path,
         snippet: "legacy shared fact",
         score: 0.95,
       },
-    ],
-  };
+    ];
   orchestrator.extraction = {
     verifyContradiction: async () => ({
       isContradiction: true,
@@ -80,15 +80,15 @@ test("checkForContradiction ignores candidates outside target write namespace", 
 
   orchestrator.qmd = {
     isAvailable: () => true,
-    search: async () => [
+  };
+  orchestrator.searchAcrossNamespaces = async () => [
       {
         docid: sharedId,
         path: sharedMemory!.path,
         snippet: "shared tenant memory",
         score: 0.95,
       },
-    ],
-  };
+    ];
   orchestrator.extraction = {
     verifyContradiction: async () => ({
       isContradiction: true,

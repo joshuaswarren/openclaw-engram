@@ -28,6 +28,7 @@ function buildHarness(options?: { identityContinuityEnabled?: boolean; initialAn
   const orchestrator = {
     config: {
       defaultNamespace: "default",
+      workspaceDir: "/tmp/workspace",
       contextCompressionActionsEnabled: false,
       feedbackEnabled: false,
       negativeExamplesEnabled: false,
@@ -54,6 +55,13 @@ function buildHarness(options?: { identityContinuityEnabled?: boolean; initialAn
         writes.push(content);
       },
     },
+    getStorageForNamespace: async () => ({
+      readIdentityAnchor: async () => anchor,
+      writeIdentityAnchor: async (content: string) => {
+        anchor = content;
+        writes.push(content);
+      },
+    }),
     summarizer: {
       runHourly: async () => {},
     },

@@ -694,6 +694,13 @@ export class StorageManager {
     return this.baseDir;
   }
 
+  private identityFilePath(workspaceDir: string, namespace?: string): string {
+    const rawNamespace = typeof namespace === "string" ? namespace.trim() : "";
+    if (!rawNamespace) return path.join(workspaceDir, "IDENTITY.md");
+    const safeNamespace = rawNamespace.replace(/[^a-zA-Z0-9._-]/g, "-");
+    return path.join(workspaceDir, `IDENTITY.${safeNamespace}.md`);
+  }
+
   private versionFilePath(kind: "memory-status" | "artifact-write"): string {
     const fileName =
       kind === "memory-status" ? ".memory-status-version.log" : ".artifact-write-version.log";
@@ -781,6 +788,9 @@ export class StorageManager {
   }
   private get identityImprovementLoopsPath(): string {
     return path.join(this.identityDir, "improvement-loops.md");
+  }
+  private get identityReflectionsPath(): string {
+    return path.join(this.identityDir, "reflections.md");
   }
   private get profilePath(): string {
     return path.join(this.baseDir, "profile.md");
@@ -2293,8 +2303,8 @@ export class StorageManager {
   // Identity file
   // ---------------------------------------------------------------------------
 
-  async readIdentity(workspaceDir: string): Promise<string> {
-    const identityPath = path.join(workspaceDir, "IDENTITY.md");
+  async readIdentity(workspaceDir: string, namespace?: string): Promise<string> {
+    const identityPath = this.identityFilePath(workspaceDir, namespace);
     try {
       return await readFile(identityPath, "utf-8");
     } catch {
@@ -2302,8 +2312,8 @@ export class StorageManager {
     }
   }
 
-  async writeIdentity(workspaceDir: string, content: string): Promise<void> {
-    const identityPath = path.join(workspaceDir, "IDENTITY.md");
+  async writeIdentity(workspaceDir: string, content: string, namespace?: string): Promise<void> {
+    const identityPath = this.identityFilePath(workspaceDir, namespace);
     await writeFile(identityPath, content, "utf-8");
     log.debug(`wrote consolidated IDENTITY.md (${content.length} chars)`);
   }
@@ -2316,9 +2326,9 @@ export class StorageManager {
   async appendToIdentity(
     workspaceDir: string,
     reflection: string,
-    opts?: { hygiene?: FileHygieneConfig },
+    opts?: { hygiene?: FileHygieneConfig; namespace?: string },
   ): Promise<void> {
-    const identityPath = path.join(workspaceDir, "IDENTITY.md");
+    const identityPath = this.identityFilePath(workspaceDir, opts?.namespace);
 
     let existing = "";
     try {
@@ -2332,7 +2342,7 @@ export class StorageManager {
       hygiene?.enabled === true &&
       hygiene.rotateEnabled === true &&
       Array.isArray(hygiene.rotatePaths) &&
-      hygiene.rotatePaths.includes("IDENTITY.md");
+      hygiene.rotatePaths.includes(path.basename(identityPath));
 
     // Rotation/splitting: preserve full history, keep the bootstrap file small.
     if (rotateEnabled) {
@@ -2379,6 +2389,29 @@ export class StorageManager {
 
     await writeFile(identityPath, existing + section, "utf-8");
     log.debug(`appended reflection to ${identityPath}`);
+  }
+
+  async readIdentityReflections(): Promise<string | null> {
+    try {
+      return await readFile(this.identityReflectionsPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async appendIdentityReflection(reflection: string): Promise<void> {
+    let existing = "";
+    try {
+      existing = await readFile(this.identityReflectionsPath, "utf-8");
+    } catch {
+      // File doesn't exist yet.
+    }
+
+    const timestamp = new Date().toISOString();
+    const section = `${existing.trimEnd().length > 0 ? "\n\n" : ""}## Reflection — ${timestamp}\n\n${reflection}\n`;
+    await mkdir(this.identityDir, { recursive: true });
+    await writeFile(this.identityReflectionsPath, `${existing.trimEnd()}${section}`, "utf-8");
+    log.debug(`appended namespace-local reflection to ${this.identityReflectionsPath}`);
   }
 
   // ---------------------------------------------------------------------------
