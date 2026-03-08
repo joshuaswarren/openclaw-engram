@@ -44,8 +44,10 @@ import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import {
+  createEvalBaselineSnapshot,
   getEvalHarnessStatus,
   importEvalBenchmarkPack,
+  type EvalBaselineSnapshot,
   type EvalBenchmarkPackSummary,
   type EvalCiGateReport,
   type EvalHarnessStatus,
@@ -656,6 +658,7 @@ export async function runBenchmarkStatusCliCommand(options: {
   evalStoreDir?: string;
   evalHarnessEnabled: boolean;
   evalShadowModeEnabled: boolean;
+  benchmarkBaselineSnapshotsEnabled: boolean;
   memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalHarnessStatus> {
   return getEvalHarnessStatus({
@@ -663,7 +666,28 @@ export async function runBenchmarkStatusCliCommand(options: {
     evalStoreDir: options.evalStoreDir,
     enabled: options.evalHarnessEnabled,
     shadowModeEnabled: options.evalShadowModeEnabled,
+    baselineSnapshotsEnabled: options.benchmarkBaselineSnapshotsEnabled,
     memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
+  });
+}
+
+export async function runBenchmarkBaselineSnapshotCliCommand(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  benchmarkBaselineSnapshotsEnabled: boolean;
+  snapshotId: string;
+  createdAt?: string;
+  notes?: string;
+  gitRef?: string;
+}): Promise<{ targetPath: string; snapshot: EvalBaselineSnapshot }> {
+  return createEvalBaselineSnapshot({
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    baselineSnapshotsEnabled: options.benchmarkBaselineSnapshotsEnabled,
+    snapshotId: options.snapshotId,
+    createdAt: options.createdAt,
+    notes: options.notes,
+    gitRef: options.gitRef,
   });
 }
 
@@ -2639,6 +2663,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             evalStoreDir: orchestrator.config.evalStoreDir,
             evalHarnessEnabled: orchestrator.config.evalHarnessEnabled,
             evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
+            benchmarkBaselineSnapshotsEnabled: orchestrator.config.benchmarkBaselineSnapshotsEnabled,
             memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
@@ -2654,6 +2679,28 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const summary = await runBenchmarkValidateCliCommand({
             path: typeof inputPath === "string" ? inputPath : "",
             memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-baseline-snapshot")
+        .description("Capture a versioned baseline snapshot of the latest completed benchmark runs")
+        .requiredOption("--snapshot-id <id>", "Stable snapshot identifier")
+        .option("--created-at <iso>", "Override snapshot creation timestamp")
+        .option("--git-ref <ref>", "Override the git ref recorded in the snapshot")
+        .option("--notes <text>", "Optional operator notes for the snapshot")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkBaselineSnapshotCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            benchmarkBaselineSnapshotsEnabled: orchestrator.config.benchmarkBaselineSnapshotsEnabled,
+            snapshotId: typeof options.snapshotId === "string" ? options.snapshotId : "",
+            createdAt: typeof options.createdAt === "string" ? options.createdAt : undefined,
+            gitRef: typeof options.gitRef === "string" ? options.gitRef : undefined,
+            notes: typeof options.notes === "string" ? options.notes : undefined,
           });
           console.log(JSON.stringify(summary, null, 2));
           console.log("OK");

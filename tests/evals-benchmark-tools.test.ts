@@ -148,6 +148,7 @@ test("benchmark-import preserves extra files when importing a directory pack", a
     memoryDir: tmpDir,
     evalHarnessEnabled: true,
     evalShadowModeEnabled: false,
+    benchmarkBaselineSnapshotsEnabled: false,
     memoryRedTeamBenchEnabled: false,
   });
 
@@ -177,6 +178,7 @@ test("benchmark-status accounts for imported memory red-team benchmark packs", a
     memoryDir: tmpDir,
     evalHarnessEnabled: true,
     evalShadowModeEnabled: false,
+    benchmarkBaselineSnapshotsEnabled: false,
     memoryRedTeamBenchEnabled: true,
   });
 
@@ -203,6 +205,7 @@ test("benchmark-status ignores attack metadata on standard benchmark packs", asy
     memoryDir: tmpDir,
     evalHarnessEnabled: true,
     evalShadowModeEnabled: false,
+    benchmarkBaselineSnapshotsEnabled: false,
     memoryRedTeamBenchEnabled: false,
   });
 

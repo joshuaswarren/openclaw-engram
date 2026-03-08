@@ -480,6 +480,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.conversationRecallTimeoutMs === "number" ? cfg.conversationRecallTimeoutMs : 800,
     evalHarnessEnabled: cfg.evalHarnessEnabled === true,
     evalShadowModeEnabled: cfg.evalShadowModeEnabled === true,
+    benchmarkBaselineSnapshotsEnabled: cfg.benchmarkBaselineSnapshotsEnabled === true,
     evalStoreDir:
       typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
         ? cfg.evalStoreDir.trim()

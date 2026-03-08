@@ -365,6 +365,7 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 |---------|---------|-------------|
 | `evalHarnessEnabled` | `false` | Enable Engram's benchmark/evaluation harness bookkeeping |
 | `evalShadowModeEnabled` | `false` | Record live recall decisions to the eval store without changing injected output |
+| `benchmarkBaselineSnapshotsEnabled` | `false` | Enable versioned baseline snapshot artifacts for the latest completed benchmark runs |
 | `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 | `objectiveStateMemoryEnabled` | `false` | Enable the objective-state memory foundation for normalized world/tool state snapshots |
 | `objectiveStateSnapshotWritesEnabled` | `false` | Allow agent-end file/process/tool writers to persist objective-state snapshots into the store |
@@ -400,9 +401,11 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
+- When `benchmarkBaselineSnapshotsEnabled` is on, Engram also tracks typed `baselines/*.json` artifacts under the eval store and surfaces the latest stored baseline snapshot in `openclaw engram benchmark-status`.
 - When both eval flags are on, live recall also writes `shadow/YYYY-MM-DD/<trace-id>.json` records with hashes, counts, chosen source, and recalled memory IDs.
 - `openclaw engram benchmark-validate <path>` validates a manifest JSON file or a pack directory with a root `manifest.json`.
 - `openclaw engram benchmark-import <path> [--force]` validates first, then imports into `benchmarks/<benchmarkId>/`.
+- `openclaw engram benchmark-baseline-snapshot --snapshot-id <id>` captures a versioned baseline snapshot of the latest completed benchmark runs under `baselines/<snapshotId>.json`.
 - `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>` compares two eval-store roots and fails when pass rate, shared metrics, or benchmark coverage regress.
 - When `objectiveStateRecallEnabled` is on, Engram can inject a separate `## Objective State` recall section sourced from the objective-state store.
 - When `causalTrajectoryMemoryEnabled` is on, Engram can persist typed causal chains into a separate store for later graph/retrieval slices.

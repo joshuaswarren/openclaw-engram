@@ -1105,6 +1105,11 @@
         "default": false,
         "description": "Enable shadow-mode evaluation workflows so future benchmark instrumentation can measure memory changes without changing live recall output."
       },
+      "benchmarkBaselineSnapshotsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable versioned benchmark baseline snapshot artifacts under the eval store for later PR delta reporting."
+      },
       "evalStoreDir": {
         "type": "string",
         "description": "Override the evaluation harness state directory (defaults to {memoryDir}/state/evals)."
@@ -2164,6 +2169,11 @@
       "label": "Evaluation Shadow Mode",
       "advanced": true,
       "help": "Reserve shadow-mode measurement paths so future benchmark instrumentation can compare memory behavior without affecting live recall."
+    },
+    "benchmarkBaselineSnapshotsEnabled": {
+      "label": "Benchmark Baseline Snapshots",
+      "advanced": true,
+      "help": "Enable versioned benchmark baseline snapshot artifacts for later PR delta reporting."
     },
     "evalStoreDir": {
       "label": "Evaluation Store Directory",

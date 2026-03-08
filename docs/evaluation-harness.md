@@ -17,10 +17,12 @@ This slice ships:
 
 - `evalHarnessEnabled`
 - `evalShadowModeEnabled`
+- `benchmarkBaselineSnapshotsEnabled`
 - `evalStoreDir`
 - `openclaw engram benchmark-status`
 - `openclaw engram benchmark-validate <path>`
 - `openclaw engram benchmark-import <path> [--force]`
+- `openclaw engram benchmark-baseline-snapshot --snapshot-id <id>`
 - `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>`
 - typed benchmark manifest validation
 - typed `memory-red-team` benchmark-pack validation for poisoning-defense suites
@@ -50,6 +52,8 @@ By default, Engram looks under:
   shadow/
     YYYY-MM-DD/
       <trace-id>.json
+  baselines/
+    <snapshot-id>.json
 ```
 
 You can override the root with `evalStoreDir`.
@@ -172,6 +176,7 @@ These records are intentionally compact:
 openclaw engram benchmark-status
 openclaw engram benchmark-validate ./benchmarks/ama-memory
 openclaw engram benchmark-import ./benchmarks/ama-memory
+openclaw engram benchmark-baseline-snapshot --snapshot-id main-baseline
 openclaw engram benchmark-ci-gate --base ./base-evals --candidate ./candidate-evals
 ```
 
@@ -188,6 +193,8 @@ The command reports:
 - shadow recall counts
 - invalid shadow records
 - latest shadow recall summary
+- baseline snapshot counts
+- latest baseline snapshot summary
 
 The validation/import tools:
 
@@ -197,6 +204,13 @@ The validation/import tools:
 - preserve extra files when importing a directory pack
 - require `--force` to replace an existing imported benchmark pack
 - preserve red-team benchmark metadata alongside standard benchmark packs
+
+The baseline snapshot tool:
+
+- requires `benchmarkBaselineSnapshotsEnabled`
+- reads the latest completed run per benchmark from the eval store
+- writes a typed baseline snapshot under `baselines/<snapshotId>.json`
+- records pass rate, shared metrics, source root, and optional operator notes without copying raw benchmark cases
 
 The CI gate:
 
@@ -224,3 +238,4 @@ See:
 - [PR3 Shadow Recording For Live Recall Decisions](plans/2026-03-07-engram-pr3-shadow-recording.md)
 - [PR4 CI Benchmark Delta Gate](plans/2026-03-07-engram-pr4-ci-benchmark-gate.md)
 - [PR16 Attack Benchmark Packs](plans/2026-03-07-engram-pr16-attack-benchmark-packs.md)
+- [PR32 Benchmark Baseline Snapshots](plans/2026-03-08-engram-pr32-benchmark-baseline-snapshots.md)

@@ -12,6 +12,7 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
 
   assert.equal(cfg.evalHarnessEnabled, false);
   assert.equal(cfg.evalShadowModeEnabled, false);
+  assert.equal(cfg.benchmarkBaselineSnapshotsEnabled, false);
   assert.equal(cfg.evalStoreDir, path.join(memoryDir, "state", "evals"));
   assert.equal(cfg.objectiveStateMemoryEnabled, false);
   assert.equal(cfg.objectiveStateSnapshotWritesEnabled, false);
@@ -58,6 +59,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     memoryDir: "/tmp/engram-memory",
     evalHarnessEnabled: true,
     evalShadowModeEnabled: true,
+    benchmarkBaselineSnapshotsEnabled: true,
     evalStoreDir: "/tmp/custom-evals",
     objectiveStateMemoryEnabled: true,
     objectiveStateSnapshotWritesEnabled: true,
@@ -94,6 +96,7 @@ test("evaluation harness config respects explicit flags and custom store dir", (
 
   assert.equal(cfg.evalHarnessEnabled, true);
   assert.equal(cfg.evalShadowModeEnabled, true);
+  assert.equal(cfg.benchmarkBaselineSnapshotsEnabled, true);
   assert.equal(cfg.evalStoreDir, "/tmp/custom-evals");
   assert.equal(cfg.objectiveStateMemoryEnabled, true);
   assert.equal(cfg.objectiveStateSnapshotWritesEnabled, true);

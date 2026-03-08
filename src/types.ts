@@ -216,6 +216,7 @@ export interface PluginConfig {
   // Evaluation harness foundation
   evalHarnessEnabled: boolean;
   evalShadowModeEnabled: boolean;
+  benchmarkBaselineSnapshotsEnabled: boolean;
   evalStoreDir: string;
   // Objective-state memory foundation
   objectiveStateMemoryEnabled: boolean;

@@ -12,6 +12,7 @@ test("benchmark-status reports empty eval store safely", async () => {
     memoryDir,
     evalHarnessEnabled: false,
     evalShadowModeEnabled: false,
+    benchmarkBaselineSnapshotsEnabled: false,
     memoryRedTeamBenchEnabled: false,
   });
 
@@ -20,6 +21,7 @@ test("benchmark-status reports empty eval store safely", async () => {
   assert.equal(status.benchmarks.total, 0);
   assert.equal(status.runs.total, 0);
   assert.equal(status.shadows.total, 0);
+  assert.equal(status.baselines.total, 0);
   assert.deepEqual(status.invalidBenchmarks, []);
 });
 
@@ -121,6 +123,7 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
     memoryDir,
     evalHarnessEnabled: true,
     evalShadowModeEnabled: true,
+    benchmarkBaselineSnapshotsEnabled: false,
     memoryRedTeamBenchEnabled: false,
   });
 
@@ -140,6 +143,8 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
   assert.equal(status.runs.failed, 0);
   assert.equal(status.shadows.total, 2);
   assert.equal(status.shadows.invalid, 1);
+  assert.equal(status.baselines.total, 0);
+  assert.equal(status.baselines.invalid, 0);
   assert.equal(status.shadows.latestTraceId, "trace-001");
   assert.equal(status.shadows.latestRecordedAt, "2026-03-06T10:03:00.000Z");
   assert.equal(status.shadows.latestSessionKey, "agent:main");

@@ -109,8 +109,17 @@ export interface EvalHarnessStatus {
     latestRecordedAt?: string;
     latestSessionKey?: string;
   };
+  baselines: {
+    enabled: boolean;
+    total: number;
+    invalid: number;
+    latestSnapshotId?: string;
+    latestCreatedAt?: string;
+    latestBenchmarkCount?: number;
+  };
   latestRun?: EvalRunSummary;
   latestShadow?: EvalShadowRecallRecord;
+  latestBaseline?: EvalBaselineSnapshot;
   invalidBenchmarks: Array<{
     path: string;
     error: string;
@@ -120,6 +129,10 @@ export interface EvalHarnessStatus {
     error: string;
   }>;
   invalidShadows: Array<{
+    path: string;
+    error: string;
+  }>;
+  invalidBaselines: Array<{
     path: string;
     error: string;
   }>;
@@ -158,6 +171,26 @@ export interface EvalCiGateReport {
   regressions: string[];
   improvements: string[];
   deltas: EvalBenchmarkDelta[];
+}
+
+export interface EvalBaselineSnapshotBenchmark {
+  benchmarkId: string;
+  runId: string;
+  completedAt?: string;
+  gitRef?: string;
+  passRate: number;
+  metrics?: EvalRunMetrics;
+}
+
+export interface EvalBaselineSnapshot {
+  schemaVersion: 1;
+  snapshotId: string;
+  createdAt: string;
+  sourceRootDir: string;
+  benchmarkCount: number;
+  benchmarks: EvalBaselineSnapshotBenchmark[];
+  notes?: string;
+  gitRef?: string;
 }
 
 export interface EvalBenchmarkPackSummary {
@@ -206,11 +239,15 @@ export function resolveEvalStoreDir(memoryDir: string, overrideDir?: string): st
   return path.join(memoryDir, "state", "evals");
 }
 
-function assertSafeBenchmarkId(benchmarkId: string): string {
-  if (benchmarkId === "." || benchmarkId === ".." || benchmarkId.includes("/") || benchmarkId.includes("\\")) {
-    throw new Error("benchmarkId must be a safe path segment");
+function assertSafePathSegment(value: string, field: string): string {
+  if (value === "." || value === ".." || value.includes("/") || value.includes("\\")) {
+    throw new Error(`${field} must be a safe path segment`);
   }
-  return benchmarkId;
+  return value;
+}
+
+function assertSafeBenchmarkId(benchmarkId: string): string {
+  return assertSafePathSegment(benchmarkId, "benchmarkId");
 }
 
 export function validateEvalBenchmarkManifest(
@@ -289,22 +326,7 @@ export function validateEvalRunSummary(raw: unknown): EvalRunSummary {
   if (!Number.isFinite(passedCases) || passedCases < 0) throw new Error("passedCases must be a non-negative number");
   if (!Number.isFinite(failedCases) || failedCases < 0) throw new Error("failedCases must be a non-negative number");
 
-  const metrics = isRecord(raw.metrics)
-    ? {
-        recallPrecisionAtK:
-          typeof raw.metrics.recallPrecisionAtK === "number" ? raw.metrics.recallPrecisionAtK : undefined,
-        actionOutcomeScore:
-          typeof raw.metrics.actionOutcomeScore === "number" ? raw.metrics.actionOutcomeScore : undefined,
-        objectiveStateCoverage:
-          typeof raw.metrics.objectiveStateCoverage === "number" ? raw.metrics.objectiveStateCoverage : undefined,
-        causalPathRecall:
-          typeof raw.metrics.causalPathRecall === "number" ? raw.metrics.causalPathRecall : undefined,
-        trustViolationRate:
-          typeof raw.metrics.trustViolationRate === "number" ? raw.metrics.trustViolationRate : undefined,
-        creationRecoveryScore:
-          typeof raw.metrics.creationRecoveryScore === "number" ? raw.metrics.creationRecoveryScore : undefined,
-      } satisfies EvalRunMetrics
-    : undefined;
+  const metrics = parseOptionalEvalRunMetrics(raw.metrics);
 
   return {
     schemaVersion: 1,
@@ -323,6 +345,68 @@ export function validateEvalRunSummary(raw: unknown): EvalRunSummary {
     notes: typeof raw.notes === "string" && raw.notes.trim().length > 0 ? raw.notes.trim() : undefined,
     gitRef: typeof raw.gitRef === "string" && raw.gitRef.trim().length > 0 ? raw.gitRef.trim() : undefined,
   };
+}
+
+export function validateEvalBaselineSnapshot(raw: unknown): EvalBaselineSnapshot {
+  if (!isRecord(raw)) throw new Error("eval baseline snapshot must be an object");
+  if (raw.schemaVersion !== 1) throw new Error("schemaVersion must be 1");
+  if (!Array.isArray(raw.benchmarks)) throw new Error("benchmarks must be an array");
+
+  const benchmarks = raw.benchmarks.map((item, index) => {
+    if (!isRecord(item)) throw new Error(`benchmarks[${index}] must be an object`);
+    const passRate = Number(item.passRate);
+    if (!Number.isFinite(passRate) || passRate < 0 || passRate > 1) {
+      throw new Error(`benchmarks[${index}].passRate must be a number between 0 and 1`);
+    }
+
+    const metrics = parseOptionalEvalRunMetrics(item.metrics);
+
+    return {
+      benchmarkId: assertString(item.benchmarkId, `benchmarks[${index}].benchmarkId`),
+      runId: assertString(item.runId, `benchmarks[${index}].runId`),
+      completedAt:
+        typeof item.completedAt === "string" && item.completedAt.trim().length > 0
+          ? item.completedAt.trim()
+          : undefined,
+      gitRef:
+        typeof item.gitRef === "string" && item.gitRef.trim().length > 0
+          ? item.gitRef.trim()
+          : undefined,
+      passRate,
+      metrics,
+    } satisfies EvalBaselineSnapshotBenchmark;
+  });
+
+  const benchmarkCount = Number(raw.benchmarkCount);
+  if (!Number.isFinite(benchmarkCount) || benchmarkCount < 0) {
+    throw new Error("benchmarkCount must be a non-negative number");
+  }
+  if (benchmarkCount !== benchmarks.length) {
+    throw new Error("benchmarkCount must match benchmarks.length");
+  }
+
+  return {
+    schemaVersion: 1,
+    snapshotId: assertString(raw.snapshotId, "snapshotId"),
+    createdAt: assertString(raw.createdAt, "createdAt"),
+    sourceRootDir: assertString(raw.sourceRootDir, "sourceRootDir"),
+    benchmarkCount,
+    benchmarks,
+    notes: typeof raw.notes === "string" && raw.notes.trim().length > 0 ? raw.notes.trim() : undefined,
+    gitRef: typeof raw.gitRef === "string" && raw.gitRef.trim().length > 0 ? raw.gitRef.trim() : undefined,
+  };
+}
+
+function parseOptionalEvalRunMetrics(raw: unknown): EvalRunMetrics | undefined {
+  if (!isRecord(raw)) return undefined;
+  return {
+    recallPrecisionAtK: typeof raw.recallPrecisionAtK === "number" ? raw.recallPrecisionAtK : undefined,
+    actionOutcomeScore: typeof raw.actionOutcomeScore === "number" ? raw.actionOutcomeScore : undefined,
+    objectiveStateCoverage: typeof raw.objectiveStateCoverage === "number" ? raw.objectiveStateCoverage : undefined,
+    causalPathRecall: typeof raw.causalPathRecall === "number" ? raw.causalPathRecall : undefined,
+    trustViolationRate: typeof raw.trustViolationRate === "number" ? raw.trustViolationRate : undefined,
+    creationRecoveryScore: typeof raw.creationRecoveryScore === "number" ? raw.creationRecoveryScore : undefined,
+  } satisfies EvalRunMetrics;
 }
 
 export function validateEvalShadowRecallRecord(raw: unknown): EvalShadowRecallRecord {
@@ -421,12 +505,14 @@ interface EvalStoreSnapshot {
   manifests: EvalBenchmarkManifest[];
   runs: EvalRunSummary[];
   shadows: EvalShadowRecallRecord[];
+  baselines: EvalBaselineSnapshot[];
 }
 
 interface EvalStoreSnapshotOptions {
   rootDir: string;
   enabled: boolean;
   shadowModeEnabled: boolean;
+  baselineSnapshotsEnabled?: boolean;
   memoryRedTeamBenchEnabled?: boolean;
 }
 
@@ -493,13 +579,16 @@ async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Prom
   const benchmarkDir = path.join(rootDir, "benchmarks");
   const runsDir = path.join(rootDir, "runs");
   const shadowDir = path.join(rootDir, "shadow");
+  const baselineDir = path.join(rootDir, "baselines");
   const benchmarkFiles = await listNamedFiles(benchmarkDir, "manifest.json");
   const runFiles = await listJsonFiles(runsDir);
   const shadowFiles = await listJsonFiles(shadowDir);
+  const baselineFiles = await listJsonFiles(baselineDir);
 
   const invalidBenchmarks: Array<{ path: string; error: string }> = [];
   const invalidRuns: Array<{ path: string; error: string }> = [];
   const invalidShadows: Array<{ path: string; error: string }> = [];
+  const invalidBaselines: Array<{ path: string; error: string }> = [];
   const manifests: EvalBenchmarkManifest[] = [];
 
   for (const filePath of benchmarkFiles) {
@@ -541,12 +630,25 @@ async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Prom
     }
   }
 
+  const baselines: EvalBaselineSnapshot[] = [];
+  for (const filePath of baselineFiles) {
+    try {
+      baselines.push(validateEvalBaselineSnapshot(await readJsonFile(filePath)));
+    } catch (error) {
+      invalidBaselines.push({
+        path: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   runs.sort((a, b) => {
     const aTime = Date.parse(a.completedAt ?? a.startedAt);
     const bTime = Date.parse(b.completedAt ?? b.startedAt);
     return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
   });
   shadows.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  baselines.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const tags = new Set<string>();
   const attackClasses = new Set<string>();
@@ -601,15 +703,26 @@ async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Prom
         latestRecordedAt: shadows[0]?.recordedAt,
         latestSessionKey: shadows[0]?.sessionKey,
       },
+      baselines: {
+        enabled: options.baselineSnapshotsEnabled === true,
+        total: baselineFiles.length,
+        invalid: invalidBaselines.length,
+        latestSnapshotId: baselines[0]?.snapshotId,
+        latestCreatedAt: baselines[0]?.createdAt,
+        latestBenchmarkCount: baselines[0]?.benchmarkCount,
+      },
       latestRun: runs[0],
       latestShadow: shadows[0],
+      latestBaseline: baselines[0],
       invalidBenchmarks,
       invalidRuns,
       invalidShadows,
+      invalidBaselines,
     },
     manifests,
     runs,
     shadows,
+    baselines,
   };
 }
 
@@ -720,6 +833,7 @@ export async function getEvalHarnessStatus(options: {
   evalStoreDir?: string;
   enabled: boolean;
   shadowModeEnabled: boolean;
+  baselineSnapshotsEnabled?: boolean;
   memoryRedTeamBenchEnabled?: boolean;
 }): Promise<EvalHarnessStatus> {
   return (
@@ -727,9 +841,61 @@ export async function getEvalHarnessStatus(options: {
       rootDir: resolveEvalStoreDir(options.memoryDir, options.evalStoreDir),
       enabled: options.enabled,
       shadowModeEnabled: options.shadowModeEnabled,
+      baselineSnapshotsEnabled: options.baselineSnapshotsEnabled,
       memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
     })
   ).status;
+}
+
+export async function createEvalBaselineSnapshot(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  baselineSnapshotsEnabled: boolean;
+  snapshotId: string;
+  createdAt?: string;
+  notes?: string;
+  gitRef?: string;
+}): Promise<{ targetPath: string; snapshot: EvalBaselineSnapshot }> {
+  if (options.baselineSnapshotsEnabled !== true) {
+    throw new Error("benchmark baseline snapshots are disabled");
+  }
+
+  const snapshotId = assertSafePathSegment(assertString(options.snapshotId, "snapshotId"), "snapshotId");
+  const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
+  const store = await collectEvalStoreSnapshot({
+    rootDir,
+    enabled: true,
+    shadowModeEnabled: true,
+    baselineSnapshotsEnabled: true,
+    memoryRedTeamBenchEnabled: true,
+  });
+  const latestRuns = latestCompletedRunsByBenchmark(store.runs);
+  const benchmarks = [...latestRuns.values()]
+    .sort((a, b) => a.benchmarkId.localeCompare(b.benchmarkId))
+    .map((run) => ({
+      benchmarkId: run.benchmarkId,
+      runId: run.runId,
+      completedAt: run.completedAt,
+      gitRef: run.gitRef,
+      passRate: computePassRate(run),
+      metrics: run.metrics,
+    } satisfies EvalBaselineSnapshotBenchmark));
+
+  const snapshot = validateEvalBaselineSnapshot({
+    schemaVersion: 1,
+    snapshotId,
+    createdAt: options.createdAt ?? new Date().toISOString(),
+    sourceRootDir: rootDir,
+    benchmarkCount: benchmarks.length,
+    benchmarks,
+    notes: options.notes,
+    gitRef: options.gitRef,
+  });
+
+  const targetPath = path.join(rootDir, "baselines", `${snapshot.snapshotId}.json`);
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  await writeFile(targetPath, JSON.stringify(snapshot, null, 2), "utf-8");
+  return { targetPath, snapshot };
 }
 
 function resolveRequiredEvalStoreRoot(options: { memoryDir?: string; evalStoreDir?: string }, label: string): string {

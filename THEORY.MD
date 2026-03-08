@@ -1,79 +1,71 @@
-# Theory: Utility Learning Must Stay Snapshot-Driven Even After Runtime Activation
+# Theory: Benchmark Gates Need Named Baselines, Not Just Store Comparisons
 
 ## Problem
 
-Engram now has the full utility-learning chain for this roadmap segment:
-typed outcome telemetry, an offline learner snapshot, and the first bounded
-runtime consumer. The problem is no longer how to capture or learn from utility
-signals. The problem is how to let those learned signals improve live recall
-and tier routing without turning the hot path into a second learner.
+Engram already has the core pieces of a benchmark-first memory system:
+benchmark-pack validation, run summaries, shadow recall recording, and a
+candidate-vs-base store comparator. That is enough to prove that memory changes
+can be measured, but it is not yet enough to make that measurement durable.
 
-If runtime code starts re-reading raw telemetry or inventing new weighting math
-on every request, the memory system becomes harder to reason about, harder to
-benchmark, and easier to destabilize. PR31 matters because it is the point
-where utility learning stops being an operator-only artifact and starts shaping
-agent behavior.
+The missing piece is a named baseline artifact. Without one, later PR
+comparison still depends on whichever branch or eval-store directory happens to
+be available at review time. That makes the release discipline weaker than the
+rest of the roadmap: reproducible in principle, but still too dependent on
+operator state.
 
 ## Operating Theory
 
-The right runtime contract is still the same three-step memory-OS pattern:
+The evaluation harness should follow the same pattern as the rest of Engram's
+memory operating system:
 
-1. capture evidence explicitly
-2. learn from it offline into a bounded snapshot
-3. let runtime consume only that bounded snapshot
+1. define a typed artifact
+2. store it under the normal state root
+3. expose it with operator-facing tooling
+4. let later slices consume that artifact instead of re-inventing the contract
 
-That means the live system should not ask "what do recent utility events say?"
-It should ask "what bounded snapshot did the learner already publish?"
-
-For PR31, the bounded consumer surface is intentionally narrow:
-
-- ranking uses learned `boost` and `suppress` multipliers only on heuristic
-  deltas that already exist in `boostSearchResults`
-- tier migration uses learned `promote` and `demote` weights only as small
-  threshold nudges on the existing hot/cold routing policy
-- both behaviors remain behind the existing dual gate of
-  `memoryUtilityLearningEnabled` and `promotionByOutcomeEnabled`
+For benchmark release discipline, the typed artifact is a baseline snapshot of
+the latest completed run per benchmark. The snapshot should be small and
+durable: benchmark ids, run ids, pass rates, shared metrics, source root, and
+optional notes. It should not duplicate benchmark cases or raw prompt content.
 
 ## Strategy
 
-The strategy is to keep runtime activation smaller than the learner itself.
-Rather than introduce a new runtime policy file or new flags, Engram loads the
-existing learner snapshot and clamps it into a dedicated runtime view:
+PR32 stays deliberately narrow.
 
-- bounded ranking multipliers
-- bounded promotion threshold delta
-- bounded demotion threshold delta
+It adds:
 
-Those values are then applied only at two seams that already exist:
+- a new `benchmarkBaselineSnapshotsEnabled` flag
+- typed `EvalBaselineSnapshot` validation
+- storage under `state/evals/baselines`
+- a CLI command to capture a named baseline snapshot
+- status visibility through the existing `benchmark-status` command
 
-- heuristic score deltas inside `boostSearchResults`
-- threshold construction inside `runTierMigrationCycle`
-
-This keeps PR31 aligned with the rest of the roadmap: small slices, fail-open
-behavior, and explicit benchmarkable contracts.
+It does not yet add PR delta reporting or required CI rollout. Those belong to
+PR33 and PR34. The goal here is to create the stable artifact that those later
+slices will consume.
 
 ## Key Discoveries
 
-- The runtime gate is not just `memoryUtilityLearningEnabled`. The second flag,
-  `promotionByOutcomeEnabled`, is the real behavior-change switch for this
-  slice, so runtime loading should stay disabled unless both flags are on.
-- Ranking application is safest when it scales existing heuristic deltas rather
-  than the base lexical score. That lets utility learning tune the heuristic
-  layer without hiding the underlying retrieval signal.
-- Tier-migration application does not need a second learner. A bounded wrapper
-  around the existing `TierRoutingPolicy` is enough for the first runtime slice.
-- The unstable part of this work was not the runtime math; it was an
-  over-specific cold-tier integration fixture. The durable contract is better
-  expressed with pure runtime-policy tests plus a focused `boostSearchResults`
-  integration test.
+- The right substrate already existed in PR4. `latestCompletedRunsByBenchmark`
+  is the exact bounded view needed for a baseline snapshot, so PR32 does not
+  need to invent another aggregation layer.
+- Baseline snapshots are best treated as eval-store artifacts, not repo-root
+  metadata. Keeping them under `state/evals` makes them align with manifests,
+  runs, and shadows, and keeps the storage model coherent.
+- `benchmark-status` is the right operator surface for this slice. A separate
+  baseline-status command would add another status surface before the baseline
+  artifact has any downstream consumers.
+- The baseline snapshot should fail closed when disabled. This keeps the slice
+  behind its own feature flag while still allowing the broader evaluation
+  harness to remain enabled independently.
 
 ## Open Questions
 
-- Should later slices reload the utility snapshot during long-lived runtime
-  processes, or is process-start loading enough until benchmark evidence says
-  otherwise?
-- Should future ranking slices split utility multipliers by heuristic class
-  instead of using one bounded `boost` multiplier and one bounded `suppress`
-  multiplier?
-- When benchmark packs evolve, should utility-learning regressions be checked
-  directly in the CI gate rather than only through broader recall outcomes?
+- Should PR33 compare candidates directly to a named baseline snapshot, or
+  resolve a snapshot into a temporary synthetic store and reuse the existing
+  CI-gate machinery?
+- Should baseline snapshots later include selected benchmark metadata such as
+  tags or source links for richer human reporting, or should they stay limited
+  to run-level outcome data?
+- Once PR34 lands, should the project maintain one rolling baseline snapshot or
+  a sequence of named snapshots tied to release points?
