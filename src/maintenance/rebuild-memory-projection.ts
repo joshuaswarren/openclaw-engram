@@ -65,9 +65,10 @@ function toProjectionPathRel(memoryDir: string, memoryPath: string): string {
 }
 
 function inferProjectedStatus(pathRel: string, memory: MemoryFile): MemoryStatus {
-  if (memory.frontmatter.status) return memory.frontmatter.status;
+  if (memory.frontmatter.status && memory.frontmatter.status !== "active") return memory.frontmatter.status;
   if (memory.frontmatter.archivedAt) return "archived";
   if (pathRel.startsWith("archive/")) return "archived";
+  if (memory.frontmatter.status) return memory.frontmatter.status;
   return "active";
 }
 

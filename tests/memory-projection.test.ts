@@ -180,6 +180,43 @@ archived without explicit status
   }
 });
 
+test("rebuildMemoryProjection treats active-plus-archivedAt memories as archived", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-archived-override-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-archived-override.md",
+      `---
+id: fact-archived-override
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+status: active
+archivedAt: 2026-03-08T02:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["archived"]
+---
+
+archivedAt should override active
+`,
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+
+    const current = readProjectedMemoryState(memoryDir, "fact-archived-override");
+    assert.ok(current);
+    assert.equal(current?.status, "archived");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager reads archive-path files as archived even without explicit status", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-archived-read-"));
   try {
