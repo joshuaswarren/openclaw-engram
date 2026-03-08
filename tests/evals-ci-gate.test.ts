@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { runBenchmarkCiGateCliCommand } from "../src/cli.js";
-import { runEvalBenchmarkCiGate } from "../src/evals.js";
+import { runBenchmarkCiGateCliCommand, runBenchmarkStoredBaselineCiGateCliCommand } from "../src/cli.js";
+import { createEvalBaselineSnapshot, runEvalBenchmarkCiGate } from "../src/evals.js";
 
 async function writeBenchmarkStore(options: {
   rootDir: string;
@@ -66,6 +66,22 @@ async function writeBenchmarkStore(options: {
     await mkdir(shadowDir, { recursive: true });
     await writeFile(path.join(shadowDir, "broken.json"), "{\"schemaVersion\":1}", "utf8");
   }
+}
+
+async function writeRequiredBaselineSnapshot(options: {
+  rootDir: string;
+  snapshotId: string;
+  gitRef?: string;
+}): Promise<void> {
+  await createEvalBaselineSnapshot({
+    memoryDir: options.rootDir,
+    evalStoreDir: options.rootDir,
+    baselineSnapshotsEnabled: true,
+    snapshotId: options.snapshotId,
+    createdAt: "2026-03-08T13:20:00.000Z",
+    gitRef: options.gitRef ?? "main",
+    notes: "Required CI baseline snapshot",
+  });
 }
 
 test("benchmark CI gate passes when candidate improves pass rate and metrics", async () => {
@@ -194,4 +210,106 @@ test("benchmark CI gate accepts explicit eval store dirs without memory dirs", a
   assert.equal(report.passed, true);
   assert.equal(report.baseRootDir, baseDir);
   assert.equal(report.candidateRootDir, candidateDir);
+});
+
+test("stored baseline CI gate passes when candidate improves over the required main snapshot", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "engram-eval-baseline-ci-pass-"));
+  const baseDir = path.join(tempRoot, "base");
+  const candidateDir = path.join(tempRoot, "candidate");
+
+  await writeBenchmarkStore({
+    rootDir: baseDir,
+    benchmarkId: "ama-memory",
+    passRate: { passed: 8, failed: 2, total: 10 },
+    actionOutcomeScore: 0.81,
+    trustViolationRate: 0.03,
+  });
+  await writeRequiredBaselineSnapshot({
+    rootDir: baseDir,
+    snapshotId: "required-main",
+  });
+  await writeBenchmarkStore({
+    rootDir: candidateDir,
+    benchmarkId: "ama-memory",
+    passRate: { passed: 9, failed: 1, total: 10 },
+    actionOutcomeScore: 0.9,
+    trustViolationRate: 0.02,
+  });
+
+  const report = await runBenchmarkStoredBaselineCiGateCliCommand({
+    baseEvalStoreDir: baseDir,
+    candidateEvalStoreDir: candidateDir,
+    snapshotId: "required-main",
+  });
+
+  assert.equal(report.passed, true);
+  assert.equal(report.baseRootDir, baseDir);
+  assert.equal(report.baselineSnapshotId, "required-main");
+  assert.equal(report.baselineResolvedFrom, "base");
+  assert.match(report.improvements.join("\n"), /pass rate improved/i);
+});
+
+test("stored baseline CI gate fails when candidate regresses against the required main snapshot", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "engram-eval-baseline-ci-fail-"));
+  const baseDir = path.join(tempRoot, "base");
+  const candidateDir = path.join(tempRoot, "candidate");
+
+  await writeBenchmarkStore({
+    rootDir: baseDir,
+    benchmarkId: "ama-memory",
+    passRate: { passed: 8, failed: 2, total: 10 },
+    actionOutcomeScore: 0.81,
+    trustViolationRate: 0.03,
+  });
+  await writeRequiredBaselineSnapshot({
+    rootDir: baseDir,
+    snapshotId: "required-main",
+  });
+  await writeBenchmarkStore({
+    rootDir: candidateDir,
+    benchmarkId: "ama-memory",
+    passRate: { passed: 7, failed: 3, total: 10 },
+    actionOutcomeScore: 0.7,
+    trustViolationRate: 0.06,
+  });
+
+  const report = await runBenchmarkStoredBaselineCiGateCliCommand({
+    baseEvalStoreDir: baseDir,
+    candidateEvalStoreDir: candidateDir,
+    snapshotId: "required-main",
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(report.baseRootDir, baseDir);
+  assert.equal(report.baselineResolvedFrom, "base");
+  assert.match(report.regressions.join("\n"), /pass rate regressed/i);
+  assert.match(report.regressions.join("\n"), /actionOutcomeScore/i);
+});
+
+test("stored baseline CI gate bootstraps from candidate snapshot when base has not adopted it yet", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "engram-eval-baseline-ci-bootstrap-"));
+  const baseDir = path.join(tempRoot, "base");
+  const candidateDir = path.join(tempRoot, "candidate");
+
+  await writeBenchmarkStore({
+    rootDir: candidateDir,
+    benchmarkId: "ama-memory",
+    passRate: { passed: 8, failed: 2, total: 10 },
+    actionOutcomeScore: 0.81,
+    trustViolationRate: 0.03,
+  });
+  await writeRequiredBaselineSnapshot({
+    rootDir: candidateDir,
+    snapshotId: "required-main",
+  });
+
+  const report = await runBenchmarkStoredBaselineCiGateCliCommand({
+    baseEvalStoreDir: baseDir,
+    candidateEvalStoreDir: candidateDir,
+    snapshotId: "required-main",
+  });
+
+  assert.equal(report.passed, true);
+  assert.equal(report.baselineResolvedFrom, "candidate");
+  assert.equal(report.baselineSnapshotId, "required-main");
 });

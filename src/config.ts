@@ -480,6 +480,8 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.conversationRecallTimeoutMs === "number" ? cfg.conversationRecallTimeoutMs : 800,
     evalHarnessEnabled: cfg.evalHarnessEnabled === true,
     evalShadowModeEnabled: cfg.evalShadowModeEnabled === true,
+    benchmarkBaselineSnapshotsEnabled: cfg.benchmarkBaselineSnapshotsEnabled === true,
+    benchmarkDeltaReporterEnabled: cfg.benchmarkDeltaReporterEnabled === true,
     evalStoreDir:
       typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
         ? cfg.evalStoreDir.trim()
@@ -506,6 +508,37 @@ export function parseConfig(raw: unknown): PluginConfig {
         : path.join(memoryDir, "state", "trust-zones"),
     trustZoneRecallEnabled: cfg.trustZoneRecallEnabled === true,
     memoryPoisoningDefenseEnabled: cfg.memoryPoisoningDefenseEnabled === true,
+    memoryRedTeamBenchEnabled: cfg.memoryRedTeamBenchEnabled === true,
+    harmonicRetrievalEnabled: cfg.harmonicRetrievalEnabled === true,
+    abstractionAnchorsEnabled: cfg.abstractionAnchorsEnabled === true,
+    verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
+    semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
+    semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
+    creationMemoryEnabled: cfg.creationMemoryEnabled === true,
+    memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
+    promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
+    commitmentLedgerEnabled: cfg.commitmentLedgerEnabled === true,
+    commitmentLifecycleEnabled: cfg.commitmentLifecycleEnabled === true,
+    commitmentStaleDays:
+      typeof cfg.commitmentStaleDays === "number" ? cfg.commitmentStaleDays : 14,
+    commitmentLedgerDir:
+      typeof cfg.commitmentLedgerDir === "string" && cfg.commitmentLedgerDir.trim().length > 0
+        ? cfg.commitmentLedgerDir.trim()
+        : path.join(memoryDir, "state", "commitment-ledger"),
+    resumeBundlesEnabled: cfg.resumeBundlesEnabled === true,
+    resumeBundleDir:
+      typeof cfg.resumeBundleDir === "string" && cfg.resumeBundleDir.trim().length > 0
+        ? cfg.resumeBundleDir.trim()
+        : path.join(memoryDir, "state", "resume-bundles"),
+    workProductRecallEnabled: cfg.workProductRecallEnabled === true,
+    workProductLedgerDir:
+      typeof cfg.workProductLedgerDir === "string" && cfg.workProductLedgerDir.trim().length > 0
+        ? cfg.workProductLedgerDir.trim()
+        : path.join(memoryDir, "state", "work-product-ledger"),
+    abstractionNodeStoreDir:
+      typeof cfg.abstractionNodeStoreDir === "string" && cfg.abstractionNodeStoreDir.trim().length > 0
+        ? cfg.abstractionNodeStoreDir.trim()
+        : path.join(memoryDir, "state", "abstraction-nodes"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:
@@ -1002,6 +1035,30 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     {
       id: "trust-zones",
       enabled: cfg.trustZoneRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "harmonic-retrieval",
+      enabled: cfg.harmonicRetrievalEnabled === true,
+      maxResults: 3,
+      maxChars: 2200,
+    },
+    {
+      id: "verified-episodes",
+      enabled: cfg.verifiedRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "verified-rules",
+      enabled: cfg.semanticRuleVerificationEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "work-products",
+      enabled: cfg.workProductRecallEnabled === true,
       maxResults: 3,
       maxChars: 1800,
     },

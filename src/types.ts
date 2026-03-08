@@ -216,6 +216,8 @@ export interface PluginConfig {
   // Evaluation harness foundation
   evalHarnessEnabled: boolean;
   evalShadowModeEnabled: boolean;
+  benchmarkBaselineSnapshotsEnabled: boolean;
+  benchmarkDeltaReporterEnabled: boolean;
   evalStoreDir: string;
   // Objective-state memory foundation
   objectiveStateMemoryEnabled: boolean;
@@ -233,6 +235,27 @@ export interface PluginConfig {
   trustZoneStoreDir: string;
   trustZoneRecallEnabled: boolean;
   memoryPoisoningDefenseEnabled: boolean;
+  memoryRedTeamBenchEnabled: boolean;
+  // Harmonic retrieval foundation
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+  abstractionNodeStoreDir: string;
+  // Episodic/semantic split foundation
+  verifiedRecallEnabled: boolean;
+  semanticRulePromotionEnabled: boolean;
+  semanticRuleVerificationEnabled: boolean;
+  // Creation-memory foundation
+  creationMemoryEnabled: boolean;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  commitmentStaleDays: number;
+  commitmentLedgerDir: string;
+  resumeBundlesEnabled: boolean;
+  resumeBundleDir: string;
+  workProductRecallEnabled: boolean;
+  workProductLedgerDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;

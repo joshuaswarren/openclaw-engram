@@ -215,6 +215,26 @@ function parseFrontmatter(
 
   const conf = parseFloat(fm.confidence ?? "0.8");
 
+  const parseEscapedQuotedValue = (value: string): string => {
+    let out = "";
+    for (let i = 0; i < value.length; i++) {
+      const ch = value[i];
+      if (ch === "\\" && i + 1 < value.length) {
+        const next = value[i + 1];
+        if (next === "\\" || next === '"') {
+          out += next;
+          i++;
+          continue;
+        }
+        out += next;
+        i++;
+        continue;
+      }
+      out += ch;
+    }
+    return out;
+  };
+
   // Parse lineage array if present
   let lineage: string[] | undefined;
   const lineageStr = fm.lineage ?? "";
@@ -251,7 +271,7 @@ function parseFrontmatter(
         if (reasonsMatch) {
           reasons = reasonsMatch[1]
             .split(/",\s*"/)
-            .map((r) => r.replace(/^"|"$/g, "").replace(/\\"/g, '"'))
+            .map((r) => parseEscapedQuotedValue(r.replace(/^"|"$/g, "")))
             .filter(Boolean);
         }
       }
@@ -322,27 +342,7 @@ function parseFrontmatter(
   // Note: Simple parsing - for full YAML we'd need a library.
   if (fmBlock.includes("links:")) {
     const links: MemoryLink[] = [];
-          ? (() => {
-              const s = match[4];
-              let out = "";
-              for (let i = 0; i < s.length; i++) {
-                const ch = s[i];
-                if (ch === "\\" && i + 1 < s.length) {
-                  const next = s[i + 1];
-                  if (next === "\\" || next === '"') {
-                    out += next;
-                    i++; // skip consumed escape char
-                    continue;
-                  }
-                  // For any other escape, drop the backslash and keep the char.
-                  out += next;
-                  i++;
-                } else {
-                  out += ch;
-                }
-              }
-              return out;
-            })()
+    const linkMatches = fmBlock.matchAll(
       /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "((?:\\.|[^"\\])*)")?/g,
     );
     for (const match of linkMatches) {
@@ -350,9 +350,7 @@ function parseFrontmatter(
         targetId: match[1],
         linkType: match[2] as MemoryLink["linkType"],
         strength: parseFloat(match[3]),
-        reason: match[4]
-          ? match[4].replace(/\\\\/g, "\\").replace(/\\"/g, '"')
-          : undefined,
+        reason: match[4] ? parseEscapedQuotedValue(match[4]) : undefined,
       });
     }
     if (links.length > 0) {

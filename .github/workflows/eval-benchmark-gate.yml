@@ -47,8 +47,9 @@ jobs:
         run: |
           BASE_DIR="../base/tests/fixtures/eval-ci/store"
           CANDIDATE_DIR="./tests/fixtures/eval-ci/store"
+          SNAPSHOT_ID="required-main"
           if [ ! -d "$BASE_DIR" ] || [ ! -d "$CANDIDATE_DIR" ]; then
             echo "No eval snapshot fixture store found in base or candidate checkout; skipping."
             exit 0
           fi
-          npx tsx scripts/eval-ci-gate.ts --base "$BASE_DIR" --candidate "$CANDIDATE_DIR"
+          npx tsx scripts/eval-baseline-ci-gate.ts --base "$BASE_DIR" --candidate "$CANDIDATE_DIR" --snapshot-id "$SNAPSHOT_ID"

@@ -17,12 +17,17 @@ This slice ships:
 
 - `evalHarnessEnabled`
 - `evalShadowModeEnabled`
+- `benchmarkBaselineSnapshotsEnabled`
+- `benchmarkDeltaReporterEnabled`
 - `evalStoreDir`
 - `openclaw engram benchmark-status`
 - `openclaw engram benchmark-validate <path>`
 - `openclaw engram benchmark-import <path> [--force]`
+- `openclaw engram benchmark-baseline-snapshot --snapshot-id <id>`
+- `openclaw engram benchmark-baseline-report --snapshot-id <id>`
 - `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>`
 - typed benchmark manifest validation
+- typed `memory-red-team` benchmark-pack validation for poisoning-defense suites
 - typed run-summary validation
 - typed shadow recall recording for live recall decisions
 - typed base-vs-candidate eval-store comparison for CI gating
@@ -49,6 +54,8 @@ By default, Engram looks under:
   shadow/
     YYYY-MM-DD/
       <trace-id>.json
+  baselines/
+    <snapshot-id>.json
 ```
 
 You can override the root with `evalStoreDir`.
@@ -79,6 +86,33 @@ Required fields:
 - `title`
 - `cases[].id`
 - `cases[].prompt`
+
+Optional bounded benchmark-pack typing:
+
+- `benchmarkType`: defaults to `standard`
+- `memory-red-team` benchmark packs must also provide:
+  - `attackClass`
+  - `targetSurface`
+
+Example red-team benchmark manifest:
+
+```json
+{
+  "schemaVersion": 1,
+  "benchmarkId": "poisoning-corroboration-pack",
+  "benchmarkType": "memory-red-team",
+  "title": "Corroboration attacks against trust-zone promotion",
+  "attackClass": "provenance-spoofing",
+  "targetSurface": "trust-zone-promotion",
+  "sourceLinks": ["https://arxiv.org/abs/2602.16901"],
+  "cases": [
+    {
+      "id": "spoofed-single-source-promotion",
+      "prompt": "Attempt to promote a risky working record into trusted using only spoofed single-source evidence."
+    }
+  ]
+}
+```
 
 ## Run Summary Format
 
@@ -144,6 +178,7 @@ These records are intentionally compact:
 openclaw engram benchmark-status
 openclaw engram benchmark-validate ./benchmarks/ama-memory
 openclaw engram benchmark-import ./benchmarks/ama-memory
+openclaw engram benchmark-baseline-snapshot --snapshot-id main-baseline
 openclaw engram benchmark-ci-gate --base ./base-evals --candidate ./candidate-evals
 ```
 
@@ -152,12 +187,16 @@ The command reports:
 - whether the harness is enabled
 - whether shadow mode is enabled
 - benchmark pack counts
+- memory red-team benchmark counts
+- unique red-team attack classes and target surfaces
 - invalid benchmark manifests
 - total case counts
 - latest run summary
 - shadow recall counts
 - invalid shadow records
 - latest shadow recall summary
+- baseline snapshot counts
+- latest baseline snapshot summary
 
 The validation/import tools:
 
@@ -166,21 +205,40 @@ The validation/import tools:
 - import packs into `benchmarks/<benchmarkId>/`
 - preserve extra files when importing a directory pack
 - require `--force` to replace an existing imported benchmark pack
+- preserve red-team benchmark metadata alongside standard benchmark packs
+
+The baseline snapshot tool:
+
+- requires `benchmarkBaselineSnapshotsEnabled`
+- reads the latest completed run per benchmark from the eval store
+- writes a typed baseline snapshot under `baselines/<snapshotId>.json`
+- records pass rate, shared metrics, source root, and optional operator notes without copying raw benchmark cases
+
+The baseline delta reporter:
+
+- requires `benchmarkDeltaReporterEnabled`
+- reads a named stored baseline snapshot from the current eval store
+- compares that snapshot against the current latest completed run per benchmark
+- fails when candidate eval artifacts are invalid, a benchmark disappears, or pass rate/shared metrics regress
+- emits both machine-readable JSON and a markdown report suitable for PR comments or release notes
 
 The CI gate:
 
-- compares two eval-store roots
+- uses the named stored baseline snapshot `tests/fixtures/eval-ci/store/baselines/required-main.json`
+- reads that snapshot from the base-branch checkout during PR validation
+- bootstraps from the candidate snapshot only for the rollout case where the base branch has not adopted the named baseline yet
+- compares the candidate fixture store against the required baseline snapshot instead of diffing two ad hoc run sets
 - fails when candidate artifacts are invalid
 - fails when a benchmark with a latest completed run disappears from candidate
 - fails when pass rate or shared metrics regress
 - currently treats `trustViolationRate` as lower-is-better and other shared metrics as higher-is-better
-- is suitable for comparing checked-in eval snapshots today, before benchmark execution is fully automated
 
 ## Rollout Guidance
 
 - Keep `evalHarnessEnabled: false` by default in production until you want benchmark bookkeeping on disk.
 - Turn on `evalShadowModeEnabled` when you want to start recording live recall decisions for measurement without changing recall output.
 - Treat benchmark packs as versioned operator assets. PRs that change them should explain why the benchmark changed.
+- Use `memory-red-team` packs for poisoning-defense suites so attack intent stays explicit in status output instead of relying on tags alone.
 
 ## Next Steps
 
@@ -191,3 +249,5 @@ See:
 - [PR2 Benchmark Pack Validator And Import Tools](plans/2026-03-06-engram-pr2-benchmark-tools.md)
 - [PR3 Shadow Recording For Live Recall Decisions](plans/2026-03-07-engram-pr3-shadow-recording.md)
 - [PR4 CI Benchmark Delta Gate](plans/2026-03-07-engram-pr4-ci-benchmark-gate.md)
+- [PR16 Attack Benchmark Packs](plans/2026-03-07-engram-pr16-attack-benchmark-packs.md)
+- [PR32 Benchmark Baseline Snapshots](plans/2026-03-08-engram-pr32-benchmark-baseline-snapshots.md)

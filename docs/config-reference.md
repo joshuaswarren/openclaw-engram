@@ -365,6 +365,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 |---------|---------|-------------|
 | `evalHarnessEnabled` | `false` | Enable Engram's benchmark/evaluation harness bookkeeping |
 | `evalShadowModeEnabled` | `false` | Record live recall decisions to the eval store without changing injected output |
+| `benchmarkBaselineSnapshotsEnabled` | `false` | Enable versioned baseline snapshot artifacts for the latest completed benchmark runs |
+| `benchmarkDeltaReporterEnabled` | `false` | Enable named-baseline delta reports against the current eval store |
 | `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 | `objectiveStateMemoryEnabled` | `false` | Enable the objective-state memory foundation for normalized world/tool state snapshots |
 | `objectiveStateSnapshotWritesEnabled` | `false` | Allow agent-end file/process/tool writers to persist objective-state snapshots into the store |
@@ -379,12 +381,34 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `trustZoneStoreDir` | `{memoryDir}/state/trust-zones` | Root directory for trust-zone records |
 | `trustZoneRecallEnabled` | `false` | Inject prompt-relevant working and trusted trust-zone records into recall context |
 | `memoryPoisoningDefenseEnabled` | `false` | Enable deterministic provenance trust scoring and corroboration requirements for risky trusted promotions |
+| `memoryRedTeamBenchEnabled` | `false` | Enable typed `memory-red-team` benchmark packs and status accounting for poisoning-defense regression suites |
+| `harmonicRetrievalEnabled` | `false` | Enable harmonic retrieval blending over abstraction nodes and cue anchors, including the dedicated recall section and `harmonic-search` diagnostics |
+| `abstractionAnchorsEnabled` | `false` | Enable typed cue-anchor indexing for abstraction nodes and expose the anchor store through status tooling |
+| `abstractionNodeStoreDir` | `{memoryDir}/state/abstraction-nodes` | Root directory for abstraction-node artifacts |
+| `verifiedRecallEnabled` | `false` | Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes |
+| `semanticRulePromotionEnabled` | `false` | Enable deterministic promotion of explicit `IF ... THEN ...` rules from verified episodic memories via `openclaw engram semantic-rule-promote` |
+| `semanticRuleVerificationEnabled` | `false` | Verify promoted semantic rules against their cited source episodes at recall time and inject a dedicated `Verified Rules` section via `openclaw engram semantic-rule-verify` |
+| `creationMemoryEnabled` | `false` | Enable the creation-memory foundation, including the typed work-product ledger and its operator-facing write/status commands |
+| `memoryUtilityLearningEnabled` | `false` | Enable typed utility-learning telemetry storage, the offline learner commands `openclaw engram utility-status`, `openclaw engram utility-record`, `openclaw engram utility-learning-status`, and `openclaw engram utility-learn`, plus runtime loading of the persisted learner snapshot |
+| `promotionByOutcomeEnabled` | `false` | Apply bounded learned utility weights to ranking heuristics and tier-migration thresholds when a learner snapshot is available |
+| `commitmentLedgerEnabled` | `false` | Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations |
+| `commitmentLifecycleEnabled` | `false` | Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger |
+| `commitmentStaleDays` | `14` | Days before an open commitment without a due date is considered stale in lifecycle status |
+| `commitmentLedgerDir` | `{memoryDir}/state/commitment-ledger` | Root directory for commitment ledger entries |
+| `resumeBundlesEnabled` | `false` | Enable typed resume-bundle storage plus the operator-facing `resume-bundle-status`, `resume-bundle-record`, and `resume-bundle-build` commands |
+| `resumeBundleDir` | `{memoryDir}/state/resume-bundles` | Root directory for resume bundles |
+| `workProductRecallEnabled` | `false` | Inject prompt-relevant work-product ledger entries into recall and expose `openclaw engram work-product-recall-search` |
+| `workProductLedgerDir` | `{memoryDir}/state/work-product-ledger` | Root directory for work-product ledger entries |
 
 Current foundation slice:
 - `openclaw engram benchmark-status` scans `benchmarks/**.json` and `runs/**.json`, validates manifests/run summaries, and reports the latest completed run.
+- When `benchmarkBaselineSnapshotsEnabled` is on, Engram also tracks typed `baselines/*.json` artifacts under the eval store and surfaces the latest stored baseline snapshot in `openclaw engram benchmark-status`.
 - When both eval flags are on, live recall also writes `shadow/YYYY-MM-DD/<trace-id>.json` records with hashes, counts, chosen source, and recalled memory IDs.
 - `openclaw engram benchmark-validate <path>` validates a manifest JSON file or a pack directory with a root `manifest.json`.
 - `openclaw engram benchmark-import <path> [--force]` validates first, then imports into `benchmarks/<benchmarkId>/`.
+- `openclaw engram benchmark-baseline-snapshot --snapshot-id <id>` captures a versioned baseline snapshot of the latest completed benchmark runs under `baselines/<snapshotId>.json`.
+- `openclaw engram benchmark-baseline-report --snapshot-id <id>` compares the current eval store against a named stored baseline snapshot, emits both JSON and markdown summaries, and fails when pass rate, shared metrics, coverage, or eval artifact validity regress relative to that snapshot.
+- The required GitHub `eval-benchmark-gate` workflow uses the committed fixture baseline snapshot at `tests/fixtures/eval-ci/store/baselines/required-main.json` as its stable PR-gating reference.
 - `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>` compares two eval-store roots and fails when pass rate, shared metrics, or benchmark coverage regress.
 - When `objectiveStateRecallEnabled` is on, Engram can inject a separate `## Objective State` recall section sourced from the objective-state store.
 - When `causalTrajectoryMemoryEnabled` is on, Engram can persist typed causal chains into a separate store for later graph/retrieval slices.
@@ -395,6 +419,23 @@ Current foundation slice:
 - When `trustZoneRecallEnabled` is also on, Engram injects a separate `## Trust Zones` recall section sourced from `working` and `trusted` trust-zone records while keeping `quarantine` records out of recall by default.
 - When `memoryPoisoningDefenseEnabled` is also on, `openclaw engram trust-zone-status` reports deterministic provenance trust scores derived from source class plus `sourceId` / `evidenceHash` / `sessionKey` anchors so later poisoning defenses can build on explicit signals instead of hidden heuristics.
 - With both `memoryPoisoningDefenseEnabled` and `quarantinePromotionEnabled` enabled, risky `working -> trusted` promotions now require at least one independent non-`quarantine` corroborating record with anchored provenance and overlapping `entityRefs` or `tags`.
+- When `memoryRedTeamBenchEnabled` is on, benchmark manifests can also declare `benchmarkType: "memory-red-team"` plus `attackClass` and `targetSurface`, and `openclaw engram benchmark-status` reports red-team pack counts and unique attack metadata.
+- When `harmonicRetrievalEnabled` is on, Engram can persist typed abstraction nodes into a separate abstraction-node store for later harmonic retrieval slices.
+- When `abstractionAnchorsEnabled` is also on, Engram can persist cue-anchor index entries under `{abstractionNodeStoreDir}/anchors` for entities, files, tools, outcomes, constraints, and dates.
+- When the harmonic retrieval section is enabled in the recall pipeline, Engram can inject a dedicated `## Harmonic Retrieval` section that explains which abstraction nodes matched and which cue anchors contributed.
+- Use `openclaw engram abstraction-node-status` to inspect node storage, `openclaw engram cue-anchor-status` to inspect anchor counts and invalid index records, and `openclaw engram harmonic-search <query>` to preview blended harmonic retrieval matches.
+- When `verifiedRecallEnabled` is on, Engram can inject a separate `## Verified Episodes` recall section sourced from recent memory boxes, but only when each surfaced box still cites at least one non-archived source memory whose `memoryKind` remains `episode`.
+- Use `openclaw engram verified-recall-search <query>` to preview verified episodic recall matches, including verified memory counts, matched fields, and cited episodic memory IDs.
+- When `semanticRulePromotionEnabled` is on, `openclaw engram semantic-rule-promote --memory-id <id>` can promote an explicit `IF ... THEN ...` rule from a non-archived episodic memory into a durable `rule` memory with lineage, `sourceMemoryId`, and duplicate suppression.
+- When `semanticRuleVerificationEnabled` is on, Engram can inject a separate `## Verified Rules` recall section sourced from promoted `rule` memories, but only when each surfaced rule still clears a provenance-aware effective-confidence threshold after re-checking its `sourceMemoryId`.
+- When both `creationMemoryEnabled` and `commitmentLedgerEnabled` are on, Engram can persist explicit commitment ledger entries and expose them through `openclaw engram commitment-status` and `openclaw engram commitment-record`.
+- When `commitmentLifecycleEnabled` is also on, Engram can transition commitment states with `openclaw engram commitment-set-state`, report overdue/stale/decay-eligible counts in `openclaw engram commitment-status`, and apply overdue-expiry plus resolved-entry cleanup through `openclaw engram commitment-lifecycle-run`.
+- When both `creationMemoryEnabled` and `resumeBundlesEnabled` are on, Engram can persist explicit typed resume bundles, inspect them with `openclaw engram resume-bundle-status`, write manual shells with `openclaw engram resume-bundle-record`, and assemble bounded bundles from transcript recovery plus recent objective state, work products, and open commitments with `openclaw engram resume-bundle-build`.
+- When `creationMemoryEnabled` is on, Engram can persist explicit work-product ledger entries and expose them through `openclaw engram work-product-status` and `openclaw engram work-product-record`.
+- When both `creationMemoryEnabled` and `workProductRecallEnabled` are on, Engram can inject a separate `## Work Products` recall section sourced from the typed work-product ledger and expose `openclaw engram work-product-recall-search <query>` for reuse previews.
+- When `memoryUtilityLearningEnabled` is on, Engram can persist typed downstream utility telemetry for promotion and ranking decisions, inspect the resulting event ledger with `openclaw engram utility-status`, record explicit benchmark/operator utility observations through `openclaw engram utility-record`, and learn bounded offline promotion/ranking weights through `openclaw engram utility-learn` with the persisted learner snapshot visible in `openclaw engram utility-learning-status`.
+- When `promotionByOutcomeEnabled` is also on and a learner snapshot exists, Engram applies bounded learned utility multipliers to ranking heuristic deltas and bounded promotion/demotion threshold nudges to tier migration without re-reading raw utility telemetry on the hot path.
+- Use `openclaw engram semantic-rule-verify <query>` to preview verified semantic-rule matches, including verification status, effective confidence, and the cited source memory id.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
 | `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |

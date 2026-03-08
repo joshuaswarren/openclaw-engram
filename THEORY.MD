@@ -1,72 +1,68 @@
-# Theory: Poisoning Defense Needs Independent Evidence Before Trust
+# Theory: Benchmark Discipline Becomes Real At The Required Check
 
 ## Problem
 
-Engram now has real trust tiers, explicit promotion rules, bounded trust-zone
-recall, and deterministic provenance trust scoring. That still leaves one
-defensive gap: a risky record can look structurally well-formed and still come
-from a single source.
+PR32 created durable baseline snapshots.
+PR33 made those snapshots comparable against current candidate runs.
 
-For poisoning defense, anchored provenance alone is not enough. If `tool_output`,
-`web_content`, or `subagent_trace` material can become `trusted` without any
-independent confirmation, then the trust zone is still too easy to poison with a
-single bad input.
+That still left one gap: the required PR gate was comparing two fixture stores
+directly, not comparing a candidate branch against the named baseline snapshot
+the repo had chosen to trust.
+
+If that gap stayed open, Engram could claim benchmark-gated release discipline
+without actually enforcing it at merge time.
 
 ## Operating Theory
 
-The trust-zone rollout is working because it has stayed ordered:
+PR34 should operationalize the stored-baseline model, not replace it.
 
-1. store trust tiers
-2. define promotion boundaries
-3. expose bounded recall
-4. surface deterministic trust signals
-5. require independent corroboration for risky promotions
-6. only then benchmark attacks and tune policy
+The cleanest rollout is:
 
-PR14 completed step 4 by making provenance quality measurable. PR15 is step 5:
-consume the existing trust substrate and require independent corroboration
-before risky `working -> trusted` promotions succeed.
+1. keep the existing required workflow and check name
+2. read the named baseline snapshot from the base branch checkout
+3. allow a one-time candidate fallback only when the base branch has not adopted
+   the named baseline yet
+4. compare the candidate branch fixture runs against that stored baseline
+5. fail the PR when candidate artifacts are invalid or benchmark outcomes regress
 
-That keeps the system explainable. Trust is no longer just "did this record
-have anchors?" It becomes "did at least one independent, non-quarantine source
-support the same claim cluster?"
+This preserves the key distinction introduced in PR32 and PR33:
+
+- the baseline is deliberate and named
+- the candidate view is the latest completed run set
+- the merge gate compares those two contracts directly
 
 ## Strategy
 
-Keep the corroboration rule narrow and deterministic:
+Keep the slice small and reviewable:
 
-- only gate risky `working -> trusted` promotions
-- leave `quarantine -> working` flow unchanged
-- require corroboration from stored records, not fresh model judgment
-- treat `quarantine` as non-corroborating by design
-- use explicit overlap on `entityRefs` or `tags`, not semantic fuzziness
-- record corroboration metadata on successful promotions
+- add one stored-baseline CI helper
+- point the existing `eval-benchmark-gate` workflow at it
+- commit one explicit required baseline fixture snapshot:
+  `tests/fixtures/eval-ci/store/baselines/required-main.json`
+- document that snapshot as the PR-gating contract
 
-This preserves small-slice discipline. PR15 is not a full trust engine. It is
-the smallest bounded policy that converts provenance signals into an actual
-promotion defense.
+The important constraint is continuity. The workflow name should stay stable so
+branch protection does not change, while the comparison semantics underneath it
+become stricter and more intentional.
 
 ## Key Discoveries
 
-- The first corroboration rule should be structural, not inferential. Explicit
-  overlap plus anchored provenance is easier to test, explain, and benchmark
-  than semantic similarity or another model call.
-- `quarantine` records cannot count as corroboration without collapsing the
-  trust boundary. The tier only works if low-trust evidence stays low-trust
-  until a cleaner source confirms it.
-- Independent source class matters. Two records from the same source class are
-  weak confirmation for poisoning defense because they often share the same
-  failure mode.
-- Corroboration belongs in promotion policy before retrieval policy. The system
-  should decide what can become `trusted` before it decides how trust should
-  alter ranking or filtering.
+- PR34 does not need another public operator command. The missing piece is a CI
+  path that reads a base-branch baseline snapshot while still evaluating the
+  candidate branch run artifacts.
+- Using a committed named snapshot is better than an implicit "latest from
+  base" rule because it makes the release baseline auditable and reviewable in
+  the repo.
+- The rollout PR itself is a bootstrap edge case: `main` cannot provide the new
+  required snapshot until the PR lands. That needs an explicit, visible
+  candidate fallback rather than a silent failure or a one-off manual merge.
+- The existing `EvalBaselineDeltaReport` contract from PR33 was already strong
+  enough for rollout. The required check only needed a thin adapter that swaps
+  the source of the baseline snapshot from "current store" to "base branch
+  store."
 
-## Open Questions
+## Remaining Question
 
-- Should PR16's attack benchmarks focus first on false promotions, or also on
-  false denials where good evidence lacks enough explicit overlap metadata?
-- Should later slices let multiple medium-trust corroborators outweigh a single
-  high-trust corroborator, or keep the first generation rule purely count-based?
-- Should future retrieval use corroboration metadata only for operator
-  observability, or eventually as a ranking/filtering input once benchmark data
-  justifies it?
+- After PR34 lands, the roadmap program is functionally complete, but the next
+  improvement path would be automating how the `required-main` fixture snapshot
+  gets refreshed so baseline promotion is itself deliberate and benchmark-backed.

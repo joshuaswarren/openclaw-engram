@@ -12,6 +12,8 @@ test("benchmark-status reports empty eval store safely", async () => {
     memoryDir,
     evalHarnessEnabled: false,
     evalShadowModeEnabled: false,
+    benchmarkBaselineSnapshotsEnabled: false,
+    memoryRedTeamBenchEnabled: false,
   });
 
   assert.equal(status.enabled, false);
@@ -19,6 +21,7 @@ test("benchmark-status reports empty eval store safely", async () => {
   assert.equal(status.benchmarks.total, 0);
   assert.equal(status.runs.total, 0);
   assert.equal(status.shadows.total, 0);
+  assert.equal(status.baselines.total, 0);
   assert.deepEqual(status.invalidBenchmarks, []);
 });
 
@@ -120,6 +123,8 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
     memoryDir,
     evalHarnessEnabled: true,
     evalShadowModeEnabled: true,
+    benchmarkBaselineSnapshotsEnabled: false,
+    memoryRedTeamBenchEnabled: false,
   });
 
   assert.equal(status.enabled, true);
@@ -127,7 +132,10 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
   assert.equal(status.benchmarks.total, 2);
   assert.equal(status.benchmarks.valid, 1);
   assert.equal(status.benchmarks.invalid, 1);
+  assert.equal(status.benchmarks.redTeam, 0);
   assert.equal(status.benchmarks.totalCases, 2);
+  assert.deepEqual(status.benchmarks.attackClasses, []);
+  assert.deepEqual(status.benchmarks.targetSurfaces, []);
   assert.deepEqual(status.benchmarks.tags, ["objective-state", "trajectory"]);
   assert.equal(status.runs.total, 2);
   assert.equal(status.runs.invalid, 1);
@@ -135,6 +143,8 @@ test("benchmark-status summarizes valid manifests, invalid manifests, and latest
   assert.equal(status.runs.failed, 0);
   assert.equal(status.shadows.total, 2);
   assert.equal(status.shadows.invalid, 1);
+  assert.equal(status.baselines.total, 0);
+  assert.equal(status.baselines.invalid, 0);
   assert.equal(status.shadows.latestTraceId, "trace-001");
   assert.equal(status.shadows.latestRecordedAt, "2026-03-06T10:03:00.000Z");
   assert.equal(status.shadows.latestSessionKey, "agent:main");

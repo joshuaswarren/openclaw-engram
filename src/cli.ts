@@ -44,12 +44,18 @@ import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import {
+  createEvalBaselineSnapshot,
   getEvalHarnessStatus,
   importEvalBenchmarkPack,
+  type EvalBaselineSnapshot,
+  type EvalBaselineDeltaReport,
   type EvalBenchmarkPackSummary,
   type EvalCiGateReport,
+  type EvalStoredBaselineCiGateReport,
   type EvalHarnessStatus,
+  runEvalBaselineDeltaReport,
   runEvalBenchmarkCiGate,
+  runEvalStoredBaselineCiGate,
   validateEvalBenchmarkPack,
 } from "./evals.js";
 import { analyzeGraphHealth, type GraphHealthReport } from "./graph.js";
@@ -57,6 +63,66 @@ import {
   getCausalTrajectoryStoreStatus,
   type CausalTrajectoryStoreStatus,
 } from "./causal-trajectory.js";
+import {
+  getAbstractionNodeStoreStatus,
+  type AbstractionNodeStoreStatus,
+} from "./abstraction-nodes.js";
+import {
+  getCueAnchorStoreStatus,
+  type CueAnchorStoreStatus,
+} from "./cue-anchors.js";
+import {
+  searchHarmonicRetrieval,
+  type HarmonicRetrievalResult,
+} from "./harmonic-retrieval.js";
+import {
+  searchVerifiedEpisodes,
+  type VerifiedEpisodeResult,
+} from "./verified-recall.js";
+import {
+  searchVerifiedSemanticRules,
+  type VerifiedSemanticRuleResult,
+} from "./semantic-rule-verifier.js";
+import {
+  applyCommitmentLedgerLifecycle,
+  getCommitmentLedgerStatus,
+  recordCommitmentLedgerEntry,
+  transitionCommitmentLedgerEntryState,
+  type CommitmentLedgerEntry,
+  type CommitmentLedgerLifecycleResult,
+  type CommitmentLedgerStatus,
+} from "./commitment-ledger.js";
+import {
+  getWorkProductLedgerStatus,
+  recordWorkProductLedgerEntry,
+  searchWorkProductLedgerEntries,
+  type WorkProductLedgerEntry,
+  type WorkProductLedgerSearchResult,
+  type WorkProductLedgerStatus,
+} from "./work-product-ledger.js";
+import {
+  getUtilityTelemetryStatus,
+  recordUtilityTelemetryEvent,
+  type UtilityTelemetryEvent,
+  type UtilityTelemetryStatus,
+} from "./utility-telemetry.js";
+import {
+  getUtilityLearningStatus,
+  learnUtilityPromotionWeights,
+  type UtilityLearningResult,
+  type UtilityLearningStatus,
+} from "./utility-learner.js";
+import {
+  buildResumeBundleFromState,
+  getResumeBundleStatus,
+  recordResumeBundle,
+  type ResumeBundle,
+  type ResumeBundleStatus,
+} from "./resume-bundles.js";
+import {
+  promoteSemanticRuleFromMemory,
+  type SemanticRulePromotionReport,
+} from "./semantic-rule-promotion.js";
 import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./objective-state.js";
 import {
   getTrustZoneStoreStatus,
@@ -596,19 +662,46 @@ export async function runBenchmarkStatusCliCommand(options: {
   evalStoreDir?: string;
   evalHarnessEnabled: boolean;
   evalShadowModeEnabled: boolean;
+  benchmarkBaselineSnapshotsEnabled: boolean;
+  memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalHarnessStatus> {
   return getEvalHarnessStatus({
     memoryDir: options.memoryDir,
     evalStoreDir: options.evalStoreDir,
     enabled: options.evalHarnessEnabled,
     shadowModeEnabled: options.evalShadowModeEnabled,
+    baselineSnapshotsEnabled: options.benchmarkBaselineSnapshotsEnabled,
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
+  });
+}
+
+export async function runBenchmarkBaselineSnapshotCliCommand(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  benchmarkBaselineSnapshotsEnabled: boolean;
+  snapshotId: string;
+  createdAt?: string;
+  notes?: string;
+  gitRef?: string;
+}): Promise<{ targetPath: string; snapshot: EvalBaselineSnapshot }> {
+  return createEvalBaselineSnapshot({
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    baselineSnapshotsEnabled: options.benchmarkBaselineSnapshotsEnabled,
+    snapshotId: options.snapshotId,
+    createdAt: options.createdAt,
+    notes: options.notes,
+    gitRef: options.gitRef,
   });
 }
 
 export async function runBenchmarkValidateCliCommand(options: {
   path: string;
+  memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalBenchmarkPackSummary> {
-  return validateEvalBenchmarkPack(options.path);
+  return validateEvalBenchmarkPack(options.path, {
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
+  });
 }
 
 export async function runBenchmarkImportCliCommand(options: {
@@ -616,12 +709,14 @@ export async function runBenchmarkImportCliCommand(options: {
   memoryDir: string;
   evalStoreDir?: string;
   force?: boolean;
+  memoryRedTeamBenchEnabled: boolean;
 }): Promise<EvalBenchmarkPackSummary & { targetDir: string; overwritten: boolean }> {
   return importEvalBenchmarkPack({
     sourcePath: options.path,
     memoryDir: options.memoryDir,
     evalStoreDir: options.evalStoreDir,
     force: options.force === true,
+    memoryRedTeamBenchEnabled: options.memoryRedTeamBenchEnabled,
   });
 }
 
@@ -632,6 +727,32 @@ export async function runBenchmarkCiGateCliCommand(options: {
   return runEvalBenchmarkCiGate({
     baseEvalStoreDir: options.baseEvalStoreDir,
     candidateEvalStoreDir: options.candidateEvalStoreDir,
+  });
+}
+
+export async function runBenchmarkStoredBaselineCiGateCliCommand(options: {
+  baseEvalStoreDir: string;
+  candidateEvalStoreDir: string;
+  snapshotId: string;
+}): Promise<EvalStoredBaselineCiGateReport> {
+  return runEvalStoredBaselineCiGate({
+    baseEvalStoreDir: options.baseEvalStoreDir,
+    candidateEvalStoreDir: options.candidateEvalStoreDir,
+    snapshotId: options.snapshotId,
+  });
+}
+
+export async function runBenchmarkBaselineReportCliCommand(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  benchmarkDeltaReporterEnabled: boolean;
+  snapshotId: string;
+}): Promise<EvalBaselineDeltaReport> {
+  return runEvalBaselineDeltaReport({
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    benchmarkDeltaReporterEnabled: options.benchmarkDeltaReporterEnabled,
+    snapshotId: options.snapshotId,
   });
 }
 
@@ -674,6 +795,359 @@ export async function runTrustZoneStatusCliCommand(options: {
     enabled: options.trustZonesEnabled,
     promotionEnabled: options.quarantinePromotionEnabled,
     poisoningDefenseEnabled: options.memoryPoisoningDefenseEnabled,
+  });
+}
+
+export async function runAbstractionNodeStatusCliCommand(options: {
+  memoryDir: string;
+  abstractionNodeStoreDir?: string;
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+}): Promise<AbstractionNodeStoreStatus> {
+  return getAbstractionNodeStoreStatus({
+    memoryDir: options.memoryDir,
+    abstractionNodeStoreDir: options.abstractionNodeStoreDir,
+    enabled: options.harmonicRetrievalEnabled,
+    anchorsEnabled: options.abstractionAnchorsEnabled,
+  });
+}
+
+export async function runCueAnchorStatusCliCommand(options: {
+  memoryDir: string;
+  abstractionNodeStoreDir?: string;
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+}): Promise<CueAnchorStoreStatus> {
+  return getCueAnchorStoreStatus({
+    memoryDir: options.memoryDir,
+    abstractionNodeStoreDir: options.abstractionNodeStoreDir,
+    enabled: options.harmonicRetrievalEnabled,
+    anchorsEnabled: options.abstractionAnchorsEnabled,
+  });
+}
+
+export async function runHarmonicSearchCliCommand(options: {
+  memoryDir: string;
+  abstractionNodeStoreDir?: string;
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+  query: string;
+  maxResults?: number;
+  sessionKey?: string;
+}): Promise<HarmonicRetrievalResult[]> {
+  if (!options.harmonicRetrievalEnabled) return [];
+  return searchHarmonicRetrieval({
+    memoryDir: options.memoryDir,
+    abstractionNodeStoreDir: options.abstractionNodeStoreDir,
+    query: options.query,
+    maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
+    sessionKey: options.sessionKey,
+    anchorsEnabled: options.abstractionAnchorsEnabled,
+  });
+}
+
+export async function runVerifiedRecallSearchCliCommand(options: {
+  memoryDir: string;
+  verifiedRecallEnabled: boolean;
+  query: string;
+  maxResults?: number;
+  boxRecallDays?: number;
+}): Promise<VerifiedEpisodeResult[]> {
+  if (!options.verifiedRecallEnabled) return [];
+  return searchVerifiedEpisodes({
+    memoryDir: options.memoryDir,
+    query: options.query,
+    maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
+    boxRecallDays: options.boxRecallDays,
+  });
+}
+
+export async function runSemanticRulePromoteCliCommand(options: {
+  memoryDir: string;
+  semanticRulePromotionEnabled: boolean;
+  sourceMemoryId: string;
+  dryRun?: boolean;
+}): Promise<SemanticRulePromotionReport> {
+  return promoteSemanticRuleFromMemory({
+    memoryDir: options.memoryDir,
+    enabled: options.semanticRulePromotionEnabled,
+    sourceMemoryId: options.sourceMemoryId,
+    dryRun: options.dryRun,
+  });
+}
+
+export async function runSemanticRuleVerifyCliCommand(options: {
+  memoryDir: string;
+  semanticRuleVerificationEnabled: boolean;
+  query: string;
+  maxResults?: number;
+}): Promise<VerifiedSemanticRuleResult[]> {
+  if (!options.semanticRuleVerificationEnabled) return [];
+  return searchVerifiedSemanticRules({
+    memoryDir: options.memoryDir,
+    query: options.query,
+    maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
+  });
+}
+
+export async function runWorkProductStatusCliCommand(options: {
+  memoryDir: string;
+  workProductLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+}): Promise<WorkProductLedgerStatus> {
+  return getWorkProductLedgerStatus({
+    memoryDir: options.memoryDir,
+    workProductLedgerDir: options.workProductLedgerDir,
+    enabled: options.creationMemoryEnabled,
+  });
+}
+
+export async function runUtilityTelemetryStatusCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
+}): Promise<UtilityTelemetryStatus> {
+  return getUtilityTelemetryStatus({
+    memoryDir: options.memoryDir,
+    enabled: options.memoryUtilityLearningEnabled,
+    promotionByOutcomeEnabled: options.promotionByOutcomeEnabled,
+  });
+}
+
+export async function runUtilityTelemetryRecordCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  event: UtilityTelemetryEvent;
+}): Promise<string | null> {
+  if (!options.memoryUtilityLearningEnabled) return null;
+  return recordUtilityTelemetryEvent({
+    memoryDir: options.memoryDir,
+    event: options.event,
+  });
+}
+
+export async function runUtilityLearningStatusCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
+}): Promise<UtilityLearningStatus> {
+  return getUtilityLearningStatus({
+    memoryDir: options.memoryDir,
+    enabled: options.memoryUtilityLearningEnabled,
+    promotionByOutcomeEnabled: options.promotionByOutcomeEnabled,
+  });
+}
+
+export async function runUtilityLearningCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  learningWindowDays?: number;
+  minEventCount?: number;
+  maxWeightMagnitude?: number;
+}): Promise<UtilityLearningResult> {
+  return learnUtilityPromotionWeights({
+    memoryDir: options.memoryDir,
+    enabled: options.memoryUtilityLearningEnabled,
+    learningWindowDays: options.learningWindowDays ?? 14,
+    minEventCount: options.minEventCount ?? 3,
+    maxWeightMagnitude: options.maxWeightMagnitude ?? 0.35,
+  });
+}
+
+export async function runWorkProductRecordCliCommand(options: {
+  memoryDir: string;
+  workProductLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  entry: WorkProductLedgerEntry;
+}): Promise<string | null> {
+  if (!options.creationMemoryEnabled) return null;
+  return recordWorkProductLedgerEntry({
+    memoryDir: options.memoryDir,
+    workProductLedgerDir: options.workProductLedgerDir,
+    entry: options.entry,
+  });
+}
+
+export async function runWorkProductRecallSearchCliCommand(options: {
+  memoryDir: string;
+  workProductLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  workProductRecallEnabled: boolean;
+  query: string;
+  maxResults?: number;
+  sessionKey?: string;
+}): Promise<WorkProductLedgerSearchResult[]> {
+  if (!options.creationMemoryEnabled || !options.workProductRecallEnabled) return [];
+  return searchWorkProductLedgerEntries({
+    memoryDir: options.memoryDir,
+    workProductLedgerDir: options.workProductLedgerDir,
+    query: options.query,
+    maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
+    sessionKey: options.sessionKey,
+  });
+}
+
+export async function runResumeBundleStatusCliCommand(options: {
+  memoryDir: string;
+  resumeBundleDir?: string;
+  creationMemoryEnabled: boolean;
+  resumeBundlesEnabled: boolean;
+}): Promise<ResumeBundleStatus> {
+  return getResumeBundleStatus({
+    memoryDir: options.memoryDir,
+    resumeBundleDir: options.resumeBundleDir,
+    enabled: options.creationMemoryEnabled && options.resumeBundlesEnabled,
+  });
+}
+
+export async function runResumeBundleRecordCliCommand(options: {
+  memoryDir: string;
+  resumeBundleDir?: string;
+  creationMemoryEnabled: boolean;
+  resumeBundlesEnabled: boolean;
+  bundle: ResumeBundle;
+}): Promise<string | null> {
+  if (!options.creationMemoryEnabled || !options.resumeBundlesEnabled) return null;
+  return recordResumeBundle({
+    memoryDir: options.memoryDir,
+    resumeBundleDir: options.resumeBundleDir,
+    bundle: options.bundle,
+  });
+}
+
+export async function runResumeBundleBuildCliCommand(options: {
+  memoryDir: string;
+  resumeBundleDir?: string;
+  objectiveStateStoreDir?: string;
+  workProductLedgerDir?: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  resumeBundlesEnabled: boolean;
+  transcriptEnabled: boolean;
+  objectiveStateMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  bundleId: string;
+  recordedAt: string;
+  sessionKey: string;
+  scope: string;
+}): Promise<{ bundle: ResumeBundle; filePath: string } | null> {
+  if (!options.creationMemoryEnabled || !options.resumeBundlesEnabled) {
+    return null;
+  }
+
+  const bundle = await buildResumeBundleFromState({
+    memoryDir: options.memoryDir,
+    sessionKey: options.sessionKey,
+    bundleId: options.bundleId,
+    recordedAt: options.recordedAt,
+    scope: options.scope,
+    transcriptEnabled: options.transcriptEnabled,
+    objectiveStateMemoryEnabled: options.objectiveStateMemoryEnabled,
+    objectiveStateStoreDir: options.objectiveStateStoreDir,
+    creationMemoryEnabled: options.creationMemoryEnabled,
+    workProductLedgerDir: options.workProductLedgerDir,
+    commitmentLedgerEnabled: options.commitmentLedgerEnabled,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+  });
+
+  const filePath = await recordResumeBundle({
+    memoryDir: options.memoryDir,
+    resumeBundleDir: options.resumeBundleDir,
+    bundle,
+  });
+
+  return { bundle, filePath };
+}
+
+export async function runCommitmentStatusCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled?: boolean;
+  commitmentStaleDays?: number;
+  commitmentDecayDays?: number;
+  now?: string;
+}): Promise<CommitmentLedgerStatus> {
+  return getCommitmentLedgerStatus({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    enabled: options.creationMemoryEnabled && options.commitmentLedgerEnabled,
+    lifecycleEnabled:
+      options.creationMemoryEnabled &&
+      options.commitmentLedgerEnabled &&
+      options.commitmentLifecycleEnabled === true,
+    staleDays: options.commitmentStaleDays,
+    decayDays: options.commitmentDecayDays,
+    now: options.now,
+  });
+}
+
+export async function runCommitmentRecordCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  entry: CommitmentLedgerEntry;
+}): Promise<string | null> {
+  if (!options.creationMemoryEnabled || !options.commitmentLedgerEnabled) return null;
+  return recordCommitmentLedgerEntry({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    entry: options.entry,
+  });
+}
+
+export async function runCommitmentSetStateCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  entryId: string;
+  nextState: CommitmentLedgerEntry["state"];
+  changedAt: string;
+}): Promise<CommitmentLedgerEntry | null> {
+  if (
+    !options.creationMemoryEnabled ||
+    !options.commitmentLedgerEnabled ||
+    !options.commitmentLifecycleEnabled
+  ) {
+    return null;
+  }
+
+  return transitionCommitmentLedgerEntryState({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    entryId: options.entryId,
+    nextState: options.nextState,
+    changedAt: options.changedAt,
+  });
+}
+
+export async function runCommitmentLifecycleCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  commitmentDecayDays: number;
+  now?: string;
+}): Promise<CommitmentLedgerLifecycleResult | null> {
+  if (
+    !options.creationMemoryEnabled ||
+    !options.commitmentLedgerEnabled ||
+    !options.commitmentLifecycleEnabled
+  ) {
+    return null;
+  }
+
+  return applyCommitmentLedgerLifecycle({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    enabled: true,
+    decayDays: options.commitmentDecayDays,
+    now: options.now,
   });
 }
 
@@ -2219,6 +2693,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             evalStoreDir: orchestrator.config.evalStoreDir,
             evalHarnessEnabled: orchestrator.config.evalHarnessEnabled,
             evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
+            benchmarkBaselineSnapshotsEnabled: orchestrator.config.benchmarkBaselineSnapshotsEnabled,
+            memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
@@ -2232,6 +2708,29 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const inputPath = args[0];
           const summary = await runBenchmarkValidateCliCommand({
             path: typeof inputPath === "string" ? inputPath : "",
+            memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-baseline-snapshot")
+        .description("Capture a versioned baseline snapshot of the latest completed benchmark runs")
+        .requiredOption("--snapshot-id <id>", "Stable snapshot identifier")
+        .option("--created-at <iso>", "Override snapshot creation timestamp")
+        .option("--git-ref <ref>", "Override the git ref recorded in the snapshot")
+        .option("--notes <text>", "Optional operator notes for the snapshot")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkBaselineSnapshotCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            benchmarkBaselineSnapshotsEnabled: orchestrator.config.benchmarkBaselineSnapshotsEnabled,
+            snapshotId: typeof options.snapshotId === "string" ? options.snapshotId : "",
+            createdAt: typeof options.createdAt === "string" ? options.createdAt : undefined,
+            gitRef: typeof options.gitRef === "string" ? options.gitRef : undefined,
+            notes: typeof options.notes === "string" ? options.notes : undefined,
           });
           console.log(JSON.stringify(summary, null, 2));
           console.log("OK");
@@ -2250,6 +2749,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             memoryDir: orchestrator.config.memoryDir,
             evalStoreDir: orchestrator.config.evalStoreDir,
             force: options.force === true,
+            memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
           });
           console.log(JSON.stringify(summary, null, 2));
           console.log("OK");
@@ -2269,6 +2769,27 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(JSON.stringify(summary, null, 2));
           if (!summary.passed) {
             throw new Error("benchmark CI gate detected regressions");
+          }
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-baseline-report")
+        .description("Compare the current eval store against a named stored benchmark baseline snapshot")
+        .requiredOption("--snapshot-id <id>", "Stable baseline snapshot identifier")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkBaselineReportCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            benchmarkDeltaReporterEnabled: orchestrator.config.benchmarkDeltaReporterEnabled,
+            snapshotId: typeof options.snapshotId === "string" ? options.snapshotId : "",
+          });
+          const { markdownReport, ...jsonSummary } = summary;
+          console.log(JSON.stringify(jsonSummary, null, 2));
+          console.log(markdownReport);
+          if (!summary.passed) {
+            throw new Error("benchmark baseline report detected regressions");
           }
           console.log("OK");
         });
@@ -2316,6 +2837,459 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("abstraction-node-status")
+        .description("Show abstraction-node store status, abstraction counts, and latest stored node")
+        .action(async () => {
+          const status = await runAbstractionNodeStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            abstractionNodeStoreDir: orchestrator.config.abstractionNodeStoreDir,
+            harmonicRetrievalEnabled: orchestrator.config.harmonicRetrievalEnabled,
+            abstractionAnchorsEnabled: orchestrator.config.abstractionAnchorsEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("cue-anchor-status")
+        .description("Show cue-anchor index status, anchor counts, and the latest stored cue anchor")
+        .action(async () => {
+          const status = await runCueAnchorStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            abstractionNodeStoreDir: orchestrator.config.abstractionNodeStoreDir,
+            harmonicRetrievalEnabled: orchestrator.config.harmonicRetrievalEnabled,
+            abstractionAnchorsEnabled: orchestrator.config.abstractionAnchorsEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("harmonic-search")
+        .description("Preview harmonic retrieval blending over abstraction nodes and cue anchors")
+        .argument("<query>", "Prompt-like query to evaluate against harmonic retrieval storage")
+        .option("--max-results <count>", "Maximum number of blended results to return", "3")
+        .option("--session-key <sessionKey>", "Optional session key for same-session tie-breaking")
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const maxResults = typeof options.maxResults === "string"
+            ? Number.parseInt(options.maxResults, 10)
+            : 3;
+          const results = await runHarmonicSearchCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            abstractionNodeStoreDir: orchestrator.config.abstractionNodeStoreDir,
+            harmonicRetrievalEnabled: orchestrator.config.harmonicRetrievalEnabled,
+            abstractionAnchorsEnabled: orchestrator.config.abstractionAnchorsEnabled,
+            query,
+            maxResults: Number.isFinite(maxResults) ? maxResults : 3,
+            sessionKey: typeof options.sessionKey === "string" ? options.sessionKey : undefined,
+          });
+          console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-status")
+        .description("Show utility-learning telemetry status, event counts, and the latest utility event")
+        .action(async () => {
+          const status = await runUtilityTelemetryStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            promotionByOutcomeEnabled: orchestrator.config.promotionByOutcomeEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-record")
+        .description("Record a utility-learning telemetry event when utility learning is enabled")
+        .requiredOption("--event-id <eventId>", "Utility telemetry event id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the event")
+        .requiredOption("--session-key <sessionKey>", "Session key associated with the event")
+        .requiredOption("--source <source>", "Event source (cli|system|benchmark|tool_result)")
+        .requiredOption("--target <target>", "Telemetry target (promotion|ranking)")
+        .requiredOption("--decision <decision>", "Decision taken (promote|demote|hold|boost|suppress)")
+        .requiredOption("--outcome <outcome>", "Observed outcome (helpful|neutral|harmful)")
+        .requiredOption("--utility-score <utilityScore>", "Bounded utility score between -1 and 1")
+        .requiredOption("--summary <summary>", "Human-readable summary of the measured utility event")
+        .option("--memory-id <memoryId...>", "Memory ids linked to the utility event")
+        .option("--entity-ref <entityRef...>", "Entity refs linked to the utility event")
+        .option("--tag <tag...>", "Tags to attach to the utility event")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const utilityScore = typeof options.utilityScore === "string"
+            ? Number.parseFloat(options.utilityScore)
+            : Number.NaN;
+          const filePath = await runUtilityTelemetryRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            event: {
+              schemaVersion: 1,
+              eventId: String(options.eventId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as UtilityTelemetryEvent["source"],
+              target: String(options.target ?? "") as UtilityTelemetryEvent["target"],
+              decision: String(options.decision ?? "") as UtilityTelemetryEvent["decision"],
+              outcome: String(options.outcome ?? "") as UtilityTelemetryEvent["outcome"],
+              utilityScore,
+              summary: String(options.summary ?? ""),
+              memoryIds: Array.isArray(options.memoryId) ? options.memoryId.map(String) : undefined,
+              entityRefs: Array.isArray(options.entityRef) ? options.entityRef.map(String) : undefined,
+              tags: Array.isArray(options.tag) ? options.tag.map(String) : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-learning-status")
+        .description("Show offline utility-learning snapshot status and learned weight counts")
+        .action(async () => {
+          const status = await runUtilityLearningStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            promotionByOutcomeEnabled: orchestrator.config.promotionByOutcomeEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-learn")
+        .description("Learn bounded offline promotion/ranking weights from recorded utility telemetry")
+        .option("--window-days <days>", "Telemetry lookback window in days", "14")
+        .option("--min-event-count <count>", "Minimum event count required per target/decision group", "3")
+        .option("--max-weight-magnitude <value>", "Maximum absolute learned weight magnitude", "0.35")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const learningWindowDays = typeof options.windowDays === "string"
+            ? Number.parseInt(options.windowDays, 10)
+            : 14;
+          const minEventCount = typeof options.minEventCount === "string"
+            ? Number.parseInt(options.minEventCount, 10)
+            : 3;
+          const maxWeightMagnitude = typeof options.maxWeightMagnitude === "string"
+            ? Number.parseFloat(options.maxWeightMagnitude)
+            : 0.35;
+          const result = await runUtilityLearningCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            learningWindowDays,
+            minEventCount,
+            maxWeightMagnitude,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("resume-bundle-status")
+        .description("Show resume bundle status, bundle counts, and the latest recorded handoff bundle")
+        .action(async () => {
+          const status = await runResumeBundleStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            resumeBundleDir: orchestrator.config.resumeBundleDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            resumeBundlesEnabled: orchestrator.config.resumeBundlesEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("resume-bundle-record")
+        .description("Record an explicit resume bundle when creation-memory handoff bundles are enabled")
+        .requiredOption("--bundle-id <bundleId>", "Resume bundle id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the bundle")
+        .requiredOption("--session-key <sessionKey>", "Session key that owns the bundle")
+        .requiredOption("--source <source>", "Bundle source (tool_result|cli|system|manual)")
+        .requiredOption("--scope <scope>", "Primary scope or recovery domain for the bundle")
+        .requiredOption("--summary <summary>", "Human-readable summary of what this bundle preserves")
+        .option("--key-fact <keyFact...>", "Short facts that a resumed agent should retain")
+        .option("--next-action <nextAction...>", "Explicit next actions for the resumed agent")
+        .option("--risk-flag <riskFlag...>", "Open risks or cautions attached to the bundle")
+        .option(
+          "--objective-state-snapshot-ref <objectiveStateSnapshotRef...>",
+          "Objective-state snapshot refs attached to the bundle",
+        )
+        .option(
+          "--work-product-entry-ref <workProductEntryRef...>",
+          "Work-product ledger refs attached to the bundle",
+        )
+        .option(
+          "--commitment-entry-ref <commitmentEntryRef...>",
+          "Commitment ledger refs attached to the bundle",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const filePath = await runResumeBundleRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            resumeBundleDir: orchestrator.config.resumeBundleDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            resumeBundlesEnabled: orchestrator.config.resumeBundlesEnabled,
+            bundle: {
+              schemaVersion: 1,
+              bundleId: String(options.bundleId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as ResumeBundle["source"],
+              scope: String(options.scope ?? ""),
+              summary: String(options.summary ?? ""),
+              keyFacts: Array.isArray(options.keyFact) ? options.keyFact.map(String) : undefined,
+              nextActions: Array.isArray(options.nextAction) ? options.nextAction.map(String) : undefined,
+              riskFlags: Array.isArray(options.riskFlag) ? options.riskFlag.map(String) : undefined,
+              objectiveStateSnapshotRefs: Array.isArray(options.objectiveStateSnapshotRef)
+                ? options.objectiveStateSnapshotRef.map(String)
+                : undefined,
+              workProductEntryRefs: Array.isArray(options.workProductEntryRef)
+                ? options.workProductEntryRef.map(String)
+                : undefined,
+              commitmentEntryRefs: Array.isArray(options.commitmentEntryRef)
+                ? options.commitmentEntryRef.map(String)
+                : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("resume-bundle-build")
+        .description("Build and persist a resume bundle from transcript recovery, objective state, work products, and open commitments")
+        .requiredOption("--bundle-id <bundleId>", "Resume bundle id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the bundle")
+        .requiredOption("--session-key <sessionKey>", "Session key that owns the bundle")
+        .requiredOption("--scope <scope>", "Primary scope or recovery domain for the bundle")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const built = await runResumeBundleBuildCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            resumeBundleDir: orchestrator.config.resumeBundleDir,
+            objectiveStateStoreDir: orchestrator.config.objectiveStateStoreDir,
+            workProductLedgerDir: orchestrator.config.workProductLedgerDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            resumeBundlesEnabled: orchestrator.config.resumeBundlesEnabled,
+            transcriptEnabled: orchestrator.config.transcriptEnabled,
+            objectiveStateMemoryEnabled: orchestrator.config.objectiveStateMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            bundleId: String(options.bundleId ?? ""),
+            recordedAt: String(options.recordedAt ?? ""),
+            sessionKey: String(options.sessionKey ?? ""),
+            scope: String(options.scope ?? ""),
+          });
+          console.log(JSON.stringify({
+            wrote: built !== null,
+            filePath: built?.filePath ?? null,
+            bundle: built?.bundle ?? null,
+          }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-status")
+        .description("Show commitment ledger status, entry counts, and the latest recorded commitment")
+        .action(async () => {
+          const status = await runCommitmentStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            commitmentLifecycleEnabled: orchestrator.config.commitmentLifecycleEnabled,
+            commitmentStaleDays: orchestrator.config.commitmentStaleDays,
+            commitmentDecayDays: orchestrator.config.commitmentDecayDays,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-record")
+        .description("Record a commitment ledger entry when commitment memory is enabled")
+        .requiredOption("--entry-id <entryId>", "Commitment entry id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the entry")
+        .requiredOption("--session-key <sessionKey>", "Session key that owns the commitment")
+        .requiredOption("--source <source>", "Entry source (tool_result|cli|system|manual)")
+        .requiredOption("--kind <kind>", "Entry kind (promise|follow_up|deadline|deliverable)")
+        .requiredOption("--state <state>", "Entry state (open|fulfilled|cancelled|expired)")
+        .requiredOption("--scope <scope>", "Primary scope or identifier for the commitment")
+        .requiredOption("--summary <summary>", "Human-readable summary of the commitment")
+        .option("--due-at <dueAt>", "Optional due timestamp for the commitment")
+        .option("--tag <tag...>", "Tags to attach to the commitment entry")
+        .option("--entity-ref <entityRef...>", "Entity refs to attach to the commitment entry")
+        .option(
+          "--work-product-entry-ref <workProductEntryRef...>",
+          "Work-product ledger refs that this commitment depends on",
+        )
+        .option(
+          "--objective-state-snapshot-ref <objectiveStateSnapshotRef...>",
+          "Objective-state snapshot refs to link to this commitment",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const filePath = await runCommitmentRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            entry: {
+              schemaVersion: 1,
+              entryId: String(options.entryId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as CommitmentLedgerEntry["source"],
+              kind: String(options.kind ?? "") as CommitmentLedgerEntry["kind"],
+              state: String(options.state ?? "") as CommitmentLedgerEntry["state"],
+              scope: String(options.scope ?? ""),
+              summary: String(options.summary ?? ""),
+              dueAt: typeof options.dueAt === "string" ? options.dueAt : undefined,
+              tags: Array.isArray(options.tag) ? options.tag.map(String) : undefined,
+              entityRefs: Array.isArray(options.entityRef) ? options.entityRef.map(String) : undefined,
+              workProductEntryRefs: Array.isArray(options.workProductEntryRef)
+                ? options.workProductEntryRef.map(String)
+                : undefined,
+              objectiveStateSnapshotRefs: Array.isArray(options.objectiveStateSnapshotRef)
+                ? options.objectiveStateSnapshotRef.map(String)
+                : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-set-state")
+        .description("Transition an existing commitment ledger entry when commitment lifecycle is enabled")
+        .requiredOption("--entry-id <entryId>", "Commitment entry id")
+        .requiredOption("--state <state>", "Next state (open|fulfilled|cancelled|expired)")
+        .requiredOption("--changed-at <changedAt>", "ISO timestamp for the lifecycle transition")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const entry = await runCommitmentSetStateCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            commitmentLifecycleEnabled: orchestrator.config.commitmentLifecycleEnabled,
+            entryId: String(options.entryId ?? ""),
+            nextState: String(options.state ?? "") as CommitmentLedgerEntry["state"],
+            changedAt: String(options.changedAt ?? ""),
+          });
+          console.log(JSON.stringify({ updated: entry !== null, entry }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-lifecycle-run")
+        .description("Apply overdue-expiry and resolved-entry cleanup to the commitment ledger")
+        .option("--now <now>", "Override the lifecycle timestamp for testing or backfills")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runCommitmentLifecycleCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            commitmentLifecycleEnabled: orchestrator.config.commitmentLifecycleEnabled,
+            commitmentDecayDays: orchestrator.config.commitmentDecayDays,
+            now: typeof options.now === "string" ? options.now : undefined,
+          });
+          console.log(JSON.stringify({ applied: result !== null, result }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("work-product-status")
+        .description("Show work-product ledger status, entry counts, and the latest recorded work product")
+        .action(async () => {
+          const status = await runWorkProductStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            workProductLedgerDir: orchestrator.config.workProductLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("work-product-record")
+        .description("Record a work-product ledger entry when creation-memory is enabled")
+        .requiredOption("--entry-id <entryId>", "Ledger entry id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the entry")
+        .requiredOption("--session-key <sessionKey>", "Session key that created the work product")
+        .requiredOption("--source <source>", "Entry source (tool_result|cli|system|manual)")
+        .requiredOption("--kind <kind>", "Entry kind (artifact|file|record|report|workspace)")
+        .requiredOption(
+          "--entry-action <entryAction>",
+          "Entry action (created|updated|deleted|referenced|published)",
+        )
+        .requiredOption("--scope <scope>", "Primary scope or identifier for the created work product")
+        .requiredOption("--summary <summary>", "Human-readable summary of the work product")
+        .option("--artifact-path <artifactPath>", "Optional path to the created artifact")
+        .option("--tag <tag...>", "Tags to attach to the work-product entry")
+        .option("--entity-ref <entityRef...>", "Entity refs to attach to the work-product entry")
+        .option(
+          "--objective-state-snapshot-ref <objectiveStateSnapshotRef...>",
+          "Objective-state snapshot refs to link to this work product",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const filePath = await runWorkProductRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            workProductLedgerDir: orchestrator.config.workProductLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            entry: {
+              schemaVersion: 1,
+              entryId: String(options.entryId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as WorkProductLedgerEntry["source"],
+              kind: String(options.kind ?? "") as WorkProductLedgerEntry["kind"],
+              action: String(options.entryAction ?? "") as WorkProductLedgerEntry["action"],
+              scope: String(options.scope ?? ""),
+              summary: String(options.summary ?? ""),
+              artifactPath: typeof options.artifactPath === "string" ? options.artifactPath : undefined,
+              tags: Array.isArray(options.tag) ? options.tag.map(String) : undefined,
+              entityRefs: Array.isArray(options.entityRef) ? options.entityRef.map(String) : undefined,
+              objectiveStateSnapshotRefs: Array.isArray(options.objectiveStateSnapshotRef)
+                ? options.objectiveStateSnapshotRef.map(String)
+                : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("work-product-recall-search")
+        .description("Preview work-product recovery candidates when creation-memory recall is enabled")
+        .argument("<query>", "Prompt-like query to evaluate against the work-product ledger")
+        .option("--max-results <count>", "Maximum number of work-product results to return", "3")
+        .option("--session-key <sessionKey>", "Optional session key to boost same-session work products")
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const maxResults = typeof options.maxResults === "string"
+            ? Number.parseInt(options.maxResults, 10)
+            : 3;
+          const results = await runWorkProductRecallSearchCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            workProductLedgerDir: orchestrator.config.workProductLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            workProductRecallEnabled: orchestrator.config.workProductRecallEnabled,
+            query,
+            maxResults: Number.isFinite(maxResults) ? maxResults : 3,
+            sessionKey: typeof options.sessionKey === "string" ? options.sessionKey : undefined,
+          });
+          console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
         .command("trust-zone-promote")
         .description("Dry-run or apply a trust-zone promotion with provenance enforcement")
         .requiredOption("--record-id <recordId>", "Source trust-zone record id")
@@ -2340,6 +3314,66 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             dryRun: options.dryRun === true,
           });
           console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("verified-recall-search")
+        .description("Preview verified episodic recall over recent memory boxes")
+        .argument("<query>", "Prompt-like query to evaluate against verified episodic recall")
+        .option("--max-results <count>", "Maximum number of verified episodic results to return", "3")
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const maxResults = typeof options.maxResults === "string"
+            ? Number.parseInt(options.maxResults, 10)
+            : 3;
+          const results = await runVerifiedRecallSearchCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            verifiedRecallEnabled: orchestrator.config.verifiedRecallEnabled,
+            query,
+            maxResults: Number.isFinite(maxResults) ? maxResults : 3,
+            boxRecallDays: orchestrator.config.boxRecallDays,
+          });
+          console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("semantic-rule-promote")
+        .description("Promote an explicit IF/THEN rule from a verified episodic memory")
+        .requiredOption("--memory-id <memoryId>", "Verified episodic memory id to promote from")
+        .option("--dry-run", "Preview the promoted semantic rule without writing it")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runSemanticRulePromoteCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            semanticRulePromotionEnabled: orchestrator.config.semanticRulePromotionEnabled,
+            sourceMemoryId: String(options.memoryId ?? ""),
+            dryRun: options.dryRun === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("semantic-rule-verify")
+        .description("Preview verified semantic-rule recall with provenance-aware confidence downgrades")
+        .argument("<query>", "Prompt-like query to evaluate against verified semantic-rule recall")
+        .option("--max-results <count>", "Maximum number of verified semantic rules to return", "3")
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const maxResults = typeof options.maxResults === "string"
+            ? Number.parseInt(options.maxResults, 10)
+            : 3;
+          const results = await runSemanticRuleVerifyCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            semanticRuleVerificationEnabled: orchestrator.config.semanticRuleVerificationEnabled,
+            query,
+            maxResults: Number.isFinite(maxResults) ? maxResults : 3,
+          });
+          console.log(JSON.stringify(results, null, 2));
           console.log("OK");
         });
 

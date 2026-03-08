@@ -11,7 +11,7 @@ export type HygieneWarning = {
 
 function toSafeTimestamp(ts: Date): string {
   // filesystem-safe, deterministic-ish, UTC
-  return ts.toISOString().replace(/[:.]/g, "").replace("Z", "Z");
+  return ts.toISOString().replace(/[:.]/g, "");
 }
 
 export async function lintWorkspaceFiles(opts: {

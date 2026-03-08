@@ -1105,6 +1105,16 @@
         "default": false,
         "description": "Enable shadow-mode evaluation workflows so future benchmark instrumentation can measure memory changes without changing live recall output."
       },
+      "benchmarkBaselineSnapshotsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable versioned benchmark baseline snapshot artifacts under the eval store for later PR delta reporting."
+      },
+      "benchmarkDeltaReporterEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable named-baseline delta reports so PR candidates can be compared against stored benchmark baselines."
+      },
       "evalStoreDir": {
         "type": "string",
         "description": "Override the evaluation harness state directory (defaults to {memoryDir}/state/evals)."
@@ -1165,6 +1175,92 @@
         "type": "boolean",
         "default": false,
         "description": "Enable deterministic provenance trust scoring for trust-zone records as the first poisoning-defense surface."
+      },
+      "memoryRedTeamBenchEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable operator-facing memory red-team benchmark packs and status accounting for poisoning-defense regression suites."
+      },
+      "harmonicRetrievalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable harmonic retrieval blending over abstraction nodes and cue anchors, including recall-section injection and harmonic-search diagnostics."
+      },
+      "abstractionAnchorsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable typed cue-anchor indexing for abstraction nodes and expose it through cue-anchor status tooling."
+      },
+      "abstractionNodeStoreDir": {
+        "type": "string",
+        "description": "Override the abstraction-node store directory (defaults to {memoryDir}/state/abstraction-nodes)."
+      },
+      "verifiedRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes."
+      },
+      "semanticRulePromotionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic promotion of explicit IF/THEN rules from verified episodic memories."
+      },
+      "semanticRuleVerificationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+      },
+      "creationMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+      },
+      "memoryUtilityLearningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable utility-learning telemetry storage so later slices can learn promotion and ranking weights from downstream outcomes."
+      },
+      "promotionByOutcomeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable outcome-aware promotion controls that consume learned utility signals when later rollout slices activate them."
+      },
+      "commitmentLedgerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+      },
+      "commitmentLifecycleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger."
+      },
+      "commitmentStaleDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Days before an open commitment without a due date is considered stale in lifecycle status."
+      },
+      "commitmentLedgerDir": {
+        "type": "string",
+        "description": "Override the commitment ledger directory (defaults to {memoryDir}/state/commitment-ledger)."
+      },
+      "resumeBundlesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic resume-bundle storage and operator-facing handoff bundle commands."
+      },
+      "resumeBundleDir": {
+        "type": "string",
+        "description": "Override the resume-bundle directory (defaults to {memoryDir}/state/resume-bundles)."
+      },
+      "workProductRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant work-product ledger entries into recall context and expose artifact-recovery search tooling."
+      },
+      "workProductLedgerDir": {
+        "type": "string",
+        "description": "Override the work-product ledger directory (defaults to {memoryDir}/state/work-product-ledger)."
       },
       "actionGraphRecallEnabled": {
         "type": "boolean",
@@ -2079,6 +2175,16 @@
       "advanced": true,
       "help": "Reserve shadow-mode measurement paths so future benchmark instrumentation can compare memory behavior without affecting live recall."
     },
+    "benchmarkBaselineSnapshotsEnabled": {
+      "label": "Benchmark Baseline Snapshots",
+      "advanced": true,
+      "help": "Enable versioned benchmark baseline snapshot artifacts for later PR delta reporting."
+    },
+    "benchmarkDeltaReporterEnabled": {
+      "label": "Benchmark Delta Reporter",
+      "advanced": true,
+      "help": "Enable named-baseline delta reports that compare the current eval store against a stored benchmark baseline snapshot."
+    },
     "evalStoreDir": {
       "label": "Evaluation Store Directory",
       "advanced": true,
@@ -2144,6 +2250,98 @@
       "label": "Memory Poisoning Defense",
       "advanced": true,
       "help": "Enable provenance trust scoring in trust-zone status output as the first poisoning-defense signal."
+    },
+    "memoryRedTeamBenchEnabled": {
+      "label": "Memory Red-Team Benchmarks",
+      "advanced": true,
+      "help": "Enable operator-facing red-team benchmark pack support and status accounting for poisoning-defense suites."
+    },
+    "harmonicRetrievalEnabled": {
+      "label": "Harmonic Retrieval",
+      "help": "Enable harmonic retrieval blending over abstraction nodes and cue anchors, including recall-section injection and harmonic-search diagnostics."
+    },
+    "abstractionAnchorsEnabled": {
+      "label": "Abstraction Anchors",
+      "advanced": true,
+      "help": "Enable typed cue-anchor indexing for abstraction nodes and expose it through cue-anchor status tooling."
+    },
+    "abstractionNodeStoreDir": {
+      "label": "Abstraction-Node Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/abstraction-nodes",
+      "help": "Override where abstraction nodes are stored."
+    },
+    "verifiedRecallEnabled": {
+      "label": "Verified Recall",
+      "help": "Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes."
+    },
+    "semanticRulePromotionEnabled": {
+      "label": "Semantic Rule Promotion",
+      "advanced": true,
+      "help": "Promote explicit IF/THEN rules from verified episodic memories into durable rule memories."
+    },
+    "semanticRuleVerificationEnabled": {
+      "label": "Semantic Rule Verification",
+      "advanced": true,
+      "help": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+    },
+    "creationMemoryEnabled": {
+      "label": "Creation Memory",
+      "advanced": true,
+      "help": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+    },
+    "memoryUtilityLearningEnabled": {
+      "label": "Utility Learning",
+      "advanced": true,
+      "help": "Enable utility-learning telemetry storage so later slices can learn promotion and ranking weights from downstream outcomes."
+    },
+    "promotionByOutcomeEnabled": {
+      "label": "Promotion By Outcome",
+      "advanced": true,
+      "help": "Enable outcome-aware promotion controls that will consume learned utility signals in later rollout slices."
+    },
+    "commitmentLedgerEnabled": {
+      "label": "Commitment Ledger",
+      "advanced": true,
+      "help": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+    },
+    "commitmentLifecycleEnabled": {
+      "label": "Commitment Lifecycle",
+      "advanced": true,
+      "help": "Enable fulfillment transitions, stale tracking, and resolved-entry cleanup for the commitment ledger."
+    },
+    "commitmentStaleDays": {
+      "label": "Commitment Stale Days",
+      "advanced": true,
+      "help": "Days before an open commitment without a due date counts as stale."
+    },
+    "commitmentLedgerDir": {
+      "label": "Commitment Ledger Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/commitment-ledger",
+      "help": "Override where commitment ledger entries are stored."
+    },
+    "resumeBundlesEnabled": {
+      "label": "Resume Bundles",
+      "advanced": true,
+      "help": "Enable deterministic resume-bundle storage and explicit handoff bundle commands."
+    },
+    "resumeBundleDir": {
+      "label": "Resume Bundle Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/resume-bundles",
+      "help": "Override where resume bundles are stored."
+    },
+    "workProductRecallEnabled": {
+      "label": "Work-Product Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant work-product ledger entries into recall context and expose artifact-recovery search tooling."
+    },
+    "workProductLedgerDir": {
+      "label": "Work-Product Ledger Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/work-product-ledger",
+      "help": "Override where work-product ledger entries are stored."
     },
     "actionGraphRecallEnabled": {
       "label": "Action Graph Recall",

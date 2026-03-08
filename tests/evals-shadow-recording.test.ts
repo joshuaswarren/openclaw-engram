@@ -12,6 +12,7 @@ async function waitForShadowCount(options: {
   evalStoreDir: string;
   enabled: boolean;
   shadowModeEnabled: boolean;
+  baselineSnapshotsEnabled?: boolean;
   count: number;
 }): Promise<Awaited<ReturnType<typeof getEvalHarnessStatus>>> {
   const deadline = Date.now() + 2_000;
@@ -21,6 +22,7 @@ async function waitForShadowCount(options: {
       evalStoreDir: options.evalStoreDir,
       enabled: options.enabled,
       shadowModeEnabled: options.shadowModeEnabled,
+      baselineSnapshotsEnabled: options.baselineSnapshotsEnabled,
     });
     if (status.shadows.total >= options.count || Date.now() >= deadline) {
       return status;
@@ -72,6 +74,7 @@ test("shadow recall recording stays off when eval shadow mode is disabled", asyn
     evalStoreDir: cfg.evalStoreDir,
     enabled: cfg.evalHarnessEnabled,
     shadowModeEnabled: cfg.evalShadowModeEnabled,
+    baselineSnapshotsEnabled: false,
     count: 0,
   });
 
@@ -123,6 +126,7 @@ test("shadow recall recording writes live recall decisions without changing inje
     evalStoreDir: cfg.evalStoreDir,
     enabled: cfg.evalHarnessEnabled,
     shadowModeEnabled: cfg.evalShadowModeEnabled,
+    baselineSnapshotsEnabled: false,
     count: 1,
   });
 
@@ -161,6 +165,7 @@ test("shadow recall recording includes no_recall decisions", async () => {
     evalStoreDir: cfg.evalStoreDir,
     enabled: cfg.evalHarnessEnabled,
     shadowModeEnabled: cfg.evalShadowModeEnabled,
+    baselineSnapshotsEnabled: false,
     count: 1,
   });
 

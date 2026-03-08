@@ -71,6 +71,11 @@ import { GraphIndex } from "./graph.js";
 import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./causal-trajectory.js";
 import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
 import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zones.js";
+import { searchHarmonicRetrieval, type HarmonicRetrievalResult } from "./harmonic-retrieval.js";
+import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-recall.js";
+import { searchVerifiedSemanticRules, type VerifiedSemanticRuleResult } from "./semantic-rule-verifier.js";
+import { applyCommitmentLedgerLifecycle } from "./commitment-ledger.js";
+import { searchWorkProductLedgerEntries, type WorkProductLedgerSearchResult } from "./work-product-ledger.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -100,6 +105,12 @@ import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
 import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
 import { RoutingRulesStore } from "./routing/store.js";
 import { PolicyRuntimeManager, type RuntimePolicyValues } from "./policy-runtime.js";
+import {
+  applyUtilityPromotionRuntimePolicy,
+  applyUtilityRankingRuntimeDelta,
+  loadUtilityRuntimeValues,
+  type UtilityRuntimeValues,
+} from "./utility-runtime.js";
 import {
   buildBehaviorSignalsForMemory,
   dedupeBehaviorSignalsByMemoryAndHash,
@@ -665,6 +676,7 @@ export class Orchestrator {
   private suppressedRecallFailures = 0;
   private readonly policyRuntime: PolicyRuntimeManager;
   private runtimePolicyValues: RuntimePolicyValues | null = null;
+  private utilityRuntimeValues: UtilityRuntimeValues | null = null;
   private evalShadowWriteChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
@@ -787,6 +799,10 @@ export class Orchestrator {
       lifecyclePromoteHeatThreshold: thresholds.promoteHeatThreshold,
       lifecycleStaleDecayThreshold: thresholds.staleDecayThreshold,
       cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
+      utilityRankingBoostMultiplier: this.utilityRuntimeValues?.rankingBoostMultiplier ?? 1,
+      utilityRankingSuppressMultiplier: this.utilityRuntimeValues?.rankingSuppressMultiplier ?? 1,
+      utilityPromoteThresholdDelta: this.utilityRuntimeValues?.promoteThresholdDelta ?? 0,
+      utilityDemoteThresholdDelta: this.utilityRuntimeValues?.demoteThresholdDelta ?? 0,
     };
     return createHash("sha256")
       .update(JSON.stringify(payload))
@@ -947,6 +963,11 @@ export class Orchestrator {
     await this.tierMigrationStatus.load();
     await this.sessionObserver.load();
     this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    this.utilityRuntimeValues = await loadUtilityRuntimeValues({
+      memoryDir: this.config.memoryDir,
+      memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
+      promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
+    });
 
     // Initialize content-hash dedup index
     if (this.config.factDeduplicationEnabled) {
@@ -2242,6 +2263,113 @@ export class Orchestrator {
       return results.length > 0 ? this.formatTrustZoneResults(results) : null;
     })();
 
+    const harmonicRetrievalPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.harmonicRetrievalEnabled ||
+        !this.isRecallSectionEnabled("harmonic-retrieval", this.config.harmonicRetrievalEnabled === true)
+      ) {
+        timings.harmonicRetrieval = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("harmonic-retrieval", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.harmonicRetrieval = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchHarmonicRetrieval({
+        memoryDir: this.config.memoryDir,
+        abstractionNodeStoreDir: this.config.abstractionNodeStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+        anchorsEnabled: this.config.abstractionAnchorsEnabled,
+      });
+
+      timings.harmonicRetrieval = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
+    })();
+
+    const verifiedRecallPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.verifiedRecallEnabled ||
+        !this.isRecallSectionEnabled("verified-episodes", this.config.verifiedRecallEnabled === true)
+      ) {
+        timings.verifiedRecall = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("verified-episodes", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.verifiedRecall = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchVerifiedEpisodes({
+        memoryDir: this.config.memoryDir,
+        query: retrievalQuery,
+        maxResults,
+        boxRecallDays: this.config.boxRecallDays,
+      });
+
+      timings.verifiedRecall = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
+    })();
+
+    const verifiedRulesPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.semanticRuleVerificationEnabled ||
+        !this.isRecallSectionEnabled("verified-rules", this.config.semanticRuleVerificationEnabled === true)
+      ) {
+        timings.verifiedRules = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("verified-rules", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.verifiedRules = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchVerifiedSemanticRules({
+        memoryDir: this.config.memoryDir,
+        query: retrievalQuery,
+        maxResults,
+      });
+
+      timings.verifiedRules = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatVerifiedSemanticRuleResults(results) : null;
+    })();
+
+    const workProductsPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.creationMemoryEnabled ||
+        !this.config.workProductRecallEnabled ||
+        !this.isRecallSectionEnabled("work-products", this.config.workProductRecallEnabled === true)
+      ) {
+        timings.workProducts = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("work-products", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.workProducts = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchWorkProductLedgerEntries({
+        memoryDir: this.config.memoryDir,
+        workProductLedgerDir: this.config.workProductLedgerDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.workProducts = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatWorkProductResults(results) : null;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2508,6 +2636,10 @@ export class Orchestrator {
       objectiveStateSection,
       causalTrajectorySection,
       trustZoneSection,
+      harmonicRetrievalSection,
+      verifiedRecallSection,
+      verifiedRulesSection,
+      workProductsSection,
       qmdResult,
       transcriptSection,
       compactionSection,
@@ -2523,6 +2655,10 @@ export class Orchestrator {
       objectiveStatePromise,
       causalTrajectoryPromise,
       trustZonePromise,
+      harmonicRetrievalPromise,
+      verifiedRecallPromise,
+      verifiedRulesPromise,
+      workProductsPromise,
       qmdPromise,
       transcriptPromise,
       compactionPromise,
@@ -2607,6 +2743,22 @@ export class Orchestrator {
 
     if (trustZoneSection) {
       this.appendRecallSection(sectionBuckets, "trust-zones", trustZoneSection);
+    }
+
+    if (harmonicRetrievalSection) {
+      this.appendRecallSection(sectionBuckets, "harmonic-retrieval", harmonicRetrievalSection);
+    }
+
+    if (verifiedRecallSection) {
+      this.appendRecallSection(sectionBuckets, "verified-episodes", verifiedRecallSection);
+    }
+
+    if (verifiedRulesSection) {
+      this.appendRecallSection(sectionBuckets, "verified-rules", verifiedRulesSection);
+    }
+
+    if (workProductsSection) {
+      this.appendRecallSection(sectionBuckets, "work-products", workProductsSection);
     }
 
     // 2. QMD results — post-process and format
@@ -3585,12 +3737,12 @@ export class Orchestrator {
       return skipped;
     }
 
-    const policy = {
+    const policy = applyUtilityPromotionRuntimePolicy({
       enabled: this.config.qmdTierMigrationEnabled,
       demotionMinAgeDays: this.config.qmdTierDemotionMinAgeDays,
       demotionValueThreshold: this.config.qmdTierDemotionValueThreshold,
       promotionValueThreshold: this.config.qmdTierPromotionValueThreshold,
-    };
+    }, this.utilityRuntimeValues);
 
     this.tierMigrationInFlight = true;
     try {
@@ -4624,6 +4776,28 @@ export class Orchestrator {
       }
     }
 
+    if (
+      this.config.creationMemoryEnabled &&
+      this.config.commitmentLedgerEnabled &&
+      this.config.commitmentLifecycleEnabled
+    ) {
+      try {
+        const lifecycle = await applyCommitmentLedgerLifecycle({
+          memoryDir: this.config.memoryDir,
+          commitmentLedgerDir: this.config.commitmentLedgerDir,
+          enabled: true,
+          decayDays: this.config.commitmentDecayDays,
+        });
+        if (lifecycle.transitionedToExpired.length > 0 || lifecycle.deletedResolved.length > 0) {
+          log.info(
+            `commitment ledger lifecycle: expired ${lifecycle.transitionedToExpired.length}, cleaned ${lifecycle.deletedResolved.length}`,
+          );
+        }
+      } catch (err) {
+        log.debug(`commitment ledger lifecycle pass failed: ${err}`);
+      }
+    }
+
     // Clean memories past their TTL (speculative memories auto-expire)
     const deletedTTL = await this.storage.cleanExpiredTTL();
     if (deletedTTL.length > 0) {
@@ -5364,6 +5538,89 @@ export class Orchestrator {
     return `## Trust Zones\n\n${lines.join("\n\n")}`;
   }
 
+  private formatHarmonicRetrievalResults(results: HarmonicRetrievalResult[]): string {
+    const lines = results.map(({ node, matchedAnchors, matchedFields, nodeScore, anchorScore }, index) => {
+      const header = [
+        `[${index + 1}] ${node.recordedAt.replace("T", " ").slice(0, 16)}`,
+        `${node.kind}/${node.abstractionLevel}`,
+        node.sessionKey,
+      ].join(" | ");
+      const details = [
+        node.title,
+        node.summary,
+        `scores: node=${nodeScore.toFixed(1)} anchor=${anchorScore.toFixed(1)}`,
+      ];
+      if (matchedAnchors.length > 0) {
+        details.push(`anchors: ${matchedAnchors.map((anchor) => `${anchor.anchorType}:${anchor.anchorValue}`).join("; ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Harmonic Retrieval\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatWorkProductResults(results: WorkProductLedgerSearchResult[]): string {
+    const lines = results.map(({ entry, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${entry.recordedAt.replace("T", " ").slice(0, 16)}`,
+        `${entry.kind}/${entry.action}`,
+        entry.sessionKey,
+      ].join(" | ");
+      const details = [entry.summary, `scope: ${entry.scope}`];
+      if (entry.artifactPath) details.push(`artifact: ${entry.artifactPath}`);
+      if (entry.tags && entry.tags.length > 0) details.push(`tags: ${entry.tags.join(", ")}`);
+      if (matchedFields.length > 0) details.push(`matched: ${matchedFields.join(", ")}`);
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Work Products\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatVerifiedEpisodeResults(results: VerifiedEpisodeResult[]): string {
+    const lines = results.map(({ box, verifiedEpisodeCount, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${box.sealedAt.replace("T", " ").slice(0, 16)}`,
+        box.traceId ? `trace:${box.traceId.slice(0, 12)}` : "trace:none",
+      ].join(" | ");
+      const details = [
+        box.goal ?? `topics: ${box.topics.join(", ")}`,
+        `verified episodes: ${verifiedEpisodeCount}`,
+      ];
+      if (box.toolsUsed && box.toolsUsed.length > 0) {
+        details.push(`tools: ${box.toolsUsed.join(", ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Verified Episodes\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatVerifiedSemanticRuleResults(results: VerifiedSemanticRuleResult[]): string {
+    const lines = results.map(({ rule, sourceMemoryId, verificationStatus, effectiveConfidence, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${rule.frontmatter.updated.replace("T", " ").slice(0, 16)}`,
+        verificationStatus,
+        `confidence:${effectiveConfidence.toFixed(2)}`,
+      ].join(" | ");
+      const details = [
+        rule.content,
+        `source memory: ${sourceMemoryId}`,
+      ];
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Verified Rules\n\n${lines.join("\n\n")}`;
+  }
+
   private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {
     const lines = raw
       .replace(/\r/g, "")
@@ -5903,7 +6160,11 @@ export class Orchestrator {
         // Access count boost: log scale, capped
         if (this.config.boostAccessCount && memory.frontmatter.accessCount) {
           const accessBoost = Math.log10(memory.frontmatter.accessCount + 1) / 3;
-          score += Math.min(accessBoost, 0.1); // Cap at 0.1 boost
+          score += applyUtilityRankingRuntimeDelta(
+            Math.min(accessBoost, 0.1),
+            this.utilityRuntimeValues,
+            "boost",
+          );
         }
 
         // Importance boost (Phase 1B): higher importance = higher rank
@@ -5912,7 +6173,11 @@ export class Orchestrator {
           // Boost important memories, slightly penalize trivial ones
           // Scale: trivial (-0.05) to critical (+0.15)
           const importanceBoost = (importanceScore - 0.4) * 0.25;
-          score += importanceBoost;
+          score += applyUtilityRankingRuntimeDelta(
+            importanceBoost,
+            this.utilityRuntimeValues,
+            importanceBoost >= 0 ? "boost" : "suppress",
+          );
         }
 
         // Feedback bias (v2.2): apply small user-provided up/down vote adjustments.
@@ -5920,7 +6185,12 @@ export class Orchestrator {
           const match = memory.path.match(/([^/]+)\.md$/);
           const memoryId = match ? match[1] : null;
           if (memoryId) {
-            score += this.relevance.adjustment(memoryId);
+            const feedbackDelta = this.relevance.adjustment(memoryId);
+            score += applyUtilityRankingRuntimeDelta(
+              feedbackDelta,
+              this.utilityRuntimeValues,
+              feedbackDelta >= 0 ? "boost" : "suppress",
+            );
           }
         }
 
@@ -5929,10 +6199,15 @@ export class Orchestrator {
           const match = memory.path.match(/([^/]+)\.md$/);
           const memoryId = match ? match[1] : null;
           if (memoryId) {
-            score -= this.negatives.penalty(memoryId, {
+            const negativePenalty = this.negatives.penalty(memoryId, {
               perHit: this.config.negativeExamplesPenaltyPerHit,
               cap: this.config.negativeExamplesPenaltyCap,
             });
+            score -= applyUtilityRankingRuntimeDelta(
+              negativePenalty,
+              this.utilityRuntimeValues,
+              "suppress",
+            );
           }
         }
 
@@ -5946,24 +6221,33 @@ export class Orchestrator {
             actionType: memory.frontmatter.intentActionType,
             entityTypes: memory.frontmatter.intentEntityTypes ?? [],
           });
-          score += compatibility * this.config.intentRoutingBoost;
+          score += applyUtilityRankingRuntimeDelta(
+            compatibility * this.config.intentRoutingBoost,
+            this.utilityRuntimeValues,
+            "boost",
+          );
         }
 
         // v8.1: Temporal + Tag index boost
         // Results that match the detected temporal window or tag query get a small additive boost.
         if (this.config.queryAwareIndexingEnabled && r.path) {
           if (temporalCandidates?.has(r.path)) {
-            score += 0.08; // Temporal match boost (fixed, non-configurable)
+            score += applyUtilityRankingRuntimeDelta(0.08, this.utilityRuntimeValues, "boost");
           }
           if (tagCandidates?.has(r.path)) {
-            score += 0.06; // Tag match boost
+            score += applyUtilityRankingRuntimeDelta(0.06, this.utilityRuntimeValues, "boost");
           }
         }
 
         // v8.3: lifecycle retrieval weighting (fail-open on legacy memories).
-        score += lifecycleRecallScoreAdjustment(memory.frontmatter, {
+        const lifecycleDelta = lifecycleRecallScoreAdjustment(memory.frontmatter, {
           lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
         });
+        score += applyUtilityRankingRuntimeDelta(
+          lifecycleDelta,
+          this.utilityRuntimeValues,
+          lifecycleDelta >= 0 ? "boost" : "suppress",
+        );
       }
 
       boosted.push({ ...r, score });
