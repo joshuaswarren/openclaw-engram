@@ -68,6 +68,7 @@ test("StorageManager preserves legacy backslash-heavy reasons from older frontma
     await mkdir(factsDir, { recursive: true });
 
     const legacyImportanceReason = String.raw`C:\notes\temp`;
+    const legacySingleSegmentReason = String.raw`D:\test`;
     const legacyLinkReason = String.raw`D:\temp\notes\today`;
     const legacyFile = `---
 id: fact-legacy-escapes
@@ -80,7 +81,7 @@ confidenceTier: normal
 tags: ["legacy"]
 importanceScore: 0.9
 importanceLevel: high
-importanceReasons: ["${legacyImportanceReason}"]
+importanceReasons: ["${legacyImportanceReason}", "${legacySingleSegmentReason}"]
 links:
   - targetId: fact-target
     linkType: supports
@@ -95,7 +96,7 @@ legacy payload
 
     const memory = (await storage.readAllMemories()).find((m) => m.frontmatter.id === "fact-legacy-escapes");
     assert.ok(memory);
-    assert.deepEqual(memory.frontmatter.importance?.reasons, [legacyImportanceReason]);
+    assert.deepEqual(memory.frontmatter.importance?.reasons, [legacyImportanceReason, legacySingleSegmentReason]);
     assert.equal(memory.frontmatter.links?.[0]?.reason, legacyLinkReason);
   } finally {
     await rm(dir, { recursive: true, force: true });

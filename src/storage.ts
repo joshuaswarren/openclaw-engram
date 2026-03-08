@@ -219,7 +219,7 @@ function parseFrontmatter(
     const legacyValue = rawValue.replace(/\\"/g, '"');
     const looksLikeLegacyPath =
       !rawValue.includes("\\\\") &&
-      (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)+/.test(rawValue) ||
+      (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)*/.test(rawValue) ||
         /\\[A-Za-z0-9._ -]+\\[A-Za-z0-9._ -]+/.test(rawValue));
 
     if (looksLikeLegacyPath) {
