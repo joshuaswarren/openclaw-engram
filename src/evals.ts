@@ -197,6 +197,7 @@ export interface EvalBaselineDeltaReport {
 
 export interface EvalStoredBaselineCiGateReport extends EvalBaselineDeltaReport {
   baseRootDir: string;
+  baselineResolvedFrom: "base" | "candidate";
 }
 
 export interface EvalBaselineSnapshotBenchmark {
@@ -1031,13 +1032,16 @@ export async function runEvalStoredBaselineCiGate(options: {
       memoryRedTeamBenchEnabled: true,
     }),
   ]);
-  const baselineSnapshot = baseSnapshot.baselines.find((snapshot) => snapshot.snapshotId === snapshotId);
+  const baselineSnapshot =
+    baseSnapshot.baselines.find((snapshot) => snapshot.snapshotId === snapshotId) ??
+    candidateSnapshot.baselines.find((snapshot) => snapshot.snapshotId === snapshotId);
   if (!baselineSnapshot) {
     throw new Error(`benchmark baseline snapshot not found: ${snapshotId}`);
   }
 
   return {
     baseRootDir,
+    baselineResolvedFrom: baseSnapshot.baselines.some((snapshot) => snapshot.snapshotId === snapshotId) ? "base" : "candidate",
     ...buildEvalBaselineDeltaReport({
       baselineSnapshot,
       candidateSnapshot,

@@ -219,7 +219,9 @@ Key settings:
 
 The repo's required benchmark check uses the committed fixture snapshot at
 `tests/fixtures/eval-ci/store/baselines/required-main.json` as the stable
-release baseline for PR gating.
+release baseline for PR gating. During the rollout PR that first introduces
+that file, the gate bootstraps from the candidate branch snapshot once; after
+that, PRs resolve the required baseline from the base branch checkout.
 | `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 | `objectiveStateMemoryEnabled` | `false` | Enable the objective-state memory foundation for normalized world/tool state snapshots |
 | `objectiveStateSnapshotWritesEnabled` | `false` | Permit objective-state snapshot writers to persist typed state records |

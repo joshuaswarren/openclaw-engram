@@ -31,6 +31,7 @@ two ad hoc fixture stores.
 ## Implementation Notes
 
 - use base-branch baseline snapshots and candidate-branch run artifacts
+- allow a one-time bootstrap fallback to the candidate snapshot so the rollout PR can land before `main` contains `required-main`
 - keep PR33's user-facing reporter behavior intact
 - treat the committed fixture snapshot as an explicit contract:
   `tests/fixtures/eval-ci/store/baselines/required-main.json`

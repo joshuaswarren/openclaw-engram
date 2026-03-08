@@ -226,6 +226,7 @@ The CI gate:
 
 - uses the named stored baseline snapshot `tests/fixtures/eval-ci/store/baselines/required-main.json`
 - reads that snapshot from the base-branch checkout during PR validation
+- bootstraps from the candidate snapshot only for the rollout case where the base branch has not adopted the named baseline yet
 - compares the candidate fixture store against the required baseline snapshot instead of diffing two ad hoc run sets
 - fails when candidate artifacts are invalid
 - fails when a benchmark with a latest completed run disappears from candidate

@@ -20,8 +20,10 @@ The cleanest rollout is:
 
 1. keep the existing required workflow and check name
 2. read the named baseline snapshot from the base branch checkout
-3. compare the candidate branch fixture runs against that stored baseline
-4. fail the PR when candidate artifacts are invalid or benchmark outcomes regress
+3. allow a one-time candidate fallback only when the base branch has not adopted
+   the named baseline yet
+4. compare the candidate branch fixture runs against that stored baseline
+5. fail the PR when candidate artifacts are invalid or benchmark outcomes regress
 
 This preserves the key distinction introduced in PR32 and PR33:
 
@@ -51,6 +53,9 @@ become stricter and more intentional.
 - Using a committed named snapshot is better than an implicit "latest from
   base" rule because it makes the release baseline auditable and reviewable in
   the repo.
+- The rollout PR itself is a bootstrap edge case: `main` cannot provide the new
+  required snapshot until the PR lands. That needs an explicit, visible
+  candidate fallback rather than a silent failure or a one-off manual merge.
 - The existing `EvalBaselineDeltaReport` contract from PR33 was already strong
   enough for rollout. The required check only needed a thin adapter that swaps
   the source of the baseline snapshot from "current store" to "base branch
