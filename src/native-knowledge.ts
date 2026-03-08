@@ -43,32 +43,60 @@ function chunkHeadingAware(options: {
   let startLine = 1;
 
   const flush = (endLine: number) => {
-    const body = currentLines.join("\n").trim();
-    if (!body) return;
+    const paragraphs: Array<{
+      content: string;
+      startLine: number;
+      endLine: number;
+    }> = [];
+    let paragraphLines: string[] = [];
+    let paragraphStartOffset: number | null = null;
+
+    const pushParagraph = (lineOffsetExclusive: number) => {
+      if (paragraphLines.length === 0 || paragraphStartOffset === null) return;
+      paragraphs.push({
+        content: paragraphLines.join("\n").trim(),
+        startLine: startLine + paragraphStartOffset,
+        endLine: startLine + lineOffsetExclusive - 1,
+      });
+      paragraphLines = [];
+      paragraphStartOffset = null;
+    };
+
+    for (let index = 0; index < currentLines.length; index += 1) {
+      const line = currentLines[index] ?? "";
+      if (line.trim().length === 0) {
+        pushParagraph(index);
+        continue;
+      }
+      if (paragraphStartOffset === null) paragraphStartOffset = index;
+      paragraphLines.push(line);
+    }
+    pushParagraph(currentLines.length);
+
+    if (paragraphs.length === 0) return;
+
+    const body = paragraphs.map((paragraph) => paragraph.content).join("\n\n");
 
     if (body.length <= options.maxChunkChars) {
       chunks.push({
-        chunkId: `${options.sourcePath}:${startLine}-${endLine}`,
+        chunkId: `${options.sourcePath}:${paragraphs[0]!.startLine}-${paragraphs[paragraphs.length - 1]!.endLine}`,
         sourcePath: options.sourcePath,
         title: currentTitle,
         sourceKind: detectSourceKind(options.sourcePath),
-        startLine,
-        endLine,
+        startLine: paragraphs[0]!.startLine,
+        endLine: paragraphs[paragraphs.length - 1]!.endLine,
         content: body,
       });
       return;
     }
 
-    const paragraphs = body.split(/\n{2,}/);
-    let paragraphStartLine = startLine;
     let buffer = "";
-    let bufferStartLine = paragraphStartLine;
+    let bufferStartLine = paragraphs[0]!.startLine;
+    let bufferEndLine = paragraphs[0]!.endLine;
 
     for (const paragraph of paragraphs) {
-      const next = buffer.length > 0 ? `${buffer}\n\n${paragraph}` : paragraph;
-      const paragraphLineCount = paragraph.split("\n").length;
+      const next = buffer.length > 0 ? `${buffer}\n\n${paragraph.content}` : paragraph.content;
       if (next.length > options.maxChunkChars && buffer.length > 0) {
-        const bufferEndLine = paragraphStartLine - 1;
         chunks.push({
           chunkId: `${options.sourcePath}:${bufferStartLine}-${bufferEndLine}`,
           sourcePath: options.sourcePath,
@@ -76,25 +104,26 @@ function chunkHeadingAware(options: {
           sourceKind: detectSourceKind(options.sourcePath),
           startLine: bufferStartLine,
           endLine: bufferEndLine,
-          content: buffer.trim(),
+          content: buffer,
         });
-        buffer = paragraph;
-        bufferStartLine = paragraphStartLine;
+        buffer = paragraph.content;
+        bufferStartLine = paragraph.startLine;
+        bufferEndLine = paragraph.endLine;
       } else {
         buffer = next;
+        bufferEndLine = paragraph.endLine;
       }
-      paragraphStartLine += paragraphLineCount + 1;
     }
 
-    if (buffer.trim()) {
+    if (buffer.length > 0) {
       chunks.push({
-        chunkId: `${options.sourcePath}:${bufferStartLine}-${endLine}`,
+        chunkId: `${options.sourcePath}:${bufferStartLine}-${bufferEndLine}`,
         sourcePath: options.sourcePath,
         title: currentTitle,
         sourceKind: detectSourceKind(options.sourcePath),
         startLine: bufferStartLine,
-        endLine,
-        content: buffer.trim(),
+        endLine: bufferEndLine,
+        content: buffer,
       });
     }
   };
@@ -105,12 +134,12 @@ function chunkHeadingAware(options: {
       flush(index);
       currentLines = [];
       currentTitle = line.replace(/^#{1,6}\s+/, "").trim() || currentTitle;
-      startLine = index + 1;
+      startLine = index + 2;
       continue;
     }
     if (/^#{1,6}\s+/.test(line)) {
       currentTitle = line.replace(/^#{1,6}\s+/, "").trim() || currentTitle;
-      startLine = index + 1;
+      startLine = index + 2;
       continue;
     }
     currentLines.push(line);

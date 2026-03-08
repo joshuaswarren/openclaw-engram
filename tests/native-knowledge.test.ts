@@ -89,6 +89,49 @@ test("collectNativeKnowledgeChunks preserves include file directory for namespac
   assert.equal(chunks[0]?.sourcePath, "docs/IDENTITY.shared.md");
 });
 
+test("collectNativeKnowledgeChunks preserves exact line ranges when long sections split by paragraphs", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-lines-"));
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "MEMORY.md"),
+    [
+      "# Memory",
+      "",
+      "First paragraph is intentionally long to trigger paragraph chunking and keep exact line numbers.",
+      "",
+      "",
+      "Second paragraph is also intentionally long so it becomes its own chunk with preserved metadata.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    config: {
+      enabled: true,
+      includeFiles: ["MEMORY.md"],
+      maxChunkChars: 90,
+      maxResults: 4,
+      maxChars: 2400,
+    },
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.length, 2);
+  assert.deepEqual(
+    chunks.map((chunk) => ({
+      startLine: chunk.startLine,
+      endLine: chunk.endLine,
+      chunkId: chunk.chunkId,
+    })),
+    [
+      { startLine: 3, endLine: 3, chunkId: "MEMORY.md:3-3" },
+      { startLine: 6, endLine: 6, chunkId: "MEMORY.md:6-6" },
+    ],
+  );
+});
+
 test("searchNativeKnowledge ranks identity and phrase matches highest", () => {
   const results = searchNativeKnowledge({
     query: "deterministic tests",
