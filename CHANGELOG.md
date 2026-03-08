@@ -6,7 +6,6 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Generic memory lifecycle ledger foundation: Engram now records append-only `created`, `updated`, `archived`, and `superseded` events under `state/memory-lifecycle-ledger.jsonl`, plus a rebuild utility and CLI for regenerating that ledger from markdown memory state.
-- Derived memory projection foundation: Engram can now rebuild `state/memory-projection.sqlite` from markdown memories plus lifecycle events, inspect projected current-state rows, and read per-memory timelines through new maintenance and CLI surfaces.
 
 ### Changed
 - Release automation now promotes `CHANGELOG.md` from `Unreleased` into a dated versioned section during the auto-release workflow, pushes that release commit back to `main`, and no longer relies on PR authors to keep the changelog release ledger in sync by hand.
