@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Fixed
+- Frontmatter link serialization now preserves parser symmetry for `links[].reason`: reasons are JSON-escaped when written and JSON-unescaped when parsed, preventing backslash amplification across save/load cycles while still addressing incomplete escaping. Parsing now also fail-opens for legacy files that contain previously-unescaped backslashes, so older memories continue to load instead of being dropped on parse.
 - Removed a redundant no-op `.replace("Z", "Z")` call from `toSafeTimestamp`, preserving the filesystem-safe `YYYYMMDDTHHMMSSmmmZ` format while resolving code-scanning alert #7.
 - **Objective-state follow-up**: plain-text tool results no longer get marked as failures just because they contain words like `errors` or `failed` inside otherwise successful messages such as `0 errors found` or `previously failed test now passes`.
 - Dashboard websocket origin validation now treats omitted default HTTP port as port 80, so same-origin upgrades on `http://127.0.0.1` and `http://127.0.0.1:80` both pass when the dashboard is bound to port 80; also removed an unreachable bracketed IPv6 loopback host entry.

@@ -152,7 +152,7 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       lines.push(`  - targetId: ${link.targetId}`);
       lines.push(`    linkType: ${link.linkType}`);
       lines.push(`    strength: ${link.strength}`);
-      if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
+      if (link.reason) lines.push(`    reason: ${JSON.stringify(link.reason)}`);
     }
   }
   if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
@@ -167,6 +167,24 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.memoryKind) lines.push(`memoryKind: ${fm.memoryKind}`);
   lines.push("---");
   return lines.join("\n");
+}
+
+function parseLinkReasonValue(rawValue: string): string {
+  const legacyValue = rawValue.replace(/\\"/g, '"');
+  const looksLikeLegacyPath =
+    !rawValue.includes("\\\\") &&
+    (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)+/.test(rawValue) ||
+      /\\[A-Za-z0-9._ -]+\\[A-Za-z0-9._ -]+/.test(rawValue));
+
+  if (looksLikeLegacyPath) {
+    return legacyValue;
+  }
+
+  try {
+    return JSON.parse(`"${rawValue}"`) as string;
+  } catch {
+    return legacyValue;
+  }
 }
 
 function parseFrontmatter(
@@ -308,14 +326,14 @@ function parseFrontmatter(
   if (fmBlock.includes("links:")) {
     const links: MemoryLink[] = [];
     const linkMatches = fmBlock.matchAll(
-      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "([^"]*)")?/g,
+      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "((?:\\.|[^"\\])*)")?/g,
     );
     for (const match of linkMatches) {
       links.push({
         targetId: match[1],
         linkType: match[2] as MemoryLink["linkType"],
         strength: parseFloat(match[3]),
-        reason: match[4] || undefined,
+        reason: match[4] ? parseLinkReasonValue(match[4]) : undefined,
       });
     }
     if (links.length > 0) {
