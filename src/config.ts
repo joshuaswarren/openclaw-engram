@@ -481,6 +481,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     evalHarnessEnabled: cfg.evalHarnessEnabled === true,
     evalShadowModeEnabled: cfg.evalShadowModeEnabled === true,
     benchmarkBaselineSnapshotsEnabled: cfg.benchmarkBaselineSnapshotsEnabled === true,
+    benchmarkDeltaReporterEnabled: cfg.benchmarkDeltaReporterEnabled === true,
     evalStoreDir:
       typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
         ? cfg.evalStoreDir.trim()

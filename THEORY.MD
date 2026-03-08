@@ -1,71 +1,71 @@
-# Theory: Benchmark Gates Need Named Baselines, Not Just Store Comparisons
+# Theory: Stored Baselines Only Matter If PRs Can Read Them
 
 ## Problem
 
-Engram already has the core pieces of a benchmark-first memory system:
-benchmark-pack validation, run summaries, shadow recall recording, and a
-candidate-vs-base store comparator. That is enough to prove that memory changes
-can be measured, but it is not yet enough to make that measurement durable.
+PR32 gave Engram a durable baseline artifact, but that alone does not create
+benchmark-gated release discipline. A stored snapshot is useful only if the
+next PR slice can consume it directly and turn it into an explicit pass/fail
+signal for a candidate build.
 
-The missing piece is a named baseline artifact. Without one, later PR
-comparison still depends on whichever branch or eval-store directory happens to
-be available at review time. That makes the release discipline weaker than the
-rest of the roadmap: reproducible in principle, but still too dependent on
-operator state.
+Without that, the evaluation harness still depends on ad hoc store-to-store
+comparisons and operator choreography. The baseline exists, but the review loop
+still cannot ask the simple question it needs to ask: how does this candidate
+compare to the named benchmark baseline we decided to trust?
 
 ## Operating Theory
 
-The evaluation harness should follow the same pattern as the rest of Engram's
-memory operating system:
+PR33 should not invent a second evaluation system. The right move is to reuse
+the same bounded comparison primitives that already power the CI gate:
 
-1. define a typed artifact
-2. store it under the normal state root
-3. expose it with operator-facing tooling
-4. let later slices consume that artifact instead of re-inventing the contract
+- latest completed run per benchmark
+- pass-rate deltas
+- shared metric deltas
+- fail-closed handling for invalid candidate artifacts
 
-For benchmark release discipline, the typed artifact is a baseline snapshot of
-the latest completed run per benchmark. The snapshot should be small and
-durable: benchmark ids, run ids, pass rates, shared metrics, source root, and
-optional notes. It should not duplicate benchmark cases or raw prompt content.
+The new work is not another comparison engine. It is a bridge between two
+existing contracts:
+
+1. the stored `EvalBaselineSnapshot` artifact from PR32
+2. the candidate latest-run view already used by PR4's CI gate
+
+If that bridge is typed, operator-facing, and feature-flagged, then PR34 can
+wire it into required CI without changing the report contract again.
 
 ## Strategy
 
-PR32 stays deliberately narrow.
+Keep PR33 narrow and reviewable:
 
-It adds:
+- add one flag: `benchmarkDeltaReporterEnabled`
+- add one typed report: `EvalBaselineDeltaReport`
+- add one CLI command: `openclaw engram benchmark-baseline-report --snapshot-id <id>`
+- emit both JSON and markdown from the same source of truth
 
-- a new `benchmarkBaselineSnapshotsEnabled` flag
-- typed `EvalBaselineSnapshot` validation
-- storage under `state/evals/baselines`
-- a CLI command to capture a named baseline snapshot
-- status visibility through the existing `benchmark-status` command
-
-It does not yet add PR delta reporting or required CI rollout. Those belong to
-PR33 and PR34. The goal here is to create the stable artifact that those later
-slices will consume.
+The command should compare a named stored baseline snapshot against the current
+eval store, not against another branch directory. That preserves the point of
+the baseline artifact: deliberate, reusable release anchors instead of transient
+workspace state.
 
 ## Key Discoveries
 
-- The right substrate already existed in PR4. `latestCompletedRunsByBenchmark`
-  is the exact bounded view needed for a baseline snapshot, so PR32 does not
-  need to invent another aggregation layer.
-- Baseline snapshots are best treated as eval-store artifacts, not repo-root
-  metadata. Keeping them under `state/evals` makes them align with manifests,
-  runs, and shadows, and keeps the storage model coherent.
-- `benchmark-status` is the right operator surface for this slice. A separate
-  baseline-status command would add another status surface before the baseline
-  artifact has any downstream consumers.
-- The baseline snapshot should fail closed when disabled. This keeps the slice
-  behind its own feature flag while still allowing the broader evaluation
-  harness to remain enabled independently.
+- The existing CI-gate comparison path already has the right semantics for
+  regressions and improvements. PR33 only needs to swap the base side from
+  "latest runs in another store" to "benchmarks recorded in one named snapshot."
+- Because the baseline snapshot lives in the same eval store as later candidate
+  runs, a benchmark is only truly "missing" if its latest candidate run is no
+  longer present after the snapshot is taken. That storage-model nuance needed a
+  regression test so the report does not silently overstate coverage.
+- Markdown output belongs in the report contract itself, not in a separate
+  formatter script, because PR comments and release notes will want the same
+  operator-facing summary that the CLI prints locally.
 
 ## Open Questions
 
-- Should PR33 compare candidates directly to a named baseline snapshot, or
-  resolve a snapshot into a temporary synthetic store and reuse the existing
-  CI-gate machinery?
-- Should baseline snapshots later include selected benchmark metadata such as
-  tags or source links for richer human reporting, or should they stay limited
-  to run-level outcome data?
-- Once PR34 lands, should the project maintain one rolling baseline snapshot or
-  a sequence of named snapshots tied to release points?
+- PR34 still needs to decide whether required CI should compare against one
+  explicit snapshot id or a repo-level default baseline pointer.
+- The baseline delta report currently treats invalid candidate baseline files as
+  regressions too. That is conservative and useful today, but later slices may
+  want a clearer distinction between "comparison baseline is unreadable" and
+  "candidate benchmark behavior regressed."
+- If Engram later supports multiple benchmark families with different rollout
+  cadences, the project may need scoped baselines instead of one flat snapshot
+  namespace.

@@ -48,9 +48,11 @@ import {
   getEvalHarnessStatus,
   importEvalBenchmarkPack,
   type EvalBaselineSnapshot,
+  type EvalBaselineDeltaReport,
   type EvalBenchmarkPackSummary,
   type EvalCiGateReport,
   type EvalHarnessStatus,
+  runEvalBaselineDeltaReport,
   runEvalBenchmarkCiGate,
   validateEvalBenchmarkPack,
 } from "./evals.js";
@@ -723,6 +725,20 @@ export async function runBenchmarkCiGateCliCommand(options: {
   return runEvalBenchmarkCiGate({
     baseEvalStoreDir: options.baseEvalStoreDir,
     candidateEvalStoreDir: options.candidateEvalStoreDir,
+  });
+}
+
+export async function runBenchmarkBaselineReportCliCommand(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  benchmarkDeltaReporterEnabled: boolean;
+  snapshotId: string;
+}): Promise<EvalBaselineDeltaReport> {
+  return runEvalBaselineDeltaReport({
+    memoryDir: options.memoryDir,
+    evalStoreDir: options.evalStoreDir,
+    benchmarkDeltaReporterEnabled: options.benchmarkDeltaReporterEnabled,
+    snapshotId: options.snapshotId,
   });
 }
 
@@ -2739,6 +2755,26 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(JSON.stringify(summary, null, 2));
           if (!summary.passed) {
             throw new Error("benchmark CI gate detected regressions");
+          }
+          console.log("OK");
+        });
+
+      cmd
+        .command("benchmark-baseline-report")
+        .description("Compare the current eval store against a named stored benchmark baseline snapshot")
+        .requiredOption("--snapshot-id <id>", "Stable baseline snapshot identifier")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const summary = await runBenchmarkBaselineReportCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            evalStoreDir: orchestrator.config.evalStoreDir,
+            benchmarkDeltaReporterEnabled: orchestrator.config.benchmarkDeltaReporterEnabled,
+            snapshotId: typeof options.snapshotId === "string" ? options.snapshotId : "",
+          });
+          console.log(JSON.stringify(summary, null, 2));
+          console.log(summary.markdownReport);
+          if (!summary.passed) {
+            throw new Error("benchmark baseline report detected regressions");
           }
           console.log("OK");
         });
