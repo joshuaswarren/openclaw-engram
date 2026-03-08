@@ -370,6 +370,18 @@ function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, filePath: s
   return frontmatter;
 }
 
+function inferCurrentStateStatus(
+  frontmatter: MemoryFrontmatter,
+  filePath: string,
+  fallbackStatus: MemoryStatus,
+): MemoryStatus {
+  if (frontmatter.status && frontmatter.status !== "active") return frontmatter.status;
+  if (frontmatter.archivedAt) return "archived";
+  if (/[\\/]archive[\\/]/.test(filePath)) return "archived";
+  if (frontmatter.status) return frontmatter.status;
+  return fallbackStatus;
+}
+
 /**
  * Entity alias table loaded from the user's local config.
  * Populated by StorageManager.loadAliases() at startup.
@@ -2859,7 +2871,7 @@ export class StorageManager {
     return {
       memoryId: memory.frontmatter.id,
       category: memory.frontmatter.category,
-      status: memory.frontmatter.status ?? fallbackStatus,
+      status: inferCurrentStateStatus(memory.frontmatter, memory.path, fallbackStatus),
       lifecycleState: memory.frontmatter.lifecycleState,
       path: memory.path,
       pathRel: path.relative(this.baseDir, memory.path).split(path.sep).join("/"),

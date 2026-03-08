@@ -211,6 +211,37 @@ archived without explicit status
   }
 });
 
+test("StorageManager treats memories with archivedAt as archived in projected-state fallback", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-archivedat-read-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-archivedat.md",
+      `---
+id: fact-archivedat
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+archivedAt: 2026-03-08T02:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["archived"]
+---
+
+archivedAt without explicit status
+`,
+    );
+
+    const storage = new StorageManager(memoryDir);
+    const current = await storage.getProjectedMemoryState("fact-archivedat");
+    assert.ok(current);
+    assert.equal(current?.status, "archived");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager projection helpers fail open to markdown and lifecycle ledger", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-projection-fallback-"));
   try {
