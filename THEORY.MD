@@ -1,62 +1,66 @@
-# Theory: Utility Learning Needs a Stable Outcome Ledger Before It Can Tune Memory
+# Theory: Utility Learning Should Happen Offline Before It Touches Live Ranking
 
 ## Problem
 
-Engram now has benchmark infrastructure, objective-state memory, trust zones,
-harmonic retrieval, creation memory, and bounded resume bundles. What it still
-lacks is a stable way to connect those memory decisions to downstream utility.
+Engram now has the PR29 outcome ledger for utility telemetry. What it still
+lacks is a stable offline learner that can turn those raw events into a
+bounded artifact the runtime can consume later without re-reading or
+reinterpreting the full telemetry store on every request.
 
-Without that contract, later slices would have to infer utility from whatever
-telemetry happened to exist at the time, which would make promotion-by-outcome
-fragile, inconsistent, and hard to benchmark. PR29 exists to prevent that
-drift by freezing the first explicit utility-learning schema before any learner
-or runtime weighting logic appears.
+Jumping straight from raw utility events to live ranking changes would make the
+rollout brittle: the runtime would have to own grouping rules, weighting math,
+sample thresholds, and decay semantics all at once. PR30 exists to separate
+that concern. The learner should read the PR29 ledger offline, emit a typed and
+bounded weight snapshot, and leave live application to PR31.
 
 ## Operating Theory
 
-Utility learning should begin as explicit evidence, not implicit inference.
-The first requirement is a typed ledger that can answer:
+Utility learning should stay in the same rollout order as the rest of the
+roadmap:
 
-- what memory surface was being adjusted (`promotion` or `ranking`)
-- what action was taken (`promote`, `hold`, `boost`, `suppress`, etc.)
-- what downstream outcome was observed (`helpful`, `neutral`, `harmful`)
-- how strong that signal was (`utilityScore` in a bounded range)
+1. capture evidence explicitly
+2. learn from it offline into a bounded snapshot
+3. let the runtime consume only that bounded snapshot
 
-That contract needs to be durable, date-partitioned, and operator-visible.
-Only then can later slices safely learn weights offline and apply them at
-runtime without rewriting storage semantics or re-litigating telemetry shape.
+For PR30, that means:
+
+- group by the real policy surface: `target + decision`
+- exclude low-sample groups instead of inventing weights from anecdotes
+- compute bounded learned weights from average utility and confidence
+- persist one typed snapshot so later slices can inspect or consume it
+- keep all of this behind `memoryUtilityLearningEnabled`
 
 ## Strategy
 
-Keep PR29 as a contract slice:
+Keep PR30 as an offline learner slice:
 
-1. add the roadmap flags `memoryUtilityLearningEnabled` and
-   `promotionByOutcomeEnabled`
-2. persist typed utility events under a dedicated `state/utility-telemetry`
-   store
-3. expose status and explicit recording commands so benchmarks and operators
-   can write first-class outcome evidence
-4. make disabled mode a true no-op so feature rollout stays bounded
+1. read utility telemetry from the PR29 event ledger
+2. learn bounded weights per `target + decision`
+3. persist a stable learner snapshot under `state/utility-telemetry`
+4. expose operator-facing `utility-learn` and `utility-learning-status`
+5. keep disabled mode a true no-op
 
 This mirrors the rest of the roadmap: store first, learner second, runtime
 policy last.
 
 ## Key Discoveries
 
-- The repo already has telemetry idioms for action outcomes and status tools,
-  so PR29 does not need a novel storage pattern; it only needs a domain-specific
-  utility contract.
-- `promotionByOutcomeEnabled` should exist in config now even though it does
-  not change runtime behavior yet. That keeps the rollout honest: PR29 is the
-  schema, PR30 is the learner, PR31 is bounded application.
-- The same disabled-mode lesson from PR27 applies here. A feature flag is only
-  real when the CLI/status path short-circuits before scanning storage.
+- The repo already has two strong patterns to reuse here: `behavior-learner.ts`
+  for bounded offline adjustment math and `policy-runtime.ts` for a persisted
+  typed snapshot contract.
+- The learner artifact should be its own file under the utility-telemetry root,
+  not a runtime policy file. PR30 should not imply that weights are already
+  applied.
+- The same disabled-mode lesson from PR27 and PR29 applies here. A feature flag
+  is only real when the CLI/status path short-circuits before scanning storage.
+- Confidence needs to be derived from both utility magnitude and event count so
+  small but noisy groups do not produce outsized weights.
 
 ## Open Questions
 
-- Should PR30 learn one shared weight model across both `promotion` and
-  `ranking`, or derive separate weight families per target?
-- When benchmark packs record utility events, should they point directly to
-  memory ids only, or also to recall-section ids and evaluation case ids?
-- What is the right decay model for stale utility signals once runtime
-  application lands?
+- How aggressively should PR31 apply the learned weights once runtime
+  consumption lands?
+- Should later slices add recency decay inside the learner snapshot itself, or
+  keep decay implicit by recomputing over a bounded lookback window?
+- When benchmark packs record utility events, should they eventually link to
+  recall-section ids and evaluation case ids in addition to memory ids?

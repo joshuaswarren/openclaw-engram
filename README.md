@@ -47,7 +47,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Artifact recovery recall** — Engram can now, when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, surface prompt-relevant work-product ledger entries back into recall as a dedicated `Work Products` section and inspect reuse candidates with `openclaw engram work-product-recall-search`.
 - **Commitment lifecycle foundation** — Engram can now, when `creationMemoryEnabled`, `commitmentLedgerEnabled`, and `commitmentLifecycleEnabled` are enabled, transition existing commitments to `fulfilled` / `cancelled` / `expired`, inspect overdue and stale obligations in `openclaw engram commitment-status`, and run deterministic lifecycle cleanup with `openclaw engram commitment-lifecycle-run`.
 - **Resume-bundle builder** — Engram can now, when `creationMemoryEnabled` and `resumeBundlesEnabled` are enabled, persist typed crash-recovery resume bundles, inspect them with `openclaw engram resume-bundle-status`, write explicit handoff shells through `openclaw engram resume-bundle-record`, and build bounded resume bundles from transcript recovery, recent objective-state snapshots, work products, and open commitments through `openclaw engram resume-bundle-build`.
-- **Utility-learning telemetry foundation** — Engram can now, when `memoryUtilityLearningEnabled` is enabled, persist typed downstream utility events for promotion and ranking decisions, inspect them with `openclaw engram utility-status`, and write deterministic benchmark/operator telemetry through `openclaw engram utility-record` before learned weighting lands.
+- **Utility-learning offline learner** — Engram can now, when `memoryUtilityLearningEnabled` is enabled, persist typed downstream utility events for promotion and ranking decisions, inspect the raw event ledger with `openclaw engram utility-status`, record deterministic benchmark/operator telemetry through `openclaw engram utility-record`, and learn bounded offline promotion/ranking weights through `openclaw engram utility-learn` and `openclaw engram utility-learning-status` before runtime weighting lands.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -186,6 +186,8 @@ openclaw engram work-product-record         # Record a typed work-product ledger
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger
 openclaw engram utility-status              # Utility-learning telemetry counts and latest observed outcome event
 openclaw engram utility-record              # Record a typed utility-learning telemetry event
+openclaw engram utility-learning-status     # Latest offline utility-learning snapshot and learned weight counts
+openclaw engram utility-learn               # Learn bounded offline promotion/ranking weights from recorded utility events
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics

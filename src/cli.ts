@@ -101,6 +101,12 @@ import {
   type UtilityTelemetryStatus,
 } from "./utility-telemetry.js";
 import {
+  getUtilityLearningStatus,
+  learnUtilityPromotionWeights,
+  type UtilityLearningResult,
+  type UtilityLearningStatus,
+} from "./utility-learner.js";
+import {
   buildResumeBundleFromState,
   getResumeBundleStatus,
   recordResumeBundle,
@@ -863,6 +869,34 @@ export async function runUtilityTelemetryRecordCliCommand(options: {
   return recordUtilityTelemetryEvent({
     memoryDir: options.memoryDir,
     event: options.event,
+  });
+}
+
+export async function runUtilityLearningStatusCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
+}): Promise<UtilityLearningStatus> {
+  return getUtilityLearningStatus({
+    memoryDir: options.memoryDir,
+    enabled: options.memoryUtilityLearningEnabled,
+    promotionByOutcomeEnabled: options.promotionByOutcomeEnabled,
+  });
+}
+
+export async function runUtilityLearningCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  learningWindowDays?: number;
+  minEventCount?: number;
+  maxWeightMagnitude?: number;
+}): Promise<UtilityLearningResult> {
+  return learnUtilityPromotionWeights({
+    memoryDir: options.memoryDir,
+    enabled: options.memoryUtilityLearningEnabled,
+    learningWindowDays: Math.max(1, Math.floor(options.learningWindowDays ?? 14)),
+    minEventCount: Math.max(1, Math.floor(options.minEventCount ?? 3)),
+    maxWeightMagnitude: Math.max(0, Math.min(1, options.maxWeightMagnitude ?? 0.35)),
   });
 }
 
@@ -2810,6 +2844,47 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             },
           });
           console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-learning-status")
+        .description("Show offline utility-learning snapshot status and learned weight counts")
+        .action(async () => {
+          const status = await runUtilityLearningStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            promotionByOutcomeEnabled: orchestrator.config.promotionByOutcomeEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-learn")
+        .description("Learn bounded offline promotion/ranking weights from recorded utility telemetry")
+        .option("--window-days <days>", "Telemetry lookback window in days", "14")
+        .option("--min-event-count <count>", "Minimum event count required per target/decision group", "3")
+        .option("--max-weight-magnitude <value>", "Maximum absolute learned weight magnitude", "0.35")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const learningWindowDays = typeof options.windowDays === "string"
+            ? Number.parseInt(options.windowDays, 10)
+            : 14;
+          const minEventCount = typeof options.minEventCount === "string"
+            ? Number.parseInt(options.minEventCount, 10)
+            : 3;
+          const maxWeightMagnitude = typeof options.maxWeightMagnitude === "string"
+            ? Number.parseFloat(options.maxWeightMagnitude)
+            : 0.35;
+          const result = await runUtilityLearningCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            learningWindowDays,
+            minEventCount,
+            maxWeightMagnitude,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 
