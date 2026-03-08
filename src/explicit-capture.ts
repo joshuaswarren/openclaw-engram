@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Orchestrator } from "./orchestrator.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
+import { ContentHashIndex } from "./storage.js";
 import type { CaptureMode, MemoryCategory, MemoryLifecycleEvent, PluginConfig } from "./types.js";
 
 export type ExplicitCaptureInput = {
@@ -55,7 +56,7 @@ function asTrimmed(value: string | undefined): string | undefined {
 }
 
 function normalizeCaptureContent(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return ContentHashIndex.normalizeContent(value);
 }
 
 function parseExplicitCaptureTtl(ttl: string | undefined): string | undefined {
@@ -202,6 +203,7 @@ export function validateExplicitCaptureInput(input: ExplicitCaptureInput): Valid
   if (confidence < 0 || confidence > 1) {
     throw new Error("confidence must be between 0 and 1");
   }
+  const ttl = parseExplicitCaptureTtl(input.ttl);
 
   return {
     content,
@@ -210,7 +212,7 @@ export function validateExplicitCaptureInput(input: ExplicitCaptureInput): Valid
     namespace: asTrimmed(input.namespace),
     tags: Array.from(new Set((input.tags ?? []).map((tag) => tag.trim()).filter(Boolean))),
     entityRef: asTrimmed(input.entityRef),
-    ttl: asTrimmed(input.ttl),
+    ttl,
     sourceReason: asTrimmed(input.sourceReason),
   };
 }
@@ -263,7 +265,7 @@ export async function persistExplicitCapture(
     confidence: candidate.confidence,
     tags: candidate.tags,
     entityRef: candidate.entityRef,
-    expiresAt: parseExplicitCaptureTtl(candidate.ttl),
+    expiresAt: candidate.ttl,
     source: source === "tool" ? "explicit" : "explicit-inline",
   });
 

@@ -525,12 +525,17 @@ export class ContentHashIndex {
   }
 
   /** Normalize content and compute SHA-256 hash. */
-  static computeHash(content: string): string {
-    const normalized = content
+  static normalizeContent(content: string): string {
+    return content
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  /** Normalize content and compute SHA-256 hash. */
+  static computeHash(content: string): string {
+    const normalized = ContentHashIndex.normalizeContent(content);
     return createHash("sha256").update(normalized).digest("hex");
   }
 }

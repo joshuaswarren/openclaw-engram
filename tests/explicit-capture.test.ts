@@ -11,6 +11,7 @@ import {
   stripInlineExplicitCaptureNotes,
   validateExplicitCaptureInput,
 } from "../src/explicit-capture.js";
+import { ContentHashIndex } from "../src/storage.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import { registerTools } from "../src/tools.js";
 
@@ -91,6 +92,17 @@ test("explicit capture validation rejects likely secrets", () => {
         content: "api_key=supersecretvalue123 remember this forever",
       }),
     /secret or credential/,
+  );
+});
+
+test("explicit capture validation rejects invalid ttl values before persistence", () => {
+  assert.throws(
+    () =>
+      validateExplicitCaptureInput({
+        content: "This memory should fail validation before any write attempt.",
+        ttl: "garbage",
+      }),
+    /ttl must be an ISO-8601 timestamp or relative duration/,
   );
 });
 
@@ -204,6 +216,15 @@ test("fact duplicate checks fall back to the full corpus scan when hash index co
 
   assert.equal(duplicate, "fact-legacy");
   assert.equal(readAllMemoriesCalls, 1);
+});
+
+test("explicit capture duplicate normalization stays aligned with fact hash normalization", () => {
+  const a = "User prefers: pourover coffee.";
+  const b = "user prefers pourover coffee";
+  assert.equal(
+    ContentHashIndex.normalizeContent(a),
+    ContentHashIndex.normalizeContent(b),
+  );
 });
 
 test("memory_store and memory_capture share explicit validation and duplicate handling", async () => {
