@@ -16,6 +16,8 @@ import os from "node:os";
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
 const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
+const ENGRAM_ACCESS_SERVICE = "__openclawEngramAccessService";
+const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
@@ -119,14 +121,27 @@ export default {
       (globalThis as any).__openclawEngramTrace = undefined;
     }
 
-    const accessService = new EngramAccessService(orchestrator);
-    const accessHttpServer = new EngramAccessHttpServer({
-      service: accessService,
-      host: cfg.agentAccessHttp.host,
-      port: cfg.agentAccessHttp.port,
-      authToken: cfg.agentAccessHttp.authToken,
-      maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
-    });
+    const existingAccessService =
+      (globalThis as any)[ENGRAM_ACCESS_SERVICE] as EngramAccessService | undefined;
+    const accessService =
+      existingAccessService && (existingAccessService as EngramAccessService)
+        ? existingAccessService
+        : new EngramAccessService(orchestrator);
+    (globalThis as any)[ENGRAM_ACCESS_SERVICE] = accessService;
+
+    const existingAccessHttpServer =
+      (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] as EngramAccessHttpServer | undefined;
+    const accessHttpServer =
+      existingAccessHttpServer && (existingAccessHttpServer as EngramAccessHttpServer)
+        ? existingAccessHttpServer
+        : new EngramAccessHttpServer({
+            service: accessService,
+            host: cfg.agentAccessHttp.host,
+            port: cfg.agentAccessHttp.port,
+            authToken: cfg.agentAccessHttp.authToken,
+            maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
+          });
+    (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;
 
     // ========================================================================
     // HOOK: before_agent_start — Inject memory context
@@ -565,6 +580,8 @@ export default {
         } catch (err) {
           log.debug(`engram access HTTP stop failed: ${err}`);
         }
+        delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
+        delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
         // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.

@@ -20,6 +20,7 @@ const MCP_PROTOCOL_VERSION = "2024-11-05";
 
 export class EngramMcpServer {
   private buffer = Buffer.alloc(0);
+  private flushTask: Promise<void> | null = null;
   private readonly tools: McpTool[];
 
   constructor(private readonly service: EngramAccessService) {
@@ -157,7 +158,21 @@ export class EngramMcpServer {
   async runStdio(input: Readable, output: Writable): Promise<void> {
     input.on("data", (chunk) => {
       this.buffer = Buffer.concat([this.buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-      void this.flushBuffer(output).catch((err) => {
+      this.scheduleFlush(output);
+    });
+    await new Promise<void>((resolve, reject) => {
+      input.on("end", resolve);
+      input.on("error", reject);
+    });
+    while (this.flushTask) {
+      await this.flushTask;
+    }
+  }
+
+  private scheduleFlush(output: Writable): void {
+    if (this.flushTask) return;
+    const task = this.flushBuffer(output)
+      .catch((err) => {
         this.writeMessage(output, {
           jsonrpc: "2.0",
           id: null,
@@ -166,12 +181,16 @@ export class EngramMcpServer {
             message: err instanceof Error ? err.message : String(err),
           },
         });
+      })
+      .finally(() => {
+        if (this.flushTask === task) {
+          this.flushTask = null;
+        }
+        if (this.buffer.length > 0) {
+          this.scheduleFlush(output);
+        }
       });
-    });
-    await new Promise<void>((resolve, reject) => {
-      input.on("end", resolve);
-      input.on("error", reject);
-    });
+    this.flushTask = task;
   }
 
   private async flushBuffer(output: Writable): Promise<void> {

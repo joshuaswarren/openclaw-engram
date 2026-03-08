@@ -59,6 +59,24 @@ function createFakeService(): EngramAccessService {
   } as unknown as EngramAccessService;
 }
 
+function parseMcpBodies(raw: string): Array<Record<string, unknown>> {
+  const messages: Array<Record<string, unknown>> = [];
+  let remaining = raw;
+  while (remaining.length > 0) {
+    const headerEnd = remaining.indexOf("\r\n\r\n");
+    assert.notEqual(headerEnd, -1, "expected MCP header terminator");
+    const header = remaining.slice(0, headerEnd);
+    const match = header.match(/Content-Length:\s*(\d+)/i);
+    assert.ok(match, "expected Content-Length header");
+    const contentLength = Number.parseInt(match[1] ?? "0", 10);
+    const bodyStart = headerEnd + 4;
+    const bodyEnd = bodyStart + contentLength;
+    messages.push(JSON.parse(remaining.slice(bodyStart, bodyEnd)) as Record<string, unknown>);
+    remaining = remaining.slice(bodyEnd);
+  }
+  return messages;
+}
+
 test("MCP server advertises tools and dispatches recall", async () => {
   const server = new EngramMcpServer(createFakeService());
 
@@ -117,4 +135,57 @@ test("MCP server reports parse errors and keeps processing later messages", asyn
 
   assert.match(raw, /"code":-32700/);
   assert.match(raw, /engram\.recall/);
+});
+
+test("MCP server drains buffered requests in arrival order across overlapping data events", async () => {
+  const seen: string[] = [];
+  const service = {
+    recall: async ({ query }: { query: string }) => {
+      seen.push(query);
+      if (query === "first") {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      return {
+        query,
+        context: query,
+        count: 1,
+        memoryIds: [query],
+      };
+    },
+  } as EngramAccessService;
+  const server = new EngramMcpServer(service);
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let raw = "";
+  output.on("data", (chunk) => {
+    raw += chunk.toString("utf-8");
+  });
+
+  const run = server.runStdio(input, output);
+  const first = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: "engram.recall", arguments: { query: "first" } },
+  });
+  const second = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "engram.recall", arguments: { query: "second" } },
+  });
+  input.write(`Content-Length: ${Buffer.byteLength(first, "utf-8")}\r\n\r\n${first}`);
+  input.write(`Content-Length: ${Buffer.byteLength(second, "utf-8")}\r\n\r\n${second}`);
+  input.end();
+  await run;
+
+  assert.deepEqual(seen, ["first", "second"]);
+  const responseBodies = parseMcpBodies(raw) as Array<{
+    id?: number;
+    result?: { structuredContent?: { query?: string } };
+  }>;
+  assert.deepEqual(
+    responseBodies.map((body) => body.result?.structuredContent?.query),
+    ["first", "second"],
+  );
 });
