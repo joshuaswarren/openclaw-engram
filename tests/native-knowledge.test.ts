@@ -63,6 +63,32 @@ test("collectNativeKnowledgeChunks includes namespaced identity files for allowe
   assert.equal(chunks[0]?.sourcePath, "IDENTITY.shared.md");
 });
 
+test("collectNativeKnowledgeChunks preserves include file directory for namespaced identity variants", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-subdir-"));
+  await mkdir(path.join(workspaceDir, "docs"), { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "docs", "IDENTITY.shared.md"),
+    "# Shared\n\nShared notes in docs.\n",
+    "utf-8",
+  );
+
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    config: {
+      enabled: true,
+      includeFiles: ["docs/IDENTITY.md"],
+      maxChunkChars: 200,
+      maxResults: 4,
+      maxChars: 2400,
+    },
+    recallNamespaces: ["shared"],
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0]?.sourcePath, "docs/IDENTITY.shared.md");
+});
+
 test("searchNativeKnowledge ranks identity and phrase matches highest", () => {
   const results = searchNativeKnowledge({
     query: "deterministic tests",

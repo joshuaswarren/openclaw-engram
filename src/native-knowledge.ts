@@ -144,9 +144,16 @@ function resolveCandidatePaths(options: {
       path.basename(trimmed).toLowerCase() === "identity.md" &&
       Array.isArray(options.recallNamespaces)
     ) {
+      const relativeDir = path.dirname(trimmed);
       for (const namespace of options.recallNamespaces) {
         if (!namespace || namespace === options.defaultNamespace) continue;
-        out.add(path.join(options.workspaceDir, `IDENTITY.${namespace}.md`));
+        out.add(
+          path.join(
+            options.workspaceDir,
+            relativeDir,
+            `IDENTITY.${namespace}.md`,
+          ),
+        );
       }
     }
   }
