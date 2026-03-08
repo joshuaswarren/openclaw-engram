@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inferIntentFromText, planRecallMode } from "../src/intent.ts";
+import { hasBroadGraphIntent, inferIntentFromText, planRecallMode } from "../src/intent.ts";
 
 test("planRecallMode keeps acknowledgements in no_recall", () => {
   assert.equal(planRecallMode("ok"), "no_recall");
@@ -14,6 +14,12 @@ test("planRecallMode keeps acknowledgements in no_recall", () => {
 
 test("planRecallMode uses graph_mode for timeline/history prompts", () => {
   assert.equal(planRecallMode("what happened in the timeline"), "graph_mode");
+});
+
+test("hasBroadGraphIntent matches expanded causal phrasing", () => {
+  assert.equal(hasBroadGraphIntent("What changed in our recall pipeline?"), true);
+  assert.equal(hasBroadGraphIntent("How did we get here with QMD failures?"), true);
+  assert.equal(hasBroadGraphIntent("Give me a normal status update"), false);
 });
 
 test("planRecallMode defaults non-ack prompts to full recall", () => {

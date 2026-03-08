@@ -31,6 +31,12 @@ export interface BoxFrontmatter {
   topics: string[];
   memoryIds: string[];
   traceId?: string;
+  /** High-level task goal for this episode (REMem-inspired). */
+  goal?: string;
+  /** Tools invoked during this episode. */
+  toolsUsed?: string[];
+  /** Episode outcome: success, failure, partial, or unknown. */
+  outcome?: "success" | "failure" | "partial" | "unknown";
 }
 
 export type SealReason = "topic_shift" | "time_gap" | "max_memories" | "forced" | "flush";
@@ -41,6 +47,8 @@ interface OpenBoxState {
   lastActivityAt: string;
   topics: string[];
   memoryIds: string[];
+  goal?: string;
+  toolsUsed?: string[];
 }
 
 interface TraceIndex {
@@ -73,6 +81,8 @@ interface ExtractionEvent {
   topics: string[];
   memoryIds: string[];
   timestamp: string;
+  goal?: string;
+  toolsUsed?: string[];
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────
@@ -114,6 +124,9 @@ function serializeBoxFrontmatter(fm: BoxFrontmatter): string {
   ];
   if (fm.sessionKey) lines.push(`sessionKey: ${fm.sessionKey}`);
   if (fm.traceId) lines.push(`traceId: ${fm.traceId}`);
+  if (fm.goal) lines.push(`goal: ${fm.goal.replace(/[\r\n]+/g, " ")}`);
+  if (fm.toolsUsed?.length) lines.push(`toolsUsed: [${fm.toolsUsed.map((t) => `"${t}"`).join(", ")}]`);
+  if (fm.outcome) lines.push(`outcome: ${fm.outcome}`);
   lines.push("---");
   return lines.join("\n");
 }
@@ -137,6 +150,7 @@ export function parseBoxFrontmatter(raw: string): BoxFrontmatter | null {
     return m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
   };
 
+  const outcome = fm.outcome as BoxFrontmatter["outcome"];
   return {
     id: fm.id ?? "",
     memoryKind: "box",
@@ -147,6 +161,9 @@ export function parseBoxFrontmatter(raw: string): BoxFrontmatter | null {
     topics: parseArray(fm.topics),
     memoryIds: parseArray(fm.memoryIds),
     traceId: fm.traceId,
+    goal: fm.goal || undefined,
+    toolsUsed: fm.toolsUsed ? parseArray(fm.toolsUsed) : undefined,
+    outcome: outcome && ["success", "failure", "partial", "unknown"].includes(outcome) ? outcome : undefined,
   };
 }
 
@@ -253,6 +270,10 @@ export class BoxBuilder {
         const topicSet = new Set([...this.openBox.topics, ...newTopics]);
         this.openBox.topics = [...topicSet];
         this.openBox.memoryIds.push(...event.memoryIds);
+        if (event.toolsUsed?.length) {
+          const toolSet = new Set([...(this.openBox.toolsUsed ?? []), ...event.toolsUsed]);
+          this.openBox.toolsUsed = [...toolSet];
+        }
         await this.sealCurrent("max_memories");
       } else if (topicShifted) {
         await this.sealCurrent("topic_shift");
@@ -269,6 +290,11 @@ export class BoxBuilder {
         const topicSet = new Set([...this.openBox.topics, ...newTopics]);
         this.openBox.topics = [...topicSet];
         this.openBox.lastActivityAt = now.toISOString();
+        // Merge toolsUsed (union)
+        if (event.toolsUsed?.length) {
+          const toolSet = new Set([...(this.openBox.toolsUsed ?? []), ...event.toolsUsed]);
+          this.openBox.toolsUsed = [...toolSet];
+        }
         await this.saveOpenBox();
       }
     } else {
@@ -290,6 +316,8 @@ export class BoxBuilder {
       lastActivityAt: ts,
       topics: event.topics.filter(Boolean),
       memoryIds: [...event.memoryIds],
+      goal: event.goal,
+      toolsUsed: event.toolsUsed?.length ? [...event.toolsUsed] : undefined,
     };
   }
 
@@ -328,6 +356,9 @@ export class BoxBuilder {
       topics: box.topics,
       memoryIds: box.memoryIds,
       traceId,
+      goal: box.goal,
+      toolsUsed: box.toolsUsed?.length ? box.toolsUsed : undefined,
+      outcome: "unknown",
     };
 
     const content = `${serializeBoxFrontmatter(fm)}\n\n<!-- Topics: ${box.topics.join(", ")} | Memories: ${box.memoryIds.length} -->\n`;

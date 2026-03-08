@@ -64,8 +64,46 @@ Consolidation
    ├─ Archive old, low-importance facts (v6.0, if factArchivalEnabled)
    ├─ Auto-consolidate IDENTITY.md reflections (when > 8 KB)
    ├─ Update topic index (state/topics.json)
+   ├─ Learn compression guidelines from action telemetry (v8.3, if compressionGuidelineLearningEnabled)
    └─ Update QMD index (qmd update)
 ```
+
+### Compression Guideline Learning (v8.3 PR21D)
+
+When `compressionGuidelineLearningEnabled=true`, each consolidation pass runs a fail-open guideline synthesis step:
+
+- Reads recent telemetry from `state/memory-actions.jsonl`
+- Produces/update `state/compression-guidelines.md`
+- Summarizes action/outcome distributions and emits conservative next-step guidance
+
+This pass never blocks consolidation. On read/write errors, it logs and continues.
+
+### Memory Action Policy Contracts (v8.13 Task 1)
+
+The action-policy layer uses a strict taxonomy and bounded eligibility context:
+
+- Action taxonomy: `store_episode`, `store_note`, `update_note`, `create_artifact`, `summarize_node`, `discard`, `link_graph`
+- Eligibility context fields:
+  - `confidence` (`0..1`)
+  - `lifecycleState` (`active|validated|candidate|stale|archived`)
+  - `importance` (`0..1`)
+  - `source` (`extraction|consolidation|replay|manual|unknown`)
+
+Parsing is strict for schema validation and fail-open in runtime helpers:
+
+- Invalid action values fall back to `discard`.
+- Invalid eligibility payloads fall back to `{ confidence: 0, lifecycleState: "candidate", importance: 0, source: "unknown" }`.
+
+### Hot/Cold Tier Routing Signals (v8.14 Task 2)
+
+Tier routing reuses lifecycle value inputs so demotion/promotion decisions stay consistent with lifecycle scoring:
+
+- `computeLifecycleValueInputs(...)` (in `src/lifecycle.ts`) provides normalized confidence/access/recency/importance/feedback signals plus disputed penalty.
+- `computeTierValueScore(...)` (in `src/tier-routing.ts`) derives a bounded value score from those inputs, adding correction/confirmation boosts and disputed penalties.
+- `decideTierTransition(...)` applies deterministic threshold rules:
+  - hot -> cold when age >= `qmdTierDemotionMinAgeDays` and value <= demotion threshold
+  - cold -> hot when value >= promotion threshold
+  - no-op when migration is disabled
 
 ## Memory States
 
@@ -74,6 +112,32 @@ Consolidation
 | `active` | Normal, searchable, in hot index |
 | `superseded` | Replaced by a newer memory; still on disk |
 | `archived` | Moved to `archive/`; still searchable via QMD and can appear in recall results (archive path is not filtered out) |
+
+## Lifecycle Policy States (v8.3)
+
+When `lifecyclePolicyEnabled` is on, memories can also carry policy metadata:
+
+- `lifecycleState`: `candidate | validated | active | stale | archived`
+- `verificationState`: `unverified | user_confirmed | system_inferred | disputed`
+- `policyClass`: `ephemeral | durable | protected`
+- scores: `heatScore` and `decayScore` (both in `[0,1]`)
+
+`status` remains the storage lifecycle, while `lifecycleState` controls retrieval weighting/filtering.
+If lifecycle fields are absent (legacy memories), retrieval fail-opens to pre-v8.3 behavior.
+
+### Retrieval Integration (PR20D)
+
+With lifecycle policy enabled:
+
+- `active` / `validated` receive a small retrieval score boost
+- `candidate` gets a slight penalty
+- `stale` gets a stronger penalty
+- `verificationState=disputed` gets an additional penalty
+
+Optional hard filtering:
+
+- If `lifecycleFilterStaleEnabled=true`, `stale`/`archived` lifecycle candidates are filtered before final top-K cap.
+- Filtering is metadata-aware and fail-open: legacy memories without lifecycle fields are not filtered.
 
 Memories in `superseded` or `archived` status remain on disk. However, **speculative TTL expiry** and **commitment decay** physically delete files via `unlink` — these entries are not retained.
 

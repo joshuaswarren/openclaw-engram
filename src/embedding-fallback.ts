@@ -142,6 +142,7 @@ export class EmbeddingFallback {
         body: JSON.stringify({
           model: provider.model,
           input: input.slice(0, 8000),
+          encoding_format: "float",
         }),
       });
       if (!res.ok) {

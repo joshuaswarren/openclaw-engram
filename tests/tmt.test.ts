@@ -17,6 +17,7 @@ import {
   parseIsoDate,
   parseIsoHour,
   isoWeekKey,
+  capTmtSummaryInputs,
   type TmtNodeFrontmatter,
 } from "../src/tmt.js";
 
@@ -66,6 +67,16 @@ test("isoWeekKey returns correct week", () => {
   const key = isoWeekKey(new Date("2026-02-22"));
   assert.match(key, /^\d{4}-\d{2}$/);
   assert.equal(key, "2026-08"); // 2026-02-22 is in week 08
+});
+
+test("capTmtSummaryInputs limits oversized content per level", () => {
+  const oversized = Array.from({ length: 300 }, (_, i) => `entry-${i} ${"x".repeat(5000)}`);
+  const capped = capTmtSummaryInputs(oversized, "hour");
+  assert.ok(capped.length > 0);
+  assert.ok(capped.length <= 64);
+  const totalChars = capped.join("\n\n").length;
+  assert.ok(totalChars <= 48_000);
+  assert.ok(capped.every((item) => item.length <= 2_000));
 });
 
 // ── Serialisation ─────────────────────────────────────────────────────────────

@@ -46,7 +46,7 @@ Examined Discord session state file for stuck channel:
 
 ```json
 {
-  "sessionKey": "agent:generalist:discord:channel:<channel-id>",
+  "sessionKey": "agent:<agent-id>:discord:channel:<channel-id>",
   "lastInboundMessageId": "<newer-message-id>",
   "lastInboundAtMs": 1770654493205,
   "lastProcessedMessageId": "<older-message-id>",
@@ -61,7 +61,7 @@ Examined Discord session state file for stuck channel:
 Examined logs around `before_agent_start` completion:
 
 ```
-[gateway] openclaw-engram: before_agent_start: sessionKey=agent:generalist:discord:channel:...
+[gateway] openclaw-engram: before_agent_start: sessionKey=agent:<agent-id>:discord:channel:...
 [gateway] openclaw-engram: before_agent_start: recall returned 25643 chars
 [gateway] openclaw-engram: before_agent_start: returning system prompt with 8029 chars
 # ...no subsequent provider call logs...

@@ -6,7 +6,7 @@
  * personal information, instructions, emotional content, and factual density.
  */
 
-import type { ImportanceLevel, ImportanceScore, MemoryCategory } from "./types.js";
+import type { ImportanceLevel, ImportanceScore, MemoryCategory, MemoryFile } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Marker patterns for each tier
@@ -93,6 +93,7 @@ const TRIVIAL_PATTERNS = [
 const CATEGORY_BOOSTS: Record<MemoryCategory, number> = {
   correction: 0.15,    // Corrections are always important
   principle: 0.12,     // Durable rules/values
+  rule: 0.11,          // Causal IF→THEN rules
   preference: 0.10,    // User preferences matter
   commitment: 0.10,    // Promises/obligations
   decision: 0.08,      // Decisions with rationale
@@ -272,6 +273,13 @@ export function scoreImportance(
     reasons: reasons.slice(0, 5), // Cap at 5 reasons
     keywords,
   };
+}
+
+/**
+ * Recompute importance for an existing memory file using current local heuristics.
+ */
+export function rescoreMemoryImportance(memory: MemoryFile): ImportanceScore {
+  return scoreImportance(memory.content, memory.frontmatter.category, memory.frontmatter.tags ?? []);
 }
 
 /**

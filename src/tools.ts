@@ -1,8 +1,13 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
-import type { MemoryCategory } from "./types.js";
+import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
+import { log } from "./logger.js";
+import { WorkStorage } from "./work/storage.js";
+import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
+import { wrapWorkLayerContext } from "./work/boundary.js";
 
 interface ToolApi {
   registerTool(
@@ -28,7 +33,202 @@ function toolResult(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined };
 }
 
+function toolJsonResult(value: unknown, options?: { linkToMemory?: boolean }) {
+  const payload = JSON.stringify(value, null, 2);
+  return toolResult(wrapWorkLayerContext(payload, { linkToMemory: options?.linkToMemory === true }));
+}
+
+function workLayerTextResult(text: string, options?: { linkToMemory?: boolean }) {
+  return toolResult(wrapWorkLayerContext(text, { linkToMemory: options?.linkToMemory === true }));
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
+const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
+const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
+
+function asTaskStatus(value: unknown): "todo" | "in_progress" | "blocked" | "done" | "cancelled" | undefined {
+  const normalized = asNonEmptyString(value);
+  if (!normalized || !WORK_TASK_STATUSES.has(normalized)) return undefined;
+  return normalized as "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+}
+
+function asTaskPriority(value: unknown): "low" | "medium" | "high" | undefined {
+  const normalized = asNonEmptyString(value);
+  if (!normalized || !WORK_TASK_PRIORITIES.has(normalized)) return undefined;
+  return normalized as "low" | "medium" | "high";
+}
+
+function asProjectStatus(value: unknown): "active" | "on_hold" | "completed" | "archived" | undefined {
+  const normalized = asNonEmptyString(value);
+  if (!normalized || !WORK_PROJECT_STATUSES.has(normalized)) return undefined;
+  return normalized as "active" | "on_hold" | "completed" | "archived";
+}
+
+function asNullablePatchString(params: Record<string, unknown>, key: string): string | null | undefined {
+  if (!Object.prototype.hasOwnProperty.call(params, key)) return undefined;
+  const value = params[key];
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+const IDENTITY_ANCHOR_TITLE = "# Identity Continuity Anchor";
+const IDENTITY_ANCHOR_SECTION_ORDER = [
+  "Identity Traits",
+  "Communication Preferences",
+  "Operating Principles",
+  "Continuity Notes",
+] as const;
+
+type IdentityAnchorSectionName = typeof IDENTITY_ANCHOR_SECTION_ORDER[number];
+type IdentityAnchorSections = Record<IdentityAnchorSectionName, string>;
+
+function parseMarkdownSections(raw: string): {
+  header: string;
+  sections: Map<string, string>;
+  order: string[];
+} {
+  const lines = raw.replace(/\r/g, "").split("\n");
+  const headerLines: string[] = [];
+  const sectionLines = new Map<string, string[]>();
+  const order: string[] = [];
+  let currentSection: string | null = null;
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^##\s+(.+?)\s*$/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim();
+      if (!sectionLines.has(currentSection)) {
+        sectionLines.set(currentSection, []);
+        order.push(currentSection);
+      }
+      continue;
+    }
+    if (!currentSection) {
+      headerLines.push(line);
+      continue;
+    }
+    sectionLines.get(currentSection)?.push(line);
+  }
+
+  const sections = new Map<string, string>();
+  for (const [name, contentLines] of sectionLines.entries()) {
+    sections.set(name, contentLines.join("\n").trim());
+  }
+
+  return {
+    header: headerLines.join("\n").trim(),
+    sections,
+    order,
+  };
+}
+
+function mergeAnchorSection(existing: string | undefined, incoming: string | undefined): string {
+  const next = incoming?.trim();
+  const prev = existing?.trim() === "- (empty)" ? "" : existing?.trim();
+  if (!next) return prev ?? "";
+  if (!prev) return next;
+  if (prev.includes(next)) return prev;
+  if (next.includes(prev)) return next;
+  return `${prev}\n\n${next}`;
+}
+
+function mergeIdentityAnchor(
+  existingRaw: string | null,
+  updates: Partial<IdentityAnchorSections>,
+): string {
+  const parsed = parseMarkdownSections(existingRaw ?? "");
+  const header = parsed.header.length > 0 ? parsed.header : IDENTITY_ANCHOR_TITLE;
+  const sections = new Map(parsed.sections);
+
+  for (const sectionName of IDENTITY_ANCHOR_SECTION_ORDER) {
+    const merged = mergeAnchorSection(sections.get(sectionName), updates[sectionName]);
+    if (!sections.has(sectionName) && !merged) {
+      sections.set(sectionName, "");
+      continue;
+    }
+    sections.set(sectionName, merged);
+  }
+
+  const finalOrder: string[] = [];
+  for (const sectionName of IDENTITY_ANCHOR_SECTION_ORDER) {
+    if (sections.has(sectionName)) finalOrder.push(sectionName);
+  }
+  for (const sectionName of parsed.order) {
+    if (!finalOrder.includes(sectionName) && sections.has(sectionName)) {
+      finalOrder.push(sectionName);
+    }
+  }
+
+  const lines: string[] = [header.trim(), ""];
+  for (const sectionName of finalOrder) {
+    lines.push(`## ${sectionName}`, "");
+    const body = sections.get(sectionName)?.trim();
+    if (body && body.length > 0) {
+      lines.push(body, "");
+    } else {
+      lines.push("");
+    }
+  }
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
+function formatContinuityIncidentSummary(
+  incident: Awaited<ReturnType<Orchestrator["storage"]["appendContinuityIncident"]>>,
+  index?: number,
+): string {
+  const prefix = typeof index === "number" ? `### [${index + 1}] ` : "### ";
+  const lines = [
+    `${prefix}${incident.id} (${incident.state})`,
+    `Opened: ${incident.openedAt}`,
+  ];
+  if (incident.closedAt) lines.push(`Closed: ${incident.closedAt}`);
+  if (incident.triggerWindow) lines.push(`Window: ${incident.triggerWindow}`);
+  lines.push("", `Symptom: ${incident.symptom}`);
+  if (incident.suspectedCause) lines.push(`Suspected Cause: ${incident.suspectedCause}`);
+  if (incident.fixApplied) lines.push(`Fix Applied: ${incident.fixApplied}`);
+  if (incident.verificationResult) lines.push(`Verification: ${incident.verificationResult}`);
+  if (incident.preventiveRule) lines.push(`Preventive Rule: ${incident.preventiveRule}`);
+  if (incident.filePath) lines.push(`Path: ${incident.filePath}`);
+  return lines.join("\n");
+}
+
+function formatContinuityLoopSummary(loop: ContinuityImprovementLoop): string {
+  const lines = [
+    `### ${loop.id}`,
+    `Cadence: ${loop.cadence}`,
+    `Status: ${loop.status}`,
+    `Last Reviewed: ${loop.lastReviewed}`,
+    `Purpose: ${loop.purpose}`,
+    `Kill Condition: ${loop.killCondition}`,
+  ];
+  if (loop.notes) lines.push(`Notes: ${loop.notes}`);
+  return lines.join("\n");
+}
+
 export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
+  const actionTypes: MemoryActionType[] = [
+    "store_episode",
+    "store_note",
+    "update_note",
+    "create_artifact",
+    "summarize_node",
+    "discard",
+    "link_graph",
+  ];
+
+  function promptHashForTelemetry(input?: string): string | undefined {
+    if (typeof input !== "string" || input.trim().length === 0) return undefined;
+    return createHash("sha256").update(input).digest("hex").slice(0, 16);
+  }
+
   function namespaceFromPath(p: string): string {
     const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
     return m && m[1] ? m[1] : orchestrator.config.defaultNamespace;
@@ -113,6 +313,413 @@ Best for:
 
   api.registerTool(
     {
+      name: "continuity_audit_generate",
+      label: "Generate Continuity Audit",
+      description:
+        "Generate a deterministic identity continuity audit report (weekly/monthly) and persist it under identity/audits.",
+      parameters: Type.Object({
+        period: Type.Optional(
+          Type.String({
+            enum: ["weekly", "monthly"],
+            description: "Audit period. Defaults to weekly.",
+          }),
+        ),
+        key: Type.Optional(
+          Type.String({
+            description:
+              "Optional period key (weekly: YYYY-Www, monthly: YYYY-MM). Defaults to current period.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to generate continuity audits.",
+          );
+        }
+        if (!orchestrator.config.continuityAuditEnabled) {
+          return toolResult(
+            "Continuity audits are disabled. Enable `continuityAuditEnabled: true` to generate continuity audits.",
+          );
+        }
+        if (!orchestrator.compounding) {
+          return toolResult(
+            "Compounding engine is disabled. Enable `compoundingEnabled: true` to generate continuity audits.",
+          );
+        }
+        const period = params.period === "monthly" ? "monthly" : "weekly";
+        const key = typeof params.key === "string" ? params.key : undefined;
+        const audit = await orchestrator.compounding.synthesizeContinuityAudit({
+          period,
+          key,
+        });
+        return toolResult(
+          `OK\n\nperiod: ${audit.period}\nkey: ${audit.key}\nreport: ${audit.reportPath}`,
+        );
+      },
+    },
+    { name: "continuity_audit_generate" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_incident_open",
+      label: "Open Continuity Incident",
+      description: "Create a new continuity incident record in append-only storage.",
+      parameters: Type.Object({
+        symptom: Type.String({
+          description: "Observed continuity failure symptom.",
+        }),
+        triggerWindow: Type.Optional(
+          Type.String({
+            description: "Optional time window when incident occurred.",
+          }),
+        ),
+        suspectedCause: Type.Optional(
+          Type.String({
+            description: "Optional suspected root cause.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to open incidents.",
+          );
+        }
+        if (!orchestrator.config.continuityIncidentLoggingEnabled) {
+          return toolResult(
+            "Continuity incident logging is disabled. Enable `continuityIncidentLoggingEnabled: true` to open incidents.",
+          );
+        }
+        const symptom = typeof params.symptom === "string" ? params.symptom.trim() : "";
+        if (!symptom) {
+          return toolResult("Missing required field: symptom");
+        }
+        const created = await orchestrator.storage.appendContinuityIncident({
+          symptom,
+          triggerWindow: typeof params.triggerWindow === "string" ? params.triggerWindow : undefined,
+          suspectedCause: typeof params.suspectedCause === "string" ? params.suspectedCause : undefined,
+        });
+        log.info(`continuity-incident open id=${created.id}`);
+        return toolResult(`Continuity incident opened.\n\n${formatContinuityIncidentSummary(created)}`);
+      },
+    },
+    { name: "continuity_incident_open" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_incident_close",
+      label: "Close Continuity Incident",
+      description: "Close an open continuity incident with required verification details.",
+      parameters: Type.Object({
+        id: Type.String({
+          description: "Incident ID to close.",
+        }),
+        fixApplied: Type.String({
+          description: "What fix was applied.",
+        }),
+        verificationResult: Type.String({
+          description: "How closure was verified.",
+        }),
+        preventiveRule: Type.Optional(
+          Type.String({
+            description: "Optional preventive follow-up rule.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to close incidents.",
+          );
+        }
+        if (!orchestrator.config.continuityIncidentLoggingEnabled) {
+          return toolResult(
+            "Continuity incident logging is disabled. Enable `continuityIncidentLoggingEnabled: true` to close incidents.",
+          );
+        }
+
+        const id = typeof params.id === "string" ? params.id.trim() : "";
+        const fixApplied = typeof params.fixApplied === "string" ? params.fixApplied.trim() : "";
+        const verificationResult =
+          typeof params.verificationResult === "string" ? params.verificationResult.trim() : "";
+        const preventiveRule =
+          typeof params.preventiveRule === "string" ? params.preventiveRule.trim() : undefined;
+
+        if (!id) return toolResult("Missing required field: id");
+        if (!fixApplied) return toolResult("Missing required field: fixApplied");
+        if (!verificationResult) return toolResult("Missing required field: verificationResult");
+
+        const closed = await orchestrator.storage.closeContinuityIncident(id, {
+          fixApplied,
+          verificationResult,
+          preventiveRule,
+        });
+        if (!closed) return toolResult(`Incident not found: ${id}`);
+        log.info(`continuity-incident close id=${id}`);
+        return toolResult(`Continuity incident closed.\n\n${formatContinuityIncidentSummary(closed)}`);
+      },
+    },
+    { name: "continuity_incident_close" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_incident_list",
+      label: "List Continuity Incidents",
+      description: "List continuity incidents and optionally filter by state.",
+      parameters: Type.Object({
+        state: Type.Optional(
+          Type.String({
+            enum: ["open", "closed", "all"],
+            description: "Incident state filter (default: open).",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max incidents to return (default: 25, max: 200).",
+            minimum: 1,
+            maximum: 200,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to list incidents.",
+          );
+        }
+        const state = params.state === "closed" || params.state === "all" ? params.state : "open";
+        const limitRaw = typeof params.limit === "number" ? params.limit : 25;
+        const limit = Math.max(1, Math.min(200, Math.floor(limitRaw)));
+        const filtered = await orchestrator.storage.readContinuityIncidents(limit, state);
+
+        if (filtered.length === 0) {
+          return toolResult(`No continuity incidents found for state=${state}.`);
+        }
+
+        const body = filtered
+          .map((incident, index) => formatContinuityIncidentSummary(incident, index))
+          .join("\n\n");
+        return toolResult(`## Continuity Incidents (${filtered.length}, state=${state})\n\n${body}`);
+      },
+    },
+    { name: "continuity_incident_list" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_loop_add_or_update",
+      label: "Add or Update Continuity Loop",
+      description: "Add or update a continuity improvement loop entry in identity/improvement-loops.md.",
+      parameters: Type.Object({
+        id: Type.String({
+          description: "Stable loop identifier.",
+        }),
+        cadence: Type.String({
+          enum: ["daily", "weekly", "monthly", "quarterly"],
+          description: "Review cadence.",
+        }),
+        purpose: Type.String({
+          description: "What this recurring loop improves.",
+        }),
+        status: Type.String({
+          enum: ["active", "paused", "retired"],
+          description: "Current lifecycle status for the loop.",
+        }),
+        killCondition: Type.String({
+          description: "Clear condition for retiring this loop.",
+        }),
+        lastReviewed: Type.Optional(
+          Type.String({
+            description: "Optional ISO timestamp for last review. Defaults to now.",
+          }),
+        ),
+        notes: Type.Optional(
+          Type.String({
+            description: "Optional operator notes.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to manage continuity loops.",
+          );
+        }
+        try {
+          const loop = await orchestrator.storage.upsertIdentityImprovementLoop({
+            id: typeof params.id === "string" ? params.id : "",
+            cadence: params.cadence as "daily" | "weekly" | "monthly" | "quarterly",
+            purpose: typeof params.purpose === "string" ? params.purpose : "",
+            status: params.status as "active" | "paused" | "retired",
+            killCondition: typeof params.killCondition === "string" ? params.killCondition : "",
+            lastReviewed: typeof params.lastReviewed === "string" ? params.lastReviewed : undefined,
+            notes: typeof params.notes === "string" ? params.notes : undefined,
+          });
+          log.info(`continuity-loop upsert id=${loop.id} status=${loop.status}`);
+          return toolResult(`Continuity loop saved.\n\n${formatContinuityLoopSummary(loop)}`);
+        } catch (err) {
+          return toolResult(`Failed to save continuity loop: ${String(err)}`);
+        }
+      },
+    },
+    { name: "continuity_loop_add_or_update" },
+  );
+
+  api.registerTool(
+    {
+      name: "continuity_loop_review",
+      label: "Review Continuity Loop",
+      description: "Update review metadata (lastReviewed/status/notes) for an existing continuity loop.",
+      parameters: Type.Object({
+        id: Type.String({
+          description: "Loop ID to review.",
+        }),
+        status: Type.Optional(
+          Type.String({
+            enum: ["active", "paused", "retired"],
+            description: "Optional status update.",
+          }),
+        ),
+        notes: Type.Optional(
+          Type.String({
+            description: "Optional notes update.",
+          }),
+        ),
+        reviewedAt: Type.Optional(
+          Type.String({
+            description: "Optional ISO timestamp for review event. Defaults to now.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to manage continuity loops.",
+          );
+        }
+        const id = typeof params.id === "string" ? params.id.trim() : "";
+        if (!id) return toolResult("Missing required field: id");
+        try {
+          const reviewed = await orchestrator.storage.reviewIdentityImprovementLoop(id, {
+            status: typeof params.status === "string" ? (params.status as "active" | "paused" | "retired") : undefined,
+            notes: typeof params.notes === "string" ? params.notes : undefined,
+            reviewedAt: typeof params.reviewedAt === "string" ? params.reviewedAt : undefined,
+          });
+          if (!reviewed) return toolResult(`Continuity loop not found: ${id}`);
+          log.info(`continuity-loop review id=${id} status=${reviewed.status}`);
+          return toolResult(`Continuity loop reviewed.\n\n${formatContinuityLoopSummary(reviewed)}`);
+        } catch (err) {
+          return toolResult(`Failed to review continuity loop: ${String(err)}`);
+        }
+      },
+    },
+    { name: "continuity_loop_review" },
+  );
+
+  api.registerTool(
+    {
+      name: "identity_anchor_get",
+      label: "Get Identity Anchor",
+      description:
+        "Read the identity continuity anchor document used for recovery-safe identity context.",
+      parameters: Type.Object({}),
+      async execute() {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to use identity anchor tools.",
+          );
+        }
+        const anchor = await orchestrator.storage.readIdentityAnchor();
+        if (!anchor) {
+          return toolResult(
+            "No identity anchor found yet. Use `identity_anchor_update` to create one.",
+          );
+        }
+        return toolResult(`## Identity Anchor\n\n${anchor}`);
+      },
+    },
+    { name: "identity_anchor_get" },
+  );
+
+  api.registerTool(
+    {
+      name: "identity_anchor_update",
+      label: "Update Identity Anchor",
+      description:
+        "Conservatively update identity anchor sections without overwriting existing material.",
+      parameters: Type.Object({
+        identityTraits: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Identity Traits' section.",
+          }),
+        ),
+        communicationPreferences: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Communication Preferences' section.",
+          }),
+        ),
+        operatingPrinciples: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Operating Principles' section.",
+          }),
+        ),
+        continuityNotes: Type.Optional(
+          Type.String({
+            description: "Updates for the 'Continuity Notes' section.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.identityContinuityEnabled) {
+          return toolResult(
+            "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to use identity anchor tools.",
+          );
+        }
+
+        const updates: Partial<IdentityAnchorSections> = {
+          "Identity Traits": typeof params.identityTraits === "string" ? params.identityTraits : undefined,
+          "Communication Preferences":
+            typeof params.communicationPreferences === "string" ? params.communicationPreferences : undefined,
+          "Operating Principles":
+            typeof params.operatingPrinciples === "string" ? params.operatingPrinciples : undefined,
+          "Continuity Notes":
+            typeof params.continuityNotes === "string" ? params.continuityNotes : undefined,
+        };
+
+        const hasUpdate = Object.values(updates).some(
+          (value) => typeof value === "string" && value.trim().length > 0,
+        );
+        if (!hasUpdate) {
+          return toolResult(
+            "No updates provided. Supply at least one section field to update the identity anchor.",
+          );
+        }
+
+        const existing = await orchestrator.storage.readIdentityAnchor();
+        const merged = mergeIdentityAnchor(existing, updates);
+        await orchestrator.storage.writeIdentityAnchor(merged);
+
+        const updatedSections = Object.entries(updates)
+          .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
+          .map(([name]) => name);
+        log.info(
+          `identity-anchor update sections=${updatedSections.join(",")} chars=${merged.length}`,
+        );
+
+        return toolResult(
+          `Identity anchor updated (${updatedSections.length} section${updatedSections.length === 1 ? "" : "s"}).\n\n${merged}`,
+        );
+      },
+    },
+    { name: "identity_anchor_update" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_feedback",
       label: "Memory Feedback",
       description:
@@ -188,6 +795,7 @@ Best for:
             "",
             `Recorded at: ${snap.recordedAt}`,
             `Query hash: ${snap.queryHash} (len=${snap.queryLen})`,
+            `Identity injection: mode=${snap.identityInjectionMode ?? "none"}, chars=${snap.identityInjectedChars ?? 0}, truncated=${snap.identityInjectionTruncated === true ? "yes" : "no"}`,
             `Memories (${snap.memoryIds.length}):`,
             ...snap.memoryIds.map((id) => `- ${id}`),
           ].join("\n"),
@@ -195,6 +803,42 @@ Best for:
       },
     },
     { name: "memory_last_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_graph_explain_last_recall",
+      label: "Explain Graph Recall",
+      description:
+        "Inspect the last graph-mode recall expansion snapshot (seed paths + expanded candidates) to explain why graph memories were included.",
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Optional namespace to inspect. Defaults to defaultNamespace.",
+          }),
+        ),
+        maxExpanded: Type.Optional(
+          Type.Number({
+            description: "Maximum expanded paths to show (default: 10, max: 50).",
+            minimum: 1,
+            maximum: 50,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { namespace, maxExpanded } = params as {
+          namespace?: string;
+          maxExpanded?: number;
+        };
+        const text = await orchestrator.explainLastGraphRecall({
+          namespace,
+          maxExpanded,
+        });
+        return toolResult(text);
+      },
+    },
+    { name: "memory_graph_explain_last_recall" },
   );
 
   api.registerTool(
@@ -300,6 +944,200 @@ Best for:
 
   api.registerTool(
     {
+      name: "context_checkpoint",
+      label: "Context Checkpoint",
+      description:
+        "Record a context-compression checkpoint event for policy-learning telemetry (v8.3).",
+      parameters: Type.Object({
+        summary: Type.String({
+          description: "Short summary of what was checkpointed.",
+        }),
+        sourcePrompt: Type.Optional(
+          Type.String({
+            description: "Optional source prompt text used for hashing in telemetry.",
+          }),
+        ),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace. Defaults to defaultNamespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.contextCompressionActionsEnabled) {
+          return toolResult(
+            "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
+          );
+        }
+        const { summary, sourcePrompt, namespace } = params as {
+          summary: string;
+          sourcePrompt?: string;
+          namespace?: string;
+        };
+        const ns =
+          typeof namespace === "string" && namespace.length > 0
+            ? namespace
+            : orchestrator.config.defaultNamespace;
+        const wrote = await orchestrator.appendMemoryActionEvent({
+          action: "summarize_node",
+          outcome: "applied",
+          namespace: ns,
+          reason: `context_checkpoint:${summary.slice(0, 200)}`,
+          promptHash: promptHashForTelemetry(sourcePrompt),
+        });
+        if (!wrote) {
+          return toolResult("Checkpoint recorded best-effort failed (fail-open).");
+        }
+        return toolResult(`Recorded context checkpoint telemetry in namespace=${ns}.`);
+      },
+    },
+    { name: "context_checkpoint" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_action_apply",
+      label: "Apply Memory Action",
+      description:
+        "Record a memory-action application event for policy-learning telemetry (v8.3).",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: actionTypes,
+          description: "Memory action type.",
+        }),
+        outcome: Type.Optional(
+          Type.String({
+            enum: ["applied", "skipped", "failed"],
+            description: "Outcome status (default: applied).",
+          }),
+        ),
+        reason: Type.Optional(
+          Type.String({
+            description: "Optional reason/notes for this action outcome.",
+          }),
+        ),
+        memoryId: Type.Optional(
+          Type.String({
+            description: "Optional memory ID targeted by this action.",
+          }),
+        ),
+        sourcePrompt: Type.Optional(
+          Type.String({
+            description: "Optional source prompt text used for hashing in telemetry.",
+          }),
+        ),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace. Defaults to defaultNamespace.",
+          }),
+        ),
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description: "When true, validate and report without persisting telemetry.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.config.contextCompressionActionsEnabled) {
+          return toolResult(
+            "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
+          );
+        }
+        const { action, outcome, reason, memoryId, sourcePrompt, namespace, dryRun } = params as {
+          action: MemoryActionType;
+          outcome?: "applied" | "skipped" | "failed";
+          reason?: string;
+          memoryId?: string;
+          sourcePrompt?: string;
+          namespace?: string;
+          dryRun?: boolean;
+        };
+        const ns =
+          typeof namespace === "string" && namespace.length > 0
+            ? namespace
+            : orchestrator.config.defaultNamespace;
+        const event = {
+          action,
+          outcome: outcome ?? "applied",
+          namespace: ns,
+          reason,
+          memoryId,
+          promptHash: promptHashForTelemetry(sourcePrompt),
+        };
+
+        const preview = orchestrator.previewMemoryActionEvent(event);
+
+        if (dryRun === true) {
+          return toolResult(
+            `Dry run: memory action would be recorded with action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}, policy=${preview.policyDecision}.`,
+          );
+        }
+
+        const wrote = await orchestrator.appendMemoryActionEvent(event);
+        if (!wrote) {
+          return toolResult("Memory action telemetry write failed (fail-open).");
+        }
+        return toolResult(
+          `Recorded memory action telemetry: action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}.`,
+        );
+      },
+    },
+    { name: "memory_action_apply" },
+  );
+
+  api.registerTool(
+    {
+      name: "compression_guidelines_optimize",
+      label: "Optimize Compression Guidelines",
+      description:
+        "Run compression guideline optimizer and optionally persist the new guideline/state (v8.11).",
+      parameters: Type.Object({
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description: "When true, compute candidate/output but do not persist changes.",
+          }),
+        ),
+        eventLimit: Type.Optional(
+          Type.Number({
+            description: "Max telemetry events to analyze (default: 500).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { dryRun, eventLimit } = params as {
+          dryRun?: boolean;
+          eventLimit?: number;
+        };
+
+        const result = await orchestrator.optimizeCompressionGuidelines({
+          dryRun: dryRun === true,
+          eventLimit,
+        });
+
+        if (!result.enabled) {
+          return toolResult(
+            "Compression guideline learning is disabled. Enable `compressionGuidelineLearningEnabled: true` to run optimizer.",
+          );
+        }
+
+        return toolResult(
+          [
+            "Compression guideline optimization complete.",
+            `dryRun=${result.dryRun}`,
+            `persisted=${result.persisted}`,
+            `eventCount=${result.eventCount}`,
+            `guidelineVersion: ${result.previousGuidelineVersion ?? "none"} -> ${result.nextGuidelineVersion}`,
+            `changedRules=${result.changedRules}`,
+            `semanticRefinementApplied=${result.semanticRefinementApplied}`,
+          ].join("\n"),
+        );
+      },
+    },
+    { name: "compression_guidelines_optimize" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_store",
       label: "Store Memory",
       description: `Explicitly store a memory. Use this when the user directly asks you to remember something, or when you identify critical information that the automatic extraction might miss.
@@ -324,8 +1162,8 @@ Best for:
         category: Type.Optional(
           Type.String({
             description:
-              'Category: "fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill" (default: "fact")',
-            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"],
+              'Category: "fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule" (default: "fact")',
+            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"],
           }),
         ),
         tags: Type.Optional(
@@ -733,6 +1571,285 @@ Best for:
 
   api.registerTool(
     {
+      name: "work_task",
+      label: "Manage Work Tasks",
+      description:
+        "Manage Engram work-layer tasks (create, get, list, update, transition, delete). Responses are marked as work-layer context and excluded from default memory extraction.",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: ["create", "get", "list", "update", "transition", "delete"],
+          description: "Task action to run.",
+        }),
+        id: Type.Optional(Type.String({ description: "Task ID for get/update/transition/delete." })),
+        title: Type.Optional(Type.String({ description: "Task title (create/update)." })),
+        description: Type.Optional(Type.String({ description: "Task description (create/update)." })),
+        status: Type.Optional(Type.String({ enum: ["todo", "in_progress", "blocked", "done", "cancelled"] })),
+        priority: Type.Optional(Type.String({ enum: ["low", "medium", "high"] })),
+        owner: Type.Optional(Type.String()),
+        assignee: Type.Optional(Type.String()),
+        projectId: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        dueAt: Type.Optional(Type.String()),
+      }),
+      async execute(_toolCallId, params) {
+        const p = params as Record<string, unknown>;
+        const action = String(p.action ?? "");
+        const storage = new WorkStorage(orchestrator.config.memoryDir);
+        try {
+          await storage.ensureDirectories();
+          if (action === "create") {
+            if (typeof p.title !== "string" || p.title.trim().length === 0) {
+              return workLayerTextResult("work_task.create requires non-empty `title`.");
+            }
+            const created = await storage.createTask({
+              title: p.title,
+              description: typeof p.description === "string" ? p.description : undefined,
+              status: asTaskStatus(p.status),
+              priority: asTaskPriority(p.priority),
+              owner: asNonEmptyString(p.owner),
+              assignee: asNonEmptyString(p.assignee),
+              projectId: asNonEmptyString(p.projectId),
+              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
+              dueAt: asNonEmptyString(p.dueAt),
+            });
+            return toolJsonResult({ action, task: created });
+          }
+
+          if (action === "get") {
+            const taskId = asNonEmptyString(p.id);
+            if (!taskId) {
+              return workLayerTextResult("work_task.get requires `id`.");
+            }
+            const task = await storage.getTask(taskId);
+            return toolJsonResult({ action, task });
+          }
+
+          if (action === "list") {
+            const tasks = await storage.listTasks({
+              status: asTaskStatus(p.status),
+              owner: asNonEmptyString(p.owner),
+              assignee: asNonEmptyString(p.assignee),
+              projectId: asNonEmptyString(p.projectId),
+            });
+            return toolJsonResult({ action, count: tasks.length, tasks });
+          }
+
+          if (action === "update") {
+            const taskId = asNonEmptyString(p.id);
+            if (!taskId) {
+              return workLayerTextResult("work_task.update requires `id`.");
+            }
+            const patch: Record<string, unknown> = {};
+            if (typeof p.title === "string") patch.title = p.title;
+            if (typeof p.description === "string") patch.description = p.description;
+            const status = asTaskStatus(p.status);
+            if (status) patch.status = status;
+            const priority = asTaskPriority(p.priority);
+            if (priority) patch.priority = priority;
+            const owner = asNullablePatchString(p, "owner");
+            if (owner !== undefined) patch.owner = owner;
+            const assignee = asNullablePatchString(p, "assignee");
+            if (assignee !== undefined) patch.assignee = assignee;
+            const projectIdPatch = asNullablePatchString(p, "projectId");
+            if (projectIdPatch !== undefined) patch.projectId = projectIdPatch;
+            if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
+            const dueAt = asNullablePatchString(p, "dueAt");
+            if (dueAt !== undefined) patch.dueAt = dueAt;
+            const updated = await storage.updateTask(taskId, patch as any);
+            return toolJsonResult({ action, task: updated });
+          }
+
+          if (action === "transition") {
+            const taskId = asNonEmptyString(p.id);
+            const rawStatus = asNonEmptyString(p.status);
+            if (!taskId || !rawStatus) {
+              return workLayerTextResult("work_task.transition requires `id` and `status`.");
+            }
+            const status = asTaskStatus(rawStatus);
+            if (!status) {
+              return workLayerTextResult("work_task.transition received invalid `status`.");
+            }
+            const task = await storage.transitionTask(taskId, status);
+            return toolJsonResult({ action, task });
+          }
+
+          if (action === "delete") {
+            const taskId = asNonEmptyString(p.id);
+            if (!taskId) {
+              return workLayerTextResult("work_task.delete requires `id`.");
+            }
+            const deleted = await storage.deleteTask(taskId);
+            return toolJsonResult({ action, deleted });
+          }
+
+          return workLayerTextResult(`Unsupported work_task action: ${action}`);
+        } catch (err) {
+          return workLayerTextResult(`work_task error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    { name: "work_task" },
+  );
+
+  api.registerTool(
+    {
+      name: "work_project",
+      label: "Manage Work Projects",
+      description:
+        "Manage Engram work-layer projects (create, get, list, update, delete, link_task). Responses are marked as work-layer context and excluded from default memory extraction.",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: ["create", "get", "list", "update", "delete", "link_task"],
+          description: "Project action to run.",
+        }),
+        id: Type.Optional(Type.String({ description: "Project ID for get/update/delete." })),
+        name: Type.Optional(Type.String({ description: "Project name (create/update)." })),
+        description: Type.Optional(Type.String({ description: "Project description (create/update)." })),
+        status: Type.Optional(Type.String({ enum: ["active", "on_hold", "completed", "archived"] })),
+        owner: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        taskId: Type.Optional(Type.String({ description: "Task ID for link_task action." })),
+        projectId: Type.Optional(Type.String({ description: "Project ID for link_task action." })),
+      }),
+      async execute(_toolCallId, params) {
+        const p = params as Record<string, unknown>;
+        const action = String(p.action ?? "");
+        const storage = new WorkStorage(orchestrator.config.memoryDir);
+        try {
+          await storage.ensureDirectories();
+          if (action === "create") {
+            if (typeof p.name !== "string" || p.name.trim().length === 0) {
+              return workLayerTextResult("work_project.create requires non-empty `name`.");
+            }
+            const project = await storage.createProject({
+              name: p.name,
+              description: typeof p.description === "string" ? p.description : undefined,
+              status: asProjectStatus(p.status),
+              owner: asNonEmptyString(p.owner),
+              tags: Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === "string") : undefined,
+            });
+            return toolJsonResult({ action, project });
+          }
+
+          if (action === "get") {
+            const projectId = asNonEmptyString(p.id);
+            if (!projectId) {
+              return workLayerTextResult("work_project.get requires `id`.");
+            }
+            const project = await storage.getProject(projectId);
+            return toolJsonResult({ action, project });
+          }
+
+          if (action === "list") {
+            const projects = await storage.listProjects();
+            return toolJsonResult({ action, count: projects.length, projects });
+          }
+
+          if (action === "update") {
+            const projectId = asNonEmptyString(p.id);
+            if (!projectId) {
+              return workLayerTextResult("work_project.update requires `id`.");
+            }
+            const patch: Record<string, unknown> = {};
+            if (typeof p.name === "string") patch.name = p.name;
+            if (typeof p.description === "string") patch.description = p.description;
+            const status = asProjectStatus(p.status);
+            if (status) patch.status = status;
+            const owner = asNullablePatchString(p, "owner");
+            if (owner !== undefined) patch.owner = owner;
+            if (Array.isArray(p.tags)) patch.tags = p.tags.filter((x): x is string => typeof x === "string");
+            const project = await storage.updateProject(projectId, patch as any);
+            return toolJsonResult({ action, project });
+          }
+
+          if (action === "delete") {
+            const projectId = asNonEmptyString(p.id);
+            if (!projectId) {
+              return workLayerTextResult("work_project.delete requires `id`.");
+            }
+            const deleted = await storage.deleteProject(projectId);
+            return toolJsonResult({ action, deleted });
+          }
+
+          if (action === "link_task") {
+            const taskId = asNonEmptyString(p.taskId);
+            const projectId = asNonEmptyString(p.projectId);
+            if (!taskId || !projectId) {
+              return workLayerTextResult("work_project.link_task requires `taskId` and `projectId`.");
+            }
+            const linked = await storage.linkTaskToProject(taskId, projectId);
+            return toolJsonResult({ action, linked });
+          }
+
+          return workLayerTextResult(`Unsupported work_project action: ${action}`);
+        } catch (err) {
+          return workLayerTextResult(`work_project error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    { name: "work_project" },
+  );
+
+  api.registerTool(
+    {
+      name: "work_board",
+      label: "Work Board Import/Export",
+      description:
+        "Export/import work-layer board snapshots and markdown. Outputs are marked as work-layer context and excluded from default memory extraction unless explicitly linked.",
+      parameters: Type.Object({
+        action: Type.String({
+          enum: ["export_markdown", "export_snapshot", "import_snapshot"],
+          description: "Board action to run.",
+        }),
+        projectId: Type.Optional(Type.String({ description: "Optional project filter/id." })),
+        snapshotJson: Type.Optional(Type.String({ description: "Snapshot JSON payload for import_snapshot." })),
+        linkToMemory: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, wrap output as linkable work context so extraction can retain it as long-term memory.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const p = params as Record<string, unknown>;
+        const action = String(p.action ?? "");
+        const projectId = asNonEmptyString(p.projectId);
+        const linkToMemory = p.linkToMemory === true;
+        try {
+          await new WorkStorage(orchestrator.config.memoryDir).ensureDirectories();
+          if (action === "export_markdown") {
+            const markdown = await exportWorkBoardMarkdown({ memoryDir: orchestrator.config.memoryDir, projectId });
+            return toolResult(wrapWorkLayerContext(markdown, { linkToMemory }));
+          }
+          if (action === "export_snapshot") {
+            const snapshot = await exportWorkBoardSnapshot({ memoryDir: orchestrator.config.memoryDir, projectId });
+            return toolJsonResult(snapshot, { linkToMemory });
+          }
+          if (action === "import_snapshot") {
+            if (typeof p.snapshotJson !== "string" || p.snapshotJson.trim().length === 0) {
+              return workLayerTextResult("work_board.import_snapshot requires `snapshotJson`.", { linkToMemory });
+            }
+            const snapshot = JSON.parse(p.snapshotJson);
+            const result = await importWorkBoardSnapshot({
+              memoryDir: orchestrator.config.memoryDir,
+              snapshot,
+              projectId: asNonEmptyString(p.projectId),
+            });
+            return toolJsonResult({ action, result }, { linkToMemory });
+          }
+          return workLayerTextResult(`Unsupported work_board action: ${action}`, { linkToMemory });
+        } catch (err) {
+          return workLayerTextResult(`work_board error: ${err instanceof Error ? err.message : String(err)}`, {
+            linkToMemory,
+          });
+        }
+      },
+    },
+    { name: "work_board" },
+  );
+
+  api.registerTool(
+    {
       name: "shared_context_write_output",
       label: "Write Shared Agent Output",
       description:
@@ -837,8 +1954,14 @@ Best for:
           );
         }
         const { date } = params as { date?: string };
-        const fp = await orchestrator.sharedContext.curateDaily({ date });
-        return toolResult(`Wrote: ${fp}`);
+        const result = await orchestrator.sharedContext.curateDaily({ date });
+        return toolResult(
+          [
+            `Roundtable: ${result.roundtablePath}`,
+            `Cross-signals: ${result.crossSignalsPath}`,
+            `Overlap count: ${result.overlapCount}`,
+          ].join("\n"),
+        );
       },
     },
     { name: "shared_context_curate_daily" },
@@ -867,7 +1990,7 @@ Best for:
         const { weekId } = params as { weekId?: string };
         const res = await orchestrator.compounding.synthesizeWeekly({ weekId });
         return toolResult(
-          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nmistakes: ${res.mistakesCount} patterns`,
+          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nrubrics: ${res.rubricsPath}\nmistakes: ${res.mistakesCount} patterns\npromotionCandidates: ${res.promotionCandidateCount}`,
         );
       },
     },

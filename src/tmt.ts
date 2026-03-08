@@ -38,6 +38,38 @@ export interface MemoryEntry {
   content: string;
 }
 
+const TMT_LEVEL_INPUT_LIMITS: Record<TmtLevel, { totalChars: number; itemChars: number; maxItems: number }> = {
+  hour: { totalChars: 48_000, itemChars: 2_000, maxItems: 64 },
+  day: { totalChars: 64_000, itemChars: 1_800, maxItems: 96 },
+  week: { totalChars: 72_000, itemChars: 1_600, maxItems: 120 },
+  persona: { totalChars: 80_000, itemChars: 1_600, maxItems: 120 },
+};
+
+export function capTmtSummaryInputs(inputs: string[], level: TmtLevel): string[] {
+  const { totalChars, itemChars, maxItems } = TMT_LEVEL_INPUT_LIMITS[level];
+  if (inputs.length === 0) return [];
+
+  const capped: string[] = [];
+  let usedChars = 0;
+
+  for (const raw of inputs) {
+    if (capped.length >= maxItems || usedChars >= totalChars) break;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+
+    const next = trimmed.length > itemChars ? `${trimmed.slice(0, itemChars - 1)}…` : trimmed;
+    const separator = capped.length === 0 ? 0 : 2;
+    if (usedChars + separator + next.length > totalChars) break;
+    capped.push(next);
+    usedChars += separator + next.length;
+  }
+
+  if (capped.length > 0) return capped;
+  const fallback = inputs[0]?.trim() ?? "";
+  if (!fallback) return [];
+  return [fallback.length > itemChars ? `${fallback.slice(0, itemChars - 1)}…` : fallback];
+}
+
 // ── Path helpers ────────────────────────────────────────────────────────────
 
 export function tmtDir(baseDir: string): string {
@@ -157,7 +189,7 @@ export class TmtBuilder {
 
       let summary: string;
       try {
-        summary = await summarize(entries.map((e) => e.content), "hour");
+        summary = await summarize(capTmtSummaryInputs(entries.map((e) => e.content), "hour"), "hour");
       } catch (err) {
         console.warn(`[engram] tmt: hour node summarize failed for ${key} (ignored): ${err}`);
         continue;
@@ -223,7 +255,7 @@ export class TmtBuilder {
 
       let summary: string;
       try {
-        summary = await summarize(inputs, "day");
+        summary = await summarize(capTmtSummaryInputs(inputs, "day"), "day");
       } catch (err) {
         console.warn(`[engram] tmt: day node summarize failed for ${date} (ignored): ${err}`);
         continue;
@@ -296,7 +328,7 @@ export class TmtBuilder {
 
         // Fall back to raw memory content if no day summaries available
         const inputs = daySummaries.length > 0 ? daySummaries : entries.map((e) => e.content);
-        const summary = await summarize(inputs, "week");
+        const summary = await summarize(capTmtSummaryInputs(inputs, "week"), "week");
         const sortedCreated = entries.map((e) => e.created).sort();
         const fm: TmtNodeFrontmatter = {
           level: "week",
@@ -372,7 +404,7 @@ export class TmtBuilder {
       }
       if (!shouldBuild) return;
 
-      const summary = await summarize(weekSummaries, "persona");
+      const summary = await summarize(capTmtSummaryInputs(weekSummaries, "persona"), "persona");
 
       const now = new Date().toISOString();
       const fm: TmtNodeFrontmatter = {

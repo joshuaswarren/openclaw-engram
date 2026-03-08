@@ -9,7 +9,7 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   dts: false,
-  external: ["openclaw"],
+  external: ["openclaw", "@lancedb/lancedb", "meilisearch", "@orama/orama", "@orama/plugin-data-persistence"],
   banner: {
     js: "// openclaw-engram: Local-first memory plugin",
   },

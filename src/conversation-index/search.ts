@@ -1,5 +1,6 @@
 import { log } from "../logger.js";
-import type { QmdClient } from "../qmd.js";
+import type { SearchBackend } from "../search/port.js";
+import type { FaissConversationIndexAdapter } from "./faiss-adapter.js";
 
 export interface ConversationSearchResult {
   path: string;
@@ -8,7 +9,7 @@ export interface ConversationSearchResult {
 }
 
 export async function searchConversationIndex(
-  qmd: QmdClient,
+  qmd: SearchBackend,
   query: string,
   maxResults: number,
 ): Promise<ConversationSearchResult[]> {
@@ -21,3 +22,16 @@ export async function searchConversationIndex(
   }
 }
 
+export async function searchConversationIndexFaissFailOpen(
+  adapter: FaissConversationIndexAdapter | undefined,
+  query: string,
+  maxResults: number,
+): Promise<ConversationSearchResult[]> {
+  if (!adapter) return [];
+  try {
+    return await adapter.searchChunks(query, maxResults);
+  } catch (err) {
+    log.debug(`conversation index FAISS search failed (fail-open): ${err}`);
+    return [];
+  }
+}

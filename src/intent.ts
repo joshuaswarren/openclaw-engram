@@ -125,3 +125,11 @@ export function planRecallMode(prompt: string): RecallPlanMode {
 
   return "full";
 }
+
+export function hasBroadGraphIntent(prompt: string): boolean {
+  const p = normalizeTextInput(prompt).trim().toLowerCase();
+  if (!p) return false;
+  return /\b(what changed|how did we get here|why did this happen|what led to|cause chain|dependency chain|regression chain|failure chain)\b/i.test(
+    p,
+  );
+}

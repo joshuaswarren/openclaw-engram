@@ -81,6 +81,17 @@ Run this before every push:
 4. Self-review staged diff for invariant classes below
 5. Add/adjust tests for each new invariant touched
 
+## Mandatory Pre-Merge Cursor Gate
+
+Before merging any PR that uses Cursor/Bugbot review:
+
+1. Required checks are green.
+2. `Cursor Bugbot` is not `pending`/`in_progress`/`neutral`/`skipping`.
+3. PR has an explicit positive Cursor verdict comment (`PASS`).
+4. No unresolved Cursor-authored review threads remain.
+
+Do not merge on `NEUTRAL` without an explicit positive verdict + zero unresolved Cursor threads.
+
 Repository automation:
 - `npm run hooks:install` configures git hooks that enforce this gate locally.
 - `pre-commit` runs `npm run preflight:quick`
@@ -122,6 +133,53 @@ Regex/heuristic classifiers must support common language variants and avoid malf
 
 10. TTL correctness:
 Cache `loadedAt` timestamps must represent completion time of cache rebuild, not start time.
+
+## v8.15 Behavior-Loop Hardening Checklist
+
+Use this checklist for PRs that touch behavior-loop auto-tuning, runtime policy application, or policy observability paths.
+
+1. Artifact isolation preserved:
+- Generic QMD/embedding recall paths must continue excluding `artifacts/`.
+- Artifact recall must stay isolated to dedicated verbatim artifact paths.
+
+2. Cap-after-filter preserved:
+- Retrieval order must remain `headroom -> filter -> rerank/boost -> cap -> format`.
+- Any top-K limits exposed to users must be applied after policy/path/status filtering.
+
+3. Config contract preserved (`enabled=false` and `0` limits):
+- `behaviorLoopAutoTuneEnabled=false` remains a hard disable (no learner apply side effects).
+- Numeric `0` values remain explicit hard caps/disables and are never coerced to non-zero defaults.
+
+4. Planner mode semantics unchanged:
+- `no_recall`, `minimal`, `full`, and `graph_mode` must remain reachable.
+- `no_recall` must still gate all recall fallbacks.
+- `minimal` mode recall budgets must remain bounded.
+
+5. Policy version parity:
+- Policy version shown by CLI (`policy-status` / `policy-diff`) must match policy version emitted in recall telemetry for the same effective runtime policy values.
+
+## v8.16 Compounding Artifact Hardening Checklist
+
+Use this checklist for PRs that touch weekly compounding reports, rubrics, or promotion-candidate synthesis.
+
+1. Provenance integrity:
+- Weekly pattern and rubric outputs must preserve source provenance (feedback/action source + line references where available).
+- Provenance formatting should stay deterministic for stable diffs.
+
+2. Outcome summary consistency:
+- Any displayed action outcome score/weight must be explainable from visible counts.
+- If score denominator includes `unknown`, rendered summaries must include `unknown` count.
+
+3. Advisory-only promotion contract:
+- Promotion candidate sections must remain explicitly advisory.
+- Compounding reports/tools must not auto-write promotion candidates into shared memory.
+
+4. Duplicate parsing drift prevention:
+- Shared telemetry sources (for example memory-action JSONL) should be parsed through one helper path per run to avoid divergence between summary sections.
+
+5. Gate behavior:
+- Optional compounding sections must remain behind explicit config gates.
+- Disabled path must preserve baseline weekly output behavior (fail-open and no hidden side effects).
 
 ## Required Tests for These Changes
 

@@ -6,6 +6,541 @@ All notable changes to this project will be documented in this file.
 
 <!-- New items go here before they're released -->
 
+### Fixed
+- Frontmatter parser now unescapes backslashes and escaped quotes for `importanceReasons` and `links[].reason`, preventing backslash doubling across save/load round-trips after serializer hardening.
+- Frontmatter link serialization now preserves parser symmetry for `links[].reason`: reasons are JSON-escaped when written and JSON-unescaped when parsed, preventing backslash amplification across save/load cycles while still addressing incomplete escaping. Parsing now also fail-opens for legacy files that contain previously-unescaped backslashes, so older memories continue to load instead of being dropped on parse.
+- Removed a redundant no-op `.replace("Z", "Z")` call from `toSafeTimestamp`, preserving the filesystem-safe `YYYYMMDDTHHMMSSmmmZ` format while resolving code-scanning alert #7.
+- **Objective-state follow-up**: plain-text tool results no longer get marked as failures just because they contain words like `errors` or `failed` inside otherwise successful messages such as `0 errors found` or `previously failed test now passes`.
+- Dashboard websocket origin validation now treats omitted default HTTP port as port 80, so same-origin upgrades on `http://127.0.0.1` and `http://127.0.0.1:80` both pass when the dashboard is bound to port 80; also removed an unreachable bracketed IPv6 loopback host entry.
+- Fallback contradiction verification, link suggestion, and memory summarization now normalize gateway/local LLM JSON aliases the same way as the direct OpenAI client, so `winner`, `type`, `summary`, and `entities` responses continue to work without an OpenAI API key.
+- **local-llm**: Read `reasoning_content` when `content` is empty — fixes thinking models (e.g. Qwen 3.5) returning null for entity summaries, consolidation, and question generation.
+- **fast-tier thinking suppression**: fast LLM client now sends `chat_template_kwargs: { enable_thinking: false }` to suppress chain-of-thought on thinking models (e.g. Qwen 3.5 small series). Prevents fast-tier operations from timing out when LM Studio forces thinking mode via chat template.
+- Add explicit `encoding_format: "float"` to local embedding requests for vLLM/LiteLLM compatibility.
+- Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
+
+### Added
+- **Required benchmark baseline gate**: the required `eval-benchmark-gate` workflow now reads the named `required-main` baseline snapshot from the base branch fixture store and blocks PRs when candidate fixture runs regress relative to that stored release baseline.
+- **Named baseline delta reporting**: when `benchmarkDeltaReporterEnabled` is enabled, Engram can now compare the current eval store against a stored baseline snapshot via `openclaw engram benchmark-baseline-report --snapshot-id <id>`, emit both JSON and markdown delta summaries, and fail fast on benchmark regressions, missing coverage, or invalid candidate eval artifacts.
+- **Benchmark baseline snapshots**: when `benchmarkBaselineSnapshotsEnabled` is enabled, Engram can now capture typed `baselines/<snapshotId>.json` artifacts for the latest completed benchmark runs via `openclaw engram benchmark-baseline-snapshot`, and `openclaw engram benchmark-status` now reports stored baseline snapshot counts plus the latest baseline summary.
+- **Utility-learning runtime weighting**: when both `memoryUtilityLearningEnabled` and `promotionByOutcomeEnabled` are enabled and a learner snapshot exists, Engram now loads bounded utility runtime values from `state/utility-telemetry/learning-state.json`, applies learned `boost` / `suppress` multipliers to ranking heuristic deltas, and nudges tier-migration promotion/demotion thresholds without re-reading raw utility telemetry on the hot path.
+- **Utility-learning offline learner**: when `memoryUtilityLearningEnabled` is enabled, Engram can now read typed utility telemetry, learn bounded offline promotion/ranking weights grouped by `target + decision`, persist that learner snapshot under `state/utility-telemetry/learning-state.json`, inspect it with `openclaw engram utility-learning-status`, and recompute it deterministically with `openclaw engram utility-learn`.
+- **Utility-learning telemetry foundation**: added `memoryUtilityLearningEnabled`, `promotionByOutcomeEnabled`, a typed utility telemetry store under `state/utility-telemetry`, and the operator-facing `openclaw engram utility-status` / `openclaw engram utility-record` commands so later slices can learn promotion and ranking weights from downstream outcomes without changing the contract again.
+- **Commitment lifecycle foundation**: when `creationMemoryEnabled`, `commitmentLedgerEnabled`, and `commitmentLifecycleEnabled` are enabled, Engram can now transition typed commitment entries to `fulfilled` / `cancelled` / `expired`, report overdue, stale, and decay-eligible commitments in `openclaw engram commitment-status`, and run overdue-expiry plus resolved-entry cleanup with `openclaw engram commitment-lifecycle-run`.
+- **Commitment ledger foundation**: when both `creationMemoryEnabled` and `commitmentLedgerEnabled` are enabled, Engram can now persist typed commitment ledger entries under `state/commitment-ledger`, inspect them with `openclaw engram commitment-status`, and write deterministic entries through `openclaw engram commitment-record`.
+- **Artifact recovery recall**: when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, Engram can now search the typed work-product ledger for reusable outputs, inject a dedicated `## Work Products` recall section, and preview recovery candidates with `openclaw engram work-product-recall-search <query>`.
+- **Creation-memory ledger**: when `creationMemoryEnabled` is enabled, Engram can now persist typed work-product ledger entries under `state/work-product-ledger`, inspect them with `openclaw engram work-product-status`, and write deterministic entries through `openclaw engram work-product-record`.
+- **Verified rule recall**: when `semanticRuleVerificationEnabled` is enabled, Engram can now re-check promoted semantic rules against their cited source episodes at recall time, downgrade stale provenance before surfacing those rules, inject a dedicated `## Verified Rules` recall section, and preview that surface with `openclaw engram semantic-rule-verify <query>`.
+- **Semantic rule promotion**: when `semanticRulePromotionEnabled` is enabled, Engram can now promote explicit `IF ... THEN ...` rules from verified episodic memories into durable `rule` memories with lineage, source-memory provenance, duplicate suppression, and the operator-facing `openclaw engram semantic-rule-promote --memory-id <id>` CLI.
+- **Verified episodic recall**: added `verifiedRecallEnabled`, `semanticRulePromotionEnabled`, bounded verified-episode search over recent memory boxes, a dedicated `## Verified Episodes` recall section, and `openclaw engram verified-recall-search <query>` for previewing verified episodic matches before semantic-rule promotion lands.
+- **Harmonic retrieval blender**: when `harmonicRetrievalEnabled` is enabled, Engram can now blend abstraction-node evidence and cue-anchor matches into a dedicated `## Harmonic Retrieval` recall section and inspect those blended results with `openclaw engram harmonic-search`.
+- **Cue-anchor index foundation**: when `harmonicRetrievalEnabled` and `abstractionAnchorsEnabled` are enabled, Engram can now persist typed cue anchors for entities, files, tools, outcomes, constraints, and dates under `state/abstraction-nodes/anchors`, and inspect them with `openclaw engram cue-anchor-status`.
+- **Abstraction-node foundation**: added `harmonicRetrievalEnabled`, `abstractionAnchorsEnabled`, `abstractionNodeStoreDir`, a typed abstraction-node store under `state/abstraction-nodes`, and `openclaw engram abstraction-node-status` for the first harmonic-retrieval storage slice.
+- **Memory red-team benchmark packs**: added `memoryRedTeamBenchEnabled`, typed `memory-red-team` benchmark manifest support (`benchmarkType`, `attackClass`, `targetSurface`), and benchmark-status accounting for poisoning-defense attack suites.
+- **Risky-promotion corroboration**: when `memoryPoisoningDefenseEnabled` is enabled, risky `working -> trusted` trust-zone promotions now require independent non-`quarantine` corroboration with anchored provenance and overlapping `entityRefs` or `tags`, and successful promotions record corroboration metadata.
+- **Provenance trust scoring**: added `memoryPoisoningDefenseEnabled`, deterministic trust-zone provenance scoring by source class and evidence anchors, and aggregate trust-band reporting in `openclaw engram trust-zone-status` as the first poisoning-defense signal.
+- **Trust-zone recall**: added `trustZoneRecallEnabled`, a separate `trust-zones` recall-pipeline section, bounded trust-zone search over `working` and `trusted` records, and `## Trust Zones` recall injection that excludes `quarantine` material by default.
+- **Trust-zone promotion path**: added deterministic trust-zone promotion planning, lineage-aware promoted records, guarded `openclaw engram trust-zone-promote`, direct `quarantine -> trusted` denial, and anchored-provenance enforcement for risky `working -> trusted` promotions.
+- **Trust-zone store foundation**: added `trustZonesEnabled`, `quarantinePromotionEnabled`, `trustZoneStoreDir`, a typed trust-zone record store under `state/trust-zones`, and `openclaw engram trust-zone-status` for inspecting quarantine, working, and trusted records before promotion logic lands.
+- **Causal trajectory recall**: added `causalTrajectoryRecallEnabled`, a separate `causal-trajectories` recall-pipeline section, bounded lexical trajectory search, and `## Causal Trajectories` recall injection with lightweight match explainability.
+- **Causal trajectory store foundation**: added `causalTrajectoryMemoryEnabled`, `causalTrajectoryStoreDir`, a typed causal-trajectory record store under `state/causal-trajectories`, and `openclaw engram causal-trajectory-status` for inspecting stored goal-action-observation-outcome chains.
+- **Objective-state writers**: when `objectiveStateMemoryEnabled` and `objectiveStateSnapshotWritesEnabled` are both enabled, Engram now derives normalized file/process/tool snapshots from `agent_end` tool activity and persists them into the objective-state store introduced in PR5.
+- **Evaluation harness foundation**: added config/schema flags (`evalHarnessEnabled`, `evalShadowModeEnabled`, `evalStoreDir`), typed benchmark manifest/run summary support, and `openclaw engram benchmark-status` for inspecting benchmark packs and the latest run summary.
+- **Benchmark pack tools**: added `openclaw engram benchmark-validate <path>` and `openclaw engram benchmark-import <path> [--force]` so operators can validate and install benchmark packs into Engram's eval store before later shadow-mode and CI-gating slices land.
+- **Shadow recall recording**: when `evalHarnessEnabled` and `evalShadowModeEnabled` are both enabled, Engram now records live recall decisions to `state/evals/shadow/YYYY-MM-DD/<trace-id>.json` and surfaces those records in `openclaw engram benchmark-status`.
+- **CI benchmark delta gate**: added `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>`, `scripts/eval-ci-gate.ts`, and an optional `eval-benchmark-gate` GitHub Actions workflow for base-vs-candidate eval-store comparison.
+- **Benchmark-first documentation**: added `docs/evaluation-harness.md`, a new benchmark-first roadmap in `docs/plans/2026-03-06-engram-agentic-memory-roadmap.md`, and a first-slice plan in `docs/plans/2026-03-06-engram-pr1-eval-harness-foundation.md`.
+- **Dual-tier local LLM**: route fast operations (rerank, entity_summary, tmt_summary, compression_guideline) to a smaller/faster model while heavy operations (extraction, consolidation, summarization) stay on the primary model. Opt-in via `localLlmFastEnabled`, `localLlmFastModel`, `localLlmFastUrl`, `localLlmFastTimeoutMs`.
+- **Causal rule extraction** (PlugMem-inspired): opt-in `"rule"` memory category for IF→THEN causal rules mined during extraction and consolidation. Enable via `causalRuleExtractionEnabled`.
+- **Episodic box metadata** (REMem-inspired): memory boxes now capture `goal`, `toolsUsed`, and `outcome` fields. Goal is derived from the first user message in each episode. `toolsUsed` merging infrastructure is in place but not yet populated (requires structured tool data in buffer turns). Enables "the time I debugged X" style retrieval.
+- **Memory reconstruction** (E-Mem-inspired): after recall, scans for entity references lacking context and performs targeted secondary retrieval. Opt-in via `memoryReconstructionEnabled`, with `memoryReconstructionMaxExpansions` (default 3) controlling expansion budget.
+- **De-linearization transform** (SimpleMem-inspired): resolves pronoun coreferences and anchors relative time expressions (yesterday, last week, etc.) to absolute ISO-8601 dates after extraction. Enabled by default via `delinearizeEnabled`.
+- **Recall confidence gate** (Synapse-inspired): opt-in gate that skips memory injection when top recall score is below threshold, preventing noisy low-relevance results. Configurable via `recallConfidenceGateEnabled`, `recallConfidenceGateThreshold`.
+- **Graph lateral inhibition** (Synapse-inspired): competitive suppression prevents hub nodes from dominating spreading activation results. Configurable via `graphLateralInhibitionEnabled`, `graphLateralInhibitionBeta`, `graphLateralInhibitionTopM`.
+- Compaction reset: opt-in session reset after compaction with BOOT.md injection (`compactionResetEnabled` config field).
+- Per-session signal files and workspace overrides for multi-agent safety.
+- Stale signal cleanup on startup (1-hour TTL).
+- 9 new tests for compaction reset lifecycle.
+
+### Changed
+- Plugin registration model: hooks re-register per agent registry; tools/CLI/service register once.
+
+### Changed
+- **README.md** rewritten with value proposition, feature highlights, search backend comparison, and contributing guide.
+
+### Added
+- `docs/search-backends.md` — comprehensive guide for all 6 search backends with configuration and tradeoffs.
+- `docs/writing-a-search-backend.md` — developer guide for implementing custom `SearchBackend` adapters.
+- Search backend settings table added to `docs/config-reference.md`.
+- v9 search architecture section added to `docs/architecture/overview.md`.
+- All existing docs updated with search backend references and links.
+
+## [9.0.0] — 2026-03-02
+
+### Added
+- **LanceDB search backend** (`src/search/lancedb-backend.ts`) — embedded hybrid FTS+vector search with native Arrow bindings and RRF reranking.
+- **Meilisearch search backend** (`src/search/meilisearch-backend.ts`) — server-based search via the official Meilisearch SDK.
+- **Orama search backend** (`src/search/orama-backend.ts`) — embedded hybrid FTS+vector search, pure JS, zero native dependencies.
+- Shared document scanner (`src/search/document-scanner.ts`) — scans `facts/` and `corrections/` for indexable markdown documents.
+- Shared embed helper (`src/search/embed-helper.ts`) — embedding via OpenAI or local LLM for embedded backends.
+- Config keys: `lanceDbPath`, `lanceEmbeddingDimension`, `meilisearchHost`, `meilisearchApiKey`, `meilisearchTimeoutMs`, `meilisearchAutoIndex`, `oramaDbPath`, `oramaEmbeddingDimension`.
+- `searchBackend` enum expanded to `"qmd" | "remote" | "noop" | "lancedb" | "meilisearch" | "orama"`.
+- Factory routing in `createSearchBackend()` for all three new backends.
+- Tests: factory routing, adapter construction, document scanner, embed helper (10 tests).
+- Smoke test script (`tests/smoke-backends.ts`) for local verification.
+
+### Added (from PR #114)
+- SearchBackend port/adapter interface (`src/search/port.ts`) abstracting QMD behind a stable contract so alternative backends (remote HTTP, noop, custom) can replace QMD.
+- `NoopSearchBackend` adapter for graceful degradation when no search engine is available.
+- `RemoteSearchBackend` HTTP REST adapter stub for remote search services.
+- Factory function `createSearchBackend(config)` for config-driven backend selection.
+- Config keys: `searchBackend` (`"qmd"` | `"remote"` | `"noop"`), `remoteSearchBaseUrl`, `remoteSearchApiKey`, `remoteSearchTimeoutMs`.
+
+### Changed
+- PR #113 runtime + documentation hardening:
+  - Fixed `openclaw engram conversation-index-health` false-degraded reports by probing conversation-index QMD availability on demand when status is initially unknown.
+  - Added regression test coverage for the on-demand QMD probe path in conversation-index health reporting.
+  - Refreshed `README.md` to reflect current v8.3.x capabilities, validation commands, and operator workflows.
+  - Added `docs/enable-all-v8.md` with an explicit full-profile config for all v8 feature families and post-config verification checklist.
+- PR #82 follow-up extraction API compatibility and normalization:
+  - Migrated extraction/consolidation LLM calls from `responses.parse` to `chat.completions.create` for OpenAI-compatible endpoints.
+  - Added direct-client extraction path and retained fail-open fallback behavior for local/gateway extraction paths.
+  - Normalized parsed facts/questions from non-schema-enforced completions output before persistence to avoid malformed question/fact records.
+- PR #82 follow-up recall injection compatibility:
+  - Return both `systemPrompt` and `prependContext` from `before_agent_start` so memory context is injected across gateway variants.
+- PR #110 QMD daemon reliability and warm-path parity:
+  - Replaced unreachable HTTP daemon transport with a managed stdio `qmd mcp` session.
+  - Corrected daemon query tool/argument usage to `query` with `limit`.
+  - Added daemon fast paths for BM25 and vector search to reduce cold subprocess latency.
+  - Hardened subprocess parsing for `No results found.` outputs and preserved fail-open fallback behavior.
+- PR #75 recall pipeline adaptation for current v8 main:
+  - Added `recallBudgetChars` and ordered `recallPipeline` config contracts with per-section enable/limits and profile consolidation thresholds.
+  - Refactored recall assembly to section-bucket ordering with section-level caps while preserving existing v8 retrieval semantics.
+  - Launched transcript/summaries/conversation-recall/compounding section fetches in parallel with preamble retrieval while keeping pipeline-ordered final assembly.
+  - Fixed profile consolidation target-line consistency by using dynamic target lines in gateway fallback schema and OpenAI prompt text.
+  - Fixed knowledge-index override caching so per-call override requests do not reuse stale default-cache snapshots.
+  - Added tests for recall pipeline config parsing/defaults, knowledge-index override cache behavior, and custom pipeline reorder/disable assembly behavior.
+- v8.16 Task 5 hardening update:
+  - Added a compounding-artifact review checklist to `docs/ops/pr-review-hardening-playbook.md` covering provenance integrity, advisory-only promotion contract, outcome-summary consistency, and duplicate parsing drift prevention.
+- PR #57 work extraction boundary hardening:
+  - Preserved linked work payload text containing wrapper-like tokens such as `[WORK_LAYER_CONTEXT link_to_memory=...]`.
+  - Escaped wrapper opener/closer tokens during work-layer wrapping and restored them only after boundary cleanup.
+  - Added regression coverage for metadata-like literal opener text in linked payloads.
+- PR #42 review-hardening backfill for Cursor findings (PRs #37-#40):
+  - Fixed continuity incident read-limit handling to guard `NaN` limits and to apply state filtering before result capping.
+  - Fixed continuity incident close-path ID lookup to verify parsed frontmatter ID before using filename suffix matches.
+  - Simplified continuity incident state parsing (removed redundant ternary branch).
+  - Fixed identity anchor merge to always persist sentinel cleanup for existing sections.
+  - Gated continuity-audit reference reads behind `continuityAuditEnabled` and bounded compounding incident scans.
+  - Added regression tests for all above cases (storage, tools/CLI state filtering, compounding gate, anchor sentinel cleanup).
+- PR #34 recall hardening + dedupe tooling:
+  - Switched recall retrieval to daemon-preferred `search()` with bounded hybrid backfill to reduce contention and preserve fail-open behavior.
+  - Kept `hybridSearch()` as BM25+vector diversification path (no daemon short-circuit), so backfill can broaden recall candidates.
+  - Added graph-assist guardrails so full-mode graph expansion requires `multiGraphMemoryEnabled=true`.
+  - Added bounded TMT summary input capping helpers to avoid oversized summarization payloads.
+- PR #33 stability pass:
+  - Fixed `buildRecallQueryPolicy` to preserve raw non-cron prompts (no whitespace normalization) when cron recall policy is not active.
+  - Replaced cron prompt bullet/numbered-line regex scoring with deterministic parsing to avoid regex-risk findings on untrusted input.
+  - Added regression coverage for raw-prompt preservation in non-cron and cron-policy-disabled paths.
+
+### Added
+- v8.8 live graph dashboard (remaining backlog slice):
+  - Added graph snapshot/diff helpers (`dashboard/lib/graph-parser.ts`, `dashboard/lib/graph-diff.ts`) with deterministic patching behavior.
+  - Added optional dashboard runtime server with API + WebSocket streaming (`src/dashboard-runtime.ts`) and standalone entrypoint/static UI (`dashboard/server.ts`, `dashboard/public/*`).
+  - Added CLI lifecycle wrappers/commands for dashboard process management: `openclaw engram dashboard start|status|stop`.
+  - Added tests: `dashboard/lib/graph-diff.test.ts`, `tests/dashboard-server.test.ts`, and `tests/cli-dashboard.test.ts`.
+- v8.5 session integrity + recovery ops (remaining backlog slice):
+  - Added transcript/checkpoint integrity analyzer + bounded repair planner/apply workflow (`src/session-integrity.ts`).
+  - Added transcript recovery summary surface (`TranscriptManager.getRecoverySummary`) and orchestrator passthrough (`Orchestrator.getRecoverySummary`).
+  - Added CLI command wrappers/surfaces: `openclaw engram session-check` and `openclaw engram session-repair` (`--dry-run`/`--apply`, guarded `--allow-session-file-repair`).
+  - Added tests: `tests/session-integrity.test.ts`, `tests/cli-session-integrity.test.ts`, and `tests/recovery-summary.test.ts`.
+- v8.16 Task 4 (compounding artifacts expansion):
+  - Added `compounding/rubrics.md` weekly artifact generation with deterministic agent rubric sections.
+  - Added provenance annotations for feedback-derived weekly patterns and rubric updates (`inbox.jsonl` line + entry key).
+  - Added outcome-aware weekly weighting summaries by action (`applied/skipped/failed/unknown` + conservative weighted score).
+  - Added optional advisory promotion-candidate section (gated by `compoundingSemanticEnabled`; no automatic shared-memory writes).
+  - Added tests: `tests/compounding-weekly-artifacts.test.ts` and `tests/compounding-outcome-weighting.test.ts`.
+- v8.16 Task 3 (optional semantic cross-signal enhancer):
+  - Added optional shared-context semantic overlap enhancement pass behind config gate (`sharedCrossSignalSemanticEnabled`).
+  - Added strict timeout guard (`sharedCrossSignalSemanticTimeoutMs`) and candidate bound (`sharedCrossSignalSemanticMaxCandidates`) with fail-open fallback to deterministic overlaps.
+  - Added backward-compatible config aliases for existing `crossSignalsSemantic*` keys.
+  - Added semantic enhancement metadata to daily `cross-signals/<YYYY-MM-DD>.json` report output.
+  - Added tests: `tests/config-shared-context-semantic.test.ts` and `tests/shared-context-cross-signals-semantic.test.ts`.
+- v8.16 Task 2 (deterministic shared cross-signals):
+  - Added deterministic cross-signal generation in shared-context daily curation from agent outputs plus feedback decision aggregates.
+  - Added persisted daily report artifact at `shared-context/cross-signals/<YYYY-MM-DD>.json`.
+  - Added roundtable `Cross-Signals` summary section with overlap highlights and generated artifact path.
+  - Updated `shared_context_curate_daily` tool response to return both roundtable and cross-signal artifact paths.
+  - Added `tests/shared-context-cross-signals.test.ts` for empty-day, single-source, and multi-source overlap coverage.
+- v8.16 Task 1 (migration CLI command group):
+  - Added `openclaw engram migrate` subcommands: `normalize-frontmatter`, `rescore-importance`, `rechunk`, and `reextract --model <id>` (dry-run by default).
+  - Added bounded migration wrappers in `src/cli.ts` with hard caps and explicit `--write` semantics.
+  - Added re-extraction request queue persistence in storage (`state/reextract-jobs.jsonl`) via append/read helpers.
+  - Added `tests/cli-migrate.test.ts` coverage for dry-run behavior and write-path correctness.
+  - Updated `docs/operations.md` and `docs/import-export.md` with migration runbook guidance.
+- v8.15 behavior-loop Task 1 (config + state contracts):
+  - Added behavior-loop auto-tuning config keys with bounded defaults and explicit zero-safe parsing semantics.
+  - Added typed behavior-loop policy contracts in `src/types.ts` and corresponding Zod schemas in `src/schemas.ts`.
+  - Extended `tests/config-proactive-policy.test.ts` to cover defaults, explicit zero overrides, and numeric clamping for behavior-loop settings.
+- v8.15 behavior-loop Task 2 (signal ingestion pipeline):
+  - Added `src/behavior-signals.ts` for correction/preference signal normalization and deterministic dedupe keys.
+  - Added append-only behavior signal ledger support in storage (`state/behavior-signals.jsonl`) with fail-open reads and persisted dedupe by `memoryId+signalHash`.
+  - Wired extraction persistence to emit namespace-safe correction/preference behavior signals per target storage namespace.
+  - Added `tests/behavior-signals.test.ts` and expanded `tests/storage-policy-state.test.ts` for signal generation, timestamp/namespace safety, and dedupe invariants.
+- v8.15 behavior-loop Task 3 (bounded policy learner):
+  - Added `src/behavior-learner.ts` with deterministic, bounded policy adjustment proposals over behavior-signal windows.
+  - Added strict tunable-parameter allowlist and protected-parameter enforcement to prevent mutation of guarded config contracts.
+  - Added clamp helpers in lifecycle/recall query policy modules for learner-consistent threshold/token-cap bounds.
+  - Added `tests/behavior-learner.test.ts` coverage for tunable-only updates, protected-parameter immutability, min-signal gating, and max-delta enforcement.
+- v8.15 behavior-loop Task 4 (runtime application + rollback):
+  - Added `src/policy-runtime.ts` with atomic runtime snapshot files (`state/policy-runtime.json`, `state/policy-runtime.prev.json`).
+  - Added guarded runtime application path with invalid-adjustment rollback and protected-parameter enforcement.
+  - Wired orchestrator retrieval/lifecycle consumers to load and apply runtime policy overrides fail-open.
+  - Added `tests/policy-runtime-application.test.ts` coverage for runtime apply/load, recall-mode contract safety, and rollback restoration on invalid updates.
+- v8.15 behavior-loop Task 5 (policy observability + rollback CLI):
+  - Added CLI commands `openclaw engram policy-status`, `openclaw engram policy-diff --since <window>`, and `openclaw engram policy-rollback`.
+  - Added runtime policy snapshot/diff helpers with evidence counts and top contributing behavior-signal summaries.
+  - Added per-turn recall telemetry policy version tagging in recall summary events and last-recall impressions.
+  - Added `tests/cli-policy-tuning.test.ts` and expanded `tests/recall-telemetry.test.ts` for policy-version and CLI report coverage.
+- v8.15 behavior-loop Task 6 (guardrails + rollout hardening docs):
+  - Added explicit behavior-loop hardening checklist to `docs/ops/pr-review-hardening-playbook.md` (artifact isolation, cap-after-filter ordering, config contract, planner mode reachability, and policy-version parity).
+  - Added v8.15 auto-tuning rollout guidance and operator command runbook to `docs/setup-config-tuning.md`.
+  - Documented rollback-first operator guidance for regression handling during behavior-loop rollout.
+- v8.8 network sync Task 1 (WebDAV module):
+  - Added `src/network/webdav.ts` with opt-in `WebDavServer` startup (`enabled=false` by default).
+  - Added strict allowlist path scoping so requests are limited to explicit root aliases and traversal escapes are rejected.
+  - Added optional HTTP Basic auth support and minimal DAV/read endpoints (`OPTIONS`, `PROPFIND`, `GET`, `HEAD`).
+  - Added `tests/network-webdav.test.ts` coverage for disabled-by-default behavior, allowlist enforcement, traversal blocking, and auth gating.
+- v8.8 network sync Task 2 (Tailscale helper module):
+  - Added `src/network/tailscale.ts` with `TailscaleHelper` status gating (`available` + `running`) and a guarded `syncDirectory(...)` helper.
+  - Added default command-runner plumbing for `tailscale version`, `tailscale status --json`, and rsync execution with timeout handling.
+  - Added `tests/network-tailscale.test.ts` coverage for availability checks, JSON status parsing, daemon-state enforcement, and sync argument construction.
+- v8.8 network sync Task 3 (CLI command surfaces):
+  - Added network CLI wrappers in `src/cli.ts`: `runTailscaleStatusCliCommand`, `runTailscaleSyncCliCommand`, `runWebDavServeCliCommand`, and `runWebDavStopCliCommand`.
+  - Added command surfaces: `openclaw engram tailscale-status`, `openclaw engram tailscale-sync`, `openclaw engram webdav-serve`, and `openclaw engram webdav-stop`.
+  - Added `tests/cli-network-commands.test.ts` coverage for helper passthrough, WebDAV serve/stop lifecycle, and auth argument validation.
+- v8.8 network sync Task 4 (security + docs):
+  - Updated `docs/operations.md` with network sync/WebDAV command runbook and operational safety notes.
+  - Updated `SECURITY.md` with explicit v8.8 network-surface guardrails (opt-in defaults, allowlist-only exposure, loopback bind posture, and auth requirements).
+- v8.9 compatibility diagnostics Task 1 (core checks):
+  - Added `src/compat/types.ts` for compatibility report/check contracts (`ok|warn|error` + summary metadata).
+  - Added `src/compat/checks.ts` with deterministic offline compatibility checks for plugin manifest shape, package wiring, core hook registration, Node runtime floor, and QMD binary availability.
+  - Added `tests/compat-checks.test.ts` coverage for healthy fixtures, malformed/missing files, and warn/error remediation paths.
+- v8.9 compatibility diagnostics Task 2 (CLI command surface):
+  - Added `openclaw engram compat [--json] [--strict]` in `src/cli.ts` for local compatibility diagnostics.
+  - Added strict-mode exit behavior (`exitCode=1` when warnings/errors are present) and machine-readable JSON output mode.
+  - Added `runCompatCliCommand` wrapper plus `tests/cli-compat.test.ts` coverage for default vs strict exit behavior.
+- v8.9 compatibility diagnostics Task 3 (fixture-backed diagnostics tests):
+  - Added fixture catalog under `tests/compat-fixtures/` for healthy, missing-manifest, and empty-package repository states.
+  - Added `tests/compat-fixtures.test.ts` to validate deterministic check outcomes across fixture scenarios.
+  - Added fixture usage notes in `tests/compat-fixtures/README.md`.
+- v8.9 compatibility diagnostics Task 4 (docs + rollout guidance):
+  - Updated `docs/operations.md` CLI runbook with `openclaw engram compat` usage and strict/json mode guidance.
+  - Updated `README.md` with compatibility diagnostics quickstart commands for operator rollout checks.
+- v8.10 FAISS conversation index Task 1 (config contracts + docs):
+  - Added FAISS backend config fields to plugin config contracts and schema (`conversationIndexFaiss*`) while keeping `conversationIndexBackend` default as `qmd`.
+  - Added strict parsing/clamping tests in `tests/config-conversation-index-faiss.test.ts`, including zero-safe semantics and malformed input handling.
+  - Updated `docs/config-reference.md` and `docs/context-retention.md` with FAISS backend configuration and rollout notes.
+- v8.10 FAISS conversation index Task 2 (adapter interface + fail-open wrappers):
+  - Added `src/conversation-index/faiss-adapter.ts` with subprocess-backed FAISS adapter APIs (`upsertChunks`, `searchChunks`, `health`) and bounded timeout/stderr/JSON error handling.
+  - Added fail-open helper wrappers in `src/conversation-index/indexer.ts` and `src/conversation-index/search.ts` so adapter failures degrade to no-op/empty recall instead of throwing into hook paths.
+  - Added `tests/conversation-index-faiss-adapter.test.ts` coverage for success, timeout, non-zero exit, malformed payload, and fail-open wrapper behavior.
+- v8.10 FAISS conversation index Task 3 (Python sidecar CLI + smoke tests):
+  - Added `scripts/faiss_index.py` JSON-in/JSON-out sidecar commands (`upsert`, `search`, `health`) with fail-open error envelopes and deterministic local `__hash__` embedding mode for smoke validation.
+  - Added `scripts/faiss_requirements.txt` and `scripts/faiss/README.md` with dependency and operational contract guidance.
+  - Added `tests/conversation-index-faiss-smoke.test.ts` with sidecar contract checks and a dependency-gated FAISS upsert/search smoke path.
+- v8.10 FAISS conversation index Task 4 (orchestrator backend wiring + parity tests):
+  - Wired orchestrator conversation-index flow to select `qmd` or `faiss` backend paths for startup health checks, index updates, and semantic recall queries.
+  - Preserved fail-open recall behavior for FAISS search/upsert failures and kept semantic-recall section formatting backend-agnostic via shared formatter logic.
+  - Added `tests/conversation-index-integration.test.ts` coverage for backend routing (`qmd` vs `faiss`), FAISS fail-open recall, formatting parity, and FAISS update-path routing.
+- v8.10 FAISS conversation index Task 5 (ops health command + docs):
+  - Added orchestrator `getConversationIndexHealth()` with backend-aware status (`qmd`/`faiss`), chunk-doc counts, and last-update metadata.
+  - Added CLI command surface `openclaw engram conversation-index-health` via `runConversationIndexHealthCliCommand`.
+  - Added `tests/cli-conversation-index-health.test.ts` coverage for CLI wrapper behavior and backend health/fail-open scenarios.
+  - Updated `docs/operations.md` and `docs/setup-config-tuning.md` with conversation-index health command usage.
+- v8.13 action-policy Task 3 (tooling + namespace-aware action audit):
+  - Added CLI helper/command `openclaw engram action-audit` to report namespace-aware action totals by action, outcome, and policy decision.
+  - Extended `memory_action_apply` tool with `dryRun` support for safe no-write validation.
+  - Added `tests/cli-memory-action-audit.test.ts` and expanded `tests/tools-compression-actions.test.ts` for dry-run behavior.
+  - Updated `docs/api.md` and `docs/operations.md` with action-audit and dry-run usage guidance.
+- v8.13 action-policy Task 4 (lifecycle + compounding feedback loop):
+  - Added bounded memory-action outcome priors to lifecycle evaluation so recent action outcomes can gently influence transition scoring without changing baseline behavior when telemetry is absent.
+  - Added compounding ingestion of denied/deferred/skipped/failed memory-action events into weekly mistake-pattern synthesis.
+  - Added `tests/memory-action-lifecycle-integration.test.ts` and expanded `tests/compounding.test.ts` coverage for bounded-prior behavior and compounding pattern extraction.
+- v8.13 action-policy Task 5 (rollout + risk controls):
+  - Added conservative/balanced/research rollout preset guidance for action-policy and compression-learning settings.
+  - Added operator hardening checklist for staged promotion and rollback order.
+  - Documented disabled-path compatibility guarantees (`enabled=false` and zero-limit semantics remain hard disables).
+- v8.14 hot/cold parity Task 1 (tier-parity config contract):
+  - Added tier migration/parity config keys and defaults (`qmdTierMigrationEnabled`, demotion/promotion thresholds, parity toggles, auto-backfill flag).
+  - Added parser coverage in `tests/config-cold-qmd.test.ts` for defaults and explicit zero-preservation semantics.
+  - Updated plugin schema/UI surface and config reference documentation for the new tier controls.
+- v8.14 hot/cold parity Task 2 (value-aware tier routing):
+  - Added `src/tier-routing.ts` with deterministic `computeTierValueScore(...)` and `decideTierTransition(...)` helpers.
+  - Reused lifecycle value inputs from `src/lifecycle.ts` to avoid duplicated weighting logic.
+  - Added `tests/tier-routing.test.ts` coverage for scoring signals, threshold boundaries, and disabled-path no-op behavior.
+  - Updated `docs/architecture/memory-lifecycle.md` with tier-routing signal/decision contracts.
+- v8.14 hot/cold parity Task 3 (migration executor + parity metadata):
+  - Added `src/tier-migration.ts` with per-memory journaling and deterministic hot/cold migration execution.
+  - Added storage migration primitives in `src/storage.ts` for tier-path resolution and atomic move/copy writes.
+  - Added collection-targeted QMD sync helpers in `src/qmd.ts` (`updateCollection`, `embedCollection`) for tier-specific reindexing.
+  - Added `tests/tier-migration.test.ts` coverage for demotion/promotion routing, metadata parity retention, and idempotent reruns.
+- v8.14 hot/cold parity Task 4 (bounded extraction + maintenance migration loops):
+  - Wired orchestrator tier migration cycle into extraction completion and maintenance/consolidation paths with fail-open behavior.
+  - Added bounded migration cycle budgeting (`limit`, `scanLimit`, `minIntervalMs`) via `CompoundingEngine.tierMigrationCycleBudget(...)`.
+  - Added `tests/orchestrator-tier-migration.test.ts` and `tests/compounding-tier-migration.test.ts` coverage for enabled/disabled wiring and non-vacuous maintenance bounds.
+- v8.14 hot/cold parity Task 5 (retrieval parity enforcement):
+  - Enforced artifact-path isolation in cold fallback generic recall so `artifacts/` memories remain exclusive to the dedicated verbatim artifact path.
+  - Added graph-expansion parity for cold fallback retrieval when `qmdTierParityGraphEnabled` is enabled.
+  - Added regression coverage in `tests/retrieval-hot-cold-parity.test.ts` and `tests/graph-cold-tier-parity.test.ts`.
+- v8.14 hot/cold parity Task 6 (tier telemetry + operator CLI controls):
+  - Added persisted tier migration telemetry state (`state/tier-migration-status.json`) with cumulative counters and last-cycle summary.
+  - Added CLI command surfaces: `openclaw engram tier-status` and `openclaw engram tier-migrate` (`--dry-run`, `--write`, `--limit`).
+  - Added `tests/cli-tier-status.test.ts` plus dry-run orchestration coverage for manual bounded migration passes.
+- v8.13 action-policy Task 2 (deterministic evaluator + orchestration traces):
+  - Added `src/memory-action-policy.ts` with deterministic `allow|defer|deny` evaluation and explicit rationale precedence.
+  - Integrated policy evaluation into orchestrator action-event ingestion so policy decisions run before action telemetry is persisted.
+  - Persisted policy decision traces (`policyDecision`, `policyRationale`, `policyEligibility`) on action events for observability.
+  - Added `tests/memory-action-policy.test.ts` coverage for precedence, disabled-flag behavior, and zero-limit semantics.
+- v8.13 action-policy Task 1 (taxonomy + eligibility contracts):
+  - Added typed action-policy contracts in `src/types.ts` (`MemoryActionPolicyDecision`, eligibility context/source/lifecycle unions, and policy result contract).
+  - Added strict schemas in `src/schemas.ts` for action taxonomy and eligibility context, plus fail-open parse helpers with default-safe fallbacks.
+  - Added `tests/memory-action-contracts.test.ts` coverage for taxonomy acceptance, strict-schema rejection, and fallback behavior.
+  - Updated `docs/architecture/memory-lifecycle.md` with v8.13 action-policy contract documentation.
+- v8.12 graph retrieval phase 2 Task 4 (graph health diagnostics command):
+  - Added `analyzeGraphHealth(...)` in `src/graph.ts` to report per-edge-file integrity, corruption counts, valid edge totals, and unique node coverage.
+  - Added CLI wrapper/command `openclaw engram graph-health` with optional `--repair-guidance` for non-destructive remediation hints.
+  - Added `tests/cli-graph-health.test.ts` coverage for corruption detection, coverage reporting, and repair-guidance gating.
+  - Updated `docs/operations.md` with graph-health command usage and diagnostics guidance.
+- v8.12 graph retrieval phase 2 Task 3 (shadow-eval assist mode in full recall):
+  - Added `graphAssistShadowEvalEnabled` config flag (default `false`) to run full-mode graph assist as compare-only shadow evaluation.
+  - Kept full-mode injected recall output baseline-identical when shadow mode is enabled, while still computing graph-expanded candidates.
+  - Added shadow comparison telemetry in recall timings (`graphShadow`) with baseline/graph overlap and average score delta.
+  - Added `tests/graph-shadow-eval.test.ts` for baseline-preservation and telemetry emission coverage.
+  - Updated config + tuning docs (`docs/config-reference.md`, `docs/setup-config-tuning.md`) and plugin schema.
+- v8.12 graph retrieval phase 2 Task 2 (richer graph provenance snapshots):
+  - Extended graph spreading-activation outputs to include per-result provenance (`seed`, `hopDepth`, `decayedWeight`, `graphType`).
+  - Persisted bounded provenance in `last_graph_recall.json` with capped seed/expanded arrays for high-traffic safety.
+  - Updated graph explain output (`memory_graph_explain_last_recall`) to include concise per-result provenance details.
+  - Added parsing/bounding helper in `src/recall-state.ts` and expanded graph integration tests for provenance fields.
+  - Updated `docs/architecture/retrieval-pipeline.md` with graph provenance snapshot behavior.
+- v8.12 graph retrieval phase 2 Task 1 (expansion scoring controls):
+  - Added graph expansion scoring config knobs: `graphExpansionActivationWeight`, `graphExpansionBlendMin`, and `graphExpansionBlendMax` with clamped parse-time handling.
+  - Added bounded blend function for graph-expanded candidate scoring to combine normalized activation with seed QMD signal while enforcing configurable score bounds.
+  - Updated graph expansion path in orchestrator to use blended scoring per namespace seed set.
+  - Added `tests/graph-recall-scoring.test.ts` for monotonic blend behavior and filter-before-cap invariants, plus config clamp/default coverage updates.
+  - Documented new graph scoring controls in `docs/config-reference.md` and `openclaw.plugin.json`.
+- v8.11 compression optimizer Task 5 (runtime integration + guardrails):
+  - Added runtime recall integration for active compression guidelines via a guarded section injected only when context-compression actions and guideline learning are both enabled.
+  - Added fail-open guideline parsing/extraction helper (`formatCompressionGuidelinesForRecall`) that reads only the suggested-guidelines block for recall usage.
+  - Preserved zero-change path behavior when optimizer learning is disabled by short-circuiting before guideline/state reads.
+  - Added `tests/recall-compression-guideline-application.test.ts` coverage for disabled (byte-equivalent guard), enabled, and malformed guideline/state cases.
+- v8.11 compression optimizer Task 4 (optimizer tool + cron-safe entry point):
+  - Added public orchestrator entry point `optimizeCompressionGuidelines(...)` with `dryRun` + `eventLimit` controls and explicit optimization summary fields.
+  - Added `compression_guidelines_optimize` tool with dry-run support and summary output including old/new guideline versions and changed-rule count.
+  - Kept runtime fail-open behavior by reusing deterministic baseline + optional semantic refinement pipeline in the shared optimizer path.
+  - Added `tests/tools-compression-optimize.test.ts` coverage for disabled gate handling, parameter passthrough, and summary output.
+  - Updated `docs/operations.md` with tool usage and cron-safe execution guidance.
+- v8.11 compression optimizer Task 3 (optional semantic refinement pass):
+  - Added optional semantic refinement pipeline in `src/compression-optimizer.ts` behind explicit enable flag + hard timeout fail-open behavior.
+  - Added config surface for refinement gating: `compressionGuidelineSemanticRefinementEnabled` and `compressionGuidelineSemanticTimeoutMs` (with schema/UI wiring and parse-time clamping).
+  - Wired orchestrator guideline-learning to run deterministic baseline first, then optional semantic refinement via bounded local-LLM runner before persisting outputs.
+  - Added `tests/compression-optimizer-semantic.test.ts` coverage for disabled, timeout, runner-error fail-open behavior, and bounded update application.
+  - Updated `docs/setup-config-tuning.md` with rollout guidance for semantic refinement.
+- v8.11 compression optimizer Task 2 (deterministic engine + orchestrator wiring):
+  - Added `src/compression-optimizer.ts` with deterministic telemetry aggregation, bounded rule-delta computation, and conservative sparse-sample behavior.
+  - Included downstream recall-quality marker parsing from telemetry notes to inform per-action confidence and direction.
+  - Wired orchestrator guideline-learning pass to compute/write versioned optimizer state and guideline markdown from the deterministic candidate.
+  - Added `tests/compression-optimizer.test.ts` and updated `tests/orchestrator-compression-guidelines.test.ts` for deterministic candidate/output and state-write coverage.
+- v8.11 compression optimizer Task 1 (state model + versioned storage):
+  - Added typed optimizer state contracts in `src/types.ts` for version, source window, event counts, and guideline version metadata.
+  - Added strict/fail-open storage APIs in `src/storage.ts`: `writeCompressionGuidelineOptimizerState` and `readCompressionGuidelineOptimizerState`.
+  - Added `tests/storage-policy-state.test.ts` coverage for optimizer state round-trip, malformed-state fail-open fallback, and missing-state behavior.
+  - Updated `docs/config-reference.md` to document persisted optimizer state at `state/compression-guideline-state.json`.
+- v8.7 custom memory routing rules Task 1 (routing engine):
+  - Added `src/routing/engine.ts` with deterministic route-rule evaluation, regex/keyword matching, and priority-ordered selection.
+  - Added safe route target validation for categories and namespaces (path traversal and separator rejection).
+  - Added `tests/routing-engine.test.ts` coverage for matching behavior, ordering, and target validation guardrails.
+- v8.7 custom memory routing rules Task 2 (config + persisted rules):
+  - Added `src/routing/store.ts` with fail-open persisted routing rule reads, normalized writes, and upsert/remove helpers.
+  - Added config surface for routing rules: `routingRulesEnabled` and `routingRulesStateFile`.
+  - Added `tests/routing-store.test.ts` and `tests/config-routing-rules.test.ts` coverage for store behavior and config defaults/overrides.
+- v8.7 custom memory routing rules Task 3 (CLI management commands):
+  - Added `openclaw engram route list|add|remove|test` command support in `src/cli.ts`.
+  - Added `runRouteCliCommand` wrapper with target parsing/validation and routing rule store integration.
+  - Added `tests/cli-routing-commands.test.ts` coverage for route command add/list/test/remove behavior and validation failures.
+- v8.7 custom memory routing rules Task 4 (orchestrator wiring + docs):
+  - Added write-time routing in `persistExtraction(...)` so rule matches can retarget extracted facts by category/namespace before persistence.
+  - Added fail-open behavior for routing rule load/evaluation errors to preserve default extraction writes.
+  - Added `tests/orchestrator-routing-rules.test.ts` coverage for category+namespace reroute behavior.
+  - Documented routing config/ops surfaces in `docs/config-reference.md` and `docs/operations.md`.
+- v8.7 work management Task 3 (board generation + import/export helpers):
+  - Added `src/work/board.ts` with board snapshot export, Kanban markdown rendering, and snapshot import helpers.
+  - Added `tests/work-board.test.ts` coverage for project-scoped board export and import create/update behavior.
+  - Updated `docs/operations.md` with work board helper usage notes.
+- v8.7 work management Task 2 (task/project CLI command slice):
+  - Added `openclaw engram task <action>` and `openclaw engram project <action>` command surfaces in `src/cli.ts`.
+  - Added CLI wrappers `runWorkTaskCliCommand` and `runWorkProjectCliCommand` with validation for status/priority transitions and required IDs.
+  - Added `tests/cli-work-commands.test.ts` coverage for task/project CRUD flows, linkage behavior, and transition guardrails.
+- v8.7 work management Task 1 (work item models + storage slice):
+  - Added `src/work/types.ts` with task/project model contracts, ownership metadata, and status enums.
+  - Added `src/work/storage.ts` for markdown-frontmatter task/project persistence, CRUD operations, status transitions, and task-to-project linkage.
+  - Added `tests/work-storage.test.ts` coverage for task/project CRUD, transition guards, linkage behavior, and frontmatter file persistence.
+- v8.6 observation-ledger maintenance Task 5 (docs/runbook slice):
+  - Updated `docs/operations.md` with an observation-ledger maintenance runbook covering archive/rebuild/migrate commands.
+  - Documented dry-run defaults, `--write` mutation mode, and operational guarantees (backup-first writes, deterministic UTC hour bucketing, idempotent no-op migration behavior).
+- v8.6 observation-ledger maintenance Task 4 (CLI command surfaces slice):
+  - Added CLI wrappers in `src/cli.ts` for archive/rebuild/migrate observation maintenance flows with safe dry-run defaults.
+  - Added commands: `openclaw engram archive-observations`, `openclaw engram rebuild-observations`, and `openclaw engram migrate-observations`.
+  - Added `tests/cli-maintenance-suite.test.ts` coverage for dry-run defaults and explicit write-mode behavior.
+- v8.6 observation-ledger maintenance Task 3 (migration service slice):
+  - Added `src/maintenance/migrate-observations.ts` to migrate legacy observation-ledger JSONL shapes into canonical `sessionKey/hour` aggregates.
+  - Added dry-run-by-default migration behavior with backup-first replacement of `state/observation-ledger/rebuilt-observations.jsonl`.
+  - Added deterministic UTC hour normalization for timezone-less legacy timestamps and bounded malformed-line fail-open parsing.
+  - Added `tests/migrate-observations.test.ts` coverage for dry-run scanning, mixed-shape migration, malformed input handling, and backup failure behavior.
+- v8.6 observation-ledger maintenance Task 2 (rebuild service slice):
+  - Added `src/maintenance/rebuild-observations.ts` to rebuild an observation ledger from transcript history with deterministic session/hour aggregation.
+  - Added dry-run-by-default rebuild behavior with backup-first replacement of `state/observation-ledger/rebuilt-observations.jsonl`.
+  - Added fail-open parsing for malformed transcript lines during rebuild.
+  - Added `tests/rebuild-observations.test.ts` coverage for dry-run, deterministic rebuild output, backup behavior, and malformed-line handling.
+- v8.6 observation-ledger maintenance Task 1 (archive service slice):
+  - Added `src/maintenance/archive-observations.ts` with deterministic archive candidate scanning across dated transcript, tool-usage, and hourly-summary artifacts.
+  - Added dry-run-by-default archival behavior with backup-first copy-then-delete flow into `archive/observations/<timestamp>/...`.
+  - Preserved zero-limit compatibility semantics (`retentionDays=0` disables archival).
+  - Added `tests/archive-observations.test.ts` coverage for dry-run, live archive, candidate filtering, and zero-retention behavior.
+- v8.6 replay ingestion Task 3 (CLI + integration slice):
+  - Added `openclaw engram replay` command with source selection, date-range filtering, dry-run, offset/max, and batch controls.
+  - Added replay command integration helper in `src/cli.ts` that wires source normalizers into replay execution and optional post-replay consolidation.
+  - Added `Orchestrator.ingestReplayBatch(...)` to enqueue replay batches through the existing extraction pipeline with preserved replay timestamps/session keys.
+  - Added `tests/cli-replay.test.ts` coverage for dry-run and live ingestion paths.
+- v8.6 replay ingestion Task 2 (source normalizers slice):
+  - Added source normalizers for `openclaw`, `claude`, and `chatgpt` exports in `src/replay/normalizers/*`.
+  - Added robust shape handling for JSON/JSONL transcript exports, including ChatGPT mapping exports and Claude `chat_messages`.
+  - Added `tests/replay-normalizers.test.ts` coverage for source parsing, strict-mode validation behavior, role/content/timestamp normalization, and default session key fallbacks.
+- v8.6 replay ingestion Task 1 (core contracts slice):
+  - Added `src/replay/types.ts` with canonical replay turn schema, parser contracts, and strict validation helpers.
+  - Added `src/replay/runner.ts` with source normalizer registry helpers and replay execution flow (dry-run, date range, offset, batching, progress summary).
+  - Added `tests/replay-types.test.ts` coverage for validation, batching, range filtering, offset/max limits, dry-run behavior, and registry duplicate guards.
+- v8.5 active session observer + heartbeat thresholds slice:
+  - Added `src/session-observer-state.ts` to persist per-session observer cursors and threshold/debounce decisions.
+  - Added heartbeat observer integration (`agent_heartbeat`) to queue proactive extraction when session growth crosses configured byte/token bands.
+  - Added config surface and schema/docs wiring: `sessionObserverEnabled`, `sessionObserverDebounceMs`, `sessionObserverBands`.
+  - Added tests: `tests/session-observer-state.test.ts` and `tests/heartbeat-observe-trigger.test.ts`.
+  - Normalized session-key examples in docs/comments to generic placeholders to avoid installation-specific identifiers.
+- v8.4 improvement-loop register slice (Task 7 / PR #43):
+  - Added structured improvement-loop register parsing/serialization helpers in `src/identity-continuity.ts`.
+  - Extended `StorageManager` with typed register APIs: read/write register, upsert loop, and review loop metadata updates.
+  - Added `continuity_loop_add_or_update` and `continuity_loop_review` tools for managing recurring continuity loops.
+  - Extended continuity audit synthesis to detect stale active loops by cadence and surface stale-loop signals/actions.
+  - Added `tests/improvement-loop-register.test.ts` and expanded continuity-audit test coverage for stale-loop detection.
+- v8.4 documentation/templates slice (Task 8):
+  - Added `docs/identity-continuity.md` with artifact contracts, safety boundaries, and rollout tiers.
+  - Added generic templates for identity anchors, continuity incidents, and continuity audits.
+  - Linked identity continuity docs from `README.md` and `docs/README.md`.
+- v8.4 identity injection budgeting + mode gating slice (PR #41):
+  - Added runtime identity continuity injection modes (`recovery_only`, `minimal`, `full`) with explicit recovery-intent gating and minimal-mode downgrade safeguards.
+  - Added per-section `identityMaxInjectChars` enforcement with trim marker + telemetry for injected chars and truncation state.
+  - Extended recall telemetry (`recall_summary`) and last-recall snapshots with identity injection fields for observability/debugging.
+  - Added `tests/identity-injection-budget.test.ts` and extended recall mode/telemetry tests for identity mode reachability and budget behavior.
+  - Updated retrieval architecture documentation with identity continuity assembly order and telemetry fields.
+- v8.4 continuity audit generator slice (PR #40):
+  - Added `continuity_audit_generate` tool for deterministic weekly/monthly continuity audit artifacts.
+  - Extended `CompoundingEngine` with continuity audit synthesis and signal checks (anchor presence, incident counts, improvement-loop presence, compounding pattern count).
+  - Added weekly compounding report linking for available continuity audits when `continuityAuditEnabled=true`.
+  - Added `tests/continuity-audit.test.ts` coverage for audit generation, compounding linkage, and tool behavior.
+  - Updated `docs/compounding.md` with continuity audit workflow and output locations.
+- v8.4 continuity incident workflow slice (PR #39):
+  - Added `continuity_incident_open`, `continuity_incident_close`, and `continuity_incident_list` tools.
+  - Added `openclaw engram continuity incidents`, `openclaw engram continuity incident-open`, and `openclaw engram continuity incident-close` CLI commands.
+  - Added validation for required incident closure fields and state-filtered incident listing behavior.
+  - Added `tests/continuity-incidents.test.ts` coverage for tool gating, open/close flows, and listing behavior.
+  - Documented continuity incident tools and CLI usage in API/operations docs.
+- v8.4 identity anchor tooling slice (PR #38):
+  - Added `identity_anchor_get` and `identity_anchor_update` tools behind `identityContinuityEnabled`.
+  - Added conservative, section-aware identity-anchor merge behavior to avoid destructive overwrites.
+  - Added identity-anchor update audit logging for operational traceability.
+  - Added `tests/tools-identity-anchor.test.ts` coverage for gating, retrieval, merge semantics, and validation.
+  - Documented identity anchor tools and storage location in API/operations docs.
+- v8.4 identity continuity storage slice (PR #37):
+  - Added identity continuity artifact types and helpers for anchor, incidents, audits, and improvement-loop storage paths.
+  - Added `src/identity-continuity.ts` to create/parse continuity incidents with explicit open/close lifecycle transitions.
+  - Extended `StorageManager` with typed read/write APIs for identity continuity artifacts and append-only incident handling.
+  - Added fail-open parsing behavior for malformed continuity incident files to preserve baseline runtime behavior.
+  - Added `tests/identity-continuity-storage.test.ts` coverage for storage round-trips, incident close transitions, and malformed-file handling.
+- v8.4 identity continuity config slice (PR #36):
+  - Added new config surface: `identityContinuityEnabled`, `identityInjectionMode`, `identityMaxInjectChars`, `continuityIncidentLoggingEnabled`, and `continuityAuditEnabled`.
+  - Added parser semantics for bounded identity injection chars and dynamic default for incident logging (`identityContinuityEnabled` when unset).
+  - Added config-schema/UI metadata and config-reference documentation for v8.4 identity continuity.
+  - Added `tests/config-identity-continuity.test.ts` and updated typed test fixtures to match the expanded `PluginConfig` contract.
+- v8.3 PR 21D (guideline learning + docs hardening slice):
+  - Added consolidation-integrated, fail-open compression guideline learning pass behind `compressionGuidelineLearningEnabled`.
+  - Added deterministic synthesis of `state/compression-guidelines.md` from recent `state/memory-actions.jsonl` telemetry.
+  - Added test coverage for guideline synthesis output and flag-gated pass execution in `tests/orchestrator-compression-guidelines.test.ts`.
+  - Expanded v8.3 docs with tool/state artifact details and operator checks for guideline-learning rollout.
+- v8.3 PR 21C (compression action tools + telemetry slice):
+  - Added `context_checkpoint` and `memory_action_apply` tools behind `contextCompressionActionsEnabled`.
+  - Added append-only telemetry wiring through `Orchestrator.appendMemoryActionEvent(...)` to persist policy-learning events into namespace-scoped `state/memory-actions.jsonl`.
+  - Added fail-open behavior for tool telemetry writes so action paths do not block runtime flow on storage errors.
+  - Added tool-focused coverage in `tests/tools-compression-actions.test.ts` for disabled-mode gating, telemetry writes, namespace handling, and fail-open behavior.
+- v8.3 PR 21B (proactive extraction slice):
+  - Added a proactive second-pass extraction path in `ExtractionEngine` behind `proactiveExtractionEnabled`.
+  - Added strict cap enforcement for proactive follow-up questions via `maxProactiveQuestionsPerExtraction` with zero-safe semantics.
+  - Added fail-open behavior: proactive-pass failures are logged and baseline extraction results are preserved.
+  - Added question merge/dedupe helper coverage in `tests/extraction-proactive.test.ts`.
+- v8.3 PR 21A (proactive/policy-learning foundation slice):
+  - Added new config surface (default off): `proactiveExtractionEnabled`, `contextCompressionActionsEnabled`, `compressionGuidelineLearningEnabled`.
+  - Added new v8.3 policy limits with zero-safe semantics: `maxProactiveQuestionsPerExtraction` and `maxCompressionTokensPerHour`.
+  - Added typed policy-state storage primitives in `StorageManager` for `state/memory-actions.jsonl` and `state/compression-guidelines.md`.
+  - Added test coverage for proactive/policy config parsing and policy-state storage read/write behavior.
+- v8.3 PR 20D (lifecycle retrieval + docs slice):
+  - Added lifecycle-aware retrieval weighting in shared score post-processing with boosts for `active`/`validated` memories and penalties for `candidate`/`stale`/`archived` states.
+  - Added stronger retrieval penalty for `verificationState: disputed`.
+  - Added optional stale retrieval filtering (`lifecycleFilterStaleEnabled`) applied before final top-K cap.
+  - Preserved fail-open behavior for legacy memories with no lifecycle metadata.
+  - Added retrieval tests covering lifecycle weighting, stale filtering, and fail-open legacy behavior.
+- v8.3 PR 20C (lifecycle consolidation + metrics slice):
+  - Added lifecycle policy config surface (`lifecyclePolicyEnabled`, thresholds, protected categories, metrics toggle) across `PluginConfig`, config parsing, and plugin schema/UI hints.
+  - Wired lifecycle scoring pass into consolidation to persist lifecycle metadata (`lifecycleState`, `heatScore`, `decayScore`, `lastValidatedAt`) only when changed.
+  - Added lifecycle metrics snapshot output at `state/lifecycle-metrics.json` with state counts, transition counts, stale ratio, and disputed ratio.
+  - Added lifecycle policy tests for config parsing and consolidation/metrics integration.
+- v8.3 PR 20B (deterministic lifecycle engine slice):
+  - Added `src/lifecycle.ts` with deterministic, bounded lifecycle scoring functions (`computeHeat`, `computeDecay`) and transition logic (`decideLifecycleTransition`).
+  - Added lifecycle guardrails: archived is terminal, disputed memories never auto-promote to active, and protected categories are not auto-archived.
+  - Added `tests/lifecycle.test.ts` coverage for bounds, monotonic scoring behavior, and transition guardrails.
+- v8.3 PR 20A (lifecycle data-model slice):
+  - Added optional lifecycle policy frontmatter fields to `MemoryFrontmatter`: `lifecycleState`, `verificationState`, `policyClass`, `lastValidatedAt`, `decayScore`, and `heatScore`.
+  - Extended memory frontmatter serialization/parsing to persist and restore lifecycle metadata, including zero-valued score fields.
+  - Added storage lifecycle round-trip tests for parse/serialize behavior and legacy compatibility when lifecycle fields are absent.
+- v8.2 PR 19A (planner-gating slice):
+  - New config flag `graphRecallEnabled` (default `false`) to explicitly opt into graph recall planner mode.
+  - New `resolveEffectiveRecallMode()` guard in recall orchestration: `graph_mode` is only active when both `graphRecallEnabled` and `multiGraphMemoryEnabled` are enabled; otherwise behavior degrades to baseline `full` recall.
+  - Added planner/config tests for graph-mode gating and opt-in parsing behavior.
+- v8.2 PR 19B (graph-recall integration slice):
+  - Added graph-mode recall expansion in `recallInternal`: when planner selects `graph_mode`, QMD seeds are expanded via `GraphIndex.spreadingActivation(...)`, merged/deduped with QMD candidates, then fed through existing boost/rerank/cap stages.
+  - Added `state/last_graph_recall.json` trace output capturing graph recall mode, query hash/length, namespace scope, seed paths, and expanded candidates for explainability/debugging.
+  - Added helper/test coverage for graph candidate merge semantics and storage-relative graph path resolution.
+  - Added integration coverage asserting graph-mode recall writes a snapshot.
+- v8.2 PR 19C (graph explainability slice):
+  - Added `memory_graph_explain_last_recall` tool to inspect the latest graph-recall snapshot (seed paths + expanded candidates).
+  - Added orchestrator APIs `getLastGraphRecallSnapshot()` and `explainLastGraphRecall()` for stable snapshot parsing and operator-friendly explain output.
+  - Updated retrieval dispute helper hints to include graph-recall explainability guidance.
+  - Added tests for snapshot read + explain formatting behavior.
+
+### Docs
+- Updated v8.2 and v8.3 implementation plans to split large releases into smaller PR slices (A-D) for safer review and rollout.
+- Documented v8.3 lifecycle retrieval integration and staged rollout guidance in `docs/architecture/memory-lifecycle.md`, `docs/config-reference.md`, and `docs/setup-config-tuning.md`.
+
+## [8.2.0-pr18] — v8.2 PR 18: Multi-Graph Memory
+
+### Added
+- Multi-graph memory (MAGMA/SYNAPSE-inspired, behind `multiGraphMemoryEnabled`, default off):
+  - New `src/graph.ts`: maintains three typed edge graphs — entity co-reference (`entity.jsonl`), temporal sequence (`time.jsonl`), and causal inference (`causal.jsonl`) — stored under `memory/state/graphs/`.
+  - **Entity graph**: edges written during `persistExtraction` when a new memory shares an `entityRef` with existing memories (capped at `maxEntityGraphEdgesPerMemory`, default 10).
+  - **Time graph**: edges written between consecutive memories within the same conversation thread.
+  - **Causal graph**: edges written when new memory content contains causal signal phrases (`because`, `therefore`, `led to`, `as a result`, `caused`, `because of`).
+  - **Spreading activation** (`GraphIndex.spreadingActivation`): SYNAPSE-inspired BFS traversal from seed nodes across all enabled graph types with configurable per-hop decay. Ready for use by PR 19 (graph recall mode).
+  - All graph writes are fail-open: any error is caught and logged; memory writes succeed regardless.
+  - New config: `multiGraphMemoryEnabled`, `entityGraphEnabled`, `timeGraphEnabled`, `causalGraphEnabled`, `maxGraphTraversalSteps` (default 3), `graphActivationDecay` (default 0.7), `maxEntityGraphEdgesPerMemory` (default 10).
+
 ## [8.2.0-pr17] — v8.2 PR 17: Temporal Memory Tree
 
 ### Added
@@ -315,3 +850,10 @@ All notable changes to this project will be documented in this file.
 - Question generation and identity reflections
 - Profile and identity auto-consolidation
 - CLI tools for search, store, profile, entities, questions, identity
+# 2026-03-07
+
+- add PR28 resume-bundle builder: deterministic bundle assembly from transcript recovery, recent objective-state snapshots, work products, and open commitments, plus the `resume-bundle-build` CLI and docs/tests
+- add PR27 resume-bundle format foundation: typed bundle schema/store, config flags, operator-facing status/write CLI, and docs/tests
+- add PR5 objective-state memory foundation: typed snapshot schema/store, status CLI, feature flags, and docs/tests
+- add PR7 objective-state recall: bounded snapshot search, recall injection flag, objective-state recall section, and docs/tests
+- Added the PR9 foundation for action-conditioned causal graph construction, including deterministic causal-stage graph edges derived from typed trajectory records behind `actionGraphRecallEnabled`.

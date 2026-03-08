@@ -30,3 +30,17 @@ Security-sensitive areas include:
 - Never commit secrets/tokens.
 - Never include personal/private memory data in fixtures, tests, or docs.
 - Redact logs before sharing.
+
+## Network feature safety (v8.8)
+
+Network sync and WebDAV surfaces are security-sensitive and must remain strict opt-in.
+
+- Default posture: disabled/not running unless explicitly invoked.
+- WebDAV exposure must be constrained to explicit allowlist roots only.
+- WebDAV should remain loopback-bound (`127.0.0.1`) by default.
+- If auth is used, require non-empty username + password together.
+- Reject traversal and symlink escape attempts outside allowlisted roots.
+- Do not add automatic public exposure behavior (for example, funnel/public listeners) as default behavior.
+
+Operational recommendation:
+- Prefer private-network transport (for example, Tailscale) when syncing memory across hosts.

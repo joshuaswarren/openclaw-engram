@@ -61,3 +61,22 @@ test("StorageManager status version is shared across instances for same memoryDi
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("StorageManager bumps memory status version on tier migration moves", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-status-version-tier-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const id = await storage.writeMemory("fact", "migrate me", { source: "test" });
+    const memory = (await storage.readAllMemories()).find((m) => m.frontmatter.id === id);
+    assert.ok(memory);
+
+    const before = storage.getMemoryStatusVersion();
+    const result = await storage.migrateMemoryToTier(memory, "cold");
+    assert.equal(result.changed, true);
+    assert.equal(storage.getMemoryStatusVersion() > before, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

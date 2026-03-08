@@ -146,6 +146,28 @@ export class ThreadingManager {
   }
 
   /**
+   * Append persisted memory IDs to an existing thread.
+   * Keeps IDs unique and updates the thread timestamp.
+   */
+  async appendEpisodeIds(threadId: string, episodeIds: string[]): Promise<void> {
+    if (episodeIds.length === 0) return;
+    const thread = await this.loadThread(threadId);
+    if (!thread) return;
+
+    let changed = false;
+    for (const id of episodeIds) {
+      if (!thread.episodeIds.includes(id)) {
+        thread.episodeIds.push(id);
+        changed = true;
+      }
+    }
+    if (!changed) return;
+
+    thread.updatedAt = new Date().toISOString();
+    await this.saveThread(thread);
+  }
+
+  /**
    * Update thread title based on accumulated content.
    */
   async updateThreadTitle(threadId: string, content: string): Promise<void> {

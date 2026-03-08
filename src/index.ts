@@ -2,13 +2,18 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
-import { Orchestrator } from "./orchestrator.js";
+import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
+import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+
+const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
+/** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
+const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
@@ -33,6 +38,31 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
   }
 }
 
+function wildcardToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+}
+
+function shouldSkipRecallForSession(
+  sessionKey: string,
+  cfg: { cronRecallMode: "all" | "none" | "allowlist"; cronRecallAllowlist: string[] },
+): boolean {
+  const isCron = sessionKey.includes(":cron:");
+  if (!isCron) return false;
+
+  if (cfg.cronRecallMode === "none") return true;
+  if (cfg.cronRecallMode === "all") return false;
+
+  if (cfg.cronRecallAllowlist.length === 0) return true;
+  return !cfg.cronRecallAllowlist.some((pattern) => {
+    try {
+      return wildcardToRegExp(pattern).test(sessionKey);
+    } catch {
+      return false;
+    }
+  });
+}
+
 export default {
   id: "openclaw-engram",
   name: "Engram (Local Memory)",
@@ -54,13 +84,31 @@ export default {
     // Re-initialize with correct debug setting
     initLogger(api.logger, cfg.debug);
     log.info(
-      `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled})`,
+      `initialized (debug=${cfg.debug}, qmdEnabled=${cfg.qmdEnabled}, transcriptEnabled=${cfg.transcriptEnabled}, hourlySummariesEnabled=${cfg.hourlySummariesEnabled}, localLlmEnabled=${cfg.localLlmEnabled}${cfg.localLlmFastEnabled ? `, fastLlm=${cfg.localLlmFastModel || "(primary)"}` : ""})`,
     );
 
-    // Singleton guard: the gateway may call register() twice (gateway + plugin contexts).
-    // Reuse the existing orchestrator if one was already created in this process.
+    // Singleton guard: the gateway calls register() once per agent (each with a
+    // different plugin registry). Reuse the orchestrator (heavy object) but always
+    // re-register hooks — each api.on() call binds to the caller's registry, so
+    // skipping registration leaves later registries with zero hooks.
     const existing = (globalThis as any).__openclawEngramOrchestrator as Orchestrator | undefined;
     const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
+    const isFirstRegistration = !(globalThis as any)[ENGRAM_REGISTERED_GUARD];
+    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
+
+    // Per-api hook deduplication: if the same api object calls register() twice
+    // (e.g., during reload edge cases), skip re-binding hooks to avoid double-
+    // fired handlers (double recall, double extraction, double reset).
+    const hookApis: WeakSet<object> = ((globalThis as any)[ENGRAM_HOOK_APIS] ??= new WeakSet());
+    if (hookApis.has(api)) {
+      log.debug("register: this api already has hooks bound — skipping duplicate hook registration");
+      return;
+    }
+    hookApis.add(api);
+
+    if (!isFirstRegistration) {
+      log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
+    }
 
     // Expose for inter-plugin discovery (e.g., langsmith tracing)
     (globalThis as any).__openclawEngramOrchestrator = orchestrator;
@@ -83,6 +131,25 @@ export default {
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
         log.debug(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+        log.debug(
+          `before_agent_start: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+        );
+        if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
+          const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
+            const re = wildcardToRegExp(pattern);
+            return re.test(sessionKey);
+          });
+          log.debug(
+            `before_agent_start: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
+          );
+        }
+
+        if (shouldSkipRecallForSession(sessionKey, cfg)) {
+          log.debug(
+            `before_agent_start: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
+          );
+          return;
+        }
 
         try {
           // Optional: keep bootstrap workspace files small and warn about truncation risk.
@@ -92,23 +159,42 @@ export default {
           // This is a placeholder - actual compaction detection depends on OpenClaw
           // For now, we'll just call recall with the sessionKey
 
+          // Pass per-agent workspace so compaction reset reads the right BOOT.md.
+          // Only set when compaction reset is enabled to avoid unbounded Map growth
+          // when recall is skipped (e.g., no_recall planner decision).
+          if (orchestrator.config.compactionResetEnabled) {
+            const agentWorkspace = ctx?.workspaceDir as string | undefined;
+            if (agentWorkspace) {
+              orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
+            }
+          }
           const context = await orchestrator.recall(prompt, sessionKey);
           log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
 
-          // Rough token estimate: 1 token ≈ 4 chars
-          const maxChars = cfg.maxMemoryTokens * 4;
+          // Final safety cap; recall assembly also enforces this budget.
+          const maxChars = cfg.recallBudgetChars;
+          if (maxChars === 0) return;
           const trimmed =
             context.length > maxChars
               ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
               : context;
 
+          const memoryContextPrompt =
+            `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+
           log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
           return {
-            systemPrompt: `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`,
+            systemPrompt: memoryContextPrompt,
+            // Backward-compat path for gateway builds that consume prependContext.
+            prependContext: memoryContextPrompt,
           };
         } catch (err) {
           log.error("recall failed", err);
+          // Clean up workspace override to prevent Map leak on exception.
+          if (orchestrator.config.compactionResetEnabled) {
+            orchestrator.clearRecallWorkspaceOverride(sessionKey);
+          }
           return;
         }
       },
@@ -132,6 +218,7 @@ export default {
           // Extract the last user-assistant exchange
           const messages = event.messages as Array<Record<string, unknown>>;
           const lastTurn = extractLastTurn(messages);
+          const eventTimestamp = new Date().toISOString();
 
           // Best-effort tool usage stats for extended hourly summaries.
           if (orchestrator.config.hourlySummariesIncludeToolStats) {
@@ -152,10 +239,23 @@ export default {
                 }
               }
             }
-            const ts = new Date().toISOString();
             for (const tool of toolNames) {
-              await orchestrator.transcript.appendToolUse({ timestamp: ts, sessionKey, tool });
+              await orchestrator.transcript.appendToolUse({ timestamp: eventTimestamp, sessionKey, tool });
             }
+          }
+
+          try {
+            await recordObjectiveStateSnapshotsFromAgentMessages({
+              memoryDir: orchestrator.config.memoryDir,
+              objectiveStateStoreDir: orchestrator.config.objectiveStateStoreDir,
+              objectiveStateMemoryEnabled: orchestrator.config.objectiveStateMemoryEnabled,
+              objectiveStateSnapshotWritesEnabled: orchestrator.config.objectiveStateSnapshotWritesEnabled,
+              sessionKey,
+              recordedAt: eventTimestamp,
+              messages,
+            });
+          } catch (error) {
+            log.debug(`agent_end objective-state writer skipped due to error: ${error}`);
           }
 
           for (const msg of lastTurn) {
@@ -175,7 +275,7 @@ export default {
             // Append to transcript
             if (orchestrator.config.transcriptEnabled) {
               await orchestrator.transcript.append({
-                timestamp: new Date().toISOString(),
+                timestamp: eventTimestamp,
                 role,
                 content: cleaned,
                 sessionKey,
@@ -188,6 +288,23 @@ export default {
         } catch (err) {
           log.error("agent_end processing failed", err);
         }
+      },
+    );
+
+    // ========================================================================
+    // HOOK: agent_heartbeat — Observe active session growth (non-blocking)
+    // ========================================================================
+    api.on(
+      "agent_heartbeat",
+      (
+        _event: Record<string, unknown>,
+        ctx: Record<string, unknown>,
+      ) => {
+        if (orchestrator.config.sessionObserverEnabled !== true) return;
+        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        void orchestrator.observeSessionHeartbeat(sessionKey).catch((err) => {
+          log.debug(`agent_heartbeat observer failed: ${err}`);
+        });
       },
     );
 
@@ -227,7 +344,7 @@ export default {
     );
 
     // ========================================================================
-    // HOOK: after_compaction — Cleanup and optional recovery
+    // HOOK: after_compaction — Trigger session reset (compaction reset flow)
     // ========================================================================
     api.on(
       "after_compaction",
@@ -238,14 +355,68 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
-          // The checkpoint will be loaded on next recall via orchestrator.recall()
-          // This hook is mainly for logging and any post-compaction cleanup
-          log.debug(`compaction completed for ${sessionKey}`);
+          if (!orchestrator.config.compactionResetEnabled) {
+            log.debug(
+              `compaction completed for ${sessionKey}, reset disabled — skipping`,
+            );
+            return;
+          }
 
-          // Could trigger background tasks here if needed
-          // e.g., immediate summarization of the checkpointed turns
+          log.info(
+            `compaction completed for ${sessionKey}, triggering session reset`,
+          );
+
+          // Use ctx.workspaceDir (per-agent) if available, fall back to config.
+          const workspaceDir =
+            (ctx?.workspaceDir as string) ||
+            orchestrator.config.workspaceDir ||
+            defaultWorkspaceDir();
+
+          // Reset the session first — only write the signal file if reset succeeds.
+          // This prevents the next recall() from injecting recovery content when
+          // no actual reset occurred (e.g., gateway doesn't support resetSession).
+          const apiAny = api as any;
+          if (typeof apiAny.resetSession === "function") {
+            const result = await apiAny.resetSession(sessionKey, "new");
+            if (result?.ok === true) {
+              log.info(
+                `session reset via API for ${sessionKey}, new sessionId=${result.sessionId}`,
+              );
+
+              // Write signal file AFTER successful reset so recall() knows
+              // a compaction reset just happened and can inject BOOT.md.
+              // Signal file is per-session to prevent multi-session overwrites.
+              const safeSessionKey = sanitizeSessionKeyForFilename(sessionKey);
+              const signalPath = path.join(
+                workspaceDir,
+                `.compaction-reset-signal-${safeSessionKey}`,
+              );
+              await writeFile(
+                signalPath,
+                JSON.stringify({
+                  sessionKey,
+                  compactedAt: new Date().toISOString(),
+                  messageCount: event.messageCount ?? 0,
+                }),
+                "utf-8",
+              );
+            } else {
+              const errorDetail =
+                result && typeof result === "object" && "error" in result
+                  ? String((result as { error?: unknown }).error ?? "unknown error")
+                  : `invalid result: ${JSON.stringify(result)}`;
+              log.error(
+                `api.resetSession failed for ${sessionKey}: ${errorDetail}`,
+              );
+            }
+          } else {
+            log.error(
+              `api.resetSession not available — compaction reset requires OC fork with PR #29985. ` +
+              `Session ${sessionKey} will continue without reset.`,
+            );
+          }
         } catch (err) {
-          log.error("after_compaction hook failed", err);
+          log.error("after_compaction reset failed", err);
         }
       },
     );
@@ -289,6 +460,7 @@ export default {
         const newJob = {
           id: jobId,
           agentId: "generalist",
+          model,
           name: "Engram Hourly Summary",
           enabled: true,
           createdAtMs: Date.now(),
@@ -330,15 +502,19 @@ export default {
     }
 
     // ========================================================================
-    // Register tools and CLI
+    // Register tools, CLI, and service (first registration only)
     // ========================================================================
-    registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
-    registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    // Tools, CLI, and services use global registries that don't need per-agent
+    // re-registration. Only register them once to avoid duplicates.
+    if (isFirstRegistration) {
+      registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
+      registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    }
 
     // ========================================================================
     // Register service
     // ========================================================================
-    api.registerService({
+    if (isFirstRegistration) api.registerService({
       id: "openclaw-engram",
       start: async () => {
         log.info("initializing engram memory system...");
@@ -364,6 +540,10 @@ export default {
         log.info("engram memory system ready");
       },
       stop: () => {
+        // Allow tools/CLI/service to re-register after a stop/reload cycle.
+        (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
+        (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
         log.info("stopped");
       },
     });

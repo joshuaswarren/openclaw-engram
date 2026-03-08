@@ -78,6 +78,117 @@ Record explicit feedback on a recalled memory.
 
 ---
 
+### `memory_action_apply`
+
+Record a memory-action telemetry event with optional safe dry-run mode.
+
+**Parameters:**
+- `action` (string, required) — One of: `store_episode`, `store_note`, `update_note`, `create_artifact`, `summarize_node`, `discard`, `link_graph`.
+- `outcome` (string, optional, default: `applied`) — One of: `applied`, `skipped`, `failed`.
+- `reason` (string, optional) — Operator rationale or note.
+- `memoryId` (string, optional) — Targeted memory ID if applicable.
+- `namespace` (string, optional) — Namespace to write telemetry into.
+- `sourcePrompt` (string, optional) — Prompt text used only for hash telemetry.
+- `dryRun` (boolean, optional, default: `false`) — Validate/report action without persisting telemetry.
+
+**Returns:** Confirmation text; in dry-run, reports what would be recorded.
+
+---
+
+### `identity_anchor_get`
+
+Read the identity continuity anchor document used for recovery-safe identity context.
+
+**Parameters:** None.
+
+**Returns:** Current identity anchor markdown, or guidance if missing/disabled.
+
+---
+
+### `identity_anchor_update`
+
+Conservatively merge updates into identity anchor sections (non-destructive by default).
+
+**Parameters:**
+- `identityTraits` (string, optional) — Updates for `Identity Traits`.
+- `communicationPreferences` (string, optional) — Updates for `Communication Preferences`.
+- `operatingPrinciples` (string, optional) — Updates for `Operating Principles`.
+- `continuityNotes` (string, optional) — Updates for `Continuity Notes`.
+
+**Returns:** Updated anchor content with merged sections.
+
+---
+
+### `continuity_incident_open`
+
+Open a continuity incident with symptom and optional context fields.
+
+**Parameters:**
+- `symptom` (string, required)
+- `triggerWindow` (string, optional)
+- `suspectedCause` (string, optional)
+
+**Returns:** Created incident record summary.
+
+---
+
+### `continuity_incident_close`
+
+Close an existing continuity incident with required fix and verification fields.
+
+**Parameters:**
+- `id` (string, required)
+- `fixApplied` (string, required)
+- `verificationResult` (string, required)
+- `preventiveRule` (string, optional)
+
+**Returns:** Closed incident record summary, or not-found message.
+
+---
+
+### `continuity_incident_list`
+
+List continuity incidents with optional state filtering.
+
+**Parameters:**
+- `state` (`open` | `closed` | `all`, optional, default `open`)
+- `limit` (number, optional, default `25`, max `200`)
+
+**Returns:** Formatted incident list.
+
+---
+
+### `continuity_loop_add_or_update`
+
+Add or update a continuity improvement loop entry in `identity/improvement-loops.md`.
+
+**Parameters:**
+- `id` (string, required) — Stable loop identifier.
+- `cadence` (`daily` | `weekly` | `monthly` | `quarterly`, required)
+- `purpose` (string, required)
+- `status` (`active` | `paused` | `retired`, required)
+- `killCondition` (string, required)
+- `lastReviewed` (string, optional, ISO timestamp)
+- `notes` (string, optional)
+
+**Returns:** Saved loop summary.
+
+---
+
+### `continuity_loop_review`
+
+Update review metadata on an existing continuity loop entry.
+
+**Parameters:**
+- `id` (string, required)
+- `status` (`active` | `paused` | `retired`, optional)
+- `notes` (string, optional)
+- `reviewedAt` (string, optional, ISO timestamp)
+
+**Returns:** Updated loop summary, or not-found message.
+
+---
+
 ## CLI Commands
 
 Run via `openclaw engram <command>`:
@@ -90,6 +201,10 @@ Run via `openclaw engram <command>`:
 | `export [--format json\|sqlite\|md]` | Export all memories to a portable file |
 | `import <file>` | Import memories from a portable file |
 | `purge` | Delete all memories (requires confirmation) |
+| `continuity incidents [--state open\|closed\|all] [--limit N]` | List continuity incidents |
+| `continuity incident-open --symptom <text> [--trigger-window <text>] [--suspected-cause <text>]` | Open a continuity incident |
+| `continuity incident-close --id <id> --fix-applied <text> --verification-result <text> [--preventive-rule <text>]` | Close a continuity incident |
+| `action-audit [--namespace <name>] [--limit N]` | Show namespace-aware memory action outcomes and policy decisions |
 
 ## Plugin Hooks
 

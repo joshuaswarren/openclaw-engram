@@ -1,0 +1,22 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+test("persistExtraction serializes per-storage temporal index updates", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.match(
+    source,
+    /for \(const entry of persistedIdsByStorage\.values\(\)\) \{\s*await this\.updateTemporalTagIndexes\(entry\.storage,\s*entry\.ids\);\s*\}/m,
+    "per-storage temporal index updates should run serially to avoid concurrent index file races",
+  );
+});
+
+test("persistExtraction derives intent from routed category", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  assert.match(
+    source,
+    /inferIntentFromText\(`\$\{writeCategory\} \$\{fact\.tags\.join\(" "\)\} \$\{fact\.content\}`\)/m,
+    "intent inference should use routed category so downstream intent metadata matches write target",
+  );
+});

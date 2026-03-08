@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Exact version to publish (e.g. 9.0.0). Skips auto-bump when set.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -105,14 +111,37 @@ jobs:
 
       - name: Compute next version from tags
         id: version
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
           SOURCE_MAIN_SHA=$(git rev-parse HEAD)
           echo "source_main_sha=${SOURCE_MAIN_SHA}" >> "$GITHUB_OUTPUT"
 
+          # Honor manual version override from workflow_dispatch
+          OVERRIDE="${VERSION_OVERRIDE}"
+          if [ -n "${OVERRIDE}" ]; then
+            # Strip leading 'v' if provided
+            OVERRIDE="${OVERRIDE#v}"
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+            echo "tag_name=v${OVERRIDE}" >> "$GITHUB_OUTPUT"
+            echo "new_version=${OVERRIDE}" >> "$GITHUB_OUTPUT"
+            echo "bump_type=override" >> "$GITHUB_OUTPUT"
+            npm version "${OVERRIDE}" --no-git-tag-version --allow-same-version
+            git add package.json package-lock.json
+            if git diff --cached --quiet; then
+              echo "::notice title=Release commit skipped::Version already matches v${OVERRIDE}; no package files changed."
+            else
+              git commit -m "chore(release): v${OVERRIDE} [skip ci]"
+            fi
+            exit 0
+          fi
+
           EXISTING_TAG=""
           while IFS= read -r tag; do
             [ -z "${tag}" ] && continue
-            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}"; then
+            TAG_TARGET_SHA="$(git rev-parse "refs/tags/${tag}^{}")"
+            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}" \
+              && [ "${TAG_TARGET_SHA}" = "${SOURCE_MAIN_SHA}" ]; then
               EXISTING_TAG="${tag}"
               break
             fi

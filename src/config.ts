@@ -1,6 +1,16 @@
 import path from "node:path";
-import type { PluginConfig, PrincipalRule, ReasoningEffort, TriggerMode } from "./types.js";
+import type {
+  IdentityInjectionMode,
+  PluginConfig,
+  PrincipalRule,
+  RecallPipelineConfig,
+  RecallSectionConfig,
+  ReasoningEffort,
+  SessionObserverBandConfig,
+  TriggerMode,
+} from "./types.js";
 import { log } from "./logger.js";
+import { cloneDefaultSessionObserverBands } from "./session-observer-bands.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   process.env.HOME ?? "~",
@@ -56,6 +66,7 @@ function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "e
 
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
+const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
 const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
@@ -67,7 +78,16 @@ const VALID_MEMORY_CATEGORIES = new Set([
   "commitment",
   "moment",
   "skill",
+  "rule",
 ]);
+
+const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [
+  "maxMemoryTokens",
+  "qmdMaxResults",
+  "qmdColdMaxResults",
+  "recallPlannerMaxQmdResultsMinimal",
+  "verbatimArtifactsMaxRecall",
+];
 
 export function parseConfig(raw: unknown): PluginConfig {
   const cfg =
@@ -106,6 +126,29 @@ export function parseConfig(raw: unknown): PluginConfig {
     typeof cfg.memoryDir === "string" && cfg.memoryDir.length > 0
       ? cfg.memoryDir
       : DEFAULT_MEMORY_DIR;
+  const rawIdentityInjectionMode = cfg.identityInjectionMode as string | undefined;
+  const identityInjectionMode: IdentityInjectionMode =
+    rawIdentityInjectionMode
+      && VALID_IDENTITY_INJECTION_MODES.includes(rawIdentityInjectionMode as IdentityInjectionMode)
+      ? (rawIdentityInjectionMode as IdentityInjectionMode)
+      : "recovery_only";
+  const identityContinuityEnabled = cfg.identityContinuityEnabled === true;
+  const sessionObserverBands: SessionObserverBandConfig[] = Array.isArray(cfg.sessionObserverBands)
+    ? (cfg.sessionObserverBands as Array<Record<string, unknown>>)
+        .map((band) => ({
+          maxBytes:
+            typeof band?.maxBytes === "number" ? Math.max(0, Math.floor(band.maxBytes)) : 0,
+          triggerDeltaBytes:
+            typeof band?.triggerDeltaBytes === "number"
+              ? Math.max(0, Math.floor(band.triggerDeltaBytes))
+              : 0,
+          triggerDeltaTokens:
+            typeof band?.triggerDeltaTokens === "number"
+              ? Math.max(0, Math.floor(band.triggerDeltaTokens))
+              : 0,
+        }))
+        .filter((band) => band.maxBytes > 0)
+    : cloneDefaultSessionObserverBands();
 
   const principalRules: PrincipalRule[] = Array.isArray(cfg.principalFromSessionKeyRules)
     ? (cfg.principalFromSessionKeyRules as any[]).map((r) => ({
@@ -167,6 +210,16 @@ export function parseConfig(raw: unknown): PluginConfig {
     baseUrl = normalizeOpenaiBaseUrl(process.env.OPENAI_BASE_URL, "env");
   }
 
+  const sharedCrossSignalSemanticEnabled =
+    cfg.sharedCrossSignalSemanticEnabled === true || cfg.crossSignalsSemanticEnabled === true;
+  const sharedCrossSignalSemanticTimeoutMs =
+    typeof cfg.sharedCrossSignalSemanticTimeoutMs === "number"
+      ? Math.max(1, Math.floor(cfg.sharedCrossSignalSemanticTimeoutMs))
+      : typeof cfg.crossSignalsSemanticTimeoutMs === "number"
+        ? Math.max(1, Math.floor(cfg.crossSignalsSemanticTimeoutMs))
+        : 4000;
+  const recallPipelineConfig = buildRecallPipelineConfig(cfg);
+
   return {
     openaiApiKey: apiKey,
     openaiBaseUrl: baseUrl,
@@ -191,6 +244,29 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram",
     qmdMaxResults:
       typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
+    qmdColdTierEnabled: cfg.qmdColdTierEnabled === true,
+    qmdColdCollection:
+      typeof cfg.qmdColdCollection === "string" && cfg.qmdColdCollection.length > 0
+        ? cfg.qmdColdCollection
+        : "openclaw-engram-cold",
+    qmdColdMaxResults:
+      typeof cfg.qmdColdMaxResults === "number" ? cfg.qmdColdMaxResults : 8,
+    qmdTierMigrationEnabled: cfg.qmdTierMigrationEnabled === true,
+    qmdTierDemotionMinAgeDays:
+      typeof cfg.qmdTierDemotionMinAgeDays === "number"
+        ? Math.max(0, Math.floor(cfg.qmdTierDemotionMinAgeDays))
+        : 14,
+    qmdTierDemotionValueThreshold:
+      typeof cfg.qmdTierDemotionValueThreshold === "number"
+        ? Math.max(0, Math.min(1, cfg.qmdTierDemotionValueThreshold))
+        : 0.35,
+    qmdTierPromotionValueThreshold:
+      typeof cfg.qmdTierPromotionValueThreshold === "number"
+        ? Math.max(0, Math.min(1, cfg.qmdTierPromotionValueThreshold))
+        : 0.7,
+    qmdTierParityGraphEnabled: cfg.qmdTierParityGraphEnabled !== false,
+    qmdTierParityHiMemEnabled: cfg.qmdTierParityHiMemEnabled !== false,
+    qmdTierAutoBackfillEnabled: cfg.qmdTierAutoBackfillEnabled === true,
     embeddingFallbackEnabled: cfg.embeddingFallbackEnabled !== false,
     embeddingFallbackProvider:
       cfg.embeddingFallbackProvider === "openai"
@@ -205,6 +281,23 @@ export function parseConfig(raw: unknown): PluginConfig {
     memoryDir,
     debug: cfg.debug === true,
     identityEnabled: cfg.identityEnabled !== false,
+    identityContinuityEnabled,
+    identityInjectionMode,
+    identityMaxInjectChars:
+      typeof cfg.identityMaxInjectChars === "number"
+        ? Math.max(0, Math.floor(cfg.identityMaxInjectChars))
+        : 1200,
+    continuityIncidentLoggingEnabled:
+      typeof cfg.continuityIncidentLoggingEnabled === "boolean"
+        ? cfg.continuityIncidentLoggingEnabled
+        : identityContinuityEnabled,
+    continuityAuditEnabled: cfg.continuityAuditEnabled === true,
+    sessionObserverEnabled: cfg.sessionObserverEnabled === true,
+    sessionObserverDebounceMs:
+      typeof cfg.sessionObserverDebounceMs === "number"
+        ? Math.max(0, Math.floor(cfg.sessionObserverDebounceMs))
+        : 120_000,
+    sessionObserverBands,
     injectQuestions: cfg.injectQuestions === true,
     commitmentDecayDays:
       typeof cfg.commitmentDecayDays === "number" ? cfg.commitmentDecayDays : 90,
@@ -223,6 +316,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     recencyWeight:
       typeof cfg.recencyWeight === "number" ? cfg.recencyWeight : 0.2,
     boostAccessCount: cfg.boostAccessCount !== false,
+    recordEmptyRecallImpressions: cfg.recordEmptyRecallImpressions === true,
     // v2.2 Advanced Retrieval (safe defaults: off unless enabled)
     queryExpansionEnabled: cfg.queryExpansionEnabled === true,
     queryExpansionMaxQueries:
@@ -309,6 +403,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     checkpointEnabled: cfg.checkpointEnabled !== false, // default: true
     checkpointTurns:
       typeof cfg.checkpointTurns === "number" ? cfg.checkpointTurns : 15,
+    // Compaction reset (opt-in, default: false)
+    compactionResetEnabled: cfg.compactionResetEnabled === true,
     // Hourly summaries
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
     hourlySummaryCronAutoRegister: cfg.hourlySummaryCronAutoRegister === true,
@@ -340,12 +436,109 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.conversationIndexMinUpdateIntervalMs
         : 15 * 60_000,
     conversationIndexEmbedOnUpdate: cfg.conversationIndexEmbedOnUpdate === true,
+    conversationIndexFaissScriptPath:
+      typeof cfg.conversationIndexFaissScriptPath === "string" && cfg.conversationIndexFaissScriptPath.trim().length > 0
+        ? cfg.conversationIndexFaissScriptPath.trim()
+        : undefined,
+    conversationIndexFaissPythonBin:
+      typeof cfg.conversationIndexFaissPythonBin === "string" && cfg.conversationIndexFaissPythonBin.trim().length > 0
+        ? cfg.conversationIndexFaissPythonBin.trim()
+        : undefined,
+    conversationIndexFaissModelId:
+      typeof cfg.conversationIndexFaissModelId === "string" && cfg.conversationIndexFaissModelId.trim().length > 0
+        ? cfg.conversationIndexFaissModelId.trim()
+        : "text-embedding-3-small",
+    conversationIndexFaissIndexDir:
+      typeof cfg.conversationIndexFaissIndexDir === "string" && cfg.conversationIndexFaissIndexDir.trim().length > 0
+        ? cfg.conversationIndexFaissIndexDir.trim()
+        : "state/conversation-index/faiss",
+    conversationIndexFaissUpsertTimeoutMs:
+      typeof cfg.conversationIndexFaissUpsertTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissUpsertTimeoutMs))
+        : 30_000,
+    conversationIndexFaissSearchTimeoutMs:
+      typeof cfg.conversationIndexFaissSearchTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissSearchTimeoutMs))
+        : 5_000,
+    conversationIndexFaissHealthTimeoutMs:
+      typeof cfg.conversationIndexFaissHealthTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissHealthTimeoutMs))
+        : 2_000,
+    conversationIndexFaissMaxBatchSize:
+      typeof cfg.conversationIndexFaissMaxBatchSize === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissMaxBatchSize))
+        : 512,
+    conversationIndexFaissMaxSearchK:
+      typeof cfg.conversationIndexFaissMaxSearchK === "number"
+        ? Math.max(0, Math.floor(cfg.conversationIndexFaissMaxSearchK))
+        : 50,
     conversationRecallTopK:
       typeof cfg.conversationRecallTopK === "number" ? cfg.conversationRecallTopK : 3,
     conversationRecallMaxChars:
       typeof cfg.conversationRecallMaxChars === "number" ? cfg.conversationRecallMaxChars : 2500,
     conversationRecallTimeoutMs:
       typeof cfg.conversationRecallTimeoutMs === "number" ? cfg.conversationRecallTimeoutMs : 800,
+    evalHarnessEnabled: cfg.evalHarnessEnabled === true,
+    evalShadowModeEnabled: cfg.evalShadowModeEnabled === true,
+    benchmarkBaselineSnapshotsEnabled: cfg.benchmarkBaselineSnapshotsEnabled === true,
+    benchmarkDeltaReporterEnabled: cfg.benchmarkDeltaReporterEnabled === true,
+    evalStoreDir:
+      typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
+        ? cfg.evalStoreDir.trim()
+        : path.join(memoryDir, "state", "evals"),
+    objectiveStateMemoryEnabled: cfg.objectiveStateMemoryEnabled === true,
+    objectiveStateSnapshotWritesEnabled: cfg.objectiveStateSnapshotWritesEnabled === true,
+    objectiveStateRecallEnabled: cfg.objectiveStateRecallEnabled === true,
+    objectiveStateStoreDir:
+      typeof cfg.objectiveStateStoreDir === "string" && cfg.objectiveStateStoreDir.trim().length > 0
+        ? cfg.objectiveStateStoreDir.trim()
+        : path.join(memoryDir, "state", "objective-state"),
+    causalTrajectoryMemoryEnabled: cfg.causalTrajectoryMemoryEnabled === true,
+    causalTrajectoryStoreDir:
+      typeof cfg.causalTrajectoryStoreDir === "string" && cfg.causalTrajectoryStoreDir.trim().length > 0
+        ? cfg.causalTrajectoryStoreDir.trim()
+        : path.join(memoryDir, "state", "causal-trajectories"),
+    causalTrajectoryRecallEnabled: cfg.causalTrajectoryRecallEnabled === true,
+    actionGraphRecallEnabled: cfg.actionGraphRecallEnabled === true,
+    trustZonesEnabled: cfg.trustZonesEnabled === true,
+    quarantinePromotionEnabled: cfg.quarantinePromotionEnabled === true,
+    trustZoneStoreDir:
+      typeof cfg.trustZoneStoreDir === "string" && cfg.trustZoneStoreDir.trim().length > 0
+        ? cfg.trustZoneStoreDir.trim()
+        : path.join(memoryDir, "state", "trust-zones"),
+    trustZoneRecallEnabled: cfg.trustZoneRecallEnabled === true,
+    memoryPoisoningDefenseEnabled: cfg.memoryPoisoningDefenseEnabled === true,
+    memoryRedTeamBenchEnabled: cfg.memoryRedTeamBenchEnabled === true,
+    harmonicRetrievalEnabled: cfg.harmonicRetrievalEnabled === true,
+    abstractionAnchorsEnabled: cfg.abstractionAnchorsEnabled === true,
+    verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
+    semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
+    semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
+    creationMemoryEnabled: cfg.creationMemoryEnabled === true,
+    memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
+    promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
+    commitmentLedgerEnabled: cfg.commitmentLedgerEnabled === true,
+    commitmentLifecycleEnabled: cfg.commitmentLifecycleEnabled === true,
+    commitmentStaleDays:
+      typeof cfg.commitmentStaleDays === "number" ? cfg.commitmentStaleDays : 14,
+    commitmentLedgerDir:
+      typeof cfg.commitmentLedgerDir === "string" && cfg.commitmentLedgerDir.trim().length > 0
+        ? cfg.commitmentLedgerDir.trim()
+        : path.join(memoryDir, "state", "commitment-ledger"),
+    resumeBundlesEnabled: cfg.resumeBundlesEnabled === true,
+    resumeBundleDir:
+      typeof cfg.resumeBundleDir === "string" && cfg.resumeBundleDir.trim().length > 0
+        ? cfg.resumeBundleDir.trim()
+        : path.join(memoryDir, "state", "resume-bundles"),
+    workProductRecallEnabled: cfg.workProductRecallEnabled === true,
+    workProductLedgerDir:
+      typeof cfg.workProductLedgerDir === "string" && cfg.workProductLedgerDir.trim().length > 0
+        ? cfg.workProductLedgerDir.trim()
+        : path.join(memoryDir, "state", "work-product-ledger"),
+    abstractionNodeStoreDir:
+      typeof cfg.abstractionNodeStoreDir === "string" && cfg.abstractionNodeStoreDir.trim().length > 0
+        ? cfg.abstractionNodeStoreDir.trim()
+        : path.join(memoryDir, "state", "abstraction-nodes"),
     // Local LLM Provider (v2.1)
     localLlmEnabled: cfg.localLlmEnabled === true || cfg.localLlmEnabled === "true", // default: false
     localLlmUrl:
@@ -420,6 +613,8 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.qmdEmbedMinIntervalMs === "number" ? cfg.qmdEmbedMinIntervalMs : 60 * 60_000,
     qmdUpdateTimeoutMs:
       typeof cfg.qmdUpdateTimeoutMs === "number" ? cfg.qmdUpdateTimeoutMs : 90_000,
+    qmdUpdateMinIntervalMs:
+      typeof cfg.qmdUpdateMinIntervalMs === "number" ? cfg.qmdUpdateMinIntervalMs : 15 * 60_000,
     // Local LLM resilience
     localLlmRetry5xxCount:
       typeof cfg.localLlmRetry5xxCount === "number" ? cfg.localLlmRetry5xxCount : 1,
@@ -429,6 +624,20 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.localLlm400TripThreshold === "number" ? cfg.localLlm400TripThreshold : 5,
     localLlm400CooldownMs:
       typeof cfg.localLlm400CooldownMs === "number" ? cfg.localLlm400CooldownMs : 120_000,
+    // Local LLM fast tier (v9.1)
+    localLlmFastEnabled: cfg.localLlmFastEnabled === true,
+    localLlmFastModel:
+      typeof cfg.localLlmFastModel === "string" && cfg.localLlmFastModel.length > 0
+        ? cfg.localLlmFastModel
+        : "",
+    localLlmFastUrl:
+      typeof cfg.localLlmFastUrl === "string" && cfg.localLlmFastUrl.length > 0
+        ? cfg.localLlmFastUrl
+        : typeof cfg.localLlmUrl === "string" && cfg.localLlmUrl.length > 0
+          ? cfg.localLlmUrl
+          : "http://localhost:1234/v1",
+    localLlmFastTimeoutMs:
+      typeof cfg.localLlmFastTimeoutMs === "number" ? cfg.localLlmFastTimeoutMs : 15_000,
     // Gateway config (passed from index.ts for fallback AI)
     gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
 
@@ -454,6 +663,30 @@ export function parseConfig(raw: unknown): PluginConfig {
         })).filter((p) => p.name.length > 0)
       : [],
     defaultRecallNamespaces: Array.isArray(cfg.defaultRecallNamespaces) ? ["self", "shared"].filter((x) => (cfg.defaultRecallNamespaces as any[]).includes(x)) as any : ["self", "shared"],
+    cronRecallMode:
+      cfg.cronRecallMode === "none"
+        ? "none"
+        : cfg.cronRecallMode === "allowlist"
+          ? "allowlist"
+          : "all",
+    cronRecallAllowlist: Array.isArray(cfg.cronRecallAllowlist)
+      ? (cfg.cronRecallAllowlist as unknown[]).filter((v): v is string => typeof v === "string" && v.length > 0)
+      : [],
+    cronRecallPolicyEnabled: cfg.cronRecallPolicyEnabled !== false,
+    cronRecallNormalizedQueryMaxChars:
+      typeof cfg.cronRecallNormalizedQueryMaxChars === "number"
+        ? cfg.cronRecallNormalizedQueryMaxChars
+        : 480,
+    cronRecallInstructionHeavyTokenCap:
+      typeof cfg.cronRecallInstructionHeavyTokenCap === "number"
+        ? cfg.cronRecallInstructionHeavyTokenCap
+        : 36,
+    cronConversationRecallMode:
+      cfg.cronConversationRecallMode === "always"
+        ? "always"
+        : cfg.cronConversationRecallMode === "never"
+          ? "never"
+          : "auto",
     autoPromoteToSharedEnabled: cfg.autoPromoteToSharedEnabled === true,
     autoPromoteToSharedCategories: Array.isArray(cfg.autoPromoteToSharedCategories)
       ? (cfg.autoPromoteToSharedCategories as any[]).filter((c) => c === "correction" || c === "decision" || c === "preference")
@@ -464,6 +697,11 @@ export function parseConfig(raw: unknown): PluginConfig {
         : cfg.autoPromoteMinConfidenceTier === "implied"
           ? "implied"
           : "explicit",
+    routingRulesEnabled: cfg.routingRulesEnabled === true,
+    routingRulesStateFile:
+      typeof cfg.routingRulesStateFile === "string" && cfg.routingRulesStateFile.trim().length > 0
+        ? cfg.routingRulesStateFile.trim()
+        : "state/routing-rules.json",
 
     // v4.0 shared-context (default off)
     sharedContextEnabled: cfg.sharedContextEnabled === true,
@@ -471,9 +709,15 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.sharedContextDir === "string" && cfg.sharedContextDir.length > 0 ? cfg.sharedContextDir : undefined,
     sharedContextMaxInjectChars:
       typeof cfg.sharedContextMaxInjectChars === "number" ? cfg.sharedContextMaxInjectChars : 4000,
-    crossSignalsSemanticEnabled: cfg.crossSignalsSemanticEnabled === true,
-    crossSignalsSemanticTimeoutMs:
-      typeof cfg.crossSignalsSemanticTimeoutMs === "number" ? cfg.crossSignalsSemanticTimeoutMs : 4000,
+    sharedCrossSignalSemanticEnabled,
+    sharedCrossSignalSemanticTimeoutMs,
+    sharedCrossSignalSemanticMaxCandidates:
+      typeof cfg.sharedCrossSignalSemanticMaxCandidates === "number"
+        ? Math.max(0, Math.floor(cfg.sharedCrossSignalSemanticMaxCandidates))
+        : 120,
+    // Backward-compatible aliases.
+    crossSignalsSemanticEnabled: sharedCrossSignalSemanticEnabled,
+    crossSignalsSemanticTimeoutMs: sharedCrossSignalSemanticTimeoutMs,
 
     // v5.0 compounding (default off)
     compoundingEnabled: cfg.compoundingEnabled === true,
@@ -489,12 +733,36 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.knowledgeIndexMaxEntities === "number" ? cfg.knowledgeIndexMaxEntities : 40,
     knowledgeIndexMaxChars:
       typeof cfg.knowledgeIndexMaxChars === "number" ? cfg.knowledgeIndexMaxChars : 4000,
+    recallBudgetChars: recallPipelineConfig.recallBudgetChars,
+    recallPipeline: recallPipelineConfig.pipeline,
     entityRelationshipsEnabled: cfg.entityRelationshipsEnabled !== false,
     entityActivityLogEnabled: cfg.entityActivityLogEnabled !== false,
     entityActivityLogMaxEntries:
       typeof cfg.entityActivityLogMaxEntries === "number" ? cfg.entityActivityLogMaxEntries : 20,
     entityAliasesEnabled: cfg.entityAliasesEnabled !== false,
     entitySummaryEnabled: cfg.entitySummaryEnabled !== false,
+
+    // Search backend abstraction
+    searchBackend: (["qmd", "remote", "noop", "lancedb", "meilisearch", "orama"] as const).includes(cfg.searchBackend as any)
+      ? (cfg.searchBackend as "qmd" | "remote" | "noop" | "lancedb" | "meilisearch" | "orama")
+      : "qmd",
+    remoteSearchBaseUrl: typeof cfg.remoteSearchBaseUrl === "string" ? cfg.remoteSearchBaseUrl : undefined,
+    remoteSearchApiKey: typeof cfg.remoteSearchApiKey === "string" ? cfg.remoteSearchApiKey : undefined,
+    remoteSearchTimeoutMs: typeof cfg.remoteSearchTimeoutMs === "number" ? cfg.remoteSearchTimeoutMs : 30_000,
+
+    // LanceDB backend
+    lanceDbPath: typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : path.join(memoryDir, "lancedb"),
+    lanceEmbeddingDimension: typeof cfg.lanceEmbeddingDimension === "number" ? cfg.lanceEmbeddingDimension : 1536,
+
+    // Meilisearch backend
+    meilisearchHost: typeof cfg.meilisearchHost === "string" ? cfg.meilisearchHost : "http://localhost:7700",
+    meilisearchApiKey: typeof cfg.meilisearchApiKey === "string" ? cfg.meilisearchApiKey : undefined,
+    meilisearchTimeoutMs: typeof cfg.meilisearchTimeoutMs === "number" ? cfg.meilisearchTimeoutMs : 30_000,
+    meilisearchAutoIndex: cfg.meilisearchAutoIndex === true,
+
+    // Orama backend
+    oramaDbPath: typeof cfg.oramaDbPath === "string" ? cfg.oramaDbPath : path.join(memoryDir, "orama"),
+    oramaEmbeddingDimension: typeof cfg.oramaEmbeddingDimension === "number" ? cfg.oramaEmbeddingDimension : 1536,
 
     // QMD daemon mode
     qmdDaemonEnabled: cfg.qmdDaemonEnabled !== false,
@@ -517,6 +785,66 @@ export function parseConfig(raw: unknown): PluginConfig {
     factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
       : ["commitment", "preference", "decision", "principle"],
+    // v8.3 lifecycle policy engine (default off)
+    lifecyclePolicyEnabled: cfg.lifecyclePolicyEnabled === true,
+    lifecycleFilterStaleEnabled: cfg.lifecycleFilterStaleEnabled === true,
+    lifecyclePromoteHeatThreshold:
+      typeof cfg.lifecyclePromoteHeatThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.lifecyclePromoteHeatThreshold))
+        : 0.55,
+    lifecycleStaleDecayThreshold:
+      typeof cfg.lifecycleStaleDecayThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.lifecycleStaleDecayThreshold))
+        : 0.65,
+    lifecycleArchiveDecayThreshold:
+      typeof cfg.lifecycleArchiveDecayThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.lifecycleArchiveDecayThreshold))
+        : 0.85,
+    lifecycleProtectedCategories: Array.isArray(cfg.lifecycleProtectedCategories)
+      ? (cfg.lifecycleProtectedCategories as any[]).filter(
+          (c): c is PluginConfig["lifecycleProtectedCategories"][number] =>
+            typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
+        )
+      : ["decision", "principle", "commitment", "preference"],
+    lifecycleMetricsEnabled:
+      typeof cfg.lifecycleMetricsEnabled === "boolean"
+        ? cfg.lifecycleMetricsEnabled
+        : cfg.lifecyclePolicyEnabled === true,
+    // v8.3 proactive + policy learning (default off)
+    proactiveExtractionEnabled: cfg.proactiveExtractionEnabled === true,
+    contextCompressionActionsEnabled: cfg.contextCompressionActionsEnabled === true,
+    compressionGuidelineLearningEnabled: cfg.compressionGuidelineLearningEnabled === true,
+    compressionGuidelineSemanticRefinementEnabled:
+      cfg.compressionGuidelineSemanticRefinementEnabled === true,
+    compressionGuidelineSemanticTimeoutMs:
+      typeof cfg.compressionGuidelineSemanticTimeoutMs === "number"
+        ? Math.max(1, Math.floor(cfg.compressionGuidelineSemanticTimeoutMs))
+        : 2500,
+    maxProactiveQuestionsPerExtraction:
+      typeof cfg.maxProactiveQuestionsPerExtraction === "number"
+        ? Math.max(0, Math.floor(cfg.maxProactiveQuestionsPerExtraction))
+        : 2,
+    maxCompressionTokensPerHour:
+      typeof cfg.maxCompressionTokensPerHour === "number"
+        ? Math.max(0, Math.floor(cfg.maxCompressionTokensPerHour))
+        : 1500,
+    behaviorLoopAutoTuneEnabled: cfg.behaviorLoopAutoTuneEnabled === true,
+    behaviorLoopLearningWindowDays:
+      typeof cfg.behaviorLoopLearningWindowDays === "number"
+        ? Math.max(0, Math.floor(cfg.behaviorLoopLearningWindowDays))
+        : 14,
+    behaviorLoopMinSignalCount:
+      typeof cfg.behaviorLoopMinSignalCount === "number"
+        ? Math.max(0, Math.floor(cfg.behaviorLoopMinSignalCount))
+        : 10,
+    behaviorLoopMaxDeltaPerCycle:
+      typeof cfg.behaviorLoopMaxDeltaPerCycle === "number"
+        ? Math.min(1, Math.max(0, cfg.behaviorLoopMaxDeltaPerCycle))
+        : 0.1,
+    behaviorLoopProtectedParams: Array.isArray(cfg.behaviorLoopProtectedParams)
+      ? (cfg.behaviorLoopProtectedParams as unknown[])
+          .filter((param): param is string => typeof param === "string" && param.trim().length > 0)
+      : [...DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS],
     // v8.0 phase 1
     recallPlannerEnabled: cfg.recallPlannerEnabled !== false,
     recallPlannerMaxQmdResultsMinimal:
@@ -562,6 +890,61 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.queryAwareIndexingMaxCandidates === "number"
         ? Math.max(0, cfg.queryAwareIndexingMaxCandidates) // clamp: negative treated as 0 (no cap)
         : 200,
+    // v8.2: Multi-graph memory (PR 18)
+    multiGraphMemoryEnabled: cfg.multiGraphMemoryEnabled === true,
+    graphRecallEnabled: cfg.graphRecallEnabled === true,
+    graphExpandedIntentEnabled: cfg.graphExpandedIntentEnabled !== false,
+    graphAssistInFullModeEnabled: cfg.graphAssistInFullModeEnabled !== false,
+    graphAssistShadowEvalEnabled: cfg.graphAssistShadowEvalEnabled === true,
+    graphAssistMinSeedResults:
+      typeof cfg.graphAssistMinSeedResults === "number"
+        ? Math.max(1, Math.floor(cfg.graphAssistMinSeedResults))
+        : 3,
+    entityGraphEnabled: cfg.entityGraphEnabled !== false,
+    timeGraphEnabled: cfg.timeGraphEnabled !== false,
+    graphWriteSessionAdjacencyEnabled: cfg.graphWriteSessionAdjacencyEnabled !== false,
+    causalGraphEnabled: cfg.causalGraphEnabled !== false,
+    maxGraphTraversalSteps:
+      typeof cfg.maxGraphTraversalSteps === "number" ? Math.max(0, cfg.maxGraphTraversalSteps) : 3,
+    graphActivationDecay:
+      typeof cfg.graphActivationDecay === "number"
+        ? Math.min(1, Math.max(0, cfg.graphActivationDecay))
+        : 0.7,
+    graphExpansionActivationWeight:
+      typeof cfg.graphExpansionActivationWeight === "number"
+        ? Math.min(1, Math.max(0, cfg.graphExpansionActivationWeight))
+        : 0.65,
+    graphExpansionBlendMin:
+      typeof cfg.graphExpansionBlendMin === "number"
+        ? Math.min(1, Math.max(0, cfg.graphExpansionBlendMin))
+        : 0.05,
+    graphExpansionBlendMax:
+      typeof cfg.graphExpansionBlendMax === "number"
+        ? Math.min(1, Math.max(0, cfg.graphExpansionBlendMax))
+        : 0.95,
+    maxEntityGraphEdgesPerMemory:
+      typeof cfg.maxEntityGraphEdgesPerMemory === "number"
+        ? Math.max(0, cfg.maxEntityGraphEdgesPerMemory)
+        : 10,
+    delinearizeEnabled: cfg.delinearizeEnabled !== false,
+    recallConfidenceGateEnabled: cfg.recallConfidenceGateEnabled === true,
+    recallConfidenceGateThreshold:
+      typeof cfg.recallConfidenceGateThreshold === "number"
+        ? Math.max(0, Math.min(1, cfg.recallConfidenceGateThreshold))
+        : 0.12,
+    causalRuleExtractionEnabled: cfg.causalRuleExtractionEnabled === true,
+    memoryReconstructionEnabled: cfg.memoryReconstructionEnabled === true,
+    memoryReconstructionMaxExpansions:
+      typeof cfg.memoryReconstructionMaxExpansions === "number" ? Math.max(0, Math.round(cfg.memoryReconstructionMaxExpansions)) : 3,
+    graphLateralInhibitionEnabled: cfg.graphLateralInhibitionEnabled !== false,
+    graphLateralInhibitionBeta:
+      typeof cfg.graphLateralInhibitionBeta === "number"
+        ? Math.max(0, Math.min(1, cfg.graphLateralInhibitionBeta))
+        : 0.15,
+    graphLateralInhibitionTopM:
+      typeof cfg.graphLateralInhibitionTopM === "number"
+        ? Math.max(0, Math.round(cfg.graphLateralInhibitionTopM))
+        : 7,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
     tmtHourlyMinMemories:
@@ -569,4 +952,193 @@ export function parseConfig(raw: unknown): PluginConfig {
     tmtSummaryMaxTokens:
       typeof cfg.tmtSummaryMaxTokens === "number" ? cfg.tmtSummaryMaxTokens : 300,
   };
+}
+
+function clampNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.floor(value));
+}
+
+function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {
+  const entry =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  return {
+    id: typeof entry.id === "string" ? entry.id.trim() : "",
+    enabled: entry.enabled !== false,
+    maxChars:
+      entry.maxChars === null
+        ? null
+        : clampNonNegativeNumber(entry.maxChars),
+    consolidateTriggerLines: clampNonNegativeNumber(entry.consolidateTriggerLines),
+    consolidateTargetLines: clampNonNegativeNumber(entry.consolidateTargetLines),
+    maxEntities: clampNonNegativeNumber(entry.maxEntities),
+    maxResults: clampNonNegativeNumber(entry.maxResults),
+    maxTurns: clampNonNegativeNumber(entry.maxTurns),
+    maxTokens: clampNonNegativeNumber(entry.maxTokens),
+    lookbackHours: clampNonNegativeNumber(entry.lookbackHours),
+    maxCount: clampNonNegativeNumber(entry.maxCount),
+    topK: clampNonNegativeNumber(entry.topK),
+    timeoutMs: clampNonNegativeNumber(entry.timeoutMs),
+    maxPatterns: clampNonNegativeNumber(entry.maxPatterns),
+  };
+}
+
+function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSectionConfig[] {
+  return [
+    {
+      id: "shared-context",
+      enabled: cfg.sharedContextEnabled === true,
+      maxChars:
+        typeof cfg.sharedContextMaxInjectChars === "number"
+          ? Math.max(0, Math.floor(cfg.sharedContextMaxInjectChars))
+          : 4000,
+    },
+    {
+      id: "profile",
+      enabled: true,
+      consolidateTriggerLines: 100,
+      consolidateTargetLines: 50,
+    },
+    {
+      id: "identity-continuity",
+      enabled: cfg.identityContinuityEnabled === true,
+    },
+    {
+      id: "knowledge-index",
+      enabled: cfg.knowledgeIndexEnabled !== false,
+      maxChars:
+        typeof cfg.knowledgeIndexMaxChars === "number"
+          ? Math.max(0, Math.floor(cfg.knowledgeIndexMaxChars))
+          : 4000,
+      maxEntities:
+        typeof cfg.knowledgeIndexMaxEntities === "number"
+          ? Math.max(0, Math.floor(cfg.knowledgeIndexMaxEntities))
+          : 40,
+    },
+    { id: "verbatim-artifacts", enabled: cfg.verbatimArtifactsEnabled === true },
+    { id: "memory-boxes", enabled: cfg.memoryBoxesEnabled === true },
+    { id: "temporal-memory-tree", enabled: cfg.temporalMemoryTreeEnabled === true },
+    {
+      id: "objective-state",
+      enabled: cfg.objectiveStateRecallEnabled === true,
+      maxResults: 4,
+      maxChars: 1800,
+    },
+    {
+      id: "causal-trajectories",
+      enabled: cfg.causalTrajectoryRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 2200,
+    },
+    {
+      id: "trust-zones",
+      enabled: cfg.trustZoneRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "harmonic-retrieval",
+      enabled: cfg.harmonicRetrievalEnabled === true,
+      maxResults: 3,
+      maxChars: 2200,
+    },
+    {
+      id: "verified-episodes",
+      enabled: cfg.verifiedRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "verified-rules",
+      enabled: cfg.semanticRuleVerificationEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "work-products",
+      enabled: cfg.workProductRecallEnabled === true,
+      maxResults: 3,
+      maxChars: 1800,
+    },
+    {
+      id: "memories",
+      enabled: true,
+      maxResults:
+        typeof cfg.qmdMaxResults === "number"
+          ? Math.max(0, Math.floor(cfg.qmdMaxResults))
+          : 8,
+    },
+    {
+      id: "compression-guidelines",
+      enabled: cfg.compressionGuidelineLearningEnabled === true,
+    },
+    {
+      id: "transcript",
+      enabled: cfg.transcriptEnabled !== false,
+      maxTurns:
+        typeof cfg.maxTranscriptTurns === "number"
+          ? Math.max(0, Math.floor(cfg.maxTranscriptTurns))
+          : 50,
+      maxTokens:
+        typeof cfg.maxTranscriptTokens === "number"
+          ? Math.max(0, Math.floor(cfg.maxTranscriptTokens))
+          : 1000,
+      lookbackHours:
+        typeof cfg.transcriptRecallHours === "number"
+          ? Math.max(0, Math.floor(cfg.transcriptRecallHours))
+          : 12,
+    },
+    {
+      id: "summaries",
+      enabled: cfg.hourlySummariesEnabled !== false,
+      maxCount:
+        typeof cfg.maxSummaryCount === "number"
+          ? Math.max(0, Math.floor(cfg.maxSummaryCount))
+          : 6,
+      lookbackHours:
+        typeof cfg.summaryRecallHours === "number"
+          ? Math.max(0, Math.floor(cfg.summaryRecallHours))
+          : 24,
+    },
+    {
+      id: "conversation-recall",
+      enabled: cfg.conversationIndexEnabled === true,
+      topK:
+        typeof cfg.conversationRecallTopK === "number"
+          ? Math.max(0, Math.floor(cfg.conversationRecallTopK))
+          : 3,
+      maxChars:
+        typeof cfg.conversationRecallMaxChars === "number"
+          ? Math.max(0, Math.floor(cfg.conversationRecallMaxChars))
+          : 2500,
+      timeoutMs:
+        typeof cfg.conversationRecallTimeoutMs === "number"
+          ? Math.max(0, Math.floor(cfg.conversationRecallTimeoutMs))
+          : 800,
+    },
+    {
+      id: "compounding",
+      enabled: cfg.compoundingEnabled === true && cfg.compoundingInjectEnabled !== false,
+      maxPatterns: 40,
+    },
+    { id: "questions", enabled: cfg.injectQuestions === true },
+  ];
+}
+
+function buildRecallPipelineConfig(cfg: Record<string, unknown>): RecallPipelineConfig {
+  const maxMemoryTokens =
+    typeof cfg.maxMemoryTokens === "number"
+      ? Math.max(0, Math.floor(cfg.maxMemoryTokens))
+      : 2000;
+  const recallBudgetCharsRaw = clampNonNegativeNumber(cfg.recallBudgetChars);
+  const recallBudgetChars = recallBudgetCharsRaw ?? maxMemoryTokens * 4;
+
+  const rawPipeline = cfg.recallPipeline;
+  const pipeline = Array.isArray(rawPipeline)
+    ? rawPipeline.map(parseRecallSectionEntry).filter((entry) => entry.id.length > 0)
+    : buildDefaultRecallPipeline(cfg);
+
+  return { recallBudgetChars, pipeline };
 }

@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
 import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -9,6 +9,12 @@ import type {
   AccessTrackingEntry,
   BufferState,
   ConfidenceTier,
+  ContinuityIncidentCloseInput,
+  ContinuityIncidentOpenInput,
+  ContinuityIncidentRecord,
+  ContinuityImprovementLoop,
+  ContinuityLoopReviewInput,
+  ContinuityLoopUpsertInput,
   EntityActivityEntry,
   EntityFile,
   EntityRelationship,
@@ -18,15 +24,30 @@ import type {
   MemoryFile,
   MemoryFrontmatter,
   MemoryLink,
+  LifecycleState,
+  VerificationState,
+  PolicyClass,
   MemoryStatus,
+  MemoryActionEvent,
+  BehaviorSignalEvent,
   MemorySummary,
   MetaState,
+  CompressionGuidelineOptimizerState,
   PluginConfig,
   ScoredEntity,
   TopicScore,
   FileHygieneConfig,
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
+import {
+  closeContinuityIncidentRecord,
+  createContinuityIncidentRecord,
+  parseContinuityIncident,
+  parseContinuityImprovementLoops,
+  reviewContinuityLoopInMarkdown,
+  serializeContinuityIncident,
+  upsertContinuityLoopInMarkdown,
+} from "./identity-continuity.js";
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "a",
@@ -57,6 +78,13 @@ const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "were",
   "with",
 ]);
+
+export interface ReextractJobRequest {
+  memoryId: string;
+  model: string;
+  requestedAt: string;
+  source: "cli-migrate";
+}
 
 function tokenizeArtifactSearchText(input: string): string[] {
   return input
@@ -90,6 +118,13 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.supersededBy) lines.push(`supersededBy: ${fm.supersededBy}`);
   if (fm.supersededAt) lines.push(`supersededAt: ${fm.supersededAt}`);
   if (fm.archivedAt) lines.push(`archivedAt: ${fm.archivedAt}`);
+  // Lifecycle policy fields
+  if (fm.lifecycleState) lines.push(`lifecycleState: ${fm.lifecycleState}`);
+  if (fm.verificationState) lines.push(`verificationState: ${fm.verificationState}`);
+  if (fm.policyClass) lines.push(`policyClass: ${fm.policyClass}`);
+  if (fm.lastValidatedAt) lines.push(`lastValidatedAt: ${fm.lastValidatedAt}`);
+  if (fm.decayScore !== undefined) lines.push(`decayScore: ${fm.decayScore}`);
+  if (fm.heatScore !== undefined) lines.push(`heatScore: ${fm.heatScore}`);
   // Access tracking
   if (fm.accessCount !== undefined && fm.accessCount > 0) {
     lines.push(`accessCount: ${fm.accessCount}`);
@@ -100,7 +135,11 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
     lines.push(`importanceScore: ${fm.importance.score}`);
     lines.push(`importanceLevel: ${fm.importance.level}`);
     if (fm.importance.reasons.length > 0) {
-      lines.push(`importanceReasons: [${fm.importance.reasons.map((r) => `"${r.replace(/"/g, '\\"')}"`).join(", ")}]`);
+      lines.push(
+        `importanceReasons: [${fm.importance.reasons
+          .map((r) => `"${r.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ")}]`,
+      );
     }
     if (fm.importance.keywords.length > 0) {
       lines.push(`importanceKeywords: [${fm.importance.keywords.map((k) => `"${k}"`).join(", ")}]`);
@@ -117,7 +156,7 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
       lines.push(`  - targetId: ${link.targetId}`);
       lines.push(`    linkType: ${link.linkType}`);
       lines.push(`    strength: ${link.strength}`);
-      if (link.reason) lines.push(`    reason: "${link.reason.replace(/"/g, '\\"')}"`);
+      if (link.reason) lines.push(`    reason: ${JSON.stringify(link.reason)}`);
     }
   }
   if (fm.intentGoal) lines.push(`intentGoal: ${fm.intentGoal}`);
@@ -132,6 +171,24 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.memoryKind) lines.push(`memoryKind: ${fm.memoryKind}`);
   lines.push("---");
   return lines.join("\n");
+}
+
+function parseLinkReasonValue(rawValue: string): string {
+  const legacyValue = rawValue.replace(/\\"/g, '"');
+  const looksLikeLegacyPath =
+    !rawValue.includes("\\\\") &&
+    (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)*/.test(rawValue) ||
+      /\\[A-Za-z0-9._ -]+\\[A-Za-z0-9._ -]+/.test(rawValue));
+
+  if (looksLikeLegacyPath) {
+    return legacyValue;
+  }
+
+  try {
+    return JSON.parse(`"${rawValue}"`) as string;
+  } catch {
+    return legacyValue;
+  }
 }
 
 function parseFrontmatter(
@@ -187,6 +244,8 @@ function parseFrontmatter(
 
   // Parse accessCount
   const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;
+  const decayScore = fm.decayScore !== undefined ? parseFloat(fm.decayScore) : undefined;
+  const heatScore = fm.heatScore !== undefined ? parseFloat(fm.heatScore) : undefined;
 
   // Parse importance
   let importance: ImportanceScore | undefined;
@@ -197,12 +256,14 @@ function parseFrontmatter(
     // Parse importance reasons array
     let reasons: string[] = [];
     const reasonsStr = fm.importanceReasons ?? "";
-    const reasonsMatch = reasonsStr.match(/\[(.*)]/);
-    if (reasonsMatch) {
-      reasons = reasonsMatch[1]
-        .split(/",\s*"/)
-        .map((r) => r.replace(/^"|"$/g, "").replace(/\\"/g, '"'))
-        .filter(Boolean);
+    if (reasonsStr.trim().startsWith("[") && reasonsStr.trim().endsWith("]")) {
+      const reasonMatches = reasonsStr.matchAll(/"((?:\\.|[^"\\])*)"/g);
+      for (const match of reasonMatches) {
+        const reason = parseLinkReasonValue(match[1]);
+        if (reason.length > 0) {
+          reasons.push(reason);
+        }
+      }
     }
 
     // Parse importance keywords array
@@ -238,6 +299,12 @@ function parseFrontmatter(
       supersededBy: fm.supersededBy || undefined,
       supersededAt: fm.supersededAt || undefined,
       archivedAt: fm.archivedAt || undefined,
+      lifecycleState: (fm.lifecycleState as LifecycleState) || undefined,
+      verificationState: (fm.verificationState as VerificationState) || undefined,
+      policyClass: (fm.policyClass as PolicyClass) || undefined,
+      lastValidatedAt: fm.lastValidatedAt || undefined,
+      decayScore: Number.isFinite(decayScore) ? decayScore : undefined,
+      heatScore: Number.isFinite(heatScore) ? heatScore : undefined,
       // Access tracking
       accessCount: accessCount && accessCount > 0 ? accessCount : undefined,
       lastAccessed: fm.lastAccessed || undefined,
@@ -265,14 +332,14 @@ function parseFrontmatter(
   if (fmBlock.includes("links:")) {
     const links: MemoryLink[] = [];
     const linkMatches = fmBlock.matchAll(
-      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "([^"]*)")?/g,
+      /- targetId: (\S+)\s+linkType: (\S+)\s+strength: ([\d.]+)(?:\s+reason: "((?:\\.|[^"\\])*)")?/g,
     );
     for (const match of linkMatches) {
       links.push({
         targetId: match[1],
         linkType: match[2] as MemoryLink["linkType"],
         strength: parseFloat(match[3]),
-        reason: match[4] || undefined,
+        reason: match[4] ? parseLinkReasonValue(match[4]) : undefined,
       });
     }
     if (links.length > 0) {
@@ -664,8 +731,38 @@ export class StorageManager {
   private get artifactsDir(): string {
     return path.join(this.baseDir, "artifacts");
   }
+  private get identityDir(): string {
+    return path.join(this.baseDir, "identity");
+  }
+  private get identityAnchorPath(): string {
+    return path.join(this.identityDir, "identity-anchor.md");
+  }
+  private get identityIncidentsDir(): string {
+    return path.join(this.identityDir, "incidents");
+  }
+  private get identityAuditsWeeklyDir(): string {
+    return path.join(this.identityDir, "audits", "weekly");
+  }
+  private get identityAuditsMonthlyDir(): string {
+    return path.join(this.identityDir, "audits", "monthly");
+  }
+  private get identityImprovementLoopsPath(): string {
+    return path.join(this.identityDir, "improvement-loops.md");
+  }
   private get profilePath(): string {
     return path.join(this.baseDir, "profile.md");
+  }
+  private get memoryActionsPath(): string {
+    return path.join(this.stateDir, "memory-actions.jsonl");
+  }
+  private get compressionGuidelinesPath(): string {
+    return path.join(this.stateDir, "compression-guidelines.md");
+  }
+  private get compressionGuidelineStatePath(): string {
+    return path.join(this.stateDir, "compression-guideline-state.json");
+  }
+  private get behaviorSignalsPath(): string {
+    return path.join(this.stateDir, "behavior-signals.jsonl");
   }
 
   /**
@@ -696,6 +793,10 @@ export class StorageManager {
     await mkdir(this.stateDir, { recursive: true });
     await mkdir(this.questionsDir, { recursive: true });
     await mkdir(this.artifactsDir, { recursive: true });
+    await mkdir(this.identityDir, { recursive: true });
+    await mkdir(this.identityIncidentsDir, { recursive: true });
+    await mkdir(this.identityAuditsWeeklyDir, { recursive: true });
+    await mkdir(this.identityAuditsMonthlyDir, { recursive: true });
     await mkdir(path.join(this.baseDir, "config"), { recursive: true });
   }
 
@@ -1031,11 +1132,14 @@ export class StorageManager {
   }
 
   /** Check if profile.md exceeds the max line cap and needs LLM consolidation */
-  async profileNeedsConsolidation(): Promise<boolean> {
+  async profileNeedsConsolidation(triggerLines?: number): Promise<boolean> {
     const profile = await this.readProfile();
     if (!profile) return false;
     const lineCount = profile.split("\n").length;
-    return lineCount > StorageManager.PROFILE_MAX_LINES;
+    const threshold = typeof triggerLines === "number"
+      ? Math.max(0, Math.floor(triggerLines))
+      : StorageManager.PROFILE_MAX_LINES;
+    return lineCount > threshold;
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {
@@ -1074,6 +1178,46 @@ export class StorageManager {
     return memories;
   }
 
+  /**
+   * Read archived memory markdown files under archive/.
+   * Used by long-term recall fallback when hot recall has no hits.
+   */
+  async readArchivedMemories(): Promise<MemoryFile[]> {
+    const memories: MemoryFile[] = [];
+    const root = this.archiveDir;
+
+    const readDir = async (dir: string) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await readDir(fullPath);
+          } else if (entry.name.endsWith(".md")) {
+            try {
+              const raw = await readFile(fullPath, "utf-8");
+              const parsed = parseFrontmatter(raw);
+              if (parsed) {
+                memories.push({
+                  path: fullPath,
+                  frontmatter: parsed.frontmatter,
+                  content: parsed.content,
+                });
+              }
+            } catch {
+              // Skip unreadable files
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist yet
+      }
+    };
+
+    await readDir(root);
+    return memories;
+  }
+
   /** Read a single memory file by its absolute path. Returns null if unreadable. */
   async readMemoryByPath(filePath: string): Promise<MemoryFile | null> {
     try {
@@ -1084,6 +1228,98 @@ export class StorageManager {
     } catch {
       return null;
     }
+  }
+
+  private resolveTierRootDir(tier: "hot" | "cold"): string {
+    return tier === "cold" ? path.join(this.baseDir, "cold") : this.baseDir;
+  }
+
+  private resolveMemoryDateDir(memory: MemoryFile): string {
+    const preferred = memory.frontmatter.created || memory.frontmatter.updated;
+    const dateToken = (preferred ?? "").slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(dateToken)
+      ? dateToken
+      : new Date().toISOString().slice(0, 10);
+  }
+
+  private isArtifactMemory(memory: MemoryFile): boolean {
+    if (memory.frontmatter.source === "artifact") return true;
+    if (memory.frontmatter.artifactType !== undefined) return true;
+    return /[\\/]artifacts[\\/]/.test(memory.path);
+  }
+
+  buildTierMemoryPath(memory: MemoryFile, tier: "hot" | "cold"): string {
+    const root = this.resolveTierRootDir(tier);
+    if (this.isArtifactMemory(memory)) {
+      return path.join(root, "artifacts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
+    }
+    if (memory.frontmatter.category === "correction") {
+      return path.join(root, "corrections", `${memory.frontmatter.id}.md`);
+    }
+    return path.join(root, "facts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
+  }
+
+  private async writeMemoryFileAtomic(targetPath: string, memory: MemoryFile): Promise<void> {
+    const fileContent = `${serializeFrontmatter(memory.frontmatter)}\n\n${memory.content}\n`;
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      await writeFile(tempPath, fileContent, "utf-8");
+      await rename(tempPath, targetPath);
+    } catch (err) {
+      try {
+        await unlink(tempPath);
+      } catch {
+        // best-effort cleanup
+      }
+      throw err;
+    }
+  }
+
+  async moveMemoryToPath(memory: MemoryFile, targetPath: string): Promise<void> {
+    await this.writeMemoryFileAtomic(targetPath, memory);
+    const sourcePath = path.resolve(memory.path);
+    const destPath = path.resolve(targetPath);
+    if (sourcePath !== destPath) {
+      try {
+        await unlink(memory.path);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes("ENOENT")) {
+          throw err;
+        }
+      }
+    }
+  }
+
+  async migrateMemoryToTier(
+    memory: MemoryFile,
+    targetTier: "hot" | "cold",
+  ): Promise<{ changed: boolean; targetPath: string }> {
+    const targetPath = this.buildTierMemoryPath(memory, targetTier);
+    const sourcePath = path.resolve(memory.path);
+    const destPath = path.resolve(targetPath);
+    if (sourcePath === destPath) {
+      return { changed: false, targetPath };
+    }
+
+    const existing = await this.readMemoryByPath(targetPath);
+    if (existing?.frontmatter.id === memory.frontmatter.id) {
+      try {
+        await unlink(memory.path);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes("ENOENT")) {
+          throw err;
+        }
+      }
+      this.bumpMemoryStatusVersion();
+      return { changed: false, targetPath };
+    }
+
+    await this.moveMemoryToPath(memory, targetPath);
+    this.bumpMemoryStatusVersion();
+    return { changed: true, targetPath };
   }
 
   private get archiveDir(): string {
@@ -1253,6 +1489,43 @@ export class StorageManager {
     return true;
   }
 
+  /**
+   * Update frontmatter fields without changing memory content.
+   * Returns false when the memory is not found.
+   */
+  async writeMemoryFrontmatter(
+    memory: MemoryFile,
+    patch: Partial<MemoryFrontmatter>,
+  ): Promise<boolean> {
+    const beforeStatus = memory.frontmatter.status ?? "active";
+    const updated: MemoryFrontmatter = {
+      ...memory.frontmatter,
+      ...patch,
+    };
+    const afterStatus = updated.status ?? "active";
+
+    const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
+    await writeFile(memory.path, fileContent, "utf-8");
+    if (beforeStatus !== afterStatus) {
+      this.bumpMemoryStatusVersion();
+    }
+    return true;
+  }
+
+  /**
+   * Update frontmatter by memory ID.
+   * Prefer writeMemoryFrontmatter(memory, patch) in batch loops to avoid full-corpus rescans.
+   */
+  async updateMemoryFrontmatter(
+    id: string,
+    patch: Partial<MemoryFrontmatter>,
+  ): Promise<boolean> {
+    const memories = await this.readAllMemories();
+    const memory = memories.find((m) => m.frontmatter.id === id);
+    if (!memory) return false;
+    return this.writeMemoryFrontmatter(memory, patch);
+  }
+
   /** Remove memories past their TTL expiresAt date */
   async cleanExpiredTTL(): Promise<MemoryFile[]> {
     const memories = await this.readAllMemories();
@@ -1318,6 +1591,376 @@ export class StorageManager {
     await writeFile(metaPath, JSON.stringify(state, null, 2), "utf-8");
   }
 
+  async appendMemoryActionEvents(events: MemoryActionEvent[]): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+
+    const nowIso = new Date().toISOString();
+    const payload = events.map((event) => {
+      const normalized: MemoryActionEvent = {
+        ...event,
+        timestamp: event.timestamp && event.timestamp.length > 0 ? event.timestamp : nowIso,
+      };
+      return `${JSON.stringify(normalized)}\n`;
+    }).join("");
+
+    await appendFile(this.memoryActionsPath, payload, "utf-8");
+    return events.length;
+  }
+
+  async appendBehaviorSignals(events: BehaviorSignalEvent[]): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+
+    let existingKeys = new Set<string>();
+    try {
+      const raw = await readFile(this.behaviorSignalsPath, "utf-8");
+      const lines = raw.split("\n");
+      for (const line of lines) {
+        const row = line.trim();
+        if (!row) continue;
+        try {
+          const parsed = JSON.parse(row) as Partial<BehaviorSignalEvent>;
+          if (typeof parsed.memoryId === "string" && typeof parsed.signalHash === "string") {
+            existingKeys.add(`${parsed.memoryId}:${parsed.signalHash}`);
+          }
+        } catch {
+          // Ignore malformed rows (fail-open).
+        }
+      }
+    } catch {
+      existingKeys = new Set<string>();
+    }
+
+    const nowIso = new Date().toISOString();
+    const deduped: BehaviorSignalEvent[] = [];
+    for (const event of events) {
+      const key = `${event.memoryId}:${event.signalHash}`;
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      deduped.push({
+        ...event,
+        timestamp: event.timestamp && event.timestamp.length > 0 ? event.timestamp : nowIso,
+      });
+    }
+
+    if (deduped.length === 0) return 0;
+    const payload = deduped.map((event) => `${JSON.stringify(event)}\n`).join("");
+    await appendFile(this.behaviorSignalsPath, payload, "utf-8");
+    return deduped.length;
+  }
+
+  async appendReextractJobs(events: ReextractJobRequest[]): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+    const filePath = path.join(this.stateDir, "reextract-jobs.jsonl");
+    const lines = events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+    try {
+      await appendFile(filePath, lines, "utf-8");
+      return events.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  async readReextractJobs(limit: number = 200): Promise<ReextractJobRequest[]> {
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 200;
+    const filePath = path.join(this.stateDir, "reextract-jobs.jsonl");
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+      const parsed: ReextractJobRequest[] = [];
+      for (const line of lines) {
+        try {
+          const record = JSON.parse(line) as Partial<ReextractJobRequest>;
+          if (
+            typeof record.memoryId !== "string" ||
+            record.memoryId.length === 0 ||
+            typeof record.model !== "string" ||
+            record.model.length === 0 ||
+            typeof record.requestedAt !== "string" ||
+            record.requestedAt.length === 0 ||
+            record.source !== "cli-migrate"
+          ) {
+            continue;
+          }
+          parsed.push({
+            memoryId: record.memoryId,
+            model: record.model,
+            requestedAt: record.requestedAt,
+            source: "cli-migrate",
+          });
+        } catch {
+          continue;
+        }
+      }
+      return parsed.slice(-safeLimit);
+    } catch {
+      return [];
+    }
+  }
+
+  async readBehaviorSignals(limit: number = 200): Promise<BehaviorSignalEvent[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+
+    try {
+      const raw = await readFile(this.behaviorSignalsPath, "utf-8");
+      const out: BehaviorSignalEvent[] = [];
+      const lines = raw.split("\n");
+      for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
+        const row = lines[i]?.trim();
+        if (!row) continue;
+        try {
+          const parsed = JSON.parse(row) as Partial<BehaviorSignalEvent>;
+          if (
+            typeof parsed.timestamp === "string" &&
+            typeof parsed.namespace === "string" &&
+            typeof parsed.memoryId === "string" &&
+            typeof parsed.category === "string" &&
+            typeof parsed.signalType === "string" &&
+            typeof parsed.direction === "string" &&
+            typeof parsed.confidence === "number" &&
+            typeof parsed.signalHash === "string" &&
+            typeof parsed.source === "string"
+          ) {
+            out.push(parsed as BehaviorSignalEvent);
+          }
+        } catch {
+          // Ignore malformed rows (fail-open).
+        }
+      }
+      return out.reverse();
+    } catch {
+      return [];
+    }
+  }
+
+  async readMemoryActionEvents(limit: number = 200): Promise<MemoryActionEvent[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+
+    try {
+      const raw = await readFile(this.memoryActionsPath, "utf-8");
+      const out: MemoryActionEvent[] = [];
+      const lines = raw.split("\n");
+      for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
+        const line = lines[i]?.trim();
+        if (!line) continue;
+        try {
+          const parsed = JSON.parse(line) as Partial<MemoryActionEvent>;
+          if (
+            typeof parsed.timestamp === "string" &&
+            typeof parsed.action === "string" &&
+            typeof parsed.outcome === "string"
+          ) {
+            out.push(parsed as MemoryActionEvent);
+          }
+        } catch {
+          // Ignore malformed rows (fail-open).
+        }
+      }
+      return out.reverse();
+    } catch {
+      return [];
+    }
+  }
+
+  async writeCompressionGuidelines(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.compressionGuidelinesPath, content, "utf-8");
+  }
+
+  async readCompressionGuidelines(): Promise<string | null> {
+    try {
+      return await readFile(this.compressionGuidelinesPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async writeCompressionGuidelineOptimizerState(
+    state: CompressionGuidelineOptimizerState,
+  ): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.compressionGuidelineStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+  }
+
+  async readCompressionGuidelineOptimizerState(): Promise<CompressionGuidelineOptimizerState | null> {
+    const isFiniteNonNegativeInteger = (value: unknown): value is number =>
+      typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+
+    try {
+      const raw = await readFile(this.compressionGuidelineStatePath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<CompressionGuidelineOptimizerState>;
+      const sourceWindow = parsed?.sourceWindow as Partial<CompressionGuidelineOptimizerState["sourceWindow"]>;
+      const eventCounts = parsed?.eventCounts as Partial<CompressionGuidelineOptimizerState["eventCounts"]>;
+      if (
+        !isFiniteNonNegativeInteger(parsed?.version) ||
+        typeof parsed?.updatedAt !== "string" ||
+        parsed.updatedAt.length === 0 ||
+        !sourceWindow ||
+        typeof sourceWindow.from !== "string" ||
+        sourceWindow.from.length === 0 ||
+        typeof sourceWindow.to !== "string" ||
+        sourceWindow.to.length === 0 ||
+        !eventCounts ||
+        !isFiniteNonNegativeInteger(eventCounts.total) ||
+        !isFiniteNonNegativeInteger(eventCounts.applied) ||
+        !isFiniteNonNegativeInteger(eventCounts.skipped) ||
+        !isFiniteNonNegativeInteger(eventCounts.failed) ||
+        !isFiniteNonNegativeInteger(parsed?.guidelineVersion)
+      ) {
+        return null;
+      }
+
+      return {
+        version: parsed.version,
+        updatedAt: parsed.updatedAt,
+        sourceWindow: {
+          from: sourceWindow.from,
+          to: sourceWindow.to,
+        },
+        eventCounts: {
+          total: eventCounts.total,
+          applied: eventCounts.applied,
+          skipped: eventCounts.skipped,
+          failed: eventCounts.failed,
+        },
+        guidelineVersion: parsed.guidelineVersion,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async writeIdentityAnchor(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.identityAnchorPath, content, "utf-8");
+  }
+
+  async readIdentityAnchor(): Promise<string | null> {
+    try {
+      return await readFile(this.identityAnchorPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async appendContinuityIncident(input: ContinuityIncidentOpenInput): Promise<ContinuityIncidentRecord> {
+    await this.ensureDirectories();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const date = nowIso.slice(0, 10);
+    const id = this.generateId("incident");
+    const incident = createContinuityIncidentRecord(id, input, nowIso);
+    const filePath = path.join(this.identityIncidentsDir, `${date}-${id}.md`);
+    await writeFile(filePath, serializeContinuityIncident(incident), "utf-8");
+    return { ...incident, filePath };
+  }
+
+  async readContinuityIncidents(
+    limit: number = 200,
+    state: "open" | "closed" | "all" = "all",
+  ): Promise<ContinuityIncidentRecord[]> {
+    const normalizedLimit = Number.isFinite(limit) ? Math.floor(limit) : 0;
+    const cappedLimit = Math.max(0, normalizedLimit);
+    if (cappedLimit === 0) return [];
+
+    try {
+      const candidates = await this.readContinuityIncidentFileNames();
+      const incidents: ContinuityIncidentRecord[] = [];
+
+      for (const file of candidates) {
+        if (incidents.length >= cappedLimit) break;
+        const filePath = path.join(this.identityIncidentsDir, file);
+        try {
+          const raw = await readFile(filePath, "utf-8");
+          const parsed = parseContinuityIncident(raw);
+          if (!parsed) continue;
+          if (state !== "all" && parsed.state !== state) continue;
+          incidents.push({ ...parsed, filePath });
+        } catch {
+          // Fail-open on malformed/missing files.
+        }
+      }
+      return incidents;
+    } catch {
+      return [];
+    }
+  }
+
+  async closeContinuityIncident(
+    id: string,
+    closure: ContinuityIncidentCloseInput,
+  ): Promise<ContinuityIncidentRecord | null> {
+    const directFilePath = await this.findContinuityIncidentFilePathById(id);
+    const target = directFilePath ? await this.readContinuityIncidentFile(directFilePath) : null;
+    if (!target || !directFilePath) return null;
+    if (target.state === "closed") return target;
+
+    const closed = closeContinuityIncidentRecord(target, closure, new Date().toISOString());
+    await writeFile(directFilePath, serializeContinuityIncident(closed), "utf-8");
+    return { ...closed, filePath: directFilePath };
+  }
+
+  async writeIdentityAudit(period: "weekly" | "monthly", key: string, content: string): Promise<string> {
+    await this.ensureDirectories();
+    const safeKey = this.sanitizeIdentityAuditKey(key);
+    const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
+    const filePath = path.join(dir, `${safeKey}.md`);
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  async readIdentityAudit(period: "weekly" | "monthly", key: string): Promise<string | null> {
+    try {
+      const safeKey = this.sanitizeIdentityAuditKey(key);
+      const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
+      return await readFile(path.join(dir, `${safeKey}.md`), "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async writeIdentityImprovementLoops(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.identityImprovementLoopsPath, content, "utf-8");
+  }
+
+  async readIdentityImprovementLoops(): Promise<string | null> {
+    try {
+      return await readFile(this.identityImprovementLoopsPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  async readIdentityImprovementLoopRegister(): Promise<ContinuityImprovementLoop[]> {
+    const raw = await this.readIdentityImprovementLoops();
+    if (!raw) return [];
+    return parseContinuityImprovementLoops(raw);
+  }
+
+  async upsertIdentityImprovementLoop(input: ContinuityLoopUpsertInput): Promise<ContinuityImprovementLoop> {
+    const nowIso = new Date().toISOString();
+    const raw = await this.readIdentityImprovementLoops();
+    const { markdown, loop } = upsertContinuityLoopInMarkdown(raw, input, nowIso);
+    await this.writeIdentityImprovementLoops(markdown);
+    return loop;
+  }
+
+  async reviewIdentityImprovementLoop(
+    id: string,
+    input: ContinuityLoopReviewInput,
+  ): Promise<ContinuityImprovementLoop | null> {
+    const raw = await this.readIdentityImprovementLoops();
+    const { markdown, loop } = reviewContinuityLoopInMarkdown(raw, id, input, new Date().toISOString());
+    if (!loop) return null;
+    await this.writeIdentityImprovementLoops(markdown);
+    return loop;
+  }
+
   // ---------------------------------------------------------------------------
   // Question storage
   // ---------------------------------------------------------------------------
@@ -1326,6 +1969,49 @@ export class StorageManager {
     const ts = Date.now().toString(36);
     const rand = Math.random().toString(36).slice(2, 4);
     return `${prefix}-${ts}-${rand}`;
+  }
+
+  private async readContinuityIncidentFileNames(): Promise<string[]> {
+    const files = await readdir(this.identityIncidentsDir);
+    return files
+      .filter((file) => file.endsWith(".md"))
+      .sort()
+      .reverse();
+  }
+
+  private async readContinuityIncidentFile(filePath: string): Promise<ContinuityIncidentRecord | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const parsed = parseContinuityIncident(raw);
+      return parsed ? { ...parsed, filePath } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async findContinuityIncidentFilePathById(id: string): Promise<string | null> {
+    const fileNames = await this.readContinuityIncidentFileNames();
+    const directMatch = fileNames.find((name) => name.endsWith(`-${id}.md`));
+    if (directMatch) {
+      const directPath = path.join(this.identityIncidentsDir, directMatch);
+      const parsed = await this.readContinuityIncidentFile(directPath);
+      if (parsed?.id === id) return directPath;
+    }
+
+    for (const fileName of fileNames) {
+      const filePath = path.join(this.identityIncidentsDir, fileName);
+      const parsed = await this.readContinuityIncidentFile(filePath);
+      if (parsed?.id === id) return filePath;
+    }
+    return null;
+  }
+
+  private sanitizeIdentityAuditKey(key: string): string {
+    const trimmed = key.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed) || trimmed.includes("..")) {
+      throw new Error("Invalid identity audit key");
+    }
+    return trimmed;
   }
 
   async writeQuestion(
@@ -1716,9 +2402,16 @@ export class StorageManager {
    * Build the Knowledge Index: a compact markdown table of top-scored entities.
    * Respects maxEntities and maxChars limits from config.
    */
-  async buildKnowledgeIndex(config: PluginConfig): Promise<{ result: string; cached: boolean }> {
+  async buildKnowledgeIndex(
+    config: PluginConfig,
+    overrides?: { maxEntities?: number; maxChars?: number },
+  ): Promise<{ result: string; cached: boolean }> {
+    const useDefaultLimits =
+      overrides?.maxEntities === undefined &&
+      overrides?.maxChars === undefined;
     // Return cached index if still fresh
     if (
+      useDefaultLimits &&
       this.knowledgeIndexCache &&
       Date.now() - this.knowledgeIndexCache.builtAt < StorageManager.KNOWLEDGE_INDEX_CACHE_TTL_MS
     ) {
@@ -1727,7 +2420,7 @@ export class StorageManager {
 
     const entities = await this.readAllEntityFiles();
     if (entities.length === 0) {
-      this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
+      if (useDefaultLimits) this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
       return { result: "", cached: false };
     }
 
@@ -1743,10 +2436,13 @@ export class StorageManager {
 
     // Sort by score descending, take top N
     scored.sort((a, b) => b.score - a.score);
-    const topN = scored.slice(0, config.knowledgeIndexMaxEntities);
+    const maxEntities = typeof overrides?.maxEntities === "number"
+      ? Math.max(0, Math.floor(overrides.maxEntities))
+      : config.knowledgeIndexMaxEntities;
+    const topN = scored.slice(0, maxEntities);
 
     if (topN.length === 0) {
-      this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
+      if (useDefaultLimits) this.knowledgeIndexCache = { result: "", builtAt: Date.now() };
       return { result: "", cached: false };
     }
 
@@ -1754,6 +2450,9 @@ export class StorageManager {
     const header = "## Knowledge Index\n\n| Entity | Type | Summary | Connected to |\n|--------|------|---------|-------------|";
     const rows: string[] = [];
     let totalChars = header.length;
+    const maxChars = typeof overrides?.maxChars === "number"
+      ? Math.max(0, Math.floor(overrides.maxChars))
+      : config.knowledgeIndexMaxChars;
 
     for (const entity of topN) {
       const summary = entity.summary || `${entity.factCount} facts`;
@@ -1762,13 +2461,13 @@ export class StorageManager {
         : "—";
       const row = `| ${entity.name} | ${entity.type} | ${summary} | ${connected} |`;
 
-      if (totalChars + row.length + 1 > config.knowledgeIndexMaxChars) break;
+      if (totalChars + row.length + 1 > maxChars) break;
       rows.push(row);
       totalChars += row.length + 1;
     }
 
     const result = rows.length === 0 ? "" : `${header}\n${rows.join("\n")}\n`;
-    this.knowledgeIndexCache = { result, builtAt: Date.now() };
+    if (useDefaultLimits) this.knowledgeIndexCache = { result, builtAt: Date.now() };
     return { result, cached: false };
   }
 

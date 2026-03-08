@@ -70,6 +70,56 @@
         "default": 8,
         "description": "Max QMD results per search"
       },
+      "qmdColdTierEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable cold-tier QMD recall from a secondary collection when hot recall misses"
+      },
+      "qmdColdCollection": {
+        "type": "string",
+        "default": "openclaw-engram-cold",
+        "description": "Secondary QMD collection name used for cold-tier fallback recall"
+      },
+      "qmdColdMaxResults": {
+        "type": "number",
+        "default": 8,
+        "description": "Max cold-tier QMD results considered before final recall cap"
+      },
+      "qmdTierMigrationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable value-aware migration between hot and cold QMD tiers"
+      },
+      "qmdTierDemotionMinAgeDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Minimum hot-memory age in days before tier demotion is eligible"
+      },
+      "qmdTierDemotionValueThreshold": {
+        "type": "number",
+        "default": 0.35,
+        "description": "Value-score threshold at or below which hot memories are eligible for cold demotion"
+      },
+      "qmdTierPromotionValueThreshold": {
+        "type": "number",
+        "default": 0.7,
+        "description": "Value-score threshold at or above which cold memories are eligible for hot promotion"
+      },
+      "qmdTierParityGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply graph-assist parity checks across hot and cold retrieval tiers"
+      },
+      "qmdTierParityHiMemEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply HiMem episode/note parity checks across hot and cold retrieval tiers"
+      },
+      "qmdTierAutoBackfillEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Allow automated cold-tier backfill jobs to repair parity gaps"
+      },
       "embeddingFallbackEnabled": {
         "type": "boolean",
         "default": true,
@@ -98,6 +148,60 @@
         "type": "boolean",
         "default": true,
         "description": "Enable agent identity reflections (appends to workspace IDENTITY.md)"
+      },
+      "identityContinuityEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable identity continuity workflows (anchor, incidents, audits)"
+      },
+      "identityInjectionMode": {
+        "type": "string",
+        "enum": ["recovery_only", "minimal", "full"],
+        "default": "recovery_only",
+        "description": "Controls when identity continuity context is injected into recall assembly"
+      },
+      "identityMaxInjectChars": {
+        "type": "number",
+        "default": 1200,
+        "description": "Maximum characters allowed for identity continuity context injection"
+      },
+      "continuityIncidentLoggingEnabled": {
+        "type": "boolean",
+        "description": "When unset, defaults to identityContinuityEnabled. Controls continuity incident logging artifacts."
+      },
+      "continuityAuditEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable continuity audit artifact generation workflows"
+      },
+      "sessionObserverEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable heartbeat-driven active session observer checks for proactive extraction triggers."
+      },
+      "sessionObserverDebounceMs": {
+        "type": "number",
+        "default": 120000,
+        "description": "Minimum interval between heartbeat observer triggers per session (ms)."
+      },
+      "sessionObserverBands": {
+        "type": "array",
+        "description": "Session size bands and growth thresholds for heartbeat observer triggers.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": { "type": "number" },
+            "triggerDeltaBytes": { "type": "number" },
+            "triggerDeltaTokens": { "type": "number" }
+          },
+          "required": ["maxBytes", "triggerDeltaBytes", "triggerDeltaTokens"]
+        },
+        "default": [
+          { "maxBytes": 50000, "triggerDeltaBytes": 4800, "triggerDeltaTokens": 1200 },
+          { "maxBytes": 200000, "triggerDeltaBytes": 9600, "triggerDeltaTokens": 2400 },
+          { "maxBytes": 1000000000, "triggerDeltaBytes": 19200, "triggerDeltaTokens": 4800 }
+        ]
       },
       "injectQuestions": {
         "type": "boolean",
@@ -218,6 +322,11 @@
         "default": true,
         "description": "Boost frequently accessed memories in search results"
       },
+      "recordEmptyRecallImpressions": {
+        "type": "boolean",
+        "default": false,
+        "description": "Record recall impressions with empty memoryIds when no memory context is injected."
+      },
       "recallPlannerEnabled": {
         "type": "boolean",
         "default": true,
@@ -316,6 +425,131 @@
         "type": "number",
         "default": 200,
         "description": "Max candidate paths returned from index prefilter before scoring (0 = no cap)."
+      },
+      "multiGraphMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable multi-graph memory (entity, time, causal edges). Default false."
+      },
+      "graphRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable graph recall planner mode (`graph_mode`). Requires multiGraphMemoryEnabled. Default false."
+      },
+      "graphExpandedIntentEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Escalate broader causal/timeline phrasing into graph_mode planning."
+      },
+      "graphAssistInFullModeEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Run bounded graph expansion during full recall mode when seed results exist."
+      },
+      "graphAssistShadowEvalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "In full mode, compute graph assist for comparison telemetry and snapshots but keep injected recall output baseline-identical."
+      },
+      "graphAssistMinSeedResults": {
+        "type": "number",
+        "default": 3,
+        "description": "Minimum seed recall results required before full-mode graph assist runs."
+      },
+      "entityGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Build entity co-reference graph (requires multiGraphMemoryEnabled). Default true."
+      },
+      "timeGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Build temporal sequence graph within threads (requires multiGraphMemoryEnabled). Default true."
+      },
+      "graphWriteSessionAdjacencyEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Write fallback temporal adjacency edges for consecutive extracted memories in the same session."
+      },
+      "causalGraphEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Build causal inference graph from heuristic phrases (requires multiGraphMemoryEnabled). Default true."
+      },
+      "maxGraphTraversalSteps": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum BFS hops during spreading activation. Default 3."
+      },
+      "graphActivationDecay": {
+        "type": "number",
+        "default": 0.7,
+        "description": "Per-hop activation decay factor (0-1). Default 0.7."
+      },
+      "graphExpansionActivationWeight": {
+        "type": "number",
+        "default": 0.65,
+        "description": "Blend weight for graph activation when scoring expanded results (0-1). Higher values favor graph activation over seed QMD score."
+      },
+      "graphExpansionBlendMin": {
+        "type": "number",
+        "default": 0.05,
+        "description": "Lower clamp bound for blended graph-expanded recall scores (0-1)."
+      },
+      "graphExpansionBlendMax": {
+        "type": "number",
+        "default": 0.95,
+        "description": "Upper clamp bound for blended graph-expanded recall scores (0-1)."
+      },
+      "maxEntityGraphEdgesPerMemory": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum entity graph edges written per memory write. Default 10."
+      },
+      "delinearizeEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "SimpleMem-inspired de-linearization: resolve pronouns and anchor relative dates in extracted memories"
+      },
+      "recallConfidenceGateEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Synapse-inspired confidence gate: skip memory injection when top recall score is below threshold"
+      },
+      "recallConfidenceGateThreshold": {
+        "type": "number",
+        "default": 0.12,
+        "description": "Minimum top recall score to inject memories (0-1). Below this, memories are rejected as too uncertain"
+      },
+      "causalRuleExtractionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "PlugMem-inspired causal rule extraction: mine IF-THEN rules from conversations during consolidation"
+      },
+      "memoryReconstructionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "E-Mem-inspired memory reconstruction: targeted secondary retrieval for entity references lacking context in recall"
+      },
+      "memoryReconstructionMaxExpansions": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum number of entity expansions per recall cycle"
+      },
+      "graphLateralInhibitionEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Synapse-inspired lateral inhibition to suppress hub-node dominance in graph retrieval"
+      },
+      "graphLateralInhibitionBeta": {
+        "type": "number",
+        "default": 0.15,
+        "description": "Inhibition strength (0-1). Higher values suppress weaker nodes more aggressively"
+      },
+      "graphLateralInhibitionTopM": {
+        "type": "number",
+        "default": 7,
+        "description": "Number of top competing nodes considered for lateral inhibition"
       },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
@@ -530,6 +764,11 @@
         "default": 15,
         "description": "Number of turns per checkpoint"
       },
+      "compactionResetEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Trigger session reset after compaction with BOOT.md injection (requires OC fork with api.resetSession)"
+      },
       "hourlySummariesEnabled": {
         "type": "boolean",
         "default": true,
@@ -692,6 +931,11 @@
         "default": 90000,
         "description": "Timeout for QMD update command (ms). Increase if your index grows and updates exceed 30s."
       },
+      "qmdUpdateMinIntervalMs": {
+        "type": "number",
+        "default": 900000,
+        "description": "Minimum interval between QMD update executions (ms). Useful because current QMD update runs globally across collections."
+      },
       "localLlmRetry5xxCount": {
         "type": "number",
         "default": 1,
@@ -715,6 +959,25 @@
       "localLlmMaxContext": {
         "type": "number",
         "description": "Override the detected context window for local LLM. Set to 32768 if your LLM server defaults to 32K context despite the model supporting 128K."
+      },
+      "localLlmFastEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable a separate smaller/faster local LLM for quick operations (rerank, entity_summary, tmt_summary, compression_guideline)."
+      },
+      "localLlmFastModel": {
+        "type": "string",
+        "default": "",
+        "description": "Model ID for fast-tier local LLM operations. Empty string uses the primary localLlmModel."
+      },
+      "localLlmFastUrl": {
+        "type": "string",
+        "description": "Endpoint for the fast-tier local LLM. Defaults to the same endpoint as localLlmUrl when not set."
+      },
+      "localLlmFastTimeoutMs": {
+        "type": "number",
+        "default": 15000,
+        "description": "Timeout for fast-tier local LLM requests (ms). Lower than primary since fast ops should complete quickly."
       },
       "hourlySummaryCronAutoRegister": {
         "type": "boolean",
@@ -750,7 +1013,7 @@
         "type": "string",
         "enum": ["qmd", "faiss"],
         "default": "qmd",
-        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss reserved/experimental."
+        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss is predeclared for follow-on adapter tasks and should remain disabled in this release."
       },
       "conversationIndexQmdCollection": {
         "type": "string",
@@ -772,6 +1035,51 @@
         "default": false,
         "description": "If true, conversation_index_update also runs QMD embed by default. Keep false for lower load."
       },
+      "conversationIndexFaissScriptPath": {
+        "type": "string",
+        "default": "",
+        "description": "Optional absolute path to FAISS sidecar script. If unset, uses built-in default script location."
+      },
+      "conversationIndexFaissPythonBin": {
+        "type": "string",
+        "default": "",
+        "description": "Optional Python executable used to run the FAISS sidecar (for example python3.11)."
+      },
+      "conversationIndexFaissModelId": {
+        "type": "string",
+        "default": "text-embedding-3-small",
+        "description": "Embedding model identifier expected by the FAISS sidecar."
+      },
+      "conversationIndexFaissIndexDir": {
+        "type": "string",
+        "default": "state/conversation-index/faiss",
+        "description": "Relative directory under memoryDir where FAISS sidecar index artifacts are stored."
+      },
+      "conversationIndexFaissUpsertTimeoutMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Timeout (ms) for FAISS upsert operations."
+      },
+      "conversationIndexFaissSearchTimeoutMs": {
+        "type": "number",
+        "default": 5000,
+        "description": "Timeout (ms) for FAISS search operations."
+      },
+      "conversationIndexFaissHealthTimeoutMs": {
+        "type": "number",
+        "default": 2000,
+        "description": "Timeout (ms) for FAISS health checks."
+      },
+      "conversationIndexFaissMaxBatchSize": {
+        "type": "number",
+        "default": 512,
+        "description": "Maximum transcript chunk batch size per FAISS upsert call."
+      },
+      "conversationIndexFaissMaxSearchK": {
+        "type": "number",
+        "default": 50,
+        "description": "Maximum top-K allowed for FAISS search requests."
+      },
       "conversationRecallTopK": {
         "type": "number",
         "default": 3,
@@ -786,6 +1094,178 @@
         "type": "number",
         "default": 800,
         "description": "Timeout for semantic conversation recall search (ms). Fail-open on timeout."
+      },
+      "evalHarnessEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's benchmark/evaluation harness foundation for tracking benchmark packs and run summaries."
+      },
+      "evalShadowModeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable shadow-mode evaluation workflows so future benchmark instrumentation can measure memory changes without changing live recall output."
+      },
+      "benchmarkBaselineSnapshotsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable versioned benchmark baseline snapshot artifacts under the eval store for later PR delta reporting."
+      },
+      "benchmarkDeltaReporterEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable named-baseline delta reports so PR candidates can be compared against stored benchmark baselines."
+      },
+      "evalStoreDir": {
+        "type": "string",
+        "description": "Override the evaluation harness state directory (defaults to {memoryDir}/state/evals)."
+      },
+      "objectiveStateMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's objective-state memory foundation for normalized world/tool state snapshots."
+      },
+      "objectiveStateSnapshotWritesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Allow writing typed objective-state snapshots to the objective-state store."
+      },
+      "objectiveStateRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant objective-state snapshots into recall context."
+      },
+      "objectiveStateStoreDir": {
+        "type": "string",
+        "description": "Override the objective-state memory directory (defaults to {memoryDir}/state/objective-state)."
+      },
+      "causalTrajectoryMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's causal-trajectory memory foundation for typed goal-action-observation-outcome chains."
+      },
+      "causalTrajectoryStoreDir": {
+        "type": "string",
+        "description": "Override the causal-trajectory memory directory (defaults to {memoryDir}/state/causal-trajectories)."
+      },
+      "causalTrajectoryRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant causal trajectories into recall context."
+      },
+      "trustZonesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Engram's trust-zone memory foundation for quarantine, working, and trusted records."
+      },
+      "quarantinePromotionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Reserve future promotion flows from quarantine into higher-trust zones."
+      },
+      "trustZoneStoreDir": {
+        "type": "string",
+        "description": "Override the trust-zone store directory (defaults to {memoryDir}/state/trust-zones)."
+      },
+      "trustZoneRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant working and trusted trust-zone records into recall context."
+      },
+      "memoryPoisoningDefenseEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic provenance trust scoring for trust-zone records as the first poisoning-defense surface."
+      },
+      "memoryRedTeamBenchEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable operator-facing memory red-team benchmark packs and status accounting for poisoning-defense regression suites."
+      },
+      "harmonicRetrievalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable harmonic retrieval blending over abstraction nodes and cue anchors, including recall-section injection and harmonic-search diagnostics."
+      },
+      "abstractionAnchorsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable typed cue-anchor indexing for abstraction nodes and expose it through cue-anchor status tooling."
+      },
+      "abstractionNodeStoreDir": {
+        "type": "string",
+        "description": "Override the abstraction-node store directory (defaults to {memoryDir}/state/abstraction-nodes)."
+      },
+      "verifiedRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes."
+      },
+      "semanticRulePromotionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic promotion of explicit IF/THEN rules from verified episodic memories."
+      },
+      "semanticRuleVerificationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+      },
+      "creationMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+      },
+      "memoryUtilityLearningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable utility-learning telemetry storage so later slices can learn promotion and ranking weights from downstream outcomes."
+      },
+      "promotionByOutcomeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable outcome-aware promotion controls that consume learned utility signals when later rollout slices activate them."
+      },
+      "commitmentLedgerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+      },
+      "commitmentLifecycleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger."
+      },
+      "commitmentStaleDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Days before an open commitment without a due date is considered stale in lifecycle status."
+      },
+      "commitmentLedgerDir": {
+        "type": "string",
+        "description": "Override the commitment ledger directory (defaults to {memoryDir}/state/commitment-ledger)."
+      },
+      "resumeBundlesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic resume-bundle storage and operator-facing handoff bundle commands."
+      },
+      "resumeBundleDir": {
+        "type": "string",
+        "description": "Override the resume-bundle directory (defaults to {memoryDir}/state/resume-bundles)."
+      },
+      "workProductRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject prompt-relevant work-product ledger entries into recall context and expose artifact-recovery search tooling."
+      },
+      "workProductLedgerDir": {
+        "type": "string",
+        "description": "Override the work-product ledger directory (defaults to {memoryDir}/state/work-product-ledger)."
+      },
+      "actionGraphRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Write action-conditioned causal-stage edges from typed trajectory records into the causal graph."
       },
       "namespacesEnabled": {
         "type": "boolean",
@@ -842,6 +1322,39 @@
         "items": { "type": "string", "enum": ["self", "shared"] },
         "default": ["self", "shared"]
       },
+      "cronRecallMode": {
+        "type": "string",
+        "enum": ["all", "none", "allowlist"],
+        "default": "all",
+        "description": "Recall behavior for cron sessions. Use allowlist to opt specific cron sessionKeys in."
+      },
+      "cronRecallAllowlist": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Session-key wildcard patterns (supports *) allowed for recall when cronRecallMode=allowlist."
+      },
+      "cronRecallPolicyEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable prompt-shape-aware recall query normalization for cron sessions."
+      },
+      "cronRecallNormalizedQueryMaxChars": {
+        "type": "number",
+        "default": 480,
+        "description": "Maximum query length (characters) used for cron recall retrieval after normalization."
+      },
+      "cronRecallInstructionHeavyTokenCap": {
+        "type": "number",
+        "default": 36,
+        "description": "Maximum token count used to build compact retrieval queries for instruction-heavy cron prompts."
+      },
+      "cronConversationRecallMode": {
+        "type": "string",
+        "enum": ["auto", "always", "never"],
+        "default": "auto",
+        "description": "Controls conversation semantic recall in cron sessions. auto skips it for instruction-heavy prompts."
+      },
       "autoPromoteToSharedEnabled": {
         "type": "boolean",
         "default": false,
@@ -858,6 +1371,16 @@
         "enum": ["explicit", "implied"],
         "default": "explicit",
         "description": "Minimum confidence tier for auto-promotion."
+      },
+      "routingRulesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable custom memory routing rules (v8.7). Default off."
+      },
+      "routingRulesStateFile": {
+        "type": "string",
+        "default": "state/routing-rules.json",
+        "description": "Relative path under memoryDir for persisted routing rules."
       },
       "sharedContextEnabled": {
         "type": "boolean",
@@ -882,6 +1405,21 @@
         "type": "number",
         "default": 4000,
         "description": "Timeout for semantic cross-signal grouping (ms)."
+      },
+      "sharedCrossSignalSemanticEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable semantic cross-signal enhancer during shared-context daily curation."
+      },
+      "sharedCrossSignalSemanticTimeoutMs": {
+        "type": "number",
+        "default": 4000,
+        "description": "Timeout budget for shared-context semantic cross-signal enhancer (ms)."
+      },
+      "sharedCrossSignalSemanticMaxCandidates": {
+        "type": "number",
+        "default": 120,
+        "description": "Maximum candidate topic tokens considered by semantic cross-signal enhancer."
       },
       "compoundingEnabled": {
         "type": "boolean",
@@ -939,6 +1477,165 @@
         "default": ["commitment", "preference", "decision", "principle"],
         "description": "Categories that protect a fact from archival regardless of other criteria."
       },
+      "lifecyclePolicyEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable lifecycle scoring/promotions during consolidation (v8.3)."
+      },
+      "lifecycleFilterStaleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If enabled, stale lifecycle memories can be filtered from retrieval (wired in PR20D)."
+      },
+      "lifecyclePromoteHeatThreshold": {
+        "type": "number",
+        "default": 0.55,
+        "description": "Heat threshold for lifecycle promotion to validated/active states."
+      },
+      "lifecycleStaleDecayThreshold": {
+        "type": "number",
+        "default": 0.65,
+        "description": "Decay threshold for lifecycle demotion to stale."
+      },
+      "lifecycleArchiveDecayThreshold": {
+        "type": "number",
+        "default": 0.85,
+        "description": "Decay threshold for lifecycle demotion to archived state semantics."
+      },
+      "lifecycleProtectedCategories": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["decision", "principle", "commitment", "preference"],
+        "description": "Categories that lifecycle policy will not auto-archive."
+      },
+      "lifecycleMetricsEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Emit lifecycle metrics snapshots to state/lifecycle-metrics.json when policy is enabled."
+      },
+      "proactiveExtractionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable proactive self-questioning extraction second-pass (v8.3, default off)."
+      },
+      "contextCompressionActionsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable context compression action tooling and telemetry paths (v8.3, default off)."
+      },
+      "compressionGuidelineLearningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable adaptive compression guideline learning from memory-action outcomes (v8.3, default off)."
+      },
+      "compressionGuidelineSemanticRefinementEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable optional semantic refinement pass after deterministic guideline candidate generation (v8.11, default off)."
+      },
+      "compressionGuidelineSemanticTimeoutMs": {
+        "type": "number",
+        "default": 2500,
+        "description": "Hard timeout in milliseconds for semantic refinement; timeout fail-opens to deterministic output."
+      },
+      "maxProactiveQuestionsPerExtraction": {
+        "type": "number",
+        "default": 2,
+        "description": "Maximum proactive self-questions generated per extraction pass (0 disables question generation)."
+      },
+      "maxCompressionTokensPerHour": {
+        "type": "number",
+        "default": 1500,
+        "description": "Hourly token budget for compression actions/guideline generation (0 disables budgeted compression work)."
+      },
+      "behaviorLoopAutoTuneEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable runtime behavior-loop policy auto-tuning (v8.15, default off)."
+      },
+      "behaviorLoopLearningWindowDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Rolling signal window used for behavior-loop policy learning (days; 0 allowed)."
+      },
+      "behaviorLoopMinSignalCount": {
+        "type": "number",
+        "default": 10,
+        "description": "Minimum signal volume required before behavior-loop adjustments are emitted (0 allowed)."
+      },
+      "behaviorLoopMaxDeltaPerCycle": {
+        "type": "number",
+        "default": 0.1,
+        "description": "Maximum absolute parameter delta allowed per learning cycle (0-1)."
+      },
+      "behaviorLoopProtectedParams": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [
+          "maxMemoryTokens",
+          "qmdMaxResults",
+          "qmdColdMaxResults",
+          "recallPlannerMaxQmdResultsMinimal",
+          "verbatimArtifactsMaxRecall"
+        ],
+        "description": "Runtime parameters that auto-tuning must never modify."
+      },
+      "searchBackend": {
+        "type": "string",
+        "enum": ["qmd", "remote", "noop", "lancedb", "meilisearch", "orama"],
+        "default": "qmd",
+        "description": "Search backend: qmd (local hybrid), remote (HTTP REST), noop (disabled), lancedb (embedded hybrid), meilisearch (server-based), orama (embedded JS)"
+      },
+      "remoteSearchBaseUrl": {
+        "type": "string",
+        "description": "Base URL for remote search backend (when searchBackend=remote)"
+      },
+      "remoteSearchApiKey": {
+        "type": "string",
+        "description": "API key for remote search backend (when searchBackend=remote)"
+      },
+      "remoteSearchTimeoutMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Timeout in ms for remote search backend requests"
+      },
+      "lanceDbPath": {
+        "type": "string",
+        "description": "Directory path for LanceDB storage (when searchBackend=lancedb)"
+      },
+      "lanceEmbeddingDimension": {
+        "type": "number",
+        "default": 1536,
+        "description": "Embedding vector dimension for LanceDB (when searchBackend=lancedb)"
+      },
+      "meilisearchHost": {
+        "type": "string",
+        "default": "http://localhost:7700",
+        "description": "Meilisearch server host URL (when searchBackend=meilisearch)"
+      },
+      "meilisearchApiKey": {
+        "type": "string",
+        "description": "API key for Meilisearch (when searchBackend=meilisearch)"
+      },
+      "meilisearchTimeoutMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Timeout in ms for Meilisearch requests (when searchBackend=meilisearch)"
+      },
+      "meilisearchAutoIndex": {
+        "type": "boolean",
+        "default": false,
+        "description": "Automatically push local memory docs to Meilisearch on update (when searchBackend=meilisearch)"
+      },
+      "oramaDbPath": {
+        "type": "string",
+        "description": "Directory path for Orama persistence files (when searchBackend=orama)"
+      },
+      "oramaEmbeddingDimension": {
+        "type": "number",
+        "default": 1536,
+        "description": "Embedding vector dimension for Orama (when searchBackend=orama)"
+      },
       "qmdDaemonEnabled": {
         "type": "boolean",
         "default": true,
@@ -993,6 +1690,34 @@
         "type": "boolean",
         "default": true,
         "description": "Generate LLM summaries for entities during consolidation"
+      },
+      "recallBudgetChars": {
+        "type": "number",
+        "description": "Hard character cap for total recall injection. Defaults to maxMemoryTokens * 4."
+      },
+      "recallPipeline": {
+        "type": "array",
+        "description": "Ordered recall sections with per-section budgets and feature knobs.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "enabled": { "type": "boolean", "default": true },
+            "maxChars": { "type": ["number", "null"] },
+            "consolidateTriggerLines": { "type": "number" },
+            "consolidateTargetLines": { "type": "number" },
+            "maxEntities": { "type": "number" },
+            "maxResults": { "type": "number" },
+            "maxTurns": { "type": "number" },
+            "maxTokens": { "type": "number" },
+            "lookbackHours": { "type": "number" },
+            "maxCount": { "type": "number" },
+            "topK": { "type": "number" },
+            "timeoutMs": { "type": "number" },
+            "maxPatterns": { "type": "number" }
+          },
+          "required": ["id"]
+        }
       }
     }
   },
@@ -1056,6 +1781,54 @@
       "advanced": true,
       "placeholder": "8"
     },
+    "qmdColdTierEnabled": {
+      "label": "Enable Cold QMD Tier",
+      "advanced": true,
+      "help": "When hot recall misses, query a secondary cold QMD collection before archive scan fallback"
+    },
+    "qmdColdCollection": {
+      "label": "Cold QMD Collection",
+      "advanced": true,
+      "placeholder": "openclaw-engram-cold"
+    },
+    "qmdColdMaxResults": {
+      "label": "Cold QMD Max Results",
+      "advanced": true,
+      "placeholder": "8"
+    },
+    "qmdTierMigrationEnabled": {
+      "label": "Enable Tier Migration",
+      "advanced": true,
+      "help": "Enable value-aware hot/cold migration controls"
+    },
+    "qmdTierDemotionMinAgeDays": {
+      "label": "Tier Demotion Min Age Days",
+      "advanced": true,
+      "placeholder": "14"
+    },
+    "qmdTierDemotionValueThreshold": {
+      "label": "Tier Demotion Value Threshold",
+      "advanced": true,
+      "placeholder": "0.35"
+    },
+    "qmdTierPromotionValueThreshold": {
+      "label": "Tier Promotion Value Threshold",
+      "advanced": true,
+      "placeholder": "0.7"
+    },
+    "qmdTierParityGraphEnabled": {
+      "label": "Tier Parity Graph Checks",
+      "advanced": true
+    },
+    "qmdTierParityHiMemEnabled": {
+      "label": "Tier Parity HiMem Checks",
+      "advanced": true
+    },
+    "qmdTierAutoBackfillEnabled": {
+      "label": "Tier Auto Backfill",
+      "advanced": true,
+      "help": "Enable automated cold-tier backfill runs for parity repair"
+    },
     "embeddingFallbackEnabled": {
       "label": "Embedding Fallback",
       "help": "Use semantic embeddings when QMD is unavailable or no results are found"
@@ -1083,6 +1856,46 @@
     "identityEnabled": {
       "label": "Identity Reflections",
       "help": "Append self-reflections to workspace IDENTITY.md after each extraction"
+    },
+    "identityContinuityEnabled": {
+      "label": "Identity Continuity",
+      "help": "Enable identity continuity workflows (anchor, incidents, audits)"
+    },
+    "identityInjectionMode": {
+      "label": "Identity Injection Mode",
+      "advanced": true,
+      "placeholder": "recovery_only",
+      "help": "When to inject identity continuity context: recovery_only, minimal, or full"
+    },
+    "identityMaxInjectChars": {
+      "label": "Identity Max Inject Chars",
+      "advanced": true,
+      "placeholder": "1200"
+    },
+    "continuityIncidentLoggingEnabled": {
+      "label": "Continuity Incident Logging",
+      "advanced": true,
+      "help": "When omitted, follows Identity Continuity enabled state"
+    },
+    "continuityAuditEnabled": {
+      "label": "Continuity Audits",
+      "advanced": true,
+      "help": "Generate continuity audit artifacts"
+    },
+    "sessionObserverEnabled": {
+      "label": "Session Observer",
+      "advanced": true,
+      "help": "Observe heartbeat growth and proactively trigger extraction when configured thresholds are crossed"
+    },
+    "sessionObserverDebounceMs": {
+      "label": "Observer Debounce (ms)",
+      "advanced": true,
+      "placeholder": "120000"
+    },
+    "sessionObserverBands": {
+      "label": "Observer Size Bands",
+      "advanced": true,
+      "help": "Array of {maxBytes, triggerDeltaBytes, triggerDeltaTokens} threshold objects"
     },
     "injectQuestions": {
       "label": "Inject Questions",
@@ -1247,6 +2060,11 @@
       "advanced": true,
       "placeholder": "15"
     },
+    "compactionResetEnabled": {
+      "label": "Compaction Reset",
+      "help": "Reset session after compaction and inject BOOT.md for recovery",
+      "advanced": true
+    },
     "hourlySummariesEnabled": {
       "label": "Enable Hourly Summaries",
       "help": "Generate hourly summaries of conversation activity"
@@ -1328,6 +2146,207 @@
       "placeholder": "(auto-detected from model)",
       "help": "Override context window if your LLM server uses smaller default (e.g., 32768 for LM Studio default)"
     },
+    "localLlmFastEnabled": {
+      "label": "Fast LLM Tier",
+      "help": "Use a separate smaller model for quick operations (rerank, entity summaries, compression guidelines)"
+    },
+    "localLlmFastModel": {
+      "label": "Fast LLM Model",
+      "placeholder": "qwen3.5-4b-mlx",
+      "help": "Model ID for fast-tier operations. Must be loaded in LM Studio alongside the primary model."
+    },
+    "localLlmFastUrl": {
+      "label": "Fast LLM URL",
+      "advanced": true,
+      "placeholder": "(defaults to localLlmUrl)",
+      "help": "Endpoint for fast-tier model. When not set, inherits the primary localLlmUrl."
+    },
+    "localLlmFastTimeoutMs": {
+      "label": "Fast LLM Timeout (ms)",
+      "advanced": true,
+      "help": "Timeout for fast-tier requests. Lower than primary since fast ops should complete quickly."
+    },
+    "evalHarnessEnabled": {
+      "label": "Evaluation Harness",
+      "help": "Enable Engram's benchmark/evaluation harness foundation and benchmark-status diagnostics."
+    },
+    "evalShadowModeEnabled": {
+      "label": "Evaluation Shadow Mode",
+      "advanced": true,
+      "help": "Reserve shadow-mode measurement paths so future benchmark instrumentation can compare memory behavior without affecting live recall."
+    },
+    "benchmarkBaselineSnapshotsEnabled": {
+      "label": "Benchmark Baseline Snapshots",
+      "advanced": true,
+      "help": "Enable versioned benchmark baseline snapshot artifacts for later PR delta reporting."
+    },
+    "benchmarkDeltaReporterEnabled": {
+      "label": "Benchmark Delta Reporter",
+      "advanced": true,
+      "help": "Enable named-baseline delta reports that compare the current eval store against a stored benchmark baseline snapshot."
+    },
+    "evalStoreDir": {
+      "label": "Evaluation Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/evals",
+      "help": "Override where benchmark packs and run summaries are stored."
+    },
+    "objectiveStateMemoryEnabled": {
+      "label": "Objective-State Memory",
+      "help": "Enable the objective-state memory foundation for normalized world and tool state snapshots."
+    },
+    "objectiveStateSnapshotWritesEnabled": {
+      "label": "Objective-State Snapshot Writes",
+      "advanced": true,
+      "help": "Allow snapshot writers to persist objective-state records into the objective-state store."
+    },
+    "objectiveStateRecallEnabled": {
+      "label": "Objective-State Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant objective-state snapshots into recall context."
+    },
+    "objectiveStateStoreDir": {
+      "label": "Objective-State Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/objective-state",
+      "help": "Override where objective-state snapshots are stored."
+    },
+    "causalTrajectoryMemoryEnabled": {
+      "label": "Causal Trajectory Memory",
+      "help": "Enable the causal-trajectory memory foundation for typed goal-action-observation-outcome chains."
+    },
+    "causalTrajectoryStoreDir": {
+      "label": "Causal Trajectory Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/causal-trajectories",
+      "help": "Override where causal-trajectory records are stored."
+    },
+    "causalTrajectoryRecallEnabled": {
+      "label": "Causal Trajectory Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant causal trajectories into recall context."
+    },
+    "trustZonesEnabled": {
+      "label": "Trust Zones",
+      "help": "Enable the trust-zone memory foundation for quarantine, working, and trusted records."
+    },
+    "quarantinePromotionEnabled": {
+      "label": "Quarantine Promotion",
+      "advanced": true,
+      "help": "Reserve future promotion flows from quarantine into higher-trust zones."
+    },
+    "trustZoneStoreDir": {
+      "label": "Trust-Zone Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/trust-zones",
+      "help": "Override where trust-zone records are stored."
+    },
+    "trustZoneRecallEnabled": {
+      "label": "Trust-Zone Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant working and trusted trust-zone records into recall context."
+    },
+    "memoryPoisoningDefenseEnabled": {
+      "label": "Memory Poisoning Defense",
+      "advanced": true,
+      "help": "Enable provenance trust scoring in trust-zone status output as the first poisoning-defense signal."
+    },
+    "memoryRedTeamBenchEnabled": {
+      "label": "Memory Red-Team Benchmarks",
+      "advanced": true,
+      "help": "Enable operator-facing red-team benchmark pack support and status accounting for poisoning-defense suites."
+    },
+    "harmonicRetrievalEnabled": {
+      "label": "Harmonic Retrieval",
+      "help": "Enable harmonic retrieval blending over abstraction nodes and cue anchors, including recall-section injection and harmonic-search diagnostics."
+    },
+    "abstractionAnchorsEnabled": {
+      "label": "Abstraction Anchors",
+      "advanced": true,
+      "help": "Enable typed cue-anchor indexing for abstraction nodes and expose it through cue-anchor status tooling."
+    },
+    "abstractionNodeStoreDir": {
+      "label": "Abstraction-Node Store Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/abstraction-nodes",
+      "help": "Override where abstraction nodes are stored."
+    },
+    "verifiedRecallEnabled": {
+      "label": "Verified Recall",
+      "help": "Inject prompt-relevant memory boxes only when their cited source memories verify as non-archived episodes."
+    },
+    "semanticRulePromotionEnabled": {
+      "label": "Semantic Rule Promotion",
+      "advanced": true,
+      "help": "Promote explicit IF/THEN rules from verified episodic memories into durable rule memories."
+    },
+    "semanticRuleVerificationEnabled": {
+      "label": "Semantic Rule Verification",
+      "advanced": true,
+      "help": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+    },
+    "creationMemoryEnabled": {
+      "label": "Creation Memory",
+      "advanced": true,
+      "help": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+    },
+    "memoryUtilityLearningEnabled": {
+      "label": "Utility Learning",
+      "advanced": true,
+      "help": "Enable utility-learning telemetry storage so later slices can learn promotion and ranking weights from downstream outcomes."
+    },
+    "promotionByOutcomeEnabled": {
+      "label": "Promotion By Outcome",
+      "advanced": true,
+      "help": "Enable outcome-aware promotion controls that will consume learned utility signals in later rollout slices."
+    },
+    "commitmentLedgerEnabled": {
+      "label": "Commitment Ledger",
+      "advanced": true,
+      "help": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+    },
+    "commitmentLifecycleEnabled": {
+      "label": "Commitment Lifecycle",
+      "advanced": true,
+      "help": "Enable fulfillment transitions, stale tracking, and resolved-entry cleanup for the commitment ledger."
+    },
+    "commitmentStaleDays": {
+      "label": "Commitment Stale Days",
+      "advanced": true,
+      "help": "Days before an open commitment without a due date counts as stale."
+    },
+    "commitmentLedgerDir": {
+      "label": "Commitment Ledger Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/commitment-ledger",
+      "help": "Override where commitment ledger entries are stored."
+    },
+    "resumeBundlesEnabled": {
+      "label": "Resume Bundles",
+      "advanced": true,
+      "help": "Enable deterministic resume-bundle storage and explicit handoff bundle commands."
+    },
+    "resumeBundleDir": {
+      "label": "Resume Bundle Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/resume-bundles",
+      "help": "Override where resume bundles are stored."
+    },
+    "workProductRecallEnabled": {
+      "label": "Work-Product Recall",
+      "advanced": true,
+      "help": "Inject prompt-relevant work-product ledger entries into recall context and expose artifact-recovery search tooling."
+    },
+    "workProductLedgerDir": {
+      "label": "Work-Product Ledger Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/work-product-ledger",
+      "help": "Override where work-product ledger entries are stored."
+    },
+    "actionGraphRecallEnabled": {
+      "label": "Action Graph Recall",
+      "help": "Write action-conditioned causal-stage edges from typed trajectory records into the causal graph."
+    },
     "factDeduplicationEnabled": {
       "label": "Fact Deduplication",
       "help": "Prevent storing semantically identical facts using content hashing"
@@ -1355,6 +2374,96 @@
       "label": "Archival Protected Categories",
       "advanced": true,
       "help": "Categories that are never archived regardless of age or importance"
+    },
+    "lifecyclePolicyEnabled": {
+      "label": "Lifecycle Policy Engine",
+      "help": "Enable lifecycle scoring/promotions during consolidation (v8.3)"
+    },
+    "lifecycleFilterStaleEnabled": {
+      "label": "Filter Stale Lifecycle Memories",
+      "advanced": true,
+      "help": "If enabled, retrieval may filter stale lifecycle memories (activated in PR20D)"
+    },
+    "lifecyclePromoteHeatThreshold": {
+      "label": "Lifecycle Promote Heat Threshold",
+      "advanced": true,
+      "placeholder": "0.55"
+    },
+    "lifecycleStaleDecayThreshold": {
+      "label": "Lifecycle Stale Decay Threshold",
+      "advanced": true,
+      "placeholder": "0.65"
+    },
+    "lifecycleArchiveDecayThreshold": {
+      "label": "Lifecycle Archive Decay Threshold",
+      "advanced": true,
+      "placeholder": "0.85"
+    },
+    "lifecycleProtectedCategories": {
+      "label": "Lifecycle Protected Categories",
+      "advanced": true,
+      "help": "Categories lifecycle policy should not auto-archive"
+    },
+    "lifecycleMetricsEnabled": {
+      "label": "Lifecycle Metrics",
+      "advanced": true,
+      "help": "Write lifecycle metrics snapshots to state/lifecycle-metrics.json"
+    },
+    "proactiveExtractionEnabled": {
+      "label": "Proactive Extraction",
+      "help": "Enable proactive self-questioning extraction second-pass (v8.3, default off)"
+    },
+    "contextCompressionActionsEnabled": {
+      "label": "Context Compression Actions",
+      "help": "Enable context compression action tools and action telemetry (v8.3, default off)"
+    },
+    "compressionGuidelineLearningEnabled": {
+      "label": "Compression Guideline Learning",
+      "help": "Enable adaptive compression guideline learning from action outcomes (v8.3, default off)"
+    },
+    "compressionGuidelineSemanticRefinementEnabled": {
+      "label": "Compression Semantic Refinement",
+      "advanced": true,
+      "help": "Enable optional semantic refinement after deterministic guideline generation (v8.11, default off)"
+    },
+    "compressionGuidelineSemanticTimeoutMs": {
+      "label": "Compression Semantic Timeout (ms)",
+      "advanced": true,
+      "placeholder": "2500"
+    },
+    "maxProactiveQuestionsPerExtraction": {
+      "label": "Max Proactive Questions / Extraction",
+      "advanced": true,
+      "placeholder": "2"
+    },
+    "maxCompressionTokensPerHour": {
+      "label": "Max Compression Tokens / Hour",
+      "advanced": true,
+      "placeholder": "1500"
+    },
+    "behaviorLoopAutoTuneEnabled": {
+      "label": "Behavior Loop Auto-Tune",
+      "help": "Enable bounded runtime policy auto-tuning from correction/preference signals (v8.15, default off)"
+    },
+    "behaviorLoopLearningWindowDays": {
+      "label": "Behavior Learning Window (days)",
+      "advanced": true,
+      "placeholder": "14"
+    },
+    "behaviorLoopMinSignalCount": {
+      "label": "Behavior Min Signal Count",
+      "advanced": true,
+      "placeholder": "10"
+    },
+    "behaviorLoopMaxDeltaPerCycle": {
+      "label": "Behavior Max Delta / Cycle",
+      "advanced": true,
+      "placeholder": "0.1"
+    },
+    "behaviorLoopProtectedParams": {
+      "label": "Behavior Protected Params",
+      "advanced": true,
+      "help": "Parameter keys that auto-tuning must never change"
     },
     "knowledgeIndexEnabled": {
       "label": "Knowledge Index",
@@ -1390,6 +2499,16 @@
     "entitySummaryEnabled": {
       "label": "Entity Summaries",
       "help": "Generate LLM summaries for entities during consolidation"
+    },
+    "recallBudgetChars": {
+      "label": "Recall Budget (Chars)",
+      "advanced": true,
+      "placeholder": "8000"
+    },
+    "recallPipeline": {
+      "label": "Recall Pipeline",
+      "advanced": true,
+      "help": "Ordered section configuration for recall assembly and per-section limits"
     }
   }
 }

@@ -1,7 +1,8 @@
-import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { log } from "./logger.js";
 import type { TranscriptEntry, Checkpoint, PluginConfig } from "./types.js";
+import { analyzeSessionIntegrity, type SessionIntegrityReport } from "./session-integrity.js";
 
 /**
  * Manages conversation transcript storage, checkpointing, and recall formatting.
@@ -18,6 +19,10 @@ export class TranscriptManager {
   private stateDir: string;
   private toolUsageDir: string;
   private config: PluginConfig;
+  private sessionFootprintCache = new Map<
+    string,
+    { totalBytes: number; fileBytes: Map<string, number>; fileSizes: Map<string, number> }
+  >();
 
   /** Default checkpoint TTL in hours */
   private static readonly DEFAULT_CHECKPOINT_TTL_HOURS = 24;
@@ -36,10 +41,10 @@ export class TranscriptManager {
    * Parse a sessionKey to extract channel type and ID.
    *
    * SessionKey patterns:
-   *   - agent:generalist:main → type="main", id="default"
-   *   - agent:generalist:discord:channel:1468425700242620516 → type="discord", id="1468425700242620516"
-   *   - agent:generalist:cron:db61e2ac-... → type="cron", id="db61e2ac-..."
-   *   - agent:generalist:slack:channel:C123456 → type="slack", id="C123456"
+   *   - agent:<agent-id>:main → type="main", id="default"
+   *   - agent:<agent-id>:discord:channel:<channel-id> → type="discord", id="<channel-id>"
+   *   - agent:<agent-id>:cron:<job-id> → type="cron", id="<job-id>"
+   *   - agent:<agent-id>:slack:channel:<channel-id> → type="slack", id="<channel-id>"
    *
    * @returns Object with dir (channel type/channel id) and file (YYYY-MM-DD.jsonl)
    */
@@ -174,6 +179,116 @@ export class TranscriptManager {
       return out;
     } catch {
       return [];
+    }
+  }
+
+  async estimateSessionFootprint(sessionKey: string): Promise<{ bytes: number; tokens: number }> {
+    const { dir } = this.getTranscriptPath(sessionKey);
+    const channelDir = path.join(this.transcriptsDir, dir);
+    let bytes = 0;
+
+    try {
+      const files = (await readdir(channelDir)).filter((file) => file.endsWith(".jsonl")).sort();
+      const cached = this.sessionFootprintCache.get(sessionKey);
+      if (!cached) {
+        const fileBytes = new Map<string, number>();
+        const fileSizes = new Map<string, number>();
+        for (const file of files) {
+          try {
+            const fullPath = path.join(channelDir, file);
+            const fileInfo = await stat(fullPath);
+            const sessionBytes = await this.estimateSessionBytesInFile(
+              fullPath,
+              sessionKey,
+            );
+            fileBytes.set(file, sessionBytes);
+            fileSizes.set(file, Math.max(0, fileInfo.size));
+            bytes += sessionBytes;
+          } catch {
+            // fail-open
+          }
+        }
+        this.sessionFootprintCache.set(sessionKey, { totalBytes: bytes, fileBytes, fileSizes });
+      } else {
+        bytes = cached.totalBytes;
+        const seen = new Set(files);
+
+        // Drop removed files from the cached total.
+        for (const [cachedFile, cachedSessionBytes] of cached.fileBytes.entries()) {
+          if (!seen.has(cachedFile)) {
+            bytes -= cachedSessionBytes;
+            cached.fileBytes.delete(cachedFile);
+            cached.fileSizes.delete(cachedFile);
+          }
+        }
+
+        // Read only newly discovered files.
+        for (const file of files) {
+          if (cached.fileBytes.has(file)) continue;
+          try {
+            const fullPath = path.join(channelDir, file);
+            const fileInfo = await stat(fullPath);
+            const sessionBytes = await this.estimateSessionBytesInFile(fullPath, sessionKey);
+            cached.fileBytes.set(file, sessionBytes);
+            cached.fileSizes.set(file, Math.max(0, fileInfo.size));
+            bytes += sessionBytes;
+          } catch {
+            // fail-open
+          }
+        }
+
+        // Recompute only the newest shard, where growth usually happens.
+        const newestFile = files[files.length - 1];
+        if (newestFile) {
+          try {
+            const newestPath = path.join(channelDir, newestFile);
+            const fileInfo = await stat(newestPath);
+            const size = Math.max(0, fileInfo.size);
+            const previousSessionBytes = cached.fileBytes.get(newestFile) ?? 0;
+            const previousSize = cached.fileSizes.get(newestFile) ?? -1;
+            if (size !== previousSize) {
+              const sessionBytes = await this.estimateSessionBytesInFile(newestPath, sessionKey);
+              cached.fileBytes.set(newestFile, sessionBytes);
+              cached.fileSizes.set(newestFile, size);
+              bytes += sessionBytes - previousSessionBytes;
+            }
+          } catch {
+            // fail-open
+          }
+        }
+
+        if (bytes < 0) bytes = 0;
+        cached.totalBytes = bytes;
+      }
+    } catch {
+      // fail-open
+      this.sessionFootprintCache.delete(sessionKey);
+    }
+
+    return {
+      bytes,
+      tokens: Math.floor(bytes / TranscriptManager.CHARS_PER_TOKEN),
+    };
+  }
+
+  private async estimateSessionBytesInFile(filePath: string, sessionKey: string): Promise<number> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      let total = 0;
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { sessionKey?: string };
+          if (parsed.sessionKey === sessionKey) {
+            total += Buffer.byteLength(`${line}\n`, "utf-8");
+          }
+        } catch {
+          // fail-open for malformed lines
+        }
+      }
+      return total;
+    } catch {
+      return 0;
     }
   }
 
@@ -715,5 +830,38 @@ export class TranscriptManager {
         channelTypes: {},
       };
     }
+  }
+
+  async analyzeIntegrity(): Promise<SessionIntegrityReport> {
+    return analyzeSessionIntegrity({ memoryDir: this.config.memoryDir });
+  }
+
+  async getRecoverySummary(sessionKey?: string): Promise<{
+    generatedAt: string;
+    sessionKey?: string;
+    healthy: boolean;
+    issueCount: number;
+    incompleteTurns: number;
+    brokenChains: number;
+    checkpointHealthy: boolean;
+  }> {
+    const report = await this.analyzeIntegrity();
+    const selectedSessions = sessionKey
+      ? report.sessions.filter((session) => session.sessionKey === sessionKey)
+      : report.sessions;
+    const incompleteTurns = selectedSessions.reduce((sum, session) => sum + session.incompleteTurns, 0);
+    const brokenChains = selectedSessions.reduce((sum, session) => sum + session.brokenChains, 0);
+    const filteredIssues = report.issues.filter((issue) => !sessionKey || issue.sessionKey === sessionKey);
+    const issueCount = filteredIssues.length;
+    const severeIssueCount = filteredIssues.filter((issue) => issue.severity !== "info").length;
+    return {
+      generatedAt: report.generatedAt,
+      sessionKey,
+      healthy: sessionKey ? severeIssueCount === 0 && report.checkpoint.healthy : report.healthy,
+      issueCount,
+      incompleteTurns,
+      brokenChains,
+      checkpointHealthy: report.checkpoint.healthy,
+    };
   }
 }

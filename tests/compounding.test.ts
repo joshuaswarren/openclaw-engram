@@ -27,6 +27,11 @@ function minimalConfig(memoryDir: string, sharedContextDir: string): PluginConfi
     memoryDir,
     debug: false,
     identityEnabled: false,
+    identityContinuityEnabled: false,
+    identityInjectionMode: "recovery_only",
+    identityMaxInjectChars: 1200,
+    continuityIncidentLoggingEnabled: false,
+    continuityAuditEnabled: false,
     injectQuestions: false,
     commitmentDecayDays: 90,
     workspaceDir: path.join(memoryDir, "workspace"),
@@ -122,6 +127,8 @@ function minimalConfig(memoryDir: string, sharedContextDir: string): PluginConfi
     principalFromSessionKeyRules: [],
     namespacePolicies: [],
     defaultRecallNamespaces: ["self"],
+    cronRecallMode: "all",
+    cronRecallAllowlist: [],
     autoPromoteToSharedEnabled: false,
     autoPromoteToSharedCategories: ["correction"],
     autoPromoteMinConfidenceTier: "explicit",
@@ -191,4 +198,123 @@ test("v5 compounding extracts patterns from feedback learning/rejections", async
   assert.ok(mistakes);
   assert.ok(mistakes!.patterns.some((p) => p.includes("seo-digest: Always include confidence score")));
   assert.ok(mistakes!.patterns.some((p) => p.includes("client-health: WRONG DATA")));
+});
+
+test("v5 compounding ingests failing memory-action patterns", async () => {
+  const memoryDir = tmpDir("engram-compound-mem-actions");
+  const sharedDir = tmpDir("engram-compound-shared-actions");
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  const nowIso = new Date().toISOString();
+  const actionPath = path.join(memoryDir, "state", "memory-actions.jsonl");
+  await writeFile(
+    actionPath,
+    [
+      JSON.stringify({
+        timestamp: nowIso,
+        action: "discard",
+        outcome: "skipped",
+        namespace: "team-alpha",
+        policyDecision: "deny",
+        reason: "policy:deny | high_importance_requires_manual_review",
+      }),
+      JSON.stringify({
+        timestamp: nowIso,
+        action: "store_note",
+        outcome: "applied",
+        namespace: "team-alpha",
+        policyDecision: "allow",
+      }),
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(cfg);
+  await eng.synthesizeWeekly();
+  const mistakes = await eng.readMistakes();
+  assert.ok(mistakes);
+  assert.ok(
+    mistakes!.patterns.some((p) =>
+      p.includes("memory-action/team-alpha: discard skipped/deny"),
+    ),
+  );
+  assert.equal(
+    mistakes!.patterns.some((p) => p.includes("store_note applied")),
+    false,
+  );
+});
+
+test("v5 compounding does not read continuity audit references when audits are disabled", async () => {
+  const memoryDir = tmpDir("engram-compound-no-audit-");
+  const sharedDir = tmpDir("engram-compound-no-audit-shared-");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = false;
+  const eng = new CompoundingEngine(cfg);
+
+  (eng as any).readContinuityAuditReferences = async () => {
+    throw new Error("should not be called when continuityAuditEnabled=false");
+  };
+
+  const res = await eng.synthesizeWeekly();
+  const report = await readFile(res.reportPath, "utf-8");
+  assert.match(report, /Weekly Compounding/);
+});
+
+test("v5 continuity audit filters incidents by state before applying scan cap", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-cap-");
+  const sharedDir = tmpDir("engram-continuity-audit-cap-shared-");
+  await mkdir(path.join(memoryDir, "identity", "incidents"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = true;
+  const eng = new CompoundingEngine(cfg);
+
+  const incidentsDir = path.join(memoryDir, "identity", "incidents");
+  const now = new Date().toISOString();
+  for (let i = 0; i < 200; i += 1) {
+    const id = `continuity-${String(1000 + i).padStart(4, "0")}`;
+    const md = [
+      "---",
+      `id: ${JSON.stringify(id)}`,
+      'state: "closed"',
+      `openedAt: ${JSON.stringify(now)}`,
+      `updatedAt: ${JSON.stringify(now)}`,
+      `closedAt: ${JSON.stringify(now)}`,
+      "---",
+      "",
+      "## Symptom",
+      "",
+      "Closed regression.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(incidentsDir, `${id}.md`), md, "utf-8");
+  }
+
+  const openId = "continuity-0001";
+  const openMd = [
+    "---",
+    `id: ${JSON.stringify(openId)}`,
+    'state: "open"',
+    `openedAt: ${JSON.stringify(now)}`,
+    `updatedAt: ${JSON.stringify(now)}`,
+    "---",
+    "",
+    "## Symptom",
+    "",
+    "Still open incident.",
+    "",
+  ].join("\n");
+  await writeFile(path.join(incidentsDir, `${openId}.md`), openMd, "utf-8");
+
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W08" });
+  const report = await readFile(res.reportPath, "utf-8");
+  assert.match(report, /Open incidents: 1/);
+  assert.match(report, /- continuity-0001/);
 });

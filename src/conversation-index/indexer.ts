@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { log } from "../logger.js";
+import type { FaissConversationIndexAdapter } from "./faiss-adapter.js";
 import type { ConversationChunk } from "./chunker.js";
 
 export function sanitizeSessionKey(sessionKey: string): string {
@@ -33,4 +35,26 @@ export async function writeConversationChunks(
     written.push(fp);
   }
   return written;
+}
+
+export interface ConversationChunkUpsertResult {
+  upserted: number;
+  skipped: boolean;
+  reason?: "adapter-unavailable" | "adapter-error";
+}
+
+export async function upsertConversationChunksFailOpen(
+  adapter: FaissConversationIndexAdapter | undefined,
+  chunks: ConversationChunk[],
+): Promise<ConversationChunkUpsertResult> {
+  if (!adapter) {
+    return { upserted: 0, skipped: true, reason: "adapter-unavailable" };
+  }
+  try {
+    const upserted = await adapter.upsertChunks(chunks);
+    return { upserted, skipped: false };
+  } catch (err) {
+    log.debug(`conversation index FAISS upsert failed (fail-open): ${err}`);
+    return { upserted: 0, skipped: true, reason: "adapter-error" };
+  }
 }

@@ -133,8 +133,25 @@ OPENCLAW_ENGRAM_CONFIG_PATH=/absolute/path/to/openclaw.json
 
 Fallback: `OPENCLAW_CONFIG_PATH`.
 
+## Alternative Search Backends (v9.0)
+
+QMD provides the highest quality retrieval, but Engram v9 supports five other backends. To use an alternative, set `searchBackend` in your config:
+
+```jsonc
+{
+  "searchBackend": "orama"   // or "lancedb", "meilisearch", "remote", "noop"
+}
+```
+
+Orama requires zero setup — no external server, no native dependencies. Just set the config and restart.
+
+See [Search Backends](search-backends.md) for a full comparison and configuration guide.
+
 ## Next Steps
 
+- [Search Backends](search-backends.md) — choose and configure your search engine
+- [Enable All Features](enable-all-v8.md) — explicit full-profile config for all feature families
 - [Config Reference](config-reference.md) — full settings list
 - [Operations](operations.md) — backups, exports, hourly summaries
 - [Architecture Overview](architecture/overview.md) — how it all fits together
+- [Writing a Search Backend](writing-a-search-backend.md) — implement your own adapter

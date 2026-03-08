@@ -1,12 +1,16 @@
 import { log } from "./logger.js";
 import path from "node:path";
+import os from "node:os";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
-import { QmdClient } from "./qmd.js";
+import { findUnresolvedEntityRefs } from "./reconstruct.js";
+import type { SearchBackend } from "./search/port.js";
+import { createSearchBackend, createConversationSearchBackend } from "./search/factory.js";
+import { NoopSearchBackend } from "./search/noop-backend.js";
 import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
@@ -14,19 +18,44 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
-import { expandQuery } from "./retrieval.js";
+import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
-import { LastRecallStore, type LastRecallSnapshot } from "./recall-state.js";
+import {
+  LastRecallStore,
+  TierMigrationStatusStore,
+  clampGraphRecallExpandedEntries,
+  type GraphRecallExpandedEntry,
+  type LastRecallSnapshot,
+  type TierMigrationCycleSummary,
+  type TierMigrationStatusSnapshot,
+} from "./recall-state.js";
+import { recordEvalShadowRecall, type EvalShadowRecallRecord } from "./evals.js";
+import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
-import { inferIntentFromText, intentCompatibilityScore, planRecallMode } from "./intent.js";
+import {
+  hasBroadGraphIntent,
+  inferIntentFromText,
+  intentCompatibilityScore,
+  planRecallMode,
+} from "./intent.js";
+import { buildRecallQueryPolicy } from "./recall-query-policy.js";
+import { parseMemoryActionEligibilityContext } from "./schemas.js";
+import { evaluateMemoryActionPolicy } from "./memory-action-policy.js";
+import {
+  buildCompressionGuidelinesMarkdown as buildCompressionGuidelinesMarkdownV2,
+  computeCompressionGuidelineCandidate,
+  refineCompressionGuidelineCandidateSemantically,
+  renderCompressionGuidelinesMarkdown,
+} from "./compression-optimizer.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
+import { decideLifecycleTransition, resolveLifecycleState, type LifecycleSignals } from "./lifecycle.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -38,10 +67,28 @@ import {
   recencyWindowFromPrompt,
   extractTagsFromPrompt,
 } from "./temporal-index.js";
+import { GraphIndex } from "./graph.js";
+import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./causal-trajectory.js";
+import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
+import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zones.js";
+import { searchHarmonicRetrieval, type HarmonicRetrievalResult } from "./harmonic-retrieval.js";
+import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-recall.js";
+import { searchVerifiedSemanticRules, type VerifiedSemanticRuleResult } from "./semantic-rule-verifier.js";
+import { applyCommitmentLedgerLifecycle } from "./commitment-ledger.js";
+import { searchWorkProductLedgerEntries, type WorkProductLedgerSearchResult } from "./work-product-ledger.js";
+import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
-import { writeConversationChunks } from "./conversation-index/indexer.js";
+import { upsertConversationChunksFailOpen, writeConversationChunks } from "./conversation-index/indexer.js";
 import { cleanupConversationChunks } from "./conversation-index/cleanup.js";
+import {
+  FaissConversationIndexAdapter,
+  failOpenFaissHealth,
+} from "./conversation-index/faiss-adapter.js";
+import {
+  searchConversationIndex,
+  searchConversationIndexFaissFailOpen,
+} from "./conversation-index/search.js";
 import { NamespaceStorageRouter } from "./namespaces/storage.js";
 import {
   defaultNamespaceForPrincipal,
@@ -49,19 +96,85 @@ import {
   resolvePrincipal,
 } from "./namespaces/principal.js";
 import { SharedContextManager } from "./shared-context/manager.js";
-import { CompoundingEngine } from "./compounding/engine.js";
+import {
+  CompoundingEngine,
+  defaultTierMigrationCycleBudget,
+} from "./compounding/engine.js";
+import { TierMigrationExecutor } from "./tier-migration.js";
+import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
+import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
+import { RoutingRulesStore } from "./routing/store.js";
+import { PolicyRuntimeManager, type RuntimePolicyValues } from "./policy-runtime.js";
+import {
+  applyUtilityPromotionRuntimePolicy,
+  applyUtilityRankingRuntimeDelta,
+  loadUtilityRuntimeValues,
+  type UtilityRuntimeValues,
+} from "./utility-runtime.js";
+import {
+  buildBehaviorSignalsForMemory,
+  dedupeBehaviorSignalsByMemoryAndHash,
+} from "./behavior-signals.js";
 import type {
   AccessTrackingEntry,
+  BehaviorLoopPolicyState,
+  BehaviorSignalEvent,
   BootstrapOptions,
   BootstrapResult,
   BufferTurn,
+  ContinuityIncidentRecord,
+  EngramTraceEvent,
   ExtractionResult,
+  IdentityInjectionMode,
+  LifecycleState,
+  MemoryActionEvent,
+  MemoryActionType,
   MemoryLink,
   MemoryFile,
+  MemoryFrontmatter,
   PluginConfig,
   QmdSearchResult,
   RecallPlanMode,
+  RecallSectionConfig,
 } from "./types.js";
+
+export interface GraphRecallSnapshot {
+  recordedAt: string;
+  mode: RecallPlanMode | string;
+  queryHash: string;
+  queryLength: number;
+  namespaces: string[];
+  seedCount: number;
+  expandedCount: number;
+  seeds: string[];
+  expanded: GraphRecallExpandedEntry[];
+}
+
+/** Maximum age (ms) before a compaction-reset signal file is considered stale and removed. */
+const COMPACTION_SIGNAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+/** Default workspace directory when no per-agent or config workspace is available. */
+export function defaultWorkspaceDir(): string {
+  return path.join(os.homedir(), ".openclaw", "workspace");
+}
+
+/**
+ * Produce a collision-resistant, filesystem-safe identifier from a session key.
+ *
+ * Session keys follow colon-delimited forms (e.g., `agent:gpucodebot:main`).
+ * A naive replace (`:` → `_`) is lossy: different keys like `agent:alpha` and
+ * `agent/alpha` would collide. Instead we append a short SHA-256 hash of the
+ * original key to the human-readable sanitized prefix, guaranteeing uniqueness
+ * while keeping filenames debuggable.
+ *
+ * Format: `<sanitized>-<12-char-hex-hash>`
+ * Example: `agent:gpucodebot:main` → `agent_gpucodebot_main-a1b2c3d4e5f6`
+ */
+export function sanitizeSessionKeyForFilename(sessionKey: string): string {
+  const readable = sessionKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const hash = createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
+  return `${readable}-${hash}`;
+}
 
 export function isArtifactMemoryPath(filePath: string): boolean {
   return /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(filePath);
@@ -84,6 +197,28 @@ export function deriveTopicsFromExtraction(result: ExtractionResult): string[] {
   return [...topics].slice(0, 16);
 }
 
+export function buildCompressionGuidelinesMarkdown(
+  events: MemoryActionEvent[],
+  generatedAtIso: string = new Date().toISOString(),
+): string {
+  return buildCompressionGuidelinesMarkdownV2(events, generatedAtIso);
+}
+
+export function formatCompressionGuidelinesForRecall(raw: string, maxLines: number = 5): string | null {
+  if (typeof raw !== "string" || raw.trim().length === 0) return null;
+  const sectionMatch = raw.match(/## Suggested Guidelines\s*\n([\s\S]*?)(?:\n##\s+|\s*$)/i);
+  if (!sectionMatch) return null;
+
+  const lines = sectionMatch[1]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .slice(0, Math.max(1, Math.floor(maxLines)));
+  if (lines.length === 0) return null;
+
+  return lines.join("\n");
+}
+
 export function filterRecallCandidates(
   candidates: QmdSearchResult[],
   options: {
@@ -101,6 +236,72 @@ export function filterRecallCandidates(
     .slice(0, Math.max(0, options.limit));
 }
 
+function tokenizeRecallQuery(prompt: string): string[] {
+  return prompt
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+
+function hasLifecycleMetadata(frontmatter: MemoryFrontmatter): boolean {
+  return (
+    frontmatter.lifecycleState !== undefined ||
+    frontmatter.verificationState !== undefined ||
+    frontmatter.policyClass !== undefined ||
+    frontmatter.lastValidatedAt !== undefined ||
+    frontmatter.decayScore !== undefined ||
+    frontmatter.heatScore !== undefined
+  );
+}
+
+export function shouldFilterLifecycleRecallCandidate(
+  frontmatter: MemoryFrontmatter,
+  options: {
+    lifecyclePolicyEnabled: boolean;
+    lifecycleFilterStaleEnabled: boolean;
+  },
+): boolean {
+  if (!options.lifecyclePolicyEnabled || !options.lifecycleFilterStaleEnabled) return false;
+  if (!hasLifecycleMetadata(frontmatter)) return false;
+  const lifecycleState = resolveLifecycleState(frontmatter);
+  return lifecycleState === "stale" || lifecycleState === "archived";
+}
+
+export function lifecycleRecallScoreAdjustment(
+  frontmatter: MemoryFrontmatter,
+  options: {
+    lifecyclePolicyEnabled: boolean;
+  },
+): number {
+  if (!options.lifecyclePolicyEnabled) return 0;
+  if (!hasLifecycleMetadata(frontmatter)) return 0;
+
+  let delta = 0;
+  const lifecycleState = resolveLifecycleState(frontmatter);
+  switch (lifecycleState) {
+    case "active":
+      delta += 0.05;
+      break;
+    case "validated":
+      delta += 0.03;
+      break;
+    case "candidate":
+      delta -= 0.01;
+      break;
+    case "stale":
+      delta -= 0.06;
+      break;
+    case "archived":
+      delta -= 0.08;
+      break;
+  }
+  if (frontmatter.verificationState === "disputed") {
+    delta -= 0.12;
+  }
+  return delta;
+}
+
 export function computeArtifactRecallLimit(
   recallMode: RecallPlanMode,
   recallResultLimit: number,
@@ -113,6 +314,55 @@ export function computeArtifactRecallLimit(
     return Math.min(base, Math.max(0, recallResultLimit));
   }
   return base;
+}
+
+export function resolveEffectiveRecallMode(options: {
+  plannerEnabled: boolean;
+  graphRecallEnabled: boolean;
+  multiGraphMemoryEnabled: boolean;
+  graphExpandedIntentEnabled?: boolean;
+  prompt: string;
+}): RecallPlanMode {
+  let plannedMode: RecallPlanMode = options.plannerEnabled
+    ? planRecallMode(options.prompt)
+    : "full";
+  if (
+    plannedMode !== "graph_mode" &&
+    options.plannerEnabled &&
+    options.graphExpandedIntentEnabled === true &&
+    hasBroadGraphIntent(options.prompt)
+  ) {
+    plannedMode = "graph_mode";
+  }
+  if (
+    plannedMode === "graph_mode" &&
+    (!options.graphRecallEnabled || !options.multiGraphMemoryEnabled)
+  ) {
+    return "full";
+  }
+  return plannedMode;
+}
+
+export function hasIdentityRecoveryIntent(prompt: string): boolean {
+  const text = typeof prompt === "string" ? prompt.toLowerCase() : "";
+  if (!text) return false;
+  return /\b(identity|continuity|recover(?:y|ing|ed)?|incident|drift|restore|regress(?:ion|ed|ing)?)\b/i.test(
+    text,
+  );
+}
+
+export function resolveEffectiveIdentityInjectionMode(options: {
+  configuredMode: IdentityInjectionMode;
+  recallMode: RecallPlanMode;
+  prompt: string;
+}): { mode: IdentityInjectionMode; shouldInject: boolean } {
+  if (options.configuredMode === "recovery_only" && !hasIdentityRecoveryIntent(options.prompt)) {
+    return { mode: "recovery_only", shouldInject: false };
+  }
+  if (options.recallMode === "minimal" && options.configuredMode === "full") {
+    return { mode: "minimal", shouldInject: true };
+  }
+  return { mode: options.configuredMode, shouldInject: true };
 }
 
 export function computeArtifactCandidateFetchLimit(targetCount: number): number {
@@ -134,6 +384,95 @@ export function computeQmdHybridFetchLimit(
   // re-applying the recall cap to avoid artifact-dominated top-N starvation.
   const artifactHeadroom = Math.max(20, Math.max(0, maxArtifactRecall) * 8);
   return Math.min(400, cappedRecallLimit + artifactHeadroom);
+}
+
+export function mergeGraphExpandedResults(
+  primary: QmdSearchResult[],
+  expanded: QmdSearchResult[],
+): QmdSearchResult[] {
+  const mergedByPath = new Map<string, QmdSearchResult>();
+  for (const item of [...primary, ...expanded]) {
+    const prev = mergedByPath.get(item.path);
+    if (!prev) {
+      mergedByPath.set(item.path, item);
+      continue;
+    }
+    const better = item.score > prev.score ? item : prev;
+    const snippet = prev.snippet || item.snippet;
+    mergedByPath.set(item.path, { ...better, snippet });
+  }
+  return Array.from(mergedByPath.values());
+}
+
+export function graphPathRelativeToStorage(storageDir: string, candidatePath: string): string | null {
+  const absolutePath = path.isAbsolute(candidatePath)
+    ? candidatePath
+    : path.resolve(storageDir, candidatePath);
+  const rel = path.relative(storageDir, absolutePath);
+  if (!rel || rel === ".") return null;
+  if (rel.startsWith("..")) return null;
+  return rel.split(path.sep).join("/");
+}
+
+function normalizeGraphActivationScore(score: number): number {
+  const bounded = Number.isFinite(score) && score > 0 ? score : 0;
+  return bounded / (1 + bounded);
+}
+
+export function blendGraphExpandedRecallScore(options: {
+  graphActivationScore: number;
+  seedRecallScore: number;
+  activationWeight: number;
+  blendMin: number;
+  blendMax: number;
+}): number {
+  const graphNorm = normalizeGraphActivationScore(options.graphActivationScore);
+  const seedScore = Number.isFinite(options.seedRecallScore)
+    ? Math.min(1, Math.max(0, options.seedRecallScore))
+    : 0;
+  const weight = Math.min(1, Math.max(0, options.activationWeight));
+  const rawMin = Math.min(1, Math.max(0, options.blendMin));
+  const rawMax = Math.min(1, Math.max(0, options.blendMax));
+  const minBound = Math.min(rawMin, rawMax);
+  const maxBound = Math.max(rawMin, rawMax);
+  const blended = (graphNorm * weight) + (seedScore * (1 - weight));
+  return Math.max(minBound, Math.min(maxBound, blended));
+}
+
+export function summarizeGraphShadowComparison(
+  baseline: QmdSearchResult[],
+  merged: QmdSearchResult[],
+  topN: number,
+): {
+  baselineCount: number;
+  graphCount: number;
+  overlapCount: number;
+  overlapRatio: number;
+  averageOverlapDelta: number;
+} {
+  const limit = Math.max(0, Math.floor(topN));
+  const baselineTop = limit > 0 ? baseline.slice(0, limit) : [];
+  const graphTop = limit > 0 ? merged.slice(0, limit) : [];
+  const baselineByPath = new Map(baselineTop.map((item) => [item.path, item.score]));
+  const graphByPath = new Map(graphTop.map((item) => [item.path, item.score]));
+
+  let overlapCount = 0;
+  let overlapDeltaSum = 0;
+  for (const [p, baselineScore] of baselineByPath.entries()) {
+    const graphScore = graphByPath.get(p);
+    if (typeof graphScore !== "number") continue;
+    overlapCount += 1;
+    overlapDeltaSum += graphScore - baselineScore;
+  }
+
+  const baselineCount = baselineTop.length;
+  return {
+    baselineCount,
+    graphCount: graphTop.length,
+    overlapCount,
+    overlapRatio: baselineCount > 0 ? overlapCount / baselineCount : 0,
+    averageOverlapDelta: overlapCount > 0 ? overlapDeltaSum / overlapCount : 0,
+  };
 }
 
 export function mergeArtifactRecallCandidates(
@@ -164,31 +503,141 @@ export function mergeArtifactRecallCandidates(
   return out;
 }
 
+export function resolveRecentThreadMemoryPaths(options: {
+  threadEpisodeIds: string[];
+  currentMemoryId: string;
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  pathById?: Map<string, string>;
+  storageDir: string;
+  maxRecent: number;
+}): string[] {
+  const maxRecent = Math.max(0, options.maxRecent);
+  if (options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
+  const pathById = options.pathById ?? buildMemoryPathById(options.allMemsForGraph, options.storageDir);
+  if (pathById.size === 0) return [];
+
+  return options.threadEpisodeIds
+    .filter((id) => id !== options.currentMemoryId)
+    .slice(-maxRecent)
+    .map((id) => pathById.get(id))
+    .filter((p): p is string => typeof p === "string" && p.length > 0);
+}
+
+export function buildMemoryPathById(
+  allMemsForGraph: MemoryFile[] | null | undefined,
+  storageDir: string,
+): Map<string, string> {
+  const pathById = new Map<string, string>();
+  for (const mem of allMemsForGraph ?? []) {
+    const id = mem.frontmatter.id;
+    if (!id) continue;
+    pathById.set(id, path.relative(storageDir, mem.path));
+  }
+  return pathById;
+}
+
+export function appendMemoryToGraphContext(options: {
+  allMemsForGraph: MemoryFile[] | null | undefined;
+  storageDir: string;
+  memoryRelPath: string;
+  memoryId: string;
+  category: MemoryFile["frontmatter"]["category"];
+  content: string;
+  entityRef: string | undefined;
+}): void {
+  if (!Array.isArray(options.allMemsForGraph)) return;
+
+  const nowIso = new Date().toISOString();
+  options.allMemsForGraph.push({
+    path: path.join(options.storageDir, options.memoryRelPath),
+    content: options.content,
+    frontmatter: {
+      id: options.memoryId,
+      category: options.category,
+      created: nowIso,
+      updated: nowIso,
+      source: "extraction",
+      confidence: 0.8,
+      confidenceTier: "implied",
+      tags: [],
+      entityRef: options.entityRef,
+      status: "active",
+    },
+  });
+}
+
+export function resolvePersistedMemoryRelativePath(options: {
+  memoryId: string;
+  pathById: Map<string, string>;
+  category: string;
+}): string {
+  const persisted = options.pathById.get(options.memoryId);
+  if (persisted) return persisted;
+  if (options.category === "correction") {
+    return path.join("corrections", `${options.memoryId}.md`);
+  }
+  const idParts = options.memoryId.split("-");
+  const maybeTimestamp = Number(idParts[1]);
+  if (Number.isFinite(maybeTimestamp) && maybeTimestamp > 0) {
+    const day = new Date(maybeTimestamp).toISOString().slice(0, 10);
+    return path.join("facts", day, `${options.memoryId}.md`);
+  }
+  return path.join("facts", `${options.memoryId}.md`);
+}
+
+/**
+ * Synapse-inspired confidence gate.
+ * Returns true if the top recall result score is below the threshold,
+ * indicating retrieval is too uncertain to inject.
+ */
+export function shouldRejectLowConfidenceRecall(
+  results: Array<{ score: number }>,
+  threshold: number,
+): boolean {
+  if (results.length === 0) return false;
+  const topScore = Math.max(...results.map((r) => r.score));
+  return topScore < threshold;
+}
+
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
-  readonly qmd: QmdClient;
-  private readonly conversationQmd?: QmdClient;
+  qmd: SearchBackend;
+  private readonly conversationQmd?: SearchBackend;
+  private readonly conversationFaiss?: FaissConversationIndexAdapter;
   readonly sharedContext?: SharedContextManager;
   readonly compounding?: CompoundingEngine;
   readonly buffer: SmartBuffer;
   readonly transcript: TranscriptManager;
+  readonly sessionObserver: SessionObserverState;
   readonly summarizer: HourlySummarizer;
   readonly localLlm: LocalLlmClient;
+  readonly fastLlm: LocalLlmClient;
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
   readonly lastRecall: LastRecallStore;
+  readonly tierMigrationStatus: TierMigrationStatusStore;
   readonly embeddingFallback: EmbeddingFallback;
   private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
   private readonly threading: ThreadingManager;
+  /** v8.2: Per-namespace multi-graph memory indexes (entity/time/causal edges) */
+  private readonly graphIndexes = new Map<string, GraphIndex>();
   /** Per-namespace BoxBuilders, keyed by the namespace root directory path. */
   private readonly boxBuilders = new Map<string, BoxBuilder>();
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
   private readonly tmtBuilder: TmtBuilder;
   private readonly rerankCache = new RerankCache();
+  /**
+   * Per-session workspace overrides keyed by sessionKey.
+   * Set by the before_agent_start hook so recall() uses the correct
+   * agent workspace for BOOT.md injection. Cleared after each recall.
+   * Using a Map prevents concurrent sessions from overwriting each other.
+   */
+  private _recallWorkspaceOverrides = new Map<string, string>();
+  private routingRulesStore: RoutingRulesStore | null = null;
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
     StorageManager,
@@ -209,6 +658,7 @@ export class Orchestrator {
   // Queue stores promises that resolve when extraction should run
   private extractionQueue: Array<() => Promise<void>> = [];
   private queueProcessing = false;
+  private heartbeatObserverChains = new Map<string, Promise<void>>();
   private recentExtractionFingerprints = new Map<string, number>();
   private nonZeroExtractionsSinceConsolidation = 0;
   private lastConsolidationRunAtMs = 0;
@@ -217,45 +667,52 @@ export class Orchestrator {
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
   private lastQmdEmbedAtMs = 0;
+  private tierMigrationInFlight = false;
+  private lastTierMigrationRunAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
   private lastRecallFailureLogAtMs = 0;
   private lastRecallFailureAtMs = 0;
   private suppressedRecallFailures = 0;
+  private readonly policyRuntime: PolicyRuntimeManager;
+  private runtimePolicyValues: RuntimePolicyValues | null = null;
+  private utilityRuntimeValues: UtilityRuntimeValues | null = null;
+  private evalShadowWriteChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
   private resolveInit: (() => void) | null = null;
+
+  /** Set per-session workspace for the next recall() call (compaction reset). @internal */
+  setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
+    this._recallWorkspaceOverrides.set(sessionKey, dir);
+  }
+
+  /** Remove a per-session workspace override (cleanup on error or early return). @internal */
+  clearRecallWorkspaceOverride(sessionKey: string): void {
+    this._recallWorkspaceOverrides.delete(sessionKey);
+  }
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
     this.storage = new StorageManager(config.memoryDir);
-    this.qmd = new QmdClient(config.qmdCollection, config.qmdMaxResults, {
-      slowLog: {
-        enabled: config.slowLogEnabled,
-        thresholdMs: config.slowLogThresholdMs,
-      },
-      updateTimeoutMs: config.qmdUpdateTimeoutMs,
-      qmdPath: config.qmdPath,
-      daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
-      daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
-    });
-    this.conversationQmd =
-      config.conversationIndexEnabled && config.conversationIndexBackend === "qmd"
-        ? new QmdClient(
-            config.conversationIndexQmdCollection,
-            Math.max(6, config.conversationRecallTopK),
-            {
-              slowLog: {
-                enabled: config.slowLogEnabled,
-                thresholdMs: config.slowLogThresholdMs,
-              },
-              updateTimeoutMs: config.qmdUpdateTimeoutMs,
-              qmdPath: config.qmdPath,
-              daemonUrl: config.qmdDaemonEnabled ? config.qmdDaemonUrl : undefined,
-              daemonRecheckIntervalMs: config.qmdDaemonRecheckIntervalMs,
-            },
-          )
+    this.qmd = createSearchBackend(config);
+    this.conversationQmd = createConversationSearchBackend(config);
+    this.conversationFaiss =
+      config.conversationIndexEnabled && config.conversationIndexBackend === "faiss"
+        ? new FaissConversationIndexAdapter({
+            memoryDir: config.memoryDir,
+            scriptPath: config.conversationIndexFaissScriptPath,
+            pythonBin: config.conversationIndexFaissPythonBin,
+            modelId: config.conversationIndexFaissModelId,
+            indexDir: config.conversationIndexFaissIndexDir,
+            upsertTimeoutMs: config.conversationIndexFaissUpsertTimeoutMs,
+            searchTimeoutMs: config.conversationIndexFaissSearchTimeoutMs,
+            healthTimeoutMs: config.conversationIndexFaissHealthTimeoutMs,
+            maxBatchSize: config.conversationIndexFaissMaxBatchSize,
+            maxSearchK: config.conversationIndexFaissMaxSearchK,
+          })
         : undefined;
     this.sharedContext = config.sharedContextEnabled ? new SharedContextManager(config) : undefined;
     this.compounding = config.compoundingEnabled ? new CompoundingEngine(config) : undefined;
@@ -266,9 +723,26 @@ export class Orchestrator {
     this.relevance = new RelevanceStore(config.memoryDir);
     this.negatives = new NegativeExampleStore(config.memoryDir);
     this.lastRecall = new LastRecallStore(config.memoryDir);
+    this.tierMigrationStatus = new TierMigrationStatusStore(config.memoryDir);
+    this.sessionObserver = new SessionObserverState({
+      memoryDir: config.memoryDir,
+      debounceMs: config.sessionObserverDebounceMs ?? 120_000,
+      bands: config.sessionObserverBands ?? [],
+    });
     this.embeddingFallback = new EmbeddingFallback(config);
+    this.policyRuntime = new PolicyRuntimeManager(config.memoryDir, config);
     this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
+    this.fastLlm = config.localLlmFastEnabled
+      ? (() => {
+          const client = new LocalLlmClient(
+            { ...config, localLlmModel: config.localLlmFastModel || config.localLlmModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
+            this.modelRegistry,
+          );
+          client.disableThinking = true;
+          return client;
+        })()
+      : this.localLlm;
     this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
     this.threading = new ThreadingManager(
       path.join(config.memoryDir, "threads"),
@@ -304,6 +778,89 @@ export class Orchestrator {
       }));
     }
     return this.boxBuilders.get(dir)!;
+  }
+
+  private effectiveRecencyWeight(): number {
+    return applyRuntimeRetrievalPolicy(
+      { recencyWeight: this.config.recencyWeight },
+      this.runtimePolicyValues,
+    ).recencyWeight;
+  }
+
+  private effectiveCronRecallInstructionHeavyTokenCap(): number {
+    return this.runtimePolicyValues?.cronRecallInstructionHeavyTokenCap ??
+      this.config.cronRecallInstructionHeavyTokenCap;
+  }
+
+  private currentPolicyVersion(): string {
+    const thresholds = this.effectiveLifecycleThresholds();
+    const payload = {
+      recencyWeight: this.effectiveRecencyWeight(),
+      lifecyclePromoteHeatThreshold: thresholds.promoteHeatThreshold,
+      lifecycleStaleDecayThreshold: thresholds.staleDecayThreshold,
+      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
+      utilityRankingBoostMultiplier: this.utilityRuntimeValues?.rankingBoostMultiplier ?? 1,
+      utilityRankingSuppressMultiplier: this.utilityRuntimeValues?.rankingSuppressMultiplier ?? 1,
+      utilityPromoteThresholdDelta: this.utilityRuntimeValues?.promoteThresholdDelta ?? 0,
+      utilityDemoteThresholdDelta: this.utilityRuntimeValues?.demoteThresholdDelta ?? 0,
+    };
+    return createHash("sha256")
+      .update(JSON.stringify(payload))
+      .digest("hex")
+      .slice(0, 12);
+  }
+
+  private effectiveLifecycleThresholds(): {
+    promoteHeatThreshold: number;
+    staleDecayThreshold: number;
+    archiveDecayThreshold: number;
+  } {
+    const archiveDecayThreshold = this.config.lifecycleArchiveDecayThreshold;
+    const staleDecayThreshold = Math.min(
+      this.runtimePolicyValues?.lifecycleStaleDecayThreshold ??
+        this.config.lifecycleStaleDecayThreshold,
+      archiveDecayThreshold,
+    );
+    return {
+      promoteHeatThreshold:
+        this.runtimePolicyValues?.lifecyclePromoteHeatThreshold ??
+        this.config.lifecyclePromoteHeatThreshold,
+      staleDecayThreshold,
+      archiveDecayThreshold,
+    };
+  }
+
+  private routeEngineOptions(): RoutingEngineOptions {
+    const allowedNamespaces = this.config.namespacesEnabled
+      ? Array.from(
+          new Set([
+            this.config.defaultNamespace,
+            this.config.sharedNamespace,
+            ...this.config.namespacePolicies.map((policy) => policy.name),
+          ]),
+        )
+      : [this.config.defaultNamespace];
+    return { allowedNamespaces };
+  }
+
+  private getRoutingRulesStore(): RoutingRulesStore {
+    if (!this.routingRulesStore) {
+      this.routingRulesStore = new RoutingRulesStore(
+        this.config.memoryDir,
+        this.config.routingRulesStateFile,
+      );
+    }
+    return this.routingRulesStore;
+  }
+
+  private async loadRoutingRules(): Promise<RouteRule[]> {
+    if (!this.config.routingRulesEnabled) return [];
+    try {
+      return await this.getRoutingRulesStore().read(this.routeEngineOptions());
+    } catch (err) {
+      log.warn(`routing rules unavailable; fail-open to default writes: ${err}`);
+      return [];
+    }
   }
 
   private async resolveArtifactSourceStatuses(
@@ -403,6 +960,14 @@ export class Orchestrator {
     await this.relevance.load();
     await this.negatives.load();
     await this.lastRecall.load();
+    await this.tierMigrationStatus.load();
+    await this.sessionObserver.load();
+    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    this.utilityRuntimeValues = await loadUtilityRuntimeValues({
+      memoryDir: this.config.memoryDir,
+      memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
+      promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
+    });
 
     // Initialize content-hash dedup index
     if (this.config.factDeduplicationEnabled) {
@@ -420,28 +985,33 @@ export class Orchestrator {
       await this.compounding.ensureDirs();
     }
 
-    if (this.config.qmdEnabled) {
+    {
       const available = await this.qmd.probe();
       if (available) {
-        const mode = this.qmd.isDaemonMode() ? "daemon" : "subprocess";
-        log.info(`QMD: available (mode: ${mode}) ${this.qmd.debugStatus()}`);
+        log.info(`Search backend: available ${this.qmd.debugStatus()}`);
         const collectionState = await this.qmd.ensureCollection(this.config.memoryDir);
         if (collectionState === "missing") {
-          this.config.qmdEnabled = false;
+          this.qmd = new NoopSearchBackend();
           log.warn(
-            "QMD collection missing for Engram memory store; disabling QMD retrieval for this runtime (fallback retrieval remains enabled)",
+            "Search collection missing for Engram memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
           );
         } else if (collectionState === "unknown") {
-          log.warn("QMD collection check unavailable; keeping QMD retrieval enabled for fail-open behavior");
+          log.warn("Search collection check unavailable; keeping search retrieval enabled for fail-open behavior");
         } else if (collectionState === "skipped") {
-          log.debug("QMD collection check skipped in daemon-only mode");
+          log.debug("Search collection check skipped (remote or daemon-only mode)");
         }
+      } else if (this.qmd instanceof NoopSearchBackend) {
+        log.debug(`Search backend: noop (search intentionally disabled)`);
       } else {
-        log.warn(`QMD: not available ${this.qmd.debugStatus()}`);
+        log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
       }
     }
 
-    if (this.config.conversationIndexEnabled && this.conversationQmd) {
+    if (
+      this.config.conversationIndexEnabled &&
+      this.config.conversationIndexBackend === "qmd" &&
+      this.conversationQmd
+    ) {
       const available = await this.conversationQmd.probe();
       if (available) {
         log.info(`Conversation index QMD: available ${this.conversationQmd.debugStatus()}`);
@@ -465,11 +1035,49 @@ export class Orchestrator {
       }
     }
 
+    if (
+      this.config.conversationIndexEnabled &&
+      this.config.conversationIndexBackend === "faiss" &&
+      this.conversationFaiss
+    ) {
+      const health = await failOpenFaissHealth(this.conversationFaiss);
+      if (health.ok) {
+        log.info(`Conversation index FAISS: available (status=${health.status})`);
+      } else {
+        log.warn(`Conversation index FAISS: degraded (${health.message ?? health.status})`);
+      }
+    }
+
     await this.buffer.load();
 
     // Validate local LLM model configuration
     if (this.config.localLlmEnabled) {
       await this.validateLocalLlmModel();
+    }
+
+    // Sweep stale compaction-reset signal files (>1 hour old).
+    // This prevents orphaned signals from persisting when agents are removed
+    // or sessions never call recall() again after a compaction.
+    // NOTE: This sweep only covers the config-level workspace. Per-agent signals
+    // (written to ctx.workspaceDir) are cleaned up by recall() on each session
+    // start, with a 1-hour TTL enforced at read time. Agent-specific workspaces
+    // are not known at initialize() time.
+    if (this.config.compactionResetEnabled) {
+      try {
+        const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
+        const files = await readdir(wsDir).catch(() => [] as string[]);
+        for (const f of files) {
+          if (!f.startsWith(".compaction-reset-signal-")) continue;
+          const fp = path.join(wsDir, f);
+          const s = await stat(fp).catch(() => null);
+          if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
+            await unlink(fp).catch(() => {});
+            log.debug(`initialize: removed stale compaction signal ${f}`);
+          }
+        }
+      } catch (err) {
+        log.debug("initialize: stale signal sweep failed:", err);
+      }
     }
 
     log.info("orchestrator initialized");
@@ -479,6 +1087,20 @@ export class Orchestrator {
       this.resolveInit();
       this.resolveInit = null;
     }
+  }
+
+  async applyBehaviorRuntimePolicy(
+    state: BehaviorLoopPolicyState,
+  ): Promise<{ applied: boolean; rolledBack: boolean; values: RuntimePolicyValues | null; reason: string }> {
+    const result = await this.policyRuntime.applyFromBehaviorState(state);
+    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    return result;
+  }
+
+  async rollbackBehaviorRuntimePolicy(): Promise<boolean> {
+    const rolledBack = await this.policyRuntime.rollback();
+    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+    return rolledBack;
   }
 
   async maybeRunFileHygiene(): Promise<void> {
@@ -554,20 +1176,265 @@ export class Orchestrator {
     return this.runConsolidation();
   }
 
-  async waitForExtractionIdle(timeoutMs: number = 60_000): Promise<void> {
+  async waitForExtractionIdle(timeoutMs: number = 60_000): Promise<boolean> {
     const started = Date.now();
     while (this.queueProcessing || this.extractionQueue.length > 0) {
       if (Date.now() - started > timeoutMs) {
         log.warn(`waitForExtractionIdle timed out after ${timeoutMs}ms`);
-        return;
+        return false;
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    return true;
+  }
+
+  async waitForConsolidationIdle(timeoutMs: number = 60_000): Promise<boolean> {
+    const started = Date.now();
+    while (this.consolidationInFlight) {
+      if (Date.now() - started > timeoutMs) {
+        log.warn(`waitForConsolidationIdle timed out after ${timeoutMs}ms`);
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
   }
 
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
+  }
+
+  previewMemoryActionEvent(
+    event: Omit<MemoryActionEvent, "timestamp"> & { timestamp?: string },
+  ): MemoryActionEvent {
+    const namespace =
+      typeof event.namespace === "string" && event.namespace.length > 0
+        ? event.namespace
+        : this.config.defaultNamespace;
+    const eligibility = parseMemoryActionEligibilityContext(event.policyEligibility);
+    const policy = evaluateMemoryActionPolicy({
+      action: event.action,
+      eligibility,
+      options: {
+        actionsEnabled: this.config.contextCompressionActionsEnabled,
+        maxCompressionTokensPerHour: this.config.maxCompressionTokensPerHour,
+      },
+    });
+
+    const normalizedOutcome =
+      policy.decision === "allow"
+        ? event.outcome
+        : event.outcome === "failed"
+          ? "failed"
+          : "skipped";
+
+    const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    );
+
+    return {
+      ...event,
+      outcome: normalizedOutcome,
+      reason: reasonParts.join(" | "),
+      namespace,
+      timestamp:
+        typeof event.timestamp === "string" && event.timestamp.length > 0
+          ? event.timestamp
+          : new Date().toISOString(),
+      policyDecision: policy.decision,
+      policyRationale: policy.rationale,
+      policyEligibility: eligibility,
+    };
+  }
+
+  async appendMemoryActionEvent(
+    event: Omit<MemoryActionEvent, "timestamp"> & { timestamp?: string },
+  ): Promise<boolean> {
+    try {
+      const toWrite = this.previewMemoryActionEvent(event);
+      const storage = await this.getStorage(toWrite.namespace);
+      await storage.appendMemoryActionEvents([toWrite]);
+      return true;
+    } catch (err) {
+      log.warn(`appendMemoryActionEvent failed (non-fatal): ${err}`);
+      return false;
+    }
+  }
+
+  async getLastGraphRecallSnapshot(namespace?: string): Promise<GraphRecallSnapshot | null> {
+    const storage = await this.getStorage(namespace);
+    const snapshotPath = path.join(storage.dir, "state", "last_graph_recall.json");
+    try {
+      const raw = await readFile(snapshotPath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<GraphRecallSnapshot>;
+      if (!parsed || typeof parsed !== "object") return null;
+      return {
+        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        mode: typeof parsed.mode === "string" ? parsed.mode : "full",
+        queryHash: typeof parsed.queryHash === "string" ? parsed.queryHash : "",
+        queryLength: typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
+        namespaces: Array.isArray(parsed.namespaces)
+          ? parsed.namespaces.filter((v): v is string => typeof v === "string")
+          : [],
+        seedCount: typeof parsed.seedCount === "number" ? parsed.seedCount : 0,
+        expandedCount: typeof parsed.expandedCount === "number" ? parsed.expandedCount : 0,
+        seeds: Array.isArray(parsed.seeds)
+          ? parsed.seeds.filter((v): v is string => typeof v === "string")
+          : [],
+        expanded: clampGraphRecallExpandedEntries(parsed.expanded, 64),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async explainLastGraphRecall(options?: {
+    namespace?: string;
+    maxExpanded?: number;
+  }): Promise<string> {
+    const snapshot = await this.getLastGraphRecallSnapshot(options?.namespace);
+    if (!snapshot) return "No graph-recall snapshot found yet.";
+    const maxExpanded = Math.max(1, Math.min(50, options?.maxExpanded ?? 10));
+    const expanded = snapshot.expanded.slice(0, maxExpanded);
+    return [
+      "## Last Graph Recall",
+      "",
+      `Recorded at: ${snapshot.recordedAt || "unknown"}`,
+      `Mode: ${snapshot.mode}`,
+      `Query hash: ${snapshot.queryHash || "unknown"} (len=${snapshot.queryLength})`,
+      `Namespaces: ${snapshot.namespaces.length > 0 ? snapshot.namespaces.join(", ") : "none"}`,
+      `Seed paths (${snapshot.seedCount}):`,
+      ...snapshot.seeds.map((p) => `- ${p}`),
+      `Expanded paths (${snapshot.expandedCount}, showing ${expanded.length}):`,
+      ...expanded.map(
+        (e) =>
+          `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType})`,
+      ),
+    ].join("\n");
+  }
+
+  private async searchConversationRecallResults(
+    retrievalQuery: string,
+    topK: number,
+  ): Promise<Array<{ path: string; snippet: string; score: number }>> {
+    if (this.config.conversationIndexBackend === "faiss") {
+      return searchConversationIndexFaissFailOpen(this.conversationFaiss, retrievalQuery, topK);
+    }
+    if (this.conversationQmd && this.conversationQmd.isAvailable()) {
+      return searchConversationIndex(this.conversationQmd, retrievalQuery, topK);
+    }
+    return [];
+  }
+
+  private formatConversationRecallSection(
+    results: Array<{ path: string; snippet: string; score: number }>,
+    maxChars: number,
+  ): string | null {
+    if (!Array.isArray(results) || results.length === 0) return null;
+    const lines: string[] = ["## Semantic Recall (Past Conversations)", ""];
+    let used = 0;
+    for (const r of results) {
+      if (!r?.snippet) continue;
+      const chunk =
+        `### ${r.path}\n` +
+        `Score: ${r.score.toFixed(3)}\n\n` +
+        `${r.snippet.trim()}\n`;
+      if (used + chunk.length > maxChars) break;
+      lines.push(chunk);
+      used += chunk.length;
+    }
+    return used > 0 ? lines.join("\n") : null;
+  }
+
+  private async countConversationChunkDocs(dir: string): Promise<number> {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      let total = 0;
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          total += await this.countConversationChunkDocs(fullPath);
+          continue;
+        }
+        if (entry.isFile() && entry.name.endsWith(".md")) {
+          total += 1;
+        }
+      }
+      return total;
+    } catch {
+      return 0;
+    }
+  }
+
+  async getConversationIndexHealth(): Promise<{
+    enabled: boolean;
+    backend: "qmd" | "faiss";
+    status: "ok" | "degraded" | "disabled";
+    chunkDocCount: number;
+    lastUpdateAt: string | null;
+    qmdAvailable?: boolean;
+    faiss?: {
+      ok: boolean;
+      status: "ok" | "degraded" | "error";
+      indexPath: string;
+      message?: string;
+    };
+  }> {
+    const chunkDocCount = await this.countConversationChunkDocs(this.conversationIndexDir);
+    const lastUpdateAtMs = Math.max(0, ...this.conversationIndexLastUpdateAtMs.values());
+    const lastUpdateAt = lastUpdateAtMs > 0 ? new Date(lastUpdateAtMs).toISOString() : null;
+
+    if (!this.config.conversationIndexEnabled) {
+      return {
+        enabled: false,
+        backend: this.config.conversationIndexBackend,
+        status: "disabled",
+        chunkDocCount,
+        lastUpdateAt,
+      };
+    }
+
+    if (this.config.conversationIndexBackend === "faiss") {
+      const faiss = await failOpenFaissHealth(this.conversationFaiss);
+      return {
+        enabled: true,
+        backend: "faiss",
+        status: faiss.ok ? "ok" : "degraded",
+        chunkDocCount,
+        lastUpdateAt,
+        faiss,
+      };
+    }
+
+    let qmdAvailable = !!this.conversationQmd?.isAvailable();
+    if (!qmdAvailable && this.conversationQmd) {
+      try {
+        qmdAvailable = await this.conversationQmd.probe();
+      } catch {
+        qmdAvailable = false;
+      }
+    }
+    return {
+      enabled: true,
+      backend: "qmd",
+      status: qmdAvailable ? "ok" : "degraded",
+      chunkDocCount,
+      lastUpdateAt,
+      qmdAvailable,
+    };
+  }
+
+  async getRecoverySummary(sessionKey?: string): Promise<{
+    generatedAt: string;
+    sessionKey?: string;
+    healthy: boolean;
+    issueCount: number;
+    incompleteTurns: number;
+    brokenChains: number;
+    checkpointHealthy: boolean;
+  }> {
+    return this.transcript.getRecoverySummary(sessionKey);
   }
 
   async updateConversationIndex(
@@ -605,18 +1472,23 @@ export class Orchestrator {
       this.conversationIndexDir,
       this.config.conversationIndexRetentionDays,
     );
-    // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
-    const q = this.conversationQmd ?? this.qmd;
-    const usingPrimaryQmdClient = q === this.qmd;
     const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
     let embedded = false;
-    if ((!usingPrimaryQmdClient || this.config.qmdEnabled) && q.isAvailable()) {
-      await q.update();
-      if (shouldEmbed) {
-        await q.embed();
-        embedded = true;
+
+    if (this.config.conversationIndexBackend === "faiss") {
+      await upsertConversationChunksFailOpen(this.conversationFaiss, chunks);
+    } else {
+      // Best-effort: ask qmd to update indexes (will no-op if qmd missing).
+      const q = this.conversationQmd ?? this.qmd;
+      if (q.isAvailable()) {
+        await q.update();
+        if (shouldEmbed) {
+          await q.embed();
+          embedded = true;
+        }
       }
     }
+
     this.conversationIndexLastUpdateAtMs.set(sessionKey, Date.now());
     return { chunks: chunks.length, skipped: false, embedded };
   }
@@ -814,20 +1686,53 @@ export class Orchestrator {
       namespacesEnabled: boolean;
       recallNamespaces: string[];
       resolveNamespace: (path: string) => string;
+      collection?: string;
     },
   ): Promise<QmdSearchResult[]> {
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
-    const maxFetchLimit = Math.min(800, Math.max(fetchLimit, qmdFetchLimit * 8));
-    const MAX_ATTEMPTS = 4;
+    const maxFetchLimit = Math.min(320, Math.max(fetchLimit, qmdFetchLimit * 5));
+    const MAX_ATTEMPTS = 2;
+    const QMD_RECALL_BUDGET_MS = 25_000;
+    const startedAtMs = Date.now();
     let bestFiltered: QmdSearchResult[] = [];
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const memoryResults = await this.qmd.hybridSearch(
+      if (Date.now() - startedAtMs >= QMD_RECALL_BUDGET_MS) {
+        break;
+      }
+
+      const primaryResults = await this.qmd.search(
         prompt,
-        undefined,
+        options.collection,
         fetchLimit,
       );
-      const filteredResults = filterRecallCandidates(memoryResults, {
+      let mergedResults = primaryResults;
+
+      // Backfill with hybrid results only when primary retrieval underfills.
+      if (
+        primaryResults.length < qmdFetchLimit &&
+        Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
+      ) {
+        const hybridResults = await this.qmd.hybridSearch(prompt, options.collection, fetchLimit);
+        if (hybridResults.length > 0) {
+          const mergedByPath = new Map<string, QmdSearchResult>();
+          for (const result of [...primaryResults, ...hybridResults]) {
+            const key = result.path || result.docid;
+            const existing = mergedByPath.get(key);
+            if (!existing || result.score > existing.score) {
+              mergedByPath.set(key, {
+                ...result,
+                snippet: result.snippet || existing?.snippet || "",
+              });
+            }
+          }
+          mergedResults = [...mergedByPath.values()]
+            .sort((a, b) => b.score - a.score)
+            .slice(0, fetchLimit);
+        }
+      }
+
+      const filteredResults = filterRecallCandidates(mergedResults, {
         namespacesEnabled: options.namespacesEnabled,
         recallNamespaces: options.recallNamespaces,
         resolveNamespace: options.resolveNamespace,
@@ -840,36 +1745,271 @@ export class Orchestrator {
       if (filteredResults.length > bestFiltered.length) {
         bestFiltered = filteredResults;
       }
-      if (memoryResults.length === 0) {
+      if (mergedResults.length === 0) {
         return filteredResults;
       }
-      if (memoryResults.length < fetchLimit && filteredResults.length > 0) {
+      if (mergedResults.length < fetchLimit && filteredResults.length > 0) {
         return filteredResults;
       }
       if (fetchLimit >= maxFetchLimit) {
-        return filteredResults;
+        break;
       }
 
       const growth = Math.max(20, Math.floor(fetchLimit / 2));
       fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
     }
 
-    return bestFiltered;
+    return bestFiltered.slice(0, qmdFetchLimit);
+  }
+
+  private async expandResultsViaGraph(options: {
+    memoryResults: QmdSearchResult[];
+    recallNamespaces: string[];
+    recallResultLimit: number;
+  }): Promise<{
+    merged: QmdSearchResult[];
+    seedPaths: string[];
+    expandedPaths: GraphRecallExpandedEntry[];
+  }> {
+    const byNamespace = new Map<string, QmdSearchResult[]>();
+    for (const result of options.memoryResults) {
+      const ns = this.namespaceFromPath(result.path);
+      if (!options.recallNamespaces.includes(ns)) continue;
+      const existing = byNamespace.get(ns);
+      if (existing) {
+        existing.push(result);
+      } else {
+        byNamespace.set(ns, [result]);
+      }
+    }
+
+    const perNamespaceSeedCap = Math.max(3, options.recallResultLimit);
+    const perNamespaceExpandedCap = Math.max(8, options.recallResultLimit * 2);
+    const seedPaths: string[] = [];
+    const expandedPaths: GraphRecallExpandedEntry[] = [];
+    const expandedResults: QmdSearchResult[] = [];
+
+    for (const [namespace, nsResults] of byNamespace.entries()) {
+      const storage = await this.storageRouter.storageFor(namespace);
+      const seedCandidates = nsResults.slice(0, perNamespaceSeedCap);
+      const seedRelativePaths = seedCandidates
+        .map((result) => graphPathRelativeToStorage(storage.dir, result.path))
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      if (seedRelativePaths.length === 0) continue;
+
+      const seedRecallScore = seedCandidates.reduce((max, item) => Math.max(max, item.score), 0);
+      seedPaths.push(...seedRelativePaths.map((rel) => path.join(storage.dir, rel)));
+      const seedSet = new Set(seedRelativePaths);
+      const expanded = await this.graphIndexFor(storage).spreadingActivation(
+        seedRelativePaths,
+        this.config.maxGraphTraversalSteps,
+      );
+      if (expanded.length === 0) continue;
+
+      for (const candidate of expanded.slice(0, perNamespaceExpandedCap)) {
+        if (seedSet.has(candidate.path)) continue;
+        const memoryPath = path.resolve(storage.dir, candidate.path);
+        const memory = await storage.readMemoryByPath(memoryPath);
+        if (!memory) continue;
+        if (isArtifactMemoryPath(memory.path)) continue;
+        if (memory.frontmatter.status && memory.frontmatter.status !== "active") continue;
+
+        const snippet = memory.content.slice(0, 400);
+        const score = blendGraphExpandedRecallScore({
+          graphActivationScore: candidate.score,
+          seedRecallScore,
+          activationWeight: this.config.graphExpansionActivationWeight,
+          blendMin: this.config.graphExpansionBlendMin,
+          blendMax: this.config.graphExpansionBlendMax,
+        });
+        expandedResults.push({
+          docid: memory.frontmatter.id,
+          path: memory.path,
+          snippet,
+          score,
+        });
+        expandedPaths.push({
+          path: memory.path,
+          score,
+          namespace,
+          seed: path.resolve(storage.dir, candidate.seed),
+          hopDepth: candidate.hopDepth,
+          decayedWeight: candidate.decayedWeight,
+          graphType: candidate.graphType,
+        });
+      }
+    }
+
+    return {
+      merged: mergeGraphExpandedResults(options.memoryResults, expandedResults),
+      seedPaths,
+      expandedPaths,
+    };
+  }
+
+  private async recordLastGraphRecallSnapshot(options: {
+    storage: StorageManager;
+    prompt: string;
+    recallMode: RecallPlanMode;
+    recallNamespaces: string[];
+    seedPaths: string[];
+    expandedPaths: GraphRecallExpandedEntry[];
+  }): Promise<void> {
+    try {
+      const snapshotPath = path.join(options.storage.dir, "state", "last_graph_recall.json");
+      await mkdir(path.dirname(snapshotPath), { recursive: true });
+      const now = new Date().toISOString();
+      const totalSeedCount = options.seedPaths.length;
+      const totalExpandedCount = options.expandedPaths.length;
+      const seeds = options.seedPaths.slice(0, 64);
+      const expanded = clampGraphRecallExpandedEntries(options.expandedPaths, 64);
+      const payload = {
+        recordedAt: now,
+        mode: options.recallMode,
+        queryHash: createHash("sha256").update(options.prompt).digest("hex"),
+        queryLength: options.prompt.length,
+        namespaces: options.recallNamespaces,
+        seedCount: totalSeedCount,
+        expandedCount: totalExpandedCount,
+        seeds,
+        expanded,
+      };
+      await writeFile(snapshotPath, JSON.stringify(payload, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`last graph recall write failed: ${err}`);
+    }
+  }
+
+  private getRecallSectionEntry(sectionId: string): RecallSectionConfig | undefined {
+    const pipeline = Array.isArray(this.config.recallPipeline)
+      ? this.config.recallPipeline
+      : [];
+    return pipeline.find((entry) => entry.id === sectionId);
+  }
+
+  private isRecallSectionEnabled(sectionId: string, defaultEnabled: boolean = true): boolean {
+    const entry = this.getRecallSectionEntry(sectionId);
+    if (!entry) return defaultEnabled;
+    return entry.enabled !== false;
+  }
+
+  private getRecallSectionMaxChars(sectionId: string): number | null | undefined {
+    const entry = this.getRecallSectionEntry(sectionId);
+    if (!entry) return undefined;
+    if (entry.maxChars === null) return null;
+    if (typeof entry.maxChars !== "number") return undefined;
+    return Math.max(0, Math.floor(entry.maxChars));
+  }
+
+  private getRecallSectionNumber(sectionId: string, key: keyof RecallSectionConfig): number | undefined {
+    const entry = this.getRecallSectionEntry(sectionId);
+    if (!entry) return undefined;
+    const value = entry[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+    return Math.max(0, Math.floor(value));
+  }
+
+  private appendRecallSection(
+    sectionBuckets: Map<string, string[]>,
+    sectionId: string,
+    content: string,
+  ): void {
+    if (!this.isRecallSectionEnabled(sectionId)) return;
+    const trimmed = content.trim();
+    if (trimmed.length === 0) return;
+
+    const maxChars = this.getRecallSectionMaxChars(sectionId);
+    let finalContent = trimmed;
+    if (maxChars === 0) return;
+    if (typeof maxChars === "number" && finalContent.length > maxChars) {
+      finalContent = `${finalContent.slice(0, maxChars)}\n\n...(trimmed)\n`;
+    }
+
+    const existing = sectionBuckets.get(sectionId) ?? [];
+    existing.push(finalContent);
+    sectionBuckets.set(sectionId, existing);
+  }
+
+  private assembleRecallSections(sectionBuckets: Map<string, string[]>): string[] {
+    const ordered: string[] = [];
+    const pipeline = Array.isArray(this.config.recallPipeline)
+      ? this.config.recallPipeline
+      : [];
+    const orderedIds = pipeline
+      .filter((entry) => entry.enabled !== false)
+      .map((entry) => entry.id);
+    const seen = new Set<string>();
+
+    for (const id of orderedIds) {
+      const chunks = sectionBuckets.get(id);
+      if (!chunks || chunks.length === 0) continue;
+      ordered.push(chunks.join("\n\n"));
+      seen.add(id);
+    }
+
+    for (const [id, chunks] of sectionBuckets.entries()) {
+      if (seen.has(id)) continue;
+      if (chunks.length === 0) continue;
+      ordered.push(chunks.join("\n\n"));
+    }
+
+    return ordered;
   }
 
   private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
-    const sections: string[] = [];
-    const recallMode: RecallPlanMode = this.config.recallPlannerEnabled
-      ? planRecallMode(prompt)
-      : "full";
+    const promptHash = createHash("sha256").update(prompt).digest("hex");
+    const traceId = createHash("sha256")
+      .update(`${sessionKey ?? "default"}:${recallStart}:${promptHash}`)
+      .digest("hex")
+      .slice(0, 16);
+    const sectionBuckets = new Map<string, string[]>();
+    const queryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
+      cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+      cronRecallNormalizedQueryMaxChars: this.config.cronRecallNormalizedQueryMaxChars,
+      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
+      cronConversationRecallMode: this.config.cronConversationRecallMode,
+    });
+    const retrievalQuery = queryPolicy.retrievalQuery || prompt;
+    const retrievalQueryHash = createHash("sha256").update(retrievalQuery).digest("hex");
+    const policyVersion = this.currentPolicyVersion();
+    let impressionRecorded = false;
+    let recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan" = "none";
+    let recalledMemoryCount = 0;
+    let recalledMemoryIds: string[] = [];
+    let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
+    let identityInjectedChars = 0;
+    let identityInjectionTruncated = false;
+    timings.queryPolicy = `${queryPolicy.promptShape}/${queryPolicy.retrievalBudgetMode}${queryPolicy.skipConversationRecall ? "/skip-conv" : ""}`;
+    const recallMode: RecallPlanMode = resolveEffectiveRecallMode({
+      plannerEnabled: this.config.recallPlannerEnabled,
+      graphRecallEnabled: this.config.graphRecallEnabled,
+      multiGraphMemoryEnabled: this.config.multiGraphMemoryEnabled,
+      graphExpandedIntentEnabled: this.config.graphExpandedIntentEnabled === true,
+      prompt,
+    });
     timings.recallPlan = recallMode;
-    const recallResultLimit = recallMode === "no_recall"
+    const plannerRecallResultLimit = recallMode === "no_recall"
       ? 0
       : recallMode === "minimal"
       ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
       : this.config.qmdMaxResults;
+    const policyMinimalLimit = Math.max(
+      0,
+      Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal),
+    );
+    const baseRecallResultLimit =
+      recallMode !== "no_recall" && queryPolicy.retrievalBudgetMode === "minimal"
+        ? Math.min(plannerRecallResultLimit, policyMinimalLimit)
+        : plannerRecallResultLimit;
+    const memoriesSectionEnabled = this.isRecallSectionEnabled("memories");
+    const memorySectionMaxResults = this.getRecallSectionNumber("memories", "maxResults");
+    const recallResultLimit = memoriesSectionEnabled
+      ? memorySectionMaxResults !== undefined
+        ? Math.min(baseRecallResultLimit, memorySectionMaxResults)
+        : baseRecallResultLimit
+      : 0;
     const recallHeadroom = this.config.verbatimArtifactsEnabled
       ? Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)
       : 12;
@@ -885,7 +2025,59 @@ export class Orchestrator {
     const embeddingFetchLimit = computedFetchLimit;
 
     if (recallMode === "no_recall") {
+      // Clean up workspace override before early return to prevent Map leaks.
+      const earlySessionKey = sessionKey ?? "default";
+      this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
+      if (sessionKey) {
+        this.queueEvalShadowRecall({
+          traceId,
+          recordedAt: new Date().toISOString(),
+          sessionKey,
+          promptHash,
+          promptLength: prompt.length,
+          retrievalQueryHash,
+          retrievalQueryLength: retrievalQuery.length,
+          recallMode,
+          recallResultLimit,
+          source: recallSource,
+          recalledMemoryCount,
+          injected: false,
+          contextChars: 0,
+          memoryIds: [],
+          policyVersion,
+          identityInjectionMode: identityInjectionModeUsed,
+          identityInjectedChars,
+          identityInjectionTruncated,
+          durationMs: Date.now() - recallStart,
+          timings: { ...timings },
+        });
+      }
+      this.emitTrace({
+        kind: "recall_summary",
+        traceId,
+        operation: "recall",
+        sessionKey,
+        promptHash,
+        promptLength: prompt.length,
+        retrievalQueryHash,
+        retrievalQueryLength: retrievalQuery.length,
+        recallMode,
+        recallResultLimit,
+        qmdEnabled: this.config.qmdEnabled,
+        qmdAvailable: this.qmd.isAvailable(),
+        recallNamespaces: [],
+        source: recallSource,
+        recalledMemoryCount,
+        injected: false,
+        contextChars: 0,
+        policyVersion,
+        identityInjectionMode: identityInjectionModeUsed,
+        identityInjectedChars,
+        identityInjectionTruncated,
+        durationMs: Date.now() - recallStart,
+        timings: { ...timings },
+      });
       return "";
     }
 
@@ -898,6 +2090,7 @@ export class Orchestrator {
 
     // 0. Shared context (v4.0, optional)
     const sharedContextPromise = (async (): Promise<string | null> => {
+      if (!this.isRecallSectionEnabled("shared-context", this.config.sharedContextEnabled === true)) return null;
       if (!this.sharedContext) return null;
       const t0 = Date.now();
       const [priorities, roundtable] = await Promise.all([
@@ -923,18 +2116,36 @@ export class Orchestrator {
 
     // 1. Profile
     const profilePromise = (async (): Promise<string | null> => {
+      if (!this.isRecallSectionEnabled("profile")) return null;
       const t0 = Date.now();
       const profile = await profileStorage.readProfile();
       timings.profile = `${Date.now() - t0}ms`;
       return profile || null;
     })();
 
+    // 1a. Identity continuity signals (v8.4)
+    const identityContinuityPromise = (async () => {
+      if (!this.isRecallSectionEnabled("identity-continuity", this.config.identityContinuityEnabled === true)) return null;
+      const t0 = Date.now();
+      const section = await this.buildIdentityContinuitySection({
+        storage: profileStorage,
+        recallMode,
+        prompt: retrievalQuery,
+      });
+      timings.identityContinuity = `${Date.now() - t0}ms`;
+      return section;
+    })();
+
     // 1b. Knowledge Index (v7.0)
     const knowledgeIndexPromise = (async (): Promise<{ result: string; cached: boolean } | null> => {
+      if (!this.isRecallSectionEnabled("knowledge-index", this.config.knowledgeIndexEnabled)) return null;
       if (!this.config.knowledgeIndexEnabled) return null;
       const t0 = Date.now();
       try {
-        const ki = await this.storage.buildKnowledgeIndex(this.config);
+        const ki = await this.storage.buildKnowledgeIndex(this.config, {
+          maxEntities: this.getRecallSectionNumber("knowledge-index", "maxEntities"),
+          maxChars: this.getRecallSectionNumber("knowledge-index", "maxChars"),
+        });
         timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
         return ki.result ? ki : null;
       } catch (err) {
@@ -946,6 +2157,7 @@ export class Orchestrator {
 
     // 1c. Verbatim artifacts (v8.0 phase 1)
     const artifactsPromise = (async (): Promise<MemoryFile[]> => {
+      if (!this.isRecallSectionEnabled("verbatim-artifacts", this.config.verbatimArtifactsEnabled === true)) return [];
       if (!this.config.verbatimArtifactsEnabled) return [];
       const t0 = Date.now();
       const targetCount = computeArtifactRecallLimit(
@@ -957,10 +2169,205 @@ export class Orchestrator {
         timings.artifacts = "skip(limit=0)";
         return [];
       }
-      const results = await this.recallArtifactsAcrossNamespaces(prompt, recallNamespaces, targetCount);
+      const results = await this.recallArtifactsAcrossNamespaces(
+        retrievalQuery,
+        recallNamespaces,
+        targetCount,
+      );
 
       timings.artifacts = `${Date.now() - t0}ms`;
       return results;
+    })();
+
+    const objectiveStatePromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.objectiveStateMemoryEnabled ||
+        !this.config.objectiveStateRecallEnabled ||
+        !this.isRecallSectionEnabled("objective-state", this.config.objectiveStateRecallEnabled === true)
+      ) {
+        timings.objectiveState = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("objective-state", "maxResults") ?? 4;
+      if (maxResults <= 0) {
+        timings.objectiveState = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchObjectiveStateSnapshots({
+        memoryDir: this.config.memoryDir,
+        objectiveStateStoreDir: this.config.objectiveStateStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.objectiveState = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatObjectiveStateResults(results) : null;
+    })();
+
+    const causalTrajectoryPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.causalTrajectoryMemoryEnabled ||
+        !this.config.causalTrajectoryRecallEnabled ||
+        !this.isRecallSectionEnabled("causal-trajectories", this.config.causalTrajectoryRecallEnabled === true)
+      ) {
+        timings.causalTrajectories = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("causal-trajectories", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.causalTrajectories = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchCausalTrajectories({
+        memoryDir: this.config.memoryDir,
+        causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.causalTrajectories = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatCausalTrajectoryResults(results) : null;
+    })();
+
+    const trustZonePromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.trustZonesEnabled ||
+        !this.config.trustZoneRecallEnabled ||
+        !this.isRecallSectionEnabled("trust-zones", this.config.trustZoneRecallEnabled === true)
+      ) {
+        timings.trustZones = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("trust-zones", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.trustZones = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchTrustZoneRecords({
+        memoryDir: this.config.memoryDir,
+        trustZoneStoreDir: this.config.trustZoneStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.trustZones = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatTrustZoneResults(results) : null;
+    })();
+
+    const harmonicRetrievalPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.harmonicRetrievalEnabled ||
+        !this.isRecallSectionEnabled("harmonic-retrieval", this.config.harmonicRetrievalEnabled === true)
+      ) {
+        timings.harmonicRetrieval = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("harmonic-retrieval", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.harmonicRetrieval = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchHarmonicRetrieval({
+        memoryDir: this.config.memoryDir,
+        abstractionNodeStoreDir: this.config.abstractionNodeStoreDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+        anchorsEnabled: this.config.abstractionAnchorsEnabled,
+      });
+
+      timings.harmonicRetrieval = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
+    })();
+
+    const verifiedRecallPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.verifiedRecallEnabled ||
+        !this.isRecallSectionEnabled("verified-episodes", this.config.verifiedRecallEnabled === true)
+      ) {
+        timings.verifiedRecall = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("verified-episodes", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.verifiedRecall = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchVerifiedEpisodes({
+        memoryDir: this.config.memoryDir,
+        query: retrievalQuery,
+        maxResults,
+        boxRecallDays: this.config.boxRecallDays,
+      });
+
+      timings.verifiedRecall = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
+    })();
+
+    const verifiedRulesPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.semanticRuleVerificationEnabled ||
+        !this.isRecallSectionEnabled("verified-rules", this.config.semanticRuleVerificationEnabled === true)
+      ) {
+        timings.verifiedRules = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("verified-rules", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.verifiedRules = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchVerifiedSemanticRules({
+        memoryDir: this.config.memoryDir,
+        query: retrievalQuery,
+        maxResults,
+      });
+
+      timings.verifiedRules = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatVerifiedSemanticRuleResults(results) : null;
+    })();
+
+    const workProductsPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.creationMemoryEnabled ||
+        !this.config.workProductRecallEnabled ||
+        !this.isRecallSectionEnabled("work-products", this.config.workProductRecallEnabled === true)
+      ) {
+        timings.workProducts = "skip";
+        return null;
+      }
+      const maxResults = this.getRecallSectionNumber("work-products", "maxResults") ?? 3;
+      if (maxResults <= 0) {
+        timings.workProducts = "skip(limit=0)";
+        return null;
+      }
+
+      const results = await searchWorkProductLedgerEntries({
+        memoryDir: this.config.memoryDir,
+        workProductLedgerDir: this.config.workProductLedgerDir,
+        query: retrievalQuery,
+        maxResults,
+        sessionKey,
+      });
+
+      timings.workProducts = `${Date.now() - t0}ms`;
+      return results.length > 0 ? this.formatWorkProductResults(results) : null;
     })();
 
     // 2. QMD search (the slow part — runs in parallel with preamble)
@@ -974,9 +2381,9 @@ export class Orchestrator {
         timings.qmd = "skip(limit=0)";
         return null;
       }
-      if (!this.config.qmdEnabled || !this.qmd.isAvailable()) {
+      if (!this.qmd.isAvailable()) {
         timings.qmd = "skip";
-        log.debug(`QMD skip: qmdEnabled=${this.config.qmdEnabled} ${this.qmd.debugStatus()}`);
+        log.debug(`Search skip: ${this.qmd.debugStatus()}`);
         return null;
       }
       const t0 = Date.now();
@@ -984,7 +2391,7 @@ export class Orchestrator {
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
       const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
-        prompt,
+        retrievalQuery,
         qmdFetchLimit,
         qmdHybridFetchLimit,
         {
@@ -998,26 +2405,287 @@ export class Orchestrator {
       return { memoryResultsLists: [filteredResults], globalResults: [] };
     })();
 
+    const transcriptPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (!this.config.transcriptEnabled || !this.isRecallSectionEnabled("transcript", true)) {
+        timings.transcript = "skip";
+        return null;
+      }
+      const transcriptMaxTokens = this.getRecallSectionNumber("transcript", "maxTokens")
+        ?? this.config.maxTranscriptTokens;
+      const transcriptMaxTurns = this.getRecallSectionNumber("transcript", "maxTurns")
+        ?? this.config.maxTranscriptTurns;
+      const transcriptLookbackHours = this.getRecallSectionNumber("transcript", "lookbackHours")
+        ?? this.config.transcriptRecallHours;
+      if (transcriptMaxTokens === 0 || transcriptMaxTurns === 0 || transcriptLookbackHours === 0) {
+        timings.transcript = "skip(limit=0)";
+        return null;
+      }
+
+      let section: string | null = null;
+      // Try checkpoint first (post-compaction recovery)
+      let checkpointInjected = false;
+      if (this.config.checkpointEnabled) {
+        const checkpoint = await this.transcript.loadCheckpoint(sessionKey);
+        log.debug(`recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`);
+        if (checkpoint && checkpoint.turns.length > 0) {
+          const formatted = this.transcript.formatForRecall(checkpoint.turns, transcriptMaxTokens);
+          if (formatted) {
+            section = `## Working Context (Recovered)\n\n${formatted}`;
+            checkpointInjected = true;
+            // Clear checkpoint after injection
+            await this.transcript.clearCheckpoint();
+          }
+        }
+      }
+
+      if (!checkpointInjected) {
+        const entries = await this.transcript.readRecent(transcriptLookbackHours, sessionKey);
+        log.debug(`recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`);
+
+        // Apply max turns cap
+        const cappedEntries = entries.slice(-transcriptMaxTurns);
+        if (cappedEntries.length > 0) {
+          log.debug(`recall: injecting ${cappedEntries.length} transcript entries`);
+          const formatted = this.transcript.formatForRecall(cappedEntries, transcriptMaxTokens);
+          if (formatted) section = formatted;
+        }
+      }
+
+      timings.transcript = `${Date.now() - t0}ms`;
+      return section;
+    })();
+
+    // Compaction reset runs independently of transcript — it must work even when
+    // transcriptEnabled=false, since compaction recovery is a separate concern.
+    const compactionPromise = (async (): Promise<string | null> => {
+      // Always clean up per-session workspace overrides, even if the feature is off,
+      // to prevent the Map from accumulating stale entries on long-running gateways.
+      const effectiveSessionKey = sessionKey ?? "default";
+      const compactionWorkspaceDir = this._recallWorkspaceOverrides.get(effectiveSessionKey);
+      this._recallWorkspaceOverrides.delete(effectiveSessionKey);
+
+      if (!this.config.compactionResetEnabled) return null;
+
+      const workspaceDir =
+        compactionWorkspaceDir ||
+        this.config.workspaceDir ||
+        defaultWorkspaceDir();
+      const safeSessionKey = sanitizeSessionKeyForFilename(effectiveSessionKey);
+      const signalPath = path.join(workspaceDir, `.compaction-reset-signal-${safeSessionKey}`);
+      const bootPath = path.join(workspaceDir, "BOOT.md");
+
+      try {
+        const signalStat = await stat(signalPath).catch(() => null);
+        if (!signalStat) return null;
+
+        const signalAge = Date.now() - signalStat.mtimeMs;
+        const signalData = JSON.parse(await readFile(signalPath, "utf-8"));
+
+        // Validate signal belongs to this session (defense-in-depth: filename
+        // is already per-session, but the sessionKey inside provides a second check).
+        // Use strict !== so missing/null sessionKey also fails validation.
+        if (signalData.sessionKey !== effectiveSessionKey) {
+          log.debug(
+            `recall: compaction signal is for ${signalData.sessionKey}, not ${effectiveSessionKey} — skipping`,
+          );
+          return null;
+        }
+
+        if (signalAge >= COMPACTION_SIGNAL_MAX_AGE_MS) {
+          log.debug(
+            `recall: stale compaction signal (${Math.round(signalAge / 1000)}s old), skipping`,
+          );
+          await unlink(signalPath).catch(() => {});
+          return null;
+        }
+
+        // Signal is fresh and belongs to this session — build recovery context
+        let section = "\n\n## Session Recovery (Post-Compaction)\n\n";
+        section += `⚠️ A compaction occurred at ${signalData.compactedAt} and this is a fresh session.\n\n`;
+
+        try {
+          const bootContent = await readFile(bootPath, "utf-8");
+          section += "### BOOT.md (working state before compaction)\n\n";
+          section += bootContent + "\n";
+        } catch {
+          section += "### ⚠️ BOOT.md is MISSING\n\n";
+          section += "The memory flush may not have written BOOT.md before compaction. ";
+          section += "Ask the user what you were working on — do not guess.\n";
+        }
+
+        log.info(`recall: injected compaction reset context for ${effectiveSessionKey}`);
+        await unlink(signalPath).catch(() => {});
+        return section;
+      } catch (err) {
+        log.debug("recall: compaction signal check failed:", err);
+        // Remove corrupt/unreadable signal files so they don't cause repeated
+        // parse failures on every recall() until the 1-hour sweep runs.
+        await unlink(signalPath).catch(() => {});
+        return null;
+      }
+    })();
+
+    const summariesPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (!this.config.hourlySummariesEnabled || !sessionKey || !this.isRecallSectionEnabled("summaries", true)) {
+        timings.summaries = "skip";
+        return null;
+      }
+      const summariesLookbackHours = this.getRecallSectionNumber("summaries", "lookbackHours")
+        ?? this.config.summaryRecallHours;
+      const summariesMaxCount = this.getRecallSectionNumber("summaries", "maxCount")
+        ?? this.config.maxSummaryCount;
+      if (summariesLookbackHours <= 0 || summariesMaxCount <= 0) {
+        timings.summaries = "skip(limit=0)";
+        return null;
+      }
+
+      const summaries = await this.summarizer.readRecent(sessionKey, summariesLookbackHours);
+      const cappedSummaries = summaries.slice(0, summariesMaxCount);
+      const section =
+        cappedSummaries.length > 0
+          ? this.summarizer.formatForRecall(cappedSummaries, summariesMaxCount)
+          : null;
+      timings.summaries = `${Date.now() - t0}ms`;
+      return section;
+    })();
+
+    const conversationRecallPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.conversationIndexEnabled ||
+        queryPolicy.skipConversationRecall ||
+        !this.isRecallSectionEnabled("conversation-recall", true)
+      ) {
+        timings.convRecall = "skip";
+        return null;
+      }
+
+      const topKOverride = this.getRecallSectionNumber("conversation-recall", "topK");
+      if (topKOverride === 0) {
+        timings.convRecall = "skip(topK=0)";
+        return null;
+      }
+
+      const startedAtMs = Date.now();
+      const timeoutMs = Math.max(
+        200,
+        this.getRecallSectionNumber("conversation-recall", "timeoutMs")
+          ?? this.config.conversationRecallTimeoutMs,
+      );
+      const topK = Math.max(
+        1,
+        topKOverride
+          ?? this.config.conversationRecallTopK,
+      );
+      const maxChars = Math.max(
+        400,
+        this.getRecallSectionNumber("conversation-recall", "maxChars")
+          ?? this.config.conversationRecallMaxChars,
+      );
+
+      const results = (await Promise.race([
+        this.searchConversationRecallResults(retrievalQuery, topK),
+        new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
+      ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
+
+      const durationMs = Date.now() - startedAtMs;
+      if (durationMs >= timeoutMs) {
+        log.debug(`conversation recall: timed out after ${timeoutMs}ms`);
+      }
+
+      const section = this.formatConversationRecallSection(results, maxChars);
+      timings.convRecall = `${Date.now() - t0}ms`;
+      return section;
+    })();
+
+    const compoundingPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (!this.compounding || !this.config.compoundingInjectEnabled || !this.isRecallSectionEnabled("compounding", true)) {
+        timings.compounding = "skip";
+        return null;
+      }
+      const mistakes = await this.compounding.readMistakes();
+      if (!mistakes || !Array.isArray(mistakes.patterns) || mistakes.patterns.length === 0) {
+        timings.compounding = `${Date.now() - t0}ms`;
+        return null;
+      }
+      const maxPatterns = this.getRecallSectionNumber("compounding", "maxPatterns") ?? 40;
+      if (maxPatterns === 0) {
+        timings.compounding = "skip(limit=0)";
+        return null;
+      }
+      const lines: string[] = [
+        "## Institutional Learning (Compounded)",
+        "",
+        "Avoid repeating these patterns:",
+        ...mistakes.patterns.slice(0, maxPatterns).map((p) => `- ${p}`),
+      ];
+      timings.compounding = `${Date.now() - t0}ms`;
+      return lines.join("\n");
+    })();
+
     // --- Wait for all parallel work ---
-    const [sharedCtx, profile, kiResult, artifacts, qmdResult] = await Promise.all([
+    const [
+      sharedCtx,
+      profile,
+      identityContinuity,
+      kiResult,
+      artifacts,
+      objectiveStateSection,
+      causalTrajectorySection,
+      trustZoneSection,
+      harmonicRetrievalSection,
+      verifiedRecallSection,
+      verifiedRulesSection,
+      workProductsSection,
+      qmdResult,
+      transcriptSection,
+      compactionSection,
+      summariesSection,
+      conversationRecallSection,
+      compoundingSection,
+    ] = await Promise.all([
       sharedContextPromise,
       profilePromise,
+      identityContinuityPromise,
       knowledgeIndexPromise,
       artifactsPromise,
+      objectiveStatePromise,
+      causalTrajectoryPromise,
+      trustZonePromise,
+      harmonicRetrievalPromise,
+      verifiedRecallPromise,
+      verifiedRulesPromise,
+      workProductsPromise,
       qmdPromise,
+      transcriptPromise,
+      compactionPromise,
+      summariesPromise,
+      conversationRecallPromise,
+      compoundingPromise,
     ]);
 
     // --- Phase 2: Assemble sections in correct order ---
 
     // 0. Shared context
-    if (sharedCtx) sections.push(sharedCtx);
+    if (sharedCtx) this.appendRecallSection(sectionBuckets, "shared-context", sharedCtx);
 
     // 1. Profile
-    if (profile) sections.push(`## User Profile\n\n${profile}`);
+    if (profile) this.appendRecallSection(sectionBuckets, "profile", `## User Profile\n\n${profile}`);
+
+    // 1a. Identity continuity
+    if (identityContinuity) {
+      this.appendRecallSection(sectionBuckets, "identity-continuity", identityContinuity.section);
+      identityInjectionModeUsed = identityContinuity.mode;
+      identityInjectedChars = identityContinuity.injectedChars;
+      identityInjectionTruncated = identityContinuity.truncated;
+    }
 
     // 1b. Knowledge Index
     if (kiResult?.result) {
-      sections.push(kiResult.result);
+      this.appendRecallSection(sectionBuckets, "knowledge-index", kiResult.result);
       log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
     }
 
@@ -1029,11 +2697,15 @@ export class Orchestrator {
         const created = createdRaw ? createdRaw.slice(0, 19).replace("T", " ") : "unknown-time";
         return `- [${artifactType}] "${this.truncateArtifactForRecall(a.content)}" (${created})`;
       });
-      sections.push(`## Verbatim Artifacts\n\n${lines.join("\n")}`);
+      this.appendRecallSection(sectionBuckets, "verbatim-artifacts", `## Verbatim Artifacts\n\n${lines.join("\n")}`);
     }
 
     // 1d. Memory Boxes (topic continuity windows, v8.0 Phase 2A)
-    if (this.config.memoryBoxesEnabled && this.config.boxRecallDays > 0) {
+    if (
+      this.isRecallSectionEnabled("memory-boxes", this.config.memoryBoxesEnabled === true) &&
+      this.config.memoryBoxesEnabled &&
+      this.config.boxRecallDays > 0
+    ) {
       const recentBoxes = await this.boxBuilderFor(profileStorage)
         .readRecentBoxes(this.config.boxRecallDays)
         .catch(() => []);
@@ -1043,17 +2715,50 @@ export class Orchestrator {
           const traceNote = b.traceId ? ` [trace: ${b.traceId.slice(0, 12)}]` : "";
           return `- [${sealedDate}${traceNote}] Topics: ${b.topics.join(", ")} (${b.memoryIds.length} memories)`;
         });
-        sections.push(`## Recent Topic Windows\n\n${boxLines.join("\n")}`);
+        this.appendRecallSection(sectionBuckets, "memory-boxes", `## Recent Topic Windows\n\n${boxLines.join("\n")}`);
       }
     }
 
     // 1e. TMT node (temporal memory tree, v8.2)
-    if (this.config.temporalMemoryTreeEnabled && recallMode !== "minimal" && (recallMode as RecallPlanMode) !== "no_recall") {
+    if (
+      this.isRecallSectionEnabled("temporal-memory-tree", this.config.temporalMemoryTreeEnabled === true) &&
+      this.config.temporalMemoryTreeEnabled &&
+      recallMode !== "minimal" &&
+      (recallMode as RecallPlanMode) !== "no_recall"
+    ) {
       const tmtNode = await this.tmtBuilder.getMostRelevantNode();
       if (tmtNode) {
         const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
-        sections.push(`## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
+        this.appendRecallSection(sectionBuckets, "temporal-memory-tree", `## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
       }
+    }
+
+    if (objectiveStateSection) {
+      this.appendRecallSection(sectionBuckets, "objective-state", objectiveStateSection);
+    }
+
+    if (causalTrajectorySection) {
+      this.appendRecallSection(sectionBuckets, "causal-trajectories", causalTrajectorySection);
+    }
+
+    if (trustZoneSection) {
+      this.appendRecallSection(sectionBuckets, "trust-zones", trustZoneSection);
+    }
+
+    if (harmonicRetrievalSection) {
+      this.appendRecallSection(sectionBuckets, "harmonic-retrieval", harmonicRetrievalSection);
+    }
+
+    if (verifiedRecallSection) {
+      this.appendRecallSection(sectionBuckets, "verified-episodes", verifiedRecallSection);
+    }
+
+    if (verifiedRulesSection) {
+      this.appendRecallSection(sectionBuckets, "verified-rules", verifiedRulesSection);
+    }
+
+    if (workProductsSection) {
+      this.appendRecallSection(sectionBuckets, "work-products", workProductsSection);
     }
 
     // 2. QMD results — post-process and format
@@ -1062,20 +2767,7 @@ export class Orchestrator {
       const { memoryResultsLists, globalResults } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
-      const mergedByPath = new Map<string, QmdSearchResult>();
-      for (const list of memoryResultsLists) {
-        for (const r of list) {
-          const prev = mergedByPath.get(r.path);
-          if (!prev) {
-            mergedByPath.set(r.path, r);
-            continue;
-          }
-          const better = r.score > prev.score ? r : prev;
-          const snippet = prev.snippet || r.snippet;
-          mergedByPath.set(r.path, { ...better, snippet });
-        }
-      }
-      const memoryResultsRaw = Array.from(mergedByPath.values());
+      const memoryResultsRaw = mergeGraphExpandedResults(memoryResultsLists.flat(), []);
 
       let memoryResults = memoryResultsRaw;
 
@@ -1088,18 +2780,64 @@ export class Orchestrator {
       // Artifacts are injected through dedicated verbatim recall flow only.
       memoryResults = memoryResults.filter((r) => !isArtifactMemoryPath(r.path));
 
+      const isFullModeGraphAssist =
+        this.config.multiGraphMemoryEnabled &&
+        this.config.graphAssistInFullModeEnabled !== false &&
+        recallMode === "full" &&
+        memoryResults.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3);
+      const shouldRunGraphExpansion =
+        recallMode === "graph_mode" ||
+        isFullModeGraphAssist;
+      const graphShadowEvalEnabled =
+        isFullModeGraphAssist &&
+        this.config.graphAssistShadowEvalEnabled === true;
+      if (shouldRunGraphExpansion) {
+        const baselineMemoryResults = memoryResults;
+        const {
+          merged,
+          seedPaths,
+          expandedPaths,
+        } = await this.expandResultsViaGraph({
+          memoryResults,
+          recallNamespaces,
+          recallResultLimit,
+        });
+        memoryResults = graphShadowEvalEnabled ? baselineMemoryResults : merged;
+
+        if (graphShadowEvalEnabled) {
+          const comparison = summarizeGraphShadowComparison(
+            baselineMemoryResults,
+            merged,
+            recallResultLimit,
+          );
+          timings.graphShadow =
+            `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
+            `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
+            `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`;
+        }
+
+        await this.recordLastGraphRecallSnapshot({
+          storage: profileStorage,
+          prompt: retrievalQuery,
+          recallMode,
+          recallNamespaces,
+          seedPaths,
+          expandedPaths,
+        });
+      }
+
       // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, prompt);
+      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, retrievalQuery);
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
         const ranked = await rerankLocalOrNoop({
-          query: prompt,
+          query: retrievalQuery,
           candidates: memoryResults.slice(0, this.config.rerankMaxCandidates).map((r) => ({
             id: r.path,
             snippet: r.snippet || r.path,
           })),
-          local: this.localLlm,
+          local: this.fastLlm,
           enabled: true,
           timeoutMs: this.config.rerankTimeoutMs,
           maxCandidates: this.config.rerankMaxCandidates,
@@ -1126,49 +2864,137 @@ export class Orchestrator {
         log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
       }
 
+      // Synapse-inspired confidence gate: check scores BEFORE slicing so
+      // reranking doesn't affect which score the gate evaluates.
+      let confidenceGateRejected = false;
+      if (
+        this.config.recallConfidenceGateEnabled &&
+        shouldRejectLowConfidenceRecall(memoryResults, this.config.recallConfidenceGateThreshold)
+      ) {
+        log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score below ${this.config.recallConfidenceGateThreshold})`);
+        memoryResults = [];
+        confidenceGateRejected = true;
+      }
+
       memoryResults = memoryResults.slice(0, recallResultLimit);
 
-      if (memoryResults.length > 0) {
-        // Track access for these memories
-        const memoryIds = this.extractMemoryIdsFromResults(memoryResults);
-        this.trackMemoryAccess(memoryIds);
-
-        // Record last recall snapshot + impression log for feedback loops.
-        if (sessionKey) {
-          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-          this.lastRecall
-            .record({ sessionKey, query: prompt, memoryIds: unique })
-            .catch((err) => log.debug(`last recall record failed: ${err}`));
+      // E-Mem-inspired memory reconstruction: fill gaps for referenced entities
+      if (this.config.memoryReconstructionEnabled && memoryResults.length > 0) {
+        try {
+          const snippets = memoryResults.map((r) => r.snippet);
+          // Extract entity paths already present in recall results to avoid duplicates
+          const coveredRefs = memoryResults
+            .map((r) => r.path)
+            .filter((p) => p.startsWith("entities/"))
+            .map((p) => p.replace(/^entities\//, "").replace(/\.md$/, ""));
+          const knownEntities = await profileStorage.listEntityNames();
+          const missing = findUnresolvedEntityRefs(snippets, coveredRefs, knownEntities);
+          if (missing.length > 0) {
+            // Allow up to maxExpansions successful entity expansions
+            const budget = this.config.memoryReconstructionMaxExpansions;
+            let expanded = 0;
+            for (const entityName of missing) {
+              if (expanded >= budget) break;
+              const raw = await profileStorage.readEntity(entityName);
+              if (raw && raw.length > 0) {
+                const snippet = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+                memoryResults.push({
+                  docid: `entity:${entityName}`,
+                  path: `entities/${entityName}.md`,
+                  snippet: `[Entity: ${entityName}] ${snippet}`,
+                  score: 0.1,
+                });
+                expanded++;
+              }
+            }
+            if (expanded > 0) {
+              log.debug(`recall: reconstructed ${expanded} entity contexts`);
+            }
+          }
+        } catch (err) {
+          log.warn("recall: memory reconstruction failed (non-fatal)", err);
         }
+      }
 
-        sections.push(this.formatQmdResults("Relevant Memories", memoryResults));
-      } else {
-        const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+      if (memoryResults.length > 0) {
+        recallSource = "hot_qmd";
+        recalledMemoryCount = memoryResults.length;
+        this.publishRecallResults({
+          title: "Relevant Memories",
+          results: memoryResults,
+          sectionBuckets,
+          retrievalQuery,
+          sessionKey,
+          identityInjection: {
+            mode: identityInjectionModeUsed,
+            injectedChars: identityInjectedChars,
+            truncated: identityInjectionTruncated,
+          },
+        });
+        recalledMemoryIds = this.extractMemoryIdsFromResults(memoryResults);
+        impressionRecorded = true;
+      } else if (!confidenceGateRejected) {
+        // Only attempt fallback paths if the confidence gate did NOT fire.
+        // When the gate rejects, all recall pathways are skipped to prevent
+        // low-relevance results from polluting context.
+        const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
         const scopedCandidates = filterRecallCandidates(embeddingResults, {
           namespacesEnabled: this.config.namespacesEnabled,
           recallNamespaces,
           resolveNamespace: (p) => this.namespaceFromPath(p),
           limit: embeddingFetchLimit,
         });
-        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
+        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, retrievalQuery)).slice(
           0,
           recallResultLimit,
         );
         if (scoped.length > 0) {
-          const memoryIds = this.extractMemoryIdsFromResults(scoped);
-          this.trackMemoryAccess(memoryIds);
-          if (sessionKey) {
-            const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-            this.lastRecall
-              .record({ sessionKey, query: prompt, memoryIds: unique })
-              .catch((err) => log.debug(`last recall record failed: ${err}`));
+          recallSource = "hot_embedding";
+          recalledMemoryCount = scoped.length;
+          this.publishRecallResults({
+            title: "Relevant Memories",
+            results: scoped,
+            sectionBuckets,
+            retrievalQuery,
+            sessionKey,
+            identityInjection: {
+              mode: identityInjectionModeUsed,
+              injectedChars: identityInjectedChars,
+              truncated: identityInjectionTruncated,
+            },
+          });
+          recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
+          impressionRecorded = true;
+        } else {
+          const longTerm = await this.applyColdFallbackPipeline({
+            prompt: retrievalQuery,
+            recallNamespaces,
+            recallResultLimit,
+            recallMode,
+          });
+          if (longTerm.length > 0) {
+            recallSource = "cold_fallback";
+            recalledMemoryCount = longTerm.length;
+            this.publishRecallResults({
+              title: "Long-Term Memories (Fallback)",
+              results: longTerm,
+              sectionBuckets,
+              retrievalQuery,
+              sessionKey,
+              identityInjection: {
+                mode: identityInjectionModeUsed,
+                injectedChars: identityInjectedChars,
+                truncated: identityInjectionTruncated,
+              },
+            });
+            recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+            impressionRecorded = true;
           }
-          sections.push(this.formatQmdResults("Relevant Memories", scoped));
         }
       }
 
       if (globalResults.length > 0) {
-        sections.push(
+        this.appendRecallSection(sectionBuckets, "workspace-context",
           this.formatQmdResults("Workspace Context", globalResults),
         );
       }
@@ -1179,7 +3005,7 @@ export class Orchestrator {
       // gently suggest an explicit workflow to inspect what was recalled and record feedback.
       // IMPORTANT: this is suggestion-only; never auto-mark negatives.
       if (isDisagreementPrompt(prompt)) {
-        sections.push(
+        this.appendRecallSection(sectionBuckets, "memories",
           [
             "## Retrieval Feedback Helper",
             "",
@@ -1191,29 +3017,37 @@ export class Orchestrator {
           ].join("\n"),
         );
       }
-    } else if (recallResultLimit > 0 && (!this.config.qmdEnabled || !this.qmd.isAvailable())) {
+    } else if (recallResultLimit > 0 && !this.qmd.isAvailable()) {
       // Fallback: embeddings first, then recency-only.
-      const embeddingResults = await this.searchEmbeddingFallback(prompt, embeddingFetchLimit);
+      const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
       const scopedCandidates = filterRecallCandidates(embeddingResults, {
         namespacesEnabled: this.config.namespacesEnabled,
         recallNamespaces,
         resolveNamespace: (p) => this.namespaceFromPath(p),
         limit: embeddingFetchLimit,
       });
-      const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, prompt)).slice(
-        0,
-        recallResultLimit,
-      );
+      const scoped = (await this.boostSearchResults(
+        scopedCandidates,
+        recallNamespaces,
+        retrievalQuery,
+      )).slice(0, recallResultLimit);
       if (scoped.length > 0) {
-        const memoryIds = this.extractMemoryIdsFromResults(scoped);
-        this.trackMemoryAccess(memoryIds);
-        if (sessionKey) {
-          const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-          this.lastRecall
-            .record({ sessionKey, query: prompt, memoryIds: unique })
-            .catch((err) => log.debug(`last recall record failed: ${err}`));
-        }
-        sections.push(this.formatQmdResults("Relevant Memories", scoped));
+        recallSource = "hot_embedding";
+        recalledMemoryCount = scoped.length;
+        this.publishRecallResults({
+          title: "Relevant Memories",
+          results: scoped,
+          sectionBuckets,
+          retrievalQuery,
+          sessionKey,
+          identityInjection: {
+            mode: identityInjectionModeUsed,
+            injectedChars: identityInjectedChars,
+            truncated: identityInjectionTruncated,
+          },
+        });
+        recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
+        impressionRecorded = true;
       } else {
         const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
@@ -1242,32 +3076,94 @@ export class Orchestrator {
             snippet: m.content,
             score: 1.0 - i / Math.max(recentSorted.length, 1),
           }));
-          const recent = (await this.boostSearchResults(recentAsResults, recallNamespaces, prompt, preloadedMap))
+          const recent = (await this.boostSearchResults(
+            recentAsResults,
+            recallNamespaces,
+            retrievalQuery,
+            preloadedMap,
+          ))
             .sort((a, b) => b.score - a.score)
             .slice(0, recallResultLimit);
 
-          // Track access for these memories
-          const memoryIds = recent.map((r) => r.docid).filter(Boolean);
-          this.trackMemoryAccess(memoryIds);
-
-          if (sessionKey) {
-            const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-            this.lastRecall
-              .record({ sessionKey, query: prompt, memoryIds: unique })
-              .catch((err) => log.debug(`last recall record failed: ${err}`));
+          if (recent.length > 0) {
+            recallSource = "recent_scan";
+            recalledMemoryCount = recent.length;
+            this.publishRecallResults({
+              title: "Recent Memories",
+              results: recent,
+              sectionBuckets,
+              retrievalQuery,
+              sessionKey,
+              identityInjection: {
+                mode: identityInjectionModeUsed,
+                injectedChars: identityInjectedChars,
+                truncated: identityInjectionTruncated,
+              },
+            });
+            recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
+            impressionRecorded = true;
+          } else {
+            const longTerm = await this.applyColdFallbackPipeline({
+              prompt: retrievalQuery,
+              recallNamespaces,
+              recallResultLimit,
+              recallMode,
+            });
+            if (longTerm.length > 0) {
+              recallSource = "cold_fallback";
+              recalledMemoryCount = longTerm.length;
+              this.publishRecallResults({
+                title: "Long-Term Memories (Fallback)",
+                results: longTerm,
+                sectionBuckets,
+                retrievalQuery,
+                sessionKey,
+                identityInjection: {
+                  mode: identityInjectionModeUsed,
+                  injectedChars: identityInjectedChars,
+                  truncated: identityInjectionTruncated,
+                },
+              });
+              recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+              impressionRecorded = true;
+            }
           }
-
-          sections.push(this.formatQmdResults("Recent Memories", recent));
+        } else {
+          const longTerm = await this.applyColdFallbackPipeline({
+            prompt: retrievalQuery,
+            recallNamespaces,
+            recallResultLimit,
+            recallMode,
+          });
+          if (longTerm.length > 0) {
+            recallSource = "cold_fallback";
+            recalledMemoryCount = longTerm.length;
+            this.publishRecallResults({
+              title: "Long-Term Memories (Fallback)",
+              results: longTerm,
+              sectionBuckets,
+              retrievalQuery,
+              sessionKey,
+              identityInjection: {
+                mode: identityInjectionModeUsed,
+                injectedChars: identityInjectedChars,
+                truncated: identityInjectionTruncated,
+              },
+            });
+            recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+            impressionRecorded = true;
+          }
         }
       }
 
       if (isDisagreementPrompt(prompt)) {
-        sections.push(
+        this.appendRecallSection(sectionBuckets, "memories",
           [
             "## Retrieval Feedback Helper",
             "",
             "The user may be disputing an answer. To debug whether retrieval misled the response:",
             "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+            "- If graph recall is enabled, use `memory_graph_explain_last_recall` to inspect seed/expanded graph paths.",
             "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
             "",
             "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
@@ -1276,144 +3172,46 @@ export class Orchestrator {
       }
     }
 
-    // 3. TRANSCRIPT INJECTION (NEW)
-    const transcriptT0 = Date.now();
-    log.debug(`recall: transcriptEnabled=${this.config.transcriptEnabled}, sessionKey=${sessionKey}`);
-    if (this.config.transcriptEnabled) {
-      // Try checkpoint first (post-compaction recovery)
-      let checkpointInjected = false;
-      if (this.config.checkpointEnabled) {
-        const checkpoint = await this.transcript.loadCheckpoint(sessionKey);
-        log.debug(`recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`);
-        if (checkpoint && checkpoint.turns.length > 0) {
-          const formatted = this.transcript.formatForRecall(
-            checkpoint.turns,
-            this.config.maxTranscriptTokens
-          );
-          if (formatted) {
-            sections.push(`## Working Context (Recovered)\n\n${formatted}`);
-            checkpointInjected = true;
-            // Clear checkpoint after injection
-            await this.transcript.clearCheckpoint();
-          }
-        }
-      }
-
-      // If no checkpoint, inject recent transcript
-      if (!checkpointInjected) {
-        const entries = await this.transcript.readRecent(
-          this.config.transcriptRecallHours,
-          sessionKey
-        );
-        log.debug(`recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`);
-
-        // Apply max turns cap
-        const cappedEntries = entries.slice(-this.config.maxTranscriptTurns);
-
-        if (cappedEntries.length > 0) {
-          log.debug(`recall: injecting ${cappedEntries.length} transcript entries`);
-          const formatted = this.transcript.formatForRecall(
-            cappedEntries,
-            this.config.maxTranscriptTokens
-          );
-          if (formatted) {
-            sections.push(formatted);
-          }
-        }
+    // 2.5. Compression guideline recall section (v8.11 Task 5)
+    if (this.isRecallSectionEnabled("compression-guidelines", this.config.compressionGuidelineLearningEnabled === true)) {
+      const compressionGuidelineSection = await this.buildCompressionGuidelineRecallSection();
+      if (compressionGuidelineSection) {
+        this.appendRecallSection(sectionBuckets, "compression-guidelines", compressionGuidelineSection);
       }
     }
 
-    timings.transcript = `${Date.now() - transcriptT0}ms`;
-
-    // 4. HOURLY SUMMARIES INJECTION (NEW)
-    const summariesT0 = Date.now();
-    if (this.config.hourlySummariesEnabled && sessionKey) {
-      const summaries = await this.summarizer.readRecent(
-        sessionKey,
-        this.config.summaryRecallHours
-      );
-
-      // Apply max count cap
-      const cappedSummaries = summaries.slice(0, this.config.maxSummaryCount);
-
-      if (cappedSummaries.length > 0) {
-        const formatted = this.summarizer.formatForRecall(
-          cappedSummaries,
-          this.config.maxSummaryCount
-        );
-        sections.push(formatted);
-      }
+    // 3. Transcript/summaries/conversation/compounding are fetched in parallel above,
+    // then assembled here according to recallPipeline order.
+    if (transcriptSection) {
+      this.appendRecallSection(sectionBuckets, "transcript", transcriptSection);
     }
-
-    timings.summaries = `${Date.now() - summariesT0}ms`;
-
-    // 4.5. Conversation semantic recall hook (optional, default off).
-    // This searches over transcript chunk docs (ideally a separate QMD collection).
-    const convT0 = Date.now();
-    if (
-      this.config.conversationIndexEnabled &&
-      this.conversationQmd &&
-      this.conversationQmd.isAvailable()
-    ) {
-      const startedAtMs = Date.now();
-      const timeoutMs = Math.max(200, this.config.conversationRecallTimeoutMs);
-      const topK = Math.max(1, this.config.conversationRecallTopK);
-      const maxChars = Math.max(400, this.config.conversationRecallMaxChars);
-
-      const results = (await Promise.race([
-        this.conversationQmd.search(prompt, undefined, topK),
-        new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
-      ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
-
-      const durationMs = Date.now() - startedAtMs;
-      if (durationMs >= timeoutMs) {
-        log.debug(`conversation recall: timed out after ${timeoutMs}ms`);
-      }
-
-      if (Array.isArray(results) && results.length > 0) {
-        const lines: string[] = ["## Semantic Recall (Past Conversations)", ""];
-        let used = 0;
-        for (const r of results) {
-          if (!r?.snippet) continue;
-          const chunk =
-            `### ${r.path}\n` +
-            `Score: ${r.score.toFixed(3)}\n\n` +
-            `${r.snippet.trim()}\n`;
-          if (used + chunk.length > maxChars) break;
-          lines.push(chunk);
-          used += chunk.length;
-        }
-        if (used > 0) {
-          sections.push(lines.join("\n"));
-        }
-      }
+    // Compaction reset context — independent section so it works even when transcript is disabled.
+    if (compactionSection) {
+      this.appendRecallSection(sectionBuckets, "compaction-reset", compactionSection);
     }
-
-    timings.convRecall = `${Date.now() - convT0}ms`;
-
-    // 4.75. Compounding injection (v5.0, optional)
-    if (this.compounding && this.config.compoundingInjectEnabled) {
-      const mistakes = await this.compounding.readMistakes();
-      if (mistakes && Array.isArray(mistakes.patterns) && mistakes.patterns.length > 0) {
-        const lines: string[] = [
-          "## Institutional Learning (Compounded)",
-          "",
-          "Avoid repeating these patterns:",
-          ...mistakes.patterns.slice(0, 40).map((p) => `- ${p}`),
-        ];
-        sections.push(lines.join("\n"));
-      }
+    if (summariesSection) {
+      this.appendRecallSection(sectionBuckets, "summaries", summariesSection);
+    }
+    if (conversationRecallSection) {
+      this.appendRecallSection(sectionBuckets, "conversation-recall", conversationRecallSection);
+    }
+    if (compoundingSection) {
+      this.appendRecallSection(sectionBuckets, "compounding", compoundingSection);
     }
 
     // 5. Inject most relevant question (if enabled) (existing)
-    if (this.config.injectQuestions) {
+    if (this.config.injectQuestions && this.isRecallSectionEnabled("questions", true)) {
       const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
       if (questions.length > 0) {
         // Find the most relevant question to the current prompt
         // Simple approach: use the highest-priority unresolved question
         // TODO: Could use QMD search to find the most contextually relevant one
         const topQuestion = questions[0]; // Already sorted by priority desc
-        sections.push(`## Open Question\n\nSomething I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`);
+        this.appendRecallSection(
+          sectionBuckets,
+          "questions",
+          `## Open Question\n\nSomething I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`,
+        );
       }
     }
 
@@ -1422,9 +3220,75 @@ export class Orchestrator {
     const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
     log.debug(`recall: ${timingParts}`);
 
-    if (sections.length === 0) return "";
+    if (!impressionRecorded && sessionKey && this.config.recordEmptyRecallImpressions) {
+      this.lastRecall
+        .record({
+          sessionKey,
+          query: retrievalQuery,
+          memoryIds: [],
+          policyVersion,
+          identityInjection: {
+            mode: identityInjectionModeUsed,
+            injectedChars: identityInjectedChars,
+            truncated: identityInjectionTruncated,
+          },
+        })
+        .catch((err) => log.debug(`last recall record failed: ${err}`));
+    }
 
-    return sections.join("\n\n---\n\n");
+    const orderedSections = this.assembleRecallSections(sectionBuckets);
+    const context = orderedSections.length === 0 ? "" : orderedSections.join("\n\n---\n\n");
+    if (sessionKey) {
+      this.queueEvalShadowRecall({
+        traceId,
+        recordedAt: new Date().toISOString(),
+        sessionKey,
+        promptHash,
+        promptLength: prompt.length,
+        retrievalQueryHash,
+        retrievalQueryLength: retrievalQuery.length,
+        recallMode,
+        recallResultLimit,
+        source: recallSource,
+        recalledMemoryCount,
+        injected: context.length > 0,
+        contextChars: context.length,
+        memoryIds: recalledMemoryIds,
+        policyVersion,
+        identityInjectionMode: identityInjectionModeUsed,
+        identityInjectedChars,
+        identityInjectionTruncated,
+        durationMs: Date.now() - recallStart,
+        timings: { ...timings },
+      });
+    }
+    this.emitTrace({
+      kind: "recall_summary",
+      traceId,
+      operation: "recall",
+      sessionKey,
+      promptHash,
+      promptLength: prompt.length,
+      retrievalQueryHash,
+      retrievalQueryLength: retrievalQuery.length,
+      recallMode,
+      recallResultLimit,
+      qmdEnabled: this.config.qmdEnabled,
+      qmdAvailable: this.qmd.isAvailable(),
+      recallNamespaces,
+      source: recallSource,
+      recalledMemoryCount,
+      injected: context.length > 0,
+      contextChars: context.length,
+      policyVersion,
+      identityInjectionMode: identityInjectionModeUsed,
+      identityInjectedChars,
+      identityInjectionTruncated,
+      durationMs: Date.now() - recallStart,
+      timings: { ...timings },
+    });
+
+    return context;
   }
 
   async processTurn(
@@ -1447,20 +3311,128 @@ export class Orchestrator {
     const decision = await this.buffer.addTurn(turn);
 
     if (decision === "keep_buffering") return;
+    await this.queueBufferedExtraction(this.buffer.getTurns(), "trigger_mode");
+  }
 
-    // Queue extraction for background processing (agent_end returns immediately)
-    // Capture the current buffer turns in a closure
-    const turnsToExtract = this.buffer.getTurns();
-    if (!this.shouldQueueExtraction(turnsToExtract)) {
-      // We still clear buffered turns so the queue doesn't keep re-enqueueing duplicates.
-      await this.buffer.clearAfterExtraction();
+  async ingestReplayBatch(
+    turns: ReplayTurn[],
+    options: { deadlineMs?: number } = {},
+  ): Promise<void> {
+    if (!Array.isArray(turns) || turns.length === 0) return;
+
+    const bySession = new Map<string, BufferTurn[]>();
+    for (const turn of turns) {
+      if (turn.role !== "user" && turn.role !== "assistant") continue;
+      const key = normalizeReplaySessionKey(turn.sessionKey);
+      const list = bySession.get(key) ?? [];
+      list.push({
+        role: turn.role,
+        content: turn.content,
+        timestamp: turn.timestamp,
+        sessionKey: key,
+      });
+      bySession.set(key, list);
+    }
+
+    const replayTasks: Array<Promise<void>> = [];
+    for (const sessionTurns of bySession.values()) {
+      if (sessionTurns.length === 0) continue;
+      replayTasks.push(
+        new Promise<void>((resolve, reject) => {
+          void this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
+            skipDedupeCheck: true,
+            clearBufferAfterExtraction: false,
+            skipCharThreshold: true,
+            extractionDeadlineMs: options.deadlineMs,
+            onTaskSettled: (err) => (err ? reject(err) : resolve()),
+          }).catch(reject);
+        }),
+      );
+    }
+    if (replayTasks.length > 0) {
+      const settled = await Promise.allSettled(replayTasks);
+      const firstRejected = settled.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (firstRejected) {
+        throw firstRejected.reason;
+      }
+    }
+  }
+
+  async observeSessionHeartbeat(sessionKey: string): Promise<void> {
+    if (this.config.sessionObserverEnabled !== true) return;
+    if (!sessionKey || sessionKey.length === 0) return;
+
+    const previous = this.heartbeatObserverChains.get(sessionKey) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const turns = this.buffer.getTurns();
+        if (turns.length === 0) return;
+        const mixedSessionTurns = turns.some((turn) => turn.sessionKey !== sessionKey);
+        if (mixedSessionTurns) {
+          log.debug(`heartbeat observer skipped: mixed session buffer for ${sessionKey}`);
+          return;
+        }
+        if (!this.shouldQueueExtraction(turns, { commit: false })) {
+          log.debug(`heartbeat observer skipped: extraction dedupe for ${sessionKey}`);
+          return;
+        }
+        const footprint = await this.transcript.estimateSessionFootprint(sessionKey);
+        const decision = await this.sessionObserver.observe({
+          sessionKey,
+          totalBytes: footprint.bytes,
+          totalTokens: footprint.tokens,
+        });
+        if (!decision.triggered) return;
+        log.debug(
+          `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
+        );
+        await this.queueBufferedExtraction(turns, "heartbeat_observer");
+      });
+
+    this.heartbeatObserverChains.set(sessionKey, next);
+    try {
+      await next;
+    } finally {
+      if (this.heartbeatObserverChains.get(sessionKey) === next) {
+        this.heartbeatObserverChains.delete(sessionKey);
+      }
+    }
+  }
+
+  private async queueBufferedExtraction(
+    turnsToExtract: BufferTurn[],
+    reason: "trigger_mode" | "heartbeat_observer",
+    options: {
+      skipDedupeCheck?: boolean;
+      clearBufferAfterExtraction?: boolean;
+      skipCharThreshold?: boolean;
+      extractionDeadlineMs?: number;
+      onTaskSettled?: (error?: unknown) => void;
+    } = {},
+  ): Promise<void> {
+    if (!options.skipDedupeCheck && !this.shouldQueueExtraction(turnsToExtract)) {
+      log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
+      options.onTaskSettled?.();
       return;
     }
+
     this.extractionQueue.push(async () => {
-      await this.runExtraction(turnsToExtract);
+      try {
+        await this.runExtraction(turnsToExtract, {
+          clearBufferAfterExtraction: options.clearBufferAfterExtraction ?? true,
+          skipCharThreshold: options.skipCharThreshold ?? false,
+          deadlineMs: options.extractionDeadlineMs,
+        });
+        options.onTaskSettled?.();
+      } catch (err) {
+        options.onTaskSettled?.(err);
+        throw err;
+      }
     });
 
-    // Start background processor if not already running
     if (!this.queueProcessing) {
       this.queueProcessing = true;
       this.processQueue().catch(err => {
@@ -1468,9 +3440,13 @@ export class Orchestrator {
         this.queueProcessing = false;
       });
     }
+    log.debug(`queued extraction from ${reason}`);
   }
 
-  private shouldQueueExtraction(turns: BufferTurn[]): boolean {
+  private shouldQueueExtraction(
+    turns: BufferTurn[],
+    options: { commit?: boolean } = {},
+  ): boolean {
     if (!this.config.extractionDedupeEnabled) return true;
     if (!Array.isArray(turns) || turns.length === 0) return false;
 
@@ -1489,9 +3465,11 @@ export class Orchestrator {
       return false;
     }
 
-    this.recentExtractionFingerprints.set(fingerprint, now);
+    if (options.commit !== false) {
+      this.recentExtractionFingerprints.set(fingerprint, now);
+    }
     // Keep this cache bounded to avoid unbounded growth.
-    if (this.recentExtractionFingerprints.size > 200) {
+    if (options.commit !== false && this.recentExtractionFingerprints.size > 200) {
       const entries = Array.from(this.recentExtractionFingerprints.entries()).sort(
         (a, b) => a[1] - b[1],
       );
@@ -1523,14 +3501,37 @@ export class Orchestrator {
     this.queueProcessing = false;
   }
 
-  private async runExtraction(turns: BufferTurn[]): Promise<void> {
+  private async runExtraction(
+    turns: BufferTurn[],
+    options: {
+      clearBufferAfterExtraction?: boolean;
+      skipCharThreshold?: boolean;
+      deadlineMs?: number;
+    } = {},
+  ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
+    const clearBufferAfterExtraction = options.clearBufferAfterExtraction ?? true;
+    const skipCharThreshold = options.skipCharThreshold ?? false;
+    const deadlineMs =
+      typeof options.deadlineMs === "number" && Number.isFinite(options.deadlineMs)
+        ? options.deadlineMs
+        : undefined;
+    const throwIfDeadlineExceeded = (stage: string): void => {
+      if (typeof deadlineMs === "number" && Date.now() > deadlineMs) {
+        throw new Error(`replay extraction deadline exceeded (${stage})`);
+      }
+    };
+    const clearBuffer = async () => {
+      if (clearBufferAfterExtraction) {
+        await this.buffer.clearAfterExtraction();
+      }
+    };
 
     // Skip extraction for cron job sessions - these are system operations, not user conversations
     const sessionKey = turns[0]?.sessionKey ?? "";
     if (sessionKey.includes(":cron:")) {
       log.debug(`skipping extraction for cron session: ${sessionKey}`);
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
 
@@ -1541,17 +3542,17 @@ export class Orchestrator {
         content: t.content.trim().slice(0, this.config.extractionMaxTurnChars),
       }))
       .filter((t) => t.content.length > 0);
+    throwIfDeadlineExceeded("before_extract");
 
     const userTurns = normalizedTurns.filter((t) => t.role === "user");
     const totalChars = normalizedTurns.reduce((sum, t) => sum + t.content.length, 0);
-    if (
-      totalChars < this.config.extractionMinChars ||
-      userTurns.length < this.config.extractionMinUserTurns
-    ) {
+    const belowCharThreshold = totalChars < this.config.extractionMinChars;
+    const belowUserTurnThreshold = userTurns.length < this.config.extractionMinUserTurns;
+    if ((!skipCharThreshold && belowCharThreshold) || belowUserTurnThreshold) {
       log.debug(
         `skipping extraction: below threshold (totalChars=${totalChars}, userTurns=${userTurns.length})`,
       );
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
 
@@ -1562,16 +3563,17 @@ export class Orchestrator {
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await storage.listEntityNames();
     const result = await this.extraction.extract(normalizedTurns, existingEntities);
+    throwIfDeadlineExceeded("before_persist");
 
     // Defensive: validate extraction result before processing
     if (!result) {
       log.warn("runExtraction: extraction returned null/undefined");
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
     if (!Array.isArray(result.facts)) {
       log.warn("runExtraction: extraction returned invalid facts (not an array)", { factsType: typeof result.facts, resultKeys: Object.keys(result) });
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
     if (
@@ -1581,12 +3583,23 @@ export class Orchestrator {
       result.profileUpdates.length === 0
     ) {
       log.debug("runExtraction: extraction produced no durable outputs; skipping persistence");
-      await this.buffer.clearAfterExtraction();
+      await clearBuffer();
       return;
     }
 
-    const persistedIds = await this.persistExtraction(result, storage);
-    await this.buffer.clearAfterExtraction();
+    let threadIdForExtraction: string | null = null;
+    if (this.config.threadingEnabled && turns.length > 0) {
+      const lastTurn = turns[turns.length - 1];
+      try {
+        threadIdForExtraction = await this.threading.processTurn(lastTurn, []);
+      } catch (err) {
+        // Fail-open: threading errors must not block memory persistence.
+        log.warn("[threading] processTurn failed before persistence (non-fatal)", err);
+      }
+    }
+
+    const persistedIds = await this.persistExtraction(result, storage, threadIdForExtraction);
+    await clearBuffer();
 
     // Build memory box from this extraction (v8.0 Phase 2A)
     // Topics are derived from the current extraction's facts and entities only —
@@ -1594,23 +3607,37 @@ export class Orchestrator {
     // session window and the call is free of expensive full-corpus I/O.
     if (this.config.memoryBoxesEnabled && persistedIds.length > 0) {
       const extractionTopics = deriveTopicsFromExtraction(result);
+      // Derive episodic metadata from buffer turns (REMem-inspired)
+      const firstUserTurn = turns.find((t) => t.role === "user");
+      const boxGoal = firstUserTurn?.content?.slice(0, 100)?.trim() || undefined;
       await this.boxBuilderFor(storage)
         .onExtraction({
           topics: extractionTopics,
           memoryIds: persistedIds,
           timestamp: new Date().toISOString(),
+          goal: boxGoal,
         })
         .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
     }
 
-    // Process threading if enabled (Phase 3B)
-    if (this.config.threadingEnabled && turns.length > 0) {
-      const lastTurn = turns[turns.length - 1];
-      const threadId = await this.threading.processTurn(lastTurn, persistedIds);
+    // Batch-append persisted IDs so non-fact memories (entities/questions) are
+    // always attached to the thread.
+    if (
+      this.config.threadingEnabled &&
+      threadIdForExtraction &&
+      persistedIds.length > 0
+    ) {
+      try {
+        await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);
+      } catch (err) {
+        log.warn("[threading] appendEpisodeIds failed after persistence (non-fatal)", err);
+      }
+    }
 
-      // Update thread title with conversation content
+    // Thread title update for the already-established thread context.
+    if (this.config.threadingEnabled && threadIdForExtraction) {
       const conversationContent = turns.map((t) => t.content).join(" ");
-      await this.threading.updateThreadTitle(threadId, conversationContent);
+      await this.threading.updateThreadTitle(threadIdForExtraction, conversationContent);
     }
 
     // Check if consolidation is needed (debounced + non-zero gated).
@@ -1631,6 +3658,194 @@ export class Orchestrator {
     await storage.saveMeta(meta);
 
     this.requestQmdMaintenance();
+    await this.runTierMigrationCycle(storage, "extraction");
+  }
+
+  private async runTierMigrationCycle(
+    storage: StorageManager,
+    trigger: "extraction" | "maintenance" | "manual",
+    options?: {
+      dryRun?: boolean;
+      limitOverride?: number;
+      force?: boolean;
+    },
+  ): Promise<TierMigrationCycleSummary> {
+    const dryRun = options?.dryRun === true;
+    const persistSkipped = options?.force === true || trigger === "manual";
+    if (!this.config.qmdTierMigrationEnabled && options?.force !== true) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit: 0,
+        dryRun,
+        skipped: "tier_migration_disabled",
+      };
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
+    if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled && options?.force !== true) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit: 0,
+        dryRun,
+        skipped: "maintenance_backfill_disabled",
+      };
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
+    if (this.tierMigrationInFlight) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit: 0,
+        dryRun,
+        skipped: "migration_in_flight",
+      };
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
+
+    const budgetTrigger = trigger === "manual" ? "maintenance" : trigger;
+    const budget = this.compounding?.tierMigrationCycleBudget(budgetTrigger)
+      ?? defaultTierMigrationCycleBudget(this.config, budgetTrigger);
+    const limit = options?.limitOverride !== undefined
+      ? Math.max(0, Math.floor(options.limitOverride))
+      : budget.limit;
+    const nowMs = Date.now();
+    if (options?.force !== true && nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs) {
+      const skipped: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit,
+        dryRun,
+        skipped: "min_interval",
+      };
+      if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
+      return skipped;
+    }
+
+    const policy = applyUtilityPromotionRuntimePolicy({
+      enabled: this.config.qmdTierMigrationEnabled,
+      demotionMinAgeDays: this.config.qmdTierDemotionMinAgeDays,
+      demotionValueThreshold: this.config.qmdTierDemotionValueThreshold,
+      promotionValueThreshold: this.config.qmdTierPromotionValueThreshold,
+    }, this.utilityRuntimeValues);
+
+    this.tierMigrationInFlight = true;
+    try {
+      const coldStorage = new StorageManager(path.join(storage.dir, "cold"));
+      const [hotMemories, coldMemories] = await Promise.all([
+        storage.readAllMemories(),
+        coldStorage.readAllMemories(),
+      ]);
+      const now = new Date();
+      const scanLimit = Math.max(0, Math.floor(budget.scanLimit));
+      const hotScanLimit = Math.min(hotMemories.length, Math.ceil(scanLimit * 0.75));
+      const coldScanLimit = Math.min(coldMemories.length, Math.max(0, scanLimit - hotScanLimit));
+      const toTimestamp = (memory: MemoryFile): number =>
+        Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);
+      const hotCandidates = hotMemories
+        .map((memory) => ({ memory, tier: "hot" as MemoryTier }))
+        .sort((a, b) => toTimestamp(a.memory) - toTimestamp(b.memory))
+        .slice(0, hotScanLimit);
+      const coldCandidates = coldMemories
+        .map((memory) => ({ memory, tier: "cold" as MemoryTier }))
+        .sort((a, b) => toTimestamp(b.memory) - toTimestamp(a.memory))
+        .slice(0, coldScanLimit);
+      const candidates = [...hotCandidates, ...coldCandidates];
+
+      const migration = new TierMigrationExecutor({
+        storage,
+        qmd: this.qmd,
+        hotCollection: this.config.qmdCollection,
+        coldCollection: this.config.qmdColdCollection ?? `${this.config.qmdCollection}-cold`,
+        autoEmbed: this.config.qmdAutoEmbedEnabled,
+      });
+
+      let migrated = 0;
+      let promoted = 0;
+      let demoted = 0;
+      for (const candidate of candidates) {
+        if (migrated >= limit) break;
+        const decision = decideTierTransition(candidate.memory, candidate.tier, policy, now);
+        if (!decision.changed) continue;
+
+        if (!dryRun) {
+          const res = await migration.migrateMemory({
+            memory: candidate.memory,
+            fromTier: candidate.tier,
+            toTier: decision.nextTier,
+            reason: `${trigger}:${decision.reason}`,
+          });
+          if (!res.changed) continue;
+        }
+        migrated += 1;
+        if (decision.nextTier === "cold") demoted += 1;
+        if (decision.nextTier === "hot") promoted += 1;
+      }
+
+      if (!dryRun) this.lastTierMigrationRunAtMs = Date.now();
+      log.debug(
+        `tier migration cycle completed: trigger=${trigger} scanned=${candidates.length} migrated=${migrated} limit=${limit}${dryRun ? " dryRun=true" : ""}`,
+      );
+      const summary: TierMigrationCycleSummary = {
+        trigger,
+        scanned: candidates.length,
+        migrated,
+        promoted,
+        demoted,
+        limit,
+        dryRun,
+      };
+      const shouldPersistCycle = trigger === "manual" || migrated > 0;
+      if (shouldPersistCycle) await this.tierMigrationStatus.recordCycle(summary);
+      return summary;
+    } catch (err) {
+      this.lastTierMigrationRunAtMs = Date.now();
+      log.warn(`tier migration cycle failed (${trigger}, fail-open): ${err}`);
+      const failed: TierMigrationCycleSummary = {
+        trigger,
+        scanned: 0,
+        migrated: 0,
+        promoted: 0,
+        demoted: 0,
+        limit,
+        dryRun,
+        errorCount: 1,
+      };
+      await this.tierMigrationStatus.recordCycle(failed);
+      return failed;
+    } finally {
+      this.tierMigrationInFlight = false;
+    }
+  }
+
+  async getTierMigrationStatus(): Promise<TierMigrationStatusSnapshot> {
+    return this.tierMigrationStatus.get();
+  }
+
+  async runTierMigrationNow(options?: {
+    dryRun?: boolean;
+    limit?: number;
+  }): Promise<TierMigrationCycleSummary> {
+    return this.runTierMigrationCycle(this.storage, "manual", {
+      dryRun: options?.dryRun === true,
+      limitOverride: options?.limit,
+      force: false,
+    });
   }
 
   private maybeScheduleConsolidation(nonZeroExtraction: boolean): void {
@@ -1652,7 +3867,7 @@ export class Orchestrator {
   }
 
   private requestQmdMaintenance(): void {
-    if (!this.config.qmdEnabled || !this.qmd.isAvailable()) return;
+    if (!this.qmd.isAvailable()) return;
     if (!this.config.qmdMaintenanceEnabled) return;
 
     this.qmdMaintenancePending = true;
@@ -1703,9 +3918,35 @@ export class Orchestrator {
     }
   }
 
-  private async persistExtraction(result: ExtractionResult, storage: StorageManager): Promise<string[]> {
+  private async persistExtraction(
+    result: ExtractionResult,
+    storage: StorageManager,
+    threadIdForExtraction?: string | null,
+  ): Promise<string[]> {
     const persistedIds: string[] = [];
+    const persistedIdsByStorage = new Map<string, { storage: StorageManager; ids: string[] }>();
+    const trackPersistedId = (targetStorage: StorageManager, id: string): void => {
+      persistedIds.push(id);
+      const key = targetStorage.dir;
+      const existing = persistedIdsByStorage.get(key);
+      if (existing) {
+        existing.ids.push(id);
+        return;
+      }
+      persistedIdsByStorage.set(key, { storage: targetStorage, ids: [id] });
+    };
     let dedupedCount = 0;
+    const behaviorSignalsByStorage = new Map<string, { storage: StorageManager; events: BehaviorSignalEvent[] }>();
+    const trackBehaviorSignals = (targetStorage: StorageManager, events: BehaviorSignalEvent[]): void => {
+      if (events.length === 0) return;
+      const key = targetStorage.dir;
+      const existing = behaviorSignalsByStorage.get(key);
+      if (existing) {
+        existing.events.push(...events);
+        return;
+      }
+      behaviorSignalsByStorage.set(key, { storage: targetStorage, events: [...events] });
+    };
 
     // Defensive: validate result and facts array
     if (!result || !Array.isArray(result.facts)) {
@@ -1747,6 +3988,41 @@ export class Orchestrator {
       );
     }
 
+    // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
+    type GraphStorageContext = {
+      allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null;
+      memoryPathById: Map<string, string>;
+      previousPersistedRelPath?: string;
+    };
+    const graphContextByStorageDir = new Map<string, GraphStorageContext>();
+    const ensureGraphContext = async (targetStorage: StorageManager): Promise<GraphStorageContext> => {
+      const existing = graphContextByStorageDir.get(targetStorage.dir);
+      if (existing) return existing;
+      const created: GraphStorageContext = {
+        allMemsForGraph: null,
+        memoryPathById: new Map<string, string>(),
+      };
+      if (this.config.multiGraphMemoryEnabled) {
+        try {
+          created.allMemsForGraph = await targetStorage.readAllMemories();
+          for (const [id, relPath] of buildMemoryPathById(created.allMemsForGraph, targetStorage.dir)) {
+            created.memoryPathById.set(id, relPath);
+          }
+        } catch { /* fail-open */ }
+      }
+      graphContextByStorageDir.set(targetStorage.dir, created);
+      return created;
+    };
+    let threadEpisodeIdsForGraph: string[] | undefined;
+    if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
+      try {
+        const thread = await this.threading.loadThread(threadIdForExtraction);
+        threadEpisodeIdsForGraph = thread?.episodeIds ? [...thread.episodeIds] : [];
+      } catch { /* fail-open */ }
+    }
+    const routeRules = await this.loadRoutingRules();
+    const routeOptions = this.routeEngineOptions();
+
     for (const fact of facts) {
       if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
         continue;
@@ -1768,9 +4044,29 @@ export class Orchestrator {
       }
 
       // Score importance using local heuristics (Phase 1B)
-      const importance = scoreImportance(fact.content, fact.category, fact.tags);
+      let writeCategory = fact.category;
+      let targetStorage = storage;
+      let routedRuleId: string | undefined;
+      if (routeRules.length > 0) {
+        try {
+          const routeText = `${fact.category} ${fact.tags.join(" ")} ${fact.content}`;
+          const selected = selectRouteRule(routeText, routeRules, routeOptions);
+          if (selected) {
+            routedRuleId = selected.rule.id;
+            if (selected.target.category) {
+              writeCategory = selected.target.category;
+            }
+            if (selected.target.namespace) {
+              targetStorage = await this.storageRouter.storageFor(selected.target.namespace);
+            }
+          }
+        } catch (err) {
+          log.warn(`routing evaluation failed; fail-open to extracted category/namespace: ${err}`);
+        }
+      }
+      const importance = scoreImportance(fact.content, writeCategory, fact.tags);
       const inferredIntent = this.config.intentRoutingEnabled
-        ? inferIntentFromText(`${fact.category} ${fact.tags.join(" ")} ${fact.content}`)
+        ? inferIntentFromText(`${writeCategory} ${fact.tags.join(" ")} ${fact.content}`)
         : null;
 
       // Check if chunking is enabled and content should be chunked
@@ -1780,11 +4076,11 @@ export class Orchestrator {
         if (chunkResult.chunked && chunkResult.chunks.length > 1) {
           // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
           const memoryKind = this.config.episodeNoteModeEnabled
-            ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+            ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
             : undefined;
 
           // Write the parent memory first (with full content for reference)
-          const parentId = await storage.writeMemory(fact.category, fact.content, {
+          const parentId = await targetStorage.writeMemory(writeCategory, fact.content, {
             confidence: fact.confidence,
             tags: [...fact.tags, "chunked"],
             entityRef: fact.entityRef,
@@ -1799,13 +4095,13 @@ export class Orchestrator {
           // Write individual chunks with parent reference
           for (const chunk of chunkResult.chunks) {
             // Score each chunk's importance separately
-            const chunkImportance = scoreImportance(chunk.content, fact.category, fact.tags);
+            const chunkImportance = scoreImportance(chunk.content, writeCategory, fact.tags);
 
-            await storage.writeChunk(
+            await targetStorage.writeChunk(
               parentId,
               chunk.index,
               chunkResult.chunks.length,
-              fact.category,
+              writeCategory,
               chunk.content,
               {
                 confidence: fact.confidence,
@@ -1821,9 +4117,17 @@ export class Orchestrator {
             );
           }
 
+          if (routedRuleId) {
+            log.debug(
+              `routing applied for chunked memory ${parentId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
+            );
+          }
           log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
-          persistedIds.push(parentId);
-          await this.indexPersistedMemory(storage, parentId);
+          trackPersistedId(targetStorage, parentId);
+          if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
+            threadEpisodeIdsForGraph.push(parentId);
+          }
+          await this.indexPersistedMemory(targetStorage, parentId);
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
             this.contentHashIndex.add(fact.content);
@@ -1835,23 +4139,70 @@ export class Orchestrator {
             // into boxBuilder.onExtraction() or threading.processTurn(), which
             // only expect canonical parent memory IDs.  Call indexPersistedMemory
             // directly for embedding-fallback sync of each chunk document.
-            await this.indexPersistedMemory(storage, chunkId);
+            await this.indexPersistedMemory(targetStorage, chunkId);
           }
           if (
             this.config.verbatimArtifactsEnabled &&
-            this.config.verbatimArtifactCategories.includes(fact.category) &&
+            this.config.verbatimArtifactCategories.includes(writeCategory) &&
             fact.confidence >= this.config.verbatimArtifactsMinConfidence
           ) {
-            await storage.writeArtifact(fact.content, {
+            await targetStorage.writeArtifact(fact.content, {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
-              artifactType: this.artifactTypeForCategory(fact.category),
+              artifactType: this.artifactTypeForCategory(writeCategory),
               sourceMemoryId: parentId,
               intentGoal: inferredIntent?.goal,
               intentActionType: inferredIntent?.actionType,
               intentEntityTypes: inferredIntent?.entityTypes,
             });
           }
+          // v8.2: graph edge building for chunked memories
+          if (this.config.multiGraphMemoryEnabled) {
+            try {
+              const graphContext = await ensureGraphContext(targetStorage);
+              const entityRef =
+                typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+              const parentRelPath = resolvePersistedMemoryRelativePath({
+                memoryId: parentId,
+                pathById: graphContext.memoryPathById,
+                category: writeCategory,
+              });
+              graphContext.memoryPathById.set(parentId, parentRelPath);
+              appendMemoryToGraphContext({
+                allMemsForGraph: graphContext.allMemsForGraph,
+                storageDir: targetStorage.dir,
+                memoryRelPath: parentRelPath,
+                memoryId: parentId,
+                category: writeCategory,
+                content: fact.content ?? "",
+                entityRef,
+              });
+              await this.buildGraphEdge(
+                targetStorage,
+                parentRelPath,
+                entityRef,
+                parentId,
+                fact.content ?? "",
+                graphContext.allMemsForGraph,
+                graphContext.memoryPathById,
+                threadIdForExtraction ?? undefined,
+                threadEpisodeIdsForGraph,
+                graphContext.previousPersistedRelPath,
+              );
+              graphContext.previousPersistedRelPath = parentRelPath;
+            } catch { /* fail-open */ }
+          }
+          trackBehaviorSignals(
+            targetStorage,
+            buildBehaviorSignalsForMemory({
+              memoryId: parentId,
+              category: writeCategory,
+              content: fact.content,
+              namespace: this.namespaceFromStorageDir(targetStorage.dir),
+              confidence: fact.confidence,
+              source: "extraction",
+            }),
+          );
           continue; // Skip the normal write below
         }
       }
@@ -1861,7 +4212,12 @@ export class Orchestrator {
       let links: MemoryLink[] = [];
 
       if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
-        const contradiction = await this.checkForContradiction(fact.content, fact.category);
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const contradiction = await this.checkForContradiction(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
         if (contradiction) {
           supersedes = contradiction.supersededId;
           links.push({
@@ -1885,7 +4241,12 @@ export class Orchestrator {
 
       // Suggest links for this memory (Phase 3A)
       if (this.config.memoryLinkingEnabled && this.qmd.isAvailable()) {
-        const suggestedLinks = await this.suggestLinksForMemory(fact.content, fact.category);
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const suggestedLinks = await this.suggestLinksForMemory(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
         if (suggestedLinks.length > 0) {
           links.push(...suggestedLinks);
         }
@@ -1893,11 +4254,11 @@ export class Orchestrator {
 
       // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
       const memoryKind = this.config.episodeNoteModeEnabled
-        ? classifyMemoryKind(fact.content, fact.tags ?? [], fact.category)
+        ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
         : undefined;
 
       // Normal write (no chunking)
-      const memoryId = await storage.writeMemory(fact.category, fact.content, {
+      const memoryId = await targetStorage.writeMemory(writeCategory, fact.content, {
         confidence: fact.confidence,
         tags: fact.tags,
         entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
@@ -1910,17 +4271,72 @@ export class Orchestrator {
         intentEntityTypes: inferredIntent?.entityTypes,
         memoryKind,
       });
-      persistedIds.push(memoryId);
-      await this.indexPersistedMemory(storage, memoryId);
+      if (routedRuleId) {
+        log.debug(
+          `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
+        );
+      }
+      trackBehaviorSignals(
+        targetStorage,
+        buildBehaviorSignalsForMemory({
+          memoryId,
+          category: writeCategory,
+          content: fact.content,
+          namespace: this.namespaceFromStorageDir(targetStorage.dir),
+          confidence: fact.confidence,
+          source: "extraction",
+        }),
+      );
+      trackPersistedId(targetStorage, memoryId);
+      if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
+        threadEpisodeIdsForGraph.push(memoryId);
+      }
+      await this.indexPersistedMemory(targetStorage, memoryId);
+      // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
+      if (this.config.multiGraphMemoryEnabled) {
+        try {
+          const graphContext = await ensureGraphContext(targetStorage);
+          const entityRef =
+            typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+          const memoryRelPath = resolvePersistedMemoryRelativePath({
+            memoryId,
+            pathById: graphContext.memoryPathById,
+            category: writeCategory,
+          });
+          graphContext.memoryPathById.set(memoryId, memoryRelPath);
+          appendMemoryToGraphContext({
+            allMemsForGraph: graphContext.allMemsForGraph,
+            storageDir: targetStorage.dir,
+            memoryRelPath: memoryRelPath,
+            memoryId,
+            category: writeCategory,
+            content: fact.content ?? "",
+            entityRef,
+          });
+          await this.buildGraphEdge(
+            targetStorage,
+            memoryRelPath,
+            entityRef,
+            memoryId,
+            fact.content ?? "",
+            graphContext.allMemsForGraph,
+            graphContext.memoryPathById,
+            threadIdForExtraction ?? undefined,
+            threadEpisodeIdsForGraph,
+            graphContext.previousPersistedRelPath,
+          );
+          graphContext.previousPersistedRelPath = memoryRelPath;
+        } catch { /* fail-open */ }
+      }
       if (
         this.config.verbatimArtifactsEnabled &&
-        this.config.verbatimArtifactCategories.includes(fact.category) &&
+        this.config.verbatimArtifactCategories.includes(writeCategory) &&
         fact.confidence >= this.config.verbatimArtifactsMinConfidence
       ) {
-        await storage.writeArtifact(fact.content, {
+        await targetStorage.writeArtifact(fact.content, {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
-          artifactType: this.artifactTypeForCategory(fact.category),
+          artifactType: this.artifactTypeForCategory(writeCategory),
           sourceMemoryId: memoryId,
           intentGoal: inferredIntent?.goal,
           intentActionType: inferredIntent?.actionType,
@@ -1944,7 +4360,7 @@ export class Orchestrator {
           ? (entity as any).facts.filter((f: any) => typeof f === "string")
           : [];
         const id = await storage.writeEntity(name, type, safeFacts);
-        if (id) persistedIds.push(id);
+        if (id) trackPersistedId(storage, id);
       } catch (err) {
         log.warn(`persistExtraction: entity write failed: ${err}`);
       }
@@ -1990,7 +4406,8 @@ export class Orchestrator {
 
     // Persist questions
     for (const q of questions) {
-      await storage.writeQuestion(q.question, q.context, q.priority);
+      const id = await storage.writeQuestion(q.question, q.context, q.priority);
+      if (id) trackPersistedId(storage, id);
     }
 
     // Persist identity reflection
@@ -2009,15 +4426,29 @@ export class Orchestrator {
       );
     }
 
+    for (const { storage: targetStorage, events } of behaviorSignalsByStorage.values()) {
+      const dedupedSignals = dedupeBehaviorSignalsByMemoryAndHash(events);
+      if (dedupedSignals.length === 0) continue;
+      await targetStorage
+        .appendBehaviorSignals(dedupedSignals)
+        .catch((err) => log.warn(`appendBehaviorSignals failed (non-fatal): ${err}`));
+    }
+
     const dedupSuffix = dedupedCount > 0 ? ` (${dedupedCount} deduped)` : "";
     log.info(
       `persisted: ${facts.length - dedupedCount} facts${dedupSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
     );
 
     // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open
-    this.updateTemporalTagIndexes(storage, persistedIds).catch((err) =>
-      log.debug(`temporal-index update error (non-fatal): ${err}`),
-    );
+    void (async () => {
+      if (persistedIdsByStorage.size === 0) {
+        await this.updateTemporalTagIndexes(storage, []);
+        return;
+      }
+      for (const entry of persistedIdsByStorage.values()) {
+        await this.updateTemporalTagIndexes(entry.storage, entry.ids);
+      }
+    })().catch((err) => log.debug(`temporal-index update error (non-fatal): ${err}`));
 
     // Return the persisted fact IDs for threading
     return persistedIds;
@@ -2029,6 +4460,80 @@ export class Orchestrator {
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) return;
     await this.embeddingFallback.indexFile(memoryId, memory.content, memory.path);
+  }
+
+  /**
+   * Build a graph edge for a persisted memory (v8.2).
+   * Shared helper used by both the chunked and non-chunked write paths to avoid duplication.
+   * Fail-open: caller wraps in try/catch.
+   */
+  private async buildGraphEdge(
+    storage: StorageManager,
+    memoryRelPath: string,
+    entityRef: string | undefined,
+    memoryId: string,
+    factContent: string,
+    allMemsForGraph: import("./types.js").MemoryFile[] | null | undefined,
+    memoryPathById: Map<string, string>,
+    threadIdForEdge: string | undefined,
+    threadEpisodeIdsForGraph: string[] | undefined,
+    fallbackCausalPredecessor: string | undefined,
+  ): Promise<void> {
+    // Entity siblings: other memories sharing the same entityRef
+    const entitySiblings: string[] = [];
+    if (entityRef) {
+      try {
+        const allMems = allMemsForGraph ?? [];
+        for (const m of allMems) {
+          if (m.frontmatter.entityRef === entityRef) {
+            const rel = path.relative(storage.dir, m.path);
+            if (rel !== memoryRelPath) entitySiblings.push(rel);
+          }
+        }
+      } catch { /* fail-open */ }
+    }
+    // Recent thread memories for time graph
+    const recentInThread: string[] = [];
+    if (threadIdForEdge && threadEpisodeIdsForGraph?.length) {
+      try {
+        recentInThread.push(...resolveRecentThreadMemoryPaths({
+          threadEpisodeIds: threadEpisodeIdsForGraph,
+          currentMemoryId: memoryId,
+          allMemsForGraph,
+          pathById: memoryPathById,
+          storageDir: storage.dir,
+          maxRecent: 3,
+        }));
+      } catch { /* fail-open */ }
+    }
+    if (
+      recentInThread.length === 0 &&
+      this.config.graphWriteSessionAdjacencyEnabled !== false &&
+      fallbackCausalPredecessor &&
+      fallbackCausalPredecessor !== memoryRelPath
+    ) {
+      recentInThread.push(fallbackCausalPredecessor);
+    }
+    const causalPredecessor = recentInThread[recentInThread.length - 1] ?? fallbackCausalPredecessor;
+    await this.graphIndexFor(storage).onMemoryWritten({
+      memoryPath: memoryRelPath,
+      entityRef,
+      content: factContent,
+      created: new Date().toISOString(),
+      threadId: threadIdForEdge,
+      recentInThread,
+      entitySiblings,
+      causalPredecessor,
+    });
+  }
+
+  private graphIndexFor(storage: StorageManager): GraphIndex {
+    const key = storage.dir;
+    const existing = this.graphIndexes.get(key);
+    if (existing) return existing;
+    const created = new GraphIndex(key, this.config);
+    this.graphIndexes.set(key, created);
+    return created;
   }
 
   /**
@@ -2112,7 +4617,7 @@ export class Orchestrator {
       await this.flushAccessTracking();
     }
 
-    const allMemories = await this.storage.readAllMemories();
+    let allMemories = await this.storage.readAllMemories();
     if (allMemories.length < 5) {
       return { memoriesProcessed: allMemories.length, merged, invalidated };
     }
@@ -2233,7 +4738,7 @@ export class Orchestrator {
           try {
             const factsText = entity.facts.slice(0, 10).join("; ");
             const prompt = `Summarize this entity in one sentence. Entity: ${entity.name} (${entity.type}). Facts: ${factsText}`;
-            const response = await this.localLlm.chatCompletion(
+            const response = await this.fastLlm.chatCompletion(
               [
                 { role: "system", content: "Respond with a single concise sentence summarizing the entity. No JSON, just plain text." },
                 { role: "user", content: prompt },
@@ -2271,6 +4776,28 @@ export class Orchestrator {
       }
     }
 
+    if (
+      this.config.creationMemoryEnabled &&
+      this.config.commitmentLedgerEnabled &&
+      this.config.commitmentLifecycleEnabled
+    ) {
+      try {
+        const lifecycle = await applyCommitmentLedgerLifecycle({
+          memoryDir: this.config.memoryDir,
+          commitmentLedgerDir: this.config.commitmentLedgerDir,
+          enabled: true,
+          decayDays: this.config.commitmentDecayDays,
+        });
+        if (lifecycle.transitionedToExpired.length > 0 || lifecycle.deletedResolved.length > 0) {
+          log.info(
+            `commitment ledger lifecycle: expired ${lifecycle.transitionedToExpired.length}, cleaned ${lifecycle.deletedResolved.length}`,
+          );
+        }
+      } catch (err) {
+        log.debug(`commitment ledger lifecycle pass failed: ${err}`);
+      }
+    }
+
     // Clean memories past their TTL (speculative memories auto-expire)
     const deletedTTL = await this.storage.cleanExpiredTTL();
     if (deletedTTL.length > 0) {
@@ -2281,6 +4808,22 @@ export class Orchestrator {
         }
       }
     }
+
+    // v8.3 Lifecycle policy pass — deterministic promotion/decay metadata
+    if (this.config.lifecyclePolicyEnabled) {
+      try {
+        const lifecycleCorpus = await this.storage.readAllMemories();
+        await this.runLifecyclePolicyPass(lifecycleCorpus);
+      } catch (err) {
+        log.warn(`lifecycle policy pass failed (ignored): ${err}`);
+      }
+    }
+
+    // v8.3 Compression guideline learning pass (default off, fail-open).
+    await this.runCompressionGuidelineLearningPass();
+
+    await this.runTierMigrationCycle(this.storage, "maintenance");
+    allMemories = await this.storage.readAllMemories();
 
     // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
     if (this.config.factArchivalEnabled) {
@@ -2296,11 +4839,23 @@ export class Orchestrator {
     }
 
     // Auto-consolidate profile.md if it exceeds max lines
-    if (await this.storage.profileNeedsConsolidation()) {
+    const profileSection = this.getRecallSectionEntry("profile");
+    const profileConsolidationTriggerLines =
+      typeof profileSection?.consolidateTriggerLines === "number"
+        ? Math.max(0, Math.floor(profileSection.consolidateTriggerLines))
+        : undefined;
+    const profileConsolidationTargetLines =
+      typeof profileSection?.consolidateTargetLines === "number"
+        ? Math.max(0, Math.floor(profileSection.consolidateTargetLines))
+        : 50;
+    if (await this.storage.profileNeedsConsolidation(profileConsolidationTriggerLines)) {
       log.info("profile.md exceeds max lines — running smart consolidation");
       const currentProfile = await this.storage.readProfile();
       if (currentProfile) {
-        const profileResult = await this.extraction.consolidateProfile(currentProfile);
+        const profileResult = await this.extraction.consolidateProfile(
+          currentProfile,
+          profileConsolidationTargetLines,
+        );
         if (profileResult) {
           await this.storage.writeProfile(profileResult.consolidatedProfile);
           log.info(`profile.md consolidated: removed ${profileResult.removedCount} items — ${profileResult.summary}`);
@@ -2335,7 +4890,7 @@ export class Orchestrator {
           }));
         await this.tmtBuilder.maybeRebuildNodes(tmtEntries, async (texts, level) => {
           const prompt = `You are a memory archivist. Summarize the following ${level}-level memories into 3–5 sentences, preserving key facts, decisions, and preferences.\n\n${texts.map((t, i) => `[${i + 1}] ${t}`).join("\n\n")}`;
-          const response = await this.localLlm.chatCompletion(
+          const response = await this.fastLlm.chatCompletion(
             [
               { role: "system", content: "Respond with a 3–5 sentence narrative summary. No JSON, just plain prose." },
               { role: "user", content: prompt },
@@ -2355,6 +4910,346 @@ export class Orchestrator {
 
     log.info("consolidation complete");
     return { memoriesProcessed: allMemories.length, merged, invalidated };
+  }
+
+  async optimizeCompressionGuidelines(options?: {
+    dryRun?: boolean;
+    eventLimit?: number;
+  }): Promise<{
+    enabled: boolean;
+    dryRun: boolean;
+    eventCount: number;
+    previousGuidelineVersion: number | null;
+    nextGuidelineVersion: number;
+    changedRules: number;
+    semanticRefinementApplied: boolean;
+    persisted: boolean;
+  }> {
+    const dryRun = options?.dryRun === true;
+    const eventLimit =
+      typeof options?.eventLimit === "number"
+        ? Math.max(0, Math.floor(options.eventLimit))
+        : 500;
+
+    const previousState = await this.storage.readCompressionGuidelineOptimizerState();
+
+    if (!this.config.compressionGuidelineLearningEnabled) {
+      return {
+        enabled: false,
+        dryRun,
+        eventCount: 0,
+        previousGuidelineVersion: previousState?.guidelineVersion ?? null,
+        nextGuidelineVersion: previousState?.guidelineVersion ?? 0,
+        changedRules: 0,
+        semanticRefinementApplied: false,
+        persisted: false,
+      };
+    }
+
+    const events = await this.storage.readMemoryActionEvents(eventLimit);
+    const generatedAt = new Date().toISOString();
+    const candidate = computeCompressionGuidelineCandidate(events, {
+      generatedAtIso: generatedAt,
+      previousState,
+    });
+    const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
+      enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
+      timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+      runRefinement: async (baseline) => {
+        const prompt = [
+          "You refine compression policy suggestions conservatively.",
+          "Return JSON only in this shape:",
+          '{"updates":[{"action":"summarize_node","delta":0.02,"confidence":"medium","note":"..."}]}',
+          "Constraints:",
+          "- Keep updates sparse and conservative.",
+          "- delta must stay between -0.15 and 0.15.",
+          "- Only include actions present in the input.",
+          "Input candidate:",
+          JSON.stringify(baseline),
+        ].join("\n");
+
+        const response = await this.fastLlm.chatCompletion(
+          [
+            { role: "system", content: "Respond with strict JSON only. No markdown." },
+            { role: "user", content: prompt },
+          ],
+          {
+            temperature: 0.1,
+            maxTokens: 400,
+            timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+            operation: "compression_guideline_semantic_refinement",
+          },
+        );
+
+        return this.parseCompressionSemanticRefinement(response?.content ?? "");
+      },
+    });
+
+    const content = renderCompressionGuidelinesMarkdown(refinedCandidate);
+    const semanticRefinementApplied =
+      JSON.stringify(refinedCandidate.ruleUpdates) !== JSON.stringify(candidate.ruleUpdates);
+    const changedRules = refinedCandidate.ruleUpdates.filter((rule) => rule.delta !== 0).length;
+
+    if (!dryRun) {
+      await this.storage.writeCompressionGuidelines(content);
+      await this.storage.writeCompressionGuidelineOptimizerState({
+        version: refinedCandidate.optimizerVersion,
+        updatedAt: refinedCandidate.generatedAt,
+        sourceWindow: refinedCandidate.sourceWindow,
+        eventCounts: refinedCandidate.eventCounts,
+        guidelineVersion: refinedCandidate.guidelineVersion,
+      });
+    }
+
+    return {
+      enabled: true,
+      dryRun,
+      eventCount: events.length,
+      previousGuidelineVersion: previousState?.guidelineVersion ?? null,
+      nextGuidelineVersion: refinedCandidate.guidelineVersion,
+      changedRules,
+      semanticRefinementApplied,
+      persisted: !dryRun,
+    };
+  }
+
+  private async runCompressionGuidelineLearningPass(): Promise<void> {
+    if (!this.config.compressionGuidelineLearningEnabled) return;
+    try {
+      const result = await this.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 500 });
+      log.info(`compression guideline learning updated (${result.eventCount} events)`);
+    } catch (err) {
+      log.warn(`compression guideline learning failed (ignored): ${err}`);
+    }
+  }
+
+  private async buildCompressionGuidelineRecallSection(): Promise<string | null> {
+    if (!this.config.contextCompressionActionsEnabled) return null;
+    if (!this.config.compressionGuidelineLearningEnabled) return null;
+
+    const state = await this.storage.readCompressionGuidelineOptimizerState().catch(() => null);
+    if (!state || state.guidelineVersion <= 0) return null;
+
+    const raw = await this.storage.readCompressionGuidelines().catch(() => null);
+    const summary = raw ? formatCompressionGuidelinesForRecall(raw, 5) : null;
+    if (!summary) return null;
+
+    return [
+      "## Active Compression Guidelines",
+      "",
+      `Guideline version: ${state.guidelineVersion}`,
+      `Updated: ${state.updatedAt}`,
+      "",
+      summary,
+    ].join("\n");
+  }
+
+  private parseCompressionSemanticRefinement(
+    raw: string,
+  ): {
+    updates: Array<{
+      action: MemoryActionType;
+      delta?: number;
+      confidence?: "low" | "medium" | "high";
+      note?: string;
+    }>;
+  } | null {
+    if (typeof raw !== "string" || raw.trim().length === 0) return null;
+    const trimmed = raw.trim();
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+
+    try {
+      const parsed = JSON.parse(trimmed.slice(start, end + 1)) as {
+        updates?: Array<{ action?: unknown; delta?: unknown; confidence?: unknown; note?: unknown }>;
+      };
+      if (!Array.isArray(parsed?.updates)) return null;
+
+      const validActions = new Set<MemoryActionType>([
+        "store_episode",
+        "store_note",
+        "update_note",
+        "create_artifact",
+        "summarize_node",
+        "discard",
+        "link_graph",
+      ]);
+
+      const updates = parsed.updates
+        .filter((item) => item && typeof item.action === "string" && validActions.has(item.action as MemoryActionType))
+        .map((item) => {
+          const confidence: "low" | "medium" | "high" | undefined =
+            item.confidence === "low" || item.confidence === "medium" || item.confidence === "high"
+              ? item.confidence
+              : undefined;
+          return {
+            action: item.action as MemoryActionType,
+            delta: typeof item.delta === "number" && Number.isFinite(item.delta) ? item.delta : undefined,
+            confidence,
+            note: typeof item.note === "string" ? item.note : undefined,
+          };
+        });
+
+      return { updates };
+    } catch {
+      return null;
+    }
+  }
+
+  private actionOutcomePriorDelta(event: MemoryActionEvent): number {
+    if (event.outcome === "failed") return -0.3;
+    if (event.policyDecision === "deny") return -0.22;
+    if (event.policyDecision === "defer") return -0.14;
+    if (event.outcome === "skipped") return -0.1;
+
+    if (event.outcome !== "applied") return 0;
+    switch (event.action) {
+      case "store_episode":
+      case "store_note":
+      case "update_note":
+        return 0.08;
+      case "create_artifact":
+      case "summarize_node":
+      case "link_graph":
+        return 0.04;
+      case "discard":
+        return -0.03;
+      default:
+        return 0;
+    }
+  }
+
+  private async buildLifecycleActionPriors(): Promise<Map<string, number>> {
+    const events = await this.storage.readMemoryActionEvents(1200);
+    if (events.length === 0) return new Map<string, number>();
+
+    const nowMs = Date.now();
+    const windowMs = 14 * 24 * 60 * 60 * 1000;
+    const byMemory = new Map<string, Array<{ weightedDelta: number; weight: number }>>();
+
+    for (const event of events) {
+      if (typeof event.memoryId !== "string" || event.memoryId.trim().length === 0) continue;
+      const ts = Date.parse(event.timestamp);
+      if (!Number.isFinite(ts)) continue;
+      const ageMs = nowMs - ts;
+      if (ageMs < 0 || ageMs > windowMs) continue;
+
+      const delta = this.actionOutcomePriorDelta(event);
+      if (delta === 0) continue;
+
+      const recencyWeight = Math.max(0.2, 1 - ageMs / windowMs);
+      const list = byMemory.get(event.memoryId) ?? [];
+      if (list.length >= 8) list.shift();
+      list.push({ weightedDelta: delta * recencyWeight, weight: recencyWeight });
+      byMemory.set(event.memoryId, list);
+    }
+
+    const out = new Map<string, number>();
+    for (const [memoryId, deltas] of byMemory.entries()) {
+      if (deltas.length === 0) continue;
+      const weightedSum = deltas.reduce((sum, item) => sum + item.weightedDelta, 0);
+      const weightTotal = deltas.reduce((sum, item) => sum + item.weight, 0);
+      if (weightTotal <= 0) continue;
+      const score = weightedSum / weightTotal;
+      out.set(memoryId, Math.max(-0.25, Math.min(0.15, score)));
+    }
+    return out;
+  }
+
+  private async runLifecyclePolicyPass(allMemories: MemoryFile[]): Promise<void> {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const countsByState: Record<LifecycleState, number> = {
+      candidate: 0,
+      validated: 0,
+      active: 0,
+      stale: 0,
+      archived: 0,
+    };
+    const transitionCounts: Record<string, number> = {};
+    let updatedCount = 0;
+    let disputedCount = 0;
+    let evaluatedCount = 0;
+
+    const thresholds = this.effectiveLifecycleThresholds();
+    const policy = {
+      promoteHeatThreshold: thresholds.promoteHeatThreshold,
+      staleDecayThreshold: thresholds.staleDecayThreshold,
+      archiveDecayThreshold: thresholds.archiveDecayThreshold,
+      protectedCategories: this.config.lifecycleProtectedCategories,
+    };
+    const actionPriors = await this.buildLifecycleActionPriors();
+
+    for (const memory of allMemories) {
+      if (memory.frontmatter.status === "superseded") {
+        continue;
+      }
+      evaluatedCount += 1;
+      const currentState = resolveLifecycleState(memory.frontmatter);
+      const actionPriorScore = actionPriors.get(memory.frontmatter.id);
+      const signals: LifecycleSignals | undefined =
+        typeof actionPriorScore === "number" && Number.isFinite(actionPriorScore)
+          ? { actionPriorScore }
+          : undefined;
+      const decision = decideLifecycleTransition(memory, policy, now, signals);
+      const nextState: LifecycleState = memory.frontmatter.status === "archived"
+        ? "archived"
+        : decision.nextState;
+
+      countsByState[nextState] += 1;
+      if (memory.frontmatter.verificationState === "disputed") {
+        disputedCount += 1;
+      }
+      if (nextState !== currentState) {
+        const key = `${currentState}->${nextState}`;
+        transitionCounts[key] = (transitionCounts[key] ?? 0) + 1;
+      }
+
+      const prevHeat = memory.frontmatter.heatScore;
+      const prevDecay = memory.frontmatter.decayScore;
+      const scoreDelta =
+        Math.abs((prevHeat ?? -1) - decision.heatScore) +
+        Math.abs((prevDecay ?? -1) - decision.decayScore);
+      const shouldPersist =
+        memory.frontmatter.lifecycleState !== nextState ||
+        memory.frontmatter.heatScore === undefined ||
+        memory.frontmatter.decayScore === undefined ||
+        memory.frontmatter.lastValidatedAt === undefined ||
+        scoreDelta >= 0.01;
+
+      if (!shouldPersist) continue;
+
+      const wrote = await this.storage.writeMemoryFrontmatter(memory, {
+        lifecycleState: nextState,
+        heatScore: decision.heatScore,
+        decayScore: decision.decayScore,
+        lastValidatedAt: nowIso,
+      });
+      if (wrote) updatedCount += 1;
+    }
+
+    if (!this.config.lifecycleMetricsEnabled) return;
+
+    const total = evaluatedCount;
+    const metrics = {
+      generatedAt: nowIso,
+      memoriesEvaluated: total,
+      memoriesUpdated: updatedCount,
+      countsByLifecycleState: countsByState,
+      transitionCounts,
+      staleRatio: total > 0 ? countsByState.stale / total : 0,
+      disputedRatio: total > 0 ? disputedCount / total : 0,
+      policy: {
+        promoteHeatThreshold: thresholds.promoteHeatThreshold,
+        staleDecayThreshold: thresholds.staleDecayThreshold,
+        archiveDecayThreshold: thresholds.archiveDecayThreshold,
+        protectedCategories: this.config.lifecycleProtectedCategories,
+      },
+    };
+    const metricsPath = path.join(this.storage.dir, "state", "lifecycle-metrics.json");
+    await mkdir(path.dirname(metricsPath), { recursive: true });
+    await writeFile(metricsPath, JSON.stringify(metrics, null, 2), "utf-8");
   }
 
   /**
@@ -2580,6 +5475,316 @@ export class Orchestrator {
     return `## ${title}\n\n${lines.join("\n\n")}`;
   }
 
+  private formatObjectiveStateResults(results: ObjectiveStateSearchResult[]): string {
+    const lines = results.map(({ snapshot }, index) => {
+      const parts = [
+        snapshot.recordedAt.replace("T", " ").slice(0, 16),
+        `${snapshot.kind}/${snapshot.changeKind}`,
+      ];
+      if (snapshot.outcome) parts.push(snapshot.outcome);
+      const header = `[${index + 1}] ${parts.join(" | ")} | ${snapshot.scope}`;
+      const detailParts = [snapshot.summary];
+      if (snapshot.command) detailParts.push(`command: ${snapshot.command}`);
+      else if (snapshot.toolName) detailParts.push(`tool: ${snapshot.toolName}`);
+      return `${header}\n${detailParts.join(" | ")}`;
+    });
+    return `## Objective State\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatCausalTrajectoryResults(results: CausalTrajectorySearchResult[]): string {
+    const lines = results.map(({ record, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${record.recordedAt.replace("T", " ").slice(0, 16)}`,
+        record.outcomeKind,
+        record.sessionKey,
+      ].join(" | ");
+      const details = [
+        `goal: ${record.goal}`,
+        `action: ${record.actionSummary}`,
+        `observation: ${record.observationSummary}`,
+        `outcome: ${record.outcomeSummary}`,
+      ];
+      if (record.followUpSummary) details.push(`follow-up: ${record.followUpSummary}`);
+      if (matchedFields.length > 0) details.push(`matched: ${matchedFields.join(", ")}`);
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Causal Trajectories\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatTrustZoneResults(results: TrustZoneSearchResult[]): string {
+    const lines = results.map(({ record, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${record.recordedAt.replace("T", " ").slice(0, 16)}`,
+        record.zone,
+        record.kind,
+      ].join(" | ");
+      const details = [
+        record.summary,
+        `provenance: ${record.provenance.sourceClass}`,
+      ];
+      if (record.entityRefs && record.entityRefs.length > 0) {
+        details.push(`entities: ${record.entityRefs.join(", ")}`);
+      }
+      if (record.tags && record.tags.length > 0) {
+        details.push(`tags: ${record.tags.join(", ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Trust Zones\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatHarmonicRetrievalResults(results: HarmonicRetrievalResult[]): string {
+    const lines = results.map(({ node, matchedAnchors, matchedFields, nodeScore, anchorScore }, index) => {
+      const header = [
+        `[${index + 1}] ${node.recordedAt.replace("T", " ").slice(0, 16)}`,
+        `${node.kind}/${node.abstractionLevel}`,
+        node.sessionKey,
+      ].join(" | ");
+      const details = [
+        node.title,
+        node.summary,
+        `scores: node=${nodeScore.toFixed(1)} anchor=${anchorScore.toFixed(1)}`,
+      ];
+      if (matchedAnchors.length > 0) {
+        details.push(`anchors: ${matchedAnchors.map((anchor) => `${anchor.anchorType}:${anchor.anchorValue}`).join("; ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Harmonic Retrieval\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatWorkProductResults(results: WorkProductLedgerSearchResult[]): string {
+    const lines = results.map(({ entry, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${entry.recordedAt.replace("T", " ").slice(0, 16)}`,
+        `${entry.kind}/${entry.action}`,
+        entry.sessionKey,
+      ].join(" | ");
+      const details = [entry.summary, `scope: ${entry.scope}`];
+      if (entry.artifactPath) details.push(`artifact: ${entry.artifactPath}`);
+      if (entry.tags && entry.tags.length > 0) details.push(`tags: ${entry.tags.join(", ")}`);
+      if (matchedFields.length > 0) details.push(`matched: ${matchedFields.join(", ")}`);
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Work Products\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatVerifiedEpisodeResults(results: VerifiedEpisodeResult[]): string {
+    const lines = results.map(({ box, verifiedEpisodeCount, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${box.sealedAt.replace("T", " ").slice(0, 16)}`,
+        box.traceId ? `trace:${box.traceId.slice(0, 12)}` : "trace:none",
+      ].join(" | ");
+      const details = [
+        box.goal ?? `topics: ${box.topics.join(", ")}`,
+        `verified episodes: ${verifiedEpisodeCount}`,
+      ];
+      if (box.toolsUsed && box.toolsUsed.length > 0) {
+        details.push(`tools: ${box.toolsUsed.join(", ")}`);
+      }
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Verified Episodes\n\n${lines.join("\n\n")}`;
+  }
+
+  private formatVerifiedSemanticRuleResults(results: VerifiedSemanticRuleResult[]): string {
+    const lines = results.map(({ rule, sourceMemoryId, verificationStatus, effectiveConfidence, matchedFields }, index) => {
+      const header = [
+        `[${index + 1}] ${rule.frontmatter.updated.replace("T", " ").slice(0, 16)}`,
+        verificationStatus,
+        `confidence:${effectiveConfidence.toFixed(2)}`,
+      ].join(" | ");
+      const details = [
+        rule.content,
+        `source memory: ${sourceMemoryId}`,
+      ];
+      if (matchedFields.length > 0) {
+        details.push(`matched: ${matchedFields.join(", ")}`);
+      }
+      return `${header}\n${details.join("\n")}`;
+    });
+
+    return `## Verified Rules\n\n${lines.join("\n\n")}`;
+  }
+
+  private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {
+    const lines = raw
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    const compact = lines.slice(0, Math.max(1, maxLines)).join(" ");
+    if (compact.length <= maxChars) return compact;
+    return `${compact.slice(0, Math.max(0, maxChars - 1))}…`;
+  }
+
+  private formatOpenIncidentLine(incident: ContinuityIncidentRecord, includeDetails: boolean): string {
+    const base = `[${incident.id}] ${incident.symptom.trim()}`;
+    if (!includeDetails) return `- ${base}`;
+    const parts = [base];
+    if (incident.suspectedCause) parts.push(`cause: ${incident.suspectedCause.trim()}`);
+    if (incident.triggerWindow) parts.push(`window: ${incident.triggerWindow.trim()}`);
+    return `- ${parts.join(" | ")}`;
+  }
+
+  private trimIdentitySection(content: string, maxChars: number): { text: string; truncated: boolean } {
+    if (maxChars <= 0) return { text: "", truncated: false };
+    if (content.length <= maxChars) return { text: content, truncated: false };
+    const suffix = "\n\n...(identity continuity trimmed)";
+    if (maxChars <= suffix.length) {
+      return { text: content.slice(0, maxChars), truncated: true };
+    }
+    const headroom = Math.max(0, maxChars - suffix.length);
+    return { text: `${content.slice(0, headroom)}${suffix}`, truncated: true };
+  }
+
+  private async buildIdentityContinuitySection(options: {
+    storage: StorageManager;
+    recallMode: RecallPlanMode;
+    prompt: string;
+  }): Promise<{ section: string; mode: IdentityInjectionMode; injectedChars: number; truncated: boolean } | null> {
+    if (!this.config.identityContinuityEnabled) return null;
+    if (this.config.identityMaxInjectChars <= 0) return null;
+
+    const resolved = resolveEffectiveIdentityInjectionMode({
+      configuredMode: this.config.identityInjectionMode,
+      recallMode: options.recallMode,
+      prompt: options.prompt,
+    });
+    if (!resolved.shouldInject) return null;
+
+    const [anchorRaw, loopsRaw, incidents] = await Promise.all([
+      options.storage.readIdentityAnchor(),
+      options.storage.readIdentityImprovementLoops(),
+      options.storage.readContinuityIncidents(200),
+    ]);
+    const openIncidents = incidents.filter((incident) => incident.state === "open");
+
+    const lines: string[] = [];
+    if (resolved.mode === "full") {
+      lines.push("## Identity Continuity");
+      if (anchorRaw && anchorRaw.trim().length > 0) {
+        lines.push("", "### Anchor", "", anchorRaw.trim());
+      }
+      if (loopsRaw && loopsRaw.trim().length > 0) {
+        lines.push("", "### Improvement Loops", "", loopsRaw.trim());
+      }
+      lines.push("", "### Open Incidents", "");
+      if (openIncidents.length === 0) {
+        lines.push("- none");
+      } else {
+        lines.push(
+          ...openIncidents.slice(0, 5).map((incident) => this.formatOpenIncidentLine(incident, true)),
+        );
+      }
+    } else {
+      const anchorSummary = anchorRaw ? this.summarizeIdentityText(anchorRaw, 3, 320) : "";
+      const loopsSummary = loopsRaw ? this.summarizeIdentityText(loopsRaw, 2, 240) : "";
+      lines.push("## Identity Continuity Signals", "");
+      if (anchorSummary) lines.push(`- anchor: ${anchorSummary}`);
+      if (loopsSummary) lines.push(`- loops: ${loopsSummary}`);
+      if (openIncidents.length === 0) {
+        lines.push("- incidents: 0 open");
+      } else {
+        lines.push(`- incidents: ${openIncidents.length} open`);
+        lines.push(...openIncidents.slice(0, 2).map((incident) => this.formatOpenIncidentLine(incident, false)));
+      }
+    }
+
+    const body = lines.join("\n").trim();
+    if (!body) return null;
+
+    const { text, truncated } = this.trimIdentitySection(body, this.config.identityMaxInjectChars);
+    if (!text) return null;
+
+    return {
+      section: text,
+      mode: resolved.mode,
+      injectedChars: text.length,
+      truncated,
+    };
+  }
+
+  private emitTrace(event: EngramTraceEvent): void {
+    try {
+      const cb = (globalThis as any).__openclawEngramTrace;
+      if (typeof cb === "function") cb(event);
+    } catch (err) {
+      log.debug(`trace callback failed: ${err}`);
+    }
+  }
+
+  private queueEvalShadowRecall(
+    record: Omit<EvalShadowRecallRecord, "schemaVersion">,
+  ): void {
+    if (!this.config.evalHarnessEnabled || !this.config.evalShadowModeEnabled) return;
+    this.evalShadowWriteChain = this.evalShadowWriteChain
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await recordEvalShadowRecall({
+            memoryDir: this.config.memoryDir,
+            evalStoreDir: this.config.evalStoreDir,
+            record: {
+              schemaVersion: 1,
+              ...record,
+            },
+          });
+        } catch (err) {
+          log.debug(`eval shadow recall write failed: ${err}`);
+        }
+      });
+  }
+
+  private publishRecallResults(options: {
+    title: string;
+    results: QmdSearchResult[];
+    sectionBuckets: Map<string, string[]>;
+    retrievalQuery: string;
+    sessionKey: string | undefined;
+    identityInjection?: {
+      mode: IdentityInjectionMode | "none";
+      injectedChars: number;
+      truncated: boolean;
+    };
+  }): void {
+    const memoryIds = this.extractMemoryIdsFromResults(options.results);
+    this.trackMemoryAccess(memoryIds);
+
+    if (options.sessionKey) {
+      const unique = Array.from(new Set(memoryIds)).slice(0, 40);
+      this.lastRecall
+        .record({
+          sessionKey: options.sessionKey,
+          query: options.retrievalQuery,
+          memoryIds: unique,
+          policyVersion: this.currentPolicyVersion(),
+          identityInjection: options.identityInjection,
+        })
+        .catch((err) => log.debug(`last recall record failed: ${err}`));
+    }
+
+    this.appendRecallSection(
+      options.sectionBuckets,
+      "memories",
+      this.formatQmdResults(options.title, options.results),
+    );
+  }
+
   private async searchEmbeddingFallback(query: string, limit: number): Promise<QmdSearchResult[]> {
     if (!this.config.embeddingFallbackEnabled) return [];
     if (!(await this.embeddingFallback.isAvailable())) return [];
@@ -2599,6 +5804,175 @@ export class Orchestrator {
       });
     }
     return results;
+  }
+
+  /**
+   * Long-term fallback retrieval.
+   * Searches archived memories only, and is invoked only when hot recall returns zero hits.
+   */
+  private async searchLongTermArchiveFallback(
+    prompt: string,
+    recallNamespaces: string[],
+    limit: number,
+  ): Promise<QmdSearchResult[]> {
+    const cappedLimit = Math.max(0, limit);
+    if (cappedLimit === 0) return [];
+
+    const tokens = Array.from(new Set(tokenizeRecallQuery(prompt)));
+    if (tokens.length === 0) return [];
+
+    const archivedMemories = await this.readArchivedMemoriesForNamespaces(recallNamespaces);
+    if (archivedMemories.length === 0) return [];
+
+    const scored: QmdSearchResult[] = [];
+    for (const memory of archivedMemories) {
+      const haystack = [
+        memory.content,
+        memory.frontmatter.category,
+        ...(memory.frontmatter.tags ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      let hits = 0;
+      for (const token of tokens) {
+        if (haystack.includes(token)) hits += 1;
+      }
+      if (hits === 0) continue;
+      const normalized = hits / tokens.length;
+      scored.push({
+        docid: memory.frontmatter.id,
+        path: memory.path,
+        score: normalized,
+        snippet: memory.content.slice(0, 400).replace(/\n/g, " "),
+      });
+    }
+
+    return scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, cappedLimit);
+  }
+
+  private async applyColdFallbackPipeline(options: {
+    prompt: string;
+    recallNamespaces: string[];
+    recallResultLimit: number;
+    recallMode: RecallPlanMode;
+  }): Promise<QmdSearchResult[]> {
+    const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
+    const coldCollection = this.config.qmdColdCollection ?? "openclaw-engram-cold";
+    const coldMaxResults = this.config.qmdColdMaxResults ?? this.config.qmdMaxResults;
+
+    let longTerm: QmdSearchResult[] = [];
+    if (coldQmdEnabled && this.qmd.isAvailable()) {
+      const coldFetchLimit = Math.max(
+        0,
+        Math.min(options.recallResultLimit, Math.max(0, coldMaxResults)),
+      );
+      if (coldFetchLimit > 0) {
+        const coldHybridLimit = computeQmdHybridFetchLimit(
+          coldFetchLimit,
+          false,
+          0,
+        );
+        longTerm = await this.fetchQmdMemoryResultsWithArtifactTopUp(
+          options.prompt,
+          coldFetchLimit,
+          coldHybridLimit,
+          {
+            namespacesEnabled: this.config.namespacesEnabled,
+            recallNamespaces: options.recallNamespaces,
+            resolveNamespace: (p) => this.namespaceFromPath(p),
+            collection: coldCollection,
+          },
+        );
+        if (longTerm.length > 0) {
+          log.debug(`cold-tier recall source=cold-qmd collection=${coldCollection} hits=${longTerm.length}`);
+        }
+      }
+    }
+    if (longTerm.length === 0) {
+      longTerm = await this.searchLongTermArchiveFallback(
+        options.prompt,
+        options.recallNamespaces,
+        options.recallResultLimit,
+      );
+      if (longTerm.length > 0) {
+        log.debug("cold-tier recall source=archive-scan");
+      }
+    }
+    if (longTerm.length === 0) return [];
+
+    let results = longTerm;
+    if (this.config.namespacesEnabled) {
+      results = results.filter((r) =>
+        options.recallNamespaces.includes(this.namespaceFromPath(r.path)),
+      );
+    }
+    // Artifact isolation contract: generic recall paths must exclude artifacts.
+    results = results.filter((r) => !isArtifactMemoryPath(r.path));
+    if (results.length === 0) return [];
+
+    const isFullModeGraphAssist =
+      this.config.qmdTierParityGraphEnabled &&
+      this.config.multiGraphMemoryEnabled &&
+      this.config.graphAssistInFullModeEnabled !== false &&
+      options.recallMode === "full" &&
+      results.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3);
+    const shouldRunGraphExpansion =
+      this.config.qmdTierParityGraphEnabled &&
+      (options.recallMode === "graph_mode" || isFullModeGraphAssist);
+
+    if (shouldRunGraphExpansion) {
+      const { merged } = await this.expandResultsViaGraph({
+        memoryResults: results,
+        recallNamespaces: options.recallNamespaces,
+        recallResultLimit: options.recallResultLimit,
+      });
+      results = merged;
+    }
+
+    results = await this.boostSearchResults(
+      results,
+      options.recallNamespaces,
+      options.prompt,
+      undefined,
+      { allowLifecycleFiltered: true },
+    );
+
+    if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
+      const ranked = await rerankLocalOrNoop({
+        query: options.prompt,
+        candidates: results.slice(0, this.config.rerankMaxCandidates).map((r) => ({
+          id: r.path,
+          snippet: r.snippet || r.path,
+        })),
+        local: this.fastLlm,
+        enabled: true,
+        timeoutMs: this.config.rerankTimeoutMs,
+        maxCandidates: this.config.rerankMaxCandidates,
+        cache: this.rerankCache,
+        cacheEnabled: this.config.rerankCacheEnabled,
+        cacheTtlMs: this.config.rerankCacheTtlMs,
+      });
+      if (ranked && ranked.length > 0) {
+        const byPath = new Map(results.map((r) => [r.path, r]));
+        const reordered: QmdSearchResult[] = [];
+        for (const p of ranked) {
+          const it = byPath.get(p);
+          if (it) reordered.push(it);
+        }
+        const rankedSet = new Set(ranked);
+        for (const r of results) {
+          if (!rankedSet.has(r.path)) reordered.push(r);
+        }
+        results = reordered;
+      }
+    }
+    if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
+      log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
+    }
+
+    return results.slice(0, options.recallResultLimit);
   }
 
   // ---------------------------------------------------------------------------
@@ -2686,6 +6060,9 @@ export class Orchestrator {
     _recallNamespaces: string[],
     prompt?: string,
     preloadedMemoryMap?: Map<string, MemoryFile>,
+    options?: {
+      allowLifecycleFiltered?: boolean;
+    },
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
 
@@ -2749,28 +6126,45 @@ export class Orchestrator {
       }
     }
 
-    // Calculate boosted scores
-    const boosted = results.map((r) => {
+    let lifecycleFilteredCount = 0;
+    const boosted: QmdSearchResult[] = [];
+    const recencyWeight = this.effectiveRecencyWeight();
+    for (const r of results) {
       const memory = memoryByPath.get(r.path);
       let score = r.score;
 
       if (memory) {
+        if (
+          options?.allowLifecycleFiltered !== true &&
+          shouldFilterLifecycleRecallCandidate(memory.frontmatter, {
+            lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
+            lifecycleFilterStaleEnabled: this.config.lifecycleFilterStaleEnabled,
+          })
+        ) {
+          lifecycleFilteredCount += 1;
+          continue;
+        }
+
         // Recency boost: exponential decay over 7 days
-        if (this.config.recencyWeight > 0) {
+        if (recencyWeight > 0) {
           const createdAt = new Date(memory.frontmatter.created).getTime();
           const ageMs = now - createdAt;
           const ageDays = ageMs / (1000 * 60 * 60 * 24);
           const halfLifeDays = 7;
           const recencyScore = Math.pow(0.5, ageDays / halfLifeDays);
           score =
-            score * (1 - this.config.recencyWeight) +
-            recencyScore * this.config.recencyWeight;
+            score * (1 - recencyWeight) +
+            recencyScore * recencyWeight;
         }
 
         // Access count boost: log scale, capped
         if (this.config.boostAccessCount && memory.frontmatter.accessCount) {
           const accessBoost = Math.log10(memory.frontmatter.accessCount + 1) / 3;
-          score += Math.min(accessBoost, 0.1); // Cap at 0.1 boost
+          score += applyUtilityRankingRuntimeDelta(
+            Math.min(accessBoost, 0.1),
+            this.utilityRuntimeValues,
+            "boost",
+          );
         }
 
         // Importance boost (Phase 1B): higher importance = higher rank
@@ -2779,7 +6173,11 @@ export class Orchestrator {
           // Boost important memories, slightly penalize trivial ones
           // Scale: trivial (-0.05) to critical (+0.15)
           const importanceBoost = (importanceScore - 0.4) * 0.25;
-          score += importanceBoost;
+          score += applyUtilityRankingRuntimeDelta(
+            importanceBoost,
+            this.utilityRuntimeValues,
+            importanceBoost >= 0 ? "boost" : "suppress",
+          );
         }
 
         // Feedback bias (v2.2): apply small user-provided up/down vote adjustments.
@@ -2787,7 +6185,12 @@ export class Orchestrator {
           const match = memory.path.match(/([^/]+)\.md$/);
           const memoryId = match ? match[1] : null;
           if (memoryId) {
-            score += this.relevance.adjustment(memoryId);
+            const feedbackDelta = this.relevance.adjustment(memoryId);
+            score += applyUtilityRankingRuntimeDelta(
+              feedbackDelta,
+              this.utilityRuntimeValues,
+              feedbackDelta >= 0 ? "boost" : "suppress",
+            );
           }
         }
 
@@ -2796,10 +6199,15 @@ export class Orchestrator {
           const match = memory.path.match(/([^/]+)\.md$/);
           const memoryId = match ? match[1] : null;
           if (memoryId) {
-            score -= this.negatives.penalty(memoryId, {
+            const negativePenalty = this.negatives.penalty(memoryId, {
               perHit: this.config.negativeExamplesPenaltyPerHit,
               cap: this.config.negativeExamplesPenaltyCap,
             });
+            score -= applyUtilityRankingRuntimeDelta(
+              negativePenalty,
+              this.utilityRuntimeValues,
+              "suppress",
+            );
           }
         }
 
@@ -2813,23 +6221,40 @@ export class Orchestrator {
             actionType: memory.frontmatter.intentActionType,
             entityTypes: memory.frontmatter.intentEntityTypes ?? [],
           });
-          score += compatibility * this.config.intentRoutingBoost;
+          score += applyUtilityRankingRuntimeDelta(
+            compatibility * this.config.intentRoutingBoost,
+            this.utilityRuntimeValues,
+            "boost",
+          );
         }
 
         // v8.1: Temporal + Tag index boost
         // Results that match the detected temporal window or tag query get a small additive boost.
         if (this.config.queryAwareIndexingEnabled && r.path) {
           if (temporalCandidates?.has(r.path)) {
-            score += 0.08; // Temporal match boost (fixed, non-configurable)
+            score += applyUtilityRankingRuntimeDelta(0.08, this.utilityRuntimeValues, "boost");
           }
           if (tagCandidates?.has(r.path)) {
-            score += 0.06; // Tag match boost
+            score += applyUtilityRankingRuntimeDelta(0.06, this.utilityRuntimeValues, "boost");
           }
         }
+
+        // v8.3: lifecycle retrieval weighting (fail-open on legacy memories).
+        const lifecycleDelta = lifecycleRecallScoreAdjustment(memory.frontmatter, {
+          lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
+        });
+        score += applyUtilityRankingRuntimeDelta(
+          lifecycleDelta,
+          this.utilityRuntimeValues,
+          lifecycleDelta >= 0 ? "boost" : "suppress",
+        );
       }
 
-      return { ...r, score };
-    });
+      boosted.push({ ...r, score });
+    }
+    if (lifecycleFilteredCount > 0) {
+      log.debug(`lifecycle retrieval filter removed ${lifecycleFilteredCount} stale/archived candidates`);
+    }
 
     // Re-sort by boosted score
     return boosted.sort((a, b) => b.score - a.score);
@@ -2877,6 +6302,7 @@ export class Orchestrator {
   private async checkForContradiction(
     content: string,
     category: string,
+    namespaceScope: string,
   ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
     if (!this.qmd.isAvailable()) return null;
 
@@ -2893,7 +6319,10 @@ export class Orchestrator {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
-      const existingMemory = await this.storage.getMemoryById(memoryId);
+      const resultNamespace = this.namespaceFromPath(result.path);
+      if (resultNamespace !== namespaceScope) continue;
+      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
       // Skip already superseded memories
@@ -2921,7 +6350,7 @@ export class Orchestrator {
         if (this.config.contradictionAutoResolve) {
           // The new memory supersedes the old one (unless LLM said first is newer)
           if (verification.whichIsNewer !== "first") {
-            await this.storage.supersedeMemory(
+            await resultStorage.supersedeMemory(
               existingMemory.frontmatter.id,
               "pending-new", // Will be updated after the new memory is written
               verification.reasoning,
@@ -2957,6 +6386,7 @@ export class Orchestrator {
   private async suggestLinksForMemory(
     content: string,
     category: string,
+    namespaceScope: string,
   ): Promise<MemoryLink[]> {
     if (!this.qmd.isAvailable()) return [];
 
@@ -2970,7 +6400,10 @@ export class Orchestrator {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
-      const memory = await this.storage.getMemoryById(memoryId);
+      const resultNamespace = this.namespaceFromPath(result.path);
+      if (resultNamespace !== namespaceScope) continue;
+      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const memory = await resultStorage.getMemoryById(memoryId);
       if (memory && memory.frontmatter.status !== "superseded") {
         candidates.push({
           id: memory.frontmatter.id,
@@ -3001,7 +6434,16 @@ export class Orchestrator {
 
   private namespaceFromPath(p: string): string {
     if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
-    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
+    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)(?:[\\/]|$)/);
+    return m && m[1] ? m[1] : this.config.defaultNamespace;
+  }
+
+  private namespaceFromStorageDir(storageDir: string): string {
+    if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
+    const resolvedStorageDir = path.resolve(storageDir);
+    const resolvedMemoryDir = path.resolve(this.config.memoryDir);
+    if (resolvedStorageDir === resolvedMemoryDir) return this.config.defaultNamespace;
+    const m = resolvedStorageDir.match(/[\\/]namespaces[\\/]([^\\/]+)$/);
     return m && m[1] ? m[1] : this.config.defaultNamespace;
   }
 
@@ -3011,6 +6453,17 @@ export class Orchestrator {
       uniq.map(async (ns) => {
         const sm = await this.storageRouter.storageFor(ns);
         return sm.readAllMemories();
+      }),
+    );
+    return lists.flat();
+  }
+
+  private async readArchivedMemoriesForNamespaces(namespaces: string[]): Promise<MemoryFile[]> {
+    const uniq = Array.from(new Set(namespaces.filter(Boolean)));
+    const lists = await Promise.all(
+      uniq.map(async (ns) => {
+        const sm = await this.storageRouter.storageFor(ns);
+        return sm.readArchivedMemories();
       }),
     );
     return lists.flat();

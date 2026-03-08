@@ -1,11 +1,42 @@
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
 export type TriggerMode = "smart" | "every_n" | "time_based";
 export type SignalLevel = "none" | "low" | "medium" | "high";
-export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill";
+export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill" | "rule";
 export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "SKIP";
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
 export type RecallPlanMode = "no_recall" | "minimal" | "full" | "graph_mode";
+export type CronRecallMode = "all" | "none" | "allowlist";
+export type CronConversationRecallMode = "auto" | "always" | "never";
+export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
+
+export interface RecallSectionConfig {
+  id: string;
+  enabled?: boolean;
+  maxChars?: number | null;
+  consolidateTriggerLines?: number;
+  consolidateTargetLines?: number;
+  maxEntities?: number;
+  maxResults?: number;
+  maxTurns?: number;
+  maxTokens?: number;
+  lookbackHours?: number;
+  maxCount?: number;
+  topK?: number;
+  timeoutMs?: number;
+  maxPatterns?: number;
+}
+
+export interface RecallPipelineConfig {
+  recallBudgetChars: number;
+  pipeline: RecallSectionConfig[];
+}
+
+export interface SessionObserverBandConfig {
+  maxBytes: number;
+  triggerDeltaBytes: number;
+  triggerDeltaTokens: number;
+}
 
 export interface FileHygieneConfig {
   enabled: boolean;
@@ -54,6 +85,16 @@ export interface PluginConfig {
   qmdEnabled: boolean;
   qmdCollection: string;
   qmdMaxResults: number;
+  qmdColdTierEnabled?: boolean;
+  qmdColdCollection?: string;
+  qmdColdMaxResults?: number;
+  qmdTierMigrationEnabled: boolean;
+  qmdTierDemotionMinAgeDays: number;
+  qmdTierDemotionValueThreshold: number;
+  qmdTierPromotionValueThreshold: number;
+  qmdTierParityGraphEnabled: boolean;
+  qmdTierParityHiMemEnabled: boolean;
+  qmdTierAutoBackfillEnabled: boolean;
   embeddingFallbackEnabled: boolean;
   embeddingFallbackProvider: "auto" | "openai" | "local";
   /** Optional absolute path to qmd binary. If unset, PATH/fallback discovery is used. */
@@ -61,6 +102,14 @@ export interface PluginConfig {
   memoryDir: string;
   debug: boolean;
   identityEnabled: boolean;
+  identityContinuityEnabled: boolean;
+  identityInjectionMode: IdentityInjectionMode;
+  identityMaxInjectChars: number;
+  continuityIncidentLoggingEnabled: boolean;
+  continuityAuditEnabled: boolean;
+  sessionObserverEnabled?: boolean;
+  sessionObserverDebounceMs?: number;
+  sessionObserverBands?: SessionObserverBandConfig[];
   injectQuestions: boolean;
   commitmentDecayDays: number;
   workspaceDir: string;
@@ -71,6 +120,8 @@ export interface PluginConfig {
   // Retrieval options
   recencyWeight: number;
   boostAccessCount: boolean;
+  /** Record empty recall impressions (memoryIds: []) when no memories are injected. Disabled by default. */
+  recordEmptyRecallImpressions: boolean;
   // v2.2 Advanced Retrieval
   queryExpansionEnabled: boolean;
   queryExpansionMaxQueries: number;
@@ -128,6 +179,9 @@ export interface PluginConfig {
   // Checkpoint
   checkpointEnabled: boolean;
   checkpointTurns: number;
+  // Compaction reset: trigger session reset after compaction instead of continuing degraded.
+  // Requires OC fork with PR #29985 (api.resetSession).
+  compactionResetEnabled: boolean;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   /** If true, Engram may attempt to auto-register an hourly summary cron job (default off). */
@@ -147,9 +201,61 @@ export interface PluginConfig {
   conversationIndexRetentionDays: number;
   conversationIndexMinUpdateIntervalMs: number;
   conversationIndexEmbedOnUpdate: boolean;
+  conversationIndexFaissScriptPath?: string;
+  conversationIndexFaissPythonBin?: string;
+  conversationIndexFaissModelId: string;
+  conversationIndexFaissIndexDir: string;
+  conversationIndexFaissUpsertTimeoutMs: number;
+  conversationIndexFaissSearchTimeoutMs: number;
+  conversationIndexFaissHealthTimeoutMs: number;
+  conversationIndexFaissMaxBatchSize: number;
+  conversationIndexFaissMaxSearchK: number;
   conversationRecallTopK: number;
   conversationRecallMaxChars: number;
   conversationRecallTimeoutMs: number;
+  // Evaluation harness foundation
+  evalHarnessEnabled: boolean;
+  evalShadowModeEnabled: boolean;
+  benchmarkBaselineSnapshotsEnabled: boolean;
+  benchmarkDeltaReporterEnabled: boolean;
+  evalStoreDir: string;
+  // Objective-state memory foundation
+  objectiveStateMemoryEnabled: boolean;
+  objectiveStateSnapshotWritesEnabled: boolean;
+  objectiveStateRecallEnabled: boolean;
+  objectiveStateStoreDir: string;
+  // Causal trajectory memory foundation
+  causalTrajectoryMemoryEnabled: boolean;
+  causalTrajectoryStoreDir: string;
+  causalTrajectoryRecallEnabled: boolean;
+  actionGraphRecallEnabled: boolean;
+  // Trust-zone memory foundation
+  trustZonesEnabled: boolean;
+  quarantinePromotionEnabled: boolean;
+  trustZoneStoreDir: string;
+  trustZoneRecallEnabled: boolean;
+  memoryPoisoningDefenseEnabled: boolean;
+  memoryRedTeamBenchEnabled: boolean;
+  // Harmonic retrieval foundation
+  harmonicRetrievalEnabled: boolean;
+  abstractionAnchorsEnabled: boolean;
+  abstractionNodeStoreDir: string;
+  // Episodic/semantic split foundation
+  verifiedRecallEnabled: boolean;
+  semanticRulePromotionEnabled: boolean;
+  semanticRuleVerificationEnabled: boolean;
+  // Creation-memory foundation
+  creationMemoryEnabled: boolean;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  commitmentStaleDays: number;
+  commitmentLedgerDir: string;
+  resumeBundlesEnabled: boolean;
+  resumeBundleDir: string;
+  workProductRecallEnabled: boolean;
+  workProductLedgerDir: string;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;
@@ -194,11 +300,17 @@ export interface PluginConfig {
   qmdAutoEmbedEnabled: boolean;
   qmdEmbedMinIntervalMs: number;
   qmdUpdateTimeoutMs: number;
+  qmdUpdateMinIntervalMs: number;
   // Local LLM resilience
   localLlmRetry5xxCount: number;
   localLlmRetryBackoffMs: number;
   localLlm400TripThreshold: number;
   localLlm400CooldownMs: number;
+  // Local LLM fast tier (v9.1) — smaller model for quick ops
+  localLlmFastEnabled: boolean;
+  localLlmFastModel: string;
+  localLlmFastUrl: string;
+  localLlmFastTimeoutMs: number;
   // Gateway config for fallback AI
   gatewayConfig?: GatewayConfig;
 
@@ -210,9 +322,17 @@ export interface PluginConfig {
   principalFromSessionKeyRules: PrincipalRule[];
   namespacePolicies: NamespacePolicy[];
   defaultRecallNamespaces: Array<"self" | "shared">;
+  cronRecallMode: CronRecallMode;
+  cronRecallAllowlist: string[];
+  cronRecallPolicyEnabled: boolean;
+  cronRecallNormalizedQueryMaxChars: number;
+  cronRecallInstructionHeavyTokenCap: number;
+  cronConversationRecallMode: CronConversationRecallMode;
   autoPromoteToSharedEnabled: boolean;
   autoPromoteToSharedCategories: Array<"correction" | "decision" | "preference">;
   autoPromoteMinConfidenceTier: ConfidenceTier;
+  routingRulesEnabled: boolean;
+  routingRulesStateFile: string;
 
   // v4.0 Shared-context (cross-agent shared intelligence)
   sharedContextEnabled: boolean;
@@ -220,6 +340,9 @@ export interface PluginConfig {
   sharedContextMaxInjectChars: number;
   crossSignalsSemanticEnabled: boolean;
   crossSignalsSemanticTimeoutMs: number;
+  sharedCrossSignalSemanticEnabled?: boolean;
+  sharedCrossSignalSemanticTimeoutMs?: number;
+  sharedCrossSignalSemanticMaxCandidates?: number;
 
   // v5.0 Compounding engine
   compoundingEnabled: boolean;
@@ -227,6 +350,26 @@ export interface PluginConfig {
   compoundingSemanticEnabled: boolean;
   compoundingSynthesisTimeoutMs: number;
   compoundingInjectEnabled: boolean;
+
+  // Search backend abstraction
+  searchBackend?: "qmd" | "remote" | "noop" | "lancedb" | "meilisearch" | "orama";
+  remoteSearchBaseUrl?: string;
+  remoteSearchApiKey?: string;
+  remoteSearchTimeoutMs?: number;
+
+  // LanceDB backend
+  lanceDbPath?: string;
+  lanceEmbeddingDimension?: number;
+
+  // Meilisearch backend
+  meilisearchHost?: string;
+  meilisearchApiKey?: string;
+  meilisearchTimeoutMs?: number;
+  meilisearchAutoIndex?: boolean;
+
+  // Orama backend
+  oramaDbPath?: string;
+  oramaEmbeddingDimension?: number;
 
   // QMD daemon mode
   qmdDaemonEnabled: boolean;
@@ -237,6 +380,9 @@ export interface PluginConfig {
   knowledgeIndexEnabled: boolean;
   knowledgeIndexMaxEntities: number;
   knowledgeIndexMaxChars: number;
+  // Recall assembly controls
+  recallBudgetChars: number;
+  recallPipeline: RecallSectionConfig[];
   entityRelationshipsEnabled: boolean;
   entityActivityLogEnabled: boolean;
   entityActivityLogMaxEntries: number;
@@ -256,6 +402,27 @@ export interface PluginConfig {
   factArchivalMaxAccessCount: number;
   /** Tags that protect a fact from archival regardless of other criteria. */
   factArchivalProtectedCategories: string[];
+  // v8.3 Lifecycle policy engine
+  lifecyclePolicyEnabled: boolean;
+  lifecycleFilterStaleEnabled: boolean;
+  lifecyclePromoteHeatThreshold: number;
+  lifecycleStaleDecayThreshold: number;
+  lifecycleArchiveDecayThreshold: number;
+  lifecycleProtectedCategories: MemoryCategory[];
+  lifecycleMetricsEnabled: boolean;
+  // v8.3 proactive + policy learning
+  proactiveExtractionEnabled: boolean;
+  contextCompressionActionsEnabled: boolean;
+  compressionGuidelineLearningEnabled: boolean;
+  compressionGuidelineSemanticRefinementEnabled: boolean;
+  compressionGuidelineSemanticTimeoutMs: number;
+  maxProactiveQuestionsPerExtraction: number;
+  maxCompressionTokensPerHour: number;
+  behaviorLoopAutoTuneEnabled: boolean;
+  behaviorLoopLearningWindowDays: number;
+  behaviorLoopMinSignalCount: number;
+  behaviorLoopMaxDeltaPerCycle: number;
+  behaviorLoopProtectedParams: string[];
   // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts
   recallPlannerEnabled: boolean;
   recallPlannerMaxQmdResultsMinimal: number;
@@ -288,6 +455,49 @@ export interface PluginConfig {
   queryAwareIndexingEnabled: boolean;
   /** Max candidate paths returned from index prefilter (0 = no cap) */
   queryAwareIndexingMaxCandidates: number;
+  // v8.2 multi-graph memory (PR 18)
+  multiGraphMemoryEnabled: boolean;
+  // v8.2 PR 19A: graph recall planner gating
+  graphRecallEnabled: boolean;
+  /** Allow graph_mode escalation for broader causal/timeline phrasing beyond strict keywords. */
+  graphExpandedIntentEnabled?: boolean;
+  /** Run bounded graph expansion in full mode when enough recall seeds exist. */
+  graphAssistInFullModeEnabled?: boolean;
+  /** In full mode, compute graph assist for telemetry/snapshotting but do not inject merged results. */
+  graphAssistShadowEvalEnabled?: boolean;
+  /** Minimum seed results required before full-mode graph assist runs. */
+  graphAssistMinSeedResults?: number;
+  entityGraphEnabled: boolean;
+  timeGraphEnabled: boolean;
+  /** When true, write fallback temporal adjacency edges for consecutive extracted memories. */
+  graphWriteSessionAdjacencyEnabled?: boolean;
+  causalGraphEnabled: boolean;
+  maxGraphTraversalSteps: number;
+  graphActivationDecay: number;
+  /** Weight of graph activation score when blending with seed QMD score (0-1). */
+  graphExpansionActivationWeight: number;
+  /** Lower bound for blended graph-expanded recall scores (0-1). */
+  graphExpansionBlendMin: number;
+  /** Upper bound for blended graph-expanded recall scores (0-1). */
+  graphExpansionBlendMax: number;
+  maxEntityGraphEdgesPerMemory: number;
+  /** SimpleMem-inspired de-linearization: resolve pronouns and anchor relative dates after extraction. */
+  delinearizeEnabled: boolean;
+  /** Synapse-inspired confidence gate — skip memory injection when top score is below threshold. */
+  recallConfidenceGateEnabled: boolean;
+  recallConfidenceGateThreshold: number;
+  /** PlugMem-inspired causal rule extraction: mine IF→THEN rules during consolidation. */
+  causalRuleExtractionEnabled: boolean;
+  /** E-Mem-inspired memory reconstruction: targeted retrieval for missing entity context. */
+  memoryReconstructionEnabled: boolean;
+  /** Maximum number of entity expansions per recall. */
+  memoryReconstructionMaxExpansions: number;
+  /** Synapse-inspired lateral inhibition to suppress hub-node dominance. */
+  graphLateralInhibitionEnabled: boolean;
+  /** Inhibition strength (default 0.15). Higher = more suppression. */
+  graphLateralInhibitionBeta: number;
+  /** Number of top competing nodes considered for inhibition (default 7). */
+  graphLateralInhibitionTopM: number;
   // v8.2: Temporal Memory Tree
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;
@@ -341,8 +551,47 @@ export interface BufferState {
   extractionCount: number;
 }
 
+export interface BehaviorLoopAdjustment {
+  parameter: string;
+  previousValue: number;
+  nextValue: number;
+  delta: number;
+  evidenceCount: number;
+  confidence: number;
+  reason: string;
+  appliedAt: string;
+}
+
+export interface BehaviorLoopPolicyState {
+  version: number;
+  windowDays: number;
+  minSignalCount: number;
+  maxDeltaPerCycle: number;
+  protectedParams: string[];
+  adjustments: BehaviorLoopAdjustment[];
+  updatedAt: string;
+}
+
+export type BehaviorSignalType = "correction_override" | "preference_affinity";
+export type BehaviorSignalDirection = "positive" | "negative";
+
+export interface BehaviorSignalEvent {
+  timestamp: string;
+  namespace: string;
+  memoryId: string;
+  category: Extract<MemoryCategory, "correction" | "preference">;
+  signalType: BehaviorSignalType;
+  direction: BehaviorSignalDirection;
+  confidence: number;
+  signalHash: string;
+  source: "extraction" | "correction";
+}
+
 /** Memory status for lifecycle management */
 export type MemoryStatus = "active" | "superseded" | "archived";
+export type LifecycleState = "candidate" | "validated" | "active" | "stale" | "archived";
+export type VerificationState = "unverified" | "user_confirmed" | "system_inferred" | "disputed";
+export type PolicyClass = "ephemeral" | "durable" | "protected";
 
 /** Importance level tiers */
 export type ImportanceLevel = "critical" | "high" | "normal" | "low" | "trivial";
@@ -382,6 +631,18 @@ export interface MemoryFrontmatter {
   supersededAt?: string;
   /** Timestamp when archived */
   archivedAt?: string;
+  /** Policy-driven lifecycle state used for retrieval eligibility/ranking. */
+  lifecycleState?: LifecycleState;
+  /** Verification provenance used by lifecycle policy. */
+  verificationState?: VerificationState;
+  /** Policy class used by lifecycle guardrails. */
+  policyClass?: PolicyClass;
+  /** Last lifecycle validation timestamp (ISO 8601). */
+  lastValidatedAt?: string;
+  /** Lifecycle decay score in [0,1]. */
+  decayScore?: number;
+  /** Lifecycle heat score in [0,1]. */
+  heatScore?: number;
   // Access tracking (Phase 1A)
   /** Number of times this memory has been retrieved */
   accessCount?: number;
@@ -574,6 +835,131 @@ export interface MetaState {
   totalEntities: number;
 }
 
+export type MemoryActionType =
+  | "store_episode"
+  | "store_note"
+  | "update_note"
+  | "create_artifact"
+  | "summarize_node"
+  | "discard"
+  | "link_graph";
+
+export type MemoryActionOutcome = "applied" | "skipped" | "failed";
+
+export type MemoryActionPolicyDecision = "allow" | "defer" | "deny";
+
+export type MemoryActionEligibilitySource =
+  | "extraction"
+  | "consolidation"
+  | "replay"
+  | "manual"
+  | "unknown";
+
+export interface MemoryActionEligibilityContext {
+  confidence: number;
+  lifecycleState: LifecycleState;
+  importance: number;
+  source: MemoryActionEligibilitySource;
+}
+
+export interface MemoryActionPolicyResult {
+  action: MemoryActionType;
+  decision: MemoryActionPolicyDecision;
+  rationale: string;
+  eligibility: MemoryActionEligibilityContext;
+}
+
+export interface MemoryActionEvent {
+  timestamp: string;
+  action: MemoryActionType;
+  outcome: MemoryActionOutcome;
+  reason?: string;
+  memoryId?: string;
+  namespace?: string;
+  promptHash?: string;
+  policyDecision?: MemoryActionPolicyDecision;
+  policyRationale?: string;
+  policyEligibility?: MemoryActionEligibilityContext;
+}
+
+export interface CompressionGuidelineOptimizerSourceWindow {
+  from: string;
+  to: string;
+}
+
+export interface CompressionGuidelineOptimizerEventCounts {
+  total: number;
+  applied: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface CompressionGuidelineOptimizerState {
+  version: number;
+  updatedAt: string;
+  sourceWindow: CompressionGuidelineOptimizerSourceWindow;
+  eventCounts: CompressionGuidelineOptimizerEventCounts;
+  guidelineVersion: number;
+}
+
+export type ContinuityIncidentState = "open" | "closed";
+
+export interface ContinuityIncidentRecord {
+  id: string;
+  state: ContinuityIncidentState;
+  openedAt: string;
+  updatedAt: string;
+  triggerWindow?: string;
+  symptom: string;
+  suspectedCause?: string;
+  fixApplied?: string;
+  verificationResult?: string;
+  preventiveRule?: string;
+  closedAt?: string;
+  filePath?: string;
+}
+
+export interface ContinuityIncidentOpenInput {
+  triggerWindow?: string;
+  symptom: string;
+  suspectedCause?: string;
+}
+
+export interface ContinuityIncidentCloseInput {
+  fixApplied: string;
+  verificationResult: string;
+  preventiveRule?: string;
+}
+
+export type ContinuityLoopCadence = "daily" | "weekly" | "monthly" | "quarterly";
+export type ContinuityLoopStatus = "active" | "paused" | "retired";
+
+export interface ContinuityImprovementLoop {
+  id: string;
+  cadence: ContinuityLoopCadence;
+  purpose: string;
+  status: ContinuityLoopStatus;
+  killCondition: string;
+  lastReviewed: string;
+  notes?: string;
+}
+
+export interface ContinuityLoopUpsertInput {
+  id: string;
+  cadence: ContinuityLoopCadence;
+  purpose: string;
+  status: ContinuityLoopStatus;
+  killCondition: string;
+  lastReviewed?: string;
+  notes?: string;
+}
+
+export interface ContinuityLoopReviewInput {
+  status?: ContinuityLoopStatus;
+  notes?: string;
+  reviewedAt?: string;
+}
+
 /** Entry in the access tracking buffer (batched updates) */
 export interface AccessTrackingEntry {
   memoryId: string;
@@ -602,7 +988,34 @@ export interface LlmTraceEvent {
   tokenUsage?: { input?: number; output?: number; total?: number };
 }
 
-export type LlmTraceCallback = (event: LlmTraceEvent) => void;
+export interface RecallTraceEvent {
+  kind: "recall_summary";
+  traceId: string;
+  operation: "recall";
+  sessionKey?: string;
+  promptHash: string;
+  promptLength: number;
+  retrievalQueryHash: string;
+  retrievalQueryLength: number;
+  recallMode: RecallPlanMode;
+  recallResultLimit: number;
+  qmdEnabled: boolean;
+  qmdAvailable: boolean;
+  recallNamespaces: string[];
+  source: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan";
+  recalledMemoryCount: number;
+  injected: boolean;
+  contextChars: number;
+  policyVersion?: string;
+  identityInjectionMode?: IdentityInjectionMode | "none";
+  identityInjectedChars?: number;
+  identityInjectionTruncated?: boolean;
+  durationMs: number;
+  timings?: Record<string, string>;
+}
+
+export type EngramTraceEvent = LlmTraceEvent | RecallTraceEvent;
+export type LlmTraceCallback = (event: EngramTraceEvent) => void;
 
 // ============================================================================
 // Gateway Configuration Types (for fallback AI)

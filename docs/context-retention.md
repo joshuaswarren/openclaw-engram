@@ -27,7 +27,11 @@ Engram intentionally does not silently modify `~/.openclaw/cron/jobs.json` unles
 
 Config (default off):
 - `conversationIndexEnabled`
-- `conversationIndexQmdCollection` (must exist in `~/.config/qmd/index.yml`)
+- `conversationIndexBackend` (`qmd` default; `faiss` is predeclared for upcoming adapter wiring)
+- `conversationIndexQmdCollection` (must exist in `~/.config/qmd/index.yml` when backend is `qmd`)
+- `conversationIndexFaissScriptPath`, `conversationIndexFaissPythonBin`, `conversationIndexFaissModelId`, `conversationIndexFaissIndexDir` (config contract fields for upcoming FAISS backend tasks)
+- `conversationIndexFaissUpsertTimeoutMs`, `conversationIndexFaissSearchTimeoutMs`, `conversationIndexFaissHealthTimeoutMs`
+- `conversationIndexFaissMaxBatchSize`, `conversationIndexFaissMaxSearchK`
 - `conversationIndexRetentionDays`
 - `conversationRecallTopK`
 - `conversationRecallMaxChars`
@@ -36,10 +40,10 @@ Config (default off):
 How it works:
 1. `conversation_index_update` chunks transcript history into markdown docs under:
    - `memoryDir/conversation-index/chunks/<sessionKey>/<YYYY-MM-DD>/*.md`
-2. QMD indexes those docs (best-effort, depends on your QMD configuration).
-3. On each new prompt, Engram runs a timeboxed semantic query against the conversation chunk collection and injects top-K snippets.
+2. Current runtime path is QMD-backed indexing/search.
+3. FAISS fields in this release are config-contract-only and become runtime-active in follow-on tasks once the adapter/sidecar wiring lands.
 
 Notes:
 - This feature is designed to be fail-open. If indexing/search fails or times out, no context is injected.
-- The current implementation uses QMD-backed indexing. `conversationIndexBackend: "faiss"` is reserved.
+- Keep `conversationIndexBackend: "qmd"` until FAISS adapter implementation is merged.
 

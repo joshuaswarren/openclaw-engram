@@ -1,7 +1,44 @@
 import { z } from "zod";
 
+export const MemoryActionTypeSchema = z.enum([
+  "store_episode",
+  "store_note",
+  "update_note",
+  "create_artifact",
+  "summarize_node",
+  "discard",
+  "link_graph",
+]);
+
+export const MemoryActionEligibilityContextSchema = z
+  .object({
+    confidence: z.number().min(0).max(1),
+    lifecycleState: z.enum(["active", "validated", "candidate", "stale", "archived"]),
+    importance: z.number().min(0).max(1),
+    source: z.enum(["extraction", "consolidation", "replay", "manual", "unknown"]),
+  })
+  .strict();
+
+export function parseMemoryActionType(value: unknown): z.infer<typeof MemoryActionTypeSchema> {
+  const parsed = MemoryActionTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : "discard";
+}
+
+export function parseMemoryActionEligibilityContext(
+  value: unknown,
+): z.infer<typeof MemoryActionEligibilityContextSchema> {
+  const parsed = MemoryActionEligibilityContextSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return {
+    confidence: 0,
+    lifecycleState: "candidate",
+    importance: 0,
+    source: "unknown",
+  };
+}
+
 export const ExtractedFactSchema = z.object({
-  category: z.enum(["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"]),
+  category: z.enum(["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"]),
   content: z
     .string()
     .describe("The memory content — a clear, standalone statement"),
@@ -32,6 +69,12 @@ export const ExtractedQuestionSchema = z.object({
   question: z.string().describe("A genuine question the AI is curious about based on this conversation"),
   context: z.string().describe("Why this question matters or what prompted it"),
   priority: z.number().min(0).max(1).describe("How important/urgent this question is (0-1)"),
+});
+
+export const ProactiveQuestionsResultSchema = z.object({
+  questions: z
+    .array(ExtractedQuestionSchema)
+    .describe("Additional follow-up questions discovered in a proactive second-pass extraction."),
 });
 
 export const ExtractedRelationshipSchema = z.object({
@@ -109,19 +152,23 @@ export const ConsolidationResultSchema = z.object({
     .describe("Entity updates from consolidation analysis"),
 });
 
-export const ProfileConsolidationResultSchema = z.object({
-  consolidatedProfile: z
-    .string()
-    .describe(
-      "The full consolidated profile as markdown. Preserve all ## section headers. Merge duplicate or near-duplicate bullets into single clear statements. Remove stale or superseded information. Keep the most important and durable observations. Target roughly 400 lines.",
-    ),
-  removedCount: z
-    .number()
-    .describe("Number of bullets removed or merged during consolidation"),
-  summary: z
-    .string()
-    .describe("Brief summary of what was consolidated"),
-});
+export function buildProfileConsolidationResultSchema(targetLines: number) {
+  return z.object({
+    consolidatedProfile: z
+      .string()
+      .describe(
+        `The full consolidated profile as markdown. Preserve all ## section headers. Merge duplicate or near-duplicate bullets into single clear statements. Remove stale or superseded information. Keep the most important and durable observations. Target roughly ${targetLines} lines.`,
+      ),
+    removedCount: z
+      .number()
+      .describe("Number of bullets removed or merged during consolidation"),
+    summary: z
+      .string()
+      .describe("Brief summary of what was consolidated"),
+  });
+}
+
+export const ProfileConsolidationResultSchema = buildProfileConsolidationResultSchema(50);
 
 export const IdentityConsolidationResultSchema = z.object({
   learnedPatterns: z
@@ -206,9 +253,37 @@ export const MemorySummarySchema = z.object({
 
 export type MemorySummaryResult = z.infer<typeof MemorySummarySchema>;
 
+// v8.15 behavior-loop auto-tuning state contracts
+export const BehaviorLoopAdjustmentSchema = z.object({
+  parameter: z.string().min(1),
+  previousValue: z.number(),
+  nextValue: z.number(),
+  delta: z.number(),
+  evidenceCount: z.number().int().min(0),
+  confidence: z.number().min(0).max(1),
+  reason: z.string(),
+  appliedAt: z.string(),
+});
+
+export const BehaviorLoopPolicyStateSchema = z.object({
+  version: z.number().int().min(0),
+  windowDays: z.number().int().min(0),
+  minSignalCount: z.number().int().min(0),
+  maxDeltaPerCycle: z.number().min(0).max(1),
+  protectedParams: z.array(z.string()),
+  adjustments: z.array(BehaviorLoopAdjustmentSchema),
+  updatedAt: z.string(),
+});
+
+export type BehaviorLoopAdjustmentParsed = z.infer<typeof BehaviorLoopAdjustmentSchema>;
+export type BehaviorLoopPolicyStateParsed = z.infer<typeof BehaviorLoopPolicyStateSchema>;
+
+export type MemoryActionTypeParsed = z.infer<typeof MemoryActionTypeSchema>;
+export type MemoryActionEligibilityContextParsed = z.infer<typeof MemoryActionEligibilityContextSchema>;
 export type ExtractedFactParsed = z.infer<typeof ExtractedFactSchema>;
 export type EntityMentionParsed = z.infer<typeof EntityMentionSchema>;
 export type ExtractedQuestionParsed = z.infer<typeof ExtractedQuestionSchema>;
+export type ProactiveQuestionsResultParsed = z.infer<typeof ProactiveQuestionsResultSchema>;
 export type ExtractionResultParsed = z.infer<typeof ExtractionResultSchema>;
 export type ConsolidationItemParsed = z.infer<typeof ConsolidationItemSchema>;
 export type ConsolidationResultParsed = z.infer<

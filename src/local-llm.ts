@@ -78,12 +78,22 @@ export class LocalLlmClient {
   private consecutive400s: number = 0;
   private cooldownUntilMs: number = 0;
   private modelRegistry?: ModelRegistry;
+  private _disableThinking: boolean = false;
   private static readonly HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
   private static readonly LMS_CACHE_INTERVAL_MS = 30000; // 30 seconds
 
   constructor(config: PluginConfig, modelRegistry?: ModelRegistry) {
     this.config = config;
     this.modelRegistry = modelRegistry;
+  }
+
+  /**
+   * Disable thinking/reasoning mode for models that support it (e.g. Qwen 3.5).
+   * When enabled, adds chat_template_kwargs to suppress chain-of-thought,
+   * reducing latency for fast-tier operations.
+   */
+  set disableThinking(value: boolean) {
+    this._disableThinking = value;
   }
 
   private resolveHomeDir(): string {
@@ -708,6 +718,13 @@ export class LocalLlmClient {
         requestBody.response_format = options.responseFormat;
       }
 
+      // Suppress thinking/reasoning for fast-tier models (e.g. Qwen 3.5 small).
+      // These models default to non-thinking but LM Studio may force thinking via
+      // chat template. Sending this kwarg explicitly disables it.
+      if (this._disableThinking) {
+        requestBody.chat_template_kwargs = { enable_thinking: false };
+      }
+
       // Normalize URL (use 127.0.0.1 instead of localhost)
       const baseUrl = this.config.localLlmUrl
         .replace("localhost", "127.0.0.1")
@@ -830,7 +847,7 @@ export class LocalLlmClient {
 
       const data = (await response.json()) as {
         choices?: Array<{
-          message?: { content?: string };
+          message?: { content?: string; reasoning_content?: string };
         }>;
         usage?: {
           prompt_tokens?: number;
@@ -843,7 +860,11 @@ export class LocalLlmClient {
         `local LLM response: choices=${data.choices?.length}, usage=${JSON.stringify(data.usage)}`,
       );
 
-      const content = data.choices?.[0]?.message?.content;
+      // Thinking models (e.g. Qwen 3.5) may put their response in
+      // `reasoning_content` and leave `content` empty. Fall back to
+      // reasoning_content so engram still gets a usable result.
+      const msg = data.choices?.[0]?.message;
+      const content = msg?.content || msg?.reasoning_content || "";
       if (!content) {
         log.warn(`local LLM returned empty content. choices=${JSON.stringify(data.choices)?.slice(0, 200)}`);
         return null;
