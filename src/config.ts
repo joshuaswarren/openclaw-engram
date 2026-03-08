@@ -251,7 +251,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN,
     maxBodyBytes:
       typeof rawAgentAccessHttp?.maxBodyBytes === "number"
-        ? Math.max(1024, Math.floor(rawAgentAccessHttp.maxBodyBytes))
+        ? Math.max(1, Math.floor(rawAgentAccessHttp.maxBodyBytes))
         : 131072,
   };
 

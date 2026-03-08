@@ -62,3 +62,14 @@ test("parseConfig supports explicit local HTTP access config and env fallback", 
     }
   }
 });
+
+test("parseConfig preserves small explicit HTTP body limits", () => {
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    agentAccessHttp: {
+      enabled: true,
+      maxBodyBytes: 32,
+    },
+  });
+  assert.equal(cfg.agentAccessHttp.maxBodyBytes, 32);
+});
