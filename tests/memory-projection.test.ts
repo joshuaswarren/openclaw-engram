@@ -180,6 +180,37 @@ archived without explicit status
   }
 });
 
+test("StorageManager reads archive-path files as archived even without explicit status", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-archived-read-"));
+  try {
+    await writeText(
+      memoryDir,
+      "archive/2026-03-08/fact-archived.md",
+      `---
+id: fact-archived
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+archivedAt: 2026-03-08T02:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["archived"]
+---
+
+archived without explicit status
+`,
+    );
+
+    const storage = new StorageManager(memoryDir);
+    const current = await storage.getProjectedMemoryState("fact-archived");
+    assert.ok(current);
+    assert.equal(current?.status, "archived");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager projection helpers fail open to markdown and lifecycle ledger", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-projection-fallback-"));
   try {

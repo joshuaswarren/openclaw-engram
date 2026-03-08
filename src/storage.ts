@@ -360,7 +360,7 @@ function parseFrontmatter(
 }
 
 function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, filePath: string): MemoryFrontmatter {
-  if (/[\\/]archive[\\/]/.test(filePath) && frontmatter.status === "active") {
+  if (/[\\/]archive[\\/]/.test(filePath) && (!frontmatter.status || frontmatter.status === "active")) {
     return {
       ...frontmatter,
       status: "archived",
@@ -2844,49 +2844,36 @@ export class StorageManager {
     if (projected) return projected;
 
     const active = await this.getMemoryById(id);
-    if (active) {
-      return {
-        memoryId: active.frontmatter.id,
-        category: active.frontmatter.category,
-        status: active.frontmatter.status ?? "active",
-        lifecycleState: active.frontmatter.lifecycleState,
-        path: active.path,
-        pathRel: path.relative(this.baseDir, active.path).split(path.sep).join("/"),
-        created: active.frontmatter.created,
-        updated: active.frontmatter.updated,
-        archivedAt: active.frontmatter.archivedAt,
-        supersededAt: active.frontmatter.supersededAt,
-        entityRef: active.frontmatter.entityRef,
-        source: active.frontmatter.source,
-        confidence: active.frontmatter.confidence,
-        confidenceTier: active.frontmatter.confidenceTier,
-        memoryKind: active.frontmatter.memoryKind,
-        accessCount: active.frontmatter.accessCount,
-        lastAccessed: active.frontmatter.lastAccessed,
-      };
-    }
+    if (active) return this.toProjectedCurrentState(active, "active");
 
     const archived = (await this.readArchivedMemories()).find((memory) => memory.frontmatter.id === id);
     if (!archived) return null;
 
+    return this.toProjectedCurrentState(archived, "archived");
+  }
+
+  private toProjectedCurrentState(
+    memory: MemoryFile,
+    fallbackStatus: MemoryStatus,
+  ): MemoryProjectionCurrentState {
     return {
-      memoryId: archived.frontmatter.id,
-      category: archived.frontmatter.category,
-      status: archived.frontmatter.status ?? "archived",
-      lifecycleState: archived.frontmatter.lifecycleState,
-      path: archived.path,
-      pathRel: path.relative(this.baseDir, archived.path).split(path.sep).join("/"),
-      created: archived.frontmatter.created,
-      updated: archived.frontmatter.updated,
-      archivedAt: archived.frontmatter.archivedAt,
-      supersededAt: archived.frontmatter.supersededAt,
-      entityRef: archived.frontmatter.entityRef,
-      source: archived.frontmatter.source,
-      confidence: archived.frontmatter.confidence,
-      confidenceTier: archived.frontmatter.confidenceTier,
-      memoryKind: archived.frontmatter.memoryKind,
-      accessCount: archived.frontmatter.accessCount,
-      lastAccessed: archived.frontmatter.lastAccessed,
+      memoryId: memory.frontmatter.id,
+      category: memory.frontmatter.category,
+      status: memory.frontmatter.status ?? fallbackStatus,
+      lifecycleState: memory.frontmatter.lifecycleState,
+      path: memory.path,
+      pathRel: path.relative(this.baseDir, memory.path).split(path.sep).join("/"),
+      created: memory.frontmatter.created,
+      updated: memory.frontmatter.updated,
+      archivedAt: memory.frontmatter.archivedAt,
+      supersededAt: memory.frontmatter.supersededAt,
+      entityRef: memory.frontmatter.entityRef,
+      source: memory.frontmatter.source,
+      confidence: memory.frontmatter.confidence,
+      confidenceTier: memory.frontmatter.confidenceTier,
+      memoryKind: memory.frontmatter.memoryKind,
+      accessCount: memory.frontmatter.accessCount,
+      lastAccessed: memory.frontmatter.lastAccessed,
     };
   }
 
