@@ -95,6 +95,7 @@ import {
   recallNamespacesForPrincipal,
   resolvePrincipal,
 } from "./namespaces/principal.js";
+import { NamespaceSearchRouter } from "./namespaces/search.js";
 import { SharedContextManager } from "./shared-context/manager.js";
 import {
   CompoundingEngine,
@@ -602,6 +603,7 @@ export function shouldRejectLowConfidenceRecall(
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
+  private readonly namespaceSearchRouter: NamespaceSearchRouter;
   qmd: SearchBackend;
   private readonly conversationQmd?: SearchBackend;
   private readonly conversationFaiss?: FaissConversationIndexAdapter;
@@ -693,9 +695,77 @@ export class Orchestrator {
     this._recallWorkspaceOverrides.delete(sessionKey);
   }
 
+  resolvePrincipal(sessionKey?: string): string {
+    return resolvePrincipal(sessionKey, this.config);
+  }
+
+  resolveSelfNamespace(sessionKey?: string): string {
+    return defaultNamespaceForPrincipal(this.resolvePrincipal(sessionKey), this.config);
+  }
+
+  async getStorageForNamespace(namespace?: string): Promise<StorageManager> {
+    const ns = typeof namespace === "string" && namespace.trim().length > 0
+      ? namespace.trim()
+      : this.config.defaultNamespace;
+    return this.storageRouter.storageFor(ns);
+  }
+
+  private configuredNamespaces(): string[] {
+    return Array.from(
+      new Set([
+        this.config.defaultNamespace,
+        this.config.sharedNamespace,
+        ...this.config.namespacePolicies.map((policy) => policy.name),
+      ].map((value) => value.trim()).filter(Boolean)),
+    );
+  }
+
+  async searchAcrossNamespaces(options: {
+    query: string;
+    namespaces?: string[];
+    maxResults?: number;
+    mode?: "search" | "hybrid" | "bm25" | "vector";
+  }): Promise<QmdSearchResult[]> {
+    const namespaces = this.config.namespacesEnabled
+      ? Array.from(
+        new Set(
+          (options.namespaces?.length ? options.namespaces : this.configuredNamespaces())
+            .map((value) => value.trim())
+            .filter(Boolean),
+        ),
+      )
+      : [this.config.defaultNamespace];
+
+    if (!this.config.namespacesEnabled) {
+      switch (options.mode) {
+        case "hybrid":
+          return await this.qmd.hybridSearch(options.query, undefined, options.maxResults);
+        case "bm25":
+          return await this.qmd.bm25Search(options.query, undefined, options.maxResults);
+        case "vector":
+          return await this.qmd.vectorSearch(options.query, undefined, options.maxResults);
+        default:
+          return await this.qmd.search(options.query, undefined, options.maxResults);
+      }
+    }
+
+    return await this.namespaceSearchRouter.searchAcrossNamespaces({
+      query: options.query,
+      namespaces,
+      maxResults: options.maxResults,
+      mode: options.mode,
+    });
+  }
+
+  private isSearchAvailableForNamespaceRouting(): boolean {
+    if (this.config.namespacesEnabled) return true;
+    return this.qmd.isAvailable();
+  }
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
+    this.namespaceSearchRouter = new NamespaceSearchRouter(config, this.storageRouter);
     this.storage = new StorageManager(config.memoryDir);
     this.qmd = createSearchBackend(config);
     this.conversationQmd = createConversationSearchBackend(config);
@@ -989,16 +1059,33 @@ export class Orchestrator {
       const available = await this.qmd.probe();
       if (available) {
         log.info(`Search backend: available ${this.qmd.debugStatus()}`);
-        const collectionState = await this.qmd.ensureCollection(this.config.memoryDir);
-        if (collectionState === "missing") {
+        const namespaces = this.config.namespacesEnabled
+          ? this.configuredNamespaces()
+          : [this.config.defaultNamespace];
+        const states = await Promise.all(
+          namespaces.map(async (namespace) => ({
+            namespace,
+            state: this.config.namespacesEnabled
+              ? await this.namespaceSearchRouter.ensureNamespaceCollection(namespace)
+              : await this.qmd.ensureCollection(this.config.memoryDir),
+          })),
+        );
+        const defaultState = states.find((entry) => entry.namespace === this.config.defaultNamespace)?.state ?? "unknown";
+        if (defaultState === "missing") {
           this.qmd = new NoopSearchBackend();
           log.warn(
             "Search collection missing for Engram memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
           );
-        } else if (collectionState === "unknown") {
+        } else if (defaultState === "unknown") {
           log.warn("Search collection check unavailable; keeping search retrieval enabled for fail-open behavior");
-        } else if (collectionState === "skipped") {
+        } else if (defaultState === "skipped") {
           log.debug("Search collection check skipped (remote or daemon-only mode)");
+        }
+        for (const entry of states) {
+          if (entry.namespace === this.config.defaultNamespace) continue;
+          if (entry.state === "missing") {
+            log.warn(`Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`);
+          }
         }
       } else if (this.qmd instanceof NoopSearchBackend) {
         log.debug(`Search backend: noop (search intentionally disabled)`);
@@ -1701,11 +1788,14 @@ export class Orchestrator {
         break;
       }
 
-      const primaryResults = await this.qmd.search(
-        prompt,
-        options.collection,
-        fetchLimit,
-      );
+      const primaryResults = options.collection
+        ? await this.qmd.search(prompt, options.collection, fetchLimit)
+        : await this.searchAcrossNamespaces({
+          query: prompt,
+          namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
+          maxResults: fetchLimit,
+          mode: "search",
+        });
       let mergedResults = primaryResults;
 
       // Backfill with hybrid results only when primary retrieval underfills.
@@ -1713,7 +1803,14 @@ export class Orchestrator {
         primaryResults.length < qmdFetchLimit &&
         Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
       ) {
-        const hybridResults = await this.qmd.hybridSearch(prompt, options.collection, fetchLimit);
+        const hybridResults = options.collection
+          ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit)
+          : await this.searchAcrossNamespaces({
+            query: prompt,
+            namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
+            maxResults: fetchLimit,
+            mode: "hybrid",
+          });
         if (hybridResults.length > 0) {
           const mergedByPath = new Map<string, QmdSearchResult>();
           for (const result of [...primaryResults, ...hybridResults]) {
@@ -3901,13 +3998,21 @@ export class Orchestrator {
     this.qmdMaintenancePending = false;
 
     try {
-      await this.qmd.update();
+      if (this.config.namespacesEnabled) {
+        await this.namespaceSearchRouter.updateNamespaces(this.configuredNamespaces());
+      } else {
+        await this.qmd.update();
+      }
       const now = Date.now();
       if (
         this.config.qmdAutoEmbedEnabled &&
         now - this.lastQmdEmbedAtMs >= this.config.qmdEmbedMinIntervalMs
       ) {
-        await this.qmd.embed();
+        if (this.config.namespacesEnabled) {
+          await this.namespaceSearchRouter.embedNamespaces(this.configuredNamespaces());
+        } else {
+          await this.qmd.embed();
+        }
         this.lastQmdEmbedAtMs = now;
       }
     } finally {
@@ -4413,7 +4518,7 @@ export class Orchestrator {
     // Persist identity reflection
     if (this.config.identityEnabled && result.identityReflection) {
       try {
-        await storage.appendToIdentity(this.config.workspaceDir, result.identityReflection);
+        await storage.appendIdentityReflection(result.identityReflection);
       } catch (err) {
         log.debug(`identity reflection write failed: ${err}`);
       }
@@ -5423,43 +5528,52 @@ export class Orchestrator {
   private static readonly IDENTITY_CONSOLIDATE_THRESHOLD = 8_000;
 
   private async autoConsolidateIdentity(): Promise<void> {
-    const identityContent = await this.storage.readIdentity(this.config.workspaceDir);
-    if (identityContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) return;
+    const namespaces = this.config.namespacesEnabled
+      ? this.configuredNamespaces()
+      : [this.config.defaultNamespace];
 
-    log.info(`IDENTITY.md is ${identityContent.length} chars — auto-consolidating reflections`);
+    for (const namespace of namespaces) {
+      const storage = await this.storageRouter.storageFor(namespace);
+      const identityNamespace =
+        this.config.namespacesEnabled && namespace !== this.config.defaultNamespace
+          ? namespace
+          : undefined;
+      const reflectionsContent = (await storage.readIdentityReflections()) ?? "";
 
-    // Find the static header (everything before reflections)
-    const reflectionIdx = identityContent.indexOf("## Learned Patterns");
-    const headerEnd = reflectionIdx !== -1 ? reflectionIdx : identityContent.indexOf("## Reflection");
-    if (headerEnd === -1) {
-      log.debug("no reflections found in IDENTITY.md, skipping consolidation");
-      return;
+      const existingIdentity = await storage.readIdentity(this.config.workspaceDir, identityNamespace);
+      const headerEnd =
+        existingIdentity.indexOf("## Learned Patterns") !== -1
+          ? existingIdentity.indexOf("## Learned Patterns")
+          : existingIdentity.indexOf("## Reflection");
+      const staticHeader =
+        (headerEnd !== -1 ? existingIdentity.slice(0, headerEnd) : existingIdentity).trimEnd() ||
+        "# IDENTITY";
+      const identityContent = `${staticHeader}\n\n${reflectionsContent.trim()}\n`;
+      if (identityContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) continue;
+
+      log.info(`IDENTITY(${namespace}) is ${identityContent.length} chars — auto-consolidating reflections`);
+      const result = await this.extraction.consolidateIdentity(identityContent, "## Reflection");
+
+      if (!result || result.learnedPatterns.length === 0) {
+        log.warn(`identity consolidation produced no patterns for namespace=${namespace}`);
+        continue;
+      }
+
+      const patternsSection = [
+        "## Learned Patterns (consolidated from reflections, " + new Date().toISOString().slice(0, 10) + ")",
+        "",
+        ...result.learnedPatterns.map((p) => `- ${p}`),
+        "",
+      ].join("\n");
+
+      const newContent = staticHeader + "\n\n" + patternsSection + "\n";
+
+      await storage.writeIdentity(this.config.workspaceDir, newContent, identityNamespace);
+      await storage.writeIdentityReflections("");
+      log.info(
+        `IDENTITY(${namespace}) consolidated: ${identityContent.length} → ${newContent.length} chars, ${result.learnedPatterns.length} patterns`,
+      );
     }
-
-    const staticHeader = identityContent.slice(0, headerEnd).trimEnd();
-
-    const result = await this.extraction.consolidateIdentity(
-      identityContent,
-      "## Reflection",
-    );
-
-    if (!result || result.learnedPatterns.length === 0) {
-      log.warn("identity consolidation produced no patterns");
-      return;
-    }
-
-    // Rebuild IDENTITY.md: static header + consolidated patterns
-    const patternsSection = [
-      "## Learned Patterns (consolidated from reflections, " + new Date().toISOString().slice(0, 10) + ")",
-      "",
-      ...result.learnedPatterns.map((p) => `- ${p}`),
-      "",
-    ].join("\n");
-
-    const newContent = staticHeader + "\n\n" + patternsSection + "\n";
-
-    await this.storage.writeIdentity(this.config.workspaceDir, newContent);
-    log.info(`IDENTITY.md consolidated: ${identityContent.length} → ${newContent.length} chars, ${result.learnedPatterns.length} patterns`);
   }
 
   private formatQmdResults(
@@ -6304,10 +6418,15 @@ export class Orchestrator {
     category: string,
     namespaceScope: string,
   ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
-    if (!this.qmd.isAvailable()) return null;
+    if (!this.isSearchAvailableForNamespaceRouting()) return null;
 
     // Search for similar memories
-    const results = await this.qmd.search(content, undefined, 5);
+    const results = await this.searchAcrossNamespaces({
+      query: content,
+      namespaces: [namespaceScope],
+      maxResults: 5,
+      mode: "search",
+    });
 
     for (const result of results) {
       // Check similarity threshold
@@ -6388,10 +6507,15 @@ export class Orchestrator {
     category: string,
     namespaceScope: string,
   ): Promise<MemoryLink[]> {
-    if (!this.qmd.isAvailable()) return [];
+    if (!this.isSearchAvailableForNamespaceRouting()) return [];
 
     // Search for related memories
-    const results = await this.qmd.search(content, undefined, 5);
+    const results = await this.searchAcrossNamespaces({
+      query: content,
+      namespaces: [namespaceScope],
+      maxResults: 5,
+      mode: "search",
+    });
     if (results.length === 0) return [];
 
     // Get full memory details for candidates

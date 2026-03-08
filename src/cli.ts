@@ -30,6 +30,11 @@ import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifec
 import { rebuildMemoryProjection } from "./maintenance/rebuild-memory-projection.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
+import {
+  listNamespaces,
+  runNamespaceMigration,
+  verifyNamespaces,
+} from "./namespaces/migrate.js";
 import { WorkStorage } from "./work/storage.js";
 import type { WorkProjectStatus, WorkTaskPriority, WorkTaskStatus } from "./work/types.js";
 import {
@@ -2481,6 +2486,96 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ${cat}: ${count}`);
             }
           }
+        });
+
+      const namespacesCmd = cmd
+        .command("namespaces")
+        .description("Manage namespace roots, migration, and verification");
+
+      namespacesCmd
+        .command("ls")
+        .description("List configured namespaces and their storage roots")
+        .action(async () => {
+          const namespaces = await listNamespaces({ config: orchestrator.config });
+          if (namespaces.length === 0) {
+            console.log("No namespaces configured.");
+            return;
+          }
+
+          console.log("=== Engram Namespaces ===\n");
+          for (const entry of namespaces) {
+            console.log(
+              `${entry.namespace}\n  root: ${entry.rootDir}\n  exists: ${entry.exists ? "yes" : "no"}\n  legacy-root: ${entry.usesLegacyRoot ? "yes" : "no"}\n  has-data: ${entry.hasMemoryData ? "yes" : "no"}\n  collection: ${entry.collection}`,
+            );
+          }
+        });
+
+      namespacesCmd
+        .command("verify")
+        .description("Verify namespace roots and detect legacy root drift")
+        .action(async () => {
+          const report = await verifyNamespaces({ config: orchestrator.config });
+          console.log("=== Namespace Verification ===\n");
+          for (const entry of report.namespaces) {
+            console.log(
+              `${entry.namespace}\n  root: ${entry.rootDir}\n  exists: ${entry.exists ? "yes" : "no"}\n  legacy-root: ${entry.usesLegacyRoot ? "yes" : "no"}\n  has-data: ${entry.hasMemoryData ? "yes" : "no"}\n  collection: ${entry.collection}`,
+            );
+          }
+
+          if (report.ok) {
+            console.log("\nOK");
+            return;
+          }
+
+          console.log("\nProblems:");
+          for (const problem of report.problems) {
+            console.log(`- ${problem}`);
+          }
+          process.exitCode = 1;
+        });
+
+      namespacesCmd
+        .command("migrate")
+        .description("Move legacy root memory layout into a namespaced root")
+        .option("--to <ns>", "Target namespace (default: config defaultNamespace)", "")
+        .option("--dry-run", "Show the migration plan without moving files")
+        .action(async (optionsRaw: unknown) => {
+          const options =
+            optionsRaw && typeof optionsRaw === "object"
+              ? optionsRaw as { to?: string; dryRun?: boolean }
+              : {};
+          const targetNamespace =
+            typeof options.to === "string" && options.to.trim().length > 0
+              ? options.to.trim()
+              : orchestrator.config.defaultNamespace;
+          const dryRun = options.dryRun === true;
+
+          const plan = await runNamespaceMigration({
+            config: orchestrator.config,
+            to: targetNamespace,
+            dryRun,
+          });
+
+          console.log("=== Namespace Migration Plan ===\n");
+          console.log(`target namespace: ${targetNamespace}`);
+          console.log(`source root: ${plan.fromRoot}`);
+          console.log(`target root: ${plan.targetRoot}`);
+          console.log(`entries: ${plan.moved.length}`);
+          console.log(`collection: ${plan.collection}`);
+
+          if (plan.moved.length > 0) {
+            console.log("\nEntries:");
+            for (const move of plan.moved) {
+              console.log(`- ${path.basename(move.from)}`);
+            }
+          }
+
+          if (dryRun) {
+            console.log("\nDRY RUN");
+            return;
+          }
+
+          console.log("\nOK");
         });
 
       cmd

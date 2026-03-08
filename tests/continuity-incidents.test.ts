@@ -79,6 +79,7 @@ function buildHarness(options?: {
   const orchestrator = {
     config: {
       defaultNamespace: "default",
+      workspaceDir: "/tmp/workspace",
       contextCompressionActionsEnabled: false,
       feedbackEnabled: false,
       negativeExamplesEnabled: false,
@@ -97,6 +98,7 @@ function buildHarness(options?: {
       getMostRecent: () => null,
     },
     storage,
+    getStorageForNamespace: async () => storage,
     summarizer: {
       runHourly: async () => {},
     },

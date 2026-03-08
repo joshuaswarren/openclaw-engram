@@ -48,6 +48,10 @@ function asNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function normalizeToolNamespace(value: unknown): string | undefined {
+  return asNonEmptyString(value);
+}
+
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
 const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
 const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
@@ -229,11 +233,6 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
     return createHash("sha256").update(input).digest("hex").slice(0, 16);
   }
 
-  function namespaceFromPath(p: string): string {
-    const m = p.match(/[\\/]+namespaces[\\/]+([^\\/]+)[\\/]+/);
-    return m && m[1] ? m[1] : orchestrator.config.defaultNamespace;
-  }
-
   api.registerTool(
     {
       name: "memory_search",
@@ -280,15 +279,22 @@ Best for:
           namespace?: string;
         };
 
-        const results =
-          collection === "global"
-            ? await orchestrator.qmd.searchGlobal(query, maxResults)
-            : await orchestrator.qmd.search(query, undefined, maxResults);
-
+        const namespaceFilter = namespace && namespace.length > 0 ? namespace : undefined;
         const filtered =
-          namespace && namespace.length > 0
-            ? results.filter((r) => namespaceFromPath(r.path) === namespace)
-            : results;
+          collection === "global"
+            ? (await orchestrator.qmd.searchGlobal(query, maxResults)).filter((result) =>
+              namespaceFilter
+                ? result.path.includes(`/namespaces/${namespaceFilter}/`) ||
+                  (!result.path.includes("/namespaces/") &&
+                    namespaceFilter === orchestrator.config.defaultNamespace)
+                : true,
+            )
+            : await orchestrator.searchAcrossNamespaces({
+              query,
+              namespaces: namespaceFilter ? [namespaceFilter] : undefined,
+              maxResults,
+              mode: "search",
+            });
 
         if (filtered.length === 0) {
           return toolResult(`No memories found matching: "${query}"`);
@@ -370,6 +376,11 @@ Best for:
         symptom: Type.String({
           description: "Observed continuity failure symptom.",
         }),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
         triggerWindow: Type.Optional(
           Type.String({
             description: "Optional time window when incident occurred.",
@@ -396,7 +407,10 @@ Best for:
         if (!symptom) {
           return toolResult("Missing required field: symptom");
         }
-        const created = await orchestrator.storage.appendContinuityIncident({
+        const storage = await orchestrator.getStorageForNamespace(
+          normalizeToolNamespace(params.namespace),
+        );
+        const created = await storage.appendContinuityIncident({
           symptom,
           triggerWindow: typeof params.triggerWindow === "string" ? params.triggerWindow : undefined,
           suspectedCause: typeof params.suspectedCause === "string" ? params.suspectedCause : undefined,
@@ -417,6 +431,11 @@ Best for:
         id: Type.String({
           description: "Incident ID to close.",
         }),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
         fixApplied: Type.String({
           description: "What fix was applied.",
         }),
@@ -452,7 +471,10 @@ Best for:
         if (!fixApplied) return toolResult("Missing required field: fixApplied");
         if (!verificationResult) return toolResult("Missing required field: verificationResult");
 
-        const closed = await orchestrator.storage.closeContinuityIncident(id, {
+        const storage = await orchestrator.getStorageForNamespace(
+          normalizeToolNamespace(params.namespace),
+        );
+        const closed = await storage.closeContinuityIncident(id, {
           fixApplied,
           verificationResult,
           preventiveRule,
@@ -477,6 +499,11 @@ Best for:
             description: "Incident state filter (default: open).",
           }),
         ),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
         limit: Type.Optional(
           Type.Number({
             description: "Max incidents to return (default: 25, max: 200).",
@@ -494,7 +521,10 @@ Best for:
         const state = params.state === "closed" || params.state === "all" ? params.state : "open";
         const limitRaw = typeof params.limit === "number" ? params.limit : 25;
         const limit = Math.max(1, Math.min(200, Math.floor(limitRaw)));
-        const filtered = await orchestrator.storage.readContinuityIncidents(limit, state);
+        const storage = await orchestrator.getStorageForNamespace(
+          normalizeToolNamespace(params.namespace),
+        );
+        const filtered = await storage.readContinuityIncidents(limit, state);
 
         if (filtered.length === 0) {
           return toolResult(`No continuity incidents found for state=${state}.`);
@@ -518,6 +548,11 @@ Best for:
         id: Type.String({
           description: "Stable loop identifier.",
         }),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
         cadence: Type.String({
           enum: ["daily", "weekly", "monthly", "quarterly"],
           description: "Review cadence.",
@@ -550,7 +585,10 @@ Best for:
           );
         }
         try {
-          const loop = await orchestrator.storage.upsertIdentityImprovementLoop({
+          const storage = await orchestrator.getStorageForNamespace(
+            normalizeToolNamespace(params.namespace),
+          );
+          const loop = await storage.upsertIdentityImprovementLoop({
             id: typeof params.id === "string" ? params.id : "",
             cadence: params.cadence as "daily" | "weekly" | "monthly" | "quarterly",
             purpose: typeof params.purpose === "string" ? params.purpose : "",
@@ -578,6 +616,11 @@ Best for:
         id: Type.String({
           description: "Loop ID to review.",
         }),
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
         status: Type.Optional(
           Type.String({
             enum: ["active", "paused", "retired"],
@@ -604,7 +647,10 @@ Best for:
         const id = typeof params.id === "string" ? params.id.trim() : "";
         if (!id) return toolResult("Missing required field: id");
         try {
-          const reviewed = await orchestrator.storage.reviewIdentityImprovementLoop(id, {
+          const storage = await orchestrator.getStorageForNamespace(
+            normalizeToolNamespace(params.namespace),
+          );
+          const reviewed = await storage.reviewIdentityImprovementLoop(id, {
             status: typeof params.status === "string" ? (params.status as "active" | "paused" | "retired") : undefined,
             notes: typeof params.notes === "string" ? params.notes : undefined,
             reviewedAt: typeof params.reviewedAt === "string" ? params.reviewedAt : undefined,
@@ -626,14 +672,23 @@ Best for:
       label: "Get Identity Anchor",
       description:
         "Read the identity continuity anchor document used for recovery-safe identity context.",
-      parameters: Type.Object({}),
-      async execute() {
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
         if (!orchestrator.config.identityContinuityEnabled) {
           return toolResult(
             "Identity continuity is disabled. Enable `identityContinuityEnabled: true` to use identity anchor tools.",
           );
         }
-        const anchor = await orchestrator.storage.readIdentityAnchor();
+        const storage = await orchestrator.getStorageForNamespace(
+          normalizeToolNamespace(params.namespace),
+        );
+        const anchor = await storage.readIdentityAnchor();
         if (!anchor) {
           return toolResult(
             "No identity anchor found yet. Use `identity_anchor_update` to create one.",
@@ -652,6 +707,11 @@ Best for:
       description:
         "Conservatively update identity anchor sections without overwriting existing material.",
       parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
         identityTraits: Type.Optional(
           Type.String({
             description: "Updates for the 'Identity Traits' section.",
@@ -699,9 +759,12 @@ Best for:
           );
         }
 
-        const existing = await orchestrator.storage.readIdentityAnchor();
+        const storage = await orchestrator.getStorageForNamespace(
+          normalizeToolNamespace(params.namespace),
+        );
+        const existing = await storage.readIdentityAnchor();
         const merged = mergeIdentityAnchor(existing, updates);
-        await orchestrator.storage.writeIdentityAnchor(merged);
+        await storage.writeIdentityAnchor(merged);
 
         const updatedSections = Object.entries(updates)
           .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
@@ -1316,9 +1379,17 @@ Best for:
 - Understanding the user holistically
 - Checking preferences before making decisions
 - "What do you know about me?"`,
-      parameters: Type.Object({}),
-      async execute() {
-        const profile = await orchestrator.storage.readProfile();
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const namespace = normalizeToolNamespace(params.namespace);
+        const storage = await orchestrator.getStorageForNamespace(namespace);
+        const profile = await storage.readProfile();
         if (!profile) {
           return toolResult(
             "No profile built yet. The profile builds automatically through conversations.",
@@ -1448,12 +1519,19 @@ Best for:
 - Understanding the agent's self-model and growth
 - "What have you learned about yourself?"
 - Reviewing identity development over time`,
-      parameters: Type.Object({}),
-      async execute() {
-        const workspaceDir = path.join(process.env.HOME ?? "~", ".openclaw", "workspace");
-        const identity = await orchestrator.storage.readIdentity(workspaceDir);
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const namespace = normalizeToolNamespace(params.namespace);
+        const storage = await orchestrator.getStorageForNamespace(namespace);
+        const identity = await storage.readIdentityReflections();
         if (!identity) {
-          return toolResult("No identity file found. Identity reflections build automatically through conversations when identityEnabled is true.");
+          return toolResult("No identity reflections found. Identity reflections build automatically through conversations when identityEnabled is true.");
         }
         return toolResult(`## Agent Identity\n\n${identity}`);
       },

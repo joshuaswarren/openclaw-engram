@@ -83,6 +83,7 @@ function buildHarness(options?: {
   const orchestrator = {
     config: {
       defaultNamespace: "default",
+      workspaceDir: "/tmp/workspace",
       contextCompressionActionsEnabled: false,
       feedbackEnabled: false,
       negativeExamplesEnabled: false,
@@ -101,6 +102,7 @@ function buildHarness(options?: {
       getMostRecent: () => null,
     },
     storage,
+    getStorageForNamespace: async () => storage,
     summarizer: {
       runHourly: async () => {},
     },
@@ -338,6 +340,7 @@ test("continuity_loop_review returns fail-open error on storage exceptions", asy
   const orchestrator = {
     config: {
       defaultNamespace: "default",
+      workspaceDir: "/tmp/workspace",
       contextCompressionActionsEnabled: false,
       feedbackEnabled: false,
       negativeExamplesEnabled: false,
@@ -365,6 +368,14 @@ test("continuity_loop_review returns fail-open error on storage exceptions", asy
         throw new Error("disk unavailable");
       },
     },
+    getStorageForNamespace: async () => ({
+      upsertIdentityImprovementLoop: async () => {
+        throw new Error("disk unavailable");
+      },
+      reviewIdentityImprovementLoop: async () => {
+        throw new Error("disk unavailable");
+      },
+    }),
     summarizer: { runHourly: async () => {} },
     transcript: { listSessionKeys: async () => [] },
     sharedContext: null,
