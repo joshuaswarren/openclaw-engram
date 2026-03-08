@@ -55,9 +55,15 @@ function makeEvent(
 const LIFECYCLE_EVENT_SORT_ORDER: Record<MemoryLifecycleEventType, number> = {
   created: 0,
   updated: 1,
-  restored: 2,
-  superseded: 3,
-  archived: 4,
+  promoted: 2,
+  explicit_capture_accepted: 3,
+  explicit_capture_queued: 4,
+  imported: 5,
+  merged: 6,
+  restored: 7,
+  superseded: 8,
+  rejected: 9,
+  archived: 10,
 };
 
 function buildEventsForMemory(memory: MemoryFile): MemoryLifecycleEvent[] {
