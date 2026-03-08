@@ -1,66 +1,79 @@
-# Theory: Utility Learning Should Happen Offline Before It Touches Live Ranking
+# Theory: Utility Learning Must Stay Snapshot-Driven Even After Runtime Activation
 
 ## Problem
 
-Engram now has the PR29 outcome ledger for utility telemetry. What it still
-lacks is a stable offline learner that can turn those raw events into a
-bounded artifact the runtime can consume later without re-reading or
-reinterpreting the full telemetry store on every request.
+Engram now has the full utility-learning chain for this roadmap segment:
+typed outcome telemetry, an offline learner snapshot, and the first bounded
+runtime consumer. The problem is no longer how to capture or learn from utility
+signals. The problem is how to let those learned signals improve live recall
+and tier routing without turning the hot path into a second learner.
 
-Jumping straight from raw utility events to live ranking changes would make the
-rollout brittle: the runtime would have to own grouping rules, weighting math,
-sample thresholds, and decay semantics all at once. PR30 exists to separate
-that concern. The learner should read the PR29 ledger offline, emit a typed and
-bounded weight snapshot, and leave live application to PR31.
+If runtime code starts re-reading raw telemetry or inventing new weighting math
+on every request, the memory system becomes harder to reason about, harder to
+benchmark, and easier to destabilize. PR31 matters because it is the point
+where utility learning stops being an operator-only artifact and starts shaping
+agent behavior.
 
 ## Operating Theory
 
-Utility learning should stay in the same rollout order as the rest of the
-roadmap:
+The right runtime contract is still the same three-step memory-OS pattern:
 
 1. capture evidence explicitly
 2. learn from it offline into a bounded snapshot
-3. let the runtime consume only that bounded snapshot
+3. let runtime consume only that bounded snapshot
 
-For PR30, that means:
+That means the live system should not ask "what do recent utility events say?"
+It should ask "what bounded snapshot did the learner already publish?"
 
-- group by the real policy surface: `target + decision`
-- exclude low-sample groups instead of inventing weights from anecdotes
-- compute bounded learned weights from average utility and confidence
-- persist one typed snapshot so later slices can inspect or consume it
-- keep all of this behind `memoryUtilityLearningEnabled`
+For PR31, the bounded consumer surface is intentionally narrow:
+
+- ranking uses learned `boost` and `suppress` multipliers only on heuristic
+  deltas that already exist in `boostSearchResults`
+- tier migration uses learned `promote` and `demote` weights only as small
+  threshold nudges on the existing hot/cold routing policy
+- both behaviors remain behind the existing dual gate of
+  `memoryUtilityLearningEnabled` and `promotionByOutcomeEnabled`
 
 ## Strategy
 
-Keep PR30 as an offline learner slice:
+The strategy is to keep runtime activation smaller than the learner itself.
+Rather than introduce a new runtime policy file or new flags, Engram loads the
+existing learner snapshot and clamps it into a dedicated runtime view:
 
-1. read utility telemetry from the PR29 event ledger
-2. learn bounded weights per `target + decision`
-3. persist a stable learner snapshot under `state/utility-telemetry`
-4. expose operator-facing `utility-learn` and `utility-learning-status`
-5. keep disabled mode a true no-op
+- bounded ranking multipliers
+- bounded promotion threshold delta
+- bounded demotion threshold delta
 
-This mirrors the rest of the roadmap: store first, learner second, runtime
-policy last.
+Those values are then applied only at two seams that already exist:
+
+- heuristic score deltas inside `boostSearchResults`
+- threshold construction inside `runTierMigrationCycle`
+
+This keeps PR31 aligned with the rest of the roadmap: small slices, fail-open
+behavior, and explicit benchmarkable contracts.
 
 ## Key Discoveries
 
-- The repo already has two strong patterns to reuse here: `behavior-learner.ts`
-  for bounded offline adjustment math and `policy-runtime.ts` for a persisted
-  typed snapshot contract.
-- The learner artifact should be its own file under the utility-telemetry root,
-  not a runtime policy file. PR30 should not imply that weights are already
-  applied.
-- The same disabled-mode lesson from PR27 and PR29 applies here. A feature flag
-  is only real when the CLI/status path short-circuits before scanning storage.
-- Confidence needs to be derived from both utility magnitude and event count so
-  small but noisy groups do not produce outsized weights.
+- The runtime gate is not just `memoryUtilityLearningEnabled`. The second flag,
+  `promotionByOutcomeEnabled`, is the real behavior-change switch for this
+  slice, so runtime loading should stay disabled unless both flags are on.
+- Ranking application is safest when it scales existing heuristic deltas rather
+  than the base lexical score. That lets utility learning tune the heuristic
+  layer without hiding the underlying retrieval signal.
+- Tier-migration application does not need a second learner. A bounded wrapper
+  around the existing `TierRoutingPolicy` is enough for the first runtime slice.
+- The unstable part of this work was not the runtime math; it was an
+  over-specific cold-tier integration fixture. The durable contract is better
+  expressed with pure runtime-policy tests plus a focused `boostSearchResults`
+  integration test.
 
 ## Open Questions
 
-- How aggressively should PR31 apply the learned weights once runtime
-  consumption lands?
-- Should later slices add recency decay inside the learner snapshot itself, or
-  keep decay implicit by recomputing over a bounded lookback window?
-- When benchmark packs record utility events, should they eventually link to
-  recall-section ids and evaluation case ids in addition to memory ids?
+- Should later slices reload the utility snapshot during long-lived runtime
+  processes, or is process-start loading enough until benchmark evidence says
+  otherwise?
+- Should future ranking slices split utility multipliers by heuristic class
+  instead of using one bounded `boost` multiplier and one bounded `suppress`
+  multiplier?
+- When benchmark packs evolve, should utility-learning regressions be checked
+  directly in the CI gate rather than only through broader recall outcomes?

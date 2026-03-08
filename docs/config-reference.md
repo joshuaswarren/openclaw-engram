@@ -387,8 +387,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `semanticRulePromotionEnabled` | `false` | Enable deterministic promotion of explicit `IF ... THEN ...` rules from verified episodic memories via `openclaw engram semantic-rule-promote` |
 | `semanticRuleVerificationEnabled` | `false` | Verify promoted semantic rules against their cited source episodes at recall time and inject a dedicated `Verified Rules` section via `openclaw engram semantic-rule-verify` |
 | `creationMemoryEnabled` | `false` | Enable the creation-memory foundation, including the typed work-product ledger and its operator-facing write/status commands |
-| `memoryUtilityLearningEnabled` | `false` | Enable typed utility-learning telemetry storage plus the offline learner commands `openclaw engram utility-status`, `openclaw engram utility-record`, `openclaw engram utility-learning-status`, and `openclaw engram utility-learn` |
-| `promotionByOutcomeEnabled` | `false` | Reserve outcome-aware promotion controls so later slices can consume learned utility signals without changing this storage contract |
+| `memoryUtilityLearningEnabled` | `false` | Enable typed utility-learning telemetry storage, the offline learner commands `openclaw engram utility-status`, `openclaw engram utility-record`, `openclaw engram utility-learning-status`, and `openclaw engram utility-learn`, plus runtime loading of the persisted learner snapshot |
+| `promotionByOutcomeEnabled` | `false` | Apply bounded learned utility weights to ranking heuristics and tier-migration thresholds when a learner snapshot is available |
 | `commitmentLedgerEnabled` | `false` | Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations |
 | `commitmentLifecycleEnabled` | `false` | Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger |
 | `commitmentStaleDays` | `14` | Days before an open commitment without a due date is considered stale in lifecycle status |
@@ -428,6 +428,7 @@ Current foundation slice:
 - When `creationMemoryEnabled` is on, Engram can persist explicit work-product ledger entries and expose them through `openclaw engram work-product-status` and `openclaw engram work-product-record`.
 - When both `creationMemoryEnabled` and `workProductRecallEnabled` are on, Engram can inject a separate `## Work Products` recall section sourced from the typed work-product ledger and expose `openclaw engram work-product-recall-search <query>` for reuse previews.
 - When `memoryUtilityLearningEnabled` is on, Engram can persist typed downstream utility telemetry for promotion and ranking decisions, inspect the resulting event ledger with `openclaw engram utility-status`, record explicit benchmark/operator utility observations through `openclaw engram utility-record`, and learn bounded offline promotion/ranking weights through `openclaw engram utility-learn` with the persisted learner snapshot visible in `openclaw engram utility-learning-status`.
+- When `promotionByOutcomeEnabled` is also on and a learner snapshot exists, Engram applies bounded learned utility multipliers to ranking heuristic deltas and bounded promotion/demotion threshold nudges to tier migration without re-reading raw utility telemetry on the hot path.
 - Use `openclaw engram semantic-rule-verify <query>` to preview verified semantic-rule matches, including verification status, effective confidence, and the cited source memory id.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
