@@ -244,6 +244,8 @@ export interface PluginConfig {
   semanticRuleVerificationEnabled: boolean;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
   commitmentLedgerEnabled: boolean;
   commitmentLifecycleEnabled: boolean;
   commitmentStaleDays: number;

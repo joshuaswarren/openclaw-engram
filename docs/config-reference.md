@@ -387,6 +387,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `semanticRulePromotionEnabled` | `false` | Enable deterministic promotion of explicit `IF ... THEN ...` rules from verified episodic memories via `openclaw engram semantic-rule-promote` |
 | `semanticRuleVerificationEnabled` | `false` | Verify promoted semantic rules against their cited source episodes at recall time and inject a dedicated `Verified Rules` section via `openclaw engram semantic-rule-verify` |
 | `creationMemoryEnabled` | `false` | Enable the creation-memory foundation, including the typed work-product ledger and its operator-facing write/status commands |
+| `memoryUtilityLearningEnabled` | `false` | Enable typed utility-learning telemetry storage and expose `openclaw engram utility-status` / `openclaw engram utility-record` for later promotion-weight learning slices |
+| `promotionByOutcomeEnabled` | `false` | Reserve outcome-aware promotion controls so later slices can consume learned utility signals without changing this storage contract |
 | `commitmentLedgerEnabled` | `false` | Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations |
 | `commitmentLifecycleEnabled` | `false` | Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger |
 | `commitmentStaleDays` | `14` | Days before an open commitment without a due date is considered stale in lifecycle status |
@@ -425,6 +427,7 @@ Current foundation slice:
 - When both `creationMemoryEnabled` and `resumeBundlesEnabled` are on, Engram can persist explicit typed resume bundles, inspect them with `openclaw engram resume-bundle-status`, write manual shells with `openclaw engram resume-bundle-record`, and assemble bounded bundles from transcript recovery plus recent objective state, work products, and open commitments with `openclaw engram resume-bundle-build`.
 - When `creationMemoryEnabled` is on, Engram can persist explicit work-product ledger entries and expose them through `openclaw engram work-product-status` and `openclaw engram work-product-record`.
 - When both `creationMemoryEnabled` and `workProductRecallEnabled` are on, Engram can inject a separate `## Work Products` recall section sourced from the typed work-product ledger and expose `openclaw engram work-product-recall-search <query>` for reuse previews.
+- When `memoryUtilityLearningEnabled` is on, Engram can persist typed downstream utility telemetry for promotion and ranking decisions, inspect the resulting event ledger with `openclaw engram utility-status`, and record explicit benchmark/operator utility observations through `openclaw engram utility-record`.
 - Use `openclaw engram semantic-rule-verify <query>` to preview verified semantic-rule matches, including verification status, effective confidence, and the cited source memory id.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 

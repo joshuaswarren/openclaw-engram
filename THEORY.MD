@@ -1,62 +1,62 @@
-# Theory: Resume Bundles Should Reuse Existing Memory, Not Invent a New Recovery Stack
+# Theory: Utility Learning Needs a Stable Outcome Ledger Before It Can Tune Memory
 
 ## Problem
 
-PR27 gave Engram a typed resume-bundle format, but that format was still an
-empty shell. A crash-recovery system is only useful once the bundle can be
-assembled from real state the agent already captured during work.
+Engram now has benchmark infrastructure, objective-state memory, trust zones,
+harmonic retrieval, creation memory, and bounded resume bundles. What it still
+lacks is a stable way to connect those memory decisions to downstream utility.
 
-The risk in PR28 is overreach. If the slice tries to build a full restore
-engine, new transcript summarization, or another parallel recovery store, it
-will sprawl and become hard to verify. The roadmap only needs one thing here:
-deterministic bundle assembly from the stores Engram already owns.
+Without that contract, later slices would have to infer utility from whatever
+telemetry happened to exist at the time, which would make promotion-by-outcome
+fragile, inconsistent, and hard to benchmark. PR29 exists to prevent that
+drift by freezing the first explicit utility-learning schema before any learner
+or runtime weighting logic appears.
 
 ## Operating Theory
 
-Engram already has the ingredients for a compact handoff bundle:
+Utility learning should begin as explicit evidence, not implicit inference.
+The first requirement is a typed ledger that can answer:
 
-- transcript recovery health from `TranscriptManager.getRecoverySummary(...)`
-- recent objective-state snapshots for what changed in the world
-- recent work-product ledger entries for what was created
-- open commitment ledger entries for what still needs to happen
+- what memory surface was being adjusted (`promotion` or `ranking`)
+- what action was taken (`promote`, `hold`, `boost`, `suppress`, etc.)
+- what downstream outcome was observed (`helpful`, `neutral`, `harmful`)
+- how strong that signal was (`utilityScore` in a bounded range)
 
-That means PR28 should not invent new sources of truth. It should compose these
-existing stores into one bounded `ResumeBundle`, keep the session boundary
-strict, and fail open on invalid stored artifacts the same way the status tools
-do.
+That contract needs to be durable, date-partitioned, and operator-visible.
+Only then can later slices safely learn weights offline and apply them at
+runtime without rewriting storage semantics or re-litigating telemetry shape.
 
 ## Strategy
 
-Keep the builder deterministic and operator-facing:
+Keep PR29 as a contract slice:
 
-1. read only the requested `sessionKey`
-2. bound each linked store by recency and a small fixed cap
-3. turn transcript health into bundle facts and risk flags
-4. turn open commitments into `nextActions`
-5. persist the built bundle through a dedicated CLI command
+1. add the roadmap flags `memoryUtilityLearningEnabled` and
+   `promotionByOutcomeEnabled`
+2. persist typed utility events under a dedicated `state/utility-telemetry`
+   store
+3. expose status and explicit recording commands so benchmarks and operators
+   can write first-class outcome evidence
+4. make disabled mode a true no-op so feature rollout stays bounded
 
-This keeps the slice reviewable. The builder proves Engram can reconstruct a
-restart-safe handoff from current memory primitives, while later slices can
-decide how recall or restore should consume that bundle.
+This mirrors the rest of the roadmap: store first, learner second, runtime
+policy last.
 
 ## Key Discoveries
 
-- The transcript layer already exposes the right compact recovery signal.
-  PR28 does not need a new parser; it can reuse `getRecoverySummary(...)`.
-- The creation-memory stores already carry the right semantics for recovery:
-  work products answer "what did we create?" and commitments answer "what is
-  still owed?".
-- Disabled-mode behavior matters as much as happy-path behavior. PR27 showed
-  that a feature flag is only real if the CLI path also short-circuits before
-  any storage walk.
+- The repo already has telemetry idioms for action outcomes and status tools,
+  so PR29 does not need a novel storage pattern; it only needs a domain-specific
+  utility contract.
+- `promotionByOutcomeEnabled` should exist in config now even though it does
+  not change runtime behavior yet. That keeps the rollout honest: PR29 is the
+  schema, PR30 is the learner, PR31 is bounded application.
+- The same disabled-mode lesson from PR27 applies here. A feature flag is only
+  real when the CLI/status path short-circuits before scanning storage.
 
 ## Open Questions
 
-- Should the next slice keep only the latest bundle per session key, or retain
-  a short sequence of checkpoints for recovery history?
-- When resume bundles are eventually recalled, should `nextActions` remain a
-  direct operator-authored list or be recomputed from current commitments at
-  read time?
-- Should future restore consumers treat transcript recovery health as a hard
-  gate, or as one signal among several when deciding whether a session can
-  resume safely?
+- Should PR30 learn one shared weight model across both `promotion` and
+  `ranking`, or derive separate weight families per target?
+- When benchmark packs record utility events, should they point directly to
+  memory ids only, or also to recall-section ids and evaluation case ids?
+- What is the right decay model for stale utility signals once runtime
+  application lands?

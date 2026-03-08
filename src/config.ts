@@ -513,6 +513,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
     semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
+    memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
+    promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
     commitmentLedgerEnabled: cfg.commitmentLedgerEnabled === true,
     commitmentLifecycleEnabled: cfg.commitmentLifecycleEnabled === true,
     commitmentStaleDays:

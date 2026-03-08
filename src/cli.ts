@@ -95,6 +95,12 @@ import {
   type WorkProductLedgerStatus,
 } from "./work-product-ledger.js";
 import {
+  getUtilityTelemetryStatus,
+  recordUtilityTelemetryEvent,
+  type UtilityTelemetryEvent,
+  type UtilityTelemetryStatus,
+} from "./utility-telemetry.js";
+import {
   buildResumeBundleFromState,
   getResumeBundleStatus,
   recordResumeBundle,
@@ -833,6 +839,30 @@ export async function runWorkProductStatusCliCommand(options: {
     memoryDir: options.memoryDir,
     workProductLedgerDir: options.workProductLedgerDir,
     enabled: options.creationMemoryEnabled,
+  });
+}
+
+export async function runUtilityTelemetryStatusCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  promotionByOutcomeEnabled: boolean;
+}): Promise<UtilityTelemetryStatus> {
+  return getUtilityTelemetryStatus({
+    memoryDir: options.memoryDir,
+    enabled: options.memoryUtilityLearningEnabled,
+    promotionByOutcomeEnabled: options.promotionByOutcomeEnabled,
+  });
+}
+
+export async function runUtilityTelemetryRecordCliCommand(options: {
+  memoryDir: string;
+  memoryUtilityLearningEnabled: boolean;
+  event: UtilityTelemetryEvent;
+}): Promise<string | null> {
+  if (!options.memoryUtilityLearningEnabled) return null;
+  return recordUtilityTelemetryEvent({
+    memoryDir: options.memoryDir,
+    event: options.event,
   });
 }
 
@@ -2724,6 +2754,62 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             sessionKey: typeof options.sessionKey === "string" ? options.sessionKey : undefined,
           });
           console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-status")
+        .description("Show utility-learning telemetry status, event counts, and the latest utility event")
+        .action(async () => {
+          const status = await runUtilityTelemetryStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            promotionByOutcomeEnabled: orchestrator.config.promotionByOutcomeEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("utility-record")
+        .description("Record a utility-learning telemetry event when utility learning is enabled")
+        .requiredOption("--event-id <eventId>", "Utility telemetry event id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the event")
+        .requiredOption("--session-key <sessionKey>", "Session key associated with the event")
+        .requiredOption("--source <source>", "Event source (cli|system|benchmark|tool_result)")
+        .requiredOption("--target <target>", "Telemetry target (promotion|ranking)")
+        .requiredOption("--decision <decision>", "Decision taken (promote|demote|hold|boost|suppress)")
+        .requiredOption("--outcome <outcome>", "Observed outcome (helpful|neutral|harmful)")
+        .requiredOption("--utility-score <utilityScore>", "Bounded utility score between -1 and 1")
+        .requiredOption("--summary <summary>", "Human-readable summary of the measured utility event")
+        .option("--memory-id <memoryId...>", "Memory ids linked to the utility event")
+        .option("--entity-ref <entityRef...>", "Entity refs linked to the utility event")
+        .option("--tag <tag...>", "Tags to attach to the utility event")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const utilityScore = typeof options.utilityScore === "string"
+            ? Number.parseFloat(options.utilityScore)
+            : Number.NaN;
+          const filePath = await runUtilityTelemetryRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryUtilityLearningEnabled: orchestrator.config.memoryUtilityLearningEnabled,
+            event: {
+              schemaVersion: 1,
+              eventId: String(options.eventId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as UtilityTelemetryEvent["source"],
+              target: String(options.target ?? "") as UtilityTelemetryEvent["target"],
+              decision: String(options.decision ?? "") as UtilityTelemetryEvent["decision"],
+              outcome: String(options.outcome ?? "") as UtilityTelemetryEvent["outcome"],
+              utilityScore,
+              summary: String(options.summary ?? ""),
+              memoryIds: Array.isArray(options.memoryId) ? options.memoryId.map(String) : undefined,
+              entityRefs: Array.isArray(options.entityRef) ? options.entityRef.map(String) : undefined,
+              tags: Array.isArray(options.tag) ? options.tag.map(String) : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
           console.log("OK");
         });
 

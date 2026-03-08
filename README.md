@@ -47,6 +47,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Artifact recovery recall** — Engram can now, when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, surface prompt-relevant work-product ledger entries back into recall as a dedicated `Work Products` section and inspect reuse candidates with `openclaw engram work-product-recall-search`.
 - **Commitment lifecycle foundation** — Engram can now, when `creationMemoryEnabled`, `commitmentLedgerEnabled`, and `commitmentLifecycleEnabled` are enabled, transition existing commitments to `fulfilled` / `cancelled` / `expired`, inspect overdue and stale obligations in `openclaw engram commitment-status`, and run deterministic lifecycle cleanup with `openclaw engram commitment-lifecycle-run`.
 - **Resume-bundle builder** — Engram can now, when `creationMemoryEnabled` and `resumeBundlesEnabled` are enabled, persist typed crash-recovery resume bundles, inspect them with `openclaw engram resume-bundle-status`, write explicit handoff shells through `openclaw engram resume-bundle-record`, and build bounded resume bundles from transcript recovery, recent objective-state snapshots, work products, and open commitments through `openclaw engram resume-bundle-build`.
+- **Utility-learning telemetry foundation** — Engram can now, when `memoryUtilityLearningEnabled` is enabled, persist typed downstream utility events for promotion and ranking decisions, inspect them with `openclaw engram utility-status`, and write deterministic benchmark/operator telemetry through `openclaw engram utility-record` before learned weighting lands.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -183,6 +184,8 @@ openclaw engram commitment-lifecycle-run  # Expire overdue commitments and clean
 openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
 openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger
+openclaw engram utility-status              # Utility-learning telemetry counts and latest observed outcome event
+openclaw engram utility-record              # Record a typed utility-learning telemetry event
 openclaw engram conversation-index-health    # Conversation index status
 openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
@@ -225,6 +228,8 @@ Key settings:
 | `semanticRulePromotionEnabled` | `false` | Enable deterministic promotion of explicit `IF ... THEN ...` rules from verified episodic memories via `openclaw engram semantic-rule-promote` |
 | `semanticRuleVerificationEnabled` | `false` | Verify promoted semantic rules against their cited source episodes at recall time and inject a dedicated `Verified Rules` section via `openclaw engram semantic-rule-verify` |
 | `creationMemoryEnabled` | `false` | Enable the creation-memory foundation, including the work-product ledger and operator-facing write/status commands |
+| `memoryUtilityLearningEnabled` | `false` | Enable typed utility-learning telemetry storage for future promotion/ranking learners |
+| `promotionByOutcomeEnabled` | `false` | Reserve outcome-aware promotion controls that later slices will drive from learned utility signals |
 | `commitmentLedgerEnabled` | `false` | Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations |
 | `commitmentLifecycleEnabled` | `false` | Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger |
 | `commitmentStaleDays` | `14` | Days before an open commitment without a due date is considered stale in lifecycle status |

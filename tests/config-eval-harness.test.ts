@@ -33,6 +33,8 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.semanticRulePromotionEnabled, false);
   assert.equal(cfg.semanticRuleVerificationEnabled, false);
   assert.equal(cfg.creationMemoryEnabled, false);
+  assert.equal(cfg.memoryUtilityLearningEnabled, false);
+  assert.equal(cfg.promotionByOutcomeEnabled, false);
   assert.equal(cfg.commitmentLedgerEnabled, false);
   assert.equal(cfg.commitmentLifecycleEnabled, false);
   assert.equal(cfg.commitmentStaleDays, 14);
@@ -77,6 +79,8 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     semanticRulePromotionEnabled: true,
     semanticRuleVerificationEnabled: true,
     creationMemoryEnabled: true,
+    memoryUtilityLearningEnabled: true,
+    promotionByOutcomeEnabled: true,
     commitmentLedgerEnabled: true,
     commitmentLifecycleEnabled: true,
     commitmentStaleDays: 21,
@@ -111,6 +115,8 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.semanticRulePromotionEnabled, true);
   assert.equal(cfg.semanticRuleVerificationEnabled, true);
   assert.equal(cfg.creationMemoryEnabled, true);
+  assert.equal(cfg.memoryUtilityLearningEnabled, true);
+  assert.equal(cfg.promotionByOutcomeEnabled, true);
   assert.equal(cfg.commitmentLedgerEnabled, true);
   assert.equal(cfg.commitmentLifecycleEnabled, true);
   assert.equal(cfg.commitmentStaleDays, 21);

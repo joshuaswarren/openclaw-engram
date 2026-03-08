@@ -1205,6 +1205,16 @@
         "default": false,
         "description": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
       },
+      "memoryUtilityLearningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable utility-learning telemetry storage so later slices can learn promotion and ranking weights from downstream outcomes."
+      },
+      "promotionByOutcomeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable outcome-aware promotion controls that consume learned utility signals when later rollout slices activate them."
+      },
       "commitmentLedgerEnabled": {
         "type": "boolean",
         "default": false,
@@ -2259,6 +2269,16 @@
       "label": "Creation Memory",
       "advanced": true,
       "help": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+    },
+    "memoryUtilityLearningEnabled": {
+      "label": "Utility Learning",
+      "advanced": true,
+      "help": "Enable utility-learning telemetry storage so later slices can learn promotion and ranking weights from downstream outcomes."
+    },
+    "promotionByOutcomeEnabled": {
+      "label": "Promotion By Outcome",
+      "advanced": true,
+      "help": "Enable outcome-aware promotion controls that will consume learned utility signals in later rollout slices."
     },
     "commitmentLedgerEnabled": {
       "label": "Commitment Ledger",
