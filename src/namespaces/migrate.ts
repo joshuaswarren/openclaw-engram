@@ -29,6 +29,7 @@ export interface NamespaceInventoryEntry {
 
 export interface NamespaceVerifyReport {
   ok: boolean;
+  problems: string[];
   namespaces: NamespaceInventoryEntry[];
 }
 
@@ -74,7 +75,9 @@ async function discoverConfiguredNamespaces(
   try {
     const entries = await readdir(namespacesDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) discovered.add(entry.name);
+      if (entry.isDirectory() && isSafeRouteNamespace(entry.name)) {
+        discovered.add(entry.name);
+      }
     }
   } catch {
     // No namespace directory yet.
@@ -117,8 +120,23 @@ export async function verifyNamespaces(options: {
   storageRouter?: NamespaceStorageRouter;
 }): Promise<NamespaceVerifyReport> {
   const namespaces = await listNamespaces(options);
+  const problems: string[] = [];
+
+  for (const entry of namespaces) {
+    if (!entry.exists) {
+      problems.push(`${entry.namespace}: missing root (${entry.rootDir})`);
+    }
+    if (entry.usesLegacyRoot && entry.hasMemoryData) {
+      problems.push(`${entry.namespace}: legacy root still contains data`);
+    }
+    if (entry.exists && !entry.hasMemoryData) {
+      problems.push(`${entry.namespace}: root exists but contains no Engram data`);
+    }
+  }
+
   return {
-    ok: true,
+    ok: problems.length === 0,
+    problems,
     namespaces,
   };
 }

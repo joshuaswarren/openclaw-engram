@@ -172,8 +172,21 @@ test("verifyNamespaces reports legacy data before migration", async () => {
   const report = await verifyNamespaces({ config });
   const defaultEntry = report.namespaces.find((entry) => entry.namespace === "default");
   assert.ok(defaultEntry);
+  assert.equal(report.ok, false);
   assert.equal(defaultEntry.hasMemoryData, true);
   assert.equal(defaultEntry.usesLegacyRoot, true);
+  assert.match(report.problems.join("\n"), /legacy root still contains data/);
+});
+
+test("verifyNamespaces flags missing and empty namespace roots", async () => {
+  const memoryDir = tmpDir("engram-namespace-verify-missing");
+  await mkdir(path.join(memoryDir, "namespaces", "shared"), { recursive: true });
+
+  const report = await verifyNamespaces({ config: baseConfig(memoryDir) });
+  assert.equal(report.ok, false);
+  assert.match(report.problems.join("\n"), /default: root exists but contains no Engram data/);
+  assert.match(report.problems.join("\n"), /shared: root exists but contains no Engram data/);
+  assert.match(report.problems.join("\n"), /team-alpha: missing root/);
 });
 
 test("runNamespaceMigration moves legacy entries into target namespace", async () => {

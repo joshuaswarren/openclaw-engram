@@ -2399,12 +2399,36 @@ export class StorageManager {
     }
   }
 
+  async writeIdentityReflections(content: string): Promise<void> {
+    await mkdir(this.identityDir, { recursive: true });
+    await writeFile(this.identityReflectionsPath, content, "utf-8");
+  }
+
   async appendIdentityReflection(reflection: string): Promise<void> {
     let existing = "";
     try {
       existing = await readFile(this.identityReflectionsPath, "utf-8");
     } catch {
       // File doesn't exist yet.
+    }
+
+    if (existing.length > StorageManager.IDENTITY_MAX_BYTES) {
+      log.debug(
+        `identity/reflections.md is ${existing.length} chars (limit ${StorageManager.IDENTITY_MAX_BYTES}); skipping reflection`,
+      );
+      return;
+    }
+
+    const allMatches = [...existing.matchAll(/## Reflection — (\S+)/g)];
+    if (allMatches.length > 0) {
+      const lastTimestamp = allMatches[allMatches.length - 1][1];
+      const elapsed = Date.now() - new Date(lastTimestamp).getTime();
+      if (elapsed < StorageManager.REFLECTION_COOLDOWN_MS) {
+        log.debug(
+          `reflection cooldown: ${Math.round(elapsed / 1000)}s since last (need ${StorageManager.REFLECTION_COOLDOWN_MS / 1000}s)`,
+        );
+        return;
+      }
     }
 
     const timestamp = new Date().toISOString();

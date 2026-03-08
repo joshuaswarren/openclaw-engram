@@ -30,7 +30,7 @@ test("checkForContradiction resolves candidate memory in routed namespace storag
   assert.ok(sharedMemory);
 
   orchestrator.qmd = {
-    isAvailable: () => true,
+    isAvailable: () => false,
   };
   orchestrator.searchAcrossNamespaces = async () => [
       {
@@ -103,4 +103,53 @@ test("checkForContradiction ignores candidates outside target write namespace", 
 
   const sharedAfter = await sharedStorage.getMemoryById(sharedId);
   assert.equal(sharedAfter?.frontmatter.status ?? "active", "active");
+});
+
+test("suggestLinksForMemory still uses namespace router when default qmd backend is unavailable", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-links-"));
+  const config = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    memoryLinkingEnabled: true,
+  });
+
+  const orchestrator = new Orchestrator(config) as any;
+  const sharedStorage = await orchestrator.getStorage("shared");
+  await sharedStorage.ensureDirectories();
+
+  const sharedId = await sharedStorage.writeMemory("fact", "shared tenant memory");
+  const sharedMemory = await sharedStorage.getMemoryById(sharedId);
+  assert.ok(sharedMemory);
+
+  orchestrator.qmd = {
+    isAvailable: () => false,
+  };
+  orchestrator.searchAcrossNamespaces = async () => [
+    {
+      docid: sharedId,
+      path: sharedMemory!.path,
+      snippet: "shared tenant memory",
+      score: 0.95,
+    },
+  ];
+  orchestrator.extraction = {
+    suggestLinks: async () => ({
+      links: [
+        {
+          targetId: sharedId,
+          linkType: "supports",
+          strength: 0.9,
+          reason: "same tenant context",
+        },
+      ],
+    }),
+  };
+
+  const links = await orchestrator.suggestLinksForMemory("new shared fact", "fact", "shared");
+  assert.equal(links.length, 1);
+  assert.equal(links[0]?.targetId, sharedId);
 });

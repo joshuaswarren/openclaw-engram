@@ -2526,6 +2526,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.log("\nOK");
             return;
           }
+
+          console.log("\nProblems:");
+          for (const problem of report.problems) {
+            console.log(`- ${problem}`);
+          }
+          process.exitCode = 1;
         });
 
       namespacesCmd

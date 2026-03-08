@@ -5529,20 +5529,24 @@ export class Orchestrator {
 
     for (const namespace of namespaces) {
       const storage = await this.storageRouter.storageFor(namespace);
-      const identityNamespace = this.config.namespacesEnabled ? namespace : undefined;
-      const identityContent = await storage.readIdentity(this.config.workspaceDir, identityNamespace);
-      if (identityContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) continue;
+      const identityNamespace =
+        this.config.namespacesEnabled && namespace !== this.config.defaultNamespace
+          ? namespace
+          : undefined;
+      const reflectionsContent = (await storage.readIdentityReflections()) ?? "";
+      if (reflectionsContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) continue;
+
+      const existingIdentity = await storage.readIdentity(this.config.workspaceDir, identityNamespace);
+      const headerEnd =
+        existingIdentity.indexOf("## Learned Patterns") !== -1
+          ? existingIdentity.indexOf("## Learned Patterns")
+          : existingIdentity.indexOf("## Reflection");
+      const staticHeader =
+        (headerEnd !== -1 ? existingIdentity.slice(0, headerEnd) : existingIdentity).trimEnd() ||
+        "# IDENTITY";
+      const identityContent = `${staticHeader}\n\n${reflectionsContent.trim()}\n`;
 
       log.info(`IDENTITY(${namespace}) is ${identityContent.length} chars — auto-consolidating reflections`);
-
-      const reflectionIdx = identityContent.indexOf("## Learned Patterns");
-      const headerEnd = reflectionIdx !== -1 ? reflectionIdx : identityContent.indexOf("## Reflection");
-      if (headerEnd === -1) {
-        log.debug(`no reflections found in IDENTITY(${namespace}), skipping consolidation`);
-        continue;
-      }
-
-      const staticHeader = identityContent.slice(0, headerEnd).trimEnd();
       const result = await this.extraction.consolidateIdentity(identityContent, "## Reflection");
 
       if (!result || result.learnedPatterns.length === 0) {
@@ -5560,6 +5564,7 @@ export class Orchestrator {
       const newContent = staticHeader + "\n\n" + patternsSection + "\n";
 
       await storage.writeIdentity(this.config.workspaceDir, newContent, identityNamespace);
+      await storage.writeIdentityReflections("");
       log.info(
         `IDENTITY(${namespace}) consolidated: ${identityContent.length} → ${newContent.length} chars, ${result.learnedPatterns.length} patterns`,
       );
@@ -6408,8 +6413,6 @@ export class Orchestrator {
     category: string,
     namespaceScope: string,
   ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
-    if (!this.qmd.isAvailable()) return null;
-
     // Search for similar memories
     const results = await this.searchAcrossNamespaces({
       query: content,
@@ -6497,8 +6500,6 @@ export class Orchestrator {
     category: string,
     namespaceScope: string,
   ): Promise<MemoryLink[]> {
-    if (!this.qmd.isAvailable()) return [];
-
     // Search for related memories
     const results = await this.searchAcrossNamespaces({
       query: content,

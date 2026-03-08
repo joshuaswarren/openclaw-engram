@@ -218,6 +218,33 @@ test("StorageManager stores namespace-local identity reflections under identity/
   assert.match(raw, /Namespace-local reflection/);
 });
 
+test("StorageManager rate-limits namespace-local identity reflections", async () => {
+  const root = tmpDir("engram-identity-ns-cooldown");
+  const storage = new StorageManager(root);
+  await storage.ensureDirectories();
+
+  await storage.appendIdentityReflection("first reflection");
+  await storage.appendIdentityReflection("second reflection");
+
+  const content = await storage.readIdentityReflections();
+  assert.match(content ?? "", /first reflection/);
+  assert.doesNotMatch(content ?? "", /second reflection/);
+});
+
+test("StorageManager skips namespace-local identity reflections once the log is oversized", async () => {
+  const root = tmpDir("engram-identity-ns-size-cap");
+  const storage = new StorageManager(root);
+  await storage.ensureDirectories();
+
+  const oversized = `## Reflection — 2026-03-08T00:00:00.000Z\n\n${"A".repeat(15_100)}\n`;
+  await writeFile(path.join(root, "identity", "reflections.md"), oversized, "utf-8");
+
+  await storage.appendIdentityReflection("should be skipped");
+
+  const content = await storage.readIdentityReflections();
+  assert.equal(content, oversized);
+});
+
 test("persistExtraction writes identity reflections into namespace-local storage when namespaces are enabled", async () => {
   const memoryDir = tmpDir("engram-identity-ns");
   await mkdir(path.join(memoryDir, "workspace"), { recursive: true });
@@ -259,4 +286,37 @@ test("persistExtraction writes identity reflections into namespace-local storage
   assert.equal(namespaceIdentityWrites, 1);
   const workspaceIdentity = await readFile(path.join(memoryDir, "workspace", "IDENTITY.md"), "utf-8");
   assert.equal(workspaceIdentity.trim(), "# IDENTITY");
+});
+
+test("autoConsolidateIdentity keeps the default namespace on workspace IDENTITY.md", async () => {
+  const memoryDir = tmpDir("engram-identity-default-workspace");
+  const workspaceDir = path.join(memoryDir, "workspace");
+  const identityDir = path.join(memoryDir, "identity");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(identityDir, { recursive: true });
+  await writeFile(path.join(workspaceDir, "IDENTITY.md"), "# IDENTITY\n\n## Purpose\n\nBootstrap\n", "utf-8");
+  await writeFile(
+    path.join(identityDir, "reflections.md"),
+    `## Reflection — 2026-03-08T00:00:00.000Z\n\n${"A".repeat(8_500)}\n`,
+    "utf-8",
+  );
+
+  const orchestrator = new Orchestrator(baseConfig(memoryDir)) as any;
+  orchestrator.extraction = {
+    consolidateIdentity: async () => ({
+      learnedPatterns: ["Keep the default namespace on IDENTITY.md"],
+    }),
+  };
+
+  await orchestrator.autoConsolidateIdentity();
+
+  const defaultIdentity = await readFile(path.join(workspaceDir, "IDENTITY.md"), "utf-8");
+  assert.match(defaultIdentity, /Keep the default namespace on IDENTITY\.md/);
+  assert.match(defaultIdentity, /## Purpose/);
+
+  const namespacedDefaultPath = path.join(workspaceDir, "IDENTITY.default.md");
+  await assert.rejects(() => readFile(namespacedDefaultPath, "utf-8"));
+
+  const reflectionLog = await readFile(path.join(identityDir, "reflections.md"), "utf-8");
+  assert.equal(reflectionLog, "");
 });
