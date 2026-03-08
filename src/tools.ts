@@ -279,12 +279,19 @@ Best for:
           namespace?: string;
         };
 
+        const namespaceFilter = namespace && namespace.length > 0 ? namespace : undefined;
         const filtered =
-          collection === "global" && (!namespace || namespace.length === 0)
-            ? await orchestrator.qmd.searchGlobal(query, maxResults)
+          collection === "global"
+            ? (await orchestrator.qmd.searchGlobal(query, maxResults)).filter((result) =>
+              namespaceFilter
+                ? result.path.includes(`/namespaces/${namespaceFilter}/`) ||
+                  (!result.path.includes("/namespaces/") &&
+                    namespaceFilter === orchestrator.config.defaultNamespace)
+                : true,
+            )
             : await orchestrator.searchAcrossNamespaces({
               query,
-              namespaces: namespace && namespace.length > 0 ? [namespace] : undefined,
+              namespaces: namespaceFilter ? [namespaceFilter] : undefined,
               maxResults,
               mode: "search",
             });

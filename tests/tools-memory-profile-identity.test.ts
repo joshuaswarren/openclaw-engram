@@ -14,10 +14,23 @@ function toolText(result: { content: Array<{ type: string; text: string }> }): s
   return result.content.map((c) => c.text).join("\n");
 }
 
-function buildHarness() {
+function buildHarness(overrides?: {
+  searchGlobal?: (query: string, maxResults?: number) => Promise<Array<{
+    path: string;
+    score: number;
+    snippet?: string;
+  }>>;
+}) {
   const tools = new Map<string, RegisteredTool>();
   const reads: Array<{ kind: "profile" | "identity"; namespace: string }> = [];
   const requestedNamespaces: Array<string | undefined> = [];
+  const globalSearchCalls: Array<{ query: string; maxResults?: number }> = [];
+  const namespaceSearchCalls: Array<{
+    query: string;
+    namespaces?: string[];
+    maxResults?: number;
+    mode?: string;
+  }> = [];
 
   const api = {
     registerTool(spec: RegisteredTool) {
@@ -39,7 +52,12 @@ function buildHarness() {
     },
     qmd: {
       search: async () => [],
-      searchGlobal: async () => [],
+      searchGlobal:
+        overrides?.searchGlobal ??
+        (async (query: string, maxResults?: number) => {
+          globalSearchCalls.push({ query, maxResults });
+          return [];
+        }),
     },
     lastRecall: {
       get: () => null,
@@ -78,11 +96,19 @@ function buildHarness() {
     recordNotUsefulMemories: async () => {},
     requestQmdMaintenanceForTool: () => {},
     appendMemoryActionEvent: async () => true,
-    searchAcrossNamespaces: async () => [],
+    searchAcrossNamespaces: async (params: {
+      query: string;
+      namespaces?: string[];
+      maxResults?: number;
+      mode?: string;
+    }) => {
+      namespaceSearchCalls.push(params);
+      return [];
+    },
   };
 
   registerTools(api as any, orchestrator as any);
-  return { tools, reads, requestedNamespaces };
+  return { tools, reads, requestedNamespaces, globalSearchCalls, namespaceSearchCalls };
 }
 
 test("memory_profile reads from the requested namespace storage", async () => {
@@ -113,4 +139,55 @@ test("memory_profile preserves an explicit default namespace request", async () 
   await tool.execute("tc3", { namespace: "default" });
 
   assert.deepEqual(requestedNamespaces, ["default"]);
+});
+
+test("memory_search uses global search before namespace filtering when collection is global", async () => {
+  const { tools, globalSearchCalls, namespaceSearchCalls } = buildHarness();
+  const tool = tools.get("memory_search");
+  assert.ok(tool);
+
+  await tool.execute("tc4", {
+    query: "project status",
+    collection: "global",
+    namespace: "shared",
+    maxResults: 5,
+  });
+
+  assert.deepEqual(globalSearchCalls, [{ query: "project status", maxResults: 5 }]);
+  assert.deepEqual(namespaceSearchCalls, []);
+});
+
+test("memory_search filters global results to the requested namespace", async () => {
+  const { tools } = buildHarness({
+    searchGlobal: async () => [
+      {
+        path: "/tmp/memory/profile.md",
+        score: 0.9,
+        snippet: "default profile result",
+      },
+      {
+        path: "/tmp/memory/namespaces/shared/facts/shared.md",
+        score: 0.8,
+        snippet: "shared result",
+      },
+      {
+        path: "/tmp/memory/namespaces/other/facts/other.md",
+        score: 0.7,
+        snippet: "other result",
+      },
+    ],
+  });
+  const tool = tools.get("memory_search");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc5", {
+    query: "project status",
+    collection: "global",
+    namespace: "shared",
+  });
+
+  const text = toolText(result);
+  assert.match(text, /shared\.md/);
+  assert.doesNotMatch(text, /profile\.md/);
+  assert.doesNotMatch(text, /other\.md/);
 });
