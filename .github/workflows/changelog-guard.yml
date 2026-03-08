@@ -13,7 +13,7 @@ jobs:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - name: Check if changelog update is required
+      - name: Validate changelog workflow expectations
         uses: actions/github-script@v7
         with:
           script: |
@@ -37,22 +37,22 @@ jobs:
             const changed = files.map(f => f.filename);
             const changelogTouched = changed.includes('CHANGELOG.md');
 
-            // If code/config/plugin schema changed, require changelog update.
-            const requiresChangelog = changed.some((path) =>
-              path.startsWith('src/') ||
-              path === 'openclaw.plugin.json' ||
-              path === 'package.json' ||
-              path === 'package-lock.json'
-            );
-
-            if (!requiresChangelog) {
-              core.notice('No source/config changes that require changelog update.');
-              return;
-            }
-
             if (!changelogTouched) {
-              core.setFailed('CHANGELOG.md is required for source/config changes. Add an Unreleased entry or apply skip-changelog label.');
+              core.notice('CHANGELOG.md is release-workflow owned; no PR changelog edit required.');
               return;
             }
 
-            core.notice('Changelog guard passed.');
+            const changelogFile = files.find(f => f.filename === 'CHANGELOG.md');
+            const patch = changelogFile?.patch || '';
+            const touchedReleaseSection =
+              patch.includes('## [Unreleased]') ||
+              /## \[v?\d+\.\d+\.\d+/.test(patch);
+
+            if (!touchedReleaseSection) {
+              core.setFailed(
+                'CHANGELOG.md was edited directly, but the diff does not update `## [Unreleased]` or a versioned release section. Keep normal PRs out of CHANGELOG.md, or edit the actual release section intentionally.',
+              );
+              return;
+            }
+
+            core.notice('CHANGELOG.md edited directly in a release section; changelog guard passed.');
