@@ -5539,7 +5539,6 @@ export class Orchestrator {
           ? namespace
           : undefined;
       const reflectionsContent = (await storage.readIdentityReflections()) ?? "";
-      if (reflectionsContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) continue;
 
       const existingIdentity = await storage.readIdentity(this.config.workspaceDir, identityNamespace);
       const headerEnd =
@@ -5550,6 +5549,7 @@ export class Orchestrator {
         (headerEnd !== -1 ? existingIdentity.slice(0, headerEnd) : existingIdentity).trimEnd() ||
         "# IDENTITY";
       const identityContent = `${staticHeader}\n\n${reflectionsContent.trim()}\n`;
+      if (identityContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) continue;
 
       log.info(`IDENTITY(${namespace}) is ${identityContent.length} chars — auto-consolidating reflections`);
       const result = await this.extraction.consolidateIdentity(identityContent, "## Reflection");

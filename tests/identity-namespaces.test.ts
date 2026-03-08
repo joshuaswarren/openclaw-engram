@@ -320,3 +320,33 @@ test("autoConsolidateIdentity keeps the default namespace on workspace IDENTITY.
   const reflectionLog = await readFile(path.join(identityDir, "reflections.md"), "utf-8");
   assert.equal(reflectionLog, "");
 });
+
+test("autoConsolidateIdentity still triggers when the existing header pushes synthesized identity over threshold", async () => {
+  const memoryDir = tmpDir("engram-identity-threshold-header");
+  const workspaceDir = path.join(memoryDir, "workspace");
+  const identityDir = path.join(memoryDir, "identity");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(identityDir, { recursive: true });
+  const largeHeader = "# IDENTITY\n\n## Purpose\n\n" + "B".repeat(6_500);
+  await writeFile(path.join(workspaceDir, "IDENTITY.md"), `${largeHeader}\n`, "utf-8");
+  await writeFile(
+    path.join(identityDir, "reflections.md"),
+    `## Reflection — 2026-03-08T00:00:00.000Z\n\n${"A".repeat(2_000)}\n`,
+    "utf-8",
+  );
+
+  let consolidateCalls = 0;
+  const orchestrator = new Orchestrator(baseConfig(memoryDir)) as any;
+  orchestrator.extraction = {
+    consolidateIdentity: async () => {
+      consolidateCalls += 1;
+      return { learnedPatterns: ["Header size should still trigger consolidation"] };
+    },
+  };
+
+  await orchestrator.autoConsolidateIdentity();
+
+  assert.equal(consolidateCalls, 1);
+  const defaultIdentity = await readFile(path.join(workspaceDir, "IDENTITY.md"), "utf-8");
+  assert.match(defaultIdentity, /Header size should still trigger consolidation/);
+});

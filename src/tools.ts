@@ -48,8 +48,7 @@ function asNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizeToolNamespace(orchestrator: Orchestrator, value: unknown): string | undefined {
-  void orchestrator;
+function normalizeToolNamespace(value: unknown): string | undefined {
   return asNonEmptyString(value);
 }
 
@@ -402,7 +401,7 @@ Best for:
           return toolResult("Missing required field: symptom");
         }
         const storage = await orchestrator.getStorageForNamespace(
-          normalizeToolNamespace(orchestrator, params.namespace),
+          normalizeToolNamespace(params.namespace),
         );
         const created = await storage.appendContinuityIncident({
           symptom,
@@ -466,7 +465,7 @@ Best for:
         if (!verificationResult) return toolResult("Missing required field: verificationResult");
 
         const storage = await orchestrator.getStorageForNamespace(
-          normalizeToolNamespace(orchestrator, params.namespace),
+          normalizeToolNamespace(params.namespace),
         );
         const closed = await storage.closeContinuityIncident(id, {
           fixApplied,
@@ -516,7 +515,7 @@ Best for:
         const limitRaw = typeof params.limit === "number" ? params.limit : 25;
         const limit = Math.max(1, Math.min(200, Math.floor(limitRaw)));
         const storage = await orchestrator.getStorageForNamespace(
-          normalizeToolNamespace(orchestrator, params.namespace),
+          normalizeToolNamespace(params.namespace),
         );
         const filtered = await storage.readContinuityIncidents(limit, state);
 
@@ -580,7 +579,7 @@ Best for:
         }
         try {
           const storage = await orchestrator.getStorageForNamespace(
-            normalizeToolNamespace(orchestrator, params.namespace),
+            normalizeToolNamespace(params.namespace),
           );
           const loop = await storage.upsertIdentityImprovementLoop({
             id: typeof params.id === "string" ? params.id : "",
@@ -642,7 +641,7 @@ Best for:
         if (!id) return toolResult("Missing required field: id");
         try {
           const storage = await orchestrator.getStorageForNamespace(
-            normalizeToolNamespace(orchestrator, params.namespace),
+            normalizeToolNamespace(params.namespace),
           );
           const reviewed = await storage.reviewIdentityImprovementLoop(id, {
             status: typeof params.status === "string" ? (params.status as "active" | "paused" | "retired") : undefined,
@@ -680,7 +679,7 @@ Best for:
           );
         }
         const storage = await orchestrator.getStorageForNamespace(
-          normalizeToolNamespace(orchestrator, params.namespace),
+          normalizeToolNamespace(params.namespace),
         );
         const anchor = await storage.readIdentityAnchor();
         if (!anchor) {
@@ -754,7 +753,7 @@ Best for:
         }
 
         const storage = await orchestrator.getStorageForNamespace(
-          normalizeToolNamespace(orchestrator, params.namespace),
+          normalizeToolNamespace(params.namespace),
         );
         const existing = await storage.readIdentityAnchor();
         const merged = mergeIdentityAnchor(existing, updates);
@@ -1381,7 +1380,7 @@ Best for:
         ),
       }),
       async execute(_toolCallId, params) {
-        const namespace = normalizeToolNamespace(orchestrator, params.namespace);
+        const namespace = normalizeToolNamespace(params.namespace);
         const storage = await orchestrator.getStorageForNamespace(namespace);
         const profile = await storage.readProfile();
         if (!profile) {
@@ -1521,7 +1520,7 @@ Best for:
         ),
       }),
       async execute(_toolCallId, params) {
-        const namespace = normalizeToolNamespace(orchestrator, params.namespace);
+        const namespace = normalizeToolNamespace(params.namespace);
         const storage = await orchestrator.getStorageForNamespace(namespace);
         const identity = await storage.readIdentityReflections();
         if (!identity) {
