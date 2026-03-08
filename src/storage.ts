@@ -32,6 +32,7 @@ import type {
   MemoryLifecycleEvent,
   MemoryLifecycleEventType,
   MemoryLifecycleStateSummary,
+  MemoryProjectionCurrentState,
   BehaviorSignalEvent,
   MemorySummary,
   MetaState,
@@ -42,6 +43,11 @@ import type {
   FileHygieneConfig,
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
+import {
+  readProjectedMemoryState,
+  readProjectedMemoryTimeline,
+} from "./memory-projection-store.js";
+import { sortMemoryLifecycleEvents } from "./memory-lifecycle-ledger-utils.js";
 import {
   closeContinuityIncidentRecord,
   createContinuityIncidentRecord,
@@ -1840,19 +1846,16 @@ export class StorageManager {
     }
   }
 
-  async readMemoryLifecycleEvents(limit: number = 200): Promise<MemoryLifecycleEvent[]> {
-    const cappedLimit = Math.max(0, Math.floor(limit));
-    if (cappedLimit === 0) return [];
-
+  async readAllMemoryLifecycleEvents(): Promise<MemoryLifecycleEvent[]> {
     try {
       const raw = await readFile(this.memoryLifecycleLedgerPath, "utf-8");
       const out: MemoryLifecycleEvent[] = [];
       const lines = raw.split("\n");
-      for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
-        const line = lines[i]?.trim();
-        if (!line) continue;
+      for (const line of lines) {
+        const row = line.trim();
+        if (!row) continue;
         try {
-          const parsed = JSON.parse(line) as Partial<MemoryLifecycleEvent>;
+          const parsed = JSON.parse(row) as Partial<MemoryLifecycleEvent>;
           if (
             typeof parsed.eventId === "string" &&
             typeof parsed.memoryId === "string" &&
@@ -1867,10 +1870,17 @@ export class StorageManager {
           // Ignore malformed rows (fail-open).
         }
       }
-      return out.reverse();
+      return sortMemoryLifecycleEvents(out);
     } catch {
       return [];
     }
+  }
+
+  async readMemoryLifecycleEvents(limit: number = 200): Promise<MemoryLifecycleEvent[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+    const events = await this.readAllMemoryLifecycleEvents();
+    return events.slice(-cappedLimit);
   }
 
   async writeCompressionGuidelines(content: string): Promise<void> {
@@ -2812,6 +2822,68 @@ export class StorageManager {
   async getMemoryById(id: string): Promise<MemoryFile | null> {
     const memories = await this.readAllMemories();
     return memories.find((m) => m.frontmatter.id === id) ?? null;
+  }
+
+  async getProjectedMemoryState(id: string): Promise<MemoryProjectionCurrentState | null> {
+    const projected = readProjectedMemoryState(this.baseDir, id);
+    if (projected) return projected;
+
+    const active = await this.getMemoryById(id);
+    if (active) {
+      return {
+        memoryId: active.frontmatter.id,
+        category: active.frontmatter.category,
+        status: active.frontmatter.status ?? "active",
+        lifecycleState: active.frontmatter.lifecycleState,
+        path: active.path,
+        pathRel: path.relative(this.baseDir, active.path).split(path.sep).join("/"),
+        created: active.frontmatter.created,
+        updated: active.frontmatter.updated,
+        archivedAt: active.frontmatter.archivedAt,
+        supersededAt: active.frontmatter.supersededAt,
+        entityRef: active.frontmatter.entityRef,
+        source: active.frontmatter.source,
+        confidence: active.frontmatter.confidence,
+        confidenceTier: active.frontmatter.confidenceTier,
+        memoryKind: active.frontmatter.memoryKind,
+        accessCount: active.frontmatter.accessCount,
+        lastAccessed: active.frontmatter.lastAccessed,
+      };
+    }
+
+    const archived = (await this.readArchivedMemories()).find((memory) => memory.frontmatter.id === id);
+    if (!archived) return null;
+
+    return {
+      memoryId: archived.frontmatter.id,
+      category: archived.frontmatter.category,
+      status: archived.frontmatter.status ?? "active",
+      lifecycleState: archived.frontmatter.lifecycleState,
+      path: archived.path,
+      pathRel: path.relative(this.baseDir, archived.path).split(path.sep).join("/"),
+      created: archived.frontmatter.created,
+      updated: archived.frontmatter.updated,
+      archivedAt: archived.frontmatter.archivedAt,
+      supersededAt: archived.frontmatter.supersededAt,
+      entityRef: archived.frontmatter.entityRef,
+      source: archived.frontmatter.source,
+      confidence: archived.frontmatter.confidence,
+      confidenceTier: archived.frontmatter.confidenceTier,
+      memoryKind: archived.frontmatter.memoryKind,
+      accessCount: archived.frontmatter.accessCount,
+      lastAccessed: archived.frontmatter.lastAccessed,
+    };
+  }
+
+  async getMemoryTimeline(memoryId: string, limit: number = 200): Promise<MemoryLifecycleEvent[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+
+    const projected = readProjectedMemoryTimeline(this.baseDir, memoryId, cappedLimit);
+    if (projected) return projected;
+
+    const events = await this.readAllMemoryLifecycleEvents();
+    return events.filter((event) => event.memoryId === memoryId).slice(-cappedLimit);
   }
 
   // ---------------------------------------------------------------------------

@@ -5,7 +5,9 @@ import path from "node:path";
 import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import {
   runArchiveObservationsCliCommand,
+  runMemoryTimelineCliCommand,
   runRebuildMemoryLifecycleLedgerCliCommand,
+  runRebuildMemoryProjectionCliCommand,
   runMigrateObservationsCliCommand,
   runRebuildObservationsCliCommand,
 } from "../src/cli.js";
@@ -90,6 +92,71 @@ alpha
   });
   assert.equal(writeResult.dryRun, false);
   await stat(writeResult.outputPath);
+});
+
+test("rebuild-memory-projection CLI wrapper respects dry-run default and write mode", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-rebuild-memory-projection-"));
+  await writeText(
+    memoryDir,
+    "facts/2026-03-08/fact-1.md",
+    `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+---
+
+alpha
+`,
+  );
+
+  const dryRunResult = await runRebuildMemoryProjectionCliCommand({ memoryDir });
+  assert.equal(dryRunResult.dryRun, true);
+  await assert.rejects(() => stat(dryRunResult.outputPath));
+
+  const writeResult = await runRebuildMemoryProjectionCliCommand({
+    memoryDir,
+    write: true,
+    now: new Date("2026-03-08T12:00:00.000Z"),
+  });
+  assert.equal(writeResult.dryRun, false);
+  await stat(writeResult.outputPath);
+});
+
+test("memory-timeline CLI wrapper reads rows from the derived projection store", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-memory-timeline-"));
+  await writeText(
+    memoryDir,
+    "facts/2026-03-08/fact-1.md",
+    `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+---
+
+alpha
+`,
+  );
+  await runRebuildMemoryProjectionCliCommand({
+    memoryDir,
+    write: true,
+    now: new Date("2026-03-08T12:00:00.000Z"),
+  });
+
+  const rows = await runMemoryTimelineCliCommand({
+    memoryDir,
+    memoryId: "fact-1",
+  });
+  assert.deepEqual(rows.map((row) => row.eventType), ["created", "updated"]);
 });
 
 test("migrate-observations CLI wrapper respects dry-run default and write mode", async () => {

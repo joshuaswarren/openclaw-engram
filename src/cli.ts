@@ -27,6 +27,7 @@ import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifecycle-ledger.js";
+import { rebuildMemoryProjection } from "./maintenance/rebuild-memory-projection.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
 import { WorkStorage } from "./work/storage.js";
@@ -294,6 +295,18 @@ export interface RebuildMemoryLifecycleLedgerCliCommandOptions {
   memoryDir: string;
   write?: boolean;
   now?: Date;
+}
+
+export interface RebuildMemoryProjectionCliCommandOptions {
+  memoryDir: string;
+  write?: boolean;
+  now?: Date;
+}
+
+export interface MemoryTimelineCliCommandOptions {
+  memoryDir: string;
+  memoryId: string;
+  limit?: number;
 }
 
 export interface MigrateObservationsCliCommandOptions {
@@ -632,6 +645,23 @@ export async function runRebuildMemoryLifecycleLedgerCliCommand(
     dryRun: options.write !== true,
     now: options.now,
   });
+}
+
+export async function runRebuildMemoryProjectionCliCommand(
+  options: RebuildMemoryProjectionCliCommandOptions,
+) {
+  return rebuildMemoryProjection({
+    memoryDir: options.memoryDir,
+    dryRun: options.write !== true,
+    now: options.now,
+  });
+}
+
+export async function runMemoryTimelineCliCommand(
+  options: MemoryTimelineCliCommandOptions,
+) {
+  const storage = new (await import("./storage.js")).StorageManager(options.memoryDir);
+  return storage.getMemoryTimeline(options.memoryId, options.limit);
 }
 
 export async function runMigrateObservationsCliCommand(
@@ -3901,6 +3931,53 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`Rebuilt rows: ${result.rebuiltRows}`);
           console.log(`Output path: ${result.outputPath}`);
           if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("rebuild-memory-projection")
+        .description("Rebuild the derived memory projection store from markdown memories and lifecycle events (dry-run by default)")
+        .option("--write", "Write rebuilt projection (default: dry-run)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runRebuildMemoryProjectionCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            write: options.write === true,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Scanned memories: ${result.scannedMemories}`);
+          console.log(`Current-state rows: ${result.currentRows}`);
+          console.log(`Timeline rows: ${result.timelineRows}`);
+          console.log(`Used lifecycle ledger: ${result.usedLifecycleLedger ? "yes" : "no"}`);
+          console.log(`Output path: ${result.outputPath}`);
+          if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("memory-timeline <memoryId>")
+        .description("Read one memory timeline from the derived projection store")
+        .option("--limit <n>", "Maximum timeline rows to print", "200")
+        .action(async (...args: unknown[]) => {
+          const memoryId = String(args[0] ?? "");
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const limit = parseInt(String(options.limit ?? "200"), 10);
+          const rows = await runMemoryTimelineCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryId,
+            limit: Number.isFinite(limit) ? limit : 200,
+          });
+
+          if (rows.length === 0) {
+            console.log("No timeline rows found. Rebuild the memory projection first if needed.");
+            console.log("OK");
+            return;
+          }
+
+          for (const row of rows) {
+            console.log(`${row.timestamp} ${row.eventType} ${row.actor}`);
+          }
           console.log("OK");
         });
 

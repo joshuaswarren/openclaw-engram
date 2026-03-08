@@ -916,6 +916,26 @@ export interface MemoryLifecycleEvent {
   correlationId?: string;
 }
 
+export interface MemoryProjectionCurrentState {
+  memoryId: string;
+  category: MemoryCategory;
+  status: MemoryStatus;
+  lifecycleState?: LifecycleState;
+  path: string;
+  pathRel: string;
+  created: string;
+  updated: string;
+  archivedAt?: string;
+  supersededAt?: string;
+  entityRef?: string;
+  source: string;
+  confidence: number;
+  confidenceTier: ConfidenceTier;
+  memoryKind?: MemoryFrontmatter["memoryKind"];
+  accessCount?: number;
+  lastAccessed?: string;
+}
+
 export interface CompressionGuidelineOptimizerSourceWindow {
   from: string;
   to: string;

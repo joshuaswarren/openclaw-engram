@@ -1,12 +1,11 @@
 import path from "node:path";
 import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { StorageManager } from "../storage.js";
-import type {
-  MemoryFile,
-  MemoryLifecycleEvent,
-  MemoryLifecycleEventType,
-  MemoryLifecycleStateSummary,
-} from "../types.js";
+import type { MemoryLifecycleEvent } from "../types.js";
+import {
+  buildLifecycleEventsForMemory,
+  sortMemoryLifecycleEvents,
+} from "../memory-lifecycle-ledger-utils.js";
 
 export interface RebuildMemoryLifecycleLedgerOptions {
   memoryDir: string;
@@ -20,78 +19,6 @@ export interface RebuildMemoryLifecycleLedgerResult {
   rebuiltRows: number;
   outputPath: string;
   backupPath?: string;
-}
-
-function summarize(memory: MemoryFile): MemoryLifecycleStateSummary {
-  return {
-    category: memory.frontmatter.category,
-    path: memory.path,
-    status: memory.frontmatter.status ?? "active",
-    lifecycleState: memory.frontmatter.lifecycleState,
-  };
-}
-
-function makeEvent(
-  memory: MemoryFile,
-  eventType: MemoryLifecycleEventType,
-  timestamp: string,
-): MemoryLifecycleEvent {
-  return {
-    eventId: `rebuild-${memory.frontmatter.id}-${eventType}-${timestamp}`,
-    memoryId: memory.frontmatter.id,
-    eventType,
-    timestamp,
-    actor: "maintenance.rebuildMemoryLifecycleLedger",
-    ruleVersion: "memory-lifecycle-ledger.v1",
-    after: summarize(memory),
-    relatedMemoryIds: [
-      ...(memory.frontmatter.supersededBy ? [memory.frontmatter.supersededBy] : []),
-      ...(memory.frontmatter.supersedes ? [memory.frontmatter.supersedes] : []),
-      ...((memory.frontmatter.lineage ?? []).filter(Boolean)),
-    ],
-  };
-}
-
-const LIFECYCLE_EVENT_SORT_ORDER: Record<MemoryLifecycleEventType, number> = {
-  created: 0,
-  updated: 1,
-  promoted: 2,
-  explicit_capture_accepted: 3,
-  explicit_capture_queued: 4,
-  imported: 5,
-  merged: 6,
-  restored: 7,
-  superseded: 8,
-  rejected: 9,
-  archived: 10,
-};
-
-function buildEventsForMemory(memory: MemoryFile): MemoryLifecycleEvent[] {
-  const events: MemoryLifecycleEvent[] = [];
-  const created = memory.frontmatter.created;
-  const updated = memory.frontmatter.updated;
-  const archivedAt = memory.frontmatter.archivedAt;
-  const supersededAt = memory.frontmatter.supersededAt;
-  const effectiveArchivedAt =
-    archivedAt ?? (memory.frontmatter.status === "archived" && updated ? updated : undefined);
-
-  events.push(makeEvent(memory, "created", created));
-  if (
-    updated &&
-    updated !== created &&
-    updated !== effectiveArchivedAt &&
-    updated !== supersededAt
-  ) {
-    events.push(makeEvent(memory, "updated", updated));
-  }
-  if (supersededAt) {
-    events.push(makeEvent(memory, "superseded", supersededAt));
-  }
-  if (effectiveArchivedAt) {
-    events.push(makeEvent(memory, "archived", effectiveArchivedAt));
-  }
-
-  return events;
 }
 
 function toBackupStamp(now: Date): string {
@@ -132,13 +59,9 @@ export async function rebuildMemoryLifecycleLedger(
   const allMemories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()]
     .sort((a, b) => a.frontmatter.id.localeCompare(b.frontmatter.id));
 
-  const events = allMemories
-    .flatMap((memory) => buildEventsForMemory(memory))
-    .sort((a, b) => {
-      if (a.memoryId !== b.memoryId) return a.memoryId.localeCompare(b.memoryId);
-      if (a.timestamp !== b.timestamp) return a.timestamp.localeCompare(b.timestamp);
-      return LIFECYCLE_EVENT_SORT_ORDER[a.eventType] - LIFECYCLE_EVENT_SORT_ORDER[b.eventType];
-    });
+  const events: MemoryLifecycleEvent[] = sortMemoryLifecycleEvents(
+    allMemories.flatMap((memory) => buildLifecycleEventsForMemory(memory)),
+  );
 
   let backupPath: string | undefined;
   if (!dryRun) {

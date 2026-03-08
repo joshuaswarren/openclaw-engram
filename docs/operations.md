@@ -333,6 +333,30 @@ Operational guarantees:
 - idempotent no-op migration when no legacy files are present
 - fail-open parsing for malformed lines (with counters in CLI output)
 
+## Memory Projection Maintenance
+
+Engram can also rebuild a derived SQLite projection for current-state inspection and per-memory timelines.
+
+```bash
+# Rebuild the derived projection from markdown memory files plus lifecycle events
+openclaw engram rebuild-memory-projection
+
+# Inspect one memory timeline from the derived projection (or fail-open fallback path)
+openclaw engram memory-timeline fact-123
+```
+
+Like the other maintenance commands, projection rebuild is dry-run by default:
+
+```bash
+openclaw engram rebuild-memory-projection --write
+```
+
+Operational guarantees:
+- markdown memories remain authoritative
+- projection rebuilds are backup-first and safe to discard/regenerate
+- timeline reads fail open to the lifecycle ledger when projection data is unavailable
+- projection writes use a separate derived SQLite store under `state/memory-projection.sqlite`
+
 ## Work Board Helpers
 
 The work-management layer includes programmatic board helpers for Kanban-style exports and snapshot import:
