@@ -318,3 +318,49 @@ beta
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("rebuildMemoryLifecycleLedger suppresses duplicate updated events across both status transitions", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-rebuild-memory-lifecycle-dual-transition-"));
+  try {
+    await writeText(
+      memoryDir,
+      "archive/2026-03-08/fact-1.md",
+      `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+status: archived
+supersededBy: fact-2
+supersededAt: 2026-03-08T01:00:00.000Z
+archivedAt: 2026-03-08T02:00:00.000Z
+---
+
+alpha
+`,
+    );
+
+    const result = await rebuildMemoryLifecycleLedger({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+
+    const rebuiltRaw = await readFile(result.outputPath, "utf-8");
+    const rows = rebuiltRaw.trim().split("\n").map((line) => JSON.parse(line) as any);
+    assert.deepEqual(
+      rows.filter((row) => row.memoryId === "fact-1").map((row) => [row.eventType, row.timestamp]),
+      [
+        ["created", "2026-03-08T00:00:00.000Z"],
+        ["superseded", "2026-03-08T01:00:00.000Z"],
+        ["archived", "2026-03-08T02:00:00.000Z"],
+      ],
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
