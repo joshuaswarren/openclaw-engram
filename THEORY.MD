@@ -1,53 +1,59 @@
-# Theory: Creation Memory Needs Retrieval, Not Just Writes
+# Theory: Creation Memory Also Needs Explicit Obligations
 
 ## Problem
 
-PR23 solved the first half of creation memory by making work products explicit
-and durable. That was necessary, but it still left a practical gap:
+PR23 and PR24 made creation memory useful for artifacts:
 
-How does an agent actually recover and reuse something it already made?
+- PR23 made work products explicit and durable.
+- PR24 made those work products recoverable and reusable.
 
-Until that answer exists, the creation-memory ledger is auditable but not yet
-operationally useful during recall.
+That still leaves the second half of the operator problem:
+
+How does an agent remember what it still owes?
+
+Without explicit commitments, creation memory answers "what did we make?" but
+not "what remains promised, pending, or due?"
 
 ## Operating Theory
 
-PR24 should stay just as disciplined as PR23:
+PR25 should stay just as disciplined as the earlier creation-memory slices:
 
-1. reuse the existing typed ledger instead of inventing a second store
-2. gate retrieval behind a separate recall flag
-3. keep search lexical and inspectable before adding heavier reuse ranking
-4. surface recovered work products in their own recall section, not mixed into
-   generic semantic memory
+1. reuse the ledger pattern instead of inventing a free-form memory type
+2. keep commitments explicit and operator-facing before adding inference
+3. separate durable obligation storage from later lifecycle automation
+4. add status and write tooling before adding recall or resume-bundle joins
 
 ## Strategy
 
-Keep PR24 intentionally small:
+Keep PR25 intentionally small:
 
-- add `workProductRecallEnabled`
-- add bounded search over work-product ledger entries
-- add `openclaw engram work-product-recall-search`
-- inject a dedicated `## Work Products` recall section
-- do not yet infer commitments or resume bundles from recovered entries
-- do not yet join the ledger to objective-state snapshots automatically
+- add `commitmentLedgerEnabled`
+- add a typed commitment-ledger store
+- add `openclaw engram commitment-status`
+- add `openclaw engram commitment-record`
+- do not yet infer commitments from transcripts
+- do not yet add fulfillment or stale-commitment policy
+- do not yet build resume bundles from commitments
 
-That yields the first real recovery path for created artifacts while keeping
-the creation-memory rollout modular.
+That yields the first durable obligation substrate while keeping the
+creation-memory rollout modular.
 
 ## Key Discoveries
 
-- Creation memory becomes useful only when agents can ask "what did we already
-  make that I can reuse right now?"
-- The first recovery pass should favor explicit lexical matches over clever
-  heuristics. Operators need a recall surface they can reason about.
-- A dedicated `Work Products` section keeps recoverability legible and
-  benchmarkable without polluting other recall sections.
+- Creation memory has two distinct surfaces: outputs and obligations. Work
+  products cover outputs; commitments cover obligations.
+- The first commitment slice should be fully explicit and operator-writable.
+  If the substrate is fuzzy too early, later lifecycle and resume logic become
+  hard to audit.
+- Commitment storage should carry enough linkage for later slices:
+  `entityRefs`, `workProductEntryRefs`, and `objectiveStateSnapshotRefs` are
+  enough for PR26+ without forcing resume logic into PR25.
 
 ## Open Questions
 
-- Should later ranking prefer `artifact` and `file` entries over `record` or
-  `report`, or should that stay query-dependent?
-- When objective-state joins arrive, should recovery favor direct artifact-path
-  evidence or shared entity refs first?
-- Should commitment and resume-bundle slices reference recovered work products
-  directly, or should they only consume ledger IDs as lineage edges?
+- Should PR26 update commitment state in-place or append successor records the
+  same way trust-zone promotions append new records?
+- Should later commitment recall prioritize deadlines over open follow-ups, or
+  should urgency stay a lifecycle concern rather than a retrieval concern?
+- When resume bundles land, should they embed full commitment summaries or only
+  reference commitment IDs plus compact status fields?

@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
 
 ### Added
+- **Commitment ledger foundation**: when both `creationMemoryEnabled` and `commitmentLedgerEnabled` are enabled, Engram can now persist typed commitment ledger entries under `state/commitment-ledger`, inspect them with `openclaw engram commitment-status`, and write deterministic entries through `openclaw engram commitment-record`.
 - **Artifact recovery recall**: when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, Engram can now search the typed work-product ledger for reusable outputs, inject a dedicated `## Work Products` recall section, and preview recovery candidates with `openclaw engram work-product-recall-search <query>`.
 - **Creation-memory ledger**: when `creationMemoryEnabled` is enabled, Engram can now persist typed work-product ledger entries under `state/work-product-ledger`, inspect them with `openclaw engram work-product-status`, and write deterministic entries through `openclaw engram work-product-record`.
 - **Verified rule recall**: when `semanticRuleVerificationEnabled` is enabled, Engram can now re-check promoted semantic rules against their cited source episodes at recall time, downgrade stale provenance before surfacing those rules, inject a dedicated `## Verified Rules` recall section, and preview that surface with `openclaw engram semantic-rule-verify <query>`.

@@ -78,6 +78,12 @@ import {
   type VerifiedSemanticRuleResult,
 } from "./semantic-rule-verifier.js";
 import {
+  getCommitmentLedgerStatus,
+  recordCommitmentLedgerEntry,
+  type CommitmentLedgerEntry,
+  type CommitmentLedgerStatus,
+} from "./commitment-ledger.js";
+import {
   getWorkProductLedgerStatus,
   recordWorkProductLedgerEntry,
   searchWorkProductLedgerEntries,
@@ -850,6 +856,34 @@ export async function runWorkProductRecallSearchCliCommand(options: {
     query: options.query,
     maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
     sessionKey: options.sessionKey,
+  });
+}
+
+export async function runCommitmentStatusCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+}): Promise<CommitmentLedgerStatus> {
+  return getCommitmentLedgerStatus({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    enabled: options.creationMemoryEnabled && options.commitmentLedgerEnabled,
+  });
+}
+
+export async function runCommitmentRecordCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  entry: CommitmentLedgerEntry;
+}): Promise<string | null> {
+  if (!options.creationMemoryEnabled || !options.commitmentLedgerEnabled) return null;
+  return recordCommitmentLedgerEntry({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    entry: options.entry,
   });
 }
 
@@ -2544,6 +2578,74 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             sessionKey: typeof options.sessionKey === "string" ? options.sessionKey : undefined,
           });
           console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-status")
+        .description("Show commitment ledger status, entry counts, and the latest recorded commitment")
+        .action(async () => {
+          const status = await runCommitmentStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-record")
+        .description("Record a commitment ledger entry when commitment memory is enabled")
+        .requiredOption("--entry-id <entryId>", "Commitment entry id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the entry")
+        .requiredOption("--session-key <sessionKey>", "Session key that owns the commitment")
+        .requiredOption("--source <source>", "Entry source (tool_result|cli|system|manual)")
+        .requiredOption("--kind <kind>", "Entry kind (promise|follow_up|deadline|deliverable)")
+        .requiredOption("--state <state>", "Entry state (open|fulfilled|cancelled|expired)")
+        .requiredOption("--scope <scope>", "Primary scope or identifier for the commitment")
+        .requiredOption("--summary <summary>", "Human-readable summary of the commitment")
+        .option("--due-at <dueAt>", "Optional due timestamp for the commitment")
+        .option("--tag <tag...>", "Tags to attach to the commitment entry")
+        .option("--entity-ref <entityRef...>", "Entity refs to attach to the commitment entry")
+        .option(
+          "--work-product-entry-ref <workProductEntryRef...>",
+          "Work-product ledger refs that this commitment depends on",
+        )
+        .option(
+          "--objective-state-snapshot-ref <objectiveStateSnapshotRef...>",
+          "Objective-state snapshot refs to link to this commitment",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const filePath = await runCommitmentRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            entry: {
+              schemaVersion: 1,
+              entryId: String(options.entryId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as CommitmentLedgerEntry["source"],
+              kind: String(options.kind ?? "") as CommitmentLedgerEntry["kind"],
+              state: String(options.state ?? "") as CommitmentLedgerEntry["state"],
+              scope: String(options.scope ?? ""),
+              summary: String(options.summary ?? ""),
+              dueAt: typeof options.dueAt === "string" ? options.dueAt : undefined,
+              tags: Array.isArray(options.tag) ? options.tag.map(String) : undefined,
+              entityRefs: Array.isArray(options.entityRef) ? options.entityRef.map(String) : undefined,
+              workProductEntryRefs: Array.isArray(options.workProductEntryRef)
+                ? options.workProductEntryRef.map(String)
+                : undefined,
+              objectiveStateSnapshotRefs: Array.isArray(options.objectiveStateSnapshotRef)
+                ? options.objectiveStateSnapshotRef.map(String)
+                : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
           console.log("OK");
         });
 

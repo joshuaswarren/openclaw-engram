@@ -1205,6 +1205,15 @@
         "default": false,
         "description": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
       },
+      "commitmentLedgerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+      },
+      "commitmentLedgerDir": {
+        "type": "string",
+        "description": "Override the commitment ledger directory (defaults to {memoryDir}/state/commitment-ledger)."
+      },
       "workProductRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2231,6 +2240,17 @@
       "label": "Creation Memory",
       "advanced": true,
       "help": "Enable creation-memory foundations, including the work-product ledger for explicit outputs agents create."
+    },
+    "commitmentLedgerEnabled": {
+      "label": "Commitment Ledger",
+      "advanced": true,
+      "help": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+    },
+    "commitmentLedgerDir": {
+      "label": "Commitment Ledger Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/commitment-ledger",
+      "help": "Override where commitment ledger entries are stored."
     },
     "workProductRecallEnabled": {
       "label": "Work-Product Recall",
