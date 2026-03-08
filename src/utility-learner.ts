@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { listJsonFiles, readJsonFile } from "./json-store.js";
+import { clamp01 } from "./lifecycle.js";
 import {
   resolveUtilityTelemetryDir,
   validateUtilityTelemetryEvent,
@@ -55,16 +56,26 @@ export interface UtilityLearningResult {
 const UTILITY_LEARNING_SNAPSHOT_VERSION = 1;
 const UTILITY_LEARNING_STATE_FILE = "learning-state.json";
 
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
-}
-
 function clampWeight(value: number, maxWeightMagnitude: number): number {
   const limit = Number.isFinite(maxWeightMagnitude) && maxWeightMagnitude > 0
     ? maxWeightMagnitude
     : 0;
   return Math.max(-limit, Math.min(limit, value));
+}
+
+function coerceLearningWindowDays(value: number): number {
+  if (!Number.isFinite(value)) return 14;
+  return Math.max(1, Math.floor(value));
+}
+
+function coerceMinEventCount(value: number): number {
+  if (!Number.isFinite(value)) return 3;
+  return Math.max(1, Math.floor(value));
+}
+
+function coerceMaxWeightMagnitude(value: number): number {
+  if (!Number.isFinite(value)) return 0.35;
+  return Math.max(0, Math.min(1, value));
 }
 
 function roundWeight(value: number): number {
@@ -234,10 +245,13 @@ export async function learnUtilityPromotionWeights(options: {
 
   const now = options.now ?? new Date();
   const updatedAt = now.toISOString();
+  const windowDays = coerceLearningWindowDays(options.learningWindowDays);
+  const minEventCount = coerceMinEventCount(options.minEventCount);
+  const maxWeightMagnitude = coerceMaxWeightMagnitude(options.maxWeightMagnitude);
   const recentEvents = selectRecentEvents(
     await readUtilityTelemetryEvents(options.memoryDir, options.utilityTelemetryDir),
     now,
-    options.learningWindowDays,
+    windowDays,
   );
 
   const grouped = new Map<string, UtilityTelemetryEvent[]>();
@@ -253,13 +267,13 @@ export async function learnUtilityPromotionWeights(options: {
 
   const weights: UtilityLearningWeight[] = [];
   for (const events of grouped.values()) {
-    if (events.length < options.minEventCount) continue;
+    if (events.length < minEventCount) continue;
     const target = events[0].target;
     const decision = events[0].decision;
     const averageUtilityScore = events.reduce((sum, event) => sum + event.utilityScore, 0) / events.length;
     const confidence = confidenceFromEvents(events.length, averageUtilityScore);
     const learnedWeight = roundWeight(
-      clampWeight(averageUtilityScore * confidence, options.maxWeightMagnitude),
+      clampWeight(averageUtilityScore * confidence, maxWeightMagnitude),
     );
     weights.push({
       target,
@@ -282,9 +296,9 @@ export async function learnUtilityPromotionWeights(options: {
   const snapshot: UtilityLearningSnapshot = {
     version: 1,
     updatedAt,
-    windowDays: options.learningWindowDays,
-    minEventCount: options.minEventCount,
-    maxWeightMagnitude: options.maxWeightMagnitude,
+    windowDays,
+    minEventCount,
+    maxWeightMagnitude,
     weights,
   };
 

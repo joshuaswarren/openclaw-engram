@@ -185,6 +185,44 @@ test("utility learner CLI commands short-circuit cleanly when utility learning i
   }
 });
 
+test("utility learner sanitizes NaN numeric inputs before persisting a snapshot", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-utility-learner-nan-"));
+  try {
+    await recordEvent(memoryDir, {
+      eventId: "utility-pr30-nan-1",
+      target: "promotion",
+      decision: "promote",
+      outcome: "helpful",
+      utilityScore: 0.8,
+    });
+    await recordEvent(memoryDir, {
+      eventId: "utility-pr30-nan-2",
+      target: "promotion",
+      decision: "promote",
+      outcome: "helpful",
+      utilityScore: 0.6,
+    });
+
+    const result = await runUtilityLearningCliCommand({
+      memoryDir,
+      memoryUtilityLearningEnabled: true,
+      learningWindowDays: Number.NaN,
+      minEventCount: Number.NaN,
+      maxWeightMagnitude: Number.NaN,
+    });
+
+    assert.equal(result.applied, false);
+    assert.equal(result.reason, "insufficient_events");
+    assert.equal(result.snapshot?.windowDays, 14);
+    assert.equal(result.snapshot?.minEventCount, 3);
+    assert.equal(result.snapshot?.maxWeightMagnitude, 0.35);
+    assert.equal(result.snapshot?.weights.length, 0);
+    assert.equal(await readUtilityLearningSnapshot(memoryDir), null);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("utility learner CLI wiring registers learn and learning-status commands", async () => {
   class MockCommand {
     children = new Map<string, MockCommand>();
@@ -246,4 +284,3 @@ test("utility learner CLI wiring registers learn and learning-status commands", 
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
-

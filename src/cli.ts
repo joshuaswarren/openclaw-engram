@@ -894,9 +894,9 @@ export async function runUtilityLearningCliCommand(options: {
   return learnUtilityPromotionWeights({
     memoryDir: options.memoryDir,
     enabled: options.memoryUtilityLearningEnabled,
-    learningWindowDays: Math.max(1, Math.floor(options.learningWindowDays ?? 14)),
-    minEventCount: Math.max(1, Math.floor(options.minEventCount ?? 3)),
-    maxWeightMagnitude: Math.max(0, Math.min(1, options.maxWeightMagnitude ?? 0.35)),
+    learningWindowDays: options.learningWindowDays ?? 14,
+    minEventCount: options.minEventCount ?? 3,
+    maxWeightMagnitude: options.maxWeightMagnitude ?? 0.35,
   });
 }
 
