@@ -4,8 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Generic memory lifecycle ledger foundation: Engram now records append-only `created`, `updated`, `archived`, and `superseded` events under `state/memory-lifecycle-ledger.jsonl`, plus a rebuild utility and CLI for regenerating that ledger from markdown memory state.
+
 ### Changed
-- Repository planning docs now treat the GitHub Project as the roadmap source of truth. Completed plans now live under `docs/plans/archive/done/`, superseded local roadmap drafts live under `docs/plans/archive/superseded/`, and the main docs entry points now send contributors to the GitHub Project before historical plan files.
+- Release automation now promotes `CHANGELOG.md` from `Unreleased` into a dated versioned section during the auto-release workflow, pushes that release commit back to `main`, and no longer relies on PR authors to keep the changelog release ledger in sync by hand.
+- Changelog guard now treats `CHANGELOG.md` as release-workflow owned by default and only validates format when a PR edits the changelog directly.
+- `THEORY.MD` is now ignored and removed from the repo so it does not keep reappearing in commits.
 
 ## [Released after v9.0.0] — 2026-03-07 to 2026-03-08
 

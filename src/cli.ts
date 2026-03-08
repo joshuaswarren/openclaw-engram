@@ -26,6 +26,7 @@ import { claudeReplayNormalizer } from "./replay/normalizers/claude.js";
 import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
+import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifecycle-ledger.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
 import { WorkStorage } from "./work/storage.js";
@@ -284,6 +285,12 @@ export interface ArchiveObservationsCliCommandOptions {
 }
 
 export interface RebuildObservationsCliCommandOptions {
+  memoryDir: string;
+  write?: boolean;
+  now?: Date;
+}
+
+export interface RebuildMemoryLifecycleLedgerCliCommandOptions {
   memoryDir: string;
   write?: boolean;
   now?: Date;
@@ -611,6 +618,16 @@ export async function runRebuildObservationsCliCommand(
   options: RebuildObservationsCliCommandOptions,
 ) {
   return rebuildObservations({
+    memoryDir: options.memoryDir,
+    dryRun: options.write !== true,
+    now: options.now,
+  });
+}
+
+export async function runRebuildMemoryLifecycleLedgerCliCommand(
+  options: RebuildMemoryLifecycleLedgerCliCommandOptions,
+) {
+  return rebuildMemoryLifecycleLedger({
     memoryDir: options.memoryDir,
     dryRun: options.write !== true,
     now: options.now,
@@ -3862,6 +3879,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`Scanned transcript files: ${result.scannedFiles}`);
           console.log(`Parsed turns: ${result.parsedTurns}`);
           console.log(`Malformed lines: ${result.malformedLines}`);
+          console.log(`Rebuilt rows: ${result.rebuiltRows}`);
+          console.log(`Output path: ${result.outputPath}`);
+          if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("rebuild-memory-lifecycle-ledger")
+        .description("Rebuild the generic memory lifecycle ledger from markdown memories (dry-run by default)")
+        .option("--write", "Write rebuilt ledger (default: dry-run)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runRebuildMemoryLifecycleLedgerCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            write: options.write === true,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Scanned memories: ${result.scannedMemories}`);
           console.log(`Rebuilt rows: ${result.rebuiltRows}`);
           console.log(`Output path: ${result.outputPath}`);
           if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);

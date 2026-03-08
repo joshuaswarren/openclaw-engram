@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import {
   runArchiveObservationsCliCommand,
+  runRebuildMemoryLifecycleLedgerCliCommand,
   runMigrateObservationsCliCommand,
   runRebuildObservationsCliCommand,
 } from "../src/cli.js";
@@ -53,6 +54,39 @@ test("rebuild-observations CLI wrapper writes only with --write semantics", asyn
     memoryDir,
     write: true,
     now: new Date("2026-02-26T12:00:00.000Z"),
+  });
+  assert.equal(writeResult.dryRun, false);
+  await stat(writeResult.outputPath);
+});
+
+test("rebuild-memory-lifecycle-ledger CLI wrapper respects dry-run default and write mode", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-rebuild-memory-lifecycle-"));
+  await writeText(
+    memoryDir,
+    "facts/2026-03-08/fact-1.md",
+    `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+---
+
+alpha
+`,
+  );
+
+  const dryRunResult = await runRebuildMemoryLifecycleLedgerCliCommand({ memoryDir });
+  assert.equal(dryRunResult.dryRun, true);
+  await assert.rejects(() => stat(dryRunResult.outputPath));
+
+  const writeResult = await runRebuildMemoryLifecycleLedgerCliCommand({
+    memoryDir,
+    write: true,
+    now: new Date("2026-03-08T12:00:00.000Z"),
   });
   assert.equal(writeResult.dryRun, false);
   await stat(writeResult.outputPath);

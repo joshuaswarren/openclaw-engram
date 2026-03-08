@@ -29,6 +29,9 @@ import type {
   PolicyClass,
   MemoryStatus,
   MemoryActionEvent,
+  MemoryLifecycleEvent,
+  MemoryLifecycleEventType,
+  MemoryLifecycleStateSummary,
   BehaviorSignalEvent,
   MemorySummary,
   MetaState,
@@ -755,6 +758,9 @@ export class StorageManager {
   private get memoryActionsPath(): string {
     return path.join(this.stateDir, "memory-actions.jsonl");
   }
+  private get memoryLifecycleLedgerPath(): string {
+    return path.join(this.stateDir, "memory-lifecycle-ledger.jsonl");
+  }
   private get compressionGuidelinesPath(): string {
     return path.join(this.stateDir, "compression-guidelines.md");
   }
@@ -873,6 +879,17 @@ export class StorageManager {
     }
 
     await writeFile(filePath, fileContent, "utf-8");
+    await this.appendGeneratedMemoryLifecycleEvent({
+      memoryId: id,
+      eventType: "created",
+      timestamp: fm.created,
+      actor: "storage.writeMemory",
+      after: this.summarizeLifecycleState(fm, filePath),
+      relatedMemoryIds: [
+        ...(options.supersedes ? [options.supersedes] : []),
+        ...((options.lineage ?? []).filter(Boolean)),
+      ],
+    });
     log.debug(`wrote memory ${id} to ${filePath}`);
     return id;
   }
@@ -921,6 +938,14 @@ export class StorageManager {
     }
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    await this.appendGeneratedMemoryLifecycleEvent({
+      memoryId: id,
+      eventType: "created",
+      timestamp: fm.created,
+      actor: "storage.writeArtifact",
+      after: this.summarizeLifecycleState(fm, filePath),
+      relatedMemoryIds: options.sourceMemoryId ? [options.sourceMemoryId] : [],
+    });
     this.bumpArtifactWriteVersion();
     // Always invalidate on write. This avoids stale mixed snapshots when multiple
     // processes share the same memoryDir and write concurrently.
@@ -1352,6 +1377,14 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      await this.appendGeneratedMemoryLifecycleEvent({
+        memoryId: memory.frontmatter.id,
+        eventType: "archived",
+        timestamp: updatedFm.archivedAt ?? updatedFm.updated,
+        actor: "storage.archiveMemory",
+        before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+        after: this.summarizeLifecycleState(updatedFm, destPath),
+      });
       this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
@@ -1485,6 +1518,18 @@ export class StorageManager {
     }
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
+    await this.appendGeneratedMemoryLifecycleEvent({
+      memoryId: id,
+      eventType: "updated",
+      timestamp: updated.updated,
+      actor: "storage.updateMemory",
+      before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+      after: this.summarizeLifecycleState(updated, memory.path),
+      relatedMemoryIds: [
+        ...(updated.supersedes ? [updated.supersedes] : []),
+        ...((updated.lineage ?? []).filter(Boolean)),
+      ],
+    });
     log.debug(`updated memory ${id}`);
     return true;
   }
@@ -1506,6 +1551,18 @@ export class StorageManager {
 
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
+    await this.appendGeneratedMemoryLifecycleEvent({
+      memoryId: updated.id,
+      eventType: this.frontmatterPatchEventType(memory.frontmatter, updated),
+      timestamp: updated.updated ?? new Date().toISOString(),
+      actor: "storage.writeMemoryFrontmatter",
+      before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+      after: this.summarizeLifecycleState(updated, memory.path),
+      relatedMemoryIds: [
+        ...(updated.supersededBy ? [updated.supersededBy] : []),
+        ...(updated.supersedes ? [updated.supersedes] : []),
+      ],
+    });
     if (beforeStatus !== afterStatus) {
       this.bumpMemoryStatusVersion();
     }
@@ -1605,6 +1662,23 @@ export class StorageManager {
     }).join("");
 
     await appendFile(this.memoryActionsPath, payload, "utf-8");
+    return events.length;
+  }
+
+  async appendMemoryLifecycleEvents(events: MemoryLifecycleEvent[]): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+
+    const nowIso = new Date().toISOString();
+    const payload = events.map((event) => {
+      const normalized: MemoryLifecycleEvent = {
+        ...event,
+        timestamp: event.timestamp && event.timestamp.length > 0 ? event.timestamp : nowIso,
+      };
+      return `${JSON.stringify(normalized)}\n`;
+    }).join("");
+
+    await appendFile(this.memoryLifecycleLedgerPath, payload, "utf-8");
     return events.length;
   }
 
@@ -1755,6 +1829,39 @@ export class StorageManager {
             typeof parsed.outcome === "string"
           ) {
             out.push(parsed as MemoryActionEvent);
+          }
+        } catch {
+          // Ignore malformed rows (fail-open).
+        }
+      }
+      return out.reverse();
+    } catch {
+      return [];
+    }
+  }
+
+  async readMemoryLifecycleEvents(limit: number = 200): Promise<MemoryLifecycleEvent[]> {
+    const cappedLimit = Math.max(0, Math.floor(limit));
+    if (cappedLimit === 0) return [];
+
+    try {
+      const raw = await readFile(this.memoryLifecycleLedgerPath, "utf-8");
+      const out: MemoryLifecycleEvent[] = [];
+      const lines = raw.split("\n");
+      for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
+        const line = lines[i]?.trim();
+        if (!line) continue;
+        try {
+          const parsed = JSON.parse(line) as Partial<MemoryLifecycleEvent>;
+          if (
+            typeof parsed.eventId === "string" &&
+            typeof parsed.memoryId === "string" &&
+            typeof parsed.eventType === "string" &&
+            typeof parsed.timestamp === "string" &&
+            typeof parsed.actor === "string" &&
+            typeof parsed.ruleVersion === "string"
+          ) {
+            out.push(parsed as MemoryLifecycleEvent);
           }
         } catch {
           // Ignore malformed rows (fail-open).
@@ -2819,6 +2926,16 @@ export class StorageManager {
 
     try {
       await writeFile(oldMemory.path, fileContent, "utf-8");
+      await this.appendGeneratedMemoryLifecycleEvent({
+        memoryId: oldMemoryId,
+        eventType: "superseded",
+        timestamp: now,
+        actor: "storage.supersedeMemory",
+        reasonCode: reason,
+        before: this.summarizeLifecycleState(oldMemory.frontmatter, oldMemory.path),
+        after: this.summarizeLifecycleState(updatedFm, oldMemory.path),
+        relatedMemoryIds: [newMemoryId],
+      });
       this.bumpMemoryStatusVersion();
       log.debug(`superseded memory ${oldMemoryId} by ${newMemoryId}: ${reason}`);
 
@@ -2900,6 +3017,16 @@ export class StorageManager {
 
       try {
         await writeFile(memory.path, fileContent, "utf-8");
+        await this.appendGeneratedMemoryLifecycleEvent({
+          memoryId: id,
+          eventType: "archived",
+          timestamp: updatedFm.archivedAt ?? updatedFm.updated,
+          actor: "storage.archiveMemories",
+          reasonCode: `summary:${summaryId}`,
+          before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+          after: this.summarizeLifecycleState(updatedFm, memory.path),
+          relatedMemoryIds: [summaryId],
+        });
         archived++;
       } catch {
         // Ignore individual failures
@@ -2974,5 +3101,43 @@ export class StorageManager {
       log.error(`failed to add links to memory ${memoryId}:`, err);
       return false;
     }
+  }
+
+  private summarizeLifecycleState(
+    frontmatter: MemoryFrontmatter,
+    filePath: string,
+  ): MemoryLifecycleStateSummary {
+    return {
+      category: frontmatter.category,
+      path: filePath,
+      status: frontmatter.status ?? "active",
+      lifecycleState: frontmatter.lifecycleState,
+    };
+  }
+
+  private frontmatterPatchEventType(
+    before: MemoryFrontmatter,
+    after: MemoryFrontmatter,
+  ): MemoryLifecycleEventType {
+    const beforeStatus = before.status ?? "active";
+    const afterStatus = after.status ?? "active";
+    if (beforeStatus !== "archived" && afterStatus === "archived") return "archived";
+    if (beforeStatus !== "superseded" && afterStatus === "superseded") return "superseded";
+    if ((beforeStatus === "archived" || beforeStatus === "superseded") && afterStatus === "active") {
+      return "restored";
+    }
+    return "updated";
+  }
+
+  private async appendGeneratedMemoryLifecycleEvent(
+    input: Omit<MemoryLifecycleEvent, "eventId" | "ruleVersion">,
+  ): Promise<void> {
+    await this.appendMemoryLifecycleEvents([
+      {
+        ...input,
+        eventId: this.generateId("mle"),
+        ruleVersion: "memory-lifecycle-ledger.v1",
+      },
+    ]);
   }
 }

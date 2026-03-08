@@ -882,6 +882,40 @@ export interface MemoryActionEvent {
   policyEligibility?: MemoryActionEligibilityContext;
 }
 
+export type MemoryLifecycleEventType =
+  | "created"
+  | "updated"
+  | "superseded"
+  | "archived"
+  | "rejected"
+  | "restored"
+  | "merged"
+  | "imported"
+  | "promoted"
+  | "explicit_capture_accepted"
+  | "explicit_capture_queued";
+
+export interface MemoryLifecycleStateSummary {
+  category?: MemoryCategory;
+  path?: string;
+  status?: MemoryStatus;
+  lifecycleState?: LifecycleState;
+}
+
+export interface MemoryLifecycleEvent {
+  eventId: string;
+  memoryId: string;
+  eventType: MemoryLifecycleEventType;
+  timestamp: string;
+  actor: string;
+  reasonCode?: string;
+  ruleVersion: string;
+  relatedMemoryIds?: string[];
+  before?: MemoryLifecycleStateSummary;
+  after?: MemoryLifecycleStateSummary;
+  correlationId?: string;
+}
+
 export interface CompressionGuidelineOptimizerSourceWindow {
   from: string;
   to: string;
