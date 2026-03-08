@@ -1210,6 +1210,16 @@
         "default": false,
         "description": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
       },
+      "commitmentLifecycleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger."
+      },
+      "commitmentStaleDays": {
+        "type": "number",
+        "default": 14,
+        "description": "Days before an open commitment without a due date is considered stale in lifecycle status."
+      },
       "commitmentLedgerDir": {
         "type": "string",
         "description": "Override the commitment ledger directory (defaults to {memoryDir}/state/commitment-ledger)."
@@ -2245,6 +2255,16 @@
       "label": "Commitment Ledger",
       "advanced": true,
       "help": "Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations."
+    },
+    "commitmentLifecycleEnabled": {
+      "label": "Commitment Lifecycle",
+      "advanced": true,
+      "help": "Enable fulfillment transitions, stale tracking, and resolved-entry cleanup for the commitment ledger."
+    },
+    "commitmentStaleDays": {
+      "label": "Commitment Stale Days",
+      "advanced": true,
+      "help": "Days before an open commitment without a due date counts as stale."
     },
     "commitmentLedgerDir": {
       "label": "Commitment Ledger Directory",

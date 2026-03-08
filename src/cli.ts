@@ -78,9 +78,12 @@ import {
   type VerifiedSemanticRuleResult,
 } from "./semantic-rule-verifier.js";
 import {
+  applyCommitmentLedgerLifecycle,
   getCommitmentLedgerStatus,
   recordCommitmentLedgerEntry,
+  transitionCommitmentLedgerEntryState,
   type CommitmentLedgerEntry,
+  type CommitmentLedgerLifecycleResult,
   type CommitmentLedgerStatus,
 } from "./commitment-ledger.js";
 import {
@@ -864,11 +867,22 @@ export async function runCommitmentStatusCliCommand(options: {
   commitmentLedgerDir?: string;
   creationMemoryEnabled: boolean;
   commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled?: boolean;
+  commitmentStaleDays?: number;
+  commitmentDecayDays?: number;
+  now?: string;
 }): Promise<CommitmentLedgerStatus> {
   return getCommitmentLedgerStatus({
     memoryDir: options.memoryDir,
     commitmentLedgerDir: options.commitmentLedgerDir,
     enabled: options.creationMemoryEnabled && options.commitmentLedgerEnabled,
+    lifecycleEnabled:
+      options.creationMemoryEnabled &&
+      options.commitmentLedgerEnabled &&
+      options.commitmentLifecycleEnabled === true,
+    staleDays: options.commitmentStaleDays,
+    decayDays: options.commitmentDecayDays,
+    now: options.now,
   });
 }
 
@@ -884,6 +898,59 @@ export async function runCommitmentRecordCliCommand(options: {
     memoryDir: options.memoryDir,
     commitmentLedgerDir: options.commitmentLedgerDir,
     entry: options.entry,
+  });
+}
+
+export async function runCommitmentSetStateCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  entryId: string;
+  nextState: CommitmentLedgerEntry["state"];
+  changedAt: string;
+}): Promise<CommitmentLedgerEntry | null> {
+  if (
+    !options.creationMemoryEnabled ||
+    !options.commitmentLedgerEnabled ||
+    !options.commitmentLifecycleEnabled
+  ) {
+    return null;
+  }
+
+  return transitionCommitmentLedgerEntryState({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    entryId: options.entryId,
+    nextState: options.nextState,
+    changedAt: options.changedAt,
+  });
+}
+
+export async function runCommitmentLifecycleCliCommand(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  creationMemoryEnabled: boolean;
+  commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  commitmentDecayDays: number;
+  now?: string;
+}): Promise<CommitmentLedgerLifecycleResult | null> {
+  if (
+    !options.creationMemoryEnabled ||
+    !options.commitmentLedgerEnabled ||
+    !options.commitmentLifecycleEnabled
+  ) {
+    return null;
+  }
+
+  return applyCommitmentLedgerLifecycle({
+    memoryDir: options.memoryDir,
+    commitmentLedgerDir: options.commitmentLedgerDir,
+    enabled: true,
+    decayDays: options.commitmentDecayDays,
+    now: options.now,
   });
 }
 
@@ -2590,6 +2657,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
             creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
             commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            commitmentLifecycleEnabled: orchestrator.config.commitmentLifecycleEnabled,
+            commitmentStaleDays: orchestrator.config.commitmentStaleDays,
+            commitmentDecayDays: orchestrator.config.commitmentDecayDays,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
@@ -2646,6 +2716,47 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             },
           });
           console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-set-state")
+        .description("Transition an existing commitment ledger entry when commitment lifecycle is enabled")
+        .requiredOption("--entry-id <entryId>", "Commitment entry id")
+        .requiredOption("--state <state>", "Next state (open|fulfilled|cancelled|expired)")
+        .requiredOption("--changed-at <changedAt>", "ISO timestamp for the lifecycle transition")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const entry = await runCommitmentSetStateCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            commitmentLifecycleEnabled: orchestrator.config.commitmentLifecycleEnabled,
+            entryId: String(options.entryId ?? ""),
+            nextState: String(options.state ?? "") as CommitmentLedgerEntry["state"],
+            changedAt: String(options.changedAt ?? ""),
+          });
+          console.log(JSON.stringify({ updated: entry !== null, entry }, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("commitment-lifecycle-run")
+        .description("Apply overdue-expiry and resolved-entry cleanup to the commitment ledger")
+        .option("--now <now>", "Override the lifecycle timestamp for testing or backfills")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runCommitmentLifecycleCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            commitmentLedgerDir: orchestrator.config.commitmentLedgerDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            commitmentLedgerEnabled: orchestrator.config.commitmentLedgerEnabled,
+            commitmentLifecycleEnabled: orchestrator.config.commitmentLifecycleEnabled,
+            commitmentDecayDays: orchestrator.config.commitmentDecayDays,
+            now: typeof options.now === "string" ? options.now : undefined,
+          });
+          console.log(JSON.stringify({ applied: result !== null, result }, null, 2));
           console.log("OK");
         });
 

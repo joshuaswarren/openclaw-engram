@@ -1,59 +1,70 @@
-# Theory: Creation Memory Also Needs Explicit Obligations
+# Theory: Commitments Need Lifecycle, Not Just Storage
 
 ## Problem
 
-PR23 and PR24 made creation memory useful for artifacts:
+PR25 established that commitments deserve a typed ledger instead of living only
+as transcript residue. That solved durability, but it did not yet solve
+operability. A ledger that can only append `open` promises is still missing the
+behavior that makes commitments useful in real agent work:
 
-- PR23 made work products explicit and durable.
-- PR24 made those work products recoverable and reusable.
+- agents need to mark obligations fulfilled or cancelled,
+- overdue commitments need deterministic expiry pressure,
+- resolved commitments should not accumulate forever once they age out.
 
-That still leaves the second half of the operator problem:
-
-How does an agent remember what it still owes?
-
-Without explicit commitments, creation memory answers "what did we make?" but
-not "what remains promised, pending, or due?"
+Without that lifecycle layer, commitment memory remains inspectable but not
+maintainable.
 
 ## Operating Theory
 
-PR25 should stay just as disciplined as the earlier creation-memory slices:
+The right PR26 shape is still a narrow storage-first slice. Commitment
+lifecycle should be deterministic and auditable before any inference or resume
+automation lands.
 
-1. reuse the ledger pattern instead of inventing a free-form memory type
-2. keep commitments explicit and operator-facing before adding inference
-3. separate durable obligation storage from later lifecycle automation
-4. add status and write tooling before adding recall or resume-bundle joins
+That means:
+
+- keep lifecycle attached to the typed commitment ledger,
+- add explicit state transitions instead of transcript-derived guesses,
+- make stale and overdue signals visible in status first,
+- reuse the existing `commitmentDecayDays` cleanup horizon instead of inventing
+  a parallel retention policy.
+
+The commitment ledger is becoming the creation-memory substrate for obligations
+the same way the work-product ledger became the substrate for outputs.
 
 ## Strategy
 
-Keep PR25 intentionally small:
+PR26 stays small by adding only three levers:
 
-- add `commitmentLedgerEnabled`
-- add a typed commitment-ledger store
-- add `openclaw engram commitment-status`
-- add `openclaw engram commitment-record`
-- do not yet infer commitments from transcripts
-- do not yet add fulfillment or stale-commitment policy
-- do not yet build resume bundles from commitments
+1. explicit lifecycle metadata and a state-transition path for existing entries
+2. deterministic lifecycle accounting for overdue, stale, and decay-eligible
+   commitments
+3. a lifecycle runner that expires overdue commitments and cleans aged resolved
+   entries, plus consolidation wiring so the behavior is not CLI-only
 
-That yields the first durable obligation substrate while keeping the
-creation-memory rollout modular.
+This avoids three kinds of sprawl:
+
+- no transcript inference,
+- no resume-bundle generation,
+- no ranking or recall layer for commitments yet.
 
 ## Key Discoveries
 
-- Creation memory has two distinct surfaces: outputs and obligations. Work
-  products cover outputs; commitments cover obligations.
-- The first commitment slice should be fully explicit and operator-writable.
-  If the substrate is fuzzy too early, later lifecycle and resume logic become
-  hard to audit.
-- Commitment storage should carry enough linkage for later slices:
-  `entityRefs`, `workProductEntryRefs`, and `objectiveStateSnapshotRefs` are
-  enough for PR26+ without forcing resume logic into PR25.
+- Commitment memory has the same rollout shape as the other memory OS tracks:
+  store first, then lifecycle, then recall/recovery consumers.
+- A lifecycle slice is more useful when it is operator-driven and predictable
+  than when it tries to infer intent from loose conversation text.
+- `commitmentDecayDays` already encodes the retention horizon for resolved
+  commitments in legacy memory cleanup, so PR26 should extend that policy to
+  the typed ledger instead of creating a second contradictory timer.
+- Overdue and stale are not the same thing: overdue is deadline-backed and can
+  auto-expire; stale is deadline-free drift that should become visible before
+  any stronger automation is added.
 
 ## Open Questions
 
-- Should PR26 update commitment state in-place or append successor records the
-  same way trust-zone promotions append new records?
-- Should later commitment recall prioritize deadlines over open follow-ups, or
-  should urgency stay a lifecycle concern rather than a retrieval concern?
-- When resume bundles land, should they embed full commitment summaries or only
-  reference commitment IDs plus compact status fields?
+- Should a later recall slice surface open commitments directly as their own
+  section, or should commitments only feed resume bundles and operator tooling?
+- When resume bundles arrive, should they include raw commitment summaries or a
+  more compact status view with links back to the ledger?
+- Should later slices keep in-place lifecycle updates, or move to append-only
+  transition history once the obligation model stabilizes?

@@ -514,6 +514,9 @@ export function parseConfig(raw: unknown): PluginConfig {
     semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     commitmentLedgerEnabled: cfg.commitmentLedgerEnabled === true,
+    commitmentLifecycleEnabled: cfg.commitmentLifecycleEnabled === true,
+    commitmentStaleDays:
+      typeof cfg.commitmentStaleDays === "number" ? cfg.commitmentStaleDays : 14,
     commitmentLedgerDir:
       typeof cfg.commitmentLedgerDir === "string" && cfg.commitmentLedgerDir.trim().length > 0
         ? cfg.commitmentLedgerDir.trim()

@@ -34,6 +34,8 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.semanticRuleVerificationEnabled, false);
   assert.equal(cfg.creationMemoryEnabled, false);
   assert.equal(cfg.commitmentLedgerEnabled, false);
+  assert.equal(cfg.commitmentLifecycleEnabled, false);
+  assert.equal(cfg.commitmentStaleDays, 14);
   assert.equal(cfg.workProductRecallEnabled, false);
   assert.equal(cfg.abstractionNodeStoreDir, path.join(memoryDir, "state", "abstraction-nodes"));
   assert.equal(cfg.commitmentLedgerDir, path.join(memoryDir, "state", "commitment-ledger"));
@@ -74,6 +76,8 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     semanticRuleVerificationEnabled: true,
     creationMemoryEnabled: true,
     commitmentLedgerEnabled: true,
+    commitmentLifecycleEnabled: true,
+    commitmentStaleDays: 21,
     commitmentLedgerDir: "/tmp/custom-commitments",
     workProductRecallEnabled: true,
     workProductLedgerDir: "/tmp/custom-work-products",
@@ -104,6 +108,8 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.semanticRuleVerificationEnabled, true);
   assert.equal(cfg.creationMemoryEnabled, true);
   assert.equal(cfg.commitmentLedgerEnabled, true);
+  assert.equal(cfg.commitmentLifecycleEnabled, true);
+  assert.equal(cfg.commitmentStaleDays, 21);
   assert.equal(cfg.commitmentLedgerDir, "/tmp/custom-commitments");
   assert.equal(cfg.workProductRecallEnabled, true);
   assert.equal(cfg.abstractionNodeStoreDir, "/tmp/abstraction-node-store");

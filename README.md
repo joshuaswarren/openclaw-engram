@@ -45,7 +45,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Verified rule recall** — Engram can now, when `semanticRuleVerificationEnabled` is enabled, inject a dedicated `Verified Rules` recall section that re-checks promoted rule memories against their cited source episodes at recall time and downgrades stale provenance before the rule can surface.
 - **Creation-memory ledger** — Engram can now, when `creationMemoryEnabled` is enabled, persist a typed work-product ledger for explicit outputs agents create or update, inspect it with `openclaw engram work-product-status`, and write deterministic entries through `openclaw engram work-product-record`.
 - **Artifact recovery recall** — Engram can now, when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, surface prompt-relevant work-product ledger entries back into recall as a dedicated `Work Products` section and inspect reuse candidates with `openclaw engram work-product-recall-search`.
-- **Commitment ledger foundation** — Engram can now, when both `creationMemoryEnabled` and `commitmentLedgerEnabled` are enabled, persist typed commitments for promises, follow-ups, deadlines, and unfinished obligations, inspect them with `openclaw engram commitment-status`, and write deterministic entries through `openclaw engram commitment-record`.
+- **Commitment lifecycle foundation** — Engram can now, when `creationMemoryEnabled`, `commitmentLedgerEnabled`, and `commitmentLifecycleEnabled` are enabled, transition existing commitments to `fulfilled` / `cancelled` / `expired`, inspect overdue and stale obligations in `openclaw engram commitment-status`, and run deterministic lifecycle cleanup with `openclaw engram commitment-lifecycle-run`.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -177,6 +177,8 @@ openclaw engram harmonic-search <query>     # Preview blended harmonic retrieval
 openclaw engram verified-recall-search <query> # Preview verified episodic recall matches
 openclaw engram commitment-status          # Commitment ledger counts and latest recorded obligation
 openclaw engram commitment-record          # Record a typed commitment ledger entry
+openclaw engram commitment-set-state      # Transition a commitment to open|fulfilled|cancelled|expired
+openclaw engram commitment-lifecycle-run  # Expire overdue commitments and clean aged resolved entries
 openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
 openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger
@@ -223,6 +225,8 @@ Key settings:
 | `semanticRuleVerificationEnabled` | `false` | Verify promoted semantic rules against their cited source episodes at recall time and inject a dedicated `Verified Rules` section via `openclaw engram semantic-rule-verify` |
 | `creationMemoryEnabled` | `false` | Enable the creation-memory foundation, including the work-product ledger and operator-facing write/status commands |
 | `commitmentLedgerEnabled` | `false` | Enable the explicit commitment ledger for promises, follow-ups, deadlines, and unfinished obligations |
+| `commitmentLifecycleEnabled` | `false` | Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger |
+| `commitmentStaleDays` | `14` | Days before an open commitment without a due date is considered stale in lifecycle status |
 | `commitmentLedgerDir` | `{memoryDir}/state/commitment-ledger` | Root directory for typed commitment ledger entries |
 | `workProductRecallEnabled` | `false` | Inject prompt-relevant work-product ledger entries into recall and expose `openclaw engram work-product-recall-search` |
 | `workProductLedgerDir` | `{memoryDir}/state/work-product-ledger` | Root directory for typed work-product ledger entries |

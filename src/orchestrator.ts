@@ -74,6 +74,7 @@ import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zone
 import { searchHarmonicRetrieval, type HarmonicRetrievalResult } from "./harmonic-retrieval.js";
 import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-recall.js";
 import { searchVerifiedSemanticRules, type VerifiedSemanticRuleResult } from "./semantic-rule-verifier.js";
+import { applyCommitmentLedgerLifecycle } from "./commitment-ledger.js";
 import { searchWorkProductLedgerEntries, type WorkProductLedgerSearchResult } from "./work-product-ledger.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
@@ -4756,6 +4757,28 @@ export class Orchestrator {
         for (const m of deletedCommitments) {
           deindexMemory(this.config.memoryDir, m.path, m.frontmatter.created, m.frontmatter.tags ?? []);
         }
+      }
+    }
+
+    if (
+      this.config.creationMemoryEnabled &&
+      this.config.commitmentLedgerEnabled &&
+      this.config.commitmentLifecycleEnabled
+    ) {
+      try {
+        const lifecycle = await applyCommitmentLedgerLifecycle({
+          memoryDir: this.config.memoryDir,
+          commitmentLedgerDir: this.config.commitmentLedgerDir,
+          enabled: true,
+          decayDays: this.config.commitmentDecayDays,
+        });
+        if (lifecycle.transitionedToExpired.length > 0 || lifecycle.deletedResolved.length > 0) {
+          log.info(
+            `commitment ledger lifecycle: expired ${lifecycle.transitionedToExpired.length}, cleaned ${lifecycle.deletedResolved.length}`,
+          );
+        }
+      } catch (err) {
+        log.debug(`commitment ledger lifecycle pass failed: ${err}`);
       }
     }
 

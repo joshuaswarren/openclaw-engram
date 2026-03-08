@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { listJsonFiles, readJsonFile } from "./json-store.js";
 import {
   assertIsoRecordedAt,
@@ -32,6 +32,8 @@ export interface CommitmentLedgerEntry {
   objectiveStateSnapshotRefs?: string[];
   tags?: string[];
   metadata?: Record<string, string>;
+  stateChangedAt?: string;
+  resolvedAt?: string;
 }
 
 export interface CommitmentLedgerStatus {
@@ -53,6 +55,16 @@ export interface CommitmentLedgerStatus {
     path: string;
     error: string;
   }>;
+  lifecycle?: {
+    staleOpen: number;
+    overdueOpen: number;
+    decayEligibleResolved: number;
+  };
+}
+
+export interface CommitmentLedgerLifecycleResult {
+  transitionedToExpired: CommitmentLedgerEntry[];
+  deletedResolved: CommitmentLedgerEntry[];
 }
 
 export function resolveCommitmentLedgerDir(memoryDir: string, overrideDir?: string): string {
@@ -86,6 +98,19 @@ export function validateCommitmentLedgerEntry(raw: unknown): CommitmentLedgerEnt
     assertIsoRecordedAt(dueAt, "dueAt");
   }
 
+  const stateChangedAt = optionalString(raw.stateChangedAt);
+  if (stateChangedAt !== undefined) {
+    assertIsoRecordedAt(stateChangedAt, "stateChangedAt");
+  }
+
+  const resolvedAt = optionalString(raw.resolvedAt);
+  if (resolvedAt !== undefined) {
+    assertIsoRecordedAt(resolvedAt, "resolvedAt");
+  }
+
+  const normalizedStateChangedAt = stateChangedAt ?? (state === "open" ? undefined : assertString(raw.recordedAt, "recordedAt"));
+  const normalizedResolvedAt = resolvedAt ?? (state === "open" ? undefined : normalizedStateChangedAt);
+
   return {
     schemaVersion: 1,
     entryId: assertSafePathSegment(assertString(raw.entryId, "entryId"), "entryId"),
@@ -102,6 +127,8 @@ export function validateCommitmentLedgerEntry(raw: unknown): CommitmentLedgerEnt
     objectiveStateSnapshotRefs: optionalStringArray(raw.objectiveStateSnapshotRefs, "objectiveStateSnapshotRefs"),
     tags: optionalStringArray(raw.tags, "tags"),
     metadata: validateStringRecord(raw.metadata, "metadata"),
+    stateChangedAt: normalizedStateChangedAt,
+    resolvedAt: normalizedResolvedAt,
   };
 }
 
@@ -126,15 +153,19 @@ async function readCommitmentLedgerEntries(options: {
 }): Promise<{
   files: string[];
   entries: CommitmentLedgerEntry[];
+  entryFiles: Array<{ entry: CommitmentLedgerEntry; filePath: string }>;
   invalidEntries: Array<{ path: string; error: string }>;
 }> {
   const rootDir = resolveCommitmentLedgerDir(options.memoryDir, options.commitmentLedgerDir);
   const files = await listJsonFiles(path.join(rootDir, "entries"));
   const entries: CommitmentLedgerEntry[] = [];
+  const entryFiles: Array<{ entry: CommitmentLedgerEntry; filePath: string }> = [];
   const invalidEntries: Array<{ path: string; error: string }> = [];
   for (const filePath of files) {
     try {
-      entries.push(validateCommitmentLedgerEntry(await readJsonFile(filePath)));
+      const entry = validateCommitmentLedgerEntry(await readJsonFile(filePath));
+      entries.push(entry);
+      entryFiles.push({ entry, filePath });
     } catch (error) {
       invalidEntries.push({
         path: filePath,
@@ -142,18 +173,127 @@ async function readCommitmentLedgerEntries(options: {
       });
     }
   }
-  return { files, entries, invalidEntries };
+  return { files, entries, entryFiles, invalidEntries };
+}
+
+function isResolvedState(state: CommitmentLedgerState): boolean {
+  return state === "fulfilled" || state === "cancelled" || state === "expired";
+}
+
+function isOverdueOpenEntry(entry: CommitmentLedgerEntry, nowMs: number): boolean {
+  return entry.state === "open" && typeof entry.dueAt === "string" && Date.parse(entry.dueAt) < nowMs;
+}
+
+function isStaleOpenEntry(entry: CommitmentLedgerEntry, nowMs: number, staleDays: number): boolean {
+  if (entry.state !== "open") return false;
+  if (typeof entry.dueAt === "string") return false;
+  const staleCutoff = nowMs - staleDays * 24 * 60 * 60 * 1000;
+  return Date.parse(entry.recordedAt) < staleCutoff;
+}
+
+function isDecayEligibleResolvedEntry(entry: CommitmentLedgerEntry, nowMs: number, decayDays: number): boolean {
+  if (!isResolvedState(entry.state)) return false;
+  const reference = entry.resolvedAt ?? entry.stateChangedAt ?? entry.recordedAt;
+  const decayCutoff = nowMs - decayDays * 24 * 60 * 60 * 1000;
+  return Date.parse(reference) < decayCutoff;
+}
+
+async function findCommitmentLedgerEntryById(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  entryId: string;
+}): Promise<{ entry: CommitmentLedgerEntry; filePath: string } | null> {
+  const { entryFiles } = await readCommitmentLedgerEntries(options);
+  for (const candidate of entryFiles) {
+    if (candidate.entry.entryId === options.entryId || path.basename(candidate.filePath, ".json") === options.entryId) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+export async function transitionCommitmentLedgerEntryState(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  entryId: string;
+  nextState: CommitmentLedgerState;
+  changedAt: string;
+}): Promise<CommitmentLedgerEntry> {
+  const match = await findCommitmentLedgerEntryById(options);
+  if (!match) {
+    throw new Error(`commitment entry not found: ${options.entryId}`);
+  }
+
+  const changedAt = assertIsoRecordedAt(options.changedAt, "changedAt");
+  const nextState = options.nextState;
+  const nextEntry: CommitmentLedgerEntry = {
+    ...match.entry,
+    state: nextState,
+    stateChangedAt: changedAt,
+    resolvedAt: isResolvedState(nextState) ? changedAt : undefined,
+  };
+
+  await writeFile(match.filePath, JSON.stringify(validateCommitmentLedgerEntry(nextEntry), null, 2), "utf8");
+  return nextEntry;
+}
+
+export async function applyCommitmentLedgerLifecycle(options: {
+  memoryDir: string;
+  commitmentLedgerDir?: string;
+  enabled: boolean;
+  decayDays: number;
+  now?: string;
+}): Promise<CommitmentLedgerLifecycleResult> {
+  if (!options.enabled) {
+    return { transitionedToExpired: [], deletedResolved: [] };
+  }
+
+  const nowIso = assertIsoRecordedAt(options.now ?? new Date().toISOString(), "now");
+  const nowMs = Date.parse(nowIso);
+  const { entryFiles } = await readCommitmentLedgerEntries(options);
+
+  const transitionedToExpired: CommitmentLedgerEntry[] = [];
+  const deletedResolved: CommitmentLedgerEntry[] = [];
+
+  for (const { entry, filePath } of entryFiles) {
+
+    if (isOverdueOpenEntry(entry, nowMs)) {
+      const updated = validateCommitmentLedgerEntry({
+        ...entry,
+        state: "expired",
+        stateChangedAt: nowIso,
+        resolvedAt: nowIso,
+      });
+      await writeFile(filePath, JSON.stringify(updated, null, 2), "utf8");
+      transitionedToExpired.push(updated);
+      continue;
+    }
+
+    if (isDecayEligibleResolvedEntry(entry, nowMs, options.decayDays)) {
+      await unlink(filePath);
+      deletedResolved.push(entry);
+    }
+  }
+
+  return { transitionedToExpired, deletedResolved };
 }
 
 export async function getCommitmentLedgerStatus(options: {
   memoryDir: string;
   commitmentLedgerDir?: string;
   enabled: boolean;
+  lifecycleEnabled?: boolean;
+  staleDays?: number;
+  decayDays?: number;
+  now?: string;
 }): Promise<CommitmentLedgerStatus> {
   const rootDir = resolveCommitmentLedgerDir(options.memoryDir, options.commitmentLedgerDir);
   const entriesDir = path.join(rootDir, "entries");
   const { files, entries, invalidEntries } = await readCommitmentLedgerEntries(options);
   entries.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  const nowMs = Date.parse(assertIsoRecordedAt(options.now ?? new Date().toISOString(), "now"));
+  const staleDays = Math.max(1, Math.floor(options.staleDays ?? 14));
+  const decayDays = Math.max(1, Math.floor(options.decayDays ?? 90));
 
   const byKind: Partial<Record<CommitmentLedgerKind, number>> = {};
   const byState: Partial<Record<CommitmentLedgerState, number>> = {};
@@ -178,5 +318,12 @@ export async function getCommitmentLedgerStatus(options: {
     },
     latestEntry: entries[0],
     invalidEntries,
+    lifecycle: options.lifecycleEnabled
+      ? {
+          overdueOpen: entries.filter((entry) => isOverdueOpenEntry(entry, nowMs)).length,
+          staleOpen: entries.filter((entry) => isStaleOpenEntry(entry, nowMs, staleDays)).length,
+          decayEligibleResolved: entries.filter((entry) => isDecayEligibleResolvedEntry(entry, nowMs, decayDays)).length,
+        }
+      : undefined,
   };
 }

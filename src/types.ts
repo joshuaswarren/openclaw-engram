@@ -245,6 +245,8 @@ export interface PluginConfig {
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   commitmentLedgerEnabled: boolean;
+  commitmentLifecycleEnabled: boolean;
+  commitmentStaleDays: number;
   commitmentLedgerDir: string;
   workProductRecallEnabled: boolean;
   workProductLedgerDir: string;
