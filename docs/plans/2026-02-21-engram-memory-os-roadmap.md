@@ -1,5 +1,7 @@
 # Engram Memory OS 1.0 Implementation Plan
 
+> Status note (2026-03-08): The GitHub Project is the source of truth for current roadmap sequencing, blockers, and contributor priority: [Engram Feature Roadmap](https://github.com/users/joshuaswarren/projects/1). This file remains as historical roadmap/design context and is not the authoritative execution queue.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Integrate all requested memory-research concepts/papers into openclaw-engram with high utility, predictable latency, and strict token-budget controls.

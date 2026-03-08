@@ -4,7 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- New items go here before they're released -->
+### Changed
+- Repository planning docs now treat the GitHub Project as the roadmap source of truth. Completed plans now live under `docs/plans/archive/done/`, superseded local roadmap drafts live under `docs/plans/archive/superseded/`, and the main docs entry points now send contributors to the GitHub Project before historical plan files.
+
+## [Released after v9.0.0] — 2026-03-07 to 2026-03-08
+
+This project auto-releases on every merge to `main`. The entries below are a consolidated summary of work that has already shipped on the active `v9.x` line but had accumulated incorrectly under `Unreleased`. Detailed per-release notes for the individual auto-generated tags live in GitHub Releases.
 
 ### Fixed
 - Frontmatter parser now unescapes backslashes and escaped quotes for `importanceReasons` and `links[].reason`, preventing backslash doubling across save/load round-trips after serializer hardening.

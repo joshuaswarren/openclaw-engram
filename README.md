@@ -143,6 +143,11 @@ See the [Search Backends Guide](docs/search-backends.md) for detailed configurat
 
 Want to build your own? See [Writing a Search Backend](docs/writing-a-search-backend.md).
 
+## Roadmap
+
+- [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1) — Current issue order, blockers, and next work
+- [Historical Plans Index](docs/plans/README.md) — Design docs and archived completed plans
+
 ## Feature Highlights
 
 Engram's capabilities are organized into feature families that you can enable progressively:
