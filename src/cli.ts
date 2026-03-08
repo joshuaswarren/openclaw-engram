@@ -48,6 +48,9 @@ import { RoutingRulesStore } from "./routing/store.js";
 import { TailscaleHelper, type TailscaleSyncOptions } from "./network/tailscale.js";
 import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
+import { EngramAccessService } from "./access-service.js";
+import { EngramAccessHttpServer } from "./access-http.js";
+import { EngramMcpServer } from "./access-mcp.js";
 import { runCompatChecks } from "./compat/checks.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import {
@@ -518,6 +521,12 @@ interface DashboardServerLike {
   status(): DashboardStatus;
 }
 
+interface AccessHttpServerLike {
+  start(): Promise<{ running: boolean; host: string; port: number; maxBodyBytes: number }>;
+  stop(): Promise<void>;
+  status(): { running: boolean; host: string; port: number; maxBodyBytes: number };
+}
+
 export interface DashboardStartCliCommandOptions {
   memoryDir: string;
   host?: string;
@@ -531,10 +540,28 @@ export interface DashboardStartCliCommandOptions {
   }) => DashboardServerLike;
 }
 
+export interface AccessHttpServeCliCommandOptions {
+  service: EngramAccessService;
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  authToken?: string;
+  maxBodyBytes?: number;
+  createServer?: (options: {
+    service: EngramAccessService;
+    host?: string;
+    port?: number;
+    authToken?: string;
+    maxBodyBytes?: number;
+  }) => AccessHttpServerLike;
+}
+
 let activeWebDavServer: WebDavServerLike | null = null;
 let webDavOperationChain: Promise<void> = Promise.resolve();
 let activeDashboardServer: DashboardServerLike | null = null;
 let dashboardOperationChain: Promise<void> = Promise.resolve();
+let activeAccessHttpServer: AccessHttpServerLike | null = null;
+let accessHttpOperationChain: Promise<void> = Promise.resolve();
 
 async function withWebDavLock<T>(operation: () => Promise<T>): Promise<T> {
   const run = webDavOperationChain.then(operation, operation);
@@ -548,6 +575,15 @@ async function withWebDavLock<T>(operation: () => Promise<T>): Promise<T> {
 async function withDashboardLock<T>(operation: () => Promise<T>): Promise<T> {
   const run = dashboardOperationChain.then(operation, operation);
   dashboardOperationChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function withAccessHttpLock<T>(operation: () => Promise<T>): Promise<T> {
+  const run = accessHttpOperationChain.then(operation, operation);
+  accessHttpOperationChain = run.then(
     () => undefined,
     () => undefined,
   );
@@ -2038,6 +2074,67 @@ export async function runDashboardStatusCliCommand(): Promise<{ running: false }
     if (!activeDashboardServer) return { running: false };
     return activeDashboardServer.status();
   });
+}
+
+export async function runAccessHttpServeCliCommand(
+  options: AccessHttpServeCliCommandOptions,
+): Promise<{ running: boolean; host: string; port: number; maxBodyBytes: number }> {
+  return withAccessHttpLock(async () => {
+    if (options.enabled === false) {
+      throw new Error("engram access HTTP is disabled");
+    }
+    if (activeAccessHttpServer) {
+      const status = activeAccessHttpServer.status();
+      if (status.running) return status;
+    }
+
+    const createServer = options.createServer ?? ((input: AccessHttpServeCliCommandOptions) =>
+      new EngramAccessHttpServer({
+        service: input.service,
+        host: input.host,
+        port: input.port,
+        authToken: input.authToken,
+        maxBodyBytes: input.maxBodyBytes,
+      }));
+
+    const server = createServer(options);
+    activeAccessHttpServer = server;
+    try {
+      return await server.start();
+    } catch (err) {
+      if (activeAccessHttpServer === server) {
+        activeAccessHttpServer = null;
+      }
+      throw err;
+    }
+  });
+}
+
+export async function runAccessHttpStopCliCommand(): Promise<{ stopped: boolean }> {
+  return withAccessHttpLock(async () => {
+    if (!activeAccessHttpServer) return { stopped: false };
+    const server = activeAccessHttpServer;
+    await server.stop();
+    if (activeAccessHttpServer === server) {
+      activeAccessHttpServer = null;
+    }
+    return { stopped: true };
+  });
+}
+
+export async function runAccessHttpStatusCliCommand(): Promise<
+  { running: false } | { running: boolean; host: string; port: number; maxBodyBytes: number }
+> {
+  return withAccessHttpLock(async () => {
+    if (!activeAccessHttpServer) return { running: false };
+    return activeAccessHttpServer.status();
+  });
+}
+
+export async function runAccessMcpServeCliCommand(service: EngramAccessService): Promise<{ ok: true }> {
+  const server = new EngramMcpServer(service);
+  await server.runStdio(process.stdin, process.stdout);
+  return { ok: true };
 }
 
 export async function runCompatCliCommand(
@@ -3853,6 +3950,62 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const status = await runDashboardStatusCliCommand();
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
+        });
+
+      const accessService = new EngramAccessService(orchestrator);
+      const accessCmd = cmd
+        .command("access")
+        .description("Manage Engram HTTP and MCP access surfaces");
+
+      accessCmd
+        .command("http-serve")
+        .description("Start local authenticated HTTP access server")
+        .option("--host <host>", "Bind host", "127.0.0.1")
+        .option("--port <n>", "Bind port", "4318")
+        .option("--token <token>", "Bearer token (defaults to config/env)")
+        .option("--max-body-bytes <n>", "Maximum request body size", "131072")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const portRaw = parseInt(String(options.port ?? "4318"), 10);
+          const maxBodyBytesRaw = parseInt(String(options.maxBodyBytes ?? "131072"), 10);
+          const status = await runAccessHttpServeCliCommand({
+            service: accessService,
+            enabled: true,
+            host: typeof options.host === "string" ? options.host : "127.0.0.1",
+            port: Number.isFinite(portRaw) ? portRaw : 4318,
+            authToken:
+              typeof options.token === "string" && options.token.trim().length > 0
+                ? options.token
+                : orchestrator.config.agentAccessHttp.authToken,
+            maxBodyBytes: Number.isFinite(maxBodyBytesRaw) ? maxBodyBytesRaw : 131072,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      accessCmd
+        .command("http-stop")
+        .description("Stop the in-process Engram HTTP access server")
+        .action(async () => {
+          const result = await runAccessHttpStopCliCommand();
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      accessCmd
+        .command("http-status")
+        .description("Show Engram HTTP access server status")
+        .action(async () => {
+          const status = await runAccessHttpStatusCliCommand();
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      accessCmd
+        .command("mcp-serve")
+        .description("Run the Engram MCP server over stdio")
+        .action(async () => {
+          await runAccessMcpServeCliCommand(accessService);
         });
 
       const routeCmd = cmd

@@ -336,6 +336,38 @@
         },
         "required": ["enabled"]
       },
+      "agentAccessHttp": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional: run a local authenticated HTTP API so non-OpenClaw clients can query Engram directly.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start the local Engram HTTP access server during plugin startup."
+          },
+          "host": {
+            "type": "string",
+            "default": "127.0.0.1",
+            "description": "Loopback host to bind for the Engram HTTP access server."
+          },
+          "port": {
+            "type": "number",
+            "default": 4318,
+            "description": "Bind port for the Engram HTTP access server. Use 0 for an ephemeral port."
+          },
+          "authToken": {
+            "type": "string",
+            "description": "Bearer token for the local Engram HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
+          },
+          "maxBodyBytes": {
+            "type": "number",
+            "default": 131072,
+            "description": "Maximum accepted JSON request body size for the local Engram HTTP API."
+          }
+        },
+        "required": ["enabled"]
+      },
       "accessTrackingEnabled": {
         "type": "boolean",
         "default": true,
@@ -1963,6 +1995,10 @@
     "boostAccessCount": {
       "label": "Boost Frequent Access",
       "help": "Rank frequently accessed memories higher in search"
+    },
+    "agentAccessHttp": {
+      "label": "Local HTTP Access",
+      "help": "Enable a local authenticated HTTP API for external Engram clients"
     },
     "negativeExamplesEnabled": {
       "label": "Negative Examples",

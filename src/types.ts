@@ -69,6 +69,14 @@ export interface NativeKnowledgeConfig {
   maxChars: number;
 }
 
+export interface AgentAccessHttpConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  authToken?: string;
+  maxBodyBytes: number;
+}
+
 export function confidenceTier(score: number): ConfidenceTier {
   if (score >= 0.95) return "explicit";
   if (score >= 0.70) return "implied";
@@ -123,6 +131,7 @@ export interface PluginConfig {
   workspaceDir: string;
   fileHygiene?: FileHygieneConfig;
   nativeKnowledge?: NativeKnowledgeConfig;
+  agentAccessHttp: AgentAccessHttpConfig;
   // Access tracking (Phase 1A)
   accessTrackingEnabled: boolean;
   accessTrackingBufferMaxSize: number;

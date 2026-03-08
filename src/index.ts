@@ -6,6 +6,8 @@ import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from
 import { registerTools } from "./tools.js";
 import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
+import { EngramAccessService } from "./access-service.js";
+import { EngramAccessHttpServer } from "./access-http.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -116,6 +118,15 @@ export default {
     if ((globalThis as any).__openclawEngramTrace === undefined) {
       (globalThis as any).__openclawEngramTrace = undefined;
     }
+
+    const accessService = new EngramAccessService(orchestrator);
+    const accessHttpServer = new EngramAccessHttpServer({
+      service: accessService,
+      host: cfg.agentAccessHttp.host,
+      port: cfg.agentAccessHttp.port,
+      authToken: cfg.agentAccessHttp.authToken,
+      maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
+    });
 
     // ========================================================================
     // HOOK: before_agent_start — Inject memory context
@@ -537,9 +548,23 @@ export default {
           );
         }
 
+        if (cfg.agentAccessHttp.enabled) {
+          try {
+            const status = await accessHttpServer.start();
+            log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
+          } catch (err) {
+            log.error("failed to start engram access HTTP server", err);
+          }
+        }
+
         log.info("engram memory system ready");
       },
-      stop: () => {
+      stop: async () => {
+        try {
+          await accessHttpServer.stop();
+        } catch (err) {
+          log.debug(`engram access HTTP stop failed: ${err}`);
+        }
         // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.

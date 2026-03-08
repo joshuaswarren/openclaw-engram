@@ -29,6 +29,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Smart recall** — Before each conversation, Engram injects the most relevant memories into the agent's context. Your agents remember what they need, when they need it.
 - **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
+- **External agent access** — Run a local authenticated HTTP API and a stdio MCP server so Codex, Claude Code, and scripts can query Engram without OpenClaw-specific glue.
 - **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
 - **Benchmark-first roadmap** — Engram now has an evaluation harness with live shadow recall recording and a CI benchmark delta gate, so memory improvements can be measured and regression-checked instead of argued from anecdotes.
 - **Baseline snapshot discipline** — Engram can now, when `benchmarkBaselineSnapshotsEnabled` is enabled, capture typed baseline snapshots of the latest completed benchmark runs so later PR delta reporting can compare candidates against a stable stored reference instead of an ad hoc branch state.

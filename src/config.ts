@@ -231,6 +231,30 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
     : undefined;
 
+  const rawAgentAccessHttp =
+    cfg.agentAccessHttp && typeof cfg.agentAccessHttp === "object" && !Array.isArray(cfg.agentAccessHttp)
+      ? (cfg.agentAccessHttp as Record<string, unknown>)
+      : undefined;
+  const agentAccessHttp = {
+    enabled: rawAgentAccessHttp?.enabled === true,
+    host:
+      typeof rawAgentAccessHttp?.host === "string" && rawAgentAccessHttp.host.trim().length > 0
+        ? rawAgentAccessHttp.host.trim()
+        : "127.0.0.1",
+    port:
+      typeof rawAgentAccessHttp?.port === "number"
+        ? Math.max(0, Math.floor(rawAgentAccessHttp.port))
+        : 4318,
+    authToken:
+      typeof rawAgentAccessHttp?.authToken === "string" && rawAgentAccessHttp.authToken.trim().length > 0
+        ? resolveEnvVars(rawAgentAccessHttp.authToken)
+        : process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN,
+    maxBodyBytes:
+      typeof rawAgentAccessHttp?.maxBodyBytes === "number"
+        ? Math.max(1024, Math.floor(rawAgentAccessHttp.maxBodyBytes))
+        : 131072,
+  };
+
   let baseUrl: string | undefined;
   if (typeof cfg.openaiBaseUrl === "string" && cfg.openaiBaseUrl.length > 0) {
     baseUrl = normalizeOpenaiBaseUrl(resolveEnvVars(cfg.openaiBaseUrl), "config");
@@ -335,6 +359,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : DEFAULT_WORKSPACE_DIR,
     fileHygiene,
     nativeKnowledge,
+    agentAccessHttp,
     // Access tracking (Phase 1A)
     accessTrackingEnabled: cfg.accessTrackingEnabled !== false,
     accessTrackingBufferMaxSize:

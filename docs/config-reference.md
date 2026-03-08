@@ -14,6 +14,16 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `workspaceDir` | `~/.openclaw/workspace` | Workspace root (IDENTITY.md location) |
 | `debug` | `false` | Enable debug logging |
 
+## Access Layer
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `agentAccessHttp.enabled` | `false` | Start a local authenticated Engram HTTP API during plugin startup |
+| `agentAccessHttp.host` | `127.0.0.1` | Loopback bind host for the Engram HTTP API |
+| `agentAccessHttp.port` | `4318` | Bind port for the Engram HTTP API (`0` = ephemeral port) |
+| `agentAccessHttp.authToken` | `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API; supports `${ENV_VAR}` references |
+| `agentAccessHttp.maxBodyBytes` | `131072` | Maximum accepted JSON request body size |
+
 ## Buffer & Triggers
 
 | Setting | Default | Description |
