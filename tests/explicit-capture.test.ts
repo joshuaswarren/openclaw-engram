@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseConfig } from "../src/config.js";
 import {
+  hasInlineExplicitCaptureMarkup,
   findDuplicateExplicitCapture,
   parseInlineExplicitCaptureNotes,
   persistExplicitCapture,
@@ -64,6 +65,22 @@ test("inline explicit capture notes parse and strip cleanly", () => {
   assert.deepEqual(notes[0]?.tags, ["coffee", "morning"]);
   assert.equal(notes[0]?.content, "User prefers pourover coffee in the morning.");
   assert.equal(stripInlineExplicitCaptureNotes(raw), "Normal text before.\n\nNormal text after.");
+});
+
+test("inline explicit capture markup is detected even when note blocks are malformed", () => {
+  const raw = [
+    "Conversation text before.",
+    "<memory_note>",
+    "category: preference",
+    "tags: malformed, ignored",
+    "</memory_note>",
+    "Conversation text after.",
+  ].join("\n");
+
+  const notes = parseInlineExplicitCaptureNotes(raw);
+  assert.equal(notes.length, 0);
+  assert.equal(hasInlineExplicitCaptureMarkup(raw), true);
+  assert.equal(stripInlineExplicitCaptureNotes(raw), "Conversation text before.\n\nConversation text after.");
 });
 
 test("explicit capture validation rejects likely secrets", () => {

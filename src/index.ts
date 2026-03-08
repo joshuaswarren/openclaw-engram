@@ -9,6 +9,7 @@ import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-stat
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
 import {
+  hasInlineExplicitCaptureMarkup,
   parseInlineExplicitCaptureNotes,
   persistExplicitCapture,
   shouldProcessInlineExplicitCapture,
@@ -304,10 +305,11 @@ export default {
             // Clean system metadata from user messages
             const cleaned =
               role === "user" ? cleanUserMessage(content) : content;
-            const explicitNotes = shouldProcessInlineExplicitCapture(orchestrator.config)
+            const inlineCaptureEnabled = shouldProcessInlineExplicitCapture(orchestrator.config);
+            const explicitNotes = inlineCaptureEnabled
               ? parseInlineExplicitCaptureNotes(cleaned)
               : [];
-            const stripped = explicitNotes.length > 0
+            const stripped = inlineCaptureEnabled && hasInlineExplicitCaptureMarkup(cleaned)
               ? stripInlineExplicitCaptureNotes(cleaned)
               : cleaned;
 

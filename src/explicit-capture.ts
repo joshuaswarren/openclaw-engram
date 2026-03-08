@@ -165,6 +165,10 @@ export function parseInlineExplicitCaptureNotes(text: string): ExplicitCaptureIn
   return notes;
 }
 
+export function hasInlineExplicitCaptureMarkup(text: string): boolean {
+  return INLINE_NOTE_RE.test(text);
+}
+
 export function stripInlineExplicitCaptureNotes(text: string): string {
   return text.replace(INLINE_NOTE_RE, "").trim();
 }
