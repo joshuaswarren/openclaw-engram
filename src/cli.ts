@@ -95,6 +95,12 @@ import {
   type WorkProductLedgerStatus,
 } from "./work-product-ledger.js";
 import {
+  getResumeBundleStatus,
+  recordResumeBundle,
+  type ResumeBundle,
+  type ResumeBundleStatus,
+} from "./resume-bundles.js";
+import {
   promoteSemanticRuleFromMemory,
   type SemanticRulePromotionReport,
 } from "./semantic-rule-promotion.js";
@@ -859,6 +865,34 @@ export async function runWorkProductRecallSearchCliCommand(options: {
     query: options.query,
     maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
     sessionKey: options.sessionKey,
+  });
+}
+
+export async function runResumeBundleStatusCliCommand(options: {
+  memoryDir: string;
+  resumeBundleDir?: string;
+  creationMemoryEnabled: boolean;
+  resumeBundlesEnabled: boolean;
+}): Promise<ResumeBundleStatus> {
+  return getResumeBundleStatus({
+    memoryDir: options.memoryDir,
+    resumeBundleDir: options.resumeBundleDir,
+    enabled: options.creationMemoryEnabled && options.resumeBundlesEnabled,
+  });
+}
+
+export async function runResumeBundleRecordCliCommand(options: {
+  memoryDir: string;
+  resumeBundleDir?: string;
+  creationMemoryEnabled: boolean;
+  resumeBundlesEnabled: boolean;
+  bundle: ResumeBundle;
+}): Promise<string | null> {
+  if (!options.creationMemoryEnabled || !options.resumeBundlesEnabled) return null;
+  return recordResumeBundle({
+    memoryDir: options.memoryDir,
+    resumeBundleDir: options.resumeBundleDir,
+    bundle: options.bundle,
   });
 }
 
@@ -2645,6 +2679,77 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             sessionKey: typeof options.sessionKey === "string" ? options.sessionKey : undefined,
           });
           console.log(JSON.stringify(results, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("resume-bundle-status")
+        .description("Show resume bundle status, bundle counts, and the latest recorded handoff bundle")
+        .action(async () => {
+          const status = await runResumeBundleStatusCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            resumeBundleDir: orchestrator.config.resumeBundleDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            resumeBundlesEnabled: orchestrator.config.resumeBundlesEnabled,
+          });
+          console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("resume-bundle-record")
+        .description("Record an explicit resume bundle when creation-memory handoff bundles are enabled")
+        .requiredOption("--bundle-id <bundleId>", "Resume bundle id")
+        .requiredOption("--recorded-at <recordedAt>", "ISO timestamp for the bundle")
+        .requiredOption("--session-key <sessionKey>", "Session key that owns the bundle")
+        .requiredOption("--source <source>", "Bundle source (tool_result|cli|system|manual)")
+        .requiredOption("--scope <scope>", "Primary scope or recovery domain for the bundle")
+        .requiredOption("--summary <summary>", "Human-readable summary of what this bundle preserves")
+        .option("--key-fact <keyFact...>", "Short facts that a resumed agent should retain")
+        .option("--next-action <nextAction...>", "Explicit next actions for the resumed agent")
+        .option("--risk-flag <riskFlag...>", "Open risks or cautions attached to the bundle")
+        .option(
+          "--objective-state-snapshot-ref <objectiveStateSnapshotRef...>",
+          "Objective-state snapshot refs attached to the bundle",
+        )
+        .option(
+          "--work-product-entry-ref <workProductEntryRef...>",
+          "Work-product ledger refs attached to the bundle",
+        )
+        .option(
+          "--commitment-entry-ref <commitmentEntryRef...>",
+          "Commitment ledger refs attached to the bundle",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const filePath = await runResumeBundleRecordCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            resumeBundleDir: orchestrator.config.resumeBundleDir,
+            creationMemoryEnabled: orchestrator.config.creationMemoryEnabled,
+            resumeBundlesEnabled: orchestrator.config.resumeBundlesEnabled,
+            bundle: {
+              schemaVersion: 1,
+              bundleId: String(options.bundleId ?? ""),
+              recordedAt: String(options.recordedAt ?? ""),
+              sessionKey: String(options.sessionKey ?? ""),
+              source: String(options.source ?? "") as ResumeBundle["source"],
+              scope: String(options.scope ?? ""),
+              summary: String(options.summary ?? ""),
+              keyFacts: Array.isArray(options.keyFact) ? options.keyFact.map(String) : undefined,
+              nextActions: Array.isArray(options.nextAction) ? options.nextAction.map(String) : undefined,
+              riskFlags: Array.isArray(options.riskFlag) ? options.riskFlag.map(String) : undefined,
+              objectiveStateSnapshotRefs: Array.isArray(options.objectiveStateSnapshotRef)
+                ? options.objectiveStateSnapshotRef.map(String)
+                : undefined,
+              workProductEntryRefs: Array.isArray(options.workProductEntryRef)
+                ? options.workProductEntryRef.map(String)
+                : undefined,
+              commitmentEntryRefs: Array.isArray(options.commitmentEntryRef)
+                ? options.commitmentEntryRef.map(String)
+                : undefined,
+            },
+          });
+          console.log(JSON.stringify({ wrote: filePath !== null, filePath }, null, 2));
           console.log("OK");
         });
 

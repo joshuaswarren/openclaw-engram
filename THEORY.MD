@@ -1,70 +1,57 @@
-# Theory: Commitments Need Lifecycle, Not Just Storage
+# Theory: Resume Bundles Need a Contract Before They Need a Builder
 
 ## Problem
 
-PR25 established that commitments deserve a typed ledger instead of living only
-as transcript residue. That solved durability, but it did not yet solve
-operability. A ledger that can only append `open` promises is still missing the
-behavior that makes commitments useful in real agent work:
+Creation memory now has the two raw ingredients a recovery system needs:
 
-- agents need to mark obligations fulfilled or cancelled,
-- overdue commitments need deterministic expiry pressure,
-- resolved commitments should not accumulate forever once they age out.
+- a typed work-product ledger for what the agent created
+- a typed commitment ledger for what the agent still owes
 
-Without that lifecycle layer, commitment memory remains inspectable but not
-maintainable.
+What it still lacks is the recovery container itself. Without a stable resume
+bundle contract, later automation would have to invent its own ad hoc shape for
+handoff state and would make PR28 harder to verify or benchmark.
 
 ## Operating Theory
 
-The right PR26 shape is still a narrow storage-first slice. Commitment
-lifecycle should be deterministic and auditable before any inference or resume
-automation lands.
+The right PR27 shape is format first.
+
+Resume bundles should become a deterministic, typed store before Engram starts
+assembling them from transcripts, objective-state snapshots, work products, or
+commitments.
 
 That means:
 
-- keep lifecycle attached to the typed commitment ledger,
-- add explicit state transitions instead of transcript-derived guesses,
-- make stale and overdue signals visible in status first,
-- reuse the existing `commitmentDecayDays` cleanup horizon instead of inventing
-  a parallel retention policy.
-
-The commitment ledger is becoming the creation-memory substrate for obligations
-the same way the work-product ledger became the substrate for outputs.
+- define a bundle schema with explicit scope, summary, and linked refs
+- persist bundles into dated storage like the other creation-memory ledgers
+- expose operator-facing record and status commands
+- stop short of any builder or recovery injection logic
 
 ## Strategy
 
-PR26 stays small by adding only three levers:
+PR27 stays narrow by shipping only the contract and tooling:
 
-1. explicit lifecycle metadata and a state-transition path for existing entries
-2. deterministic lifecycle accounting for overdue, stale, and decay-eligible
-   commitments
-3. a lifecycle runner that expires overdue commitments and cleans aged resolved
-   entries, plus consolidation wiring so the behavior is not CLI-only
+1. config flags for enabling resume-bundle storage
+2. a typed `ResumeBundle` schema and deterministic file layout
+3. status and write commands so operators can inspect and exercise the format
 
-This avoids three kinds of sprawl:
-
-- no transcript inference,
-- no resume-bundle generation,
-- no ranking or recall layer for commitments yet.
+This keeps PR27 reviewable and leaves PR28 with one focused job: populate the
+bundle from live session state instead of also debating what the bundle should
+look like.
 
 ## Key Discoveries
 
-- Commitment memory has the same rollout shape as the other memory OS tracks:
-  store first, then lifecycle, then recall/recovery consumers.
-- A lifecycle slice is more useful when it is operator-driven and predictable
-  than when it tries to infer intent from loose conversation text.
-- `commitmentDecayDays` already encodes the retention horizon for resolved
-  commitments in legacy memory cleanup, so PR26 should extend that policy to
-  the typed ledger instead of creating a second contradictory timer.
-- Overdue and stale are not the same thing: overdue is deadline-backed and can
-  auto-expire; stale is deadline-free drift that should become visible before
-  any stronger automation is added.
+- Resume bundles fit the same rollout discipline as the rest of the memory OS:
+  format first, then builders, then recovery consumers.
+- The format needs linked refs to objective-state snapshots, work products, and
+  commitments on day one, even if this slice does not auto-populate them yet.
+- A bundle format can be valuable before automation because it gives operators a
+  stable handoff shell and gives CI something deterministic to validate later.
 
 ## Open Questions
 
-- Should a later recall slice surface open commitments directly as their own
-  section, or should commitments only feed resume bundles and operator tooling?
-- When resume bundles arrive, should they include raw commitment summaries or a
-  more compact status view with links back to the ledger?
-- Should later slices keep in-place lifecycle updates, or move to append-only
-  transition history once the obligation model stabilizes?
+- Should PR28 emit one bundle per session checkpoint, or should it replace the
+  latest bundle for a session key?
+- Should future recovery consumers prefer bundle `nextActions` directly, or
+  recompute priorities from linked ledgers at restore time?
+- When resume-bundle recall eventually lands, should bundles appear as a
+  dedicated recall section or stay strictly in operator tooling?

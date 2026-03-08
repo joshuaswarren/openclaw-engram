@@ -521,6 +521,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.commitmentLedgerDir === "string" && cfg.commitmentLedgerDir.trim().length > 0
         ? cfg.commitmentLedgerDir.trim()
         : path.join(memoryDir, "state", "commitment-ledger"),
+    resumeBundlesEnabled: cfg.resumeBundlesEnabled === true,
+    resumeBundleDir:
+      typeof cfg.resumeBundleDir === "string" && cfg.resumeBundleDir.trim().length > 0
+        ? cfg.resumeBundleDir.trim()
+        : path.join(memoryDir, "state", "resume-bundles"),
     workProductRecallEnabled: cfg.workProductRecallEnabled === true,
     workProductLedgerDir:
       typeof cfg.workProductLedgerDir === "string" && cfg.workProductLedgerDir.trim().length > 0

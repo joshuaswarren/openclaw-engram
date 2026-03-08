@@ -46,6 +46,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Creation-memory ledger** — Engram can now, when `creationMemoryEnabled` is enabled, persist a typed work-product ledger for explicit outputs agents create or update, inspect it with `openclaw engram work-product-status`, and write deterministic entries through `openclaw engram work-product-record`.
 - **Artifact recovery recall** — Engram can now, when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, surface prompt-relevant work-product ledger entries back into recall as a dedicated `Work Products` section and inspect reuse candidates with `openclaw engram work-product-recall-search`.
 - **Commitment lifecycle foundation** — Engram can now, when `creationMemoryEnabled`, `commitmentLedgerEnabled`, and `commitmentLifecycleEnabled` are enabled, transition existing commitments to `fulfilled` / `cancelled` / `expired`, inspect overdue and stale obligations in `openclaw engram commitment-status`, and run deterministic lifecycle cleanup with `openclaw engram commitment-lifecycle-run`.
+- **Resume-bundle format foundation** — Engram can now, when `creationMemoryEnabled` and `resumeBundlesEnabled` are enabled, persist typed crash-recovery resume bundles, inspect them with `openclaw engram resume-bundle-status`, and write deterministic handoff shells through `openclaw engram resume-bundle-record`.
 - **Zero-config start** — Install, add an API key, restart. Engram works out of the box with sensible defaults and progressively unlocks advanced features as you enable them.
 
 ## Quick Start
@@ -228,6 +229,8 @@ Key settings:
 | `commitmentLifecycleEnabled` | `false` | Enable commitment lifecycle transitions, stale tracking, and resolved-entry cleanup for the commitment ledger |
 | `commitmentStaleDays` | `14` | Days before an open commitment without a due date is considered stale in lifecycle status |
 | `commitmentLedgerDir` | `{memoryDir}/state/commitment-ledger` | Root directory for typed commitment ledger entries |
+| `resumeBundlesEnabled` | `false` | Enable typed resume-bundle storage plus the operator-facing `resume-bundle-status` and `resume-bundle-record` commands |
+| `resumeBundleDir` | `{memoryDir}/state/resume-bundles` | Root directory for typed resume bundles |
 | `workProductRecallEnabled` | `false` | Inject prompt-relevant work-product ledger entries into recall and expose `openclaw engram work-product-recall-search` |
 | `workProductLedgerDir` | `{memoryDir}/state/work-product-ledger` | Root directory for typed work-product ledger entries |
 

@@ -248,6 +248,8 @@ export interface PluginConfig {
   commitmentLifecycleEnabled: boolean;
   commitmentStaleDays: number;
   commitmentLedgerDir: string;
+  resumeBundlesEnabled: boolean;
+  resumeBundleDir: string;
   workProductRecallEnabled: boolean;
   workProductLedgerDir: string;
   // Local LLM Provider (v2.1)

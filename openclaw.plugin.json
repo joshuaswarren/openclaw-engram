@@ -1224,6 +1224,15 @@
         "type": "string",
         "description": "Override the commitment ledger directory (defaults to {memoryDir}/state/commitment-ledger)."
       },
+      "resumeBundlesEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable deterministic resume-bundle storage and operator-facing handoff bundle commands."
+      },
+      "resumeBundleDir": {
+        "type": "string",
+        "description": "Override the resume-bundle directory (defaults to {memoryDir}/state/resume-bundles)."
+      },
       "workProductRecallEnabled": {
         "type": "boolean",
         "default": false,
@@ -2271,6 +2280,17 @@
       "advanced": true,
       "placeholder": "{memoryDir}/state/commitment-ledger",
       "help": "Override where commitment ledger entries are stored."
+    },
+    "resumeBundlesEnabled": {
+      "label": "Resume Bundles",
+      "advanced": true,
+      "help": "Enable deterministic resume-bundle storage and explicit handoff bundle commands."
+    },
+    "resumeBundleDir": {
+      "label": "Resume Bundle Directory",
+      "advanced": true,
+      "placeholder": "{memoryDir}/state/resume-bundles",
+      "help": "Override where resume bundles are stored."
     },
     "workProductRecallEnabled": {
       "label": "Work-Product Recall",

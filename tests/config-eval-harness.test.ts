@@ -36,9 +36,11 @@ test("evaluation harness config defaults off and derives store dir from memoryDi
   assert.equal(cfg.commitmentLedgerEnabled, false);
   assert.equal(cfg.commitmentLifecycleEnabled, false);
   assert.equal(cfg.commitmentStaleDays, 14);
+  assert.equal(cfg.resumeBundlesEnabled, false);
   assert.equal(cfg.workProductRecallEnabled, false);
   assert.equal(cfg.abstractionNodeStoreDir, path.join(memoryDir, "state", "abstraction-nodes"));
   assert.equal(cfg.commitmentLedgerDir, path.join(memoryDir, "state", "commitment-ledger"));
+  assert.equal(cfg.resumeBundleDir, path.join(memoryDir, "state", "resume-bundles"));
   assert.equal(cfg.workProductLedgerDir, path.join(memoryDir, "state", "work-product-ledger"));
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "objective-state" && entry.enabled === false), true);
   assert.equal(cfg.recallPipeline.some((entry) => entry.id === "causal-trajectories" && entry.enabled === false), true);
@@ -79,6 +81,8 @@ test("evaluation harness config respects explicit flags and custom store dir", (
     commitmentLifecycleEnabled: true,
     commitmentStaleDays: 21,
     commitmentLedgerDir: "/tmp/custom-commitments",
+    resumeBundlesEnabled: true,
+    resumeBundleDir: "/tmp/custom-resume-bundles",
     workProductRecallEnabled: true,
     workProductLedgerDir: "/tmp/custom-work-products",
     abstractionNodeStoreDir: "/tmp/abstraction-node-store",
@@ -111,6 +115,8 @@ test("evaluation harness config respects explicit flags and custom store dir", (
   assert.equal(cfg.commitmentLifecycleEnabled, true);
   assert.equal(cfg.commitmentStaleDays, 21);
   assert.equal(cfg.commitmentLedgerDir, "/tmp/custom-commitments");
+  assert.equal(cfg.resumeBundlesEnabled, true);
+  assert.equal(cfg.resumeBundleDir, "/tmp/custom-resume-bundles");
   assert.equal(cfg.workProductRecallEnabled, true);
   assert.equal(cfg.abstractionNodeStoreDir, "/tmp/abstraction-node-store");
   assert.equal(cfg.workProductLedgerDir, "/tmp/custom-work-products");
