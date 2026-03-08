@@ -135,7 +135,11 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
     lines.push(`importanceScore: ${fm.importance.score}`);
     lines.push(`importanceLevel: ${fm.importance.level}`);
     if (fm.importance.reasons.length > 0) {
-      lines.push(`importanceReasons: [${fm.importance.reasons.map((r) => `"${r.replace(/"/g, '\\"')}"`).join(", ")}]`);
+      lines.push(
+        `importanceReasons: [${fm.importance.reasons
+          .map((r) => `"${r.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ")}]`,
+      );
     }
     if (fm.importance.keywords.length > 0) {
       lines.push(`importanceKeywords: [${fm.importance.keywords.map((k) => `"${k}"`).join(", ")}]`);
@@ -173,7 +177,7 @@ function parseLinkReasonValue(rawValue: string): string {
   const legacyValue = rawValue.replace(/\\"/g, '"');
   const looksLikeLegacyPath =
     !rawValue.includes("\\\\") &&
-    (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)+/.test(rawValue) ||
+    (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)*/.test(rawValue) ||
       /\\[A-Za-z0-9._ -]+\\[A-Za-z0-9._ -]+/.test(rawValue));
 
   if (looksLikeLegacyPath) {
@@ -252,12 +256,14 @@ function parseFrontmatter(
     // Parse importance reasons array
     let reasons: string[] = [];
     const reasonsStr = fm.importanceReasons ?? "";
-    const reasonsMatch = reasonsStr.match(/\[(.*)]/);
-    if (reasonsMatch) {
-      reasons = reasonsMatch[1]
-        .split(/",\s*"/)
-        .map((r) => r.replace(/^"|"$/g, "").replace(/\\"/g, '"'))
-        .filter(Boolean);
+    if (reasonsStr.trim().startsWith("[") && reasonsStr.trim().endsWith("]")) {
+      const reasonMatches = reasonsStr.matchAll(/"((?:\\.|[^"\\])*)"/g);
+      for (const match of reasonMatches) {
+        const reason = parseLinkReasonValue(match[1]);
+        if (reason.length > 0) {
+          reasons.push(reason);
+        }
+      }
     }
 
     // Parse importance keywords array

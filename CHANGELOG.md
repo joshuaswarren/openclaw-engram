@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 <!-- New items go here before they're released -->
 
 ### Fixed
+- Frontmatter parser now unescapes backslashes and escaped quotes for `importanceReasons` and `links[].reason`, preventing backslash doubling across save/load round-trips after serializer hardening.
 - Frontmatter link serialization now preserves parser symmetry for `links[].reason`: reasons are JSON-escaped when written and JSON-unescaped when parsed, preventing backslash amplification across save/load cycles while still addressing incomplete escaping. Parsing now also fail-opens for legacy files that contain previously-unescaped backslashes, so older memories continue to load instead of being dropped on parse.
 - Removed a redundant no-op `.replace("Z", "Z")` call from `toSafeTimestamp`, preserving the filesystem-safe `YYYYMMDDTHHMMSSmmmZ` format while resolving code-scanning alert #7.
 - **Objective-state follow-up**: plain-text tool results no longer get marked as failures just because they contain words like `errors` or `failed` inside otherwise successful messages such as `0 errors found` or `previously failed test now passes`.
