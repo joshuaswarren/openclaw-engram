@@ -170,13 +170,20 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
 }
 
 function parseLinkReasonValue(rawValue: string): string {
+  const legacyValue = rawValue.replace(/\\"/g, '"');
+  const looksLikeLegacyPath =
+    !rawValue.includes("\\\\") &&
+    (/[A-Za-z]:\\[A-Za-z0-9._ -]+(?:\\[A-Za-z0-9._ -]+)+/.test(rawValue) ||
+      /\\[A-Za-z0-9._ -]+\\[A-Za-z0-9._ -]+/.test(rawValue));
+
+  if (looksLikeLegacyPath) {
+    return legacyValue;
+  }
+
   try {
     return JSON.parse(`"${rawValue}"`) as string;
   } catch {
-    // Backward-compat fallback for legacy files that escaped quotes but not
-    // backslashes (e.g. "C:\Users"). Preserve backslashes literally while
-    // still unescaping legacy quote escapes.
-    return rawValue.replace(/\\"/g, '"');
+    return legacyValue;
   }
 }
 

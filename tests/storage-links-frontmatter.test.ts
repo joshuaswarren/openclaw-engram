@@ -89,3 +89,45 @@ test("StorageManager reads legacy link reasons with unescaped backslashes", asyn
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("StorageManager preserves legacy backslash sequences that look like JSON escapes", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-link-reason-legacy-json-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const id = "fact-legacy-link-reason-json-ish";
+    const day = new Date().toISOString().slice(0, 10);
+    const file = path.join(dir, "facts", day, `${id}.md`);
+    const legacyReason = String.raw`D:\temp\notes\today`;
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-01-01T00:00:00.000Z",
+      "updated: 2026-01-01T00:00:00.000Z",
+      "source: test",
+      "confidence: 0.8",
+      "confidenceTier: medium",
+      "tags: []",
+      "links:",
+      "  - targetId: fact-target",
+      "    linkType: references",
+      "    strength: 0.9",
+      `    reason: "${legacyReason}"`,
+      "---",
+      "",
+      "payload",
+      "",
+    ].join("\n");
+
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, raw, "utf-8");
+
+    const memory = await storage.getMemoryById(id);
+    assert.ok(memory);
+    assert.equal(memory.frontmatter.links?.[0]?.reason, legacyReason);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
