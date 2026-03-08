@@ -239,11 +239,15 @@ export function resolveEvalStoreDir(memoryDir: string, overrideDir?: string): st
   return path.join(memoryDir, "state", "evals");
 }
 
-function assertSafeBenchmarkId(benchmarkId: string): string {
-  if (benchmarkId === "." || benchmarkId === ".." || benchmarkId.includes("/") || benchmarkId.includes("\\")) {
-    throw new Error("benchmarkId must be a safe path segment");
+function assertSafePathSegment(value: string, field: string): string {
+  if (value === "." || value === ".." || value.includes("/") || value.includes("\\")) {
+    throw new Error(`${field} must be a safe path segment`);
   }
-  return benchmarkId;
+  return value;
+}
+
+function assertSafeBenchmarkId(benchmarkId: string): string {
+  return assertSafePathSegment(benchmarkId, "benchmarkId");
 }
 
 export function validateEvalBenchmarkManifest(
@@ -856,7 +860,7 @@ export async function createEvalBaselineSnapshot(options: {
     throw new Error("benchmark baseline snapshots are disabled");
   }
 
-  const snapshotId = assertSafeBenchmarkId(assertString(options.snapshotId, "snapshotId"));
+  const snapshotId = assertSafePathSegment(assertString(options.snapshotId, "snapshotId"), "snapshotId");
   const rootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
   const store = await collectEvalStoreSnapshot({
     rootDir,

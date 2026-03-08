@@ -106,6 +106,21 @@ test("createEvalBaselineSnapshot fails closed when baseline snapshots are disabl
   );
 });
 
+test("createEvalBaselineSnapshot reports snapshotId when the snapshot id is unsafe", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-eval-baseline-id-"));
+  await seedEvalStore(memoryDir);
+
+  await assert.rejects(
+    () =>
+      createEvalBaselineSnapshot({
+        memoryDir,
+        baselineSnapshotsEnabled: true,
+        snapshotId: "bad/id",
+      }),
+    /snapshotId must be a safe path segment/i,
+  );
+});
+
 test("benchmark-status reports baseline snapshot counts and latest baseline metadata", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-eval-baseline-status-"));
   await seedEvalStore(memoryDir);
