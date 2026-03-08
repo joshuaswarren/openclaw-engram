@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
   assert.match(output, /## \[Unreleased\]\n\n## \[v9\.0\.1\] - 2026-03-08/);
   assert.match(output, /### Added\n- Added a lifecycle ledger\./);
   assert.match(output, /### Fixed\n- Fixed a release workflow bug\./);
+  assert.match(output, /- Fixed a release workflow bug\.\n\n## \[v9\.0\.0\] - 2026-03-01/);
   assert.match(output, /## \[v9\.0\.0\] - 2026-03-01/);
 });
 

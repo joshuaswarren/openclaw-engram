@@ -29,6 +29,6 @@ export function promoteUnreleasedChangelog(
   }
 
   const normalizedBody = unreleasedBody.replace(/^\n+/, "").replace(/\n+$/, "");
-  const releaseSection = `\n\n## [v${options.version}] - ${options.date}\n\n${normalizedBody}`;
+  const releaseSection = `\n\n## [v${options.version}] - ${options.date}\n\n${normalizedBody}\n`;
   return `${before}${releaseSection}${after}`;
 }
