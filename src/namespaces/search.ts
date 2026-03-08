@@ -114,7 +114,7 @@ export class NamespaceSearchRouter {
 
   async ensureNamespaceCollection(namespace: string): Promise<"present" | "missing" | "unknown" | "skipped"> {
     const record = await this.backendRecordFor(namespace);
-    return await record.backend.ensureCollection(record.memoryDir);
+    return record.collectionState;
   }
 
   private async backendRecordFor(namespace: string): Promise<NamespaceBackendRecord> {
@@ -164,10 +164,14 @@ function mergeNamespaceSearchResults(
     for (const result of list) {
       const key = result.path || result.docid;
       const existing = merged.get(key);
-      if (!existing || result.score > existing.score) {
+      if (!existing) {
+        merged.set(key, result);
+        continue;
+      }
+      if (result.score > existing.score) {
         merged.set(key, {
           ...result,
-          snippet: result.snippet || existing?.snippet || "",
+          snippet: existing.snippet || result.snippet || "",
         });
       }
     }

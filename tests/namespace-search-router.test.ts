@@ -363,6 +363,7 @@ test("NamespaceSearchRouter scopes backends by namespace root and dedupes merged
   assert.equal(results[1]?.path, "/tmp/shared.md");
   assert.equal(results[2]?.path, "/tmp/dup.md");
   assert.equal(results[2]?.score, 0.7);
+  assert.equal(results[2]?.snippet, "default dup");
 });
 
 test("NamespaceSearchRouter derives a namespaced collection for migrated default roots", async () => {
@@ -471,4 +472,33 @@ test("NamespaceSearchRouter runs maintenance only for present namespace collecti
 
   assert.deepEqual(backends.get("openclaw-engram")?.calls, ["update", "embed"]);
   assert.deepEqual(backends.get("openclaw-engram--ns--shared")?.calls ?? [], []);
+});
+
+test("NamespaceSearchRouter ensureNamespaceCollection returns cached availability without re-ensuring", async () => {
+  const memoryDir = tmpDir("engram-ns-search-ensure");
+  const cfg = baseConfig(memoryDir);
+  let ensureCalls = 0;
+  const storageRouter = {
+    async storageFor() {
+      return { dir: memoryDir };
+    },
+  };
+
+  const router = new NamespaceSearchRouter(
+    cfg,
+    storageRouter as any,
+    () => ({
+      ...backendForResultSet([]),
+      probe: async () => false,
+      ensureCollection: async () => {
+        ensureCalls += 1;
+        return "present";
+      },
+    }),
+  );
+
+  const state = await router.ensureNamespaceCollection("default");
+
+  assert.equal(state, "unknown");
+  assert.equal(ensureCalls, 0);
 });

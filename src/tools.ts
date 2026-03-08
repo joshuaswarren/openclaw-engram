@@ -49,9 +49,8 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 function normalizeToolNamespace(orchestrator: Orchestrator, value: unknown): string | undefined {
-  const namespace = asNonEmptyString(value);
-  if (!namespace) return undefined;
-  return namespace === orchestrator.config.defaultNamespace ? undefined : namespace;
+  void orchestrator;
+  return asNonEmptyString(value);
 }
 
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);

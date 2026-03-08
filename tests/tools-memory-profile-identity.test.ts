@@ -17,6 +17,7 @@ function toolText(result: { content: Array<{ type: string; text: string }> }): s
 function buildHarness() {
   const tools = new Map<string, RegisteredTool>();
   const reads: Array<{ kind: "profile" | "identity"; namespace: string }> = [];
+  const requestedNamespaces: Array<string | undefined> = [];
 
   const api = {
     registerTool(spec: RegisteredTool) {
@@ -52,6 +53,7 @@ function buildHarness() {
       writeIdentityAnchor: async () => {},
     },
     getStorageForNamespace: async (namespace?: string) => {
+      requestedNamespaces.push(namespace);
       const resolved = typeof namespace === "string" && namespace.length > 0 ? namespace : "default";
       return {
         readProfile: async () => {
@@ -80,7 +82,7 @@ function buildHarness() {
   };
 
   registerTools(api as any, orchestrator as any);
-  return { tools, reads };
+  return { tools, reads, requestedNamespaces };
 }
 
 test("memory_profile reads from the requested namespace storage", async () => {
@@ -101,4 +103,14 @@ test("memory_identity accepts namespace and reads namespace-local reflections", 
   const result = await tool.execute("tc2", { namespace: "shared" });
   assert.match(toolText(result), /shared identity/);
   assert.deepEqual(reads, [{ kind: "identity", namespace: "shared" }]);
+});
+
+test("memory_profile preserves an explicit default namespace request", async () => {
+  const { tools, requestedNamespaces } = buildHarness();
+  const tool = tools.get("memory_profile");
+  assert.ok(tool);
+
+  await tool.execute("tc3", { namespace: "default" });
+
+  assert.deepEqual(requestedNamespaces, ["default"]);
 });
