@@ -4,6 +4,8 @@ import { getMemoryProjectionPath } from "./memory-projection-store.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type { MemoryFile, MemoryLifecycleEvent } from "./types.js";
 
+export class EngramAccessInputError extends Error {}
+
 export interface EngramAccessHealthResponse {
   ok: true;
   memoryDir: string;
@@ -90,7 +92,16 @@ export class EngramAccessService {
   async recall(request: EngramAccessRecallRequest): Promise<EngramAccessRecallResponse> {
     const query = request.query.trim();
     if (query.length === 0) {
-      throw new Error("query is required");
+      throw new EngramAccessInputError("query is required");
+    }
+    const requestedNamespace = request.namespace?.trim();
+    if (
+      requestedNamespace &&
+      requestedNamespace !== this.orchestrator.config.defaultNamespace
+    ) {
+      throw new EngramAccessInputError(
+        `namespace-scoped recall is not implemented for ${requestedNamespace}`,
+      );
     }
     const context = await this.orchestrator.recall(query, request.sessionKey);
     const snapshot = request.sessionKey

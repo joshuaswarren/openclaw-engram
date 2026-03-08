@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EngramAccessHttpServer } from "../src/access-http.js";
-import type { EngramAccessService } from "../src/access-service.js";
+import { EngramAccessInputError, type EngramAccessService } from "../src/access-service.js";
 
 function createFakeService(): EngramAccessService {
   return {
@@ -149,6 +149,43 @@ test("access HTTP server rejects oversized JSON bodies", async () => {
       body: JSON.stringify({ query: "x".repeat(200) }),
     });
     assert.equal(response.status, 413);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP server returns 400 for empty recall query", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      recall: async ({ query }: { query: string }) => {
+        if (query.trim().length === 0) throw new EngramAccessInputError("query is required");
+        return { query, context: "ctx", count: 0, memoryIds: [] };
+      },
+      health: async () => ({ ok: true }),
+      recallExplain: async () => ({ found: false }),
+      memoryGet: async () => ({ found: false, namespace: "global" }),
+      memoryTimeline: async () => ({ found: false, namespace: "global", count: 0, timeline: [] }),
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(`${base}/engram/v1/recall`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query: "   " }),
+    });
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error: string };
+    assert.equal(body.error, "query is required");
   } finally {
     await server.stop();
   }

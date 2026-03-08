@@ -157,7 +157,16 @@ export class EngramMcpServer {
   async runStdio(input: Readable, output: Writable): Promise<void> {
     input.on("data", (chunk) => {
       this.buffer = Buffer.concat([this.buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-      void this.flushBuffer(output);
+      void this.flushBuffer(output).catch((err) => {
+        this.writeMessage(output, {
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32700,
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      });
     });
     await new Promise<void>((resolve, reject) => {
       input.on("end", resolve);
@@ -187,7 +196,20 @@ export class EngramMcpServer {
       const body = this.buffer.slice(messageStart, messageEnd).toString("utf-8");
       this.buffer = this.buffer.slice(messageEnd);
 
-      const parsed = JSON.parse(body) as JsonRpcRequest;
+      let parsed: JsonRpcRequest;
+      try {
+        parsed = JSON.parse(body) as JsonRpcRequest;
+      } catch {
+        this.writeMessage(output, {
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32700,
+            message: "Parse error",
+          },
+        });
+        continue;
+      }
       const response = await this.handleRequest(parsed);
       if (response) {
         this.writeMessage(output, response);

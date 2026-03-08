@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
 import { EngramMcpServer } from "../src/access-mcp.js";
 import type { EngramAccessService } from "../src/access-service.js";
 
@@ -96,4 +97,24 @@ test("MCP server advertises tools and dispatches recall", async () => {
   const recallResult = recall?.result as { structuredContent: { context: string; memoryIds: string[] } };
   assert.equal(recallResult.structuredContent.context, "ctx");
   assert.deepEqual(recallResult.structuredContent.memoryIds, ["fact-1"]);
+});
+
+test("MCP server reports parse errors and keeps processing later messages", async () => {
+  const server = new EngramMcpServer(createFakeService());
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let raw = "";
+  output.on("data", (chunk) => {
+    raw += chunk.toString("utf-8");
+  });
+
+  const run = server.runStdio(input, output);
+  input.write("Content-Length: 9\r\n\r\nnot-json!");
+  const valid = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+  input.write(`Content-Length: ${Buffer.byteLength(valid, "utf-8")}\r\n\r\n${valid}`);
+  input.end();
+  await run;
+
+  assert.match(raw, /"code":-32700/);
+  assert.match(raw, /engram\.recall/);
 });

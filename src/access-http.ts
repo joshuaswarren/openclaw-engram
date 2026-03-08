@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { timingSafeEqual } from "node:crypto";
 import { URL } from "node:url";
 import { log } from "./logger.js";
-import type { EngramAccessService } from "./access-service.js";
+import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -62,6 +62,10 @@ export class EngramAccessHttpServer {
         log.debug(`engram access HTTP request failed: ${err}`);
         if (err instanceof HttpError) {
           this.respondJson(res, err.status, { error: err.message });
+          return;
+        }
+        if (err instanceof EngramAccessInputError) {
+          this.respondJson(res, 400, { error: err.message });
           return;
         }
         if (res.headersSent) {
