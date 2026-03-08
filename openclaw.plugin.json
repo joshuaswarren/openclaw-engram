@@ -1110,6 +1110,11 @@
         "default": false,
         "description": "Enable versioned benchmark baseline snapshot artifacts under the eval store for later PR delta reporting."
       },
+      "benchmarkDeltaReporterEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable named-baseline delta reports so PR candidates can be compared against stored benchmark baselines."
+      },
       "evalStoreDir": {
         "type": "string",
         "description": "Override the evaluation harness state directory (defaults to {memoryDir}/state/evals)."
@@ -2174,6 +2179,11 @@
       "label": "Benchmark Baseline Snapshots",
       "advanced": true,
       "help": "Enable versioned benchmark baseline snapshot artifacts for later PR delta reporting."
+    },
+    "benchmarkDeltaReporterEnabled": {
+      "label": "Benchmark Delta Reporter",
+      "advanced": true,
+      "help": "Enable named-baseline delta reports that compare the current eval store against a stored benchmark baseline snapshot."
     },
     "evalStoreDir": {
       "label": "Evaluation Store Directory",

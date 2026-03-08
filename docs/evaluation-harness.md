@@ -18,11 +18,13 @@ This slice ships:
 - `evalHarnessEnabled`
 - `evalShadowModeEnabled`
 - `benchmarkBaselineSnapshotsEnabled`
+- `benchmarkDeltaReporterEnabled`
 - `evalStoreDir`
 - `openclaw engram benchmark-status`
 - `openclaw engram benchmark-validate <path>`
 - `openclaw engram benchmark-import <path> [--force]`
 - `openclaw engram benchmark-baseline-snapshot --snapshot-id <id>`
+- `openclaw engram benchmark-baseline-report --snapshot-id <id>`
 - `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>`
 - typed benchmark manifest validation
 - typed `memory-red-team` benchmark-pack validation for poisoning-defense suites
@@ -211,6 +213,14 @@ The baseline snapshot tool:
 - reads the latest completed run per benchmark from the eval store
 - writes a typed baseline snapshot under `baselines/<snapshotId>.json`
 - records pass rate, shared metrics, source root, and optional operator notes without copying raw benchmark cases
+
+The baseline delta reporter:
+
+- requires `benchmarkDeltaReporterEnabled`
+- reads a named stored baseline snapshot from the current eval store
+- compares that snapshot against the current latest completed run per benchmark
+- fails when candidate eval artifacts are invalid, a benchmark disappears, or pass rate/shared metrics regress
+- emits both machine-readable JSON and a markdown report suitable for PR comments or release notes
 
 The CI gate:
 

@@ -173,6 +173,28 @@ export interface EvalCiGateReport {
   deltas: EvalBenchmarkDelta[];
 }
 
+export interface EvalBaselineDeltaReport {
+  passed: boolean;
+  baselineSnapshotId: string;
+  baselineCreatedAt: string;
+  baselineSourceRootDir: string;
+  candidateRootDir: string;
+  comparedBenchmarks: number;
+  missingCandidateBenchmarks: string[];
+  invalidArtifacts: {
+    candidate: {
+      benchmarks: number;
+      runs: number;
+      shadows: number;
+      baselines: number;
+    };
+  };
+  regressions: string[];
+  improvements: string[];
+  deltas: EvalBenchmarkDelta[];
+  markdownReport: string;
+}
+
 export interface EvalBaselineSnapshotBenchmark {
   benchmarkId: string;
   runId: string;
@@ -574,6 +596,54 @@ function compareMetricDeltas(
   return { deltas, regressions, improvements };
 }
 
+function formatEvalBaselineDeltaMarkdown(report: EvalBaselineDeltaReport): string {
+  const lines = [
+    "# Eval Baseline Delta Report",
+    "",
+    `- Passed: ${report.passed ? "yes" : "no"}`,
+    `- Baseline snapshot: ${report.baselineSnapshotId}`,
+    `- Baseline created: ${report.baselineCreatedAt}`,
+    `- Baseline source root: ${report.baselineSourceRootDir}`,
+    `- Candidate root: ${report.candidateRootDir}`,
+    `- Benchmarks compared: ${report.comparedBenchmarks}`,
+  ];
+
+  if (report.missingCandidateBenchmarks.length > 0) {
+    lines.push(`- Missing candidate benchmarks: ${report.missingCandidateBenchmarks.join(", ")}`);
+  }
+
+  lines.push(
+    `- Invalid candidate artifacts: benchmarks=${report.invalidArtifacts.candidate.benchmarks}, runs=${report.invalidArtifacts.candidate.runs}, shadows=${report.invalidArtifacts.candidate.shadows}, baselines=${report.invalidArtifacts.candidate.baselines}`,
+    "",
+    "## Regressions",
+  );
+  if (report.regressions.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const regression of report.regressions) lines.push(`- ${regression}`);
+  }
+
+  lines.push("", "## Improvements");
+  if (report.improvements.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const improvement of report.improvements) lines.push(`- ${improvement}`);
+  }
+
+  lines.push("", "## Benchmark Deltas");
+  if (report.deltas.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const delta of report.deltas) {
+      lines.push(
+        `- ${delta.benchmarkId}: passRate ${delta.basePassRate} -> ${delta.candidatePassRate} (delta ${delta.passRateDelta})`,
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
 async function collectEvalStoreSnapshot(options: EvalStoreSnapshotOptions): Promise<EvalStoreSnapshot> {
   const rootDir = options.rootDir;
   const benchmarkDir = path.join(rootDir, "benchmarks");
@@ -896,6 +966,122 @@ export async function createEvalBaselineSnapshot(options: {
   await mkdir(path.dirname(targetPath), { recursive: true });
   await writeFile(targetPath, JSON.stringify(snapshot, null, 2), "utf-8");
   return { targetPath, snapshot };
+}
+
+export async function runEvalBaselineDeltaReport(options: {
+  memoryDir: string;
+  evalStoreDir?: string;
+  benchmarkDeltaReporterEnabled: boolean;
+  snapshotId: string;
+}): Promise<EvalBaselineDeltaReport> {
+  if (options.benchmarkDeltaReporterEnabled !== true) {
+    throw new Error("benchmark delta reporter is disabled");
+  }
+
+  const snapshotId = assertSafePathSegment(assertString(options.snapshotId, "snapshotId"), "snapshotId");
+  const candidateRootDir = resolveEvalStoreDir(options.memoryDir, options.evalStoreDir);
+  const candidateSnapshot = await collectEvalStoreSnapshot({
+    rootDir: candidateRootDir,
+    enabled: true,
+    shadowModeEnabled: true,
+    baselineSnapshotsEnabled: true,
+    memoryRedTeamBenchEnabled: true,
+  });
+  const baselineSnapshot = candidateSnapshot.baselines.find((snapshot) => snapshot.snapshotId === snapshotId);
+  if (!baselineSnapshot) {
+    throw new Error(`benchmark baseline snapshot not found: ${snapshotId}`);
+  }
+
+  const regressions: string[] = [];
+  const improvements: string[] = [];
+
+  if (candidateSnapshot.status.invalidBenchmarks.length > 0) {
+    regressions.push(`candidate store has ${candidateSnapshot.status.invalidBenchmarks.length} invalid benchmark manifest(s)`);
+  }
+  if (candidateSnapshot.status.invalidRuns.length > 0) {
+    regressions.push(`candidate store has ${candidateSnapshot.status.invalidRuns.length} invalid run summary file(s)`);
+  }
+  if (candidateSnapshot.status.invalidShadows.length > 0) {
+    regressions.push(`candidate store has ${candidateSnapshot.status.invalidShadows.length} invalid shadow record(s)`);
+  }
+  if (candidateSnapshot.status.invalidBaselines.length > 0) {
+    regressions.push(`candidate store has ${candidateSnapshot.status.invalidBaselines.length} invalid baseline snapshot file(s)`);
+  }
+
+  const candidateRuns = latestCompletedRunsByBenchmark(candidateSnapshot.runs);
+  const baselineBenchmarks = new Map(
+    baselineSnapshot.benchmarks.map((benchmark) => [benchmark.benchmarkId, benchmark] as const),
+  );
+  const missingCandidateBenchmarks = [...baselineBenchmarks.keys()]
+    .filter((benchmarkId) => !candidateRuns.has(benchmarkId))
+    .sort();
+  for (const benchmarkId of missingCandidateBenchmarks) {
+    regressions.push(`candidate is missing latest completed benchmark run for ${benchmarkId}`);
+  }
+
+  const deltas: EvalBenchmarkDelta[] = [];
+  for (const benchmarkId of [...baselineBenchmarks.keys()].sort()) {
+    const baseBenchmark = baselineBenchmarks.get(benchmarkId);
+    const candidateRun = candidateRuns.get(benchmarkId);
+    if (!baseBenchmark || !candidateRun) continue;
+
+    const passRateDelta = computePassRate(candidateRun) - baseBenchmark.passRate;
+    const delta: EvalBenchmarkDelta = {
+      benchmarkId,
+      baseRunId: baseBenchmark.runId,
+      candidateRunId: candidateRun.runId,
+      basePassRate: baseBenchmark.passRate,
+      candidatePassRate: computePassRate(candidateRun),
+      passRateDelta,
+      metricDeltas: {},
+      regressions: [],
+      improvements: [],
+    };
+
+    if (passRateDelta < 0) {
+      delta.regressions.push(`passRate ${baseBenchmark.passRate} -> ${delta.candidatePassRate}`);
+      regressions.push(`${benchmarkId} pass rate regressed (${baseBenchmark.passRate} -> ${delta.candidatePassRate})`);
+    } else if (passRateDelta > 0) {
+      delta.improvements.push(`passRate ${baseBenchmark.passRate} -> ${delta.candidatePassRate}`);
+      improvements.push(`${benchmarkId} pass rate improved (${baseBenchmark.passRate} -> ${delta.candidatePassRate})`);
+    }
+
+    const metricDelta = compareMetricDeltas(baseBenchmark.metrics, candidateRun.metrics);
+    delta.metricDeltas = metricDelta.deltas;
+    for (const regression of metricDelta.regressions) {
+      delta.regressions.push(regression);
+      regressions.push(`${benchmarkId} ${regression}`);
+    }
+    for (const improvement of metricDelta.improvements) {
+      delta.improvements.push(improvement);
+      improvements.push(`${benchmarkId} ${improvement}`);
+    }
+    deltas.push(delta);
+  }
+
+  const report: EvalBaselineDeltaReport = {
+    passed: regressions.length === 0,
+    baselineSnapshotId: baselineSnapshot.snapshotId,
+    baselineCreatedAt: baselineSnapshot.createdAt,
+    baselineSourceRootDir: baselineSnapshot.sourceRootDir,
+    candidateRootDir: candidateSnapshot.status.rootDir,
+    comparedBenchmarks: deltas.length,
+    missingCandidateBenchmarks,
+    invalidArtifacts: {
+      candidate: {
+        benchmarks: candidateSnapshot.status.invalidBenchmarks.length,
+        runs: candidateSnapshot.status.invalidRuns.length,
+        shadows: candidateSnapshot.status.invalidShadows.length,
+        baselines: candidateSnapshot.status.invalidBaselines.length,
+      },
+    },
+    regressions,
+    improvements,
+    deltas,
+    markdownReport: "",
+  };
+  report.markdownReport = formatEvalBaselineDeltaMarkdown(report);
+  return report;
 }
 
 function resolveRequiredEvalStoreRoot(options: { memoryDir?: string; evalStoreDir?: string }, label: string): string {
