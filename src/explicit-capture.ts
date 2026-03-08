@@ -26,6 +26,7 @@ export type ValidExplicitCapture = {
 };
 
 const INLINE_NOTE_RE = /<memory_note>\s*([\s\S]*?)\s*<\/memory_note>/gi;
+const INLINE_NOTE_MARKUP_RE = /<memory_note>\s*[\s\S]*?\s*<\/memory_note>/i;
 const INLINE_ALLOWED_CATEGORIES = new Set<MemoryCategory>([
   "fact",
   "preference",
@@ -166,7 +167,7 @@ export function parseInlineExplicitCaptureNotes(text: string): ExplicitCaptureIn
 }
 
 export function hasInlineExplicitCaptureMarkup(text: string): boolean {
-  return INLINE_NOTE_RE.test(text);
+  return INLINE_NOTE_MARKUP_RE.test(text);
 }
 
 export function stripInlineExplicitCaptureNotes(text: string): string {
@@ -226,7 +227,15 @@ export async function findDuplicateExplicitCapture(
     const hasHash = await (storage as { hasFactContentHash: (content: string) => Promise<boolean> }).hasFactContentHash(
       candidate.content,
     );
-    if (!hasHash) return null;
+    if (!hasHash) {
+      const authoritative =
+        typeof (storage as { isFactContentHashAuthoritative?: () => Promise<boolean> | boolean }).isFactContentHashAuthoritative
+          === "function"
+          ? await (storage as { isFactContentHashAuthoritative: () => Promise<boolean> | boolean })
+            .isFactContentHashAuthoritative()
+          : false;
+      if (authoritative) return null;
+    }
   }
   const existing = await storage.readAllMemories();
   const normalizedCandidate = normalizeCaptureContent(candidate.content);

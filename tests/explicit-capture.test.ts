@@ -80,6 +80,7 @@ test("inline explicit capture markup is detected even when note blocks are malfo
   const notes = parseInlineExplicitCaptureNotes(raw);
   assert.equal(notes.length, 0);
   assert.equal(hasInlineExplicitCaptureMarkup(raw), true);
+  assert.equal(hasInlineExplicitCaptureMarkup(raw), true);
   assert.equal(stripInlineExplicitCaptureNotes(raw), "Conversation text before.\n\nConversation text after.");
 });
 
@@ -154,10 +155,11 @@ test("persistExplicitCapture writes lifecycle events and dedupes active duplicat
   assert.equal(lifecycleEvents.length, 1);
 });
 
-test("fact duplicate checks short-circuit without a full corpus scan when hash index misses", async () => {
+test("fact duplicate checks short-circuit without a full corpus scan when authoritative hash index misses", async () => {
   let readAllMemoriesCalls = 0;
   const storage = {
     hasFactContentHash: async () => false,
+    isFactContentHashAuthoritative: async () => true,
     readAllMemories: async () => {
       readAllMemoriesCalls += 1;
       return [];
@@ -174,6 +176,34 @@ test("fact duplicate checks short-circuit without a full corpus scan when hash i
 
   assert.equal(duplicate, null);
   assert.equal(readAllMemoriesCalls, 0);
+});
+
+test("fact duplicate checks fall back to the full corpus scan when hash index coverage is not authoritative", async () => {
+  let readAllMemoriesCalls = 0;
+  const storage = {
+    hasFactContentHash: async () => false,
+    isFactContentHashAuthoritative: async () => false,
+    readAllMemories: async () => {
+      readAllMemoriesCalls += 1;
+      return [
+        {
+          frontmatter: { id: "fact-legacy", category: "fact", status: "active" },
+          content: "Legacy fact content that predates the hash index.",
+        },
+      ];
+    },
+  };
+
+  const duplicate = await findDuplicateExplicitCapture(
+    { getStorage: async () => storage } as never,
+    validateExplicitCaptureInput({
+      content: "Legacy fact content that predates the hash index.",
+      category: "fact",
+    }),
+  );
+
+  assert.equal(duplicate, "fact-legacy");
+  assert.equal(readAllMemoriesCalls, 1);
 });
 
 test("memory_store and memory_capture share explicit validation and duplicate handling", async () => {

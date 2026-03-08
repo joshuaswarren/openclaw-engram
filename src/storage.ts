@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
+import { access, readdir, readFile, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
 import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -687,6 +687,7 @@ export class StorageManager {
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
   private factHashIndex: ContentHashIndex | null = null;
+  private factHashIndexAuthoritative: boolean | null = null;
 
   constructor(private readonly baseDir: string) {}
 
@@ -766,6 +767,9 @@ export class StorageManager {
   private get stateDir(): string {
     return path.join(this.baseDir, "state");
   }
+  private get factHashIndexReadyPath(): string {
+    return path.join(this.stateDir, "fact-hashes.ready");
+  }
 
   private async getFactHashIndex(): Promise<ContentHashIndex> {
     if (!this.factHashIndex) {
@@ -773,6 +777,32 @@ export class StorageManager {
       await this.factHashIndex.load();
     }
     return this.factHashIndex;
+  }
+
+  private async ensureFactHashIndexAuthoritative(): Promise<void> {
+    if (this.factHashIndexAuthoritative !== null) {
+      return;
+    }
+
+    try {
+      await access(this.factHashIndexReadyPath);
+      this.factHashIndexAuthoritative = true;
+      return;
+    } catch {
+      // Fall through and backfill from the live fact corpus once.
+    }
+
+    const factHashIndex = await this.getFactHashIndex();
+    const existing = await this.readAllMemories();
+    for (const memory of existing) {
+      if (memory.frontmatter.category !== "fact") continue;
+      if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
+      factHashIndex.add(memory.content);
+    }
+    await factHashIndex.save();
+    await mkdir(path.dirname(this.factHashIndexReadyPath), { recursive: true });
+    await writeFile(this.factHashIndexReadyPath, "v1\n", "utf-8");
+    this.factHashIndexAuthoritative = true;
   }
   private get questionsDir(): string {
     return path.join(this.baseDir, "questions");
@@ -956,8 +986,14 @@ export class StorageManager {
   }
 
   async hasFactContentHash(content: string): Promise<boolean> {
+    await this.ensureFactHashIndexAuthoritative();
     const factHashIndex = await this.getFactHashIndex();
     return factHashIndex.has(content);
+  }
+
+  async isFactContentHashAuthoritative(): Promise<boolean> {
+    await this.ensureFactHashIndexAuthoritative();
+    return true;
   }
 
   async writeArtifact(
