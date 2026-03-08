@@ -757,6 +757,11 @@ export class Orchestrator {
     });
   }
 
+  private isSearchAvailableForNamespaceRouting(): boolean {
+    if (this.config.namespacesEnabled) return true;
+    return this.qmd.isAvailable();
+  }
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
@@ -6413,6 +6418,8 @@ export class Orchestrator {
     category: string,
     namespaceScope: string,
   ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
+    if (!this.isSearchAvailableForNamespaceRouting()) return null;
+
     // Search for similar memories
     const results = await this.searchAcrossNamespaces({
       query: content,
@@ -6500,6 +6507,8 @@ export class Orchestrator {
     category: string,
     namespaceScope: string,
   ): Promise<MemoryLink[]> {
+    if (!this.isSearchAvailableForNamespaceRouting()) return [];
+
     // Search for related memories
     const results = await this.searchAcrossNamespaces({
       query: content,

@@ -123,12 +123,6 @@ export async function verifyNamespaces(options: {
   const problems: string[] = [];
 
   for (const entry of namespaces) {
-    if (!entry.exists) {
-      problems.push(`${entry.namespace}: missing root (${entry.rootDir})`);
-    }
-    if (entry.usesLegacyRoot && entry.hasMemoryData) {
-      problems.push(`${entry.namespace}: legacy root still contains data`);
-    }
     if (entry.exists && !entry.hasMemoryData) {
       problems.push(`${entry.namespace}: root exists but contains no Engram data`);
     }

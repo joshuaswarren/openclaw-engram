@@ -2539,8 +2539,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .description("Move legacy root memory layout into a namespaced root")
         .option("--to <ns>", "Target namespace (default: config defaultNamespace)", "")
         .option("--dry-run", "Show the migration plan without moving files")
-        .action(async (...args: unknown[]) => {
-          const options = (args[0] ?? {}) as Record<string, unknown>;
+        .action(async (optionsRaw: unknown) => {
+          const options =
+            optionsRaw && typeof optionsRaw === "object"
+              ? optionsRaw as { to?: string; dryRun?: boolean }
+              : {};
           const targetNamespace =
             typeof options.to === "string" && options.to.trim().length > 0
               ? options.to.trim()

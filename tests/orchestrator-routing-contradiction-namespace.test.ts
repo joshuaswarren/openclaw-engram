@@ -153,3 +153,38 @@ test("suggestLinksForMemory still uses namespace router when default qmd backend
   assert.equal(links.length, 1);
   assert.equal(links[0]?.targetId, sharedId);
 });
+
+test("contradiction and link checks fail open when search is unavailable without namespaces", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-routing-no-qmd-"));
+  const config = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    namespacesEnabled: false,
+    contradictionDetectionEnabled: true,
+    memoryLinkingEnabled: true,
+  });
+
+  const orchestrator = new Orchestrator(config) as any;
+  orchestrator.qmd = {
+    isAvailable: () => false,
+    search: async () => {
+      throw new Error("search should not run when backend is unavailable");
+    },
+    hybridSearch: async () => {
+      throw new Error("hybrid search should not run when backend is unavailable");
+    },
+    bm25Search: async () => {
+      throw new Error("bm25 search should not run when backend is unavailable");
+    },
+    vectorSearch: async () => {
+      throw new Error("vector search should not run when backend is unavailable");
+    },
+  };
+
+  const contradiction = await orchestrator.checkForContradiction("fact", "fact", "default");
+  const links = await orchestrator.suggestLinksForMemory("fact", "fact", "default");
+
+  assert.equal(contradiction, null);
+  assert.deepEqual(links, []);
+});
