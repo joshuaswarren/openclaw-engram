@@ -136,6 +136,20 @@ export async function getResumeBundleStatus(options: {
 }): Promise<ResumeBundleStatus> {
   const rootDir = resolveResumeBundleDir(options.memoryDir, options.resumeBundleDir);
   const bundlesDir = path.join(rootDir, "bundles");
+  if (!options.enabled) {
+    return {
+      enabled: false,
+      rootDir,
+      bundlesDir,
+      bundles: {
+        total: 0,
+        valid: 0,
+        invalid: 0,
+        bySource: {},
+      },
+      invalidBundles: [],
+    };
+  }
   const { files, bundles, invalidBundles } = await readResumeBundles(options);
 
   let latestBundle: ResumeBundle | undefined;

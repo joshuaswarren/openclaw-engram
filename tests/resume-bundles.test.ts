@@ -206,6 +206,10 @@ test("resume-bundle CLI commands write and report only when the feature is enabl
     resumeBundlesEnabled: false,
   });
   assert.equal(disabledStatus.enabled, false);
+  assert.equal(disabledStatus.bundles.total, 0);
+  assert.equal(disabledStatus.bundles.valid, 0);
+  assert.equal(disabledStatus.bundles.invalid, 0);
+  assert.equal(disabledStatus.latestBundle, undefined);
 
   const enabledStatus = await runResumeBundleStatusCliCommand({
     memoryDir,
