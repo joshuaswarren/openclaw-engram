@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
 import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
+import { persistExplicitCapture, validateExplicitCaptureInput } from "./explicit-capture.js";
 import { log } from "./logger.js";
 import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
@@ -231,6 +232,63 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
   function promptHashForTelemetry(input?: string): string | undefined {
     if (typeof input !== "string" || input.trim().length === 0) return undefined;
     return createHash("sha256").update(input).digest("hex").slice(0, 16);
+  }
+
+  async function executeExplicitCapture(
+    params: {
+      content: string;
+      namespace?: string;
+      category?: string;
+      tags?: string[];
+      entityRef?: string;
+      confidence?: number;
+      ttl?: string;
+      sourceReason?: string;
+    },
+    maintenanceReason: string,
+  ) {
+    const {
+      content,
+      namespace,
+      category = "fact",
+      tags = [],
+      entityRef,
+      confidence,
+      ttl,
+      sourceReason,
+    } = params;
+
+    const candidate = validateExplicitCaptureInput({
+      content,
+      namespace,
+      category,
+      tags,
+      entityRef,
+      confidence,
+      ttl,
+      sourceReason,
+    });
+    const result = await persistExplicitCapture(orchestrator, candidate, "tool");
+
+    if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
+      const storage = await orchestrator.getStorage(candidate.namespace);
+      const mem = await storage.getMemoryById(result.id).catch(() => null);
+      if (mem?.path && mem.frontmatter?.created) {
+        indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
+      }
+    }
+
+    orchestrator.requestQmdMaintenanceForTool(maintenanceReason);
+
+    if (result.duplicateOf) {
+      return toolResult(
+        `Memory already exists: ${result.duplicateOf}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
+      );
+    }
+
+    return toolResult(
+      `Memory stored: ${result.id}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
+    );
   }
 
   api.registerTool(
@@ -1240,53 +1298,111 @@ Best for:
               "Entity reference (e.g., person-jane-doe, project-my-app)",
           }),
         ),
+        confidence: Type.Optional(
+          Type.Number({
+            description: "Explicit capture confidence (0-1). Defaults to 0.95.",
+            minimum: 0,
+            maximum: 1,
+          }),
+        ),
+        ttl: Type.Optional(
+          Type.String({
+            description: "Optional TTL expression to attach to the stored memory.",
+          }),
+        ),
+        sourceReason: Type.Optional(
+          Type.String({
+            description: "Optional reason code for audit history.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
-        const {
-          content,
-          namespace,
-          category = "fact",
-          tags = [],
-          entityRef,
-        } = params as {
-          content: string;
-          namespace?: string;
-          category?: string;
-          tags?: string[];
-          entityRef?: string;
-        };
-
-        const storage = await orchestrator.getStorage(namespace);
-        const id = await storage.writeMemory(
-          category as MemoryCategory,
-          content,
-          {
-            confidence: 0.95,
-            tags,
-            entityRef,
-            source: "explicit",
+        return executeExplicitCapture(
+          params as {
+            content: string;
+            namespace?: string;
+            category?: string;
+            tags?: string[];
+            entityRef?: string;
+            confidence?: number;
+            ttl?: string;
+            sourceReason?: string;
           },
+          "memory_store",
         );
-
-        // Update temporal + tag indexes for the explicit store (v8.1).
-        // Only do an incremental update when indexes already exist; if they
-        // don't exist yet the next extraction's updateTemporalTagIndexes will
-        // trigger a full corpus bootstrap — writing a partial index here would
-        // permanently prevent that bootstrap from running.
-        if (orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
-          const mem = await storage.getMemoryById(id).catch(() => null);
-          if (mem?.path && mem.frontmatter?.created) {
-            indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
-          }
-        }
-
-        // Queue debounced QMD maintenance via orchestrator guardrails so new memory becomes searchable.
-        orchestrator.requestQmdMaintenanceForTool("memory_store");
-
-        return toolResult(`Memory stored: ${id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`);
       },
     },
     { name: "memory_store" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_capture",
+      label: "Capture Memory",
+      description:
+        "Store a validated explicit memory note. Preferred tool for explicit capture modes and operator-controlled memory creation.",
+      parameters: Type.Object({
+        content: Type.String({
+          description: "The memory to store — one standalone validated statement.",
+        }),
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Namespace to store into. Omit to store into defaultNamespace.",
+          }),
+        ),
+        category: Type.Optional(
+          Type.String({
+            description: "Memory category.",
+            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"],
+          }),
+        ),
+        tags: Type.Optional(
+          Type.Array(Type.String(), {
+            description: "Tags for categorization",
+          }),
+        ),
+        entityRef: Type.Optional(
+          Type.String({
+            description:
+              "Entity reference (e.g., person-jane-doe, project-my-app)",
+          }),
+        ),
+        confidence: Type.Optional(
+          Type.Number({
+            description: "Explicit capture confidence (0-1). Defaults to 0.95.",
+            minimum: 0,
+            maximum: 1,
+          }),
+        ),
+        ttl: Type.Optional(
+          Type.String({
+            description: "Optional TTL expression to attach to the stored memory.",
+          }),
+        ),
+        sourceReason: Type.Optional(
+          Type.String({
+            description: "Optional reason code for audit history.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        return executeExplicitCapture(
+          params as {
+            content: string;
+            namespace?: string;
+            category?: string;
+            tags?: string[];
+            entityRef?: string;
+            confidence?: number;
+            ttl?: string;
+            sourceReason?: string;
+          },
+          "memory_capture",
+        );
+      },
+    },
+    { name: "memory_capture" },
   );
 
   api.registerTool(

@@ -109,6 +109,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     typeof cfg.model === "string" && cfg.model.length > 0
       ? cfg.model
       : "gpt-5.2";
+  const captureMode =
+    cfg.captureMode === "explicit" || cfg.captureMode === "hybrid"
+      ? cfg.captureMode
+      : "implicit";
 
   const rawEffort = cfg.reasoningEffort as string | undefined;
   const reasoningEffort: ReasoningEffort =
@@ -357,6 +361,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.workspaceDir === "string" && cfg.workspaceDir.length > 0
         ? cfg.workspaceDir
         : DEFAULT_WORKSPACE_DIR,
+    captureMode,
     fileHygiene,
     nativeKnowledge,
     agentAccessHttp,

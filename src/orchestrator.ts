@@ -83,6 +83,7 @@ import {
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import type { MemorySummary } from "./types.js";
+import { shouldSkipImplicitExtraction } from "./explicit-capture.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { upsertConversationChunksFailOpen, writeConversationChunks } from "./conversation-index/indexer.js";
 import { cleanupConversationChunks } from "./conversation-index/cleanup.js";
@@ -3443,6 +3444,10 @@ export class Orchestrator {
   ): Promise<void> {
     if (role !== "user" && role !== "assistant") {
       log.debug(`processTurn: ignoring unsupported role=${String(role)}`);
+      return;
+    }
+    if (shouldSkipImplicitExtraction(this.config)) {
+      log.debug("processTurn: skipping implicit extraction because captureMode=explicit");
       return;
     }
 

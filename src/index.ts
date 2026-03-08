@@ -8,6 +8,13 @@ import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
+import {
+  parseInlineExplicitCaptureNotes,
+  persistExplicitCapture,
+  shouldProcessInlineExplicitCapture,
+  stripInlineExplicitCaptureNotes,
+  validateExplicitCaptureInput,
+} from "./explicit-capture.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -297,19 +304,40 @@ export default {
             // Clean system metadata from user messages
             const cleaned =
               role === "user" ? cleanUserMessage(content) : content;
+            const explicitNotes = shouldProcessInlineExplicitCapture(orchestrator.config)
+              ? parseInlineExplicitCaptureNotes(cleaned)
+              : [];
+            const stripped = explicitNotes.length > 0
+              ? stripInlineExplicitCaptureNotes(cleaned)
+              : cleaned;
+
+            for (const note of explicitNotes) {
+              try {
+                await persistExplicitCapture(
+                  orchestrator,
+                  validateExplicitCaptureInput(note),
+                  "inline",
+                );
+                orchestrator.requestQmdMaintenanceForTool("inline.memory_note");
+              } catch (error) {
+                log.warn(`explicit inline capture rejected: ${error}`);
+              }
+            }
 
             // Append to transcript
-            if (orchestrator.config.transcriptEnabled) {
+            if (orchestrator.config.transcriptEnabled && stripped.length > 0) {
               await orchestrator.transcript.append({
                 timestamp: eventTimestamp,
                 role,
-                content: cleaned,
+                content: stripped,
                 sessionKey,
                 turnId: crypto.randomUUID(),
               });
             }
 
-            await orchestrator.processTurn(role, cleaned, sessionKey);
+            if (stripped.length > 0) {
+              await orchestrator.processTurn(role, stripped, sessionKey);
+            }
           }
         } catch (err) {
           log.error("agent_end processing failed", err);

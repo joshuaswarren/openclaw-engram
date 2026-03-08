@@ -794,6 +794,12 @@
         "default": true,
         "description": "Enable transcript archiving"
       },
+      "captureMode": {
+        "type": "string",
+        "enum": ["implicit", "explicit", "hybrid"],
+        "default": "implicit",
+        "description": "Memory capture policy. implicit preserves normal extraction, explicit stores only structured capture, and hybrid allows both."
+      },
       "transcriptRetentionDays": {
         "type": "number",
         "default": 7,
@@ -1995,6 +2001,10 @@
     "boostAccessCount": {
       "label": "Boost Frequent Access",
       "help": "Rank frequently accessed memories higher in search"
+    },
+    "captureMode": {
+      "label": "Capture Mode",
+      "help": "Choose whether Engram stores only explicit notes, normal extraction, or both."
     },
     "agentAccessHttp": {
       "label": "Local HTTP Access",

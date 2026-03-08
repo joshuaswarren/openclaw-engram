@@ -9,6 +9,7 @@ export type RecallPlanMode = "no_recall" | "minimal" | "full" | "graph_mode";
 export type CronRecallMode = "all" | "none" | "allowlist";
 export type CronConversationRecallMode = "auto" | "always" | "never";
 export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
+export type CaptureMode = "implicit" | "explicit" | "hybrid";
 
 export interface RecallSectionConfig {
   id: string;
@@ -129,6 +130,7 @@ export interface PluginConfig {
   injectQuestions: boolean;
   commitmentDecayDays: number;
   workspaceDir: string;
+  captureMode: CaptureMode;
   fileHygiene?: FileHygieneConfig;
   nativeKnowledge?: NativeKnowledgeConfig;
   agentAccessHttp: AgentAccessHttpConfig;

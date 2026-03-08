@@ -74,6 +74,7 @@ test("memory_store queues orchestrator-maintained QMD sync after write", async (
 
   const writeCalls: Array<{ category: string; content: string }> = [];
   let maintenanceRequests = 0;
+  let lifecycleEvents = 0;
   const orchestrator = {
     config: {
       defaultNamespace: "default",
@@ -82,10 +83,16 @@ test("memory_store queues orchestrator-maintained QMD sync after write", async (
       namespacesEnabled: false,
     },
     getStorage: async () => ({
+      readAllMemories: async () => [],
       writeMemory: async (category: string, content: string) => {
         writeCalls.push({ category, content });
         return "fact-test-1";
       },
+      appendMemoryLifecycleEvents: async (events: unknown[]) => {
+        lifecycleEvents += events.length;
+        return events.length;
+      },
+      getMemoryById: async () => null,
     }),
     requestQmdMaintenanceForTool: (reason: string) => {
       assert.equal(reason, "memory_store");
@@ -127,6 +134,7 @@ test("memory_store queues orchestrator-maintained QMD sync after write", async (
     category: "fact",
     content: "Store this durable memory",
   });
+  assert.equal(lifecycleEvents, 1);
   assert.equal(maintenanceRequests, 1);
   assert.match(out.content[0].text, /Memory stored: fact-test-1/);
 });

@@ -686,6 +686,7 @@ export class StorageManager {
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
+  private factHashIndex: ContentHashIndex | null = null;
 
   constructor(private readonly baseDir: string) {}
 
@@ -764,6 +765,14 @@ export class StorageManager {
   }
   private get stateDir(): string {
     return path.join(this.baseDir, "state");
+  }
+
+  private async getFactHashIndex(): Promise<ContentHashIndex> {
+    if (!this.factHashIndex) {
+      this.factHashIndex = new ContentHashIndex(this.stateDir);
+      await this.factHashIndex.load();
+    }
+    return this.factHashIndex;
   }
   private get questionsDir(): string {
     return path.join(this.baseDir, "questions");
@@ -865,6 +874,7 @@ export class StorageManager {
       sourceMemoryId?: string;
       sourceTurnId?: string;
       memoryKind?: MemoryFrontmatter["memoryKind"];
+      expiresAt?: string;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -876,7 +886,9 @@ export class StorageManager {
 
     // Auto-set TTL for speculative memories
     let expiresAt: string | undefined;
-    if (tier === "speculative") {
+    if (typeof options.expiresAt === "string" && options.expiresAt.length > 0) {
+      expiresAt = options.expiresAt;
+    } else if (tier === "speculative") {
       const expiry = new Date(now.getTime() + SPECULATIVE_TTL_DAYS * 24 * 60 * 60 * 1000);
       expiresAt = expiry.toISOString();
     }
@@ -930,8 +942,22 @@ export class StorageManager {
         ...((options.lineage ?? []).filter(Boolean)),
       ],
     });
+    if (category === "fact") {
+      try {
+        const factHashIndex = await this.getFactHashIndex();
+        factHashIndex.add(content);
+        await factHashIndex.save();
+      } catch (err) {
+        log.warn(`storage.writeMemory completed but failed to update fact hash index: ${err}`);
+      }
+    }
     log.debug(`wrote memory ${id} to ${filePath}`);
     return id;
+  }
+
+  async hasFactContentHash(content: string): Promise<boolean> {
+    const factHashIndex = await this.getFactHashIndex();
+    return factHashIndex.has(content);
   }
 
   async writeArtifact(
