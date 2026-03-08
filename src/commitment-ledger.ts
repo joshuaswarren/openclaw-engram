@@ -83,7 +83,7 @@ export function validateCommitmentLedgerEntry(raw: unknown): CommitmentLedgerEnt
 
   const dueAt = optionalString(raw.dueAt);
   if (dueAt !== undefined) {
-    assertIsoRecordedAt(dueAt);
+    assertIsoRecordedAt(dueAt, "dueAt");
   }
 
   return {

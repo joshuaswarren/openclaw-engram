@@ -46,6 +46,24 @@ test("validateCommitmentLedgerEntry accepts the normalized contract", () => {
   assert.equal(entry.dueAt, "2026-03-09T12:00:00.000Z");
 });
 
+test("validateCommitmentLedgerEntry reports dueAt field name on invalid due timestamp", () => {
+  assert.throws(
+    () => validateCommitmentLedgerEntry({
+      schemaVersion: 1,
+      entryId: "commitment-bad-due",
+      recordedAt: "2026-03-08T02:16:00.000Z",
+      sessionKey: "agent:main",
+      source: "cli",
+      kind: "deadline",
+      state: "open",
+      scope: "bad dueAt",
+      summary: "This entry carries an invalid due timestamp.",
+      dueAt: "tomorrow morning",
+    }),
+    /dueAt must be an ISO timestamp/,
+  );
+});
+
 test("recordCommitmentLedgerEntry persists entries into dated storage", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-commitment-record-"));
   const filePath = await recordCommitmentLedgerEntry({
