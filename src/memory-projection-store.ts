@@ -231,23 +231,26 @@ export function readProjectedMemoryTimeline(
     const rows = db
       .prepare(
         `
-          SELECT
-            event_id,
-            memory_id,
-            event_type,
-            timestamp,
-            event_order,
-            actor,
-            reason_code,
-            rule_version,
-            related_memory_ids_json,
-            before_json,
-            after_json,
-            correlation_id
-          FROM memory_timeline
-          WHERE memory_id = ?
+          SELECT * FROM (
+            SELECT
+              event_id,
+              memory_id,
+              event_type,
+              timestamp,
+              event_order,
+              actor,
+              reason_code,
+              rule_version,
+              related_memory_ids_json,
+              before_json,
+              after_json,
+              correlation_id
+            FROM memory_timeline
+            WHERE memory_id = ?
+            ORDER BY timestamp DESC, event_order DESC
+            LIMIT ?
+          )
           ORDER BY timestamp ASC, event_order ASC
-          LIMIT ?
         `,
       )
       .all(memoryId, limit) as Array<Record<string, unknown>>;

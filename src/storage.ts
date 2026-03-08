@@ -2857,7 +2857,7 @@ export class StorageManager {
     return {
       memoryId: archived.frontmatter.id,
       category: archived.frontmatter.category,
-      status: archived.frontmatter.status ?? "active",
+      status: archived.frontmatter.status ?? "archived",
       lifecycleState: archived.frontmatter.lifecycleState,
       path: archived.path,
       pathRel: path.relative(this.baseDir, archived.path).split(path.sep).join("/"),
