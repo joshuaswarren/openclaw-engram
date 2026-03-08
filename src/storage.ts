@@ -2880,7 +2880,7 @@ export class StorageManager {
     if (cappedLimit === 0) return [];
 
     const projected = readProjectedMemoryTimeline(this.baseDir, memoryId, cappedLimit);
-    if (projected) return projected;
+    if (projected && projected.length > 0) return projected;
 
     const events = await this.readAllMemoryLifecycleEvents();
     return events.filter((event) => event.memoryId === memoryId).slice(-cappedLimit);

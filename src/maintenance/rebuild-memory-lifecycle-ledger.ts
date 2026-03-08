@@ -2,6 +2,7 @@ import path from "node:path";
 import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { StorageManager } from "../storage.js";
 import type { MemoryLifecycleEvent } from "../types.js";
+import { toBackupStamp } from "./backup-stamp.js";
 import {
   buildLifecycleEventsForMemory,
   sortMemoryLifecycleEvents,
@@ -19,10 +20,6 @@ export interface RebuildMemoryLifecycleLedgerResult {
   rebuiltRows: number;
   outputPath: string;
   backupPath?: string;
-}
-
-function toBackupStamp(now: Date): string {
-  return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
 async function backupExistingLedger(

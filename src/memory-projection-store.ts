@@ -251,6 +251,7 @@ export function readProjectedMemoryTimeline(
         `,
       )
       .all(memoryId, limit) as Array<Record<string, unknown>>;
+    if (rows.length === 0) return null;
     return parseTimelineRows(rows);
   } catch {
     return null;

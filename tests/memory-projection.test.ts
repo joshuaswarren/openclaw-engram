@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { StorageManager } from "../src/storage.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
 import {
+  getMemoryProjectionPath,
+  initializeMemoryProjectionDb,
   readProjectedMemoryState,
   readProjectedMemoryTimeline,
 } from "../src/memory-projection-store.ts";
@@ -168,6 +171,46 @@ test("StorageManager projection helpers fail open to markdown and lifecycle ledg
     const projectedTimeline = await storage.getMemoryTimeline(memoryId);
     assert.deepEqual(
       projectedTimeline.map((entry) => entry.eventType),
+      ["created", "updated"],
+    );
+
+    const secondId = await storage.writeMemory("fact", "written after projection rebuild", {
+      source: "test",
+    });
+    await storage.updateMemory(secondId, "written after projection rebuild updated");
+
+    const fallbackAfterProjection = await storage.getMemoryTimeline(secondId);
+    assert.deepEqual(
+      fallbackAfterProjection.map((entry) => entry.eventType),
+      ["created", "updated"],
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager falls back when projection database exists but has no timeline row for a memory", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-storage-projection-empty-row-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    const memoryId = await storage.writeMemory("fact", "fallback memory", {
+      source: "test",
+      tags: ["fallback"],
+    });
+    await storage.updateMemory(memoryId, "fallback memory updated");
+
+    const projectionPath = getMemoryProjectionPath(memoryDir);
+    await mkdir(path.dirname(projectionPath), { recursive: true });
+    const db = new Database(projectionPath);
+    try {
+      initializeMemoryProjectionDb(db);
+    } finally {
+      db.close();
+    }
+
+    const timeline = await storage.getMemoryTimeline(memoryId);
+    assert.deepEqual(
+      timeline.map((entry) => entry.eventType),
       ["created", "updated"],
     );
   } finally {

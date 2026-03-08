@@ -2,6 +2,7 @@ import path from "node:path";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import Database from "better-sqlite3";
 import { StorageManager } from "../storage.js";
+import { toBackupStamp } from "./backup-stamp.js";
 import type {
   MemoryFile,
   MemoryLifecycleEvent,
@@ -32,10 +33,6 @@ export interface RebuildMemoryProjectionResult {
   outputPath: string;
   backupPath?: string;
   usedLifecycleLedger: boolean;
-}
-
-function toBackupStamp(now: Date): string {
-  return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
 async function backupExistingProjection(
