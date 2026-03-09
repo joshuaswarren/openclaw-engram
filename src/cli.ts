@@ -408,7 +408,55 @@ export interface ConversationIndexHealthCliOrchestrator {
       status: "ok" | "degraded" | "error";
       indexPath: string;
       message?: string;
+      manifest?: {
+        version: number;
+        modelId: string;
+        normalizedModelId: string;
+        dimension: number;
+        chunkCount: number;
+        updatedAt: string;
+        lastSuccessfulRebuildAt: string;
+      };
     };
+  }>;
+  inspectConversationIndex(): Promise<{
+    enabled: boolean;
+    backend: "qmd" | "faiss";
+    status: "ok" | "degraded" | "disabled";
+    available: boolean;
+    indexPath: string;
+    supportsIncrementalUpdate: boolean;
+    message?: string;
+    chunkDocCount: number;
+    lastUpdateAt: string | null;
+    metadata: {
+      chunkCount: number | null;
+      qmdAvailable?: boolean;
+      debugStatus?: string;
+      hasIndex?: boolean;
+      hasMetadata?: boolean;
+      hasManifest?: boolean;
+      manifest?: {
+        version: number;
+        modelId: string;
+        normalizedModelId: string;
+        dimension: number;
+        chunkCount: number;
+        updatedAt: string;
+        lastSuccessfulRebuildAt: string;
+      };
+    };
+  }>;
+  rebuildConversationIndex(
+    sessionKey?: string,
+    hours?: number,
+    opts?: { embed?: boolean },
+  ): Promise<{
+    chunks: number;
+    skipped: boolean;
+    reason?: string;
+    embedded?: boolean;
+    rebuilt?: boolean;
   }>;
 }
 
@@ -729,9 +777,39 @@ export async function runConversationIndexHealthCliCommand(
     status: "ok" | "degraded" | "error";
     indexPath: string;
     message?: string;
+    manifest?: {
+      version: number;
+      modelId: string;
+      normalizedModelId: string;
+      dimension: number;
+      chunkCount: number;
+      updatedAt: string;
+      lastSuccessfulRebuildAt: string;
+    };
   };
 }> {
   return orchestrator.getConversationIndexHealth();
+}
+
+export async function runConversationIndexInspectCliCommand(
+  orchestrator: ConversationIndexHealthCliOrchestrator,
+) {
+  return orchestrator.inspectConversationIndex();
+}
+
+export async function runConversationIndexRebuildCliCommand(
+  orchestrator: ConversationIndexHealthCliOrchestrator,
+  options: {
+    sessionKey?: string;
+    hours?: number;
+    embed?: boolean;
+  },
+) {
+  return orchestrator.rebuildConversationIndex(
+    options.sessionKey,
+    options.hours,
+    { embed: options.embed },
+  );
 }
 
 export async function runGraphHealthCliCommand(
@@ -3622,6 +3700,38 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async () => {
           const health = await runConversationIndexHealthCliCommand(orchestrator);
           console.log(JSON.stringify(health, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("conversation-index-inspect")
+        .description("Inspect conversation index backend metadata and artifact state")
+        .action(async () => {
+          const inspection = await runConversationIndexInspectCliCommand(orchestrator);
+          console.log(JSON.stringify(inspection, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("conversation-index-rebuild")
+        .description("Rebuild the conversation index backend from transcript history")
+        .option("--session-key <sessionKey>", "Optional session key to rebuild instead of all recent transcripts")
+        .option("--hours <count>", "Hours of transcript history to scan", "24")
+        .option("--embed", "Force embedding step for backends that support it")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const hours = typeof options.hours === "string"
+            ? Number.parseInt(options.hours, 10)
+            : 24;
+          const result = await runConversationIndexRebuildCliCommand(orchestrator, {
+            sessionKey:
+              typeof options.sessionKey === "string" && options.sessionKey.trim().length > 0
+                ? options.sessionKey.trim()
+                : undefined,
+            hours: Number.isFinite(hours) ? hours : 24,
+            embed: options.embed === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 

@@ -27,9 +27,9 @@ Engram intentionally does not silently modify `~/.openclaw/cron/jobs.json` unles
 
 Config (default off):
 - `conversationIndexEnabled`
-- `conversationIndexBackend` (`qmd` default; `faiss` is predeclared for upcoming adapter wiring)
+- `conversationIndexBackend` (`qmd` default; `faiss` is a live local sidecar backend)
 - `conversationIndexQmdCollection` (must exist in `~/.config/qmd/index.yml` when backend is `qmd`)
-- `conversationIndexFaissScriptPath`, `conversationIndexFaissPythonBin`, `conversationIndexFaissModelId`, `conversationIndexFaissIndexDir` (config contract fields for upcoming FAISS backend tasks)
+- `conversationIndexFaissScriptPath`, `conversationIndexFaissPythonBin`, `conversationIndexFaissModelId`, `conversationIndexFaissIndexDir`
 - `conversationIndexFaissUpsertTimeoutMs`, `conversationIndexFaissSearchTimeoutMs`, `conversationIndexFaissHealthTimeoutMs`
 - `conversationIndexFaissMaxBatchSize`, `conversationIndexFaissMaxSearchK`
 - `conversationIndexRetentionDays`
@@ -40,10 +40,13 @@ Config (default off):
 How it works:
 1. `conversation_index_update` chunks transcript history into markdown docs under:
    - `memoryDir/conversation-index/chunks/<sessionKey>/<YYYY-MM-DD>/*.md`
-2. Current runtime path is QMD-backed indexing/search.
-3. FAISS fields in this release are config-contract-only and become runtime-active in follow-on tasks once the adapter/sidecar wiring lands.
+2. When `conversationIndexBackend` is `qmd`, Engram updates and searches the configured QMD collection.
+3. When `conversationIndexBackend` is `faiss`, Engram shells out to the bundled Python sidecar and stores local artifacts under:
+   - `memoryDir/state/conversation-index/faiss/index.faiss`
+   - `memoryDir/state/conversation-index/faiss/metadata.jsonl`
+   - `memoryDir/state/conversation-index/faiss/manifest.json`
 
 Notes:
 - This feature is designed to be fail-open. If indexing/search fails or times out, no context is injected.
-- Keep `conversationIndexBackend: "qmd"` until FAISS adapter implementation is merged.
-
+- FAISS health is also fail-open. Missing Python dependencies, missing sidecar artifacts, or search-side dimension mismatches degrade recall safely instead of breaking hooks.
+- Sentence-transformers embeddings are opt-in with `ENGRAM_FAISS_ENABLE_ST=1`. Without that env var, the FAISS sidecar uses deterministic hash embeddings.

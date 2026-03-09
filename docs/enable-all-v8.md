@@ -17,8 +17,10 @@ Apply under:
   "qmdColdTierEnabled": true,
   "qmdColdCollection": "openclaw-engram-cold",
   "conversationIndexEnabled": true,
-  "conversationIndexBackend": "qmd",
-  "conversationIndexQmdCollection": "openclaw-engram-conversations",
+  "conversationIndexBackend": "faiss",
+  "conversationIndexFaissPythonBin": "python3",
+  "conversationIndexFaissModelId": "text-embedding-3-small",
+  "conversationIndexFaissIndexDir": "state/conversation-index/faiss",
 
   "recallPlannerEnabled": true,
   "memoryBoxesEnabled": true,
@@ -68,6 +70,8 @@ Apply under:
 - Keep secrets in environment variables (`${OPENAI_API_KEY}`), not hardcoded keys.
 - If you run many features at once, expect higher extraction/consolidation activity.
 - `debug: true` is recommended while validating; disable later for quieter logs.
+- If you use `conversationIndexBackend: "faiss"`, install `scripts/faiss_requirements.txt` first and optionally set `ENGRAM_FAISS_ENABLE_ST=1` for sentence-transformers embeddings.
+- If you prefer QMD for transcript recall, swap the FAISS fields for `conversationIndexBackend: "qmd"` plus `conversationIndexQmdCollection`.
 
 ## Required Restart
 
@@ -85,6 +89,7 @@ Run all commands:
 openclaw engram compat --strict
 openclaw engram stats
 openclaw engram conversation-index-health
+openclaw engram conversation-index-inspect
 openclaw engram graph-health
 openclaw engram tier-status
 openclaw engram policy-status
@@ -95,6 +100,7 @@ Expected:
 - `compat --strict`: exits `0`
 - `stats`: `QMD: available`
 - `conversation-index-health`: `status: "ok"` when backend is `qmd`
+- `conversation-index-inspect`: returns backend metadata and artifact state without mutating the index
 - `graph-health`: JSON report without runtime command failure
 - `tier-status`: returns migration telemetry JSON
 - `policy-status`: returns runtime policy snapshot JSON

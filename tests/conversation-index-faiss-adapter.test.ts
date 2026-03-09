@@ -216,6 +216,163 @@ test("faiss adapter honors zero timeout as no timeout", async () => {
   assert.equal(health.status, "ok");
 });
 
+test("faiss adapter health preserves manifest metadata for diagnostics", async () => {
+  const proc = new FakeProcess();
+  const spawnFn: typeof childProcess.spawn = () => {
+    process.nextTick(() => {
+      proc.stdout.emit(
+        "data",
+        JSON.stringify({
+          ok: true,
+          status: "ok",
+          manifest: {
+            version: 1,
+            modelId: "text-embedding-3-small",
+            normalizedModelId: "__hash__",
+            dimension: 128,
+            chunkCount: 3,
+            updatedAt: "2026-03-09T14:30:00Z",
+            lastSuccessfulRebuildAt: "2026-03-09T14:30:00Z",
+          },
+        }),
+      );
+      proc.emit("close", 0);
+    });
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter(baseConfig(spawnFn));
+  const health = await adapter.health();
+  assert.equal(health.manifest?.version, 1);
+  assert.equal(health.manifest?.dimension, 128);
+  assert.equal(health.manifest?.chunkCount, 3);
+  assert.equal(health.manifest?.normalizedModelId, "__hash__");
+});
+
+test("faiss adapter inspect reports artifact metadata", async () => {
+  const proc = new FakeProcess();
+  const spawnFn: typeof childProcess.spawn = () => {
+    process.nextTick(() => {
+      proc.stdout.emit(
+        "data",
+        JSON.stringify({
+          ok: true,
+          status: "degraded",
+          error: "missing manifest",
+          manifest: {
+            version: 1,
+            modelId: "text-embedding-3-small",
+            normalizedModelId: "__hash__",
+            dimension: 128,
+            chunkCount: 2,
+            updatedAt: "2026-03-09T14:30:00Z",
+            lastSuccessfulRebuildAt: "2026-03-09T14:30:00Z",
+          },
+          metadata: {
+            chunkCount: 2,
+            hasIndex: true,
+            hasMetadata: true,
+            hasManifest: false,
+          },
+        }),
+      );
+      proc.emit("close", 0);
+    });
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter(baseConfig(spawnFn));
+  const inspection = await adapter.inspect();
+  assert.equal(inspection.status, "degraded");
+  assert.equal(inspection.metadata.chunkCount, 2);
+  assert.equal(inspection.metadata.hasIndex, true);
+  assert.equal(inspection.metadata.hasManifest, false);
+  assert.equal(inspection.manifest?.dimension, 128);
+});
+
+test("faiss adapter rebuildChunks parses rebuild count", async () => {
+  const proc = new FakeProcess();
+  const spawnFn: typeof childProcess.spawn = () => {
+    process.nextTick(() => {
+      proc.stdout.emit("data", JSON.stringify({ ok: true, rebuilt: 3 }));
+      proc.emit("close", 0);
+    });
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter(baseConfig(spawnFn));
+  const rebuilt = await adapter.rebuildChunks(sampleChunks(3));
+  assert.equal(rebuilt, 3);
+});
+
+test("faiss adapter rebuildChunks batches rebuild payloads via rebuild then incremental upserts", async () => {
+  const stdinWrites: string[] = [];
+  const commands: string[] = [];
+  const spawnFn: typeof childProcess.spawn = (_bin, args) => {
+    commands.push(String(args?.[1] ?? ""));
+    const proc = new FakeProcess();
+    const originalWrite = proc.stdin.write.bind(proc.stdin);
+    proc.stdin.write = (chunk: string) => {
+      stdinWrites.push(chunk);
+      return originalWrite(chunk);
+    };
+
+    process.nextTick(() => {
+      const command = String(args?.[1] ?? "");
+      proc.stdout.emit("data", JSON.stringify(command === "rebuild" ? { ok: true, rebuilt: 2 } : { ok: true, upserted: 2 }));
+      proc.emit("close", 0);
+    });
+
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    maxBatchSize: 2,
+  });
+
+  const rebuilt = await adapter.rebuildChunks(sampleChunks(4));
+  assert.equal(rebuilt, 4);
+  assert.deepEqual(commands, ["rebuild", "upsert"]);
+
+  const payloads = stdinWrites.map((chunk) => JSON.parse(chunk));
+  assert.equal(payloads[0].chunks.length, 2);
+  assert.equal(payloads[1].chunks.length, 2);
+});
+
+test("faiss adapter rebuildChunks still calls rebuild for empty chunk sets", async () => {
+  const stdinWrites: string[] = [];
+  const commands: string[] = [];
+  const spawnFn: typeof childProcess.spawn = (_bin, args) => {
+    commands.push(String(args?.[1] ?? ""));
+    const proc = new FakeProcess();
+    const originalWrite = proc.stdin.write.bind(proc.stdin);
+    proc.stdin.write = (chunk: string) => {
+      stdinWrites.push(chunk);
+      return originalWrite(chunk);
+    };
+
+    process.nextTick(() => {
+      proc.stdout.emit("data", JSON.stringify({ ok: true, rebuilt: 0 }));
+      proc.emit("close", 0);
+    });
+
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    maxBatchSize: 2,
+  });
+
+  const rebuilt = await adapter.rebuildChunks([]);
+  assert.equal(rebuilt, 0);
+  assert.deepEqual(commands, ["rebuild"]);
+
+  const payload = JSON.parse(stdinWrites[0] ?? "");
+  assert.deepEqual(payload.chunks, []);
+});
+
 test("faiss adapter throws non-zero exit with stderr context", async () => {
   const proc = new FakeProcess();
   const spawnFn: typeof childProcess.spawn = () => {

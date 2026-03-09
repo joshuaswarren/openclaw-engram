@@ -7,4 +7,4 @@ export { OramaBackend } from "./orama-backend.js";
 export { EmbedHelper } from "./embed-helper.js";
 export { scanMemoryDir } from "./document-scanner.js";
 export type { IndexableDocument } from "./document-scanner.js";
-export { createSearchBackend, createConversationSearchBackend } from "./factory.js";
+export { createSearchBackend, createConversationSearchBackend, createConversationIndexRuntime } from "./factory.js";

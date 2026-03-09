@@ -353,21 +353,26 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `hourlySummariesExtendedEnabled` | `false` | Structured topics/decisions in hourly summaries |
 | `hourlySummariesIncludeToolStats` | `false` | Include tool usage stats in summaries |
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
-| `conversationIndexBackend` | `qmd` | Conversation index backend (`qmd` active; `faiss` predeclared for follow-on adapter tasks) |
+| `conversationIndexBackend` | `qmd` | Conversation index backend (`qmd` for QMD collections, `faiss` for the bundled local sidecar) |
 | `conversationIndexQmdCollection` | `openclaw-engram-conversations` | QMD collection for conversation index |
 | `conversationIndexFaissScriptPath` | `(unset)` | Optional absolute path to FAISS sidecar script |
 | `conversationIndexFaissPythonBin` | `(unset)` | Optional Python executable for FAISS sidecar |
-| `conversationIndexFaissModelId` | `text-embedding-3-small` | Embedding model id for FAISS backend |
-| `conversationIndexFaissIndexDir` | `state/conversation-index/faiss` | Relative FAISS artifact directory under `memoryDir` |
+| `conversationIndexFaissModelId` | `text-embedding-3-small` | Embedding model id passed to the FAISS sidecar |
+| `conversationIndexFaissIndexDir` | `state/conversation-index/faiss` | Relative FAISS artifact directory under `memoryDir` (`index.faiss`, `metadata.jsonl`, `manifest.json`) |
 | `conversationIndexFaissUpsertTimeoutMs` | `30000` | Timeout for FAISS upsert operations |
 | `conversationIndexFaissSearchTimeoutMs` | `5000` | Timeout for FAISS search operations |
-| `conversationIndexFaissHealthTimeoutMs` | `2000` | Timeout for FAISS health checks |
+| `conversationIndexFaissHealthTimeoutMs` | `2000` | Timeout for FAISS health checks; degraded health is fail-open |
 | `conversationIndexFaissMaxBatchSize` | `512` | Max chunk batch size sent per FAISS upsert |
 | `conversationIndexFaissMaxSearchK` | `50` | Max top-K allowed for FAISS search |
 | `conversationRecallTopK` | `3` | Top-K relevant transcript chunks to inject |
 | `conversationRecallMaxChars` | `2500` | Max characters of conversation context to inject |
 | `conversationRecallTimeoutMs` | `800` | Timeout for conversation recall (ms) |
 | `conversationIndexMinUpdateIntervalMs` | `900000` | Min interval between index updates |
+
+FAISS notes:
+- `conversation_index_update` still writes chunk markdown under `memoryDir/conversation-index/chunks/...`; the FAISS backend additionally upserts those chunks into the local sidecar index.
+- The sidecar health check reports `degraded` when Python dependencies or local artifacts are missing. Recall stays fail-open and skips semantic transcript injection instead of breaking hook execution.
+- Sentence-transformers embeddings are opt-in via `ENGRAM_FAISS_ENABLE_ST=1`. Without that env var, the sidecar uses deterministic hash embeddings for low-friction local setups.
 
 ## v9.1 Evaluation Harness Foundation
 

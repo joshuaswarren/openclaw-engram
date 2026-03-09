@@ -43,6 +43,12 @@ export interface ConversationChunkUpsertResult {
   reason?: "adapter-unavailable" | "adapter-error";
 }
 
+export interface ConversationChunkRebuildResult {
+  rebuilt: number;
+  skipped: boolean;
+  reason?: "adapter-unavailable" | "adapter-error";
+}
+
 export async function upsertConversationChunksFailOpen(
   adapter: FaissConversationIndexAdapter | undefined,
   chunks: ConversationChunk[],
@@ -56,5 +62,21 @@ export async function upsertConversationChunksFailOpen(
   } catch (err) {
     log.debug(`conversation index FAISS upsert failed (fail-open): ${err}`);
     return { upserted: 0, skipped: true, reason: "adapter-error" };
+  }
+}
+
+export async function rebuildConversationChunksFailOpen(
+  adapter: FaissConversationIndexAdapter | undefined,
+  chunks: ConversationChunk[],
+): Promise<ConversationChunkRebuildResult> {
+  if (!adapter) {
+    return { rebuilt: 0, skipped: true, reason: "adapter-unavailable" };
+  }
+  try {
+    const rebuilt = await adapter.rebuildChunks(chunks);
+    return { rebuilt, skipped: false };
+  } catch (err) {
+    log.debug(`conversation index FAISS rebuild failed (fail-open): ${err}`);
+    return { rebuilt: 0, skipped: true, reason: "adapter-error" };
   }
 }

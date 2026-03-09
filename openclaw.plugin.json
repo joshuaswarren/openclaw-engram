@@ -1085,7 +1085,7 @@
         "type": "string",
         "enum": ["qmd", "faiss"],
         "default": "qmd",
-        "description": "Backend for conversation indexing. qmd indexes chunk docs; faiss is predeclared for follow-on adapter tasks and should remain disabled in this release."
+        "description": "Backend for conversation indexing. qmd indexes chunk docs into a QMD collection; faiss uses the bundled Python sidecar and local FAISS artifacts under memoryDir/state/conversation-index/faiss."
       },
       "conversationIndexQmdCollection": {
         "type": "string",
@@ -1120,12 +1120,12 @@
       "conversationIndexFaissModelId": {
         "type": "string",
         "default": "text-embedding-3-small",
-        "description": "Embedding model identifier expected by the FAISS sidecar."
+        "description": "Embedding model identifier passed to the FAISS sidecar. By default the sidecar aliases OpenAI embedding ids to a local sentence-transformers model when ENGRAM_FAISS_ENABLE_ST=1, and otherwise falls back to deterministic hash embeddings."
       },
       "conversationIndexFaissIndexDir": {
         "type": "string",
         "default": "state/conversation-index/faiss",
-        "description": "Relative directory under memoryDir where FAISS sidecar index artifacts are stored."
+        "description": "Relative directory under memoryDir where FAISS sidecar artifacts are stored, including index.faiss, metadata.jsonl, and manifest.json."
       },
       "conversationIndexFaissUpsertTimeoutMs": {
         "type": "number",
@@ -1140,7 +1140,7 @@
       "conversationIndexFaissHealthTimeoutMs": {
         "type": "number",
         "default": 2000,
-        "description": "Timeout (ms) for FAISS health checks."
+        "description": "Timeout (ms) for FAISS health checks. Health is fail-open and reports degraded when dependencies or local artifacts are missing."
       },
       "conversationIndexFaissMaxBatchSize": {
         "type": "number",

@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
 import { mkdir } from "node:fs/promises";
-import { runConversationIndexHealthCliCommand } from "../src/cli.js";
+import {
+  runConversationIndexHealthCliCommand,
+  runConversationIndexInspectCliCommand,
+  runConversationIndexRebuildCliCommand,
+} from "../src/cli.js";
 import { parseConfig } from "../src/config.js";
 import { Orchestrator } from "../src/orchestrator.js";
 
@@ -25,9 +29,75 @@ test("conversation-index-health CLI wrapper returns orchestrator health payload"
     async getConversationIndexHealth() {
       return expected;
     },
+    async inspectConversationIndex() {
+      throw new Error("unused");
+    },
+    async rebuildConversationIndex() {
+      throw new Error("unused");
+    },
   });
 
   assert.deepEqual(result, expected);
+});
+
+test("conversation-index-inspect CLI wrapper returns orchestrator inspection payload", async () => {
+  const expected = {
+    enabled: true,
+    backend: "faiss" as const,
+    status: "ok" as const,
+    available: true,
+    indexPath: "/tmp/faiss-index",
+    supportsIncrementalUpdate: true,
+    chunkDocCount: 3,
+    lastUpdateAt: "2026-02-27T18:00:00.000Z",
+    metadata: {
+      chunkCount: 3,
+      hasIndex: true,
+      hasMetadata: true,
+      hasManifest: true,
+    },
+  };
+
+  const result = await runConversationIndexInspectCliCommand({
+    async getConversationIndexHealth() {
+      throw new Error("unused");
+    },
+    async inspectConversationIndex() {
+      return expected;
+    },
+    async rebuildConversationIndex() {
+      throw new Error("unused");
+    },
+  });
+
+  assert.deepEqual(result, expected);
+});
+
+test("conversation-index-rebuild CLI wrapper forwards options", async () => {
+  const calls: Array<{ sessionKey?: string; hours?: number; opts?: { embed?: boolean } }> = [];
+  const result = await runConversationIndexRebuildCliCommand({
+    async getConversationIndexHealth() {
+      throw new Error("unused");
+    },
+    async inspectConversationIndex() {
+      throw new Error("unused");
+    },
+    async rebuildConversationIndex(sessionKey?: string, hours?: number, opts?: { embed?: boolean }) {
+      calls.push({ sessionKey, hours, opts });
+      return { chunks: 7, skipped: false, embedded: false, rebuilt: true };
+    },
+  }, {
+    sessionKey: "agent:test:main",
+    hours: 12,
+    embed: true,
+  });
+
+  assert.deepEqual(calls, [{
+    sessionKey: "agent:test:main",
+    hours: 12,
+    opts: { embed: true },
+  }]);
+  assert.deepEqual(result, { chunks: 7, skipped: false, embedded: false, rebuilt: true });
 });
 
 async function makeOrchestrator(overrides: Record<string, unknown>): Promise<Orchestrator> {

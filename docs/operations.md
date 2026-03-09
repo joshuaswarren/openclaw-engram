@@ -54,6 +54,8 @@ openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
 openclaw engram conversation-index-health  # Backend health + index stats
+openclaw engram conversation-index-inspect # Backend metadata + artifact diagnostics
+openclaw engram conversation-index-rebuild # Rebuild backend from transcript history
 openclaw engram graph-health        # Graph edge-file integrity + coverage
 openclaw engram session-check       # Transcript/checkpoint continuity diagnostics
 openclaw engram session-repair      # Bounded repair plan/apply (dry-run default)
@@ -165,6 +167,12 @@ openclaw engram webdav-stop
 
 # Show conversation-index backend health and basic index stats
 openclaw engram conversation-index-health
+
+# Inspect conversation-index backend metadata/artifact state
+openclaw engram conversation-index-inspect
+
+# Rebuild conversation-index backend from the last 24h of transcripts
+openclaw engram conversation-index-rebuild
 
 # Show graph health with optional repair guidance notes
 openclaw engram graph-health --repair-guidance

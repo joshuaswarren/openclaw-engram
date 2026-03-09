@@ -1,5 +1,6 @@
 import type { PluginConfig } from "../types.js";
 import type { SearchBackend } from "./port.js";
+import path from "node:path";
 import { NoopSearchBackend } from "./noop-backend.js";
 import { RemoteSearchBackend } from "./remote-backend.js";
 import { LanceDbBackend } from "./lancedb-backend.js";
@@ -8,6 +9,12 @@ import { OramaBackend } from "./orama-backend.js";
 import { EmbedHelper } from "./embed-helper.js";
 import { QmdClient, type QmdClientOptions } from "../qmd.js";
 import { log } from "../logger.js";
+import { FaissConversationIndexAdapter } from "../conversation-index/faiss-adapter.js";
+import {
+  createConversationIndexBackend,
+  type ConversationIndexBackend,
+  type ConversationQmdRuntime,
+} from "../conversation-index/backend.js";
 
 /**
  * Resolve non-QMD backends from config.
@@ -125,4 +132,45 @@ export function createConversationSearchBackend(config: PluginConfig): SearchBac
     Math.max(6, config.conversationRecallTopK),
     qmdOptions(config),
   );
+}
+
+export interface ConversationIndexRuntime {
+  qmd?: ConversationQmdRuntime;
+  faiss?: FaissConversationIndexAdapter;
+  backend?: ConversationIndexBackend;
+}
+
+export function createConversationIndexRuntime(
+  config: PluginConfig,
+  overrides?: {
+    getQmd?: () => ConversationQmdRuntime | undefined;
+    getFaiss?: () => FaissConversationIndexAdapter | undefined;
+  },
+): ConversationIndexRuntime {
+  const qmd = createConversationSearchBackend(config) as ConversationQmdRuntime | undefined;
+  const faiss =
+    config.conversationIndexEnabled && config.conversationIndexBackend === "faiss"
+      ? new FaissConversationIndexAdapter({
+          memoryDir: config.memoryDir,
+          scriptPath: config.conversationIndexFaissScriptPath,
+          pythonBin: config.conversationIndexFaissPythonBin,
+          modelId: config.conversationIndexFaissModelId,
+          indexDir: config.conversationIndexFaissIndexDir,
+          upsertTimeoutMs: config.conversationIndexFaissUpsertTimeoutMs,
+          searchTimeoutMs: config.conversationIndexFaissSearchTimeoutMs,
+          healthTimeoutMs: config.conversationIndexFaissHealthTimeoutMs,
+          maxBatchSize: config.conversationIndexFaissMaxBatchSize,
+          maxSearchK: config.conversationIndexFaissMaxSearchK,
+        })
+      : undefined;
+
+  const backend = createConversationIndexBackend({
+    enabled: config.conversationIndexEnabled,
+    backend: config.conversationIndexBackend,
+    getQmd: () => overrides?.getQmd?.() ?? qmd,
+    getFaiss: () => overrides?.getFaiss?.() ?? faiss,
+    collectionDir: path.join(config.memoryDir, "conversation-index"),
+  });
+
+  return { qmd, faiss, backend };
 }
