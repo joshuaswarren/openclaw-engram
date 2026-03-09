@@ -258,3 +258,24 @@ test("openclaw workspace adapter respects recall namespace filtering", async () 
   });
   assert.equal(visibleChunks.some((chunk) => chunk.sourcePath === "handoffs/shared.md"), true);
 });
+
+test("collectNativeKnowledgeChunks keeps bootstrap files in includeFiles when the workspace adapter cannot run", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-openclaw-workspace-bootstrap-fallback-"));
+  const workspaceDir = path.join(root, "workspace");
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.md"),
+    "# Identity\n\nBootstrap context should still load through includeFiles.\n",
+    "utf-8",
+  );
+
+  const config = baseConfig();
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    config,
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.some((chunk) => chunk.sourcePath === "IDENTITY.md"), true);
+  assert.equal(chunks.some((chunk) => chunk.sourceKind === "bootstrap_doc"), false);
+});

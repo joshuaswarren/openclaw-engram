@@ -1206,7 +1206,10 @@ export async function collectNativeKnowledgeChunks(options: {
 
   const chunks: NativeKnowledgeChunk[] = [];
   const openclawBootstrapFiles = new Set(
-    (options.config.openclawWorkspace?.enabled ? options.config.openclawWorkspace.bootstrapFiles : [])
+    (options.memoryDir && options.config.openclawWorkspace?.enabled
+      ? options.config.openclawWorkspace.bootstrapFiles
+      : []
+    )
       .map((value) => value.replace(/\\/g, "/")),
   );
   const candidatePaths = resolveCandidatePaths({
