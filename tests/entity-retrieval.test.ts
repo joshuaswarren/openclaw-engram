@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
-import { buildEntityRecallSection, entityIndexVersion } from "../src/entity-retrieval.js";
+import { buildEntityRecallSection, entityIndexVersion, readRecentEntityTranscriptEntries } from "../src/entity-retrieval.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import { StorageManager, normalizeEntityName } from "../src/storage.js";
 import type { PluginConfig, TranscriptEntry } from "../src/types.js";
@@ -246,6 +246,70 @@ test('entity retrieval treats "what happened to her" as a pronoun follow-up', as
   assert.match(section!, /target: Alice Example \(person\)/);
   assert.match(section!, /resolution: carried forward from recent turns via alias "Alice Example"/);
   assert.doesNotMatch(section!, /target: Bob Example \(person\)/);
+});
+
+test("entity retrieval recent-turn helpers treat zero as disabled", async () => {
+  const transcriptEntries: TranscriptEntry[] = [
+    {
+      timestamp: "2026-03-09T10:00:00.000Z",
+      role: "user",
+      content: "What do we know about Alice Example?",
+      sessionKey: "user:test:entity-followup-zero",
+      turnId: "turn-1",
+    },
+    {
+      timestamp: "2026-03-09T10:00:05.000Z",
+      role: "assistant",
+      content: "Alice Example led the launch review last month.",
+      sessionKey: "user:test:entity-followup-zero",
+      turnId: "turn-2",
+    },
+  ];
+
+  const recentEntries = await readRecentEntityTranscriptEntries(Promise.resolve(transcriptEntries), 0);
+  assert.deepEqual(recentEntries, []);
+});
+
+test("entity retrieval does not scan recent turns when recentTurns is zero", async () => {
+  const { config, storage } = await buildHarness("engram-entity-followup-zero-disabled");
+  await writeEntity(
+    storage,
+    "Alice Example",
+    "person",
+    ["Alice Example led the launch review last month."],
+    "Alice Example is the release lead for the launch review.",
+  );
+
+  const transcriptEntries: TranscriptEntry[] = [
+    {
+      timestamp: "2026-03-09T10:00:00.000Z",
+      role: "user",
+      content: "What do we know about Alice Example?",
+      sessionKey: "user:test:entity-followup-zero-disabled",
+      turnId: "turn-1",
+    },
+    {
+      timestamp: "2026-03-09T10:00:05.000Z",
+      role: "assistant",
+      content: "Alice Example led the launch review last month.",
+      sessionKey: "user:test:entity-followup-zero-disabled",
+      turnId: "turn-2",
+    },
+  ];
+
+  const section = await buildEntityRecallSection({
+    config,
+    storage,
+    query: "What happened to her?",
+    recentTurns: 0,
+    maxHints: 2,
+    maxSupportingFacts: 4,
+    maxRelatedEntities: 2,
+    maxChars: 2400,
+    transcriptEntries,
+  });
+
+  assert.equal(section, null);
 });
 
 test("entity retrieval surfaces uncertainty when direct facts conflict", async () => {

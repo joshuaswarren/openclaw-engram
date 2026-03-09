@@ -333,6 +333,7 @@ function resolveRecentTurnCandidates(
   transcriptEntries: TranscriptEntry[],
   recentTurns: number,
 ): EntityCandidate[] {
+  if (recentTurns <= 0 || transcriptEntries.length === 0) return [];
   const recentEntries = transcriptEntries.slice(-recentTurns);
   const candidates = new Map<string, EntityCandidate>();
   for (let indexOffset = recentEntries.length - 1; indexOffset >= 0; indexOffset -= 1) {
@@ -546,6 +547,7 @@ export async function readRecentEntityTranscriptEntries(
   transcriptEntriesPromise: Promise<TranscriptEntry[]>,
   recentTurns: number,
 ): Promise<TranscriptEntry[]> {
+  if (recentTurns <= 0) return [];
   const transcriptEntries = await transcriptEntriesPromise.catch(() => []);
   if (transcriptEntries.length === 0) return [];
   return transcriptEntries.slice(-Math.max(1, recentTurns * 2));
