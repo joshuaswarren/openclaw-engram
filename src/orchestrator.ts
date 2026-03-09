@@ -3008,7 +3008,7 @@ export class Orchestrator {
       }
       const maxPatterns = this.getRecallSectionNumber("compounding", "maxPatterns") ?? 40;
       const maxRubrics = this.getRecallSectionNumber("compounding", "maxRubrics") ?? 4;
-      if (maxPatterns === 0) {
+      if (maxPatterns === 0 && maxRubrics === 0) {
         timings.compounding = "skip(limit=0)";
         return null;
       }

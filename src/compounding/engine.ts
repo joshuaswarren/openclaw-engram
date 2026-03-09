@@ -818,9 +818,11 @@ export class CompoundingEngine {
       if (previous.severity === null && e.severity) previous.severity = e.severity;
       if (previous.confidence === null) previous.confidence = normalizeConfidence(e.confidence);
       if (previous.outcome === null && e.outcome) previous.outcome = e.outcome.trim();
-      if (previous.evidenceWindow.start === null || previous.evidenceWindow.end === null) {
-        previous.evidenceWindow = normalizeEvidenceWindow(e.evidenceWindowStart, e.evidenceWindowEnd);
-      }
+      const nextEvidenceWindow = normalizeEvidenceWindow(e.evidenceWindowStart, e.evidenceWindowEnd);
+      previous.evidenceWindow = {
+        start: previous.evidenceWindow.start ?? nextEvidenceWindow.start,
+        end: previous.evidenceWindow.end ?? nextEvidenceWindow.end,
+      };
       evidenceByPattern.set(pattern, previous);
     }
 

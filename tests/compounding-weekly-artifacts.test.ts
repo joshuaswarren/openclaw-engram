@@ -136,3 +136,43 @@ test("weekly compounding writes structured json, workflow rubrics, and stable re
   assert.equal(mistakes!.registry?.[0]?.recurrenceCount, 1);
   assert.equal(first.reportJsonPath, second.reportJsonPath);
 });
+
+test("weekly compounding merges split evidence windows across repeated feedback entries", async () => {
+  const memoryDir = tmpDir("engram-compound-evidence-window-mem");
+  const sharedDir = tmpDir("engram-compound-evidence-window-shared");
+  await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
+
+  await writeFile(
+    path.join(sharedDir, "feedback", "inbox.jsonl"),
+    [
+      JSON.stringify({
+        agent: "agent-a",
+        workflow: "review-loop",
+        decision: "approved_with_feedback",
+        reason: "tighten confidence thresholds",
+        date: "2026-02-25T10:00:00.000Z",
+        learning: "Include explicit confidence rationale",
+        evidenceWindowStart: "2026-02-20T00:00:00.000Z",
+      }),
+      JSON.stringify({
+        agent: "agent-a",
+        workflow: "review-loop",
+        decision: "approved_with_feedback",
+        reason: "tighten confidence thresholds",
+        date: "2026-02-26T10:00:00.000Z",
+        learning: "Include explicit confidence rationale",
+        evidenceWindowEnd: "2026-02-27T00:00:00.000Z",
+      }),
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const engine = new CompoundingEngine(buildConfig(memoryDir, sharedDir));
+  await engine.synthesizeWeekly({ weekId: "2026-W09" });
+  const mistakes = await engine.readMistakes();
+
+  assert.ok(mistakes);
+  assert.equal(mistakes!.registry?.[0]?.evidenceWindow.start, "2026-02-20T00:00:00.000Z");
+  assert.equal(mistakes!.registry?.[0]?.evidenceWindow.end, "2026-02-27T00:00:00.000Z");
+});
