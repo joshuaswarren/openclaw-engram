@@ -425,9 +425,13 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(regex);
 }
 
-function matchesGlobs(notePath: string, patterns: string[]): boolean {
+function compileGlobs(patterns: string[]): RegExp[] {
+  return patterns.map((pattern) => globToRegExp(pattern));
+}
+
+function matchesCompiledGlobs(notePath: string, patterns: RegExp[]): boolean {
   if (patterns.length === 0) return false;
-  return patterns.some((pattern) => globToRegExp(pattern).test(notePath));
+  return patterns.some((pattern) => pattern.test(notePath));
 }
 
 async function listMarkdownFiles(rootDir: string): Promise<string[] | null> {
@@ -601,9 +605,11 @@ export async function syncObsidianVaults(options: {
       continue;
     }
 
+    const includePatterns = compileGlobs(vault.includeGlobs);
+    const excludePatterns = compileGlobs(vault.excludeGlobs);
     const includedNotePaths = notePaths.filter((notePath) => {
-      if (!matchesGlobs(notePath, vault.includeGlobs)) return false;
-      if (matchesGlobs(notePath, vault.excludeGlobs)) return false;
+      if (!matchesCompiledGlobs(notePath, includePatterns)) return false;
+      if (matchesCompiledGlobs(notePath, excludePatterns)) return false;
       return true;
     });
 
@@ -789,13 +795,13 @@ export async function collectNativeKnowledgeChunks(options: {
     if (!(await readableFile(filePath))) continue;
     const content = await readFile(filePath, "utf-8").catch(() => null);
     if (!content) continue;
+    const sourcePath = path.relative(options.workspaceDir, filePath);
     chunks.push(
       ...chunkHeadingAware({
-        sourcePath: path.relative(options.workspaceDir, filePath),
+        sourcePath,
         content,
         maxChunkChars: options.config.maxChunkChars,
         createChunk: ({ title, startLine, endLine, content }) => {
-          const sourcePath = path.relative(options.workspaceDir, filePath);
           return {
             chunkId: `${sourcePath}:${startLine}-${endLine}`,
             sourcePath,
