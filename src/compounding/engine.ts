@@ -167,7 +167,18 @@ function tokenizeRecallQuery(text: string): string[] {
 function weekIdToIndex(weekId: string): number {
   const match = weekId.match(/^(\d{4})-W(\d{2})$/);
   if (!match) return Number.POSITIVE_INFINITY;
-  return (Number(match[1]) * 53) + Number(match[2]);
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(week) || week < 1 || week > 53) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const isoWeekOneStart = new Date(jan4);
+  isoWeekOneStart.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const targetWeekStart = new Date(isoWeekOneStart);
+  targetWeekStart.setUTCDate(isoWeekOneStart.getUTCDate() + ((week - 1) * 7));
+  return Math.floor(targetWeekStart.getTime() / (7 * 24 * 60 * 60 * 1000));
 }
 
 function normalizeConfidence(value: unknown): number | null {
@@ -219,6 +230,26 @@ function inferLegacyMistakeScope(pattern: string): { agent: string | null; workf
   return {
     agent: subject.length > 0 ? subject : null,
     workflow: null,
+  };
+}
+
+function inferLegacyMistakeMetadata(pattern: string): {
+  category: "feedback" | "action";
+  agent: string | null;
+  workflow: string | null;
+} {
+  if (pattern.startsWith("memory-action/")) {
+    return {
+      category: "action",
+      agent: null,
+      workflow: "memory-actions",
+    };
+  }
+  const scope = inferLegacyMistakeScope(pattern);
+  return {
+    category: "feedback",
+    agent: scope.agent,
+    workflow: scope.workflow,
   };
 }
 
@@ -543,24 +574,24 @@ export class CompoundingEngine {
           ? parsed.updatedAt
           : new Date(0).toISOString();
         parsed.registry = parsed.patterns.map((pattern) => {
-          const scope = inferLegacyMistakeScope(pattern);
+          const metadata = inferLegacyMistakeMetadata(pattern);
           return {
-            id: stableMistakeId("feedback", pattern, scope.agent, scope.workflow),
-          pattern,
-          category: "feedback",
-          status: "active",
-          agent: scope.agent,
-          workflow: scope.workflow,
-          tags: [],
-          severity: null,
-          confidence: null,
-          outcome: null,
-          provenance: [],
-          firstSeenAt: updatedAt,
-          lastSeenAt: updatedAt,
-          recurrenceCount: 1,
-          lastWeekId: isoWeekId(new Date(updatedAt)),
-          evidenceWindow: { start: null, end: null },
+            id: stableMistakeId(metadata.category, pattern, metadata.agent, metadata.workflow),
+            pattern,
+            category: metadata.category,
+            status: "active",
+            agent: metadata.agent,
+            workflow: metadata.workflow,
+            tags: [],
+            severity: null,
+            confidence: null,
+            outcome: null,
+            provenance: [],
+            firstSeenAt: updatedAt,
+            lastSeenAt: updatedAt,
+            recurrenceCount: 1,
+            lastWeekId: isoWeekId(new Date(updatedAt)),
+            evidenceWindow: { start: null, end: null },
           };
         });
       }
