@@ -14,6 +14,23 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `workspaceDir` | `~/.openclaw/workspace` | Workspace root (IDENTITY.md location) |
 | `debug` | `false` | Enable debug logging |
 
+## Memory OS Presets
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `memoryOsPreset` | `(unset)` | Optional advanced preset: `conservative`, `balanced`, `research-max`, or `local-llm-heavy`. Preset values seed the advanced config surface before explicit per-setting overrides are applied. |
+
+Preset intent:
+
+- `conservative` keeps recall budgets lower and leaves experimental learning/graph features off.
+- `balanced` enables the recommended indexing, artifact, and rerank defaults without turning on the higher-churn learning loops.
+- `research-max` enables the broadest shipped experimental surface, including graph recall and adaptive policy loops.
+- `local-llm-heavy` biases extraction/rerank/tooling toward local OpenAI-compatible endpoints and the fast local tier.
+
+Backward compatibility note:
+
+- `memoryOsPreset: "research"` is accepted as an alias for `research-max`, but new configs should use `research-max`.
+
 ## Access Layer
 
 | Setting | Default | Description |
@@ -274,7 +291,7 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
 }
 ```
 
-`research`:
+`research-max`:
 
 ```jsonc
 {
@@ -291,6 +308,20 @@ Disabled-path compatibility guarantees:
 - `contextCompressionActionsEnabled=false` keeps action tooling and action-policy telemetry inactive.
 - `maxCompressionTokensPerHour=0` remains a hard disable (no implicit non-zero coercion).
 - `compressionGuidelineLearningEnabled=false` keeps consolidation behavior baseline-equivalent.
+
+## Budget Mapping Notes
+
+The original v8 roadmap listed several operator knobs that are now split across the live config surface.
+
+| Roadmap knob | Live config surface |
+|--------------|---------------------|
+| `maxRecallTokens` | `maxMemoryTokens` for token budget, plus `recallBudgetChars` for final assembled-context trimming. |
+| `maxRecallMs` | No single global wall-clock cap. Use stage-specific limits such as `recallPlannerTimeoutMs`, `conversationRecallTimeoutMs`, and `rerankTimeoutMs`. |
+| `maxCompressionTokensPerHour` | `maxCompressionTokensPerHour` |
+| `maxGraphTraversalSteps` | `maxGraphTraversalSteps` |
+| `maxArtifactsPerSession` | No dedicated per-session write cap. The nearest shipped controls are `verbatimArtifactsEnabled`, `verbatimArtifactsMaxRecall`, and `verbatimArtifactCategories`. |
+| `maxProactiveQuestionsPerExtraction` | `maxProactiveQuestionsPerExtraction` |
+| `indexRefreshBudgetMs` | Use refresh cadence + timeout controls such as `qmdUpdateMinIntervalMs`, `qmdUpdateTimeoutMs`, and `conversationIndexMinUpdateIntervalMs`. |
 
 ## v8.14 Hot/Cold Tier Parity + Migration
 

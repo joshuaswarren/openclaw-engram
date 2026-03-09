@@ -214,7 +214,8 @@ Operational checks after enabling guideline learning:
 
 v8.13 action-policy rollout presets:
 - Canonical preset JSON lives in `docs/config-reference.md` under `v8.13 Action-Policy Rollout Presets`.
-- Use `conservative` for baseline-equivalent mode, `balanced` for default production rollout, and `research` for high-change experiments.
+- Use `conservative` for baseline-equivalent mode, `balanced` for default production rollout, `research-max` for the broadest shipped experimental surface, and `local-llm-heavy` when you want local endpoints carrying most advanced work.
+- For the cross-feature preset entry point, set `memoryOsPreset` first and then override only the specific knobs your environment needs.
 
 Operator hardening checklist before promotion:
 - Keep `contextCompressionActionsEnabled=true` only after tool traces stay stable and review-clean for one full daily cycle.

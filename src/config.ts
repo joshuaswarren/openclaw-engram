@@ -1,6 +1,7 @@
 import path from "node:path";
 import type {
   IdentityInjectionMode,
+  MemoryOsPresetName,
   PluginConfig,
   PrincipalRule,
   RecallPipelineConfig,
@@ -80,6 +81,12 @@ function normalizeMemoryRelativeDir(raw: unknown, fallback: string): string {
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
 const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
+const VALID_MEMORY_OS_PRESETS: MemoryOsPresetName[] = [
+  "conservative",
+  "balanced",
+  "research-max",
+  "local-llm-heavy",
+];
 const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
@@ -102,11 +109,124 @@ const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [
   "verbatimArtifactsMaxRecall",
 ];
 
+const MEMORY_OS_PRESET_ALIASES: Record<string, MemoryOsPresetName> = {
+  research: "research-max",
+};
+
+const MEMORY_OS_PRESETS: Record<MemoryOsPresetName, Record<string, unknown>> = {
+  conservative: {
+    maxMemoryTokens: 1500,
+    recallPlannerMaxQmdResultsMinimal: 2,
+    recallPlannerMaxQmdResultsFull: 5,
+    queryAwareIndexingEnabled: false,
+    verbatimArtifactsEnabled: false,
+    verbatimArtifactsMaxRecall: 2,
+    rerankEnabled: false,
+    localLlmEnabled: false,
+    localLlmFastEnabled: false,
+    multiGraphMemoryEnabled: false,
+    graphRecallEnabled: false,
+    graphAssistInFullModeEnabled: false,
+    proactiveExtractionEnabled: false,
+    contextCompressionActionsEnabled: false,
+    compressionGuidelineLearningEnabled: false,
+    compressionGuidelineSemanticRefinementEnabled: false,
+    maxProactiveQuestionsPerExtraction: 0,
+    maxCompressionTokensPerHour: 0,
+    behaviorLoopAutoTuneEnabled: false,
+  },
+  balanced: {
+    maxMemoryTokens: 2000,
+    recallPlannerMaxQmdResultsMinimal: 4,
+    recallPlannerMaxQmdResultsFull: 8,
+    queryAwareIndexingEnabled: true,
+    verbatimArtifactsEnabled: true,
+    verbatimArtifactsMaxRecall: 4,
+    rerankEnabled: true,
+    rerankProvider: "local",
+    localLlmEnabled: false,
+    localLlmFastEnabled: false,
+    multiGraphMemoryEnabled: false,
+    graphRecallEnabled: false,
+    graphAssistInFullModeEnabled: false,
+    proactiveExtractionEnabled: false,
+    contextCompressionActionsEnabled: false,
+    compressionGuidelineLearningEnabled: false,
+    compressionGuidelineSemanticRefinementEnabled: false,
+    maxProactiveQuestionsPerExtraction: 2,
+    maxCompressionTokensPerHour: 1500,
+    behaviorLoopAutoTuneEnabled: false,
+  },
+  "research-max": {
+    maxMemoryTokens: 3200,
+    recallPlannerMaxQmdResultsMinimal: 6,
+    recallPlannerMaxQmdResultsFull: 12,
+    queryAwareIndexingEnabled: true,
+    verbatimArtifactsEnabled: true,
+    verbatimArtifactsMaxRecall: 6,
+    rerankEnabled: true,
+    rerankProvider: "local",
+    localLlmEnabled: false,
+    localLlmFastEnabled: false,
+    multiGraphMemoryEnabled: true,
+    graphRecallEnabled: true,
+    graphAssistInFullModeEnabled: true,
+    proactiveExtractionEnabled: true,
+    contextCompressionActionsEnabled: true,
+    compressionGuidelineLearningEnabled: true,
+    compressionGuidelineSemanticRefinementEnabled: true,
+    maxProactiveQuestionsPerExtraction: 4,
+    maxCompressionTokensPerHour: 3000,
+    behaviorLoopAutoTuneEnabled: true,
+  },
+  "local-llm-heavy": {
+    maxMemoryTokens: 2400,
+    recallPlannerMaxQmdResultsMinimal: 4,
+    recallPlannerMaxQmdResultsFull: 8,
+    queryAwareIndexingEnabled: true,
+    verbatimArtifactsEnabled: true,
+    verbatimArtifactsMaxRecall: 4,
+    rerankEnabled: true,
+    rerankProvider: "local",
+    localLlmEnabled: true,
+    localLlmFastEnabled: true,
+    embeddingFallbackProvider: "local",
+    localLlmFallback: true,
+    multiGraphMemoryEnabled: false,
+    graphRecallEnabled: false,
+    graphAssistInFullModeEnabled: false,
+    proactiveExtractionEnabled: true,
+    contextCompressionActionsEnabled: true,
+    compressionGuidelineLearningEnabled: true,
+    compressionGuidelineSemanticRefinementEnabled: false,
+    maxProactiveQuestionsPerExtraction: 2,
+    maxCompressionTokensPerHour: 1500,
+    behaviorLoopAutoTuneEnabled: false,
+  },
+};
+
+function resolveMemoryOsPreset(value: unknown): MemoryOsPresetName | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (VALID_MEMORY_OS_PRESETS.includes(normalized as MemoryOsPresetName)) {
+    return normalized as MemoryOsPresetName;
+  }
+  return MEMORY_OS_PRESET_ALIASES[normalized];
+}
+
 export function parseConfig(raw: unknown): PluginConfig {
-  const cfg =
+  const baseCfg =
     raw && typeof raw === "object" && !Array.isArray(raw)
       ? (raw as Record<string, unknown>)
       : {};
+  const memoryOsPreset = resolveMemoryOsPreset(baseCfg.memoryOsPreset);
+  const cfg = memoryOsPreset
+    ? {
+        ...MEMORY_OS_PRESETS[memoryOsPreset],
+        ...baseCfg,
+        memoryOsPreset,
+      }
+    : baseCfg;
 
   let apiKey: string | undefined;
   if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {
@@ -372,6 +492,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       : [],
     maxMemoryTokens:
       typeof cfg.maxMemoryTokens === "number" ? cfg.maxMemoryTokens : 2000,
+    memoryOsPreset,
     qmdEnabled: cfg.qmdEnabled !== false,
     qmdCollection:
       typeof cfg.qmdCollection === "string"

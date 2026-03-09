@@ -30,7 +30,7 @@ AI agents forget everything between conversations. Engram fixes that.
 - **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
 - **External agent access** — Run a local authenticated HTTP API and a stdio MCP server so Codex, Claude Code, and scripts can query Engram without OpenClaw-specific glue.
-- **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
+- **Memory OS features** — Temporal memory tree, graph reasoning, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
 - **Benchmark-first roadmap** — Engram now has an evaluation harness with live shadow recall recording and a CI benchmark delta gate, so memory improvements can be measured and regression-checked instead of argued from anecdotes.
 - **Baseline snapshot discipline** — Engram can now, when `benchmarkBaselineSnapshotsEnabled` is enabled, capture typed baseline snapshots of the latest completed benchmark runs so later PR delta reporting can compare candidates against a stable stored reference instead of an ad hoc branch state.
 - **Named baseline delta reporting** — Engram can now, when `benchmarkDeltaReporterEnabled` is enabled, compare the current eval store against a stored baseline snapshot, emit a machine-readable delta report plus markdown summary, and fail fast when a candidate regresses a benchmark that previously passed.
@@ -170,6 +170,8 @@ Engram's capabilities are organized into feature families that you can enable pr
 
 Start with defaults, then enable features as needed. See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profile.
 
+If you want a supported starting point for the advanced surface, set `memoryOsPreset` to one of `conservative`, `balanced`, `research-max`, or `local-llm-heavy`, then override only the few knobs you actually need.
+
 ## Agent & Operator Commands
 
 ```bash
@@ -297,22 +299,37 @@ When an Obsidian vault adapter is enabled, Engram syncs active notes into backen
 
 Full reference: [Config Reference](docs/config-reference.md)
 
+Preset example:
+
+```jsonc
+{
+  "memoryOsPreset": "balanced",
+  "localLlmEnabled": true,
+  "localLlmUrl": "http://localhost:1234/v1",
+  "localLlmModel": "qwen2.5-32b-instruct"
+}
+```
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — Installation, setup, first-run verification
 - [Search Backends](docs/search-backends.md) — Choosing and configuring search engines
 - [Writing a Search Backend](docs/writing-a-search-backend.md) — Build your own adapter
 - [Config Reference](docs/config-reference.md) — Every setting with defaults
+- [Local LLM Guide](docs/guides/local-llm.md) — Setup and tune local-first extraction/rerank flows
+- [Cost Control Guide](docs/guides/cost-control.md) — Budget mappings, presets, and rollout discipline
+- [Migration Guide](docs/guides/migrations.md) — Move from manual tuning and historical roadmap docs to the current config surface
 - [Evaluation Harness](docs/evaluation-harness.md) — Benchmark pack, shadow recall, and CI delta gate format
 - [Architecture Overview](docs/architecture/overview.md) — System design and storage layout
 - [Retrieval Pipeline](docs/architecture/retrieval-pipeline.md) — How recall works
 - [Memory Lifecycle](docs/architecture/memory-lifecycle.md) — Write, consolidation, expiry
+- [Graph Reasoning](docs/architecture/graph-reasoning.md) — Opt-in graph traversal, assist, and explainability
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Operations](docs/operations.md) — Backup, export, maintenance
 - [Namespaces](docs/namespaces.md) — Multi-agent memory isolation
 - [Shared Context](docs/shared-context.md) — Cross-agent intelligence
 - [Identity Continuity](docs/identity-continuity.md) — Consistent agent personality
-- [Agentic Memory Roadmap](docs/plans/2026-03-06-engram-agentic-memory-roadmap.md) — Benchmark-first roadmap and PR slices
+- [Historical Plans Index](docs/plans/README.md) — Archived design context; GitHub Project remains the roadmap source of truth
 
 ## Developer Install
 
