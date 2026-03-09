@@ -1,0 +1,286 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { runMemoryGovernance, restoreMemoryGovernanceRun } from "../src/maintenance/memory-governance.ts";
+import { StorageManager } from "../src/storage.ts";
+
+async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
+  const full = path.join(baseDir, relPath);
+  await mkdir(path.dirname(full), { recursive: true });
+  await writeFile(full, content, "utf-8");
+}
+
+function memoryDoc(options: {
+  id: string;
+  content: string;
+  category?: string;
+  created?: string;
+  updated?: string;
+  confidence?: number;
+  confidenceTier?: string;
+  status?: string;
+  lifecycleState?: string;
+  verificationState?: string;
+  accessCount?: number;
+  lastAccessed?: string;
+  tags?: string[];
+}): string {
+  return [
+    "---",
+    `id: ${options.id}`,
+    `category: ${options.category ?? "fact"}`,
+    `created: ${options.created ?? "2026-03-01T00:00:00.000Z"}`,
+    `updated: ${options.updated ?? options.created ?? "2026-03-01T00:00:00.000Z"}`,
+    "source: test",
+    `confidence: ${options.confidence ?? 0.8}`,
+    `confidenceTier: ${options.confidenceTier ?? "implied"}`,
+    `tags: [${(options.tags ?? ["governance"]).map((tag) => `"${tag}"`).join(", ")}]`,
+    ...(options.status ? [`status: ${options.status}`] : []),
+    ...(options.lifecycleState ? [`lifecycleState: ${options.lifecycleState}`] : []),
+    ...(options.verificationState ? [`verificationState: ${options.verificationState}`] : []),
+    ...(options.accessCount !== undefined ? [`accessCount: ${options.accessCount}`] : []),
+    ...(options.lastAccessed ? [`lastAccessed: ${options.lastAccessed}`] : []),
+    "---",
+    "",
+    options.content,
+    "",
+  ].join("\n");
+}
+
+test("shadow governance run writes review artifacts without mutating memory files", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-shadow-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-duplicate-a.md",
+      memoryDoc({
+        id: "fact-duplicate-a",
+        content: "The deployment checklist requires smoke tests before cutover.",
+        created: "2026-03-01T00:00:00.000Z",
+        updated: "2026-03-01T00:00:00.000Z",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-02/fact-duplicate-b.md",
+      memoryDoc({
+        id: "fact-duplicate-b",
+        content: "The deployment checklist requires smoke tests before cutover.",
+        created: "2026-03-02T00:00:00.000Z",
+        updated: "2026-03-02T00:00:00.000Z",
+        confidence: 0.55,
+        confidenceTier: "inferred",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-03/fact-disputed.md",
+      memoryDoc({
+        id: "fact-disputed",
+        content: "This disputed memory should be quarantined for review.",
+        created: "2026-03-03T00:00:00.000Z",
+        updated: "2026-03-03T00:00:00.000Z",
+        verificationState: "disputed",
+        lifecycleState: "candidate",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-04/fact-speculative.md",
+      memoryDoc({
+        id: "fact-speculative",
+        content: "This speculative memory is low confidence and should enter review.",
+        created: "2026-03-04T00:00:00.000Z",
+        updated: "2026-03-04T00:00:00.000Z",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        lifecycleState: "candidate",
+        verificationState: "unverified",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2025-01-01/fact-stale.md",
+      memoryDoc({
+        id: "fact-stale",
+        content: "This stale memory should be proposed for archival.",
+        created: "2025-01-01T00:00:00.000Z",
+        updated: "2025-01-01T00:00:00.000Z",
+        confidence: 0.7,
+        confidenceTier: "implied",
+        lifecycleState: "stale",
+        verificationState: "system_inferred",
+        accessCount: 0,
+        lastAccessed: "2025-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const result = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    assert.equal(result.mode, "shadow");
+    assert.equal(result.appliedActions.length, 0);
+    assert.equal(result.reviewQueue.length >= 4, true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "disputed_memory"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "speculative_low_confidence"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "archive_candidate"), true);
+    assert.match(result.traceId, /^gov-/);
+    await stat(result.summaryPath);
+    await stat(result.reviewQueuePath);
+    await stat(result.reportPath);
+    await stat(result.keptMemoriesPath);
+    await stat(result.appliedActionsPath);
+    await stat(result.metricsPath);
+    await stat(result.manifestPath);
+
+    const report = await readFile(result.reportPath, "utf-8");
+    assert.match(report, /Trace ID:/);
+    const keptMemories = JSON.parse(await readFile(result.keptMemoriesPath, "utf-8")) as string[];
+    assert.deepEqual(keptMemories, ["fact-duplicate-a"]);
+    const manifest = JSON.parse(
+      await readFile(result.manifestPath, "utf-8"),
+    ) as { traceId: string; artifacts: Record<string, string> };
+    assert.equal(manifest.traceId, result.traceId);
+    assert.equal(manifest.artifacts.metrics, result.metricsPath);
+
+    const duplicate = await new StorageManager(memoryDir).getMemoryById("fact-duplicate-b");
+    assert.equal(duplicate?.frontmatter.status ?? "active", "active");
+    await assert.rejects(() => stat(path.join(memoryDir, "archive", "2026-03-09", "fact-stale.md")));
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("apply governance run writes restore metadata and restore reverts archive/quarantine/review changes", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-duplicate-a.md",
+      memoryDoc({
+        id: "fact-duplicate-a",
+        content: "The deployment checklist requires smoke tests before cutover.",
+        created: "2026-03-01T00:00:00.000Z",
+        updated: "2026-03-01T00:00:00.000Z",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-02/fact-duplicate-b.md",
+      memoryDoc({
+        id: "fact-duplicate-b",
+        content: "The deployment checklist requires smoke tests before cutover.",
+        created: "2026-03-02T00:00:00.000Z",
+        updated: "2026-03-02T00:00:00.000Z",
+        confidence: 0.55,
+        confidenceTier: "inferred",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-03/fact-disputed.md",
+      memoryDoc({
+        id: "fact-disputed",
+        content: "This disputed memory should be quarantined for review.",
+        created: "2026-03-03T00:00:00.000Z",
+        updated: "2026-03-03T00:00:00.000Z",
+        verificationState: "disputed",
+        lifecycleState: "candidate",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-04/fact-speculative.md",
+      memoryDoc({
+        id: "fact-speculative",
+        content: "This speculative memory is low confidence and should enter review.",
+        created: "2026-03-04T00:00:00.000Z",
+        updated: "2026-03-04T00:00:00.000Z",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        lifecycleState: "candidate",
+        verificationState: "unverified",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2025-01-01/fact-stale.md",
+      memoryDoc({
+        id: "fact-stale",
+        content: "This stale memory should be proposed for archival.",
+        created: "2025-01-01T00:00:00.000Z",
+        updated: "2025-01-01T00:00:00.000Z",
+        confidence: 0.7,
+        confidenceTier: "implied",
+        lifecycleState: "stale",
+        verificationState: "system_inferred",
+        accessCount: 0,
+        lastAccessed: "2025-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const applyResult = await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    assert.equal(applyResult.mode, "apply");
+    assert.equal(applyResult.appliedActions.some((action) => action.action === "archive"), true);
+    assert.equal(applyResult.appliedActions.some((action) => action.action === "set_status"), true);
+    assert.ok(applyResult.restorePath);
+    await stat(applyResult.restorePath);
+    await stat(applyResult.metricsPath);
+
+    const storage = new StorageManager(memoryDir);
+    const duplicate = await storage.getMemoryById("fact-duplicate-b");
+    const disputed = await storage.getMemoryById("fact-disputed");
+    const speculative = await storage.getMemoryById("fact-speculative");
+    assert.equal(duplicate?.frontmatter.status, "pending_review");
+    assert.equal(disputed?.frontmatter.status, "quarantined");
+    assert.equal(speculative?.frontmatter.status, "pending_review");
+    await stat(path.join(memoryDir, "archive", "2026-03-09", "fact-stale.md"));
+
+    const restored = await restoreMemoryGovernanceRun({
+      memoryDir,
+      runId: applyResult.runId,
+      now: new Date("2026-03-09T12:30:00.000Z"),
+    });
+
+    assert.equal(restored.restoredActions >= 4, true);
+
+    const restoredStorage = new StorageManager(memoryDir);
+    const restoredDuplicate = await restoredStorage.getMemoryById("fact-duplicate-b");
+    const restoredDisputed = await restoredStorage.getMemoryById("fact-disputed");
+    const restoredSpeculative = await restoredStorage.getMemoryById("fact-speculative");
+    const restoredStale = await restoredStorage.getMemoryById("fact-stale");
+    assert.equal(restoredDuplicate?.frontmatter.status ?? "active", "active");
+    assert.equal(restoredDisputed?.frontmatter.status ?? "active", "active");
+    assert.equal(restoredSpeculative?.frontmatter.status ?? "active", "active");
+    assert.ok(restoredStale);
+    await assert.rejects(() => stat(path.join(memoryDir, "archive", "2026-03-09", "fact-stale.md")));
+
+    const restoreRaw = JSON.parse(await readFile(applyResult.restorePath as string, "utf-8")) as { runId: string };
+    assert.equal(restoreRaw.runId, applyResult.runId);
+    const lifecycleEvents = await restoredStorage.readMemoryLifecycleEvents();
+    const governanceEvent = lifecycleEvents.find((event) =>
+      event.actor === "memory-governance.apply" && event.reasonCode === "exact_duplicate"
+    );
+    assert.ok(governanceEvent);
+    assert.equal(governanceEvent.ruleVersion, "memory-governance.v1");
+    assert.equal(governanceEvent.correlationId, applyResult.traceId);
+    assert.deepEqual(governanceEvent.relatedMemoryIds, ["fact-duplicate-a"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

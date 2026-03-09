@@ -194,6 +194,11 @@ openclaw engram commitment-status          # Commitment ledger counts and latest
 openclaw engram commitment-record          # Record a typed commitment ledger entry
 openclaw engram commitment-set-state      # Transition a commitment to open|fulfilled|cancelled|expired
 openclaw engram commitment-lifecycle-run  # Expire overdue commitments and clean aged resolved entries
+openclaw engram governance-run --mode shadow # Build review queue + audit artifacts without mutating memories
+openclaw engram governance-run --mode apply  # Apply reversible governance transitions and write restore metadata
+openclaw engram governance-report         # Read the latest or named governance artifact bundle
+openclaw engram governance-restore --run-id <runId> # Restore one applied governance run
+openclaw engram review-disposition <memoryId> --status rejected # Record an explicit operator review outcome
 openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
 openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger
@@ -206,6 +211,8 @@ openclaw engram graph-health                 # Entity graph status
 openclaw engram tier-status                  # Hot/cold tier metrics
 openclaw engram policy-status                # Lifecycle policy snapshot
 ```
+
+Governance runs write durable artifacts under `{memoryDir}/state/memory-governance/runs/<runId>/`, including `summary.json`, `review-queue.json`, `kept-memories.json`, `applied-actions.json`, `metrics.json`, `manifest.json`, `report.md`, and `restore.json` for apply runs.
 
 ## Configuration
 

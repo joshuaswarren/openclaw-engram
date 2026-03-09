@@ -8,6 +8,7 @@ import type {
   ContinuityIncidentRecord,
   MemoryActionEvent,
   MemoryFile,
+  MemoryStatus,
   TranscriptEntry,
 } from "./types.js";
 import { chunkContent } from "./chunking.js";
@@ -27,6 +28,12 @@ import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifecycle-ledger.js";
+import {
+  listMemoryGovernanceRuns,
+  readMemoryGovernanceRunArtifact,
+  restoreMemoryGovernanceRun,
+  runMemoryGovernance,
+} from "./maintenance/memory-governance.js";
 import { rebuildMemoryProjection } from "./maintenance/rebuild-memory-projection.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
@@ -315,6 +322,31 @@ export interface MemoryTimelineCliCommandOptions {
   memoryDir: string;
   memoryId: string;
   limit?: number;
+}
+
+export interface MemoryGovernanceCliCommandOptions {
+  memoryDir: string;
+  mode: "shadow" | "apply";
+  now?: Date;
+}
+
+export interface MemoryGovernanceReportCliCommandOptions {
+  memoryDir: string;
+  runId?: string;
+}
+
+export interface MemoryGovernanceRestoreCliCommandOptions {
+  memoryDir: string;
+  runId: string;
+  now?: Date;
+}
+
+export interface MemoryReviewDispositionCliCommandOptions {
+  memoryDir: string;
+  memoryId: string;
+  status: Extract<MemoryStatus, "active" | "pending_review" | "rejected" | "quarantined">;
+  reasonCode?: string;
+  now?: Date;
 }
 
 export interface MigrateObservationsCliCommandOptions {
@@ -751,6 +783,57 @@ export async function runMemoryTimelineCliCommand(
 ) {
   const storage = new (await import("./storage.js")).StorageManager(options.memoryDir);
   return storage.getMemoryTimeline(options.memoryId, options.limit);
+}
+
+export async function runMemoryGovernanceCliCommand(
+  options: MemoryGovernanceCliCommandOptions,
+) {
+  return runMemoryGovernance({
+    memoryDir: options.memoryDir,
+    mode: options.mode,
+    now: options.now,
+  });
+}
+
+export async function runMemoryGovernanceReportCliCommand(
+  options: MemoryGovernanceReportCliCommandOptions,
+) {
+  const runId = options.runId ?? (await listMemoryGovernanceRuns(options.memoryDir))[0];
+  if (!runId) {
+    throw new Error("no governance runs found");
+  }
+  return readMemoryGovernanceRunArtifact(options.memoryDir, runId);
+}
+
+export async function runMemoryGovernanceRestoreCliCommand(
+  options: MemoryGovernanceRestoreCliCommandOptions,
+) {
+  return restoreMemoryGovernanceRun({
+    memoryDir: options.memoryDir,
+    runId: options.runId,
+    now: options.now,
+  });
+}
+
+export async function runMemoryReviewDispositionCliCommand(
+  options: MemoryReviewDispositionCliCommandOptions,
+) {
+  const storage = new (await import("./storage.js")).StorageManager(options.memoryDir);
+  const memory = await storage.getMemoryById(options.memoryId);
+  if (!memory) throw new Error(`memory not found: ${options.memoryId}`);
+  await storage.writeMemoryFrontmatter(memory, {
+    status: options.status,
+    updated: (options.now ?? new Date()).toISOString(),
+  }, {
+    actor: "cli.review-disposition",
+    reasonCode: options.reasonCode,
+    ruleVersion: "memory-governance.v1",
+  });
+  return {
+    memoryId: options.memoryId,
+    status: options.status,
+    reasonCode: options.reasonCode,
+  };
 }
 
 export async function runMigrateObservationsCliCommand(
@@ -4336,6 +4419,83 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           for (const row of rows) {
             console.log(`${row.timestamp} ${row.eventType} ${row.actor}`);
           }
+          console.log("OK");
+        });
+
+      cmd
+        .command("governance-run")
+        .description("Run memory governance in shadow/apply mode and write audit artifacts")
+        .option("--mode <mode>", "Governance mode (shadow|apply)", "shadow")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const mode = options.mode === "apply" ? "apply" : "shadow";
+          const result = await runMemoryGovernanceCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            mode,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("governance-report")
+        .description("Read the latest or a named governance run artifact bundle")
+        .option("--run-id <id>", "Governance run id (default: latest)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runMemoryGovernanceReportCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            runId: typeof options.runId === "string" && options.runId.trim().length > 0
+              ? options.runId.trim()
+              : undefined,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("governance-restore")
+        .description("Restore memory files from a previous governance apply run")
+        .requiredOption("--run-id <id>", "Governance run id to restore")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          if (typeof options.runId !== "string" || options.runId.trim().length === 0) {
+            throw new Error("missing --run-id");
+          }
+          const result = await runMemoryGovernanceRestoreCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            runId: options.runId.trim(),
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("review-disposition <memoryId>")
+        .description("Manually set an operator review disposition on one memory")
+        .requiredOption("--status <status>", "Disposition status (active|pending_review|rejected|quarantined)")
+        .option("--reason-code <code>", "Optional reason code recorded in CLI output")
+        .action(async (...args: unknown[]) => {
+          const memoryId = String(args[0] ?? "");
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const statusOpt = typeof options.status === "string" ? options.status.trim() : "";
+          if (
+            statusOpt !== "active"
+            && statusOpt !== "pending_review"
+            && statusOpt !== "rejected"
+            && statusOpt !== "quarantined"
+          ) {
+            throw new Error(`invalid review disposition status: ${statusOpt}`);
+          }
+          const result = await runMemoryReviewDispositionCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryId,
+            status: statusOpt,
+            reasonCode: typeof options.reasonCode === "string" && options.reasonCode.trim().length > 0
+              ? options.reasonCode.trim()
+              : undefined,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 
