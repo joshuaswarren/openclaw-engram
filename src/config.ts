@@ -620,6 +620,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     evalShadowModeEnabled: cfg.evalShadowModeEnabled === true,
     benchmarkBaselineSnapshotsEnabled: cfg.benchmarkBaselineSnapshotsEnabled === true,
     benchmarkDeltaReporterEnabled: cfg.benchmarkDeltaReporterEnabled === true,
+    benchmarkStoredBaselineEnabled: cfg.benchmarkStoredBaselineEnabled === true,
     evalStoreDir:
       typeof cfg.evalStoreDir === "string" && cfg.evalStoreDir.trim().length > 0
         ? cfg.evalStoreDir.trim()
@@ -669,6 +670,26 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.resumeBundleDir.trim()
         : path.join(memoryDir, "state", "resume-bundles"),
     workProductRecallEnabled: cfg.workProductRecallEnabled === true,
+    workTasksEnabled: cfg.workTasksEnabled === true,
+    workProjectsEnabled: cfg.workProjectsEnabled === true,
+    workTasksDir:
+      typeof cfg.workTasksDir === "string" && cfg.workTasksDir.trim().length > 0
+        ? cfg.workTasksDir.trim()
+        : path.join(memoryDir, "work", "tasks"),
+    workProjectsDir:
+      typeof cfg.workProjectsDir === "string" && cfg.workProjectsDir.trim().length > 0
+        ? cfg.workProjectsDir.trim()
+        : path.join(memoryDir, "work", "projects"),
+    workIndexEnabled: cfg.workIndexEnabled === true,
+    workIndexDir:
+      typeof cfg.workIndexDir === "string" && cfg.workIndexDir.trim().length > 0
+        ? cfg.workIndexDir.trim()
+        : path.join(memoryDir, "work", "index"),
+    workTaskIndexEnabled: cfg.workTaskIndexEnabled === true,
+    workProjectIndexEnabled: cfg.workProjectIndexEnabled === true,
+    workIndexAutoRebuildEnabled: cfg.workIndexAutoRebuildEnabled === true,
+    workIndexAutoRebuildDebounceMs:
+      typeof cfg.workIndexAutoRebuildDebounceMs === "number" ? cfg.workIndexAutoRebuildDebounceMs : 1000,
     workProductLedgerDir:
       typeof cfg.workProductLedgerDir === "string" && cfg.workProductLedgerDir.trim().length > 0
         ? cfg.workProductLedgerDir.trim()
@@ -891,16 +912,19 @@ export function parseConfig(raw: unknown): PluginConfig {
     remoteSearchTimeoutMs: typeof cfg.remoteSearchTimeoutMs === "number" ? cfg.remoteSearchTimeoutMs : 30_000,
 
     // LanceDB backend
+    lancedbEnabled: cfg.lancedbEnabled === true,
     lanceDbPath: typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : path.join(memoryDir, "lancedb"),
     lanceEmbeddingDimension: typeof cfg.lanceEmbeddingDimension === "number" ? cfg.lanceEmbeddingDimension : 1536,
 
     // Meilisearch backend
+    meilisearchEnabled: cfg.meilisearchEnabled === true,
     meilisearchHost: typeof cfg.meilisearchHost === "string" ? cfg.meilisearchHost : "http://localhost:7700",
     meilisearchApiKey: typeof cfg.meilisearchApiKey === "string" ? cfg.meilisearchApiKey : undefined,
     meilisearchTimeoutMs: typeof cfg.meilisearchTimeoutMs === "number" ? cfg.meilisearchTimeoutMs : 30_000,
     meilisearchAutoIndex: cfg.meilisearchAutoIndex === true,
 
     // Orama backend
+    oramaEnabled: cfg.oramaEnabled === true,
     oramaDbPath: typeof cfg.oramaDbPath === "string" ? cfg.oramaDbPath : path.join(memoryDir, "orama"),
     oramaEmbeddingDimension: typeof cfg.oramaEmbeddingDimension === "number" ? cfg.oramaEmbeddingDimension : 1536,
 
@@ -987,10 +1011,25 @@ export function parseConfig(raw: unknown): PluginConfig {
       : [...DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS],
     // v8.0 phase 1
     recallPlannerEnabled: cfg.recallPlannerEnabled !== false,
+    recallPlannerModel:
+      typeof cfg.recallPlannerModel === "string" && cfg.recallPlannerModel.trim().length > 0
+        ? cfg.recallPlannerModel.trim()
+        : "gpt-5.2-mini",
+    recallPlannerTimeoutMs:
+      typeof cfg.recallPlannerTimeoutMs === "number" ? cfg.recallPlannerTimeoutMs : 1500,
+    recallPlannerUseResponsesApi: cfg.recallPlannerUseResponsesApi !== false,
+    recallPlannerMaxPromptChars:
+      typeof cfg.recallPlannerMaxPromptChars === "number" ? cfg.recallPlannerMaxPromptChars : 4000,
+    recallPlannerMaxMemoryHints:
+      typeof cfg.recallPlannerMaxMemoryHints === "number" ? cfg.recallPlannerMaxMemoryHints : 24,
+    recallPlannerShadowMode: cfg.recallPlannerShadowMode === true,
+    recallPlannerTelemetryEnabled: cfg.recallPlannerTelemetryEnabled !== false,
     recallPlannerMaxQmdResultsMinimal:
       typeof cfg.recallPlannerMaxQmdResultsMinimal === "number"
         ? cfg.recallPlannerMaxQmdResultsMinimal
         : 4,
+    recallPlannerMaxQmdResultsFull:
+      typeof cfg.recallPlannerMaxQmdResultsFull === "number" ? cfg.recallPlannerMaxQmdResultsFull : 8,
     intentRoutingEnabled: cfg.intentRoutingEnabled === true,
     intentRoutingBoost:
       typeof cfg.intentRoutingBoost === "number" ? cfg.intentRoutingBoost : 0.12,
@@ -1030,9 +1069,82 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.queryAwareIndexingMaxCandidates === "number"
         ? Math.max(0, cfg.queryAwareIndexingMaxCandidates) // clamp: negative treated as 0 (no cap)
         : 200,
+    temporalIndexWindowDays:
+      typeof cfg.temporalIndexWindowDays === "number" ? cfg.temporalIndexWindowDays : 30,
+    temporalIndexMaxEntries:
+      typeof cfg.temporalIndexMaxEntries === "number" ? cfg.temporalIndexMaxEntries : 5000,
+    temporalBoostRecentDays:
+      typeof cfg.temporalBoostRecentDays === "number" ? cfg.temporalBoostRecentDays : 7,
+    temporalBoostScore: typeof cfg.temporalBoostScore === "number" ? cfg.temporalBoostScore : 0.15,
+    temporalDecayEnabled: cfg.temporalDecayEnabled !== false,
+    tagMemoryEnabled: cfg.tagMemoryEnabled === true,
+    tagMaxPerMemory: typeof cfg.tagMaxPerMemory === "number" ? cfg.tagMaxPerMemory : 5,
+    tagIndexMaxEntries:
+      typeof cfg.tagIndexMaxEntries === "number" ? cfg.tagIndexMaxEntries : 10000,
+    tagRecallBoost: typeof cfg.tagRecallBoost === "number" ? cfg.tagRecallBoost : 0.15,
+    tagRecallMaxMatches: typeof cfg.tagRecallMaxMatches === "number" ? cfg.tagRecallMaxMatches : 10,
     // v8.2: Multi-graph memory (PR 18)
     multiGraphMemoryEnabled: cfg.multiGraphMemoryEnabled === true,
     graphRecallEnabled: cfg.graphRecallEnabled === true,
+    graphRecallMaxExpansions:
+      typeof cfg.graphRecallMaxExpansions === "number" ? cfg.graphRecallMaxExpansions : 3,
+    graphRecallMaxPerSeed:
+      typeof cfg.graphRecallMaxPerSeed === "number" ? cfg.graphRecallMaxPerSeed : 5,
+    graphRecallMinEdgeWeight:
+      typeof cfg.graphRecallMinEdgeWeight === "number" ? cfg.graphRecallMinEdgeWeight : 0.1,
+    graphRecallShadowEnabled: cfg.graphRecallShadowEnabled === true,
+    graphRecallSnapshotEnabled: cfg.graphRecallSnapshotEnabled === true,
+    graphRecallShadowSampleRate:
+      typeof cfg.graphRecallShadowSampleRate === "number" ? cfg.graphRecallShadowSampleRate : 0.1,
+    graphRecallExplainToolEnabled: cfg.graphRecallExplainToolEnabled === true,
+    graphRecallStoreColdMirror: cfg.graphRecallStoreColdMirror === true,
+    graphRecallColdMirrorCollection:
+      typeof cfg.graphRecallColdMirrorCollection === "string" &&
+      cfg.graphRecallColdMirrorCollection.trim().length > 0
+        ? cfg.graphRecallColdMirrorCollection.trim()
+        : undefined,
+    graphRecallColdMirrorMinAgeDays:
+      typeof cfg.graphRecallColdMirrorMinAgeDays === "number" ? cfg.graphRecallColdMirrorMinAgeDays : 7,
+    graphRecallUseEntityPriors: cfg.graphRecallUseEntityPriors === true,
+    graphRecallEntityPriorBoost:
+      typeof cfg.graphRecallEntityPriorBoost === "number" ? cfg.graphRecallEntityPriorBoost : 0.2,
+    graphRecallPreferHubSeeds: cfg.graphRecallPreferHubSeeds === true,
+    graphRecallHubBias:
+      typeof cfg.graphRecallHubBias === "number" ? cfg.graphRecallHubBias : 0.3,
+    graphRecallRecencyHalfLifeDays:
+      typeof cfg.graphRecallRecencyHalfLifeDays === "number" ? cfg.graphRecallRecencyHalfLifeDays : 30,
+    graphRecallDampingFactor:
+      typeof cfg.graphRecallDampingFactor === "number" ? cfg.graphRecallDampingFactor : 0.85,
+    graphRecallMaxSeedNodes:
+      typeof cfg.graphRecallMaxSeedNodes === "number" ? cfg.graphRecallMaxSeedNodes : 10,
+    graphRecallMaxExpandedNodes:
+      typeof cfg.graphRecallMaxExpandedNodes === "number" ? cfg.graphRecallMaxExpandedNodes : 30,
+    graphRecallMaxTrailPerNode:
+      typeof cfg.graphRecallMaxTrailPerNode === "number" ? cfg.graphRecallMaxTrailPerNode : 5,
+    graphRecallMinSeedScore:
+      typeof cfg.graphRecallMinSeedScore === "number" ? cfg.graphRecallMinSeedScore : 0.3,
+    graphRecallExpansionScoreThreshold:
+      typeof cfg.graphRecallExpansionScoreThreshold === "number"
+        ? cfg.graphRecallExpansionScoreThreshold
+        : 0.2,
+    graphRecallExplainMaxPaths:
+      typeof cfg.graphRecallExplainMaxPaths === "number" ? cfg.graphRecallExplainMaxPaths : 3,
+    graphRecallExplainMaxChars:
+      typeof cfg.graphRecallExplainMaxChars === "number" ? cfg.graphRecallExplainMaxChars : 500,
+    graphRecallExplainEdgeLimit:
+      typeof cfg.graphRecallExplainEdgeLimit === "number" ? cfg.graphRecallExplainEdgeLimit : 5,
+    graphRecallExplainEnabled: cfg.graphRecallExplainEnabled === true,
+    graphRecallEntityHintsEnabled: cfg.graphRecallEntityHintsEnabled === true,
+    graphRecallEntityHintMax:
+      typeof cfg.graphRecallEntityHintMax === "number" ? cfg.graphRecallEntityHintMax : 3,
+    graphRecallEntityHintMaxChars:
+      typeof cfg.graphRecallEntityHintMaxChars === "number" ? cfg.graphRecallEntityHintMaxChars : 200,
+    graphRecallSnapshotDir:
+      typeof cfg.graphRecallSnapshotDir === "string" && cfg.graphRecallSnapshotDir.trim().length > 0
+        ? cfg.graphRecallSnapshotDir.trim()
+        : path.join(memoryDir, "state", "graph"),
+    graphRecallEnableTrace: cfg.graphRecallEnableTrace === true,
+    graphRecallEnableDebug: cfg.graphRecallEnableDebug === true,
     graphExpandedIntentEnabled: cfg.graphExpandedIntentEnabled !== false,
     graphAssistInFullModeEnabled: cfg.graphAssistInFullModeEnabled !== false,
     graphAssistShadowEvalEnabled: cfg.graphAssistShadowEvalEnabled === true,
