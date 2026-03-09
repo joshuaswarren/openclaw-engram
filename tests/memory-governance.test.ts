@@ -150,6 +150,10 @@ test("shadow governance run writes review artifacts without mutating memory file
     ) as { traceId: string; artifacts: Record<string, string> };
     assert.equal(manifest.traceId, result.traceId);
     assert.equal(manifest.artifacts.metrics, result.metricsPath);
+    const metrics = JSON.parse(await readFile(result.metricsPath, "utf-8")) as {
+      proposedStatuses: Record<string, number>;
+    };
+    assert.equal(metrics.proposedStatuses.archived, 1);
 
     const duplicate = await new StorageManager(memoryDir).getMemoryById("fact-duplicate-b");
     assert.equal(duplicate?.frontmatter.status ?? "active", "active");

@@ -318,8 +318,9 @@ function buildMetrics(
   }
 
   for (const action of proposedActions) {
-    if (!action.afterStatus) continue;
-    proposedStatuses[action.afterStatus] = (proposedStatuses[action.afterStatus] ?? 0) + 1;
+    const effectiveStatus = action.afterStatus ?? (action.action === "archive" ? "archived" : undefined);
+    if (!effectiveStatus) continue;
+    proposedStatuses[effectiveStatus] = (proposedStatuses[effectiveStatus] ?? 0) + 1;
   }
 
   return {
@@ -448,7 +449,7 @@ async function writeGovernanceArtifacts(options: {
     },
   };
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
-  if (restorePath && options.restoreManifest) {
+  if (restorePath && options.restoreManifest && await safeRead(restorePath) === null) {
     await writeFile(restorePath, JSON.stringify(options.restoreManifest, null, 2), "utf-8");
   }
 
