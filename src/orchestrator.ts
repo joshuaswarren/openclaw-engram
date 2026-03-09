@@ -3455,65 +3455,13 @@ export class Orchestrator {
           const queryAwareScopedMemories = queryAwarePrefilter.candidatePaths
             ? activeMemories.filter((memory) => queryAwarePrefilter.candidatePaths?.has(memory.path))
             : activeMemories;
-          const prefilterAwareMemories = queryAwareScopedMemories.length > 0
-            ? queryAwareScopedMemories
-            : activeMemories;
-          const recentSorted = queryAwareScopedMemories
-            .sort(
-              (a, b) =>
-                new Date(b.frontmatter.updated).getTime() -
-                new Date(a.frontmatter.updated).getTime(),
-            );
-          const effectiveRecentSorted = recentSorted.length > 0
-            ? recentSorted
-            : prefilterAwareMemories
-            .sort(
-              (a, b) =>
-                new Date(b.frontmatter.updated).getTime() -
-                new Date(a.frontmatter.updated).getTime(),
-            );
-          const preloadedMap = new Map<string, MemoryFile>(
-            prefilterAwareMemories.filter((m) => m.path).map((m) => [m.path, m]),
-          );
-          const recentAsResults: QmdSearchResult[] = effectiveRecentSorted.map((m, i) => ({
-            docid: m.frontmatter.id,
-            path: m.path,
-            snippet: m.content,
-            score: 1.0 - i / Math.max(effectiveRecentSorted.length, 1),
-          }));
-          const recent = (await this.boostSearchResults(
-            recentAsResults,
-            recallNamespaces,
-            retrievalQuery,
-            preloadedMap,
-          ))
-            .sort((a, b) => b.score - a.score)
-            .slice(0, recallResultLimit);
-
-          if (recent.length > 0) {
-            recallSource = "recent_scan";
-            recalledMemoryCount = recent.length;
-            this.publishRecallResults({
-              title: "Recent Memories",
-              results: recent,
-              sectionBuckets,
-              retrievalQuery,
-              sessionKey,
-              identityInjection: {
-                mode: identityInjectionModeUsed,
-                injectedChars: identityInjectedChars,
-                truncated: identityInjectionTruncated,
-              },
-            });
-            recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
-            recalledMemoryPaths = recent.map((result) => result.path).filter(Boolean);
-            impressionRecorded = true;
-          } else {
+          if (queryAwarePrefilter.candidatePaths && queryAwareScopedMemories.length === 0) {
             const longTerm = await this.applyColdFallbackPipeline({
               prompt: retrievalQuery,
               recallNamespaces,
               recallResultLimit,
               recallMode,
+              queryAwarePrefilter,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -3534,6 +3482,77 @@ export class Orchestrator {
               recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
               impressionRecorded = true;
             }
+          } else {
+            const recentSorted = queryAwareScopedMemories
+              .sort(
+                (a, b) =>
+                  new Date(b.frontmatter.updated).getTime() -
+                  new Date(a.frontmatter.updated).getTime(),
+              );
+            const preloadedMap = new Map<string, MemoryFile>(
+              queryAwareScopedMemories.filter((m) => m.path).map((m) => [m.path, m]),
+            );
+            const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
+              docid: m.frontmatter.id,
+              path: m.path,
+              snippet: m.content,
+              score: 1.0 - i / Math.max(recentSorted.length, 1),
+            }));
+            const recent = (await this.boostSearchResults(
+              recentAsResults,
+              recallNamespaces,
+              retrievalQuery,
+              preloadedMap,
+            ))
+              .sort((a, b) => b.score - a.score)
+              .slice(0, recallResultLimit);
+
+            if (recent.length > 0) {
+              recallSource = "recent_scan";
+              recalledMemoryCount = recent.length;
+              this.publishRecallResults({
+                title: "Recent Memories",
+                results: recent,
+                sectionBuckets,
+                retrievalQuery,
+                sessionKey,
+                identityInjection: {
+                  mode: identityInjectionModeUsed,
+                  injectedChars: identityInjectedChars,
+                  truncated: identityInjectionTruncated,
+                },
+              });
+              recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
+              recalledMemoryPaths = recent.map((result) => result.path).filter(Boolean);
+              impressionRecorded = true;
+            } else {
+              const longTerm = await this.applyColdFallbackPipeline({
+                prompt: retrievalQuery,
+                recallNamespaces,
+                recallResultLimit,
+                recallMode,
+                queryAwarePrefilter,
+              });
+              if (longTerm.length > 0) {
+                recallSource = "cold_fallback";
+                recalledMemoryCount = longTerm.length;
+                this.publishRecallResults({
+                  title: "Long-Term Memories (Fallback)",
+                  results: longTerm,
+                  sectionBuckets,
+                  retrievalQuery,
+                  sessionKey,
+                  identityInjection: {
+                    mode: identityInjectionModeUsed,
+                    injectedChars: identityInjectedChars,
+                    truncated: identityInjectionTruncated,
+                  },
+                });
+                recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+                recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
+                impressionRecorded = true;
+              }
+            }
           }
         } else {
           const longTerm = await this.applyColdFallbackPipeline({
@@ -3541,6 +3560,7 @@ export class Orchestrator {
             recallNamespaces,
             recallResultLimit,
             recallMode,
+            queryAwarePrefilter,
           });
           if (longTerm.length > 0) {
             recallSource = "cold_fallback";
@@ -6269,7 +6289,9 @@ export class Orchestrator {
       )
       : [];
     if (scopedSeedResults.length >= cappedLimit) {
-      return scopedSeedResults.slice(0, cappedLimit);
+      return scopedSeedResults
+        .filter((result) => !isArtifactMemoryPath(result.path))
+        .slice(0, cappedLimit);
     }
 
     const tokens = Array.from(new Set(tokenizeRecallQuery(prompt)));
@@ -6314,6 +6336,7 @@ export class Orchestrator {
     }
 
     return [...mergedByPath.values()]
+      .filter((result) => !isArtifactMemoryPath(result.path))
       .sort((a, b) => b.score - a.score)
       .slice(0, cappedLimit);
   }

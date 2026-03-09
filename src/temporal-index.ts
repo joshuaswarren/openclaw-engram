@@ -568,35 +568,33 @@ export async function resolvePromptTagPrefilterAsync(
   paths: Set<string> | null;
 }> {
   const explicitTags = extractTagsFromPrompt(prompt);
-  let raw: string;
   try {
-    raw = await fs.promises.readFile(tagIndexPath(memoryDir), "utf8");
+    const raw = await fs.promises.readFile(tagIndexPath(memoryDir), "utf8");
+    const tagIndex = normalizeTagIndex(JSON.parse(raw) as TagIndex);
+    const matched = new Set<string>(explicitTags);
+
+    for (const canonical of Object.keys(tagIndex.tags)) {
+      if (promptContainsAlias(prompt, canonical)) {
+        matched.add(canonical);
+      }
+    }
+    for (const [alias, canonicals] of Object.entries(tagIndex.aliases ?? {})) {
+      if (!promptContainsAlias(prompt, alias)) continue;
+      for (const canonical of canonicals) {
+        matched.add(canonical);
+      }
+    }
+
+    const expandedTags = expandCanonicalTags(tagIndex, Array.from(matched));
+    const paths = await queryByTagsAsync(memoryDir, expandedTags);
+    return {
+      matchedTags: Array.from(matched),
+      expandedTags,
+      paths,
+    };
   } catch {
     return { matchedTags: explicitTags, expandedTags: explicitTags, paths: null };
   }
-
-  const tagIndex = normalizeTagIndex(JSON.parse(raw) as TagIndex);
-  const matched = new Set<string>(explicitTags);
-
-  for (const canonical of Object.keys(tagIndex.tags)) {
-    if (promptContainsAlias(prompt, canonical)) {
-      matched.add(canonical);
-    }
-  }
-  for (const [alias, canonicals] of Object.entries(tagIndex.aliases ?? {})) {
-    if (!promptContainsAlias(prompt, alias)) continue;
-    for (const canonical of canonicals) {
-      matched.add(canonical);
-    }
-  }
-
-  const expandedTags = expandCanonicalTags(tagIndex, Array.from(matched));
-  const paths = await queryByTagsAsync(memoryDir, expandedTags);
-  return {
-    matchedTags: Array.from(matched),
-    expandedTags,
-    paths,
-  };
 }
 
 /**
