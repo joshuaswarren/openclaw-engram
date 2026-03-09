@@ -101,6 +101,7 @@ export interface ReextractJobRequest {
 }
 
 export interface MemoryLifecycleEventWriteOptions {
+  at?: Date;
   actor?: string;
   reasonCode?: string;
   ruleVersion?: string;
@@ -1513,7 +1514,7 @@ export class StorageManager {
     lifecycle?: MemoryLifecycleEventWriteOptions,
   ): Promise<string | null> {
     try {
-      const now = new Date();
+      const now = lifecycle?.at ?? new Date();
       const today = now.toISOString().slice(0, 10);
       const destDir = path.join(this.archiveDir, today);
       await mkdir(destDir, { recursive: true });

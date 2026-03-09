@@ -34,6 +34,8 @@ interface MemoryGovernanceRestoreEntry {
   originalPath: string;
   currentPath: string;
   beforeRaw: string;
+  expectedCurrentRaw?: string;
+  applied: boolean;
 }
 
 export interface MemoryGovernanceRestoreManifest {
@@ -116,8 +118,21 @@ function governanceRunDir(memoryDir: string, runId: string): string {
   return path.join(governanceRunsDir(memoryDir), runId);
 }
 
+function governanceRestorePath(memoryDir: string, runId: string): string {
+  return path.join(governanceRunDir(memoryDir, runId), "restore.json");
+}
+
 function buildRunId(now: Date): string {
   return `gov-${now.toISOString().replace(/[:.]/g, "-")}`;
+}
+
+function plannedArchivePath(memoryDir: string, originalPath: string, now: Date): string {
+  return path.join(
+    memoryDir,
+    "archive",
+    now.toISOString().slice(0, 10),
+    path.basename(originalPath),
+  );
 }
 
 function normalizeContent(content: string): string {
@@ -317,6 +332,16 @@ async function safeRead(filePath: string): Promise<string | null> {
   }
 }
 
+async function persistRestoreManifest(
+  memoryDir: string,
+  manifest: MemoryGovernanceRestoreManifest,
+): Promise<string> {
+  const restorePath = governanceRestorePath(memoryDir, manifest.runId);
+  await mkdir(path.dirname(restorePath), { recursive: true });
+  await writeFile(restorePath, JSON.stringify(manifest, null, 2), "utf-8");
+  return restorePath;
+}
+
 async function writeGovernanceArtifacts(options: {
   memoryDir: string;
   runId: string;
@@ -351,7 +376,7 @@ async function writeGovernanceArtifacts(options: {
   const appliedActionsPath = path.join(runDir, "applied-actions.json");
   const metricsPath = path.join(runDir, "metrics.json");
   const manifestPath = path.join(runDir, "manifest.json");
-  const restorePath = options.restoreManifest ? path.join(runDir, "restore.json") : undefined;
+  const restorePath = options.restoreManifest ? governanceRestorePath(options.memoryDir, options.runId) : undefined;
 
   await writeFile(summaryPath, JSON.stringify(options.summary, null, 2), "utf-8");
   await writeFile(reviewQueuePath, JSON.stringify(options.reviewQueue, null, 2), "utf-8");
@@ -451,6 +476,7 @@ export async function runMemoryGovernance(
     .filter((memoryId) => !targetedMemoryIds.has(memoryId));
   const appliedActions: MemoryGovernanceAppliedAction[] = [];
   const restoreEntries: MemoryGovernanceRestoreEntry[] = [];
+  const restoreEntryByMemoryId = new Map<string, MemoryGovernanceRestoreEntry>();
 
   if (options.mode === "apply") {
     for (const action of proposedActions) {
@@ -458,9 +484,37 @@ export async function runMemoryGovernance(
       if (!memory) continue;
       const beforeRaw = await safeRead(memory.path);
       if (!beforeRaw) continue;
+      const entry: MemoryGovernanceRestoreEntry = {
+        action: action.action,
+        memoryId: action.memoryId,
+        reasonCode: action.reasonCode,
+        originalPath: memory.path,
+        currentPath: action.action === "archive"
+          ? plannedArchivePath(options.memoryDir, memory.path, now)
+          : memory.path,
+        beforeRaw,
+        applied: false,
+      };
+      restoreEntries.push(entry);
+      restoreEntryByMemoryId.set(action.memoryId, entry);
+    }
+
+    const restoreManifest: MemoryGovernanceRestoreManifest = {
+      runId,
+      createdAt: now.toISOString(),
+      entries: restoreEntries,
+    };
+    await persistRestoreManifest(options.memoryDir, restoreManifest);
+
+    for (const action of proposedActions) {
+      const memory = await storage.getMemoryById(action.memoryId);
+      if (!memory) continue;
+      const restoreEntry = restoreEntryByMemoryId.get(action.memoryId);
+      if (!restoreEntry) continue;
 
       if (action.action === "archive") {
         const archivedPath = await storage.archiveMemory(memory, {
+          at: now,
           actor: "memory-governance.apply",
           reasonCode: action.reasonCode,
           ruleVersion: RULE_VERSION,
@@ -468,18 +522,14 @@ export async function runMemoryGovernance(
           correlationId: traceId,
         });
         if (!archivedPath) continue;
+        restoreEntry.currentPath = archivedPath;
+        restoreEntry.expectedCurrentRaw = await safeRead(archivedPath) ?? undefined;
+        restoreEntry.applied = true;
+        await persistRestoreManifest(options.memoryDir, restoreManifest);
         appliedActions.push({
           ...action,
           currentPath: archivedPath,
           afterStatus: "archived",
-        });
-        restoreEntries.push({
-          action: "archive",
-          memoryId: action.memoryId,
-          reasonCode: action.reasonCode,
-          originalPath: memory.path,
-          currentPath: archivedPath,
-          beforeRaw,
         });
         continue;
       }
@@ -496,17 +546,12 @@ export async function runMemoryGovernance(
         correlationId: traceId,
       });
       if (!updated) continue;
+      restoreEntry.expectedCurrentRaw = await safeRead(memory.path) ?? undefined;
+      restoreEntry.applied = true;
+      await persistRestoreManifest(options.memoryDir, restoreManifest);
       appliedActions.push({
         ...action,
         currentPath: memory.path,
-      });
-      restoreEntries.push({
-        action: "set_status",
-        memoryId: action.memoryId,
-        reasonCode: action.reasonCode,
-        originalPath: memory.path,
-        currentPath: memory.path,
-        beforeRaw,
       });
     }
   }
@@ -558,11 +603,18 @@ export async function restoreMemoryGovernanceRun(
   options: RestoreMemoryGovernanceRunOptions,
 ): Promise<RestoreMemoryGovernanceRunResult> {
   void options.now;
-  const restorePath = path.join(governanceRunDir(options.memoryDir, options.runId), "restore.json");
+  const restorePath = governanceRestorePath(options.memoryDir, options.runId);
   const raw = JSON.parse(await readFile(restorePath, "utf-8")) as MemoryGovernanceRestoreManifest;
   let restoredActions = 0;
 
   for (const entry of [...raw.entries].reverse()) {
+    if (!entry.applied) {
+      continue;
+    }
+    const currentRaw = await safeRead(entry.currentPath);
+    if (entry.expectedCurrentRaw && currentRaw !== entry.expectedCurrentRaw) {
+      throw new Error(`restore conflict for ${entry.memoryId}: current contents diverged from governance run`);
+    }
     if (entry.action === "archive") {
       await rm(entry.currentPath, { force: true });
     }

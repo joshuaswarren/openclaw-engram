@@ -249,7 +249,10 @@ test("apply governance run writes restore metadata and restore reverts archive/q
     assert.equal(duplicate?.frontmatter.status, "pending_review");
     assert.equal(disputed?.frontmatter.status, "quarantined");
     assert.equal(speculative?.frontmatter.status, "pending_review");
-    await stat(path.join(memoryDir, "archive", "2026-03-09", "fact-stale.md"));
+    const archivedPath = path.join(memoryDir, "archive", "2026-03-09", "fact-stale.md");
+    await stat(archivedPath);
+    const archivedRaw = await readFile(archivedPath, "utf-8");
+    assert.match(archivedRaw, /archivedAt: 2026-03-09T12:00:00.000Z/);
 
     const restored = await restoreMemoryGovernanceRun({
       memoryDir,
@@ -280,6 +283,52 @@ test("apply governance run writes restore metadata and restore reverts archive/q
     assert.equal(governanceEvent.ruleVersion, "memory-governance.v1");
     assert.equal(governanceEvent.correlationId, applyResult.traceId);
     assert.deepEqual(governanceEvent.relatedMemoryIds, ["fact-duplicate-a"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("restore refuses to overwrite post-run edits", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-restore-conflict-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-1.md",
+      memoryDoc({
+        id: "fact-1",
+        content: "This disputed memory should be quarantined for review.",
+        verificationState: "disputed",
+        lifecycleState: "candidate",
+      }),
+    );
+
+    const applyResult = await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const updatedPath = path.join(memoryDir, "facts/2026-03-01/fact-1.md");
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-1.md",
+      memoryDoc({
+        id: "fact-1",
+        content: "Operator edited this after the governance run.",
+        status: "quarantined",
+        verificationState: "disputed",
+        lifecycleState: "candidate",
+        updated: "2026-03-09T13:00:00.000Z",
+      }),
+    );
+
+    await assert.rejects(
+      () => restoreMemoryGovernanceRun({ memoryDir, runId: applyResult.runId }),
+      /restore conflict/,
+    );
+
+    const currentRaw = await readFile(updatedPath, "utf-8");
+    assert.match(currentRaw, /Operator edited this after the governance run/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

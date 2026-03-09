@@ -821,7 +821,7 @@ export async function runMemoryReviewDispositionCliCommand(
   const storage = new (await import("./storage.js")).StorageManager(options.memoryDir);
   const memory = await storage.getMemoryById(options.memoryId);
   if (!memory) throw new Error(`memory not found: ${options.memoryId}`);
-  await storage.writeMemoryFrontmatter(memory, {
+  const updated = await storage.writeMemoryFrontmatter(memory, {
     status: options.status,
     updated: (options.now ?? new Date()).toISOString(),
   }, {
@@ -829,6 +829,9 @@ export async function runMemoryReviewDispositionCliCommand(
     reasonCode: options.reasonCode,
     ruleVersion: "memory-governance.v1",
   });
+  if (!updated) {
+    throw new Error(`failed to update memory disposition: ${options.memoryId}`);
+  }
   return {
     memoryId: options.memoryId,
     status: options.status,
