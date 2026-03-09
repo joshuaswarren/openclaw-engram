@@ -224,12 +224,6 @@ Key settings:
 | `benchmarkDeltaReporterEnabled` | `false` | Enable named-baseline delta reports against the current eval store |
 | `nativeKnowledge.enabled` | `false` | Enable curated workspace and synced native-knowledge recall without converting source docs into durable memory files |
 | `nativeKnowledge.obsidianVaults` | `[]` | Optional backend-agnostic Obsidian vault adapters that sync markdown notes, tags, aliases, links, and daily-note dates into native knowledge recall |
-
-The repo's required benchmark check uses the committed fixture snapshot at
-`tests/fixtures/eval-ci/store/baselines/required-main.json` as the stable
-release baseline for PR gating. During the rollout PR that first introduces
-that file, the gate bootstraps from the candidate branch snapshot once; after
-that, PRs resolve the required baseline from the base branch checkout.
 | `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 | `objectiveStateMemoryEnabled` | `false` | Enable the objective-state memory foundation for normalized world/tool state snapshots |
 | `objectiveStateSnapshotWritesEnabled` | `false` | Permit objective-state snapshot writers to persist typed state records |
@@ -261,6 +255,12 @@ that, PRs resolve the required baseline from the base branch checkout.
 | `resumeBundleDir` | `{memoryDir}/state/resume-bundles` | Root directory for typed resume bundles |
 | `workProductRecallEnabled` | `false` | Inject prompt-relevant work-product ledger entries into recall and expose `openclaw engram work-product-recall-search` |
 | `workProductLedgerDir` | `{memoryDir}/state/work-product-ledger` | Root directory for typed work-product ledger entries |
+
+The repo's required benchmark check uses the committed fixture snapshot at
+`tests/fixtures/eval-ci/store/baselines/required-main.json` as the stable
+release baseline for PR gating. During the rollout PR that first introduces
+that file, the gate bootstraps from the candidate branch snapshot once; after
+that, PRs resolve the required baseline from the base branch checkout.
 
 ### Native Knowledge Sync
 
