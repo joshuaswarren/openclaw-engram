@@ -232,6 +232,7 @@ def build_manifest(
     chunk_count: int,
     *,
     generated_at: str | None = None,
+    last_successful_rebuild_at: str | None = None,
 ) -> dict[str, Any]:
     normalized_model_id = normalize_model_id(model_id)
     now_iso = generated_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -242,7 +243,7 @@ def build_manifest(
         "dimension": int(vector_dim),
         "chunkCount": int(chunk_count),
         "updatedAt": now_iso,
-        "lastSuccessfulRebuildAt": now_iso,
+        "lastSuccessfulRebuildAt": last_successful_rebuild_at or now_iso,
     }
 
 
@@ -435,6 +436,7 @@ def run_upsert(payload: dict[str, Any]) -> dict[str, Any]:
         idx_path = index_file(index_dir)
         manifest_path = manifest_file(index_dir)
         existing = read_metadata(meta_path)
+        existing_manifest = read_manifest(manifest_path)
         merged = merge_rows(existing, chunks)
 
         texts = [row["text"] for row in merged]
@@ -443,7 +445,22 @@ def run_upsert(payload: dict[str, Any]) -> dict[str, Any]:
         # Commit FAISS index first; metadata follows so we never point at missing vectors.
         write_index(idx_path, vectors, faiss)
         write_metadata(meta_path, merged)
-        write_manifest(manifest_path, build_manifest(model_id, int(vectors.shape[1]), len(merged)))
+        preserved_rebuild_at = (
+            existing_manifest.get("lastSuccessfulRebuildAt")
+            if isinstance(existing_manifest, dict)
+            and isinstance(existing_manifest.get("lastSuccessfulRebuildAt"), str)
+            and existing_manifest.get("lastSuccessfulRebuildAt")
+            else None
+        )
+        write_manifest(
+            manifest_path,
+            build_manifest(
+                model_id,
+                int(vectors.shape[1]),
+                len(merged),
+                last_successful_rebuild_at=preserved_rebuild_at,
+            ),
+        )
     finally:
         release_index_lock(lock_path)
 

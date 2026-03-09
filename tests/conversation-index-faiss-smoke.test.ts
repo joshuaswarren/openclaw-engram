@@ -206,6 +206,52 @@ test("faiss sidecar rejects stale manifest model mismatches instead of silently 
   }
 });
 
+test("faiss sidecar upsert preserves lastSuccessfulRebuildAt across incremental updates", { skip: !hasFaissDeps() }, () => {
+  const indexPath = mkdtempSync(path.join(tmpdir(), "engram-faiss-upsert-preserve-"));
+  try {
+    const rebuildResponse = runSidecar("rebuild", {
+      modelId: "__hash__",
+      indexPath,
+      chunks: [
+        {
+          id: "chunk-1",
+          sessionKey: "session-1",
+          text: "baseline rebuild",
+          startTs: "2026-02-27T00:00:00.000Z",
+          endTs: "2026-02-27T00:00:05.000Z",
+        },
+      ],
+    });
+    assert.equal(rebuildResponse.ok, true);
+
+    const originalManifest = JSON.parse(readFileSync(manifestPath(indexPath), "utf-8")) as Record<string, unknown>;
+    const originalRebuildAt = String(originalManifest.lastSuccessfulRebuildAt);
+    assert.ok(originalRebuildAt.length > 0);
+
+    const upsertResponse = runSidecar("upsert", {
+      modelId: "__hash__",
+      indexPath,
+      chunks: [
+        {
+          id: "chunk-2",
+          sessionKey: "session-1",
+          text: "incremental upsert",
+          startTs: "2026-02-27T00:01:00.000Z",
+          endTs: "2026-02-27T00:01:05.000Z",
+        },
+      ],
+    });
+    assert.equal(upsertResponse.ok, true);
+
+    const updatedManifest = JSON.parse(readFileSync(manifestPath(indexPath), "utf-8")) as Record<string, unknown>;
+    assert.equal(updatedManifest.lastSuccessfulRebuildAt, originalRebuildAt);
+    assert.notEqual(updatedManifest.updatedAt, "");
+    assert.equal(updatedManifest.chunkCount, 2);
+  } finally {
+    rmSync(indexPath, { recursive: true, force: true });
+  }
+});
+
 test("faiss sidecar rejects manifest dimension mismatches instead of silently reusing the index", { skip: !hasFaissDeps() }, () => {
   const indexPath = mkdtempSync(path.join(tmpdir(), "engram-faiss-stale-dim-"));
   try {
