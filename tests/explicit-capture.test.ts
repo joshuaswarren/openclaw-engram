@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { parseConfig } from "../src/config.js";
 import {
   hasInlineExplicitCaptureMarkup,
-  findDuplicateExplicitCapture,
   parseInlineExplicitCaptureNotes,
   persistExplicitCapture,
   shouldProcessInlineExplicitCapture,
@@ -223,26 +222,25 @@ test("persistExplicitCapture attributes lifecycle actors to the correct tool sou
 });
 
 test("fact duplicate checks short-circuit without a full corpus scan when authoritative hash index misses", async () => {
-  let readAllMemoriesCalls = 0;
   const storage = {
     hasFactContentHash: async () => false,
     isFactContentHashAuthoritative: async () => true,
-    readAllMemories: async () => {
-      readAllMemoriesCalls += 1;
-      return [];
-    },
+    readAllMemories: async () => [],
+    writeMemory: async () => "fact-1",
+    appendMemoryLifecycleEvents: async () => 1,
   };
 
-  const duplicate = await findDuplicateExplicitCapture(
+  const duplicate = await persistExplicitCapture(
     { getStorage: async () => storage } as never,
     validateExplicitCaptureInput({
       content: "This fact should miss the hash gate and skip the full scan.",
       category: "fact",
     }),
+    "memory_capture",
   );
 
-  assert.equal(duplicate, null);
-  assert.equal(readAllMemoriesCalls, 0);
+  assert.equal(duplicate.duplicateOf, undefined);
+  assert.equal(duplicate.id, "fact-1");
 });
 
 test("fact duplicate checks fall back to the full corpus scan when hash index coverage is not authoritative", async () => {
@@ -259,17 +257,53 @@ test("fact duplicate checks fall back to the full corpus scan when hash index co
         },
       ];
     },
+    writeMemory: async () => "fact-should-not-write",
+    appendMemoryLifecycleEvents: async () => 1,
   };
 
-  const duplicate = await findDuplicateExplicitCapture(
+  const duplicate = await persistExplicitCapture(
     { getStorage: async () => storage } as never,
     validateExplicitCaptureInput({
       content: "Legacy fact content that predates the hash index.",
       category: "fact",
     }),
+    "memory_capture",
   );
 
-  assert.equal(duplicate, "fact-legacy");
+  assert.equal(duplicate.duplicateOf, "fact-legacy");
+  assert.equal(readAllMemoriesCalls, 1);
+});
+
+test("fact duplicate checks fail open to the full corpus scan when hash index access throws", async () => {
+  let readAllMemoriesCalls = 0;
+  const storage = {
+    hasFactContentHash: async () => {
+      throw new Error("transient hash index failure");
+    },
+    isFactContentHashAuthoritative: async () => true,
+    readAllMemories: async () => {
+      readAllMemoriesCalls += 1;
+      return [
+        {
+          frontmatter: { id: "fact-legacy", category: "fact", status: "active" },
+          content: "Legacy fact content that predates the hash index.",
+        },
+      ];
+    },
+    writeMemory: async () => "fact-should-not-write",
+    appendMemoryLifecycleEvents: async () => 1,
+  };
+
+  const duplicate = await persistExplicitCapture(
+    { getStorage: async () => storage } as never,
+    validateExplicitCaptureInput({
+      content: "Legacy fact content that predates the hash index.",
+      category: "fact",
+    }),
+    "memory_capture",
+  );
+
+  assert.equal(duplicate.duplicateOf, "fact-legacy");
   assert.equal(readAllMemoriesCalls, 1);
 });
 

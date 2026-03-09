@@ -225,7 +225,7 @@ export function validateExplicitCaptureInput(
   };
 }
 
-export async function findDuplicateExplicitCapture(
+async function findDuplicateExplicitCapture(
   orchestrator: Orchestrator,
   candidate: ValidExplicitCapture,
 ): Promise<string | null> {
@@ -234,17 +234,22 @@ export async function findDuplicateExplicitCapture(
     candidate.category === "fact"
     && typeof (storage as { hasFactContentHash?: (content: string) => Promise<boolean> }).hasFactContentHash === "function"
   ) {
-    const hasHash = await (storage as { hasFactContentHash: (content: string) => Promise<boolean> }).hasFactContentHash(
-      candidate.content,
-    );
-    if (!hasHash) {
-      const authoritative =
-        typeof (storage as { isFactContentHashAuthoritative?: () => Promise<boolean> | boolean }).isFactContentHashAuthoritative
-          === "function"
-          ? await (storage as { isFactContentHashAuthoritative: () => Promise<boolean> | boolean })
-            .isFactContentHashAuthoritative()
-          : false;
-      if (authoritative) return null;
+    try {
+      const hasHash = await (storage as { hasFactContentHash: (content: string) => Promise<boolean> }).hasFactContentHash(
+        candidate.content,
+      );
+      if (!hasHash) {
+        const authoritative =
+          typeof (storage as { isFactContentHashAuthoritative?: () => Promise<boolean> | boolean }).isFactContentHashAuthoritative
+            === "function"
+            ? await (storage as { isFactContentHashAuthoritative: () => Promise<boolean> | boolean })
+              .isFactContentHashAuthoritative()
+            : false;
+        if (authoritative) return null;
+      }
+    } catch (err) {
+      // Fail open: hash index is only an optimization, so fall back to the full corpus scan.
+      void err;
     }
   }
   const existing = await storage.readAllMemories();
