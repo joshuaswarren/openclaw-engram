@@ -106,6 +106,24 @@ test("explicit capture validation rejects invalid ttl values before persistence"
   );
 });
 
+test("memory_store can preserve legacy short-content writes while strict explicit capture still rejects them", () => {
+  assert.doesNotThrow(() =>
+    validateExplicitCaptureInput(
+      {
+        content: "uses vim",
+      },
+      "legacy_tool",
+    ));
+
+  assert.throws(
+    () =>
+      validateExplicitCaptureInput({
+        content: "uses vim",
+      }),
+    /at least 10 characters/,
+  );
+});
+
 test("persistExplicitCapture writes lifecycle events and dedupes active duplicates", async () => {
   const memories: Array<{
     frontmatter: { id: string; category: string; status?: string };

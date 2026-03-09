@@ -268,7 +268,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       confidence,
       ttl,
       sourceReason,
-    });
+    }, source === "memory_store" ? "legacy_tool" : "strict_explicit");
     const result = await persistExplicitCapture(orchestrator, candidate, source);
 
     if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {

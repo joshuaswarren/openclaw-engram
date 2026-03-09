@@ -27,6 +27,7 @@ export type ValidExplicitCapture = {
 };
 
 export type ExplicitCaptureSource = "memory_store" | "memory_capture" | "inline";
+type ExplicitCaptureValidationMode = "legacy_tool" | "strict_explicit";
 
 const INLINE_NOTE_RE = /<memory_note>\s*([\s\S]*?)\s*<\/memory_note>/gi;
 const INLINE_NOTE_MARKUP_RE = /<memory_note>\s*[\s\S]*?\s*<\/memory_note>/i;
@@ -177,11 +178,16 @@ export function stripInlineExplicitCaptureNotes(text: string): string {
   return text.replace(INLINE_NOTE_RE, "").trim();
 }
 
-export function validateExplicitCaptureInput(input: ExplicitCaptureInput): ValidExplicitCapture {
+export function validateExplicitCaptureInput(
+  input: ExplicitCaptureInput,
+  mode: ExplicitCaptureValidationMode = "strict_explicit",
+): ValidExplicitCapture {
   const content = asTrimmed(input.content);
   if (!content) throw new Error("content is required");
-  if (content.length < 10) throw new Error("content must be at least 10 characters");
-  if (content.length > 4000) throw new Error("content must be 4000 characters or fewer");
+  if (mode === "strict_explicit") {
+    if (content.length < 10) throw new Error("content must be at least 10 characters");
+    if (content.length > 4000) throw new Error("content must be 4000 characters or fewer");
+  }
   if (/<memory_note>/i.test(content) || /<\/memory_note>/i.test(content)) {
     throw new Error("nested memory_note blocks are not allowed");
   }
