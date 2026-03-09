@@ -316,6 +316,33 @@ test("explicit capture duplicate normalization stays aligned with fact hash norm
   );
 });
 
+test("explicit capture duplicate checks preserve punctuation that changes technical meaning", async () => {
+  const storage = {
+    hasFactContentHash: async () => true,
+    isFactContentHashAuthoritative: async () => true,
+    readAllMemories: async () => [
+      {
+        frontmatter: { id: "fact-cpp", category: "fact", status: "active" },
+        content: "User prefers C++",
+      },
+    ],
+    writeMemory: async () => "fact-c",
+    appendMemoryLifecycleEvents: async () => 1,
+  };
+
+  const result = await persistExplicitCapture(
+    { getStorage: async () => storage } as never,
+    validateExplicitCaptureInput({
+      content: "User prefers C",
+      category: "fact",
+    }),
+    "memory_capture",
+  );
+
+  assert.equal(result.duplicateOf, undefined);
+  assert.equal(result.id, "fact-c");
+});
+
 test("memory_store and memory_capture share explicit validation and duplicate handling", async () => {
   type RegisteredTool = {
     execute: (

@@ -22,7 +22,7 @@ export type ValidExplicitCapture = {
   namespace?: string;
   tags: string[];
   entityRef?: string;
-  ttl?: string;
+  expiresAt?: string;
   sourceReason?: string;
 };
 
@@ -59,7 +59,10 @@ function asTrimmed(value: string | undefined): string | undefined {
 }
 
 function normalizeCaptureContent(value: string): string {
-  return ContentHashIndex.normalizeContent(value);
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parseExplicitCaptureTtl(ttl: string | undefined): string | undefined {
@@ -211,7 +214,7 @@ export function validateExplicitCaptureInput(
   if (confidence < 0 || confidence > 1) {
     throw new Error("confidence must be between 0 and 1");
   }
-  const ttl = parseExplicitCaptureTtl(input.ttl);
+  const expiresAt = parseExplicitCaptureTtl(input.ttl);
 
   return {
     content,
@@ -220,7 +223,7 @@ export function validateExplicitCaptureInput(
     namespace: asTrimmed(input.namespace),
     tags: Array.from(new Set((input.tags ?? []).map((tag) => tag.trim()).filter(Boolean))),
     entityRef: asTrimmed(input.entityRef),
-    ttl,
+    expiresAt,
     sourceReason: asTrimmed(input.sourceReason),
   };
 }
@@ -278,7 +281,7 @@ export async function persistExplicitCapture(
     confidence: candidate.confidence,
     tags: candidate.tags,
     entityRef: candidate.entityRef,
-    expiresAt: candidate.ttl,
+    expiresAt: candidate.expiresAt,
     source: source === "inline" ? "explicit-inline" : "explicit",
   });
 
