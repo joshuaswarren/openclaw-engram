@@ -38,6 +38,11 @@ import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import {
+  buildEntityRecallSection,
+  entityRecentTranscriptLookbackHours,
+  readRecentEntityTranscriptEntries,
+} from "./entity-retrieval.js";
+import {
   hasBroadGraphIntent,
   inferIntentFromText,
   intentCompatibilityScore,
@@ -2472,6 +2477,47 @@ export class Orchestrator {
       return section;
     })();
 
+    const entityRetrievalPromise = (async (): Promise<string | null> => {
+      if (!this.isRecallSectionEnabled("entity-retrieval", this.config.entityRetrievalEnabled)) return null;
+      if (!this.config.entityRetrievalEnabled) return null;
+      const maxChars = this.getRecallSectionMaxChars("entity-retrieval") ?? this.config.entityRetrievalMaxChars;
+      const maxHints = this.getRecallSectionNumber("entity-retrieval", "maxHints") ?? this.config.entityRetrievalMaxHints;
+      const maxSupportingFacts =
+        this.getRecallSectionNumber("entity-retrieval", "maxSupportingFacts") ?? this.config.entityRetrievalMaxSupportingFacts;
+      const maxRelatedEntities =
+        this.getRecallSectionNumber("entity-retrieval", "maxRelatedEntities") ?? this.config.entityRetrievalMaxRelatedEntities;
+      const recentTurns =
+        this.getRecallSectionNumber("entity-retrieval", "recentTurns") ?? this.config.entityRetrievalRecentTurns;
+      if (maxChars === 0 || maxHints === 0 || maxSupportingFacts === 0) {
+        timings.entityRetrieval = "skip(limit=0)";
+        return null;
+      }
+      const t0 = Date.now();
+      const transcriptEntries = sessionKey
+        ? await readRecentEntityTranscriptEntries(
+            this.transcript.readRecent(entityRecentTranscriptLookbackHours, sessionKey),
+            recentTurns,
+          )
+        : [];
+      const section = await buildEntityRecallSection({
+        config: this.config,
+        storage: profileStorage,
+        query: retrievalQuery,
+        recallNamespaces,
+        recentTurns,
+        maxHints,
+        maxSupportingFacts,
+        maxRelatedEntities,
+        maxChars,
+        transcriptEntries,
+      }).catch((err) => {
+        log.warn(`entity retrieval build failed: ${err}`);
+        return null;
+      });
+      timings.entityRetrieval = `${Date.now() - t0}ms`;
+      return section;
+    })();
+
     // 1b. Knowledge Index (v7.0)
     const knowledgeIndexPromise = (async (): Promise<{ result: string; cached: boolean } | null> => {
       if (!this.isRecallSectionEnabled("knowledge-index", this.config.knowledgeIndexEnabled)) return null;
@@ -3022,6 +3068,7 @@ export class Orchestrator {
       sharedCtx,
       profile,
       identityContinuity,
+      entityRetrievalSection,
       kiResult,
       artifacts,
       objectiveStateSection,
@@ -3042,6 +3089,7 @@ export class Orchestrator {
       sharedContextPromise,
       profilePromise,
       identityContinuityPromise,
+      entityRetrievalPromise,
       knowledgeIndexPromise,
       artifactsPromise,
       objectiveStatePromise,
@@ -3074,6 +3122,10 @@ export class Orchestrator {
       identityInjectionModeUsed = identityContinuity.mode;
       identityInjectedChars = identityContinuity.injectedChars;
       identityInjectionTruncated = identityContinuity.truncated;
+    }
+
+    if (entityRetrievalSection) {
+      this.appendRecallSection(sectionBuckets, "entity-retrieval", entityRetrievalSection);
     }
 
     // 1b. Knowledge Index
