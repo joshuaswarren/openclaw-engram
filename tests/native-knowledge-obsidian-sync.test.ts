@@ -119,3 +119,24 @@ test("obsidian vault sync fail-opens when a configured vault root is unavailable
   });
   assert.equal(chunks.some((chunk) => chunk.notePath === "Ideas.md"), true);
 });
+
+test("obsidian sync persistence failure preserves already collected workspace chunks", async () => {
+  const { memoryDir, workspaceDir, vaultDir, config } = await createConfig("engram-obsidian-write-fail");
+  config.includeFiles = ["IDENTITY.md"];
+  const workspaceDoc = path.join(workspaceDir, "IDENTITY.md");
+  const notePath = path.join(vaultDir, "Ideas.md");
+  await writeFile(workspaceDoc, "# Identity\n\nWorkspace memory survives sync persistence failures.\n", "utf-8");
+  await writeFile(notePath, "# Ideas\n\nCapture agent-native roadmap notes.\n", "utf-8");
+
+  await writeFile(path.join(memoryDir, "state"), "not-a-directory\n", "utf-8");
+
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config,
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.some((chunk) => chunk.sourcePath === "IDENTITY.md"), true);
+  assert.equal(chunks.some((chunk) => chunk.notePath === "Ideas.md"), true);
+});

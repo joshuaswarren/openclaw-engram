@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { log } from "./logger.js";
 import type { NativeKnowledgeConfig, NativeKnowledgeObsidianVaultConfig } from "./types.js";
 
 export type NativeKnowledgeChunk = {
@@ -713,13 +714,17 @@ export async function syncObsidianVaults(options: {
     updatedAt: new Date().toISOString(),
     vaults: nextVaults,
   };
-  const statePath = resolveNativeKnowledgeStatePath(options.memoryDir, options.config);
-  await mkdir(path.dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
   const activeChunks = loadActiveObsidianChunks({
     state: nextState,
     defaultNamespace: "default",
   });
+  const statePath = resolveNativeKnowledgeStatePath(options.memoryDir, options.config);
+  try {
+    await mkdir(path.dirname(statePath), { recursive: true });
+    await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+  } catch (error) {
+    log.warn(`native knowledge: failed to persist obsidian sync state (fail-open): ${String(error)}`);
+  }
 
   return {
     statePath,
