@@ -99,6 +99,24 @@ test("entity retrieval builds answer hints and persists a mention index", async 
   assert.ok(index.entities.some((entry: { canonicalId: string }) => entry.canonicalId === canonical));
 });
 
+test("entity retrieval preserves mention-index updatedAt when entity state is unchanged", async () => {
+  const { memoryDir, config, storage } = await buildHarness("engram-entity-stable-index");
+  await writeEntity(
+    storage,
+    "Stable Entity",
+    "person",
+    ["Stable Entity owns the unchanged index test."],
+    "Stable Entity owns the unchanged index test.",
+  );
+
+  await buildSection(config, storage, "Who is Stable Entity?");
+  const firstIndex = JSON.parse(await readFile(path.join(memoryDir, "state", "entity-mention-index.json"), "utf-8"));
+  await buildSection(config, storage, "Who is Stable Entity?");
+  const secondIndex = JSON.parse(await readFile(path.join(memoryDir, "state", "entity-mention-index.json"), "utf-8"));
+
+  assert.equal(firstIndex.updatedAt, secondIndex.updatedAt);
+});
+
 test("entity retrieval resolves pronoun follow-ups from recent transcript turns", async () => {
   const { config, storage } = await buildHarness("engram-entity-followup");
   await writeEntity(

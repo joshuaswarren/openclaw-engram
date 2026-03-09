@@ -175,6 +175,18 @@ function entityIndexStatePath(storage: StorageManager): string {
   return path.join(storage.dir, "state", "entity-mention-index.json");
 }
 
+async function readEntityIndexState(storage: StorageManager): Promise<EntityMentionIndex | null> {
+  const raw = await readFile(entityIndexStatePath(storage), "utf-8").catch(() => "");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<EntityMentionIndex>;
+    if (parsed.version !== ENTITY_INDEX_VERSION || !Array.isArray(parsed.entities)) return null;
+    return parsed as EntityMentionIndex;
+  } catch {
+    return null;
+  }
+}
+
 async function writeEntityIndexState(storage: StorageManager, index: EntityMentionIndex): Promise<void> {
   const statePath = entityIndexStatePath(storage);
   await mkdir(path.dirname(statePath), { recursive: true });
@@ -228,7 +240,8 @@ async function buildEntityMentionIndex(
   config: PluginConfig,
   recallNamespaces?: string[],
 ): Promise<EntityMentionIndex> {
-  const [entityFiles, memories, nativeChunks] = await Promise.all([
+  const [previousIndex, entityFiles, memories, nativeChunks] = await Promise.all([
+    readEntityIndexState(storage),
     storage.readAllEntityFiles(),
     storage.readAllMemories(),
     readNativeChunks(config, recallNamespaces),
@@ -278,10 +291,16 @@ async function buildEntityMentionIndex(
     entities.set(pseudoEntry.canonicalId, pseudoEntry);
   }
 
+  const sortedEntities = [...entities.values()].sort((left, right) => left.name.localeCompare(right.name));
+  const previousEntities = previousIndex ? JSON.stringify(previousIndex.entities) : "";
+  const nextEntities = JSON.stringify(sortedEntities);
   const index: EntityMentionIndex = {
     version: ENTITY_INDEX_VERSION,
-    updatedAt: new Date().toISOString(),
-    entities: [...entities.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    updatedAt:
+      previousIndex && previousEntities === nextEntities
+        ? previousIndex.updatedAt
+        : new Date().toISOString(),
+    entities: sortedEntities,
   };
   await writeEntityIndexState(storage, index);
   return index;
