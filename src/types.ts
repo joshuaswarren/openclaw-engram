@@ -723,7 +723,7 @@ export interface BehaviorSignalEvent {
 }
 
 /** Memory status for lifecycle management */
-export type MemoryStatus = "active" | "superseded" | "archived";
+export type MemoryStatus = "active" | "pending_review" | "rejected" | "quarantined" | "superseded" | "archived";
 export type LifecycleState = "candidate" | "validated" | "active" | "stale" | "archived";
 export type VerificationState = "unverified" | "user_confirmed" | "system_inferred" | "disputed";
 export type PolicyClass = "ephemeral" | "durable" | "protected";
@@ -758,7 +758,7 @@ export interface MemoryFrontmatter {
   expiresAt?: string;
   /** IDs of parent memories this was derived from (lineage tracking) */
   lineage?: string[];
-  /** Memory status: active (default), superseded, or archived */
+  /** Memory status: active (default), pending_review, rejected, quarantined, superseded, or archived */
   status?: MemoryStatus;
   /** ID of memory that superseded this one */
   supersededBy?: string;

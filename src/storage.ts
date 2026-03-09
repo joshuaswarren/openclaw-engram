@@ -100,6 +100,15 @@ export interface ReextractJobRequest {
   source: "cli-migrate";
 }
 
+export interface MemoryLifecycleEventWriteOptions {
+  at?: Date;
+  actor?: string;
+  reasonCode?: string;
+  ruleVersion?: string;
+  relatedMemoryIds?: string[];
+  correlationId?: string;
+}
+
 function tokenizeArtifactSearchText(input: string): string[] {
   return input
     .toLowerCase()
@@ -1500,9 +1509,12 @@ export class StorageManager {
    * Updates frontmatter with archived status before moving.
    * Returns the new file path on success, null on failure.
    */
-  async archiveMemory(memory: MemoryFile): Promise<string | null> {
+  async archiveMemory(
+    memory: MemoryFile,
+    lifecycle?: MemoryLifecycleEventWriteOptions,
+  ): Promise<string | null> {
     try {
-      const now = new Date();
+      const now = lifecycle?.at ?? new Date();
       const today = now.toISOString().slice(0, 10);
       const destDir = path.join(this.archiveDir, today);
       await mkdir(destDir, { recursive: true });
@@ -1521,14 +1533,21 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
-      await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.archiveMemory", {
-        memoryId: memory.frontmatter.id,
-        eventType: "archived",
-        timestamp: updatedFm.archivedAt ?? updatedFm.updated,
-        actor: "storage.archiveMemory",
-        before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
-        after: this.summarizeLifecycleState(updatedFm, destPath),
-      });
+      await this.appendGeneratedMemoryLifecycleEventFailOpen(
+        "storage.archiveMemory",
+        {
+          memoryId: memory.frontmatter.id,
+          eventType: "archived",
+          timestamp: updatedFm.archivedAt ?? updatedFm.updated,
+          actor: lifecycle?.actor ?? "storage.archiveMemory",
+          reasonCode: lifecycle?.reasonCode,
+          before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+          after: this.summarizeLifecycleState(updatedFm, destPath),
+          relatedMemoryIds: lifecycle?.relatedMemoryIds,
+          correlationId: lifecycle?.correlationId,
+        },
+        lifecycle?.ruleVersion,
+      );
       this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
@@ -1685,6 +1704,7 @@ export class StorageManager {
   async writeMemoryFrontmatter(
     memory: MemoryFile,
     patch: Partial<MemoryFrontmatter>,
+    lifecycle?: MemoryLifecycleEventWriteOptions,
   ): Promise<boolean> {
     const beforeStatus = memory.frontmatter.status ?? "active";
     const updated: MemoryFrontmatter = {
@@ -1695,18 +1715,25 @@ export class StorageManager {
 
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
-    await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemoryFrontmatter", {
-      memoryId: updated.id,
-      eventType: this.frontmatterPatchEventType(memory.frontmatter, updated),
-      timestamp: updated.updated ?? new Date().toISOString(),
-      actor: "storage.writeMemoryFrontmatter",
-      before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
-      after: this.summarizeLifecycleState(updated, memory.path),
-      relatedMemoryIds: [
-        ...(updated.supersededBy ? [updated.supersededBy] : []),
-        ...(updated.supersedes ? [updated.supersedes] : []),
-      ],
-    });
+    await this.appendGeneratedMemoryLifecycleEventFailOpen(
+      "storage.writeMemoryFrontmatter",
+      {
+        memoryId: updated.id,
+        eventType: this.frontmatterPatchEventType(memory.frontmatter, updated),
+        timestamp: updated.updated ?? new Date().toISOString(),
+        actor: lifecycle?.actor ?? "storage.writeMemoryFrontmatter",
+        reasonCode: lifecycle?.reasonCode,
+        before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
+        after: this.summarizeLifecycleState(updated, memory.path),
+        relatedMemoryIds: [
+          ...(lifecycle?.relatedMemoryIds ?? []),
+          ...(updated.supersededBy ? [updated.supersededBy] : []),
+          ...(updated.supersedes ? [updated.supersedes] : []),
+        ],
+        correlationId: lifecycle?.correlationId,
+      },
+      lifecycle?.ruleVersion,
+    );
     if (beforeStatus !== afterStatus) {
       this.bumpMemoryStatusVersion();
     }
@@ -3368,7 +3395,8 @@ export class StorageManager {
     const afterStatus = after.status ?? "active";
     if (beforeStatus !== "archived" && afterStatus === "archived") return "archived";
     if (beforeStatus !== "superseded" && afterStatus === "superseded") return "superseded";
-    if ((beforeStatus === "archived" || beforeStatus === "superseded") && afterStatus === "active") {
+    if (beforeStatus !== "rejected" && afterStatus === "rejected") return "rejected";
+    if (beforeStatus !== "active" && afterStatus === "active") {
       return "restored";
     }
     return "updated";
@@ -3376,12 +3404,13 @@ export class StorageManager {
 
   private async appendGeneratedMemoryLifecycleEvent(
     input: Omit<MemoryLifecycleEvent, "eventId" | "ruleVersion">,
+    ruleVersion = "memory-lifecycle-ledger.v1",
   ): Promise<void> {
     await this.appendMemoryLifecycleEvents([
       {
         ...input,
         eventId: this.generateId("mle"),
-        ruleVersion: "memory-lifecycle-ledger.v1",
+        ruleVersion,
       },
     ]);
   }
@@ -3389,9 +3418,10 @@ export class StorageManager {
   private async appendGeneratedMemoryLifecycleEventFailOpen(
     operation: string,
     input: Omit<MemoryLifecycleEvent, "eventId" | "ruleVersion">,
+    ruleVersion?: string,
   ): Promise<void> {
     try {
-      await this.appendGeneratedMemoryLifecycleEvent(input);
+      await this.appendGeneratedMemoryLifecycleEvent(input, ruleVersion);
     } catch (appendErr) {
       log.warn(`${operation} completed but failed to append lifecycle event: ${appendErr}`);
     }

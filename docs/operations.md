@@ -365,6 +365,44 @@ Operational guarantees:
 - timeline reads fail open to the lifecycle ledger when projection data is unavailable
 - projection writes use a separate derived SQLite store under `state/memory-projection.sqlite`
 
+## Memory Governance Maintenance
+
+Engram can run a deterministic memory-governance sweep that builds a review queue, applies reversible status/archive transitions, and writes durable audit artifacts for each run.
+
+```bash
+# Simulate a governance run and write review artifacts only
+openclaw engram governance-run --mode shadow
+
+# Apply governance actions and write restore metadata
+openclaw engram governance-run --mode apply
+
+# Read the latest governance artifact bundle
+openclaw engram governance-report
+
+# Restore one applied governance run
+openclaw engram governance-restore --run-id gov-2026-03-09T12-00-00-000Z
+
+# Record an explicit operator disposition for one memory
+openclaw engram review-disposition fact-123 --status rejected --reason-code operator_review
+```
+
+Each governance run writes artifacts under `state/memory-governance/runs/<runId>/`:
+
+- `summary.json`
+- `review-queue.json`
+- `kept-memories.json`
+- `applied-actions.json`
+- `metrics.json`
+- `manifest.json`
+- `report.md`
+- `restore.json` for `apply` runs only
+
+Operational guarantees:
+- `shadow` mode never mutates markdown memories
+- `apply` mode writes rollback-safe restore metadata before the run is considered complete
+- governance lifecycle events record actor, reason code, rule version, correlation ID, and related memory IDs where available
+- the rule set is versioned as `memory-governance.v1` so artifact interpretation stays reproducible
+
 ## Work Board Helpers
 
 The work-management layer includes programmatic board helpers for Kanban-style exports and snapshot import:
