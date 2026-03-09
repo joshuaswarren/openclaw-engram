@@ -55,7 +55,7 @@ test("faiss sidecar health command returns contract", () => {
   }
 });
 
-test("faiss sidecar health explains degraded status on a fresh install", () => {
+test("faiss sidecar health explains degraded status on a fresh install", { skip: !hasFaissDeps() }, () => {
   const indexPath = mkdtempSync(path.join(tmpdir(), "engram-faiss-health-empty-"));
   try {
     const response = runSidecar("health", {
