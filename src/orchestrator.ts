@@ -66,6 +66,7 @@ import {
   isTemporalQuery,
   recencyWindowFromPrompt,
   extractTagsFromPrompt,
+  resolvePromptTagPrefilterAsync,
 } from "./temporal-index.js";
 import { GraphIndex } from "./graph.js";
 import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./causal-trajectory.js";
@@ -157,6 +158,15 @@ export interface GraphRecallSnapshot {
   expanded: GraphRecallExpandedEntry[];
 }
 
+type QueryAwarePrefilter = {
+  candidatePaths: Set<string> | null;
+  temporalFromDate: string | null;
+  matchedTags: string[];
+  expandedTags: string[];
+  combination: "none" | "temporal" | "tag" | "intersection" | "union";
+  filteredToFullSearch: boolean;
+};
+
 /** Maximum age (ms) before a compaction-reset signal file is considered stale and removed. */
 const COMPACTION_SIGNAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
@@ -241,6 +251,15 @@ export function filterRecallCandidates(
   return scopedByNamespace
     .filter((r) => !isArtifactMemoryPath(r.path))
     .slice(0, Math.max(0, options.limit));
+}
+
+function applyQueryAwareCandidateFilter(
+  candidates: QmdSearchResult[],
+  candidatePaths: Set<string> | null,
+): QmdSearchResult[] {
+  if (!candidatePaths || candidatePaths.size === 0) return candidates;
+  const filtered = candidates.filter((candidate) => candidatePaths.has(candidate.path));
+  return filtered.length > 0 ? filtered : candidates;
 }
 
 function tokenizeRecallQuery(prompt: string): string[] {
@@ -1771,6 +1790,154 @@ export class Orchestrator {
     return mergeArtifactRecallCandidates(filteredByNamespace, targetCount);
   }
 
+  private scopeQueryAwarePaths(
+    paths: Set<string> | null,
+    recallNamespaces: string[],
+  ): Set<string> | null {
+    if (!paths || paths.size === 0) return null;
+    const scoped = new Set<string>();
+    for (const memoryPath of paths) {
+      if (!memoryPath || isArtifactMemoryPath(memoryPath)) continue;
+      if (
+        this.config.namespacesEnabled &&
+        !recallNamespaces.includes(this.namespaceFromPath(memoryPath))
+      ) {
+        continue;
+      }
+      scoped.add(memoryPath);
+    }
+    return scoped.size > 0 ? scoped : null;
+  }
+
+  private async buildQueryAwarePrefilter(
+    prompt: string,
+    recallNamespaces: string[],
+  ): Promise<QueryAwarePrefilter> {
+    if (!this.config.queryAwareIndexingEnabled || !prompt.trim()) {
+      return {
+        candidatePaths: null,
+        temporalFromDate: null,
+        matchedTags: [],
+        expandedTags: [],
+        combination: "none",
+        filteredToFullSearch: false,
+      };
+    }
+
+    const temporalFromDate = isTemporalQuery(prompt)
+      ? recencyWindowFromPrompt(prompt, Date.now())
+      : null;
+    const [rawTemporal, tagSignals] = await Promise.all([
+      temporalFromDate
+        ? queryByDateRangeAsync(this.config.memoryDir, temporalFromDate)
+        : Promise.resolve<Set<string> | null>(null),
+      resolvePromptTagPrefilterAsync(this.config.memoryDir, prompt).catch(() => ({
+        matchedTags: extractTagsFromPrompt(prompt),
+        expandedTags: extractTagsFromPrompt(prompt),
+        paths: null,
+      })),
+    ]);
+
+    const temporalCandidates = this.scopeQueryAwarePaths(rawTemporal, recallNamespaces);
+    const tagCandidates = this.scopeQueryAwarePaths(tagSignals.paths, recallNamespaces);
+    const maxCandidates = this.config.queryAwareIndexingMaxCandidates;
+
+    let candidatePaths: Set<string> | null = null;
+    let combination: QueryAwarePrefilter["combination"] = "none";
+    let filteredToFullSearch = false;
+
+    if (temporalCandidates && tagCandidates) {
+      const intersection = new Set(
+        Array.from(temporalCandidates).filter((memoryPath) => tagCandidates.has(memoryPath)),
+      );
+      if (intersection.size > 0) {
+        candidatePaths = intersection;
+        combination = "intersection";
+      } else {
+        candidatePaths = new Set([...temporalCandidates, ...tagCandidates]);
+        combination = "union";
+      }
+    } else if (temporalCandidates) {
+      candidatePaths = temporalCandidates;
+      combination = "temporal";
+    } else if (tagCandidates) {
+      candidatePaths = tagCandidates;
+      combination = "tag";
+    }
+
+    if (candidatePaths && maxCandidates > 0 && candidatePaths.size > maxCandidates) {
+      filteredToFullSearch = true;
+      candidatePaths = null;
+    }
+
+    return {
+      candidatePaths,
+      temporalFromDate,
+      matchedTags: tagSignals.matchedTags,
+      expandedTags: tagSignals.expandedTags,
+      combination,
+      filteredToFullSearch,
+    };
+  }
+
+  private async searchScopedMemoryCandidates(
+    candidatePaths: Set<string>,
+    query: string,
+    limit: number,
+    options?: {
+      allowArchived?: boolean;
+    },
+  ): Promise<QmdSearchResult[]> {
+    const cappedLimit = Math.max(0, limit);
+    if (cappedLimit === 0 || candidatePaths.size === 0) return [];
+
+    const tokens = Array.from(new Set(tokenizeRecallQuery(query)));
+    const memories = (
+      await Promise.all(
+        Array.from(candidatePaths).map(async (memoryPath) => {
+          const namespace = this.config.namespacesEnabled
+            ? this.namespaceFromPath(memoryPath)
+            : this.config.defaultNamespace;
+          const storage = await this.storageRouter.storageFor(namespace);
+          return await storage.readMemoryByPath(memoryPath);
+        }),
+      )
+    ).filter((memory): memory is MemoryFile => memory !== null);
+
+    const results: QmdSearchResult[] = [];
+    for (const memory of memories) {
+      const status = memory.frontmatter.status ?? "active";
+      if (!options?.allowArchived && status !== "active") continue;
+
+      const haystack = [
+        memory.content,
+        memory.frontmatter.category,
+        ...(memory.frontmatter.tags ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      let hits = 0;
+      for (const token of tokens) {
+        if (haystack.includes(token)) hits += 1;
+      }
+      const score = tokens.length > 0
+        ? hits / tokens.length
+        : 0.01;
+      if (tokens.length > 0 && hits === 0) continue;
+
+      results.push({
+        docid: memory.frontmatter.id,
+        path: memory.path,
+        score,
+        snippet: memory.content.slice(0, 400).replace(/\n/g, " "),
+      });
+    }
+
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, cappedLimit);
+  }
+
   private async fetchQmdMemoryResultsWithArtifactTopUp(
     prompt: string,
     qmdFetchLimit: number,
@@ -1780,14 +1947,31 @@ export class Orchestrator {
       recallNamespaces: string[];
       resolveNamespace: (path: string) => string;
       collection?: string;
+      queryAwarePrefilter?: QueryAwarePrefilter;
     },
   ): Promise<QmdSearchResult[]> {
+    const queryAwarePrefilter = options.queryAwarePrefilter
+      ?? await this.buildQueryAwarePrefilter(prompt, options.recallNamespaces);
+    const scopedSeedResults = queryAwarePrefilter.candidatePaths?.size
+      ? await this.searchScopedMemoryCandidates(
+        queryAwarePrefilter.candidatePaths,
+        prompt,
+        qmdFetchLimit,
+        { allowArchived: options.collection !== undefined },
+      )
+      : [];
+
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
     const maxFetchLimit = Math.min(320, Math.max(fetchLimit, qmdFetchLimit * 5));
     const MAX_ATTEMPTS = 2;
     const QMD_RECALL_BUDGET_MS = 25_000;
     const startedAtMs = Date.now();
-    let bestFiltered: QmdSearchResult[] = [];
+    let bestFiltered = filterRecallCandidates(scopedSeedResults, {
+      namespacesEnabled: options.namespacesEnabled,
+      recallNamespaces: options.recallNamespaces,
+      resolveNamespace: options.resolveNamespace,
+      limit: qmdFetchLimit,
+    });
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       if (Date.now() - startedAtMs >= QMD_RECALL_BUDGET_MS) {
@@ -1833,6 +2017,23 @@ export class Orchestrator {
             .sort((a, b) => b.score - a.score)
             .slice(0, fetchLimit);
         }
+      }
+
+      if (scopedSeedResults.length > 0) {
+        const mergedByPath = new Map<string, QmdSearchResult>();
+        for (const result of [...scopedSeedResults, ...mergedResults]) {
+          const key = result.path || result.docid;
+          const existing = mergedByPath.get(key);
+          if (!existing || result.score > existing.score) {
+            mergedByPath.set(key, {
+              ...result,
+              snippet: result.snippet || existing?.snippet || "",
+            });
+          }
+        }
+        mergedResults = [...mergedByPath.values()]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, fetchLimit);
       }
 
       const filteredResults = filterRecallCandidates(mergedResults, {
@@ -2081,6 +2282,7 @@ export class Orchestrator {
     let recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan" = "none";
     let recalledMemoryCount = 0;
     let recalledMemoryIds: string[] = [];
+    let recalledMemoryPaths: string[] = [];
     let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
     let identityInjectedChars = 0;
     let identityInjectionTruncated = false;
@@ -2473,6 +2675,30 @@ export class Orchestrator {
       return results.length > 0 ? this.formatWorkProductResults(results) : null;
     })();
 
+    const queryAwarePrefilterPromise = (async (): Promise<QueryAwarePrefilter> => {
+      const t0 = Date.now();
+      if (!this.config.queryAwareIndexingEnabled || !prompt.trim()) {
+        timings.queryAware = "skip";
+        return {
+          candidatePaths: null,
+          temporalFromDate: null,
+          matchedTags: [],
+          expandedTags: [],
+          combination: "none",
+          filteredToFullSearch: false,
+        };
+      }
+
+      const prefilter = await this.buildQueryAwarePrefilter(retrievalQuery, recallNamespaces);
+      const candidateCount = prefilter.candidatePaths?.size ?? 0;
+      const temporalLabel = prefilter.temporalFromDate ?? "-";
+      const tagLabel = prefilter.expandedTags.length > 0 ? prefilter.expandedTags.join("|") : "-";
+      const fallbackLabel = prefilter.filteredToFullSearch ? "/full-search" : "";
+      timings.queryAware =
+        `${Date.now() - t0}ms(${prefilter.combination}${fallbackLabel};count=${candidateCount};time=${temporalLabel};tags=${tagLabel})`;
+      return prefilter;
+    })();
+
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
@@ -2490,6 +2716,7 @@ export class Orchestrator {
         return null;
       }
       const t0 = Date.now();
+      const queryAwarePrefilter = await queryAwarePrefilterPromise;
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
@@ -2501,6 +2728,7 @@ export class Orchestrator {
           namespacesEnabled: this.config.namespacesEnabled,
           recallNamespaces,
           resolveNamespace: (p) => this.namespaceFromPath(p),
+          queryAwarePrefilter,
         },
       );
 
@@ -3078,13 +3306,19 @@ export class Orchestrator {
           },
         });
         recalledMemoryIds = this.extractMemoryIdsFromResults(memoryResults);
+        recalledMemoryPaths = memoryResults.map((result) => result.path).filter(Boolean);
         impressionRecorded = true;
       } else if (!confidenceGateRejected) {
         // Only attempt fallback paths if the confidence gate did NOT fire.
         // When the gate rejects, all recall pathways are skipped to prevent
         // low-relevance results from polluting context.
+        const queryAwarePrefilter = await queryAwarePrefilterPromise;
         const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
-        const scopedCandidates = filterRecallCandidates(embeddingResults, {
+        const prefilteredEmbeddingResults = applyQueryAwareCandidateFilter(
+          embeddingResults,
+          queryAwarePrefilter.candidatePaths,
+        );
+        const scopedCandidates = filterRecallCandidates(prefilteredEmbeddingResults, {
           namespacesEnabled: this.config.namespacesEnabled,
           recallNamespaces,
           resolveNamespace: (p) => this.namespaceFromPath(p),
@@ -3110,6 +3344,7 @@ export class Orchestrator {
             },
           });
           recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
+          recalledMemoryPaths = scoped.map((result) => result.path).filter(Boolean);
           impressionRecorded = true;
         } else {
           const longTerm = await this.applyColdFallbackPipeline({
@@ -3117,6 +3352,7 @@ export class Orchestrator {
             recallNamespaces,
             recallResultLimit,
             recallMode,
+            queryAwarePrefilter,
           });
           if (longTerm.length > 0) {
             recallSource = "cold_fallback";
@@ -3134,6 +3370,7 @@ export class Orchestrator {
               },
             });
             recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+            recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
             impressionRecorded = true;
           }
         }
@@ -3165,8 +3402,13 @@ export class Orchestrator {
       }
     } else if (recallResultLimit > 0 && !this.qmd.isAvailable()) {
       // Fallback: embeddings first, then recency-only.
+      const queryAwarePrefilter = await queryAwarePrefilterPromise;
       const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
-      const scopedCandidates = filterRecallCandidates(embeddingResults, {
+      const prefilteredEmbeddingResults = applyQueryAwareCandidateFilter(
+        embeddingResults,
+        queryAwarePrefilter.candidatePaths,
+      );
+      const scopedCandidates = filterRecallCandidates(prefilteredEmbeddingResults, {
         namespacesEnabled: this.config.namespacesEnabled,
         recallNamespaces,
         resolveNamespace: (p) => this.namespaceFromPath(p),
@@ -3193,13 +3435,16 @@ export class Orchestrator {
           },
         });
         recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
+        recalledMemoryPaths = scoped.map((result) => result.path).filter(Boolean);
         impressionRecorded = true;
       } else {
         const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
           // Filter out non-active memories
           const activeMemories = memories.filter(
-            (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+            (m) =>
+              (!m.frontmatter.status || m.frontmatter.status === "active") &&
+              !isArtifactMemoryPath(m.path),
           );
           // Convert all active memories to QmdSearchResult with recency-based
           // baseline score, then pass through boostSearchResults so temporal/tag
@@ -3207,53 +3452,16 @@ export class Orchestrator {
           // Cap AFTER boosting so boosted-but-recency-ranked memories can surface.
           // Pass a pre-populated memoryByPath so boostSearchResults skips redundant
           // disk reads for files already loaded by readAllMemoriesForNamespaces.
-          const recentSorted = activeMemories
-            .sort(
-              (a, b) =>
-                new Date(b.frontmatter.updated).getTime() -
-                new Date(a.frontmatter.updated).getTime(),
-            );
-          const preloadedMap = new Map<string, MemoryFile>(
-            activeMemories.filter((m) => m.path).map((m) => [m.path, m]),
-          );
-          const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
-            docid: m.frontmatter.id,
-            path: m.path,
-            snippet: m.content,
-            score: 1.0 - i / Math.max(recentSorted.length, 1),
-          }));
-          const recent = (await this.boostSearchResults(
-            recentAsResults,
-            recallNamespaces,
-            retrievalQuery,
-            preloadedMap,
-          ))
-            .sort((a, b) => b.score - a.score)
-            .slice(0, recallResultLimit);
-
-          if (recent.length > 0) {
-            recallSource = "recent_scan";
-            recalledMemoryCount = recent.length;
-            this.publishRecallResults({
-              title: "Recent Memories",
-              results: recent,
-              sectionBuckets,
-              retrievalQuery,
-              sessionKey,
-              identityInjection: {
-                mode: identityInjectionModeUsed,
-                injectedChars: identityInjectedChars,
-                truncated: identityInjectionTruncated,
-              },
-            });
-            recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
-            impressionRecorded = true;
-          } else {
+          const queryAwareScopedMemories = queryAwarePrefilter.candidatePaths
+            ? activeMemories.filter((memory) => queryAwarePrefilter.candidatePaths?.has(memory.path))
+            : activeMemories;
+          if (queryAwarePrefilter.candidatePaths && queryAwareScopedMemories.length === 0) {
             const longTerm = await this.applyColdFallbackPipeline({
               prompt: retrievalQuery,
               recallNamespaces,
               recallResultLimit,
               recallMode,
+              queryAwarePrefilter,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -3271,7 +3479,79 @@ export class Orchestrator {
                 },
               });
               recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+              recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
               impressionRecorded = true;
+            }
+          } else {
+            const recentSorted = queryAwareScopedMemories
+              .sort(
+                (a, b) =>
+                  new Date(b.frontmatter.updated).getTime() -
+                  new Date(a.frontmatter.updated).getTime(),
+              );
+            const preloadedMap = new Map<string, MemoryFile>(
+              queryAwareScopedMemories.filter((m) => m.path).map((m) => [m.path, m]),
+            );
+            const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
+              docid: m.frontmatter.id,
+              path: m.path,
+              snippet: m.content,
+              score: 1.0 - i / Math.max(recentSorted.length, 1),
+            }));
+            const recent = (await this.boostSearchResults(
+              recentAsResults,
+              recallNamespaces,
+              retrievalQuery,
+              preloadedMap,
+            ))
+              .sort((a, b) => b.score - a.score)
+              .slice(0, recallResultLimit);
+
+            if (recent.length > 0) {
+              recallSource = "recent_scan";
+              recalledMemoryCount = recent.length;
+              this.publishRecallResults({
+                title: "Recent Memories",
+                results: recent,
+                sectionBuckets,
+                retrievalQuery,
+                sessionKey,
+                identityInjection: {
+                  mode: identityInjectionModeUsed,
+                  injectedChars: identityInjectedChars,
+                  truncated: identityInjectionTruncated,
+                },
+              });
+              recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
+              recalledMemoryPaths = recent.map((result) => result.path).filter(Boolean);
+              impressionRecorded = true;
+            } else {
+              const longTerm = await this.applyColdFallbackPipeline({
+                prompt: retrievalQuery,
+                recallNamespaces,
+                recallResultLimit,
+                recallMode,
+                queryAwarePrefilter,
+              });
+              if (longTerm.length > 0) {
+                recallSource = "cold_fallback";
+                recalledMemoryCount = longTerm.length;
+                this.publishRecallResults({
+                  title: "Long-Term Memories (Fallback)",
+                  results: longTerm,
+                  sectionBuckets,
+                  retrievalQuery,
+                  sessionKey,
+                  identityInjection: {
+                    mode: identityInjectionModeUsed,
+                    injectedChars: identityInjectedChars,
+                    truncated: identityInjectionTruncated,
+                  },
+                });
+                recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+                recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
+                impressionRecorded = true;
+              }
             }
           }
         } else {
@@ -3280,6 +3560,7 @@ export class Orchestrator {
             recallNamespaces,
             recallResultLimit,
             recallMode,
+            queryAwarePrefilter,
           });
           if (longTerm.length > 0) {
             recallSource = "cold_fallback";
@@ -3297,6 +3578,7 @@ export class Orchestrator {
               },
             });
             recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
+            recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
             impressionRecorded = true;
           }
         }
@@ -3359,6 +3641,14 @@ export class Orchestrator {
           `## Open Question\n\nSomething I've been curious about: ${topQuestion.question}\n\n_Context: ${topQuestion.context}_`,
         );
       }
+    }
+
+    const finalizedQueryAwarePrefilter = await queryAwarePrefilterPromise;
+    if (timings.queryAware && finalizedQueryAwarePrefilter.candidatePaths?.size) {
+      const helpedCount = recalledMemoryPaths.filter((memoryPath) =>
+        finalizedQueryAwarePrefilter.candidatePaths?.has(memoryPath)
+      ).length;
+      timings.queryAware = `${timings.queryAware};helped=${helpedCount}`;
     }
 
     // --- Timing summary ---
@@ -5985,15 +6275,30 @@ export class Orchestrator {
     prompt: string,
     recallNamespaces: string[],
     limit: number,
+    queryAwarePrefilter?: QueryAwarePrefilter,
   ): Promise<QmdSearchResult[]> {
     const cappedLimit = Math.max(0, limit);
     if (cappedLimit === 0) return [];
 
+    const scopedSeedResults = queryAwarePrefilter?.candidatePaths?.size
+      ? await this.searchScopedMemoryCandidates(
+        queryAwarePrefilter.candidatePaths,
+        prompt,
+        cappedLimit,
+        { allowArchived: true },
+      )
+      : [];
+    if (scopedSeedResults.length >= cappedLimit) {
+      return scopedSeedResults
+        .filter((result) => !isArtifactMemoryPath(result.path))
+        .slice(0, cappedLimit);
+    }
+
     const tokens = Array.from(new Set(tokenizeRecallQuery(prompt)));
-    if (tokens.length === 0) return [];
+    if (tokens.length === 0) return scopedSeedResults;
 
     const archivedMemories = await this.readArchivedMemoriesForNamespaces(recallNamespaces);
-    if (archivedMemories.length === 0) return [];
+    if (archivedMemories.length === 0) return scopedSeedResults;
 
     const scored: QmdSearchResult[] = [];
     for (const memory of archivedMemories) {
@@ -6018,7 +6323,20 @@ export class Orchestrator {
       });
     }
 
-    return scored
+    const mergedByPath = new Map<string, QmdSearchResult>();
+    for (const result of [...scopedSeedResults, ...scored]) {
+      const key = result.path || result.docid;
+      const existing = mergedByPath.get(key);
+      if (!existing || result.score > existing.score) {
+        mergedByPath.set(key, {
+          ...result,
+          snippet: result.snippet || existing?.snippet || "",
+        });
+      }
+    }
+
+    return [...mergedByPath.values()]
+      .filter((result) => !isArtifactMemoryPath(result.path))
       .sort((a, b) => b.score - a.score)
       .slice(0, cappedLimit);
   }
@@ -6028,6 +6346,7 @@ export class Orchestrator {
     recallNamespaces: string[];
     recallResultLimit: number;
     recallMode: RecallPlanMode;
+    queryAwarePrefilter?: QueryAwarePrefilter;
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
     const coldCollection = this.config.qmdColdCollection ?? "openclaw-engram-cold";
@@ -6054,6 +6373,7 @@ export class Orchestrator {
             recallNamespaces: options.recallNamespaces,
             resolveNamespace: (p) => this.namespaceFromPath(p),
             collection: coldCollection,
+            queryAwarePrefilter: options.queryAwarePrefilter,
           },
         );
         if (longTerm.length > 0) {
@@ -6066,6 +6386,7 @@ export class Orchestrator {
         options.prompt,
         options.recallNamespaces,
         options.recallResultLimit,
+        options.queryAwarePrefilter,
       );
       if (longTerm.length > 0) {
         log.debug("cold-tier recall source=archive-scan");
