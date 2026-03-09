@@ -222,6 +222,8 @@ Key settings:
 | `evalShadowModeEnabled` | `false` | Record live recall decisions to the eval store without changing injected output |
 | `benchmarkBaselineSnapshotsEnabled` | `false` | Enable versioned baseline snapshot artifacts for the latest completed benchmark runs |
 | `benchmarkDeltaReporterEnabled` | `false` | Enable named-baseline delta reports against the current eval store |
+| `nativeKnowledge.enabled` | `false` | Enable curated workspace and synced native-knowledge recall without converting source docs into durable memory files |
+| `nativeKnowledge.obsidianVaults` | `[]` | Optional backend-agnostic Obsidian vault adapters that sync markdown notes, tags, aliases, links, and daily-note dates into native knowledge recall |
 
 The repo's required benchmark check uses the committed fixture snapshot at
 `tests/fixtures/eval-ci/store/baselines/required-main.json` as the stable
@@ -259,6 +261,38 @@ that, PRs resolve the required baseline from the base branch checkout.
 | `resumeBundleDir` | `{memoryDir}/state/resume-bundles` | Root directory for typed resume bundles |
 | `workProductRecallEnabled` | `false` | Inject prompt-relevant work-product ledger entries into recall and expose `openclaw engram work-product-recall-search` |
 | `workProductLedgerDir` | `{memoryDir}/state/work-product-ledger` | Root directory for typed work-product ledger entries |
+
+### Native Knowledge Sync
+
+Engram can search curated markdown files directly during recall without first extracting them into durable memory records. This keeps operator docs, handoff notes, and Obsidian content available as first-class recall sources while preserving the markdown files as the source of truth.
+
+Example:
+
+```jsonc
+{
+  "nativeKnowledge": {
+    "enabled": true,
+    "includeFiles": ["IDENTITY.md", "MEMORY.md", "TEAM.md"],
+    "obsidianVaults": [
+      {
+        "id": "personal",
+        "rootDir": "/Users/you/Documents/Obsidian",
+        "includeGlobs": ["**/*.md"],
+        "excludeGlobs": [".obsidian/**", "Templates/**"],
+        "namespace": "shared",
+        "privacyClass": "private",
+        "folderRules": [
+          { "pathPrefix": "Projects", "namespace": "work", "privacyClass": "team" }
+        ],
+        "dailyNotePatterns": ["Daily/YYYY-MM-DD", "YYYY-MM-DD"],
+        "materializeBacklinks": true
+      }
+    ]
+  }
+}
+```
+
+When an Obsidian vault adapter is enabled, Engram syncs active notes into backend-agnostic native-knowledge state under `{memoryDir}/state/native-knowledge`, preserves aliases, inline/frontmatter tags, wikilinks, optional backlinks, and daily-note dates, and then blends those chunks into the existing `Curated Workspace Knowledge` recall section with namespace filtering applied before injection.
 
 Full reference: [Config Reference](docs/config-reference.md)
 

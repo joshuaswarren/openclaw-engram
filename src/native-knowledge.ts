@@ -1,20 +1,78 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { readFile, stat } from "node:fs/promises";
-import type { NativeKnowledgeConfig } from "./types.js";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import type { NativeKnowledgeConfig, NativeKnowledgeObsidianVaultConfig } from "./types.js";
 
 export type NativeKnowledgeChunk = {
   chunkId: string;
   sourcePath: string;
   title: string;
-  sourceKind: "identity" | "memory" | "workspace_doc";
+  sourceKind: "identity" | "memory" | "workspace_doc" | "obsidian_note";
   startLine: number;
   endLine: number;
   content: string;
+  vaultId?: string;
+  notePath?: string;
+  noteKey?: string;
+  derivedDate?: string;
+  tags?: string[];
+  aliases?: string[];
+  wikilinks?: string[];
+  backlinks?: string[];
+  namespace?: string;
+  privacyClass?: string;
+  sourceHash?: string;
+  mtimeMs?: number;
 };
 
 export type NativeKnowledgeSearchResult = NativeKnowledgeChunk & {
   score: number;
 };
+
+interface ParsedFrontmatter {
+  body: string;
+  bodyStartLine: number;
+  data: Record<string, string | string[]>;
+}
+
+interface ObsidianNoteState {
+  noteKey: string;
+  notePath: string;
+  title: string;
+  derivedDate?: string;
+  tags: string[];
+  aliases: string[];
+  wikilinks: string[];
+  backlinks: string[];
+  namespace?: string;
+  privacyClass?: string;
+  sourceHash: string;
+  mtimeMs: number;
+  deleted: boolean;
+  deletedAt?: string;
+  chunks: NativeKnowledgeChunk[];
+}
+
+interface ObsidianVaultState {
+  vaultId: string;
+  rootDir: string;
+  syncedAt: string;
+  notes: Record<string, ObsidianNoteState>;
+}
+
+interface ObsidianSyncState {
+  version: 1;
+  updatedAt: string;
+  vaults: Record<string, ObsidianVaultState>;
+}
+
+export interface NativeKnowledgeSyncResult {
+  statePath: string;
+  vaultCount: number;
+  touchedNotes: number;
+  deletedNotes: number;
+  chunkCount: number;
+}
 
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -24,6 +82,10 @@ function tokenize(value: string): string[] {
   return normalizeText(value).split(/\s+/).filter((token) => token.length >= 2);
 }
 
+function uniqueSorted(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0).map((value) => value.trim()))].sort();
+}
+
 function detectSourceKind(filePath: string): NativeKnowledgeChunk["sourceKind"] {
   const base = path.basename(filePath).toLowerCase();
   if (base.startsWith("identity")) return "identity";
@@ -31,16 +93,154 @@ function detectSourceKind(filePath: string): NativeKnowledgeChunk["sourceKind"] 
   return "workspace_doc";
 }
 
+function stripYamlFrontmatter(text: string): string {
+  if (!text.startsWith("---\n")) return text;
+  const closing = text.indexOf("\n---\n", 4);
+  if (closing === -1) return text;
+  return text.slice(closing + 5);
+}
+
+function parseInlineArray(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return [];
+  return trimmed
+    .slice(1, -1)
+    .split(",")
+    .map((value) => value.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
+}
+
+function parseFrontmatter(content: string): ParsedFrontmatter {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return { body: normalized, bodyStartLine: 1, data: {} };
+  const closing = normalized.indexOf("\n---\n", 4);
+  if (closing === -1) return { body: normalized, bodyStartLine: 1, data: {} };
+
+  const data: Record<string, string | string[]> = {};
+  const lines = normalized.slice(4, closing).split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (!match) {
+      index += 1;
+      continue;
+    }
+    const [, key, rawValue] = match;
+    if (rawValue.trim().length > 0) {
+      const inlineArray = parseInlineArray(rawValue);
+      data[key] = inlineArray.length > 0 ? inlineArray : rawValue.trim().replace(/^['"]|['"]$/g, "");
+      index += 1;
+      continue;
+    }
+
+    const items: string[] = [];
+    let cursor = index + 1;
+    while (cursor < lines.length) {
+      const next = lines[cursor] ?? "";
+      const itemMatch = /^\s*-\s*(.+)$/.exec(next);
+      if (!itemMatch) break;
+      items.push(itemMatch[1]!.trim().replace(/^['"]|['"]$/g, ""));
+      cursor += 1;
+    }
+    data[key] = items;
+    index = cursor;
+  }
+
+  return {
+    body: normalized.slice(closing + 5),
+    bodyStartLine: normalized.slice(0, closing + 5).split("\n").length,
+    data,
+  };
+}
+
+function compileDailyNotePattern(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = escaped
+    .replace(/YYYY/g, "(?<year>\\d{4})")
+    .replace(/MM/g, "(?<month>\\d{2})")
+    .replace(/DD/g, "(?<day>\\d{2})");
+  return new RegExp(`^${regex}$`);
+}
+
+function deriveDailyNoteDate(notePath: string, patterns: string[]): string | undefined {
+  const withoutExt = notePath.replace(/\.md$/i, "");
+  for (const pattern of patterns) {
+    const match = compileDailyNotePattern(pattern).exec(withoutExt);
+    if (!match?.groups) continue;
+    const { year, month, day } = match.groups;
+    if (!year || !month || !day) continue;
+    return `${year}-${month}-${day}`;
+  }
+  return undefined;
+}
+
+function extractInlineTags(content: string): string[] {
+  const matches = [...content.matchAll(/(^|\s)#([a-z0-9/_-]+)/gi)];
+  return uniqueSorted(matches.map((match) => match[2] ?? ""));
+}
+
+function extractWikilinks(content: string): { targets: string[]; aliases: string[] } {
+  const targets: string[] = [];
+  const aliases: string[] = [];
+  const regex = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
+  for (const match of content.matchAll(regex)) {
+    const target = (match[1] ?? "").trim();
+    const alias = (match[2] ?? "").trim();
+    if (target) targets.push(target);
+    if (alias) aliases.push(alias);
+  }
+  return {
+    targets: uniqueSorted(targets),
+    aliases: uniqueSorted(aliases),
+  };
+}
+
+function normalizePathPrefix(prefix: string): string {
+  return prefix.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function classifyObsidianNote(
+  notePath: string,
+  vault: NativeKnowledgeObsidianVaultConfig,
+): { namespace?: string; privacyClass?: string } {
+  let namespace = vault.namespace;
+  let privacyClass = vault.privacyClass;
+  const normalizedPath = notePath.replace(/\\/g, "/");
+  const rules = [...vault.folderRules].sort(
+    (a, b) => normalizePathPrefix(b.pathPrefix).length - normalizePathPrefix(a.pathPrefix).length,
+  );
+
+  for (const rule of rules) {
+    const prefix = normalizePathPrefix(rule.pathPrefix);
+    if (!prefix) continue;
+    if (normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)) {
+      namespace = rule.namespace ?? namespace;
+      privacyClass = rule.privacyClass ?? privacyClass;
+      break;
+    }
+  }
+
+  return { namespace, privacyClass };
+}
+
 function chunkHeadingAware(options: {
   sourcePath: string;
   content: string;
   maxChunkChars: number;
+  startLineOffset?: number;
+  createChunk: (args: {
+    title: string;
+    startLine: number;
+    endLine: number;
+    content: string;
+  }) => NativeKnowledgeChunk;
 }): NativeKnowledgeChunk[] {
   const lines = options.content.replace(/\r\n/g, "\n").split("\n");
   const chunks: NativeKnowledgeChunk[] = [];
   let currentTitle = path.basename(options.sourcePath);
   let currentLines: string[] = [];
-  let startLine = 1;
+  let startLine = 1 + (options.startLineOffset ?? 0);
 
   const flush = () => {
     const paragraphs: Array<{
@@ -76,17 +276,13 @@ function chunkHeadingAware(options: {
     if (paragraphs.length === 0) return;
 
     const body = paragraphs.map((paragraph) => paragraph.content).join("\n\n");
-
     if (body.length <= options.maxChunkChars) {
-      chunks.push({
-        chunkId: `${options.sourcePath}:${paragraphs[0]!.startLine}-${paragraphs[paragraphs.length - 1]!.endLine}`,
-        sourcePath: options.sourcePath,
+      chunks.push(options.createChunk({
         title: currentTitle,
-        sourceKind: detectSourceKind(options.sourcePath),
         startLine: paragraphs[0]!.startLine,
         endLine: paragraphs[paragraphs.length - 1]!.endLine,
         content: body,
-      });
+      }));
       return;
     }
 
@@ -97,15 +293,12 @@ function chunkHeadingAware(options: {
     for (const paragraph of paragraphs) {
       const next = buffer.length > 0 ? `${buffer}\n\n${paragraph.content}` : paragraph.content;
       if (next.length > options.maxChunkChars && buffer.length > 0) {
-        chunks.push({
-          chunkId: `${options.sourcePath}:${bufferStartLine}-${bufferEndLine}`,
-          sourcePath: options.sourcePath,
+        chunks.push(options.createChunk({
           title: currentTitle,
-          sourceKind: detectSourceKind(options.sourcePath),
           startLine: bufferStartLine,
           endLine: bufferEndLine,
           content: buffer,
-        });
+        }));
         buffer = paragraph.content;
         bufferStartLine = paragraph.startLine;
         bufferEndLine = paragraph.endLine;
@@ -116,15 +309,12 @@ function chunkHeadingAware(options: {
     }
 
     if (buffer.length > 0) {
-      chunks.push({
-        chunkId: `${options.sourcePath}:${bufferStartLine}-${bufferEndLine}`,
-        sourcePath: options.sourcePath,
+      chunks.push(options.createChunk({
         title: currentTitle,
-        sourceKind: detectSourceKind(options.sourcePath),
         startLine: bufferStartLine,
         endLine: bufferEndLine,
         content: buffer,
-      });
+      }));
     }
   };
 
@@ -134,12 +324,12 @@ function chunkHeadingAware(options: {
       flush();
       currentLines = [];
       currentTitle = line.replace(/^#{1,6}\s+/, "").trim() || currentTitle;
-      startLine = index + 2;
+      startLine = index + 2 + (options.startLineOffset ?? 0);
       continue;
     }
     if (/^#{1,6}\s+/.test(line)) {
       currentTitle = line.replace(/^#{1,6}\s+/, "").trim() || currentTitle;
-      startLine = index + 2;
+      startLine = index + 2 + (options.startLineOffset ?? 0);
       continue;
     }
     currentLines.push(line);
@@ -189,8 +379,385 @@ function resolveCandidatePaths(options: {
   return Array.from(out);
 }
 
+function resolveNoteTitle(notePath: string, parsed: ParsedFrontmatter): string {
+  const rawTitle = parsed.data.title;
+  if (typeof rawTitle === "string" && rawTitle.trim().length > 0) return rawTitle.trim();
+  const heading = parsed.body.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim();
+  if (heading) return heading;
+  return path.basename(notePath, path.extname(notePath));
+}
+
+function parseFrontmatterList(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) return uniqueSorted(value);
+  if (typeof value === "string" && value.trim().length > 0) return [value.trim()];
+  return [];
+}
+
+function toPosixRelative(rootDir: string, filePath: string): string {
+  return path.relative(rootDir, filePath).split(path.sep).join("/");
+}
+
+function globToRegExp(glob: string): RegExp {
+  let regex = "^";
+  for (let index = 0; index < glob.length; index += 1) {
+    const char = glob[index]!;
+    const next = glob[index + 1];
+    if (char === "*") {
+      if (next === "*") {
+        if (glob[index + 2] === "/") {
+          regex += "(?:.*/)?";
+          index += 2;
+        } else {
+          regex += ".*";
+          index += 1;
+        }
+      } else {
+        regex += "[^/]*";
+      }
+      continue;
+    }
+    if (char === "?") {
+      regex += ".";
+      continue;
+    }
+    if (char === "/") {
+      regex += "/";
+      continue;
+    }
+    regex += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  regex += "$";
+  return new RegExp(regex);
+}
+
+function matchesGlobs(notePath: string, patterns: string[]): boolean {
+  if (patterns.length === 0) return false;
+  return patterns.some((pattern) => globToRegExp(pattern).test(notePath));
+}
+
+async function listMarkdownFiles(rootDir: string): Promise<string[] | null> {
+  const results: string[] = [];
+  async function walk(currentDir: string): Promise<void> {
+    const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+      results.push(toPosixRelative(rootDir, fullPath));
+    }
+  }
+  const rootInfo = await stat(rootDir).catch(() => null);
+  if (!rootInfo?.isDirectory()) return null;
+  await walk(rootDir);
+  return results.sort();
+}
+
+export function resolveNativeKnowledgeStatePath(memoryDir: string, config: NativeKnowledgeConfig): string {
+  return path.join(memoryDir, config.stateDir, "obsidian-sync.json");
+}
+
+async function loadSyncState(memoryDir: string, config: NativeKnowledgeConfig): Promise<ObsidianSyncState> {
+  const statePath = resolveNativeKnowledgeStatePath(memoryDir, config);
+  try {
+    const raw = JSON.parse(await readFile(statePath, "utf-8")) as Partial<ObsidianSyncState>;
+    if (raw.version !== 1 || typeof raw.vaults !== "object" || !raw.vaults) {
+      throw new Error("invalid obsidian native knowledge state");
+    }
+    return {
+      version: 1,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date(0).toISOString(),
+      vaults: raw.vaults as Record<string, ObsidianVaultState>,
+    };
+  } catch {
+    return {
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      vaults: {},
+    };
+  }
+}
+
+function buildObsidianChunks(options: {
+  vault: NativeKnowledgeObsidianVaultConfig;
+  notePath: string;
+  title: string;
+  content: string;
+  startLineOffset: number;
+  derivedDate?: string;
+  tags: string[];
+  aliases: string[];
+  wikilinks: string[];
+  backlinks?: string[];
+  namespace?: string;
+  privacyClass?: string;
+  sourceHash: string;
+  mtimeMs: number;
+  maxChunkChars: number;
+}): NativeKnowledgeChunk[] {
+  const noteKey = `${options.vault.id}:${options.notePath}`;
+  return chunkHeadingAware({
+    sourcePath: options.notePath,
+    content: options.content,
+    maxChunkChars: options.maxChunkChars,
+    startLineOffset: options.startLineOffset,
+    createChunk: ({ title, startLine, endLine, content }) => ({
+      chunkId: `${noteKey}:${startLine}-${endLine}`,
+      sourcePath: `${options.vault.id}/${options.notePath}`,
+      title,
+      sourceKind: "obsidian_note",
+      startLine,
+      endLine,
+      content,
+      vaultId: options.vault.id,
+      notePath: options.notePath,
+      noteKey,
+      derivedDate: options.derivedDate,
+      tags: options.tags,
+      aliases: options.aliases,
+      wikilinks: options.wikilinks,
+      backlinks: options.backlinks ?? [],
+      namespace: options.namespace,
+      privacyClass: options.privacyClass,
+      sourceHash: options.sourceHash,
+      mtimeMs: options.mtimeMs,
+    }),
+  });
+}
+
+function buildAliasIndex(notes: Record<string, ObsidianNoteState>): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const note of Object.values(notes)) {
+    if (note.deleted) continue;
+    const candidates = [
+      note.title,
+      path.basename(note.notePath, path.extname(note.notePath)),
+      note.notePath.replace(/\.md$/i, ""),
+      ...note.aliases,
+    ];
+    for (const candidate of candidates) {
+      const key = normalizeText(candidate);
+      if (!key) continue;
+      const existing = index.get(key) ?? [];
+      existing.push(note.noteKey);
+      index.set(key, uniqueSorted(existing));
+    }
+  }
+  return index;
+}
+
+function materializeBacklinks(notes: Record<string, ObsidianNoteState>): Record<string, string[]> {
+  const backlinks = new Map<string, Set<string>>();
+  const aliasIndex = buildAliasIndex(notes);
+  for (const note of Object.values(notes)) {
+    if (note.deleted) continue;
+    for (const target of note.wikilinks) {
+      const matches = aliasIndex.get(normalizeText(target)) ?? [];
+      for (const match of matches) {
+        if (match === note.noteKey) continue;
+        const bucket = backlinks.get(match) ?? new Set<string>();
+        bucket.add(note.notePath);
+        backlinks.set(match, bucket);
+      }
+    }
+  }
+  return Object.fromEntries(
+    [...backlinks.entries()].map(([noteKey, refs]) => [noteKey, [...refs].sort()]),
+  );
+}
+
+export async function syncObsidianVaults(options: {
+  memoryDir: string;
+  config: NativeKnowledgeConfig;
+}): Promise<NativeKnowledgeSyncResult> {
+  if (options.config.obsidianVaults.length === 0) {
+    return {
+      statePath: resolveNativeKnowledgeStatePath(options.memoryDir, options.config),
+      vaultCount: 0,
+      touchedNotes: 0,
+      deletedNotes: 0,
+      chunkCount: 0,
+    };
+  }
+
+  const state = await loadSyncState(options.memoryDir, options.config);
+  const nextVaults: Record<string, ObsidianVaultState> = {};
+  let touchedNotes = 0;
+  let deletedNotes = 0;
+  let chunkCount = 0;
+
+  for (const vault of options.config.obsidianVaults) {
+    const previousVault = state.vaults[vault.id];
+    const previousNotes = previousVault?.notes ?? {};
+    const notePaths = await listMarkdownFiles(vault.rootDir);
+    if (notePaths === null) {
+      nextVaults[vault.id] = previousVault ?? {
+        vaultId: vault.id,
+        rootDir: vault.rootDir,
+        syncedAt: new Date().toISOString(),
+        notes: previousNotes,
+      };
+      chunkCount += Object.values(previousNotes)
+        .filter((note) => !note.deleted)
+        .reduce((total, note) => total + note.chunks.length, 0);
+      continue;
+    }
+
+    const includedNotePaths = notePaths.filter((notePath) => {
+      if (!matchesGlobs(notePath, vault.includeGlobs)) return false;
+      if (matchesGlobs(notePath, vault.excludeGlobs)) return false;
+      return true;
+    });
+
+    const nextNotes: Record<string, ObsidianNoteState> = {};
+    const seenNoteKeys = new Set<string>();
+
+    for (const notePath of includedNotePaths) {
+      const absPath = path.join(vault.rootDir, notePath);
+      const content = await readFile(absPath, "utf-8").catch(() => null);
+      if (content === null) continue;
+      const info = await stat(absPath).catch(() => null);
+      if (!info?.isFile()) continue;
+
+      const sourceHash = createHash("sha256").update(content).digest("hex");
+      const noteKey = `${vault.id}:${notePath}`;
+      seenNoteKeys.add(noteKey);
+      const previous = previousNotes[noteKey];
+      if (previous && previous.deleted !== true && previous.sourceHash === sourceHash && previous.mtimeMs === info.mtimeMs) {
+        nextNotes[noteKey] = {
+          ...previous,
+          deleted: false,
+          deletedAt: undefined,
+        };
+        chunkCount += previous.chunks.length;
+        continue;
+      }
+
+      const parsed = parseFrontmatter(content);
+      const { targets } = extractWikilinks(parsed.body);
+      const tags = uniqueSorted([
+        ...parseFrontmatterList(parsed.data.tags),
+        ...extractInlineTags(parsed.body),
+      ]);
+      const aliases = parseFrontmatterList(parsed.data.aliases);
+      const { namespace, privacyClass } = classifyObsidianNote(notePath, vault);
+      const title = resolveNoteTitle(notePath, parsed);
+      const derivedDate = deriveDailyNoteDate(notePath, vault.dailyNotePatterns);
+      const chunks = buildObsidianChunks({
+        vault,
+        notePath,
+        title,
+        content: parsed.body,
+        startLineOffset: parsed.bodyStartLine - 1,
+        derivedDate,
+        tags,
+        aliases,
+        wikilinks: targets,
+        namespace,
+        privacyClass,
+        sourceHash,
+        mtimeMs: info.mtimeMs,
+        maxChunkChars: options.config.maxChunkChars,
+      });
+
+      nextNotes[noteKey] = {
+        noteKey,
+        notePath,
+        title,
+        derivedDate,
+        tags,
+        aliases,
+        wikilinks: targets,
+        backlinks: [],
+        namespace,
+        privacyClass,
+        sourceHash,
+        mtimeMs: info.mtimeMs,
+        deleted: false,
+        chunks,
+      };
+      touchedNotes += 1;
+      chunkCount += chunks.length;
+    }
+
+    for (const [noteKey, previous] of Object.entries(previousNotes)) {
+      if (seenNoteKeys.has(noteKey)) continue;
+      nextNotes[noteKey] = {
+        ...previous,
+        deleted: true,
+        deletedAt: new Date().toISOString(),
+        chunks: [],
+      };
+      deletedNotes += 1;
+    }
+
+    if (vault.materializeBacklinks) {
+      const backlinks = materializeBacklinks(nextNotes);
+      for (const note of Object.values(nextNotes)) {
+        if (note.deleted) continue;
+        note.backlinks = backlinks[note.noteKey] ?? [];
+        note.chunks = note.chunks.map((chunk) => ({
+          ...chunk,
+          backlinks: note.backlinks,
+        }));
+      }
+    }
+
+    nextVaults[vault.id] = {
+      vaultId: vault.id,
+      rootDir: vault.rootDir,
+      syncedAt: new Date().toISOString(),
+      notes: nextNotes,
+    };
+  }
+
+  const nextState: ObsidianSyncState = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    vaults: nextVaults,
+  };
+  const statePath = resolveNativeKnowledgeStatePath(options.memoryDir, options.config);
+  await mkdir(path.dirname(statePath), { recursive: true });
+  await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+
+  return {
+    statePath,
+    vaultCount: options.config.obsidianVaults.length,
+    touchedNotes,
+    deletedNotes,
+    chunkCount,
+  };
+}
+
+function loadActiveObsidianChunks(options: {
+  state: ObsidianSyncState;
+  recallNamespaces?: string[];
+  defaultNamespace: string;
+}): NativeKnowledgeChunk[] {
+  const out: NativeKnowledgeChunk[] = [];
+  for (const vault of Object.values(options.state.vaults)) {
+    for (const note of Object.values(vault.notes)) {
+      if (note.deleted) continue;
+      const namespace = note.namespace;
+      if (
+        namespace &&
+        Array.isArray(options.recallNamespaces) &&
+        namespace !== options.defaultNamespace &&
+        !options.recallNamespaces.includes(namespace)
+      ) {
+        continue;
+      }
+      out.push(...note.chunks);
+    }
+  }
+  return out;
+}
+
 export async function collectNativeKnowledgeChunks(options: {
   workspaceDir: string;
+  memoryDir?: string;
   config: NativeKnowledgeConfig;
   recallNamespaces?: string[];
   defaultNamespace: string;
@@ -213,9 +780,37 @@ export async function collectNativeKnowledgeChunks(options: {
         sourcePath: path.relative(options.workspaceDir, filePath),
         content,
         maxChunkChars: options.config.maxChunkChars,
+        createChunk: ({ title, startLine, endLine, content }) => {
+          const sourcePath = path.relative(options.workspaceDir, filePath);
+          return {
+            chunkId: `${sourcePath}:${startLine}-${endLine}`,
+            sourcePath,
+            title,
+            sourceKind: detectSourceKind(sourcePath),
+            startLine,
+            endLine,
+            content,
+          };
+        },
       }),
     );
   }
+
+  if (options.memoryDir && options.config.obsidianVaults.length > 0) {
+    await syncObsidianVaults({
+      memoryDir: options.memoryDir,
+      config: options.config,
+    });
+    const state = await loadSyncState(options.memoryDir, options.config);
+    chunks.push(
+      ...loadActiveObsidianChunks({
+        state,
+        recallNamespaces: options.recallNamespaces,
+        defaultNamespace: options.defaultNamespace,
+      }),
+    );
+  }
+
   return chunks;
 }
 
@@ -230,7 +825,20 @@ export function searchNativeKnowledge(options: {
 
   return options.chunks
     .map((chunk) => {
-      const normalizedContent = normalizeText(`${chunk.title}\n${chunk.content}`);
+      const metadataText = [
+        chunk.title,
+        chunk.content,
+        chunk.sourcePath,
+        chunk.notePath,
+        chunk.derivedDate,
+        ...(chunk.tags ?? []),
+        ...(chunk.aliases ?? []),
+        ...(chunk.wikilinks ?? []),
+        ...(chunk.backlinks ?? []),
+      ]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .join("\n");
+      const normalizedContent = normalizeText(metadataText);
       const contentTokens = new Set(tokenize(normalizedContent));
       let overlap = 0;
       for (const token of queryTokens) {
@@ -238,11 +846,21 @@ export function searchNativeKnowledge(options: {
       }
       if (overlap === 0 && !normalizedContent.includes(normalizedQuery)) return null;
       const kindBoost =
-        chunk.sourceKind === "identity" ? 0.15 : chunk.sourceKind === "memory" ? 0.1 : 0.05;
+        chunk.sourceKind === "identity"
+          ? 0.15
+          : chunk.sourceKind === "memory"
+            ? 0.1
+            : chunk.sourceKind === "obsidian_note"
+              ? 0.08
+              : 0.05;
       const phraseBoost = normalizedContent.includes(normalizedQuery) ? 0.35 : 0;
+      const metadataBoost =
+        (chunk.aliases?.some((alias) => normalizeText(alias).includes(normalizedQuery)) ? 0.12 : 0) +
+        (chunk.tags?.some((tag) => normalizeText(tag).includes(normalizedQuery)) ? 0.08 : 0) +
+        (chunk.derivedDate && normalizeText(chunk.derivedDate).includes(normalizedQuery) ? 0.08 : 0);
       return {
         ...chunk,
-        score: overlap / Math.max(queryTokens.size, 1) + kindBoost + phraseBoost,
+        score: overlap / Math.max(queryTokens.size, 1) + kindBoost + phraseBoost + metadataBoost,
       };
     })
     .filter((chunk): chunk is NativeKnowledgeSearchResult => chunk !== null)
@@ -260,9 +878,16 @@ export function formatNativeKnowledgeSection(options: {
 
   for (const result of options.results) {
     const snippet = result.content.length > 500 ? `${result.content.slice(0, 497)}...` : result.content;
+    const meta = [
+      result.derivedDate ? `date=${result.derivedDate}` : null,
+      result.tags && result.tags.length > 0 ? `tags=${result.tags.join(",")}` : null,
+      result.vaultId ? `vault=${result.vaultId}` : null,
+    ]
+      .filter((value): value is string => value !== null)
+      .join(" ");
     const block =
       `- ${result.sourcePath}:${result.startLine}-${result.endLine} [${result.title}] ` +
-      `(score: ${result.score.toFixed(3)})\n  ${snippet.replace(/\n/g, "\n  ")}`;
+      `(score: ${result.score.toFixed(3)}${meta ? `; ${meta}` : ""})\n  ${snippet.replace(/\n/g, "\n  ")}`;
     if (used + block.length > options.maxChars && lines.length > 2) break;
     if (used + block.length > options.maxChars) return null;
     lines.push(block);

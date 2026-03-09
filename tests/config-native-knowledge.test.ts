@@ -30,9 +30,73 @@ test("parseConfig supports explicit native knowledge settings", () => {
     maxChunkChars: 1200,
     maxResults: 6,
     maxChars: 3000,
+    stateDir: "state/native-knowledge",
+    obsidianVaults: [],
   });
   const section = cfg.recallPipeline.find((entry) => entry.id === "native-knowledge");
   assert.equal(section?.enabled, true);
   assert.equal(section?.maxResults, 6);
   assert.equal(section?.maxChars, 3000);
+});
+
+test("parseConfig sanitizes obsidian vault adapter settings", () => {
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    nativeKnowledge: {
+      enabled: true,
+      stateDir: "state/custom-native-knowledge",
+      obsidianVaults: [
+        {
+          id: " personal ",
+          rootDir: " /vaults/personal ",
+          includeGlobs: ["**/*.md", " ", "Projects/**/*.md"],
+          excludeGlobs: [".obsidian/**", "", "**/*.png"],
+          namespace: " shared ",
+          privacyClass: " private ",
+          folderRules: [
+            { pathPrefix: "Projects/", namespace: "work", privacyClass: "team" },
+            { pathPrefix: "  " },
+          ],
+          dailyNotePatterns: ["YYYY-MM-DD", "Daily/YYYY/MM/DD", ""],
+          materializeBacklinks: true,
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(cfg.nativeKnowledge, {
+    enabled: true,
+    includeFiles: ["IDENTITY.md", "MEMORY.md"],
+    maxChunkChars: 900,
+    maxResults: 4,
+    maxChars: 2400,
+    stateDir: "state/custom-native-knowledge",
+    obsidianVaults: [
+      {
+        id: "personal",
+        rootDir: "/vaults/personal",
+        includeGlobs: ["**/*.md", "Projects/**/*.md"],
+        excludeGlobs: [".obsidian/**", "**/*.png"],
+        namespace: "shared",
+        privacyClass: "private",
+        folderRules: [
+          { pathPrefix: "Projects/", namespace: "work", privacyClass: "team" },
+        ],
+        dailyNotePatterns: ["YYYY-MM-DD", "Daily/YYYY/MM/DD"],
+        materializeBacklinks: true,
+      },
+    ],
+  });
+});
+
+test("parseConfig keeps native knowledge stateDir memory-relative", () => {
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    nativeKnowledge: {
+      enabled: true,
+      stateDir: "/tmp/../custom//native-state",
+    },
+  });
+
+  assert.equal(cfg.nativeKnowledge?.stateDir, "tmp/custom/native-state");
 });

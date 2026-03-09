@@ -2929,6 +2929,7 @@ export class Orchestrator {
 
       const chunks = await collectNativeKnowledgeChunks({
         workspaceDir: this.config.workspaceDir,
+        memoryDir: this.config.memoryDir,
         config: this.config.nativeKnowledge,
         recallNamespaces: this.config.namespacesEnabled ? recallNamespaces : undefined,
         defaultNamespace: this.config.defaultNamespace,
