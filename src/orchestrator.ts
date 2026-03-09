@@ -3745,6 +3745,7 @@ export class Orchestrator {
       identityInjectionTruncated,
       durationMs: Date.now() - recallStart,
       timings: { ...timings },
+      recalledContent: this.config.traceRecallContent && context.length > 0 ? context : undefined,
     });
 
     return context;

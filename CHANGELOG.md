@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **`traceRecallContent` config option**: When set to `true`, Engram populates `RecallTraceEvent.recalledContent` with the full memory context injected into each agent turn. Allows external trace collectors (Langfuse, LangSmith, etc.) to see exactly which memories were recalled per conversation turn. Disabled by default — opt in only when you want memory content flowing to external systems.
 - Generic memory lifecycle ledger foundation: Engram now records append-only `created`, `updated`, `archived`, and `superseded` events under the local `state/memory-lifecycle-ledger.jsonl`, plus a rebuild utility and CLI for regenerating that ledger from markdown memory state.
 
 ### Changed

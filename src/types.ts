@@ -259,6 +259,7 @@ export interface PluginConfig {
   evalShadowModeEnabled: boolean;
   benchmarkBaselineSnapshotsEnabled: boolean;
   benchmarkDeltaReporterEnabled: boolean;
+  benchmarkStoredBaselineEnabled: boolean;
   evalStoreDir: string;
   // Objective-state memory foundation
   objectiveStateMemoryEnabled: boolean;
@@ -297,6 +298,16 @@ export interface PluginConfig {
   resumeBundleDir: string;
   workProductRecallEnabled: boolean;
   workProductLedgerDir: string;
+  workTasksEnabled: boolean;
+  workProjectsEnabled: boolean;
+  workTasksDir: string;
+  workProjectsDir: string;
+  workIndexEnabled: boolean;
+  workIndexDir: string;
+  workTaskIndexEnabled: boolean;
+  workProjectIndexEnabled: boolean;
+  workIndexAutoRebuildEnabled: boolean;
+  workIndexAutoRebuildDebounceMs: number;
   // Local LLM Provider (v2.1)
   localLlmEnabled: boolean;
   localLlmUrl: string;
@@ -321,6 +332,13 @@ export interface PluginConfig {
   // Observability
   /** If true, log slow operations (local LLM + related I/O) with durations and metadata (no content). */
   slowLogEnabled: boolean;
+  /**
+   * If true, include the full recalled memory text in `RecallTraceEvent.recalledContent`.
+   * Disabled by default — enable only when you want external trace subscribers (e.g. Langfuse)
+   * to see the exact memory context injected into each conversation turn.
+   * This adds payload to trace events but does not log to files or the gateway log.
+   */
+  traceRecallContent: boolean;
   /** Threshold for slow operation logging (ms). */
   slowLogThresholdMs: number;
   // Extraction stability guards (P0/P1)
@@ -399,16 +417,19 @@ export interface PluginConfig {
   remoteSearchTimeoutMs?: number;
 
   // LanceDB backend
+  lancedbEnabled: boolean;
   lanceDbPath?: string;
   lanceEmbeddingDimension?: number;
 
   // Meilisearch backend
+  meilisearchEnabled: boolean;
   meilisearchHost?: string;
   meilisearchApiKey?: string;
   meilisearchTimeoutMs?: number;
   meilisearchAutoIndex?: boolean;
 
   // Orama backend
+  oramaEnabled: boolean;
   oramaDbPath?: string;
   oramaEmbeddingDimension?: number;
 
@@ -466,7 +487,15 @@ export interface PluginConfig {
   behaviorLoopProtectedParams: string[];
   // v8.0 Phase 1: recall planner + intent routing + verbatim artifacts
   recallPlannerEnabled: boolean;
+  recallPlannerModel: string;
+  recallPlannerTimeoutMs: number;
+  recallPlannerUseResponsesApi: boolean;
+  recallPlannerMaxPromptChars: number;
+  recallPlannerMaxMemoryHints: number;
+  recallPlannerShadowMode: boolean;
+  recallPlannerTelemetryEnabled: boolean;
   recallPlannerMaxQmdResultsMinimal: number;
+  recallPlannerMaxQmdResultsFull: number;
   intentRoutingEnabled: boolean;
   intentRoutingBoost: number;
   verbatimArtifactsEnabled: boolean;
@@ -496,10 +525,51 @@ export interface PluginConfig {
   queryAwareIndexingEnabled: boolean;
   /** Max candidate paths returned from index prefilter (0 = no cap) */
   queryAwareIndexingMaxCandidates: number;
+  temporalIndexWindowDays: number;
+  temporalIndexMaxEntries: number;
+  temporalBoostRecentDays: number;
+  temporalBoostScore: number;
+  temporalDecayEnabled: boolean;
+  tagMemoryEnabled: boolean;
+  tagMaxPerMemory: number;
+  tagIndexMaxEntries: number;
+  tagRecallBoost: number;
+  tagRecallMaxMatches: number;
   // v8.2 multi-graph memory (PR 18)
   multiGraphMemoryEnabled: boolean;
   // v8.2 PR 19A: graph recall planner gating
   graphRecallEnabled: boolean;
+  graphRecallMaxExpansions: number;
+  graphRecallMaxPerSeed: number;
+  graphRecallMinEdgeWeight: number;
+  graphRecallShadowEnabled: boolean;
+  graphRecallSnapshotEnabled: boolean;
+  graphRecallShadowSampleRate: number;
+  graphRecallExplainToolEnabled: boolean;
+  graphRecallStoreColdMirror: boolean;
+  graphRecallColdMirrorCollection?: string;
+  graphRecallColdMirrorMinAgeDays: number;
+  graphRecallUseEntityPriors: boolean;
+  graphRecallEntityPriorBoost: number;
+  graphRecallPreferHubSeeds: boolean;
+  graphRecallHubBias: number;
+  graphRecallRecencyHalfLifeDays: number;
+  graphRecallDampingFactor: number;
+  graphRecallMaxSeedNodes: number;
+  graphRecallMaxExpandedNodes: number;
+  graphRecallMaxTrailPerNode: number;
+  graphRecallMinSeedScore: number;
+  graphRecallExpansionScoreThreshold: number;
+  graphRecallExplainMaxPaths: number;
+  graphRecallExplainMaxChars: number;
+  graphRecallExplainEdgeLimit: number;
+  graphRecallExplainEnabled: boolean;
+  graphRecallEntityHintsEnabled: boolean;
+  graphRecallEntityHintMax: number;
+  graphRecallEntityHintMaxChars: number;
+  graphRecallSnapshotDir: string;
+  graphRecallEnableTrace: boolean;
+  graphRecallEnableDebug: boolean;
   /** Allow graph_mode escalation for broader causal/timeline phrasing beyond strict keywords. */
   graphExpandedIntentEnabled?: boolean;
   /** Run bounded graph expansion in full mode when enough recall seeds exist. */
@@ -1107,6 +1177,13 @@ export interface RecallTraceEvent {
   identityInjectionTruncated?: boolean;
   durationMs: number;
   timings?: Record<string, string>;
+  /**
+   * The full recalled memory context injected into the system prompt.
+   * Only populated when `traceRecallContent` config option is `true`.
+   * Omitted by default to avoid sending potentially sensitive memory content
+   * to external trace collectors unless explicitly opted in.
+   */
+  recalledContent?: string;
 }
 
 export type EngramTraceEvent = LlmTraceEvent | RecallTraceEvent;

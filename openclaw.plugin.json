@@ -478,10 +478,50 @@
         "default": true,
         "description": "Use lightweight retrieve-vs-think planning to avoid unnecessary recall work."
       },
+      "recallPlannerModel": {
+        "type": "string",
+        "default": "gpt-5.2-mini",
+        "description": "Model to use for the recall planner."
+      },
+      "recallPlannerTimeoutMs": {
+        "type": "number",
+        "default": 1500,
+        "description": "Timeout in ms for recall planner inference."
+      },
+      "recallPlannerUseResponsesApi": {
+        "type": "boolean",
+        "default": true,
+        "description": "Use OpenAI Responses API for recall planner calls."
+      },
+      "recallPlannerMaxPromptChars": {
+        "type": "number",
+        "default": 4000,
+        "description": "Maximum characters of prompt context to send to the recall planner."
+      },
+      "recallPlannerMaxMemoryHints": {
+        "type": "number",
+        "default": 24,
+        "description": "Maximum number of recent memory hints included in the recall planner prompt."
+      },
+      "recallPlannerShadowMode": {
+        "type": "boolean",
+        "default": false,
+        "description": "Run recall planner in shadow mode — evaluate but do not apply results."
+      },
+      "recallPlannerTelemetryEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Emit telemetry events for recall planner decisions."
+      },
       "recallPlannerMaxQmdResultsMinimal": {
         "type": "number",
         "default": 4,
         "description": "QMD cap used when recall planner selects minimal mode."
+      },
+      "recallPlannerMaxQmdResultsFull": {
+        "type": "number",
+        "default": 8,
+        "description": "QMD cap used when recall planner selects full mode."
       },
       "intentRoutingEnabled": {
         "type": "boolean",
@@ -572,6 +612,56 @@
         "default": 200,
         "description": "Max candidate paths returned from index prefilter before scoring (0 = no cap)."
       },
+      "temporalIndexWindowDays": {
+        "type": "number",
+        "default": 30,
+        "description": "Number of days to include in the temporal index window."
+      },
+      "temporalIndexMaxEntries": {
+        "type": "number",
+        "default": 5000,
+        "description": "Maximum number of entries in the temporal index."
+      },
+      "temporalBoostRecentDays": {
+        "type": "number",
+        "default": 7,
+        "description": "Memories from the last N days receive a recency boost during recall."
+      },
+      "temporalBoostScore": {
+        "type": "number",
+        "default": 0.15,
+        "description": "Score boost applied to recent memories during recall."
+      },
+      "temporalDecayEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply temporal decay to older memories during recall scoring."
+      },
+      "tagMemoryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable tag-based memory indexing and recall boosting."
+      },
+      "tagMaxPerMemory": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum number of tags assigned per memory."
+      },
+      "tagIndexMaxEntries": {
+        "type": "number",
+        "default": 10000,
+        "description": "Maximum number of entries in the tag index."
+      },
+      "tagRecallBoost": {
+        "type": "number",
+        "default": 0.15,
+        "description": "Score boost applied to memories whose tags match the query."
+      },
+      "tagRecallMaxMatches": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum number of tag-matched memories injected per recall."
+      },
       "multiGraphMemoryEnabled": {
         "type": "boolean",
         "default": false,
@@ -581,6 +671,159 @@
         "type": "boolean",
         "default": false,
         "description": "Enable graph recall planner mode (`graph_mode`). Requires multiGraphMemoryEnabled. Default false."
+      },
+      "graphRecallMaxExpansions": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum number of expansion hops per graph recall query."
+      },
+      "graphRecallMaxPerSeed": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum graph-expanded results per seed node."
+      },
+      "graphRecallMinEdgeWeight": {
+        "type": "number",
+        "default": 0.1,
+        "description": "Minimum edge weight to follow during graph recall traversal."
+      },
+      "graphRecallShadowEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Run graph recall in shadow mode — evaluate but do not inject results."
+      },
+      "graphRecallSnapshotEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Write graph recall snapshots for offline analysis."
+      },
+      "graphRecallShadowSampleRate": {
+        "type": "number",
+        "default": 0.1,
+        "description": "Fraction of turns evaluated in shadow mode (0-1)."
+      },
+      "graphRecallExplainToolEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Expose a graph explain tool to agents during graph recall."
+      },
+      "graphRecallStoreColdMirror": {
+        "type": "boolean",
+        "default": false,
+        "description": "Store cold-path graph recall results in a secondary QMD collection."
+      },
+      "graphRecallColdMirrorCollection": {
+        "type": "string",
+        "description": "QMD collection name for cold-mirror graph recall results."
+      },
+      "graphRecallColdMirrorMinAgeDays": {
+        "type": "number",
+        "default": 7,
+        "description": "Minimum age in days for a memory to qualify for cold-mirror storage."
+      },
+      "graphRecallUseEntityPriors": {
+        "type": "boolean",
+        "default": false,
+        "description": "Boost seed nodes using entity prior scores during graph recall."
+      },
+      "graphRecallEntityPriorBoost": {
+        "type": "number",
+        "default": 0.2,
+        "description": "Score boost applied to nodes with strong entity priors."
+      },
+      "graphRecallPreferHubSeeds": {
+        "type": "boolean",
+        "default": false,
+        "description": "Prefer high-degree hub nodes as graph recall seeds."
+      },
+      "graphRecallHubBias": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Bias weight toward hub-seed selection (0-1)."
+      },
+      "graphRecallRecencyHalfLifeDays": {
+        "type": "number",
+        "default": 30,
+        "description": "Half-life in days for recency decay applied to graph-expanded nodes."
+      },
+      "graphRecallDampingFactor": {
+        "type": "number",
+        "default": 0.85,
+        "description": "PageRank-style damping factor for graph activation propagation."
+      },
+      "graphRecallMaxSeedNodes": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum number of seed nodes selected for graph recall expansion."
+      },
+      "graphRecallMaxExpandedNodes": {
+        "type": "number",
+        "default": 30,
+        "description": "Maximum total nodes visited during graph recall expansion."
+      },
+      "graphRecallMaxTrailPerNode": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum trail length followed per node during graph traversal."
+      },
+      "graphRecallMinSeedScore": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Minimum QMD score for a memory to qualify as a graph recall seed."
+      },
+      "graphRecallExpansionScoreThreshold": {
+        "type": "number",
+        "default": 0.2,
+        "description": "Minimum blended score required to include a graph-expanded node in results."
+      },
+      "graphRecallExplainMaxPaths": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum reasoning paths included in a graph recall explanation."
+      },
+      "graphRecallExplainMaxChars": {
+        "type": "number",
+        "default": 500,
+        "description": "Maximum characters per graph recall explanation."
+      },
+      "graphRecallExplainEdgeLimit": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum edges described per node in a graph recall explanation."
+      },
+      "graphRecallExplainEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Append natural-language graph reasoning explanations to recall output."
+      },
+      "graphRecallEntityHintsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inject entity hint summaries alongside graph-recalled memories."
+      },
+      "graphRecallEntityHintMax": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum number of entity hints injected per graph recall result."
+      },
+      "graphRecallEntityHintMaxChars": {
+        "type": "number",
+        "default": 200,
+        "description": "Maximum characters per entity hint injected during graph recall."
+      },
+      "graphRecallSnapshotDir": {
+        "type": "string",
+        "description": "Directory for graph recall snapshot files (defaults to {memoryDir}/state/graph)."
+      },
+      "graphRecallEnableTrace": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable detailed graph recall trace logging for debugging."
+      },
+      "graphRecallEnableDebug": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable verbose debug output for graph recall operations."
       },
       "graphExpandedIntentEnabled": {
         "type": "boolean",
@@ -1003,6 +1246,11 @@
         "default": 30000,
         "description": "Threshold for slow operation logging (ms)"
       },
+      "traceRecallContent": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, include the full recalled memory text in RecallTraceEvent.recalledContent emitted to __openclawEngramTrace subscribers (e.g. Langfuse). Disabled by default — only enable when you want external trace collectors to capture injected memory context."
+      },
       "extractionDedupeEnabled": {
         "type": "boolean",
         "default": true,
@@ -1262,6 +1510,11 @@
         "default": false,
         "description": "Enable versioned benchmark baseline snapshot artifacts under the eval store for later PR delta reporting."
       },
+      "benchmarkStoredBaselineEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable stored baseline comparisons for benchmark delta reporting."
+      },
       "benchmarkDeltaReporterEnabled": {
         "type": "boolean",
         "default": false,
@@ -1413,6 +1666,53 @@
       "workProductLedgerDir": {
         "type": "string",
         "description": "Override the work-product ledger directory (defaults to {memoryDir}/state/work-product-ledger)."
+      },
+      "workTasksEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable task tracking within the work product system."
+      },
+      "workProjectsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable project tracking within the work product system."
+      },
+      "workTasksDir": {
+        "type": "string",
+        "description": "Override the work tasks directory (defaults to {memoryDir}/work/tasks)."
+      },
+      "workProjectsDir": {
+        "type": "string",
+        "description": "Override the work projects directory (defaults to {memoryDir}/work/projects)."
+      },
+      "workIndexEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable search index for work tasks and projects."
+      },
+      "workIndexDir": {
+        "type": "string",
+        "description": "Override the work index directory (defaults to {memoryDir}/work/index)."
+      },
+      "workTaskIndexEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include tasks in the work search index."
+      },
+      "workProjectIndexEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include projects in the work search index."
+      },
+      "workIndexAutoRebuildEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Automatically rebuild the work index when tasks or projects change."
+      },
+      "workIndexAutoRebuildDebounceMs": {
+        "type": "number",
+        "default": 1000,
+        "description": "Debounce delay in ms before triggering auto-rebuild of the work index."
       },
       "actionGraphRecallEnabled": {
         "type": "boolean",
@@ -1751,6 +2051,11 @@
         "default": 30000,
         "description": "Timeout in ms for remote search backend requests"
       },
+      "lancedbEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable LanceDB as a supplemental search backend."
+      },
       "lanceDbPath": {
         "type": "string",
         "description": "Directory path for LanceDB storage (when searchBackend=lancedb)"
@@ -1759,6 +2064,11 @@
         "type": "number",
         "default": 1536,
         "description": "Embedding vector dimension for LanceDB (when searchBackend=lancedb)"
+      },
+      "meilisearchEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Meilisearch as a supplemental search backend."
       },
       "meilisearchHost": {
         "type": "string",
@@ -1778,6 +2088,11 @@
         "type": "boolean",
         "default": false,
         "description": "Automatically push local memory docs to Meilisearch on update (when searchBackend=meilisearch)"
+      },
+      "oramaEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Orama as a supplemental search backend."
       },
       "oramaDbPath": {
         "type": "string",
