@@ -64,6 +64,19 @@ function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "e
   return parsed.toString().replace(/\/+$/, "");
 }
 
+function normalizeMemoryRelativeDir(raw: unknown, fallback: string): string {
+  if (typeof raw !== "string") return fallback;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return fallback;
+
+  const normalized = trimmed
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== "." && segment !== "..")
+    .join("/");
+  return normalized.length > 0 ? normalized : fallback;
+}
+
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
 const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
@@ -232,6 +245,72 @@ export function parseConfig(raw: unknown): PluginConfig {
           typeof rawNativeKnowledge.maxChars === "number"
             ? Math.max(0, Math.floor(rawNativeKnowledge.maxChars))
             : 2400,
+        stateDir:
+          normalizeMemoryRelativeDir(rawNativeKnowledge.stateDir, "state/native-knowledge"),
+        obsidianVaults: Array.isArray(rawNativeKnowledge.obsidianVaults)
+          ? (rawNativeKnowledge.obsidianVaults as unknown[])
+            .filter((value): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value))
+            .map((vault, index) => {
+              const defaultId = `vault-${index + 1}`;
+              return {
+                id:
+                  typeof vault.id === "string" && vault.id.trim().length > 0
+                    ? vault.id.trim()
+                    : defaultId,
+                rootDir:
+                  typeof vault.rootDir === "string" && vault.rootDir.trim().length > 0
+                    ? vault.rootDir.trim()
+                    : "",
+                includeGlobs: Array.isArray(vault.includeGlobs)
+                  ? (vault.includeGlobs as unknown[])
+                    .filter((value): value is string => typeof value === "string")
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                  : ["**/*.md"],
+                excludeGlobs: Array.isArray(vault.excludeGlobs)
+                  ? (vault.excludeGlobs as unknown[])
+                    .filter((value): value is string => typeof value === "string")
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                  : [".obsidian/**", "**/*.canvas", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.gif", "**/*.pdf"],
+                namespace:
+                  typeof vault.namespace === "string" && vault.namespace.trim().length > 0
+                    ? vault.namespace.trim()
+                    : undefined,
+                privacyClass:
+                  typeof vault.privacyClass === "string" && vault.privacyClass.trim().length > 0
+                    ? vault.privacyClass.trim()
+                    : undefined,
+                folderRules: Array.isArray(vault.folderRules)
+                  ? (vault.folderRules as unknown[])
+                    .filter((value): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value))
+                    .map((rule) => ({
+                      pathPrefix:
+                        typeof rule.pathPrefix === "string" && rule.pathPrefix.trim().length > 0
+                          ? rule.pathPrefix.trim()
+                          : "",
+                      namespace:
+                        typeof rule.namespace === "string" && rule.namespace.trim().length > 0
+                          ? rule.namespace.trim()
+                          : undefined,
+                      privacyClass:
+                        typeof rule.privacyClass === "string" && rule.privacyClass.trim().length > 0
+                          ? rule.privacyClass.trim()
+                          : undefined,
+                    }))
+                    .filter((rule) => rule.pathPrefix.length > 0)
+                  : [],
+                dailyNotePatterns: Array.isArray(vault.dailyNotePatterns)
+                  ? (vault.dailyNotePatterns as unknown[])
+                    .filter((value): value is string => typeof value === "string")
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                  : ["YYYY-MM-DD"],
+                materializeBacklinks: vault.materializeBacklinks === true,
+              };
+            })
+            .filter((vault) => vault.rootDir.length > 0)
+          : [],
       }
     : undefined;
 

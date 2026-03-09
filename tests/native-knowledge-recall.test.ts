@@ -9,6 +9,7 @@ import { Orchestrator } from "../src/orchestrator.js";
 async function buildNativeKnowledgeRecallHarness(options: {
   enabled: boolean;
   recallSectionEnabled?: boolean;
+  vaultDir?: string;
 }) {
   const root = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-recall-"));
   const memoryDir = path.join(root, "memory");
@@ -42,6 +43,20 @@ async function buildNativeKnowledgeRecallHarness(options: {
       maxChunkChars: 400,
       maxResults: 3,
       maxChars: 1200,
+      stateDir: "state/native-knowledge",
+      obsidianVaults: options.vaultDir
+        ? [
+          {
+            id: "vault",
+            rootDir: options.vaultDir,
+            includeGlobs: ["**/*.md"],
+            excludeGlobs: [".obsidian/**"],
+            folderRules: [],
+            dailyNotePatterns: ["YYYY-MM-DD"],
+            materializeBacklinks: false,
+          },
+        ]
+        : [],
     },
     recallPipeline: [
       {
@@ -92,4 +107,34 @@ test("recall omits native knowledge section when the pipeline section is disable
   );
 
   assert.equal(context.includes("## Curated Workspace Knowledge"), false);
+});
+
+test("recall blends obsidian native knowledge results into the shared section", async () => {
+  const vaultDir = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-obsidian-recall-"));
+  await mkdir(vaultDir, { recursive: true });
+  await writeFile(
+    path.join(vaultDir, "2026-03-09.md"),
+    [
+      "---",
+      "aliases:",
+      "  - Deployment Retrospective",
+      "---",
+      "# Daily Note",
+      "",
+      "Deployment retrospective captured the release checklist for the March 9 ship.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const orchestrator = await buildNativeKnowledgeRecallHarness({ enabled: true, vaultDir });
+  const context = await (orchestrator as any).recallInternal(
+    "What did the Deployment Retrospective say about the March 9 ship?",
+    "agent:main",
+  );
+
+  assert.match(context, /## Curated Workspace Knowledge/);
+  assert.match(context, /vault\/2026-03-09\.md:7-7/);
+  assert.match(context, /date=2026-03-09/);
+  assert.match(context, /Deployment retrospective captured the release checklist/i);
 });

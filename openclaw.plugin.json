@@ -332,6 +332,86 @@
             "type": "number",
             "default": 2400,
             "description": "Maximum total characters to inject from native knowledge recall."
+          },
+          "stateDir": {
+            "type": "string",
+            "default": "state/native-knowledge",
+            "description": "Memory-relative directory used for backend-agnostic native knowledge sync state."
+          },
+          "obsidianVaults": {
+            "type": "array",
+            "default": [],
+            "description": "Optional Obsidian vault adapters to sync into backend-agnostic native knowledge records.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Stable vault identifier used in synced note metadata."
+                },
+                "rootDir": {
+                  "type": "string",
+                  "description": "Absolute path to the Obsidian vault root."
+                },
+                "includeGlobs": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "default": ["**/*.md"],
+                  "description": "Glob patterns (relative to the vault root) that are eligible for sync."
+                },
+                "excludeGlobs": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "default": [".obsidian/**", "**/*.canvas", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.gif", "**/*.pdf"],
+                  "description": "Glob patterns excluded from sync."
+                },
+                "namespace": {
+                  "type": "string",
+                  "description": "Default namespace assigned to records from this vault."
+                },
+                "privacyClass": {
+                  "type": "string",
+                  "description": "Operator-defined privacy class preserved on synced records."
+                },
+                "folderRules": {
+                  "type": "array",
+                  "default": [],
+                  "description": "Optional per-folder overrides for namespace or privacy classification.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "pathPrefix": {
+                        "type": "string",
+                        "description": "Vault-relative folder prefix that activates the override."
+                      },
+                      "namespace": {
+                        "type": "string",
+                        "description": "Namespace override for matching notes."
+                      },
+                      "privacyClass": {
+                        "type": "string",
+                        "description": "Privacy-class override for matching notes."
+                      }
+                    },
+                    "required": ["pathPrefix"]
+                  }
+                },
+                "dailyNotePatterns": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "default": ["YYYY-MM-DD"],
+                  "description": "Filename patterns used to derive daily-note dates (for example `YYYY-MM-DD` or `YYYY/MM/DD`)."
+                },
+                "materializeBacklinks": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "If true, compute backlinks from wikilink targets for recall hints and explainability."
+                }
+              },
+              "required": ["rootDir"]
+            }
           }
         },
         "required": ["enabled"]

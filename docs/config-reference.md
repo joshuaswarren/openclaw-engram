@@ -120,6 +120,58 @@ Supported keys:
 | `timeoutMs` | `number` | `conversation-recall` section only |
 | `maxPatterns` | `number` | `compounding` section only |
 
+## Native Knowledge
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `nativeKnowledge.enabled` | `false` | Enable curated-file and adapter-backed native knowledge recall. |
+| `nativeKnowledge.includeFiles` | `["IDENTITY.md","MEMORY.md"]` | Workspace-relative markdown files to chunk directly into the native knowledge recall section. |
+| `nativeKnowledge.maxChunkChars` | `900` | Maximum chunk size before heading/paragraph-aware splitting. |
+| `nativeKnowledge.maxResults` | `4` | Maximum native knowledge chunks injected into recall. |
+| `nativeKnowledge.maxChars` | `2400` | Maximum total characters injected by the native knowledge section. |
+| `nativeKnowledge.stateDir` | `state/native-knowledge` | `memoryDir`-relative directory used for backend-agnostic adapter sync state. |
+| `nativeKnowledge.obsidianVaults` | `[]` | Optional Obsidian vault adapters to sync into native knowledge recall. |
+
+### `nativeKnowledge.obsidianVaults` entries
+
+Each vault entry supports:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `id` | `vault-{n}` | Stable adapter identifier used in synced metadata and recall formatting. |
+| `rootDir` | required | Absolute path to the Obsidian vault root. |
+| `includeGlobs` | `["**/*.md"]` | Vault-relative globs eligible for sync. |
+| `excludeGlobs` | `[".obsidian/**","**/*.canvas","**/*.png","**/*.jpg","**/*.jpeg","**/*.gif","**/*.pdf"]` | Vault-relative globs excluded from sync. |
+| `namespace` | unset | Default namespace assigned to synced notes from this vault. |
+| `privacyClass` | unset | Operator-defined privacy classification preserved on synced note chunks. |
+| `folderRules` | `[]` | Optional per-folder overrides for namespace and privacy class. Longest matching prefix wins. |
+| `dailyNotePatterns` | `["YYYY-MM-DD"]` | Filename patterns used to derive a note date from the vault-relative path. |
+| `materializeBacklinks` | `false` | When enabled, compute backlinks from wikilink targets and expose them in recall metadata. |
+
+Example:
+
+```jsonc
+{
+  "nativeKnowledge": {
+    "enabled": true,
+    "includeFiles": ["IDENTITY.md", "MEMORY.md", "TEAM.md"],
+    "obsidianVaults": [
+      {
+        "id": "personal",
+        "rootDir": "/Users/you/Documents/Obsidian",
+        "namespace": "shared",
+        "privacyClass": "private",
+        "folderRules": [
+          { "pathPrefix": "Projects", "namespace": "work", "privacyClass": "team" }
+        ],
+        "dailyNotePatterns": ["Daily/YYYY-MM-DD", "YYYY-MM-DD"],
+        "materializeBacklinks": true
+      }
+    ]
+  }
+}
+```
+
 ## v8.0 Memory OS
 
 | Setting | Default | Description |

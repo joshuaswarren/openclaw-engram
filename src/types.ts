@@ -68,6 +68,26 @@ export interface NativeKnowledgeConfig {
   maxChunkChars: number;
   maxResults: number;
   maxChars: number;
+  stateDir: string;
+  obsidianVaults: NativeKnowledgeObsidianVaultConfig[];
+}
+
+export interface NativeKnowledgeFolderRuleConfig {
+  pathPrefix: string;
+  namespace?: string;
+  privacyClass?: string;
+}
+
+export interface NativeKnowledgeObsidianVaultConfig {
+  id: string;
+  rootDir: string;
+  includeGlobs: string[];
+  excludeGlobs: string[];
+  namespace?: string;
+  privacyClass?: string;
+  folderRules: NativeKnowledgeFolderRuleConfig[];
+  dailyNotePatterns: string[];
+  materializeBacklinks: boolean;
 }
 
 export interface AgentAccessHttpConfig {
