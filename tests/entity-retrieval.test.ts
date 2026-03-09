@@ -193,7 +193,7 @@ test("entity retrieval resolves pronoun follow-ups from recent transcript turns"
   assert.ok(section);
   assert.match(section!, /target: Alice Example \(person\)/);
   assert.match(section!, /resolution: carried forward from recent turns via alias "Alice Example"/);
-  assert.match(section!, /recent timeline:/);
+  assert.doesNotMatch(section!, /recent timeline:/);
 });
 
 test('entity retrieval treats "what happened to her" as a pronoun follow-up', async () => {
@@ -246,6 +246,27 @@ test('entity retrieval treats "what happened to her" as a pronoun follow-up', as
   assert.match(section!, /target: Alice Example \(person\)/);
   assert.match(section!, /resolution: carried forward from recent turns via alias "Alice Example"/);
   assert.doesNotMatch(section!, /target: Bob Example \(person\)/);
+});
+
+test("entity retrieval avoids duplicating likely-answer snippets in recent timeline fallback", async () => {
+  const { config, storage } = await buildHarness("engram-entity-timeline-dedupe");
+  await writeEntity(
+    storage,
+    "Alice Example",
+    "person",
+    [
+      "Alice Example led the launch review last month.",
+      "Alice Example coordinated the release freeze rollback.",
+    ],
+    "Alice Example is the release lead for the launch review.",
+  );
+
+  const section = await buildSection(config, storage, "What happened with Alice Example?");
+
+  assert.ok(section);
+  assert.match(section!, /likely answer:/);
+  const repeatedFactMatches = section!.match(/Alice Example led the launch review last month\./g) ?? [];
+  assert.equal(repeatedFactMatches.length, 1);
 });
 
 test("entity retrieval recent-turn helpers treat zero as disabled", async () => {
@@ -355,6 +376,42 @@ test("entity retrieval can answer from native knowledge titles and aliases witho
   assert.ok(section);
   assert.match(section!, /target: Launch Runbook \(identity\)/);
   assert.match(section!, /rollback owners/);
+});
+
+test("entity retrieval keeps multi-chunk native-only pseudo entries together", async () => {
+  const { workspaceDir, config, storage } = await buildHarness("engram-entity-native-multichunk", {
+    nativeKnowledge: {
+      enabled: true,
+      includeFiles: ["IDENTITY.md"],
+      maxChunkChars: 120,
+      maxResults: 5,
+      maxChars: 1600,
+      stateDir: "state/native-knowledge",
+      obsidianVaults: [],
+    },
+  });
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.md"),
+    [
+      "# Launch Runbook",
+      "",
+      "Rollback owners coordinate feature flags, smoke tests, and staged recovery steps across the release train.",
+      "",
+      "Communications owners post launch updates, incident summaries, and follow-up notes for every release checkpoint.",
+      "",
+      "Escalation owners track launch blockers, rollback authority, and cross-team approvals through every checkpoint in the runbook.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  await buildSection(config, storage, "Tell me about Launch Runbook");
+
+  const index = JSON.parse(await readFile(path.join(config.memoryDir, "state", "entity-mention-index.json"), "utf-8"));
+  const launchRunbookEntries = index.entities.filter((entry: { name: string }) => entry.name === "Launch Runbook");
+  assert.equal(launchRunbookEntries.length, 1);
+  assert.equal(launchRunbookEntries[0]?.nativeChunks.length >= 2, true);
 });
 
 test("entity retrieval keeps distinct native-only entries that share a title", async () => {

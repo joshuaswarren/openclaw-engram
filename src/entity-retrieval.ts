@@ -196,8 +196,12 @@ async function writeEntityIndexState(storage: StorageManager, index: EntityMenti
   await writeFile(statePath, nextContent, "utf-8");
 }
 
+function nativePseudoCanonicalId(chunk: NativeKnowledgeChunk): string {
+  return `native:${createHash("sha256").update(chunk.sourcePath).digest("hex").slice(0, 12)}`;
+}
+
 function createPseudoNativeEntry(chunk: NativeKnowledgeChunk): EntityMentionIndexEntry {
-  const canonicalId = `native:${createHash("sha256").update(chunk.sourcePath).digest("hex").slice(0, 12)}`;
+  const canonicalId = nativePseudoCanonicalId(chunk);
   return {
     canonicalId,
     name: chunk.title,
@@ -278,6 +282,11 @@ async function buildEntityMentionIndex(
 
   const aliasIndex = buildAliasIndex([...entities.values()]);
   for (const chunk of nativeChunks) {
+    const existingPseudo = entities.get(nativePseudoCanonicalId(chunk));
+    if (existingPseudo) {
+      mergeNativeChunk(existingPseudo, chunk);
+      continue;
+    }
     const candidateAliases = uniqueStrings([chunk.title, ...(chunk.aliases ?? [])]).map(normalizeText).filter(Boolean);
     let matched = false;
     for (const alias of candidateAliases) {
@@ -461,6 +470,7 @@ function formatEntityHintSection(
   const lines: string[] = ["## entity_answer_hints", ""];
   for (const { candidate, snippets, uncertainty } of candidates) {
     const topSnippets = snippets.slice(0, 3);
+    const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
     lines.push(`- target: ${candidate.entry.name} (${candidate.entry.type})`);
     if (candidate.source === "recent_turn") {
       lines.push(`- resolution: carried forward from recent turns via alias "${candidate.alias}"`);
@@ -476,11 +486,13 @@ function formatEntityHintSection(
     }
     if (mode !== "direct") {
       const timeline = snippets
-        .filter((snippet) => snippet.kind === "activity" || snippet.kind === "memory")
+        .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text)))
         .slice(0, 2);
       const fallbackTimeline = timeline.length > 0
         ? timeline
-        : snippets.filter((snippet) => snippet.kind === "fact" || snippet.kind === "summary").slice(0, 2);
+        : snippets
+          .filter((snippet) => (snippet.kind === "fact" || snippet.kind === "summary") && !topSnippetTexts.has(normalizeText(snippet.text)))
+          .slice(0, 2);
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
         for (const snippet of fallbackTimeline) {
