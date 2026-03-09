@@ -100,7 +100,7 @@ function detectEntityQueryMode(query: string): EntityQueryMode | null {
   const normalized = normalizeText(query);
   if (!normalized) return null;
   if (
-    /^(what about|and what about|how about|what happened with (he|him|his|she|her|they|them|their|it|its)|did (he|she|they|it)|is (he|she|they|it)|was (he|she|they|it))\b/.test(normalized)
+    /^(what about|and what about|how about|what happened (with|to) (he|him|his|she|her|they|them|their|it|its)|did (he|she|they|it)|is (he|she|they|it)|was (he|she|they|it))\b/.test(normalized)
   ) {
     return "follow_up";
   }

@@ -196,6 +196,58 @@ test("entity retrieval resolves pronoun follow-ups from recent transcript turns"
   assert.match(section!, /recent timeline:/);
 });
 
+test('entity retrieval treats "what happened to her" as a pronoun follow-up', async () => {
+  const { config, storage } = await buildHarness("engram-entity-followup-to-pronoun");
+  await writeEntity(
+    storage,
+    "Alice Example",
+    "person",
+    [
+      "Alice Example led the launch review last month.",
+      "Alice Example coordinated the release freeze rollback.",
+    ],
+    "Alice Example is the release lead for the launch review.",
+  );
+  await writeEntity(
+    storage,
+    "Bob Example",
+    "person",
+    ["Bob Example owns the on-call rotation."],
+    "Bob Example owns the on-call rotation.",
+  );
+
+  const transcriptEntries: TranscriptEntry[] = [
+    {
+      timestamp: "2026-03-09T10:00:00.000Z",
+      role: "user",
+      content: "What do we know about Alice Example?",
+      sessionKey: "user:test:entity-followup-to-pronoun",
+      turnId: "turn-1",
+    },
+    {
+      timestamp: "2026-03-09T10:00:05.000Z",
+      role: "assistant",
+      content: "Alice Example led the launch review last month.",
+      sessionKey: "user:test:entity-followup-to-pronoun",
+      turnId: "turn-2",
+    },
+    {
+      timestamp: "2026-03-09T10:00:09.000Z",
+      role: "assistant",
+      content: "Bob Example also came up in a different thread.",
+      sessionKey: "user:test:entity-followup-to-pronoun",
+      turnId: "turn-3",
+    },
+  ];
+
+  const section = await buildSection(config, storage, "What happened to her?", transcriptEntries);
+
+  assert.ok(section);
+  assert.match(section!, /target: Alice Example \(person\)/);
+  assert.match(section!, /resolution: carried forward from recent turns via alias "Alice Example"/);
+  assert.doesNotMatch(section!, /target: Bob Example \(person\)/);
+});
+
 test("entity retrieval surfaces uncertainty when direct facts conflict", async () => {
   const { config, storage } = await buildHarness("engram-entity-conflict");
   await writeEntity(
