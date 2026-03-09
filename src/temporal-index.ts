@@ -30,13 +30,22 @@ export interface TemporalIndex {
 export interface TagIndex {
   version: number;
   lastRebuildAt?: string;
-  /** Map from tag string → array of memory paths */
-  tags: Record<string, string[]>;
+  /** Map from canonical tag string → node metadata */
+  tags: Record<string, TagNode | string[]>;
+  /** Map from alias string → canonical tags */
+  aliases?: Record<string, string[]>;
+}
+
+export interface TagNode {
+  paths: string[];
+  aliases?: string[];
+  parents?: string[];
 }
 
 const INDEX_VERSION = 1;
 const TEMPORAL_INDEX_FILE = "index_time.json";
 const TAG_INDEX_FILE = "index_tags.json";
+const TAG_INDEX_VERSION = 2;
 
 function stateDir(memoryDir: string): string {
   return path.join(memoryDir, "state");
@@ -117,6 +126,207 @@ function removePathFromSet(record: Record<string, string[]>, key: string, p: str
   }
 }
 
+function normalizeTagSegment(segment: string): string {
+  return segment
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function normalizeCanonicalTag(tag: string): string {
+  return tag
+    .trim()
+    .toLowerCase()
+    .replace(/\s*[>:|.]+\s*/g, "/")
+    .replace(/\s*\/\s*/g, "/")
+    .split("/")
+    .map(normalizeTagSegment)
+    .filter(Boolean)
+    .join("/");
+}
+
+function normalizeAliasKey(tag: string): string {
+  return tag
+    .trim()
+    .toLowerCase()
+    .replace(/[\/_.:-]+/g, " ")
+    .replace(/[-]+/g, " ")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function singularizeAlias(alias: string): string | null {
+  if (!alias.endsWith("s") || alias.length <= 3) return null;
+  return alias.slice(0, -1);
+}
+
+function deriveParentTags(canonical: string): string[] {
+  const parts = canonical.split("/").filter(Boolean);
+  const parents: string[] = [];
+  for (let i = parts.length - 1; i > 0; i -= 1) {
+    parents.push(parts.slice(0, i).join("/"));
+  }
+  return parents;
+}
+
+function deriveTagAliases(rawTag: string, canonical: string): string[] {
+  const aliases = new Set<string>();
+  const canonicalAlias = normalizeAliasKey(canonical);
+  const rawAlias = normalizeAliasKey(rawTag);
+  const leaf = canonical.split("/").at(-1) ?? canonical;
+  const leafAlias = normalizeAliasKey(leaf);
+
+  for (const candidate of [canonicalAlias, rawAlias, leafAlias]) {
+    if (!candidate) continue;
+    aliases.add(candidate);
+    const singular = singularizeAlias(candidate);
+    if (singular) aliases.add(singular);
+  }
+
+  return Array.from(aliases);
+}
+
+function normalizeTagIndex(raw: TagIndex | null | undefined): TagIndex {
+  const normalized: TagIndex = {
+    version: TAG_INDEX_VERSION,
+    tags: {},
+    aliases: {},
+  };
+
+  if (!raw || typeof raw !== "object") {
+    return normalized;
+  }
+
+  const sourceTags = raw.tags ?? {};
+  for (const [rawCanonical, nodeOrPaths] of Object.entries(sourceTags)) {
+    const canonical = normalizeCanonicalTag(rawCanonical);
+    if (!canonical) continue;
+    const node: TagNode = Array.isArray(nodeOrPaths)
+      ? { paths: [...new Set(nodeOrPaths)] }
+      : {
+          paths: Array.isArray(nodeOrPaths?.paths) ? [...new Set(nodeOrPaths.paths)] : [],
+          aliases: Array.isArray(nodeOrPaths?.aliases) ? [...new Set(nodeOrPaths.aliases)] : [],
+          parents: Array.isArray(nodeOrPaths?.parents) ? [...new Set(nodeOrPaths.parents)] : [],
+        };
+    normalized.tags[canonical] = node;
+    for (const alias of deriveTagAliases(canonical, canonical)) {
+      const list = normalized.aliases![alias] ?? [];
+      if (!list.includes(canonical)) list.push(canonical);
+      normalized.aliases![alias] = list;
+    }
+    for (const alias of node.aliases ?? []) {
+      const aliasKey = normalizeAliasKey(alias);
+      if (!aliasKey) continue;
+      const list = normalized.aliases![aliasKey] ?? [];
+      if (!list.includes(canonical)) list.push(canonical);
+      normalized.aliases![aliasKey] = list;
+    }
+    node.parents = [...new Set(node.parents ?? deriveParentTags(canonical))];
+  }
+
+  for (const [alias, canonicals] of Object.entries(raw.aliases ?? {})) {
+    const aliasKey = normalizeAliasKey(alias);
+    if (!aliasKey) continue;
+    const list = normalized.aliases![aliasKey] ?? [];
+    for (const canonical of canonicals ?? []) {
+      const normalizedCanonical = normalizeCanonicalTag(canonical);
+      if (normalizedCanonical && !list.includes(normalizedCanonical)) {
+        list.push(normalizedCanonical);
+      }
+    }
+    normalized.aliases![aliasKey] = list;
+  }
+
+  return normalized;
+}
+
+function ensureTagNode(index: TagIndex, canonical: string): TagNode {
+  const existing = index.tags[canonical];
+  if (existing && !Array.isArray(existing)) {
+    return existing;
+  }
+  const created: TagNode = {
+    paths: Array.isArray(existing) ? [...new Set(existing)] : [],
+    aliases: [],
+    parents: deriveParentTags(canonical),
+  };
+  index.tags[canonical] = created;
+  return created;
+}
+
+function addTagGraphEntry(index: TagIndex, rawTag: string, memoryPath: string): void {
+  const canonical = normalizeCanonicalTag(rawTag);
+  if (!canonical) return;
+  const node = ensureTagNode(index, canonical);
+  if (!node.paths.includes(memoryPath)) {
+    node.paths.push(memoryPath);
+  }
+
+  for (const alias of deriveTagAliases(rawTag, canonical)) {
+    const aliasKey = normalizeAliasKey(alias);
+    if (!aliasKey) continue;
+    if (!node.aliases?.includes(aliasKey)) {
+      node.aliases = [...new Set([...(node.aliases ?? []), aliasKey])];
+    }
+    const list = index.aliases?.[aliasKey] ?? [];
+    if (!list.includes(canonical)) {
+      index.aliases![aliasKey] = [...list, canonical];
+    }
+  }
+}
+
+function removeTagGraphEntry(index: TagIndex, rawTag: string, memoryPath: string): void {
+  const canonical = normalizeCanonicalTag(rawTag);
+  if (!canonical) return;
+  const node = index.tags[canonical];
+  if (!node || Array.isArray(node)) return;
+  node.paths = node.paths.filter((value) => value !== memoryPath);
+  if (node.paths.length === 0) {
+    delete index.tags[canonical];
+  }
+}
+
+function expandCanonicalTags(index: TagIndex, rawTags: string[]): string[] {
+  const canonicals = new Set<string>();
+  for (const rawTag of rawTags) {
+    const canonical = normalizeCanonicalTag(rawTag);
+    if (canonical && index.tags[canonical]) {
+      canonicals.add(canonical);
+    }
+    const aliasKey = normalizeAliasKey(rawTag);
+    for (const resolved of index.aliases?.[aliasKey] ?? []) {
+      canonicals.add(resolved);
+    }
+  }
+
+  const expanded = new Set<string>();
+  for (const canonical of canonicals) {
+    expanded.add(canonical);
+    const node = index.tags[canonical];
+    if (node && !Array.isArray(node)) {
+      for (const parent of node.parents ?? []) {
+        expanded.add(parent);
+      }
+    }
+  }
+  return Array.from(expanded);
+}
+
+function aliasPhrase(alias: string): string {
+  return alias.replace(/\//g, " ").replace(/-/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function promptContainsAlias(prompt: string, alias: string): boolean {
+  const phrase = aliasPhrase(alias);
+  if (!phrase) return false;
+  const normalizedPrompt = ` ${normalizeAliasKey(prompt)} `;
+  return normalizedPrompt.includes(` ${phrase} `);
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -145,10 +355,10 @@ export function indexMemory(
 
     // Tag index
     const gPath = tagIndexPath(memoryDir);
-    const gIndex = readJsonSafe<TagIndex>(gPath, { version: INDEX_VERSION, tags: {} });
+    const gIndex = normalizeTagIndex(readJsonSafe<TagIndex>(gPath, { version: TAG_INDEX_VERSION, tags: {}, aliases: {} }));
     for (const tag of tags) {
       if (tag && typeof tag === "string") {
-        addPathToSet(gIndex.tags, tag.toLowerCase(), memoryPath);
+        addTagGraphEntry(gIndex, tag, memoryPath);
       }
     }
     writeJsonAtomic(gPath, gIndex);
@@ -176,10 +386,10 @@ export function deindexMemory(
     writeJsonAtomic(tPath, tIndex);
 
     const gPath = tagIndexPath(memoryDir);
-    const gIndex = readJsonSafe<TagIndex>(gPath, { version: INDEX_VERSION, tags: {} });
+    const gIndex = normalizeTagIndex(readJsonSafe<TagIndex>(gPath, { version: TAG_INDEX_VERSION, tags: {}, aliases: {} }));
     for (const tag of tags) {
       if (tag && typeof tag === "string") {
-        removePathFromSet(gIndex.tags, tag.toLowerCase(), memoryPath);
+        removeTagGraphEntry(gIndex, tag, memoryPath);
       }
     }
     writeJsonAtomic(gPath, gIndex);
@@ -197,7 +407,7 @@ export function clearIndexes(memoryDir: string): void {
   try {
     ensureStateDir(memoryDir);
     writeJsonAtomic(temporalIndexPath(memoryDir), { version: INDEX_VERSION, dates: {} });
-    writeJsonAtomic(tagIndexPath(memoryDir), { version: INDEX_VERSION, tags: {} });
+    writeJsonAtomic(tagIndexPath(memoryDir), { version: TAG_INDEX_VERSION, tags: {}, aliases: {} });
   } catch {
     // Fail silently — indexes are advisory only
   }
@@ -234,14 +444,14 @@ export function indexMemoriesBatch(
     const tIndex = readJsonSafe<TemporalIndex>(tPath, { version: INDEX_VERSION, dates: {} });
 
     const gPath = tagIndexPath(memoryDir);
-    const gIndex = readJsonSafe<TagIndex>(gPath, { version: INDEX_VERSION, tags: {} });
+    const gIndex = normalizeTagIndex(readJsonSafe<TagIndex>(gPath, { version: TAG_INDEX_VERSION, tags: {}, aliases: {} }));
 
     for (const entry of entries) {
       const dateKey = isoDateFromTimestamp(entry.createdAt);
       addPathToSet(tIndex.dates, dateKey, entry.path);
       for (const tag of entry.tags) {
         if (tag && typeof tag === "string") {
-          addPathToSet(gIndex.tags, tag.toLowerCase(), entry.path);
+          addTagGraphEntry(gIndex, tag, entry.path);
         }
       }
     }
@@ -311,17 +521,18 @@ export async function queryByTagsAsync(
     }
     let gIndex: TagIndex;
     try {
-      gIndex = JSON.parse(raw) as TagIndex;
+      gIndex = normalizeTagIndex(JSON.parse(raw) as TagIndex);
     } catch {
-      gIndex = { version: INDEX_VERSION, tags: {} };
+      gIndex = { version: TAG_INDEX_VERSION, tags: {}, aliases: {} };
     }
 
+    const expandedTags = expandCanonicalTags(gIndex, tags);
     const results = new Set<string>();
-    for (const tag of tags) {
-      const key = tag.toLowerCase();
-      const paths = gIndex.tags[key] ?? [];
-      for (const p of paths) {
-        results.add(p);
+    for (const canonical of expandedTags) {
+      const nodeOrPaths = gIndex.tags[canonical];
+      const paths = Array.isArray(nodeOrPaths) ? nodeOrPaths : (nodeOrPaths?.paths ?? []);
+      for (const pathValue of paths) {
+        results.add(pathValue);
       }
     }
     return results.size > 0 ? results : null;
@@ -341,10 +552,51 @@ export function extractTagsFromPrompt(prompt: string): string[] {
   // Match #tag style tokens
   const hashMatches = prompt.matchAll(/#([a-zA-Z][\w-]{1,30})/g);
   for (const m of hashMatches) {
-    found.add(m[1].toLowerCase());
+    const canonical = normalizeCanonicalTag(m[1]);
+    if (canonical) found.add(canonical);
   }
 
   return Array.from(found);
+}
+
+export async function resolvePromptTagPrefilterAsync(
+  memoryDir: string,
+  prompt: string,
+): Promise<{
+  matchedTags: string[];
+  expandedTags: string[];
+  paths: Set<string> | null;
+}> {
+  const explicitTags = extractTagsFromPrompt(prompt);
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(tagIndexPath(memoryDir), "utf8");
+  } catch {
+    return { matchedTags: explicitTags, expandedTags: explicitTags, paths: null };
+  }
+
+  const tagIndex = normalizeTagIndex(JSON.parse(raw) as TagIndex);
+  const matched = new Set<string>(explicitTags);
+
+  for (const canonical of Object.keys(tagIndex.tags)) {
+    if (promptContainsAlias(prompt, canonical)) {
+      matched.add(canonical);
+    }
+  }
+  for (const [alias, canonicals] of Object.entries(tagIndex.aliases ?? {})) {
+    if (!promptContainsAlias(prompt, alias)) continue;
+    for (const canonical of canonicals) {
+      matched.add(canonical);
+    }
+  }
+
+  const expandedTags = expandCanonicalTags(tagIndex, Array.from(matched));
+  const paths = await queryByTagsAsync(memoryDir, expandedTags);
+  return {
+    matchedTags: Array.from(matched),
+    expandedTags,
+    paths,
+  };
 }
 
 /**
