@@ -145,7 +145,7 @@ test("persistExplicitCapture writes lifecycle events and dedupes active duplicat
       sourceReason: "user-request",
       ttl: "2d",
     }),
-    "tool",
+    "memory_capture",
   );
   assert.equal(first.duplicateOf, undefined);
   assert.equal(lifecycleEvents.length, 1);
@@ -160,11 +160,43 @@ test("persistExplicitCapture writes lifecycle events and dedupes active duplicat
       content: "The user prefers concise responses in technical reviews.",
       category: "preference",
     }),
-    "tool",
+    "memory_capture",
   );
   assert.equal(second.duplicateOf, first.id);
   assert.equal(memories.length, 1);
   assert.equal(lifecycleEvents.length, 1);
+});
+
+test("persistExplicitCapture attributes lifecycle actors to the correct tool source", async () => {
+  const lifecycleEvents: Array<{ actor: string; memoryId: string }> = [];
+  let nextId = 1;
+  const storage = {
+    hasFactContentHash: async () => false,
+    isFactContentHashAuthoritative: async () => true,
+    readAllMemories: async () => [],
+    writeMemory: async () => `fact-${nextId++}`,
+    appendMemoryLifecycleEvents: async (events: Array<{ actor: string; memoryId: string }>) => {
+      lifecycleEvents.push(...events);
+      return events.length;
+    },
+  };
+  const orchestrator = { getStorage: async () => storage };
+
+  await persistExplicitCapture(
+    orchestrator as never,
+    validateExplicitCaptureInput({ content: "Store this using the memory_store tool path." }),
+    "memory_store",
+  );
+  await persistExplicitCapture(
+    orchestrator as never,
+    validateExplicitCaptureInput({ content: "Store this using the memory_capture tool path." }),
+    "memory_capture",
+  );
+
+  assert.deepEqual(
+    lifecycleEvents.map((event) => event.actor),
+    ["tool.memory_store", "tool.memory_capture"],
+  );
 });
 
 test("fact duplicate checks short-circuit without a full corpus scan when authoritative hash index misses", async () => {

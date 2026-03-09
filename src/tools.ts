@@ -246,6 +246,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       sourceReason?: string;
     },
     maintenanceReason: string,
+    source: "memory_store" | "memory_capture",
   ) {
     const {
       content,
@@ -268,7 +269,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       ttl,
       sourceReason,
     });
-    const result = await persistExplicitCapture(orchestrator, candidate, "tool");
+    const result = await persistExplicitCapture(orchestrator, candidate, source);
 
     if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
       const storage = await orchestrator.getStorage(candidate.namespace);
@@ -1329,6 +1330,7 @@ Best for:
             sourceReason?: string;
           },
           "memory_store",
+          "memory_store",
         );
       },
     },
@@ -1398,6 +1400,7 @@ Best for:
             ttl?: string;
             sourceReason?: string;
           },
+          "memory_capture",
           "memory_capture",
         );
       },

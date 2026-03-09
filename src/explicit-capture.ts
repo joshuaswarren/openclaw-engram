@@ -26,6 +26,8 @@ export type ValidExplicitCapture = {
   sourceReason?: string;
 };
 
+export type ExplicitCaptureSource = "memory_store" | "memory_capture" | "inline";
+
 const INLINE_NOTE_RE = /<memory_note>\s*([\s\S]*?)\s*<\/memory_note>/gi;
 const INLINE_NOTE_MARKUP_RE = /<memory_note>\s*[\s\S]*?\s*<\/memory_note>/i;
 const INLINE_ALLOWED_CATEGORIES = new Set<MemoryCategory>([
@@ -253,7 +255,7 @@ export async function findDuplicateExplicitCapture(
 export async function persistExplicitCapture(
   orchestrator: Orchestrator,
   candidate: ValidExplicitCapture,
-  source: "tool" | "inline",
+  source: ExplicitCaptureSource,
 ): Promise<{ id: string; duplicateOf?: string }> {
   const duplicateOf = await findDuplicateExplicitCapture(orchestrator, candidate);
   if (duplicateOf) {
@@ -266,7 +268,7 @@ export async function persistExplicitCapture(
     tags: candidate.tags,
     entityRef: candidate.entityRef,
     expiresAt: candidate.ttl,
-    source: source === "tool" ? "explicit" : "explicit-inline",
+    source: source === "inline" ? "explicit-inline" : source,
   });
 
   const created = new Date().toISOString();
@@ -275,7 +277,12 @@ export async function persistExplicitCapture(
     memoryId: id,
     eventType: "explicit_capture_accepted",
     timestamp: created,
-    actor: source === "tool" ? "tool.memory_capture" : "inline.memory_note",
+    actor:
+      source === "inline"
+        ? "inline.memory_note"
+        : source === "memory_store"
+          ? "tool.memory_store"
+          : "tool.memory_capture",
     reasonCode: candidate.sourceReason,
     ruleVersion: "explicit-capture.v1",
   };
