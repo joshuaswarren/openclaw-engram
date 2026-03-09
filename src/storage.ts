@@ -1003,7 +1003,7 @@ export class StorageManager {
     if (category === "fact") {
       try {
         const factHashIndex = await this.getFactHashIndex();
-        factHashIndex.add(content);
+        factHashIndex.add(sanitized.text);
         await factHashIndex.save();
       } catch (err) {
         log.warn(`storage.writeMemory completed but failed to update fact hash index: ${err}`);
