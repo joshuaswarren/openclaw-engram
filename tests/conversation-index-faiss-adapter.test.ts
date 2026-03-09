@@ -305,6 +305,41 @@ test("faiss adapter rebuildChunks parses rebuild count", async () => {
   assert.equal(rebuilt, 3);
 });
 
+test("faiss adapter rebuildChunks batches rebuild payloads via rebuild then incremental upserts", async () => {
+  const stdinWrites: string[] = [];
+  const commands: string[] = [];
+  const spawnFn: typeof childProcess.spawn = (_bin, args) => {
+    commands.push(String(args?.[1] ?? ""));
+    const proc = new FakeProcess();
+    const originalWrite = proc.stdin.write.bind(proc.stdin);
+    proc.stdin.write = (chunk: string) => {
+      stdinWrites.push(chunk);
+      return originalWrite(chunk);
+    };
+
+    process.nextTick(() => {
+      const command = String(args?.[1] ?? "");
+      proc.stdout.emit("data", JSON.stringify(command === "rebuild" ? { ok: true, rebuilt: 2 } : { ok: true, upserted: 2 }));
+      proc.emit("close", 0);
+    });
+
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    maxBatchSize: 2,
+  });
+
+  const rebuilt = await adapter.rebuildChunks(sampleChunks(4));
+  assert.equal(rebuilt, 4);
+  assert.deepEqual(commands, ["rebuild", "upsert"]);
+
+  const payloads = stdinWrites.map((chunk) => JSON.parse(chunk));
+  assert.equal(payloads[0].chunks.length, 2);
+  assert.equal(payloads[1].chunks.length, 2);
+});
+
 test("faiss adapter throws non-zero exit with stderr context", async () => {
   const proc = new FakeProcess();
   const spawnFn: typeof childProcess.spawn = () => {

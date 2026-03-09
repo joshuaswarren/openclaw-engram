@@ -81,6 +81,32 @@ interface SidecarResult {
   };
 }
 
+function parseSidecarManifest(result: SidecarResult): FaissHealthResult["manifest"] | undefined {
+  const manifest = result.manifest;
+  if (
+    !manifest ||
+    typeof manifest.version !== "number" ||
+    typeof manifest.modelId !== "string" ||
+    typeof manifest.normalizedModelId !== "string" ||
+    typeof manifest.dimension !== "number" ||
+    typeof manifest.chunkCount !== "number" ||
+    typeof manifest.updatedAt !== "string" ||
+    typeof manifest.lastSuccessfulRebuildAt !== "string"
+  ) {
+    return undefined;
+  }
+
+  return {
+    version: manifest.version,
+    modelId: manifest.modelId,
+    normalizedModelId: manifest.normalizedModelId,
+    dimension: manifest.dimension,
+    chunkCount: manifest.chunkCount,
+    updatedAt: manifest.updatedAt,
+    lastSuccessfulRebuildAt: manifest.lastSuccessfulRebuildAt,
+  };
+}
+
 export function resolveDefaultFaissScriptPath(fromModuleUrl: string = import.meta.url): string {
   const currentFile = fileURLToPath(fromModuleUrl);
   const moduleDir = path.dirname(currentFile);
@@ -179,25 +205,7 @@ export class FaissConversationIndexAdapter {
       status: result.status,
       indexPath: this.indexPath,
       message: typeof result.error === "string" && result.error.length > 0 ? result.error : undefined,
-      manifest:
-        result.manifest &&
-        typeof result.manifest.version === "number" &&
-        typeof result.manifest.modelId === "string" &&
-        typeof result.manifest.normalizedModelId === "string" &&
-        typeof result.manifest.dimension === "number" &&
-        typeof result.manifest.chunkCount === "number" &&
-        typeof result.manifest.updatedAt === "string" &&
-        typeof result.manifest.lastSuccessfulRebuildAt === "string"
-          ? {
-              version: result.manifest.version,
-              modelId: result.manifest.modelId,
-              normalizedModelId: result.manifest.normalizedModelId,
-              dimension: result.manifest.dimension,
-              chunkCount: result.manifest.chunkCount,
-              updatedAt: result.manifest.updatedAt,
-              lastSuccessfulRebuildAt: result.manifest.lastSuccessfulRebuildAt,
-            }
-          : undefined,
+      manifest: parseSidecarManifest(result),
     };
   }
 
@@ -215,25 +223,7 @@ export class FaissConversationIndexAdapter {
       status: result.status,
       indexPath: this.indexPath,
       message: typeof result.error === "string" && result.error.length > 0 ? result.error : undefined,
-      manifest:
-        result.manifest &&
-        typeof result.manifest.version === "number" &&
-        typeof result.manifest.modelId === "string" &&
-        typeof result.manifest.normalizedModelId === "string" &&
-        typeof result.manifest.dimension === "number" &&
-        typeof result.manifest.chunkCount === "number" &&
-        typeof result.manifest.updatedAt === "string" &&
-        typeof result.manifest.lastSuccessfulRebuildAt === "string"
-          ? {
-              version: result.manifest.version,
-              modelId: result.manifest.modelId,
-              normalizedModelId: result.manifest.normalizedModelId,
-              dimension: result.manifest.dimension,
-              chunkCount: result.manifest.chunkCount,
-              updatedAt: result.manifest.updatedAt,
-              lastSuccessfulRebuildAt: result.manifest.lastSuccessfulRebuildAt,
-            }
-          : undefined,
+      manifest: parseSidecarManifest(result),
       metadata: {
         chunkCount:
           result.metadata && typeof result.metadata.chunkCount === "number"
@@ -247,10 +237,13 @@ export class FaissConversationIndexAdapter {
   }
 
   async rebuildChunks(chunks: ConversationChunk[]): Promise<number> {
-    const payload = {
+    if (this.config.maxBatchSize <= 0 || chunks.length === 0) return 0;
+
+    const firstBatch = chunks.slice(0, this.config.maxBatchSize);
+    const rebuildPayload = {
       modelId: this.config.modelId,
       indexPath: this.indexPath,
-      chunks: chunks.map((chunk) => ({
+      chunks: firstBatch.map((chunk) => ({
         id: chunk.id,
         sessionKey: chunk.sessionKey,
         text: chunk.text,
@@ -258,12 +251,18 @@ export class FaissConversationIndexAdapter {
         endTs: chunk.endTs,
       })),
     };
-    const result = await this.runCommand("rebuild", payload, this.config.upsertTimeoutMs);
+    const result = await this.runCommand("rebuild", rebuildPayload, this.config.upsertTimeoutMs);
     const rebuilt = result.rebuilt;
     if (typeof rebuilt !== "number" || !Number.isFinite(rebuilt)) {
       throw new FaissAdapterError("FAISS sidecar produced malformed rebuild response", "malformed_output");
     }
-    return Math.max(0, Math.floor(rebuilt));
+
+    const rebuildCount = Math.max(0, Math.floor(rebuilt));
+    const remaining = chunks.slice(firstBatch.length);
+    if (remaining.length === 0) return rebuildCount;
+
+    const upserted = await this.upsertChunks(remaining);
+    return rebuildCount + upserted;
   }
 
   private async runCommand(command: SidecarCommand, payload: object, timeoutMs: number): Promise<SidecarResult> {
