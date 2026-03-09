@@ -15,10 +15,14 @@ export interface RecallSectionConfig {
   id: string;
   enabled?: boolean;
   maxChars?: number | null;
+  maxHints?: number;
+  maxSupportingFacts?: number;
+  maxRelatedEntities?: number;
   consolidateTriggerLines?: number;
   consolidateTargetLines?: number;
   maxEntities?: number;
   maxResults?: number;
+  recentTurns?: number;
   maxTurns?: number;
   maxTokens?: number;
   lookbackHours?: number;
@@ -442,6 +446,12 @@ export interface PluginConfig {
   knowledgeIndexEnabled: boolean;
   knowledgeIndexMaxEntities: number;
   knowledgeIndexMaxChars: number;
+  entityRetrievalEnabled: boolean;
+  entityRetrievalMaxChars: number;
+  entityRetrievalMaxHints: number;
+  entityRetrievalMaxSupportingFacts: number;
+  entityRetrievalMaxRelatedEntities: number;
+  entityRetrievalRecentTurns: number;
   // Recall assembly controls
   recallBudgetChars: number;
   recallPipeline: RecallSectionConfig[];

@@ -85,6 +85,12 @@ See [Search Backends](search-backends.md) for detailed configuration and compari
 | `knowledgeIndexEnabled` | `true` | Inject entity/topic index into recall context |
 | `knowledgeIndexMaxEntities` | `40` | Max entities included in the knowledge index |
 | `knowledgeIndexMaxChars` | `4000` | Max characters of knowledge index injected |
+| `entityRetrievalEnabled` | `true` | Enable entity-oriented recall hints for `who is`, `what do we know about`, and transcript-backed recent-turn pronoun follow-ups within the active recall namespace |
+| `entityRetrievalMaxChars` | `2400` | Max characters injected by the entity retrieval section |
+| `entityRetrievalMaxHints` | `2` | Max entity targets summarized in a single recall pass |
+| `entityRetrievalMaxSupportingFacts` | `6` | Max direct-answer supporting facts/timeline snippets considered per target |
+| `entityRetrievalMaxRelatedEntities` | `3` | Max related entities listed per target when confidence is high |
+| `entityRetrievalRecentTurns` | `6` | Number of recent transcript turns scanned for pronoun carry-forward and short follow-up resolution |
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Hard cap for total assembled recall context (final safety trim before system prompt injection) |
 | `recallPipeline` | `(built-in ordered defaults)` | Ordered section controls for recall assembly, including per-section caps and knobs |
 
@@ -108,10 +114,14 @@ Supported keys:
 | `id` | `string` | Section identifier (required) |
 | `enabled` | `boolean` | Enable/disable the section |
 | `maxChars` | `number \| null` | Per-section char cap (`null` = uncapped by section) |
+| `maxHints` | `number` | `entity-retrieval` section only; max resolved entity targets |
+| `maxSupportingFacts` | `number` | `entity-retrieval` section only; direct-answer evidence budget per target |
+| `maxRelatedEntities` | `number` | `entity-retrieval` section only; related-entity cap per target |
 | `consolidateTriggerLines` | `number` | `profile` section only; profile consolidation trigger line count |
 | `consolidateTargetLines` | `number` | `profile` section only; consolidation target line count |
 | `maxEntities` | `number` | `knowledge-index` section only; per-section entity cap |
 | `maxResults` | `number` | `memories` section only; cap injected memory result count |
+| `recentTurns` | `number` | `entity-retrieval` section only; transcript follow-up window |
 | `maxTurns` | `number` | `transcript` section only |
 | `maxTokens` | `number` | `transcript` section only |
 | `lookbackHours` | `number` | `transcript` / `summaries` section only |

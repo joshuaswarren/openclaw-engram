@@ -894,6 +894,17 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.knowledgeIndexMaxEntities === "number" ? cfg.knowledgeIndexMaxEntities : 40,
     knowledgeIndexMaxChars:
       typeof cfg.knowledgeIndexMaxChars === "number" ? cfg.knowledgeIndexMaxChars : 4000,
+    entityRetrievalEnabled: cfg.entityRetrievalEnabled !== false,
+    entityRetrievalMaxChars:
+      typeof cfg.entityRetrievalMaxChars === "number" ? cfg.entityRetrievalMaxChars : 2400,
+    entityRetrievalMaxHints:
+      typeof cfg.entityRetrievalMaxHints === "number" ? cfg.entityRetrievalMaxHints : 2,
+    entityRetrievalMaxSupportingFacts:
+      typeof cfg.entityRetrievalMaxSupportingFacts === "number" ? cfg.entityRetrievalMaxSupportingFacts : 6,
+    entityRetrievalMaxRelatedEntities:
+      typeof cfg.entityRetrievalMaxRelatedEntities === "number" ? cfg.entityRetrievalMaxRelatedEntities : 3,
+    entityRetrievalRecentTurns:
+      typeof cfg.entityRetrievalRecentTurns === "number" ? cfg.entityRetrievalRecentTurns : 6,
     recallBudgetChars: recallPipelineConfig.recallBudgetChars,
     recallPipeline: recallPipelineConfig.pipeline,
     entityRelationshipsEnabled: cfg.entityRelationshipsEnabled !== false,
@@ -1223,10 +1234,14 @@ function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {
       entry.maxChars === null
         ? null
         : clampNonNegativeNumber(entry.maxChars),
+    maxHints: clampNonNegativeNumber(entry.maxHints),
+    maxSupportingFacts: clampNonNegativeNumber(entry.maxSupportingFacts),
+    maxRelatedEntities: clampNonNegativeNumber(entry.maxRelatedEntities),
     consolidateTriggerLines: clampNonNegativeNumber(entry.consolidateTriggerLines),
     consolidateTargetLines: clampNonNegativeNumber(entry.consolidateTargetLines),
     maxEntities: clampNonNegativeNumber(entry.maxEntities),
     maxResults: clampNonNegativeNumber(entry.maxResults),
+    recentTurns: clampNonNegativeNumber(entry.recentTurns),
     maxTurns: clampNonNegativeNumber(entry.maxTurns),
     maxTokens: clampNonNegativeNumber(entry.maxTokens),
     lookbackHours: clampNonNegativeNumber(entry.lookbackHours),
@@ -1257,6 +1272,30 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     {
       id: "identity-continuity",
       enabled: cfg.identityContinuityEnabled === true,
+    },
+    {
+      id: "entity-retrieval",
+      enabled: cfg.entityRetrievalEnabled !== false,
+      maxChars:
+        typeof cfg.entityRetrievalMaxChars === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxChars))
+          : 2400,
+      maxHints:
+        typeof cfg.entityRetrievalMaxHints === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxHints))
+          : 2,
+      maxSupportingFacts:
+        typeof cfg.entityRetrievalMaxSupportingFacts === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxSupportingFacts))
+          : 6,
+      maxRelatedEntities:
+        typeof cfg.entityRetrievalMaxRelatedEntities === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxRelatedEntities))
+          : 3,
+      recentTurns:
+        typeof cfg.entityRetrievalRecentTurns === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalRecentTurns))
+          : 6,
     },
     {
       id: "knowledge-index",
