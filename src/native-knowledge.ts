@@ -72,6 +72,7 @@ export interface NativeKnowledgeSyncResult {
   touchedNotes: number;
   deletedNotes: number;
   chunkCount: number;
+  activeChunks: NativeKnowledgeChunk[];
 }
 
 function normalizeText(value: string): string {
@@ -91,13 +92,6 @@ function detectSourceKind(filePath: string): NativeKnowledgeChunk["sourceKind"] 
   if (base.startsWith("identity")) return "identity";
   if (base === "memory.md") return "memory";
   return "workspace_doc";
-}
-
-function stripYamlFrontmatter(text: string): string {
-  if (!text.startsWith("---\n")) return text;
-  const closing = text.indexOf("\n---\n", 4);
-  if (closing === -1) return text;
-  return text.slice(closing + 5);
 }
 
 function parseInlineArray(raw: string): string[] {
@@ -579,6 +573,7 @@ export async function syncObsidianVaults(options: {
       touchedNotes: 0,
       deletedNotes: 0,
       chunkCount: 0,
+      activeChunks: [],
     };
   }
 
@@ -721,6 +716,10 @@ export async function syncObsidianVaults(options: {
   const statePath = resolveNativeKnowledgeStatePath(options.memoryDir, options.config);
   await mkdir(path.dirname(statePath), { recursive: true });
   await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+  const activeChunks = loadActiveObsidianChunks({
+    state: nextState,
+    defaultNamespace: "default",
+  });
 
   return {
     statePath,
@@ -728,6 +727,7 @@ export async function syncObsidianVaults(options: {
     touchedNotes,
     deletedNotes,
     chunkCount,
+    activeChunks,
   };
 }
 
@@ -740,19 +740,28 @@ function loadActiveObsidianChunks(options: {
   for (const vault of Object.values(options.state.vaults)) {
     for (const note of Object.values(vault.notes)) {
       if (note.deleted) continue;
-      const namespace = note.namespace;
-      if (
-        namespace &&
-        Array.isArray(options.recallNamespaces) &&
-        namespace !== options.defaultNamespace &&
-        !options.recallNamespaces.includes(namespace)
-      ) {
-        continue;
-      }
+      if (!isChunkAllowedForRecallNamespace(note, options.recallNamespaces, options.defaultNamespace)) continue;
       out.push(...note.chunks);
     }
   }
   return out;
+}
+
+function isChunkAllowedForRecallNamespace(
+  chunk: Pick<NativeKnowledgeChunk, "namespace">,
+  recallNamespaces: string[] | undefined,
+  defaultNamespace: string,
+): boolean {
+  const namespace = chunk.namespace;
+  if (
+    namespace &&
+    Array.isArray(recallNamespaces) &&
+    namespace !== defaultNamespace &&
+    !recallNamespaces.includes(namespace)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export async function collectNativeKnowledgeChunks(options: {
@@ -797,17 +806,14 @@ export async function collectNativeKnowledgeChunks(options: {
   }
 
   if (options.memoryDir && options.config.obsidianVaults.length > 0) {
-    await syncObsidianVaults({
+    const syncResult = await syncObsidianVaults({
       memoryDir: options.memoryDir,
       config: options.config,
     });
-    const state = await loadSyncState(options.memoryDir, options.config);
     chunks.push(
-      ...loadActiveObsidianChunks({
-        state,
-        recallNamespaces: options.recallNamespaces,
-        defaultNamespace: options.defaultNamespace,
-      }),
+      ...syncResult.activeChunks.filter((chunk) =>
+        isChunkAllowedForRecallNamespace(chunk, options.recallNamespaces, options.defaultNamespace),
+      ),
     );
   }
 
