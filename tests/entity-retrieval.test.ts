@@ -117,6 +117,47 @@ test("entity retrieval preserves mention-index updatedAt when entity state is un
   assert.equal(firstIndex.updatedAt, secondIndex.updatedAt);
 });
 
+test("entity retrieval respects small supporting-fact caps when ranking memory snippets", async () => {
+  const { config, storage } = await buildHarness("engram-entity-memory-cap");
+  const canonical = await writeEntity(
+    storage,
+    "Memory Heavy",
+    "project",
+    [],
+    "",
+  );
+
+  for (const note of [
+    "Memory Heavy shipped the retrieval guardrails update.",
+    "Memory Heavy tracks the timeline for dependency cleanup.",
+    "Memory Heavy retains the regression budget for search quality.",
+    "Memory Heavy owns the rollout notes for this roadmap slice.",
+    "Memory Heavy documents the feature-flag rollback path.",
+  ]) {
+    await storage.writeMemory("fact", note, { entityRef: canonical, confidence: 0.9 });
+  }
+
+  const section = await buildEntityRecallSection({
+    config,
+    storage,
+    query: "Tell me about Memory Heavy",
+    recentTurns: 6,
+    maxHints: 1,
+    maxSupportingFacts: 1,
+    maxRelatedEntities: 2,
+    maxChars: 2400,
+    transcriptEntries: [],
+  });
+
+  assert.ok(section);
+  const answerBulletLines = section!
+    .split("\n")
+    .filter((line) => line.startsWith("  - "));
+  assert.equal(answerBulletLines.length, 1);
+  assert.match(answerBulletLines[0]!, /retrieval guardrails update/i);
+  assert.doesNotMatch(answerBulletLines[0]!, /dependency cleanup|regression budget|rollout notes|rollback path/i);
+});
+
 test("entity retrieval resolves pronoun follow-ups from recent transcript turns", async () => {
   const { config, storage } = await buildHarness("engram-entity-followup");
   await writeEntity(

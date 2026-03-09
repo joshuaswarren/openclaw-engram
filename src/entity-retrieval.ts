@@ -396,7 +396,7 @@ async function buildHintSnippets(
     });
   }
 
-  for (const memorySnippet of entry.memorySnippets.slice(0, Math.max(maxSupportingFacts, 4))) {
+  for (const memorySnippet of entry.memorySnippets.slice(0, Math.min(maxSupportingFacts, 4))) {
     snippets.push({
       text: memorySnippet,
       score: 5,
