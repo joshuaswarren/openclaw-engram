@@ -268,7 +268,7 @@ export async function persistExplicitCapture(
     tags: candidate.tags,
     entityRef: candidate.entityRef,
     expiresAt: candidate.ttl,
-    source: source === "inline" ? "explicit-inline" : source,
+    source: source === "inline" ? "explicit-inline" : "explicit",
   });
 
   const created = new Date().toISOString();

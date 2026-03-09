@@ -169,12 +169,16 @@ test("persistExplicitCapture writes lifecycle events and dedupes active duplicat
 
 test("persistExplicitCapture attributes lifecycle actors to the correct tool source", async () => {
   const lifecycleEvents: Array<{ actor: string; memoryId: string }> = [];
+  const sources: string[] = [];
   let nextId = 1;
   const storage = {
     hasFactContentHash: async () => false,
     isFactContentHashAuthoritative: async () => true,
     readAllMemories: async () => [],
-    writeMemory: async () => `fact-${nextId++}`,
+    writeMemory: async (_category: string, _content: string, options: { source?: string }) => {
+      sources.push(options.source ?? "");
+      return `fact-${nextId++}`;
+    },
     appendMemoryLifecycleEvents: async (events: Array<{ actor: string; memoryId: string }>) => {
       lifecycleEvents.push(...events);
       return events.length;
@@ -197,6 +201,7 @@ test("persistExplicitCapture attributes lifecycle actors to the correct tool sou
     lifecycleEvents.map((event) => event.actor),
     ["tool.memory_store", "tool.memory_capture"],
   );
+  assert.deepEqual(sources, ["explicit", "explicit"]);
 });
 
 test("fact duplicate checks short-circuit without a full corpus scan when authoritative hash index misses", async () => {
