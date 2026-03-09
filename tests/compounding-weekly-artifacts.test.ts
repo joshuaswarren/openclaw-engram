@@ -137,7 +137,7 @@ test("weekly compounding writes structured json, workflow rubrics, and stable re
   assert.equal(first.reportJsonPath, second.reportJsonPath);
 });
 
-test("weekly compounding merges split evidence windows across repeated feedback entries", async () => {
+test("weekly compounding widens evidence windows across repeated feedback entries", async () => {
   const memoryDir = tmpDir("engram-compound-evidence-window-mem");
   const sharedDir = tmpDir("engram-compound-evidence-window-shared");
   await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
@@ -152,7 +152,8 @@ test("weekly compounding merges split evidence windows across repeated feedback 
         reason: "tighten confidence thresholds",
         date: "2026-02-25T10:00:00.000Z",
         learning: "Include explicit confidence rationale",
-        evidenceWindowStart: "2026-02-20T00:00:00.000Z",
+        evidenceWindowStart: "2026-02-22T00:00:00.000Z",
+        evidenceWindowEnd: "2026-02-25T00:00:00.000Z",
       }),
       JSON.stringify({
         agent: "agent-a",
@@ -161,6 +162,7 @@ test("weekly compounding merges split evidence windows across repeated feedback 
         reason: "tighten confidence thresholds",
         date: "2026-02-26T10:00:00.000Z",
         learning: "Include explicit confidence rationale",
+        evidenceWindowStart: "2026-02-20T00:00:00.000Z",
         evidenceWindowEnd: "2026-02-27T00:00:00.000Z",
       }),
       "",

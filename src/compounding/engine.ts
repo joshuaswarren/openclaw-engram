@@ -187,6 +187,13 @@ function normalizeEvidenceWindow(start?: string, end?: string): EvidenceWindow {
   return { start: safeStart, end: safeEnd };
 }
 
+function mergeEvidenceWindows(current: EvidenceWindow, next: EvidenceWindow): EvidenceWindow {
+  return {
+    start: current.start === null ? next.start : next.start === null ? current.start : current.start <= next.start ? current.start : next.start,
+    end: current.end === null ? next.end : next.end === null ? current.end : current.end >= next.end ? current.end : next.end,
+  };
+}
+
 function stableMistakeId(
   category: "feedback" | "action",
   pattern: string,
@@ -838,10 +845,7 @@ export class CompoundingEngine {
       if (previous.confidence === null) previous.confidence = normalizeConfidence(e.confidence);
       if (previous.outcome === null && e.outcome) previous.outcome = e.outcome.trim();
       const nextEvidenceWindow = normalizeEvidenceWindow(e.evidenceWindowStart, e.evidenceWindowEnd);
-      previous.evidenceWindow = {
-        start: previous.evidenceWindow.start ?? nextEvidenceWindow.start,
-        end: previous.evidenceWindow.end ?? nextEvidenceWindow.end,
-      };
+      previous.evidenceWindow = mergeEvidenceWindows(previous.evidenceWindow, nextEvidenceWindow);
       evidenceByPattern.set(pattern, previous);
     }
 
