@@ -57,8 +57,8 @@
       },
       "memoryOsPreset": {
         "type": "string",
-        "enum": ["conservative", "balanced", "research-max", "local-llm-heavy"],
-        "description": "Optional named preset that seeds Engram's advanced config surface before explicit per-setting overrides are applied."
+        "enum": ["conservative", "balanced", "research", "research-max", "local-llm-heavy"],
+        "description": "Optional named preset that seeds Engram's advanced config surface before explicit per-setting overrides are applied. `research` is accepted as a backward-compatible alias for `research-max`."
       },
       "qmdEnabled": {
         "type": "boolean",
@@ -2272,7 +2272,7 @@
     "memoryOsPreset": {
       "label": "Memory OS Preset",
       "advanced": true,
-      "help": "Optional preset: conservative, balanced, research-max, or local-llm-heavy. Explicit settings still win."
+      "help": "Optional preset: conservative, balanced, research-max, or local-llm-heavy. `research` remains accepted as a backward-compatible alias. Explicit settings still win."
     },
     "qmdEnabled": {
       "label": "Enable QMD",
