@@ -8,6 +8,11 @@ test("ingestReplayBatch enqueues replay slices without clearing shared buffer", 
 
   assert.match(
     source,
+    /if \(shouldSkipImplicitExtraction\(this\.config\)\) \{[\s\S]*ingestReplayBatch: skipping implicit extraction because captureMode=explicit[\s\S]*return;\s*\}/m,
+    "replay ingestion should honor explicit capture mode and skip implicit extraction paths",
+  );
+  assert.match(
+    source,
     /skipDedupeCheck:\s*true,\s*clearBufferAfterExtraction:\s*false,\s*skipCharThreshold:\s*true,/m,
     "replay ingestion should bypass dedupe/minimum thresholds and preserve the live smart buffer",
   );

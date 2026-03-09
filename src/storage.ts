@@ -692,7 +692,9 @@ export class StorageManager {
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
   private factHashIndex: ContentHashIndex | null = null;
+  private factHashIndexLoadPromise: Promise<ContentHashIndex> | null = null;
   private factHashIndexAuthoritative: boolean | null = null;
+  private factHashIndexAuthoritativePromise: Promise<void> | null = null;
 
   constructor(private readonly baseDir: string) {}
 
@@ -777,37 +779,58 @@ export class StorageManager {
   }
 
   private async getFactHashIndex(): Promise<ContentHashIndex> {
-    if (!this.factHashIndex) {
-      this.factHashIndex = new ContentHashIndex(this.stateDir);
-      await this.factHashIndex.load();
+    if (this.factHashIndex) {
+      return this.factHashIndex;
     }
-    return this.factHashIndex;
+    if (!this.factHashIndexLoadPromise) {
+      const index = new ContentHashIndex(this.stateDir);
+      this.factHashIndexLoadPromise = index
+        .load()
+        .then(() => {
+          this.factHashIndex = index;
+          return index;
+        })
+        .catch((err) => {
+          this.factHashIndexLoadPromise = null;
+          throw err;
+        });
+    }
+    return this.factHashIndexLoadPromise;
   }
 
   private async ensureFactHashIndexAuthoritative(): Promise<void> {
-    if (this.factHashIndexAuthoritative !== null) {
+    if (this.factHashIndexAuthoritative === true) {
+      return;
+    }
+    if (this.factHashIndexAuthoritativePromise) {
+      await this.factHashIndexAuthoritativePromise;
       return;
     }
 
-    try {
-      await access(this.factHashIndexReadyPath);
+    this.factHashIndexAuthoritativePromise = (async () => {
+      try {
+        await access(this.factHashIndexReadyPath);
+        this.factHashIndexAuthoritative = true;
+        return;
+      } catch {
+        // Fall through and backfill from the live fact corpus once.
+      }
+
+      const factHashIndex = await this.getFactHashIndex();
+      const existing = await this.readAllMemories();
+      for (const memory of existing) {
+        if (memory.frontmatter.category !== "fact") continue;
+        if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
+        factHashIndex.add(memory.content);
+      }
+      await factHashIndex.save();
+      await mkdir(path.dirname(this.factHashIndexReadyPath), { recursive: true });
+      await writeFile(this.factHashIndexReadyPath, "v1\n", "utf-8");
       this.factHashIndexAuthoritative = true;
-      return;
-    } catch {
-      // Fall through and backfill from the live fact corpus once.
-    }
-
-    const factHashIndex = await this.getFactHashIndex();
-    const existing = await this.readAllMemories();
-    for (const memory of existing) {
-      if (memory.frontmatter.category !== "fact") continue;
-      if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
-      factHashIndex.add(memory.content);
-    }
-    await factHashIndex.save();
-    await mkdir(path.dirname(this.factHashIndexReadyPath), { recursive: true });
-    await writeFile(this.factHashIndexReadyPath, "v1\n", "utf-8");
-    this.factHashIndexAuthoritative = true;
+    })().finally(() => {
+      this.factHashIndexAuthoritativePromise = null;
+    });
+    await this.factHashIndexAuthoritativePromise;
   }
   private get questionsDir(): string {
     return path.join(this.baseDir, "questions");

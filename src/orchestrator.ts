@@ -3469,6 +3469,10 @@ export class Orchestrator {
     options: { deadlineMs?: number } = {},
   ): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) return;
+    if (shouldSkipImplicitExtraction(this.config)) {
+      log.debug("ingestReplayBatch: skipping implicit extraction because captureMode=explicit");
+      return;
+    }
 
     const bySession = new Map<string, BufferTurn[]>();
     for (const turn of turns) {
