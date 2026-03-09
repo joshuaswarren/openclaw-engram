@@ -94,6 +94,7 @@ interface OpenClawWorkspaceFileState {
   author?: string;
   agent?: string;
   sourceHash: string;
+  syncConfigHash: string;
   mtimeMs: number;
   deleted: boolean;
   deletedAt?: string;
@@ -557,7 +558,7 @@ function resolveFileCandidates(options: {
   const listedFiles = new Set(options.listedFiles.map((value) => value.replace(/\\/g, "/")));
 
   for (const file of options.bootstrapFiles.map((value) => value.replace(/\\/g, "/"))) {
-    if (listedFiles.has(file)) out.set(file, "bootstrap_doc");
+    if (listedFiles.has(file) && !matchesCompiledGlobs(file, excludes)) out.set(file, "bootstrap_doc");
   }
 
   for (const sourcePath of listedFiles) {
@@ -1094,8 +1095,28 @@ export async function syncOpenClawWorkspaceArtifacts(options: {
     if (!info?.isFile()) continue;
 
     const sourceHash = createHash("sha256").update(content).digest("hex");
+    const parsed = parseFrontmatter(content);
+    const metadata = deriveOpenClawArtifactMetadata({
+      sourcePath: candidate.sourcePath,
+      parsed,
+      sharedSafeGlobs: adapter.sharedSafeGlobs,
+    });
+    const title = resolveNoteTitle(candidate.sourcePath, parsed);
+    const syncConfigHash = createHash("sha256")
+      .update(JSON.stringify({
+        sourceKind: candidate.sourceKind,
+        maxChunkChars: options.config.maxChunkChars,
+        metadata,
+      }))
+      .digest("hex");
     const previous = previousState.files[candidate.sourcePath];
-    if (previous && previous.deleted !== true && previous.sourceHash === sourceHash && previous.mtimeMs === info.mtimeMs) {
+    if (
+      previous &&
+      previous.deleted !== true &&
+      previous.sourceHash === sourceHash &&
+      previous.mtimeMs === info.mtimeMs &&
+      previous.syncConfigHash === syncConfigHash
+    ) {
       nextFiles[candidate.sourcePath] = {
         ...previous,
         deleted: false,
@@ -1105,13 +1126,6 @@ export async function syncOpenClawWorkspaceArtifacts(options: {
       continue;
     }
 
-    const parsed = parseFrontmatter(content);
-    const metadata = deriveOpenClawArtifactMetadata({
-      sourcePath: candidate.sourcePath,
-      parsed,
-      sharedSafeGlobs: adapter.sharedSafeGlobs,
-    });
-    const title = resolveNoteTitle(candidate.sourcePath, parsed);
     const chunks = buildOpenClawWorkspaceChunks({
       sourcePath: candidate.sourcePath,
       sourceKind: candidate.sourceKind,
@@ -1134,6 +1148,7 @@ export async function syncOpenClawWorkspaceArtifacts(options: {
       author: metadata.author,
       agent: metadata.agent,
       sourceHash,
+      syncConfigHash,
       mtimeMs: info.mtimeMs,
       deleted: false,
       chunks,
@@ -1189,6 +1204,10 @@ export async function collectNativeKnowledgeChunks(options: {
   if (!options.config.enabled) return [];
 
   const chunks: NativeKnowledgeChunk[] = [];
+  const openclawBootstrapFiles = new Set(
+    (options.config.openclawWorkspace?.enabled ? options.config.openclawWorkspace.bootstrapFiles : [])
+      .map((value) => value.replace(/\\/g, "/")),
+  );
   const candidatePaths = resolveCandidatePaths({
     workspaceDir: options.workspaceDir,
     includeFiles: options.config.includeFiles,
@@ -1200,6 +1219,7 @@ export async function collectNativeKnowledgeChunks(options: {
     const content = await readFile(filePath, "utf-8").catch(() => null);
     if (!content) continue;
     const sourcePath = path.relative(options.workspaceDir, filePath);
+    if (openclawBootstrapFiles.has(sourcePath.replace(/\\/g, "/"))) continue;
     chunks.push(
       ...chunkHeadingAware({
         sourcePath,

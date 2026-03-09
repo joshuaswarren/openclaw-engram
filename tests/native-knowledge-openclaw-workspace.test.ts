@@ -43,7 +43,19 @@ test("openclaw workspace adapter syncs metadata, dedupes bootstrap files, and to
   await mkdir(path.join(workspaceDir, "automation", "shared"), { recursive: true });
   await mkdir(path.join(workspaceDir, "docs"), { recursive: true });
 
-  await writeFile(path.join(workspaceDir, "IDENTITY.md"), "# Identity\n\nPrefers concise responses.\n", "utf-8");
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.md"),
+    [
+      "---",
+      "privacyClass: private",
+      "---",
+      "# Identity",
+      "",
+      "Prefers concise responses.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
   await writeFile(
     path.join(workspaceDir, "handoffs", "api-rollout.md"),
     [
@@ -136,6 +148,27 @@ test("openclaw workspace adapter syncs metadata, dedupes bootstrap files, and to
   };
   assert.equal(secondState.files["handoffs/api-rollout.md"]?.deleted, true);
   assert.match(secondState.files["handoffs/api-rollout.md"]?.deletedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+  const excludedConfig = baseConfig();
+  excludedConfig.openclawWorkspace!.excludeGlobs = ["IDENTITY.md", "node_modules/**"];
+  const excludedChunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config: excludedConfig,
+    defaultNamespace: "default",
+  });
+  assert.equal(excludedChunks.some((chunk) => chunk.sourcePath === "IDENTITY.md"), false);
+
+  const reclassifiedConfig = baseConfig();
+  reclassifiedConfig.openclawWorkspace!.sharedSafeGlobs = [];
+  const reclassifiedChunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config: reclassifiedConfig,
+    defaultNamespace: "default",
+  });
+  const reclassifiedAutomation = reclassifiedChunks.find((chunk) => chunk.sourcePath === "automation/shared/status.md");
+  assert.equal(reclassifiedAutomation?.privacyClass, undefined);
 });
 
 test("searchNativeKnowledge favors handoffs for in-progress work queries", () => {
@@ -182,4 +215,46 @@ test("searchNativeKnowledge favors handoffs for in-progress work queries", () =>
 
   assert.equal(results[0]?.sourceKind, "handoff");
   assert.equal(results[0]?.sourcePath, "handoffs/api-rollout.md");
+});
+
+test("openclaw workspace adapter respects recall namespace filtering", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-openclaw-workspace-namespace-"));
+  const workspaceDir = path.join(root, "workspace");
+  const memoryDir = path.join(root, "memory");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(path.join(workspaceDir, "handoffs"), { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "handoffs", "shared.md"),
+    [
+      "---",
+      "namespace: shared",
+      "---",
+      "# Shared Handoff",
+      "",
+      "Shared rollout notes.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const config = baseConfig();
+  config.includeFiles = [];
+  const hiddenChunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["personal"],
+    defaultNamespace: "default",
+  });
+  assert.equal(hiddenChunks.some((chunk) => chunk.sourcePath === "handoffs/shared.md"), false);
+
+  const visibleChunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["shared"],
+    defaultNamespace: "default",
+  });
+  assert.equal(visibleChunks.some((chunk) => chunk.sourcePath === "handoffs/shared.md"), true);
 });
