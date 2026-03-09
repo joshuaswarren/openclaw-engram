@@ -244,7 +244,8 @@ The CI gate:
 
 See:
 
-- [Agentic Memory Roadmap](plans/2026-03-06-engram-agentic-memory-roadmap.md)
+- [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1)
+- [Historical Plans Index](plans/README.md)
 - [PR1 Eval Harness Foundation Plan](plans/2026-03-06-engram-pr1-eval-harness-foundation.md)
 - [PR2 Benchmark Pack Validator And Import Tools](plans/2026-03-06-engram-pr2-benchmark-tools.md)
 - [PR3 Shadow Recording For Live Recall Decisions](plans/2026-03-07-engram-pr3-shadow-recording.md)

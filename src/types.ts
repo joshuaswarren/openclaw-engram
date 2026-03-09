@@ -10,6 +10,7 @@ export type CronRecallMode = "all" | "none" | "allowlist";
 export type CronConversationRecallMode = "auto" | "always" | "never";
 export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 export type CaptureMode = "implicit" | "explicit" | "hybrid";
+export type MemoryOsPresetName = "conservative" | "balanced" | "research-max" | "local-llm-heavy";
 
 export interface RecallSectionConfig {
   id: string;
@@ -124,6 +125,7 @@ export interface PluginConfig {
   consolidateEveryN: number;
   highSignalPatterns: string[];
   maxMemoryTokens: number;
+  memoryOsPreset?: MemoryOsPresetName;
   qmdEnabled: boolean;
   qmdCollection: string;
   qmdMaxResults: number;

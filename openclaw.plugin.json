@@ -55,6 +55,11 @@
         "default": 2000,
         "description": "Max tokens injected per turn"
       },
+      "memoryOsPreset": {
+        "type": "string",
+        "enum": ["conservative", "balanced", "research-max", "local-llm-heavy"],
+        "description": "Optional named preset that seeds Engram's advanced config surface before explicit per-setting overrides are applied."
+      },
       "qmdEnabled": {
         "type": "boolean",
         "default": true,
@@ -2133,6 +2138,36 @@
         "default": 4000,
         "description": "Hard character cap for the Knowledge Index section"
       },
+      "entityRetrievalEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable entity-oriented recall hints for direct entity questions and short follow-up queries."
+      },
+      "entityRetrievalMaxChars": {
+        "type": "number",
+        "default": 2400,
+        "description": "Hard character cap for the entity retrieval section."
+      },
+      "entityRetrievalMaxHints": {
+        "type": "number",
+        "default": 2,
+        "description": "Maximum entity targets summarized in one recall pass."
+      },
+      "entityRetrievalMaxSupportingFacts": {
+        "type": "number",
+        "default": 6,
+        "description": "Maximum supporting fact/timeline snippets considered per entity target."
+      },
+      "entityRetrievalMaxRelatedEntities": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum related entities listed per target when confidence is high."
+      },
+      "entityRetrievalRecentTurns": {
+        "type": "number",
+        "default": 6,
+        "description": "Recent transcript turns scanned for pronoun carry-forward and short follow-up resolution."
+      },
       "entityRelationshipsEnabled": {
         "type": "boolean",
         "default": true,
@@ -2233,6 +2268,11 @@
       "label": "Max Memory Tokens",
       "advanced": true,
       "placeholder": "2000"
+    },
+    "memoryOsPreset": {
+      "label": "Memory OS Preset",
+      "advanced": true,
+      "help": "Optional preset: conservative, balanced, research-max, or local-llm-heavy. Explicit settings still win."
     },
     "qmdEnabled": {
       "label": "Enable QMD",
@@ -2953,6 +2993,35 @@
       "label": "Knowledge Index Max Chars",
       "advanced": true,
       "placeholder": "4000"
+    },
+    "entityRetrievalEnabled": {
+      "label": "Entity Retrieval",
+      "help": "Inject direct-answer entity hints for entity questions and short follow-up queries"
+    },
+    "entityRetrievalMaxChars": {
+      "label": "Entity Retrieval Max Chars",
+      "advanced": true,
+      "placeholder": "2400"
+    },
+    "entityRetrievalMaxHints": {
+      "label": "Entity Retrieval Max Hints",
+      "advanced": true,
+      "placeholder": "2"
+    },
+    "entityRetrievalMaxSupportingFacts": {
+      "label": "Entity Retrieval Max Supporting Facts",
+      "advanced": true,
+      "placeholder": "6"
+    },
+    "entityRetrievalMaxRelatedEntities": {
+      "label": "Entity Retrieval Max Related Entities",
+      "advanced": true,
+      "placeholder": "3"
+    },
+    "entityRetrievalRecentTurns": {
+      "label": "Entity Retrieval Recent Turns",
+      "advanced": true,
+      "placeholder": "6"
     },
     "entityRelationshipsEnabled": {
       "label": "Entity Relationships",
