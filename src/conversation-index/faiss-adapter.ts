@@ -237,7 +237,7 @@ export class FaissConversationIndexAdapter {
   }
 
   async rebuildChunks(chunks: ConversationChunk[]): Promise<number> {
-    if (this.config.maxBatchSize <= 0 || chunks.length === 0) return 0;
+    if (this.config.maxBatchSize <= 0) return 0;
 
     const firstBatch = chunks.slice(0, this.config.maxBatchSize);
     const rebuildPayload = {

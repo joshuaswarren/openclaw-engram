@@ -340,6 +340,39 @@ test("faiss adapter rebuildChunks batches rebuild payloads via rebuild then incr
   assert.equal(payloads[1].chunks.length, 2);
 });
 
+test("faiss adapter rebuildChunks still calls rebuild for empty chunk sets", async () => {
+  const stdinWrites: string[] = [];
+  const commands: string[] = [];
+  const spawnFn: typeof childProcess.spawn = (_bin, args) => {
+    commands.push(String(args?.[1] ?? ""));
+    const proc = new FakeProcess();
+    const originalWrite = proc.stdin.write.bind(proc.stdin);
+    proc.stdin.write = (chunk: string) => {
+      stdinWrites.push(chunk);
+      return originalWrite(chunk);
+    };
+
+    process.nextTick(() => {
+      proc.stdout.emit("data", JSON.stringify({ ok: true, rebuilt: 0 }));
+      proc.emit("close", 0);
+    });
+
+    return proc as unknown as childProcess.ChildProcess;
+  };
+
+  const adapter = new FaissConversationIndexAdapter({
+    ...baseConfig(spawnFn),
+    maxBatchSize: 2,
+  });
+
+  const rebuilt = await adapter.rebuildChunks([]);
+  assert.equal(rebuilt, 0);
+  assert.deepEqual(commands, ["rebuild"]);
+
+  const payload = JSON.parse(stdinWrites[0] ?? "");
+  assert.deepEqual(payload.chunks, []);
+});
+
 test("faiss adapter throws non-zero exit with stderr context", async () => {
   const proc = new FakeProcess();
   const spawnFn: typeof childProcess.spawn = () => {
