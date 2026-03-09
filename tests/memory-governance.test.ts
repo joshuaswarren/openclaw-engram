@@ -376,3 +376,33 @@ test("governance lifecycle metadata matches the selected review reason", async (
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("disputed stale memories stay quarantined instead of being archived", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-priority-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2025-01-01/fact-1.md",
+      memoryDoc({
+        id: "fact-1",
+        content: "This stale disputed memory should still go to review.",
+        updated: "2025-01-01T00:00:00.000Z",
+        verificationState: "disputed",
+        lifecycleState: "stale",
+      }),
+    );
+
+    const result = await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    assert.equal(result.appliedActions.some((action) => action.action === "archive"), false);
+    const memory = await new StorageManager(memoryDir).getMemoryById("fact-1");
+    assert.equal(memory?.frontmatter.status, "quarantined");
+    await assert.rejects(() => stat(path.join(memoryDir, "archive", "2026-03-09", "fact-1.md")));
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

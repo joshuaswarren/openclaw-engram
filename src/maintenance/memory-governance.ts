@@ -165,14 +165,23 @@ function compareCanonicalPreference(left: MemoryFile, right: MemoryFile): number
 function proposedStatusPriority(status: MemoryStatus): number {
   switch (status) {
     case "quarantined":
-      return 3;
+      return 4;
     case "rejected":
+      return 3;
+    case "archived":
       return 2;
     case "pending_review":
       return 1;
     default:
       return 0;
   }
+}
+
+function proposedActionPriority(action: MemoryGovernanceAppliedAction): number {
+  if (action.action === "archive") {
+    return proposedStatusPriority("archived");
+  }
+  return proposedStatusPriority(action.afterStatus ?? "active");
 }
 
 function buildReviewQueue(memories: MemoryFile[], now: Date): MemoryGovernanceReviewQueueEntry[] {
@@ -281,12 +290,8 @@ function buildProposedActions(
       continue;
     }
 
-    const existingPriority = existing.action === "archive"
-      ? 4
-      : proposedStatusPriority(existing.afterStatus ?? "active");
-    const candidatePriority = candidate.action === "archive"
-      ? 4
-      : proposedStatusPriority(candidate.afterStatus ?? "active");
+    const existingPriority = proposedActionPriority(existing);
+    const candidatePriority = proposedActionPriority(candidate);
     if (candidatePriority > existingPriority) {
       selected.set(entry.memoryId, candidate);
     }
