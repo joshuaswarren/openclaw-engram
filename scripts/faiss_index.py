@@ -596,6 +596,7 @@ def run_health(payload: dict[str, Any]) -> dict[str, Any]:
                     error = str(exc)
     elif status == "ok":
         status = "degraded"
+        error = "conversation index artifacts missing; build the FAISS conversation index"
 
     response: dict[str, Any] = {"ok": True, "status": status}
     if error:

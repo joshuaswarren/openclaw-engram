@@ -55,6 +55,22 @@ test("faiss sidecar health command returns contract", () => {
   }
 });
 
+test("faiss sidecar health explains degraded status on a fresh install", () => {
+  const indexPath = mkdtempSync(path.join(tmpdir(), "engram-faiss-health-empty-"));
+  try {
+    const response = runSidecar("health", {
+      modelId: "__hash__",
+      indexPath,
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.status, "degraded");
+    assert.match(String(response.error), /artifacts missing/i);
+  } finally {
+    rmSync(indexPath, { recursive: true, force: true });
+  }
+});
+
 test("faiss sidecar upsert/search smoke with hash model", { skip: !hasFaissDeps() }, () => {
   const indexPath = mkdtempSync(path.join(tmpdir(), "engram-faiss-smoke-"));
   try {
