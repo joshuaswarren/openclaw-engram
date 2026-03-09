@@ -333,3 +333,46 @@ test("restore refuses to overwrite post-run edits", async () => {
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("governance lifecycle metadata matches the selected review reason", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-reason-match-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-a.md",
+      memoryDoc({
+        id: "fact-a",
+        content: "Canonical duplicate body.",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-02/fact-b.md",
+      memoryDoc({
+        id: "fact-b",
+        content: "Canonical duplicate body.",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        verificationState: "disputed",
+        lifecycleState: "candidate",
+      }),
+    );
+
+    await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const events = await new StorageManager(memoryDir).readMemoryLifecycleEvents();
+    const disputedEvent = events.find((event) =>
+      event.memoryId === "fact-b" && event.reasonCode === "disputed_memory"
+    );
+    assert.ok(disputedEvent);
+    assert.deepEqual(disputedEvent.relatedMemoryIds, []);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

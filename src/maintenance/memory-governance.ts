@@ -469,6 +469,9 @@ export async function runMemoryGovernance(
   const memories = await storage.readAllMemories();
   const reviewQueue = buildReviewQueue(memories, now);
   const proposedActions = buildProposedActions(reviewQueue, memories);
+  const reviewEntryByActionKey = new Map(
+    reviewQueue.map((entry) => [`${entry.memoryId}:${entry.reasonCode}`, entry] as const),
+  );
   const metrics = buildMetrics(reviewQueue, proposedActions, memories.length);
   const targetedMemoryIds = new Set(proposedActions.map((action) => action.memoryId));
   const keptMemoryIds = memories
@@ -513,12 +516,13 @@ export async function runMemoryGovernance(
       if (!restoreEntry) continue;
 
       if (action.action === "archive") {
+        const reviewEntry = reviewEntryByActionKey.get(`${action.memoryId}:${action.reasonCode}`);
         const archivedPath = await storage.archiveMemory(memory, {
           at: now,
           actor: "memory-governance.apply",
           reasonCode: action.reasonCode,
           ruleVersion: RULE_VERSION,
-          relatedMemoryIds: reviewQueue.find((entry) => entry.memoryId === action.memoryId)?.relatedMemoryIds ?? [],
+          relatedMemoryIds: reviewEntry?.relatedMemoryIds ?? [],
           correlationId: traceId,
         });
         if (!archivedPath) continue;
@@ -535,6 +539,7 @@ export async function runMemoryGovernance(
       }
 
       if (!action.afterStatus || action.beforeStatus === action.afterStatus) continue;
+      const reviewEntry = reviewEntryByActionKey.get(`${action.memoryId}:${action.reasonCode}`);
       const updated = await storage.writeMemoryFrontmatter(memory, {
         status: action.afterStatus,
         updated: now.toISOString(),
@@ -542,7 +547,7 @@ export async function runMemoryGovernance(
         actor: "memory-governance.apply",
         reasonCode: action.reasonCode,
         ruleVersion: RULE_VERSION,
-        relatedMemoryIds: reviewQueue.find((entry) => entry.memoryId === action.memoryId)?.relatedMemoryIds ?? [],
+        relatedMemoryIds: reviewEntry?.relatedMemoryIds ?? [],
         correlationId: traceId,
       });
       if (!updated) continue;
