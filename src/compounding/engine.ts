@@ -907,8 +907,9 @@ export class CompoundingEngine {
     });
 
     const seenIds = new Set(registry.map((entry) => entry.id));
+    const seenPatterns = new Set(registry.map((entry) => entry.pattern));
     for (const previous of previousRegistry) {
-      if (seenIds.has(previous.id)) continue;
+      if (seenIds.has(previous.id) || seenPatterns.has(previous.pattern)) continue;
       const staleWeeks = weekIdToIndex(weekId) - weekIdToIndex(previous.lastWeekId);
       registry.push({
         ...previous,

@@ -316,6 +316,69 @@ test("v5 compounding preserves recurrence when a legacy registry entry is synthe
   assert.equal(mistakes!.registry?.[0]?.firstSeenAt, "2026-02-25T10:00:00.000Z");
 });
 
+test("v5 compounding does not duplicate legacy registry entries when scope metadata narrows", async () => {
+  const memoryDir = tmpDir("engram-compound-legacy-scope");
+  const sharedDir = tmpDir("engram-compound-legacy-scope-shared");
+  await mkdir(path.join(memoryDir, "compounding"), { recursive: true });
+  await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
+
+  await writeFile(
+    path.join(memoryDir, "compounding", "mistakes.json"),
+    JSON.stringify({
+      version: 2,
+      updatedAt: "2026-02-25T10:00:00.000Z",
+      patterns: ["agent-a: Always include explicit confidence rationale"],
+      registry: [
+        {
+          id: "feedback:agent-a:default:agent-a-always-include-explicit-confidence-rat",
+          pattern: "agent-a: Always include explicit confidence rationale",
+          category: "feedback",
+          status: "active",
+          agent: "agent-a",
+          workflow: null,
+          tags: [],
+          severity: null,
+          confidence: null,
+          outcome: null,
+          provenance: [],
+          firstSeenAt: "2026-02-25T10:00:00.000Z",
+          lastSeenAt: "2026-02-25T10:00:00.000Z",
+          recurrenceCount: 1,
+          lastWeekId: "2026-W09",
+          evidenceWindow: { start: null, end: null },
+          retiredAt: null,
+        },
+      ],
+    }, null, 2),
+    "utf-8",
+  );
+
+  await writeFile(
+    path.join(sharedDir, "feedback", "inbox.jsonl"),
+    [
+      JSON.stringify({
+        agent: "agent-a",
+        workflow: "review-loop",
+        decision: "approved_with_feedback",
+        reason: "tighten confidence thresholds",
+        date: "2026-03-03T10:00:00.000Z",
+        learning: "Always include explicit confidence rationale",
+      }),
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(minimalConfig(memoryDir, sharedDir));
+  await eng.synthesizeWeekly({ weekId: "2026-W10" });
+  const mistakes = await eng.readMistakes();
+
+  assert.ok(mistakes);
+  assert.equal(mistakes!.registry?.length, 1);
+  assert.equal(mistakes!.registry?.[0]?.workflow, "review-loop");
+  assert.equal(mistakes!.registry?.[0]?.recurrenceCount, 2);
+});
+
 test("v5 compounding does not read continuity audit references when audits are disabled", async () => {
   const memoryDir = tmpDir("engram-compound-no-audit-");
   const sharedDir = tmpDir("engram-compound-no-audit-shared-");
