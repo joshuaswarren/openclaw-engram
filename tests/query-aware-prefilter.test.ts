@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
+import * as fs from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { Orchestrator } from "../src/orchestrator.js";
 import { parseConfig } from "../src/config.js";
@@ -72,6 +73,56 @@ test("resolvePromptTagPrefilterAsync matches tag aliases through punctuation-del
 
   assert.deepEqual(match.matchedTags, ["infra/ops"]);
   assert.equal(match.paths?.has("/tmp/memory/facts/ops.md"), true);
+});
+
+test("resolvePromptTagPrefilterAsync reuses the loaded tag index for path lookup", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-query-aware-read-once-"));
+  indexMemoriesBatch(memoryDir, [
+    {
+      path: "/tmp/memory/facts/ops.md",
+      createdAt: "2026-03-09T00:00:00.000Z",
+      tags: ["infra/ops"],
+    },
+  ]);
+
+  const originalReadFile = fs.promises.readFile;
+  let readCount = 0;
+  fs.promises.readFile = (async (...args: Parameters<typeof originalReadFile>) => {
+    readCount += 1;
+    return originalReadFile(...args);
+  }) as typeof originalReadFile;
+
+  try {
+    const match = await resolvePromptTagPrefilterAsync(memoryDir, "What happened with infra ops?");
+    assert.deepEqual(match.matchedTags, ["infra/ops"]);
+    assert.equal(match.paths?.has("/tmp/memory/facts/ops.md"), true);
+    assert.equal(readCount, 1);
+  } finally {
+    fs.promises.readFile = originalReadFile;
+  }
+});
+
+test("queryByTagsAsync preserves all paths when legacy tags collapse to one canonical key", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-query-aware-collision-"));
+  const stateDir = path.join(memoryDir, "state");
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "index_tags.json"),
+    JSON.stringify({
+      version: 1,
+      tags: {
+        infra_ops: ["/tmp/memory/facts/one.md"],
+        "infra-ops": ["/tmp/memory/facts/two.md"],
+      },
+    }),
+    "utf8",
+  );
+
+  const matches = await queryByTagsAsync(memoryDir, ["infra ops"]);
+
+  assert.ok(matches);
+  assert.equal(matches?.has("/tmp/memory/facts/one.md"), true);
+  assert.equal(matches?.has("/tmp/memory/facts/two.md"), true);
 });
 
 test("fetchQmdMemoryResultsWithArtifactTopUp merges advisory query-aware seeds with backend search", async () => {

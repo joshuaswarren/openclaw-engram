@@ -212,7 +212,20 @@ function normalizeTagIndex(raw: TagIndex | null | undefined): TagIndex {
           aliases: Array.isArray(nodeOrPaths?.aliases) ? [...new Set(nodeOrPaths.aliases)] : [],
           parents: Array.isArray(nodeOrPaths?.parents) ? [...new Set(nodeOrPaths.parents)] : [],
         };
-    normalized.tags[canonical] = node;
+    const existingNode = normalized.tags[canonical];
+    if (existingNode && !Array.isArray(existingNode)) {
+      existingNode.paths = [...new Set([...existingNode.paths, ...node.paths])];
+      existingNode.aliases = [...new Set([...(existingNode.aliases ?? []), ...(node.aliases ?? [])])];
+      existingNode.parents = [...new Set([...(existingNode.parents ?? []), ...(node.parents ?? [])])];
+    } else if (Array.isArray(existingNode)) {
+      normalized.tags[canonical] = {
+        paths: [...new Set([...existingNode, ...node.paths])],
+        aliases: [...new Set(node.aliases ?? [])],
+        parents: [...new Set(node.parents ?? deriveParentTags(canonical))],
+      };
+    } else {
+      normalized.tags[canonical] = node;
+    }
     for (const alias of deriveTagAliases(canonical, canonical)) {
       const list = normalized.aliases![alias] ?? [];
       if (!list.includes(canonical)) list.push(canonical);
@@ -225,7 +238,10 @@ function normalizeTagIndex(raw: TagIndex | null | undefined): TagIndex {
       if (!list.includes(canonical)) list.push(canonical);
       normalized.aliases![aliasKey] = list;
     }
-    node.parents = [...new Set(node.parents ?? deriveParentTags(canonical))];
+    const mergedNode = normalized.tags[canonical];
+    if (mergedNode && !Array.isArray(mergedNode)) {
+      mergedNode.parents = [...new Set(mergedNode.parents ?? deriveParentTags(canonical))];
+    }
   }
 
   for (const [alias, canonicals] of Object.entries(raw.aliases ?? {})) {
@@ -526,19 +542,23 @@ export async function queryByTagsAsync(
       gIndex = { version: TAG_INDEX_VERSION, tags: {}, aliases: {} };
     }
 
-    const expandedTags = expandCanonicalTags(gIndex, tags);
-    const results = new Set<string>();
-    for (const canonical of expandedTags) {
-      const nodeOrPaths = gIndex.tags[canonical];
-      const paths = Array.isArray(nodeOrPaths) ? nodeOrPaths : (nodeOrPaths?.paths ?? []);
-      for (const pathValue of paths) {
-        results.add(pathValue);
-      }
-    }
-    return results.size > 0 ? results : null;
+    return queryByTagsFromIndex(gIndex, tags);
   } catch {
     return null;
   }
+}
+
+function queryByTagsFromIndex(index: TagIndex, tags: string[]): Set<string> | null {
+  const expandedTags = expandCanonicalTags(index, tags);
+  const results = new Set<string>();
+  for (const canonical of expandedTags) {
+    const nodeOrPaths = index.tags[canonical];
+    const paths = Array.isArray(nodeOrPaths) ? nodeOrPaths : (nodeOrPaths?.paths ?? []);
+    for (const pathValue of paths) {
+      results.add(pathValue);
+    }
+  }
+  return results.size > 0 ? results : null;
 }
 
 /**
@@ -586,7 +606,7 @@ export async function resolvePromptTagPrefilterAsync(
     }
 
     const expandedTags = expandCanonicalTags(tagIndex, Array.from(matched));
-    const paths = await queryByTagsAsync(memoryDir, expandedTags);
+    const paths = queryByTagsFromIndex(tagIndex, expandedTags);
     return {
       matchedTags: Array.from(matched),
       expandedTags,
