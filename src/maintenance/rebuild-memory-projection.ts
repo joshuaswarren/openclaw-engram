@@ -144,7 +144,11 @@ function normalizePreview(content: string, maxChars = 180): string {
 }
 
 function dedupeStrings(values: string[] | undefined): string[] {
-  return [...new Set((values ?? []).filter((value) => value.trim().length > 0))].sort();
+  return [...new Set(
+    (values ?? [])
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  )].sort();
 }
 
 function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProjectionCurrentState {
@@ -167,7 +171,7 @@ function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProject
     memoryKind: memory.frontmatter.memoryKind,
     accessCount: memory.frontmatter.accessCount,
     lastAccessed: memory.frontmatter.lastAccessed,
-    tags: [...(memory.frontmatter.tags ?? [])],
+    tags: dedupeStrings(memory.frontmatter.tags),
     preview: normalizePreview(memory.content),
   };
 }
@@ -186,7 +190,7 @@ function buildEntityMentionRows(
         updated: row.updated,
       });
     }
-    for (const tag of row.tags ?? []) {
+    for (const tag of dedupeStrings(row.tags)) {
       if (!tag.includes(":")) continue;
       mentions.push({
         memoryId: row.memoryId,

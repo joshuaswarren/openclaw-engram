@@ -16,6 +16,7 @@ import {
   initializeMemoryProjectionDb,
   readProjectedEntityMentions,
   readProjectedLatestReviewQueue,
+  readProjectedMemoryBrowse,
   readProjectedMemoryState,
   readProjectedMemoryTimeline,
   readProjectedNativeKnowledgeChunks,
@@ -174,6 +175,115 @@ alpha
         ["updated", "2026-03-08T01:00:00.000Z"],
       ],
     );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("projection browse migrates legacy schema columns and still matches full file content", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-legacy-browse-"));
+  try {
+    const projectionPath = getMemoryProjectionPath(memoryDir);
+    await mkdir(path.dirname(projectionPath), { recursive: true });
+    const deepNeedle = "needle beyond preview depth";
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-legacy.md",
+      memoryDoc({
+        id: "fact-legacy",
+        content: `${"alpha ".repeat(60)}${deepNeedle}`,
+        created: "2026-03-08T00:00:00.000Z",
+        updated: "2026-03-08T01:00:00.000Z",
+      }),
+    );
+
+    const db = new Database(projectionPath);
+    try {
+      db.exec(`
+        CREATE TABLE meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+
+        CREATE TABLE memory_current (
+          memory_id TEXT PRIMARY KEY,
+          category TEXT NOT NULL,
+          status TEXT NOT NULL,
+          lifecycle_state TEXT,
+          path_rel TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          archived_at TEXT,
+          superseded_at TEXT,
+          entity_ref TEXT,
+          source TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          confidence_tier TEXT NOT NULL,
+          memory_kind TEXT,
+          access_count INTEGER,
+          last_accessed TEXT
+        );
+      `);
+      db.prepare(`
+        INSERT INTO memory_current (
+          memory_id,
+          category,
+          status,
+          lifecycle_state,
+          path_rel,
+          created_at,
+          updated_at,
+          archived_at,
+          superseded_at,
+          entity_ref,
+          source,
+          confidence,
+          confidence_tier,
+          memory_kind,
+          access_count,
+          last_accessed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "fact-legacy",
+        "fact",
+        "active",
+        null,
+        "facts/2026-03-08/fact-legacy.md",
+        "2026-03-08T00:00:00.000Z",
+        "2026-03-08T01:00:00.000Z",
+        null,
+        null,
+        null,
+        "test",
+        0.8,
+        "implied",
+        null,
+        null,
+        null,
+      );
+    } finally {
+      db.close();
+    }
+
+    const browse = readProjectedMemoryBrowse(memoryDir, {
+      query: deepNeedle,
+      limit: 20,
+      offset: 0,
+    });
+    assert.ok(browse);
+    assert.equal(browse?.total, 1);
+    assert.equal(browse?.memories[0]?.id, "fact-legacy");
+
+    const migrated = new Database(projectionPath, { readonly: true });
+    try {
+      const columns = migrated
+        .prepare(`PRAGMA table_info(memory_current)`)
+        .all() as Array<{ name: string }>;
+      assert.equal(columns.some((column) => column.name === "tags_json"), true);
+      assert.equal(columns.some((column) => column.name === "preview_text"), true);
+    } finally {
+      migrated.close();
+    }
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -701,7 +811,7 @@ test("rebuildMemoryProjection projects entity mentions, native knowledge chunks,
         confidence: 0.95,
         confidenceTier: "explicit",
         entityRef: "person-alex",
-        tags: ["projection", "team:ops"],
+        tags: [" projection ", "team:ops", "team:ops"],
       }),
     );
     await writeText(
@@ -772,6 +882,10 @@ test("rebuildMemoryProjection projects entity mentions, native knowledge chunks,
     assert.equal(result.entityMentionRows, 2);
     assert.equal(result.nativeKnowledgeRows, 1);
     assert.equal(result.reviewQueueRows >= 1, true);
+
+    const projectedCurrent = readProjectedMemoryState(memoryDir, "fact-duplicate-a");
+    assert.ok(projectedCurrent);
+    assert.deepEqual(projectedCurrent?.tags, ["projection", "team:ops"]);
 
     const entityMentions = readProjectedEntityMentions(memoryDir);
     assert.ok(entityMentions);

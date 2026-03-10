@@ -206,6 +206,54 @@ test("access service uses projection-backed browse filters, including archived m
   }
 });
 
+test("access service projection browse matches full content beyond preview text", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-projection-content-"));
+  try {
+    const deepNeedle = "full content projection query";
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-deep.md",
+      memoryDoc(
+        "fact-deep",
+        `${"alpha ".repeat(60)}${deepNeedle}`,
+        ['entityRef: person-deep', 'tags: ["projection", "content"]'],
+      ),
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    const browse = await service.memoryBrowse({
+      query: deepNeedle,
+      status: "active",
+      category: "fact",
+    });
+    assert.equal(browse.total, 1);
+    assert.equal(browse.count, 1);
+    assert.equal(browse.memories[0]?.id, "fact-deep");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service reviewQueue and maintenance fall back to governance artifacts when projection is absent", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-fallback-"));
   try {

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type {
@@ -105,6 +106,27 @@ export type MemoryProjectionNativeKnowledgeChunk = ProjectedNativeKnowledgeChunk
 
 export function getMemoryProjectionPath(memoryDir: string): string {
   return path.join(memoryDir, "state", "memory-projection.sqlite");
+}
+
+function listTableColumns(db: Database.Database, tableName: string): Set<string> {
+  try {
+    const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>;
+    return new Set(rows.map((row) => row.name).filter((name): name is string => typeof name === "string"));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function migrateMemoryCurrentTable(db: Database.Database): void {
+  const columns = listTableColumns(db, "memory_current");
+  if (columns.size === 0) return;
+
+  if (!columns.has("tags_json")) {
+    db.exec(`ALTER TABLE memory_current ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'`);
+  }
+  if (!columns.has("preview_text")) {
+    db.exec(`ALTER TABLE memory_current ADD COLUMN preview_text TEXT NOT NULL DEFAULT ''`);
+  }
 }
 
 export function initializeMemoryProjectionDb(db: Database.Database): void {
@@ -241,11 +263,28 @@ export function initializeMemoryProjectionDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_memory_review_actions_run
       ON memory_review_actions(run_id, memory_id);
   `);
+
+  migrateMemoryCurrentTable(db);
+  db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)")
+    .run("schemaVersion", String(MEMORY_PROJECTION_SCHEMA_VERSION));
+}
+
+function ensureMemoryProjectionSchema(dbPath: string): void {
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { fileMustExist: true });
+    initializeMemoryProjectionDb(db);
+  } catch {
+    return;
+  } finally {
+    db?.close();
+  }
 }
 
 function openProjectionReadonly(memoryDir: string): Database.Database | null {
   const dbPath = getMemoryProjectionPath(memoryDir);
   try {
+    ensureMemoryProjectionSchema(dbPath);
     return new Database(dbPath, { readonly: true, fileMustExist: true });
   } catch {
     return null;
@@ -457,24 +496,7 @@ export function readProjectedMemoryBrowse(
       whereClauses.push("category = ?");
       params.push(options.category);
     }
-    if (options.query) {
-      const like = `%${options.query.toLowerCase()}%`;
-      whereClauses.push(`
-        (
-          lower(memory_id) LIKE ?
-          OR lower(path_rel) LIKE ?
-          OR lower(COALESCE(entity_ref, '')) LIKE ?
-          OR lower(preview_text) LIKE ?
-          OR lower(tags_json) LIKE ?
-        )
-      `);
-      params.push(like, like, like, like, like);
-    }
-
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-    const totalRow = db
-      .prepare(`SELECT COUNT(*) AS total FROM memory_current ${whereSql}`)
-      .get(...params) as { total?: number } | undefined;
     const rows = db
       .prepare(`
         SELECT
@@ -490,13 +512,18 @@ export function readProjectedMemoryBrowse(
         FROM memory_current
         ${whereSql}
         ORDER BY updated_at DESC, created_at DESC, memory_id ASC
-        LIMIT ? OFFSET ?
       `)
-      .all(...params, options.limit, options.offset) as Array<Record<string, unknown>>;
+      .all(...params) as Array<Record<string, unknown>>;
+
+    const normalizedQuery = options.query?.trim().toLowerCase() ?? "";
+    const filteredRows = normalizedQuery
+      ? rows.filter((row) => projectedBrowseRowMatchesQuery(memoryDir, row, normalizedQuery))
+      : rows;
+    const pageRows = filteredRows.slice(options.offset, options.offset + options.limit);
 
     return {
-      total: typeof totalRow?.total === "number" ? totalRow.total : 0,
-      memories: rows
+      total: filteredRows.length,
+      memories: pageRows
         .filter(
           (row) =>
             typeof row.memory_id === "string" &&
@@ -520,6 +547,32 @@ export function readProjectedMemoryBrowse(
     return null;
   } finally {
     db.close();
+  }
+}
+
+function projectedBrowseRowMatchesQuery(
+  memoryDir: string,
+  row: Record<string, unknown>,
+  query: string,
+): boolean {
+  const tags = parseStringArray(row.tags_json).join("\n").toLowerCase();
+  const metadataHaystack = [
+    typeof row.memory_id === "string" ? row.memory_id : "",
+    typeof row.path_rel === "string" ? row.path_rel : "",
+    typeof row.entity_ref === "string" ? row.entity_ref : "",
+    typeof row.preview_text === "string" ? row.preview_text : "",
+    tags,
+  ]
+    .join("\n")
+    .toLowerCase();
+  if (metadataHaystack.includes(query)) return true;
+
+  if (typeof row.path_rel !== "string") return false;
+  try {
+    const content = readFileSync(path.join(memoryDir, row.path_rel), "utf-8").toLowerCase();
+    return content.includes(query);
+  } catch {
+    return false;
   }
 }
 
