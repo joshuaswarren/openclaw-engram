@@ -180,18 +180,17 @@ alpha
   }
 });
 
-test("projection browse migrates legacy schema columns and still matches full file content", async () => {
+test("initializeMemoryProjectionDb migrates legacy schema columns for existing projection stores", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-legacy-browse-"));
   try {
     const projectionPath = getMemoryProjectionPath(memoryDir);
     await mkdir(path.dirname(projectionPath), { recursive: true });
-    const deepNeedle = "needle beyond preview depth";
     await writeText(
       memoryDir,
       "facts/2026-03-08/fact-legacy.md",
       memoryDoc({
         id: "fact-legacy",
-        content: `${"alpha ".repeat(60)}${deepNeedle}`,
+        content: `${"alpha ".repeat(60)}needle beyond preview depth`,
         created: "2026-03-08T00:00:00.000Z",
         updated: "2026-03-08T01:00:00.000Z",
       }),
@@ -261,12 +260,13 @@ test("projection browse migrates legacy schema columns and still matches full fi
         null,
         null,
       );
+
+      initializeMemoryProjectionDb(db);
     } finally {
       db.close();
     }
 
     const browse = readProjectedMemoryBrowse(memoryDir, {
-      query: deepNeedle,
       limit: 20,
       offset: 0,
     });

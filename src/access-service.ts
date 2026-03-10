@@ -4,6 +4,7 @@ import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
+import { inferMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import { parseEntityFile } from "./storage.js";
@@ -269,9 +270,9 @@ export class EngramAccessService {
       };
     }
 
-    let memories = await storage.readAllMemories();
+    let memories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()];
     memories = memories.filter((memory) => {
-      const status = (memory.frontmatter.status ?? "active").toLowerCase();
+      const status = inferMemoryStatus(memory.frontmatter, memory.path).toLowerCase();
       if (statusFilter && status !== statusFilter) return false;
       if (categoryFilter && memory.frontmatter.category.toLowerCase() !== categoryFilter) return false;
       if (!query) return true;
@@ -506,7 +507,7 @@ export class EngramAccessService {
       id: memory.frontmatter.id,
       path: memory.path,
       category: memory.frontmatter.category,
-      status: memory.frontmatter.status ?? "active",
+      status: inferMemoryStatus(memory.frontmatter, memory.path),
       created: memory.frontmatter.created,
       updated: memory.frontmatter.updated,
       tags: [...memory.frontmatter.tags],

@@ -206,6 +206,47 @@ test("access service uses projection-backed browse filters, including archived m
   }
 });
 
+test("access service fallback browse includes archived memories without a projection", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-fallback-archived-"));
+  try {
+    await writeText(
+      memoryDir,
+      "archive/2026-03-08/fact-archived.md",
+      memoryDoc(
+        "fact-archived",
+        "Archived memory that should still appear without projection browse.",
+        ['entityRef: person-retired', 'archivedAt: 2026-03-08T02:00:00.000Z', 'tags: ["legacy", "browser"]'],
+      ),
+    );
+
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    const browse = await service.memoryBrowse({
+      query: "archived memory",
+      status: "archived",
+      category: "fact",
+    });
+    assert.equal(browse.total, 1);
+    assert.equal(browse.memories[0]?.id, "fact-archived");
+    assert.equal(browse.memories[0]?.status, "archived");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service projection browse matches full content beyond preview text", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-projection-content-"));
   try {
