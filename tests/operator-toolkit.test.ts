@@ -115,6 +115,55 @@ test("operator setup scaffolds directories and optional capture instructions", a
   assert.match(memoryDoc, /explicit memory capture/i);
 });
 
+test("operator setup previews and removes managed capture instructions", async () => {
+  const fixture = await makeFixture({ captureMode: "explicit" });
+
+  const preview = await runOperatorSetup({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+    captureInstructionsMode: "preview",
+  });
+  assert.match(preview.explicitCapture.preview ?? "", /BEGIN ENGRAM EXPLICIT CAPTURE INSTRUCTIONS/);
+
+  await runOperatorSetup({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+    captureInstructionsMode: "install",
+  });
+  const memoryDocPath = path.join(fixture.workspaceDir, "MEMORY.md");
+  const installed = await readFile(memoryDocPath, "utf-8");
+  assert.match(installed, /BEGIN ENGRAM EXPLICIT CAPTURE INSTRUCTIONS/);
+
+  const removed = await runOperatorSetup({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+    captureInstructionsMode: "remove",
+  });
+  assert.equal(removed.explicitCapture.memoryDocRemoved, true);
+  await assert.rejects(() => readFile(memoryDocPath, "utf-8"), /ENOENT/);
+});
+
+test("operator setup can remove managed capture instructions after captureMode is switched back to implicit", async () => {
+  const fixture = await makeFixture({ captureMode: "explicit" });
+
+  await runOperatorSetup({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+    captureInstructionsMode: "install",
+  });
+  fixture.orchestrator.config.captureMode = "implicit";
+
+  const removed = await runOperatorSetup({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+    captureInstructionsMode: "remove",
+  });
+
+  assert.equal(removed.explicitCapture.enabled, false);
+  assert.equal(removed.explicitCapture.memoryDocRemoved, true);
+  await assert.rejects(() => readFile(path.join(fixture.workspaceDir, "MEMORY.md"), "utf-8"), /ENOENT/);
+});
+
 test("operator doctor surfaces auth and qmd problems", async () => {
   const fixture = await makeFixture({
     qmdEnabled: true,

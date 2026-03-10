@@ -222,3 +222,62 @@ test("doctor CLI warns instead of failing when config discovery misses but runti
     delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
   }
 });
+
+test("setup CLI previews managed explicit-capture instructions without writing MEMORY.md", async () => {
+  const fixture = await makeFixture({ captureMode: "explicit" });
+  const action = getAction(fixture.root, ["engram", "setup"]);
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = fixture.configPath;
+
+  try {
+    const result = await captureAction(action, {
+      json: true,
+      previewCaptureInstructions: true,
+    });
+    const report = JSON.parse(result.output) as {
+      explicitCapture: {
+        preview: string | null;
+        memoryDocExists: boolean;
+      };
+    };
+    assert.match(report.explicitCapture.preview ?? "", /BEGIN ENGRAM EXPLICIT CAPTURE INSTRUCTIONS/);
+    assert.equal(report.explicitCapture.memoryDocExists, false);
+    assert.equal(result.exitCode, undefined);
+  } finally {
+    delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  }
+});
+
+test("setup CLI removes managed explicit-capture instructions when requested", async () => {
+  const fixture = await makeFixture({ captureMode: "explicit" });
+  const action = getAction(fixture.root, ["engram", "setup"]);
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = fixture.configPath;
+
+  try {
+    const install = await captureAction(action, {
+      json: true,
+      installCaptureInstructions: true,
+    });
+    const installed = JSON.parse(install.output) as {
+      explicitCapture: {
+        memoryDocExists: boolean;
+      };
+    };
+    assert.equal(installed.explicitCapture.memoryDocExists, true);
+
+    const removed = await captureAction(action, {
+      json: true,
+      removeCaptureInstructions: true,
+    });
+    const report = JSON.parse(removed.output) as {
+      explicitCapture: {
+        memoryDocExists: boolean;
+        memoryDocRemoved: boolean;
+      };
+    };
+    assert.equal(report.explicitCapture.memoryDocRemoved, true);
+    assert.equal(report.explicitCapture.memoryDocExists, false);
+    assert.equal(removed.exitCode, undefined);
+  } finally {
+    delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  }
+});

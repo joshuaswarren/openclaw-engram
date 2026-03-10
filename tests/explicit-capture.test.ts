@@ -5,6 +5,7 @@ import {
   hasInlineExplicitCaptureMarkup,
   parseInlineExplicitCaptureNotes,
   persistExplicitCapture,
+  queueExplicitCaptureForReview,
   shouldProcessInlineExplicitCapture,
   shouldSkipImplicitExtraction,
   stripInlineExplicitCaptureNotes,
@@ -182,6 +183,141 @@ test("persistExplicitCapture writes lifecycle events and dedupes active duplicat
   assert.equal(second.duplicateOf, first.id);
   assert.equal(memories.length, 1);
   assert.equal(lifecycleEvents.length, 1);
+});
+
+test("persistExplicitCapture rejects namespaces outside the configured policy", async () => {
+  const storage = {
+    hasFactContentHash: async () => false,
+    isFactContentHashAuthoritative: async () => true,
+    readAllMemories: async () => [],
+    writeMemory: async () => "fact-1",
+    appendMemoryLifecycleEvents: async () => 1,
+  };
+
+  await assert.rejects(
+    () =>
+      persistExplicitCapture(
+        {
+          config: {
+            defaultNamespace: "default",
+            sharedNamespace: "shared",
+            namespacesEnabled: false,
+            namespacePolicies: [],
+          },
+          getStorage: async () => storage,
+        } as never,
+        validateExplicitCaptureInput({
+          content: "Store this in a namespace that is not configured.",
+          namespace: "team",
+        }),
+        "memory_capture",
+      ),
+    /unsupported namespace: team/,
+  );
+});
+
+test("queueExplicitCaptureForReview stores a pending-review memory and lifecycle event", async () => {
+  const memories: Array<{
+    frontmatter: { id: string; status?: string; tags?: string[]; category?: string };
+    content: string;
+    path: string;
+  }> = [];
+  const lifecycleEvents: Array<{ eventType: string; reasonCode?: string; memoryId: string }> = [];
+  let nextId = 1;
+  const storage = {
+    readAllMemories: async () => memories,
+    writeMemory: async (category: string, content: string, options: { tags?: string[] }) => {
+      const id = `fact-${nextId++}`;
+      memories.push({
+        frontmatter: { id, category, tags: options.tags, status: "active" },
+        content,
+        path: `/tmp/${id}.md`,
+      });
+      return id;
+    },
+    getMemoryById: async (id: string) => memories.find((memory) => memory.frontmatter.id === id) ?? null,
+    writeMemoryFrontmatter: async (
+      memory: { frontmatter: { status?: string } },
+      patch: { status: string },
+    ) => {
+      memory.frontmatter.status = patch.status;
+      return memory;
+    },
+    appendMemoryLifecycleEvents: async (events: Array<{ eventType: string; reasonCode?: string; memoryId: string }>) => {
+      lifecycleEvents.push(...events);
+      return events.length;
+    },
+  };
+
+  const queued = await queueExplicitCaptureForReview(
+    {
+      config: {
+        defaultNamespace: "default",
+        sharedNamespace: "shared",
+        namespacesEnabled: false,
+        namespacePolicies: [],
+      },
+      getStorage: async () => storage,
+    } as never,
+    {
+      content: "api_key=supersecretvalue123 should be reviewed, not dropped",
+      category: "fact",
+      tags: ["operator-review"],
+    },
+    "inline",
+    new Error("content appears to contain a secret or credential"),
+  );
+
+  assert.equal(queued.duplicateOf, undefined);
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0]?.frontmatter.status, "pending_review");
+  assert.deepEqual(
+    memories[0]?.frontmatter.tags,
+    ["explicit-capture", "queued-review", "operator-review"],
+  );
+  assert.match(memories[0]?.content ?? "", /Explicit capture queued for review/);
+  assert.doesNotMatch(memories[0]?.content ?? "", /supersecretvalue123/);
+  assert.match(memories[0]?.content ?? "", /\[redacted credential\]/);
+  assert.equal(lifecycleEvents.some((event) => event.eventType === "explicit_capture_queued"), true);
+});
+
+test("queueExplicitCaptureForReview preserves requested namespace isolation when namespaces are enabled", async () => {
+  const requestedNamespaces: string[] = [];
+  const storage = {
+    readAllMemories: async () => [],
+    writeMemory: async () => "fact-1",
+    getMemoryById: async () => ({
+      frontmatter: { id: "fact-1", status: "active" },
+      content: "queued review item",
+      path: "/tmp/fact-1.md",
+    }),
+    writeMemoryFrontmatter: async () => undefined,
+    appendMemoryLifecycleEvents: async () => 1,
+  };
+
+  await queueExplicitCaptureForReview(
+    {
+      config: {
+        defaultNamespace: "default",
+        sharedNamespace: "shared",
+        namespacesEnabled: true,
+        namespacePolicies: [],
+      },
+      getStorage: async (namespace?: string) => {
+        requestedNamespaces.push(namespace ?? "default");
+        return storage;
+      },
+    } as never,
+    {
+      content: "This explicit note targeted a private namespace and should stay isolated while queued.",
+      category: "fact",
+      namespace: "team",
+    },
+    "inline",
+    new Error("unsupported namespace: team"),
+  );
+
+  assert.deepEqual(requestedNamespaces, ["team", "team"]);
 });
 
 test("persistExplicitCapture attributes lifecycle actors to the correct tool source", async () => {

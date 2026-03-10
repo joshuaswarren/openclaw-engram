@@ -52,6 +52,20 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*[^\s]{8,}\b/i,
   /\b(?:authorization)\s*:\s*[^\s]{8,}\b/i,
 ];
+const SECRET_REDACTION_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /\bsk-[A-Za-z0-9]{16,}\b/g, replacement: "[redacted openai key]" },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replacement: "[redacted aws key]" },
+  { pattern: /\bBearer\s+[A-Za-z0-9._-]{16,}\b/gi, replacement: "Bearer [redacted token]" },
+  {
+    pattern: /\b(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*[^\s]{8,}\b/gi,
+    replacement: "[redacted credential]",
+  },
+  {
+    pattern: /\b(?:authorization)\s*:\s*[^\s]{8,}\b/gi,
+    replacement: "authorization: [redacted credential]",
+  },
+];
+const EXPLICIT_CAPTURE_REVIEW_TAGS = ["explicit-capture", "queued-review"];
 
 function asTrimmed(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -63,6 +77,56 @@ function normalizeCaptureContent(value: string): string {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function redactSecrets(value: string): string {
+  let redacted = value;
+  for (const { pattern, replacement } of SECRET_REDACTION_PATTERNS) {
+    redacted = redacted.replace(pattern, replacement);
+  }
+  return redacted;
+}
+
+function normalizeExplicitCaptureError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) return error.message.trim();
+  const rendered = String(error).trim();
+  return rendered.length > 0 ? rendered : "explicit capture failed";
+}
+
+function resolveExplicitCaptureReviewNamespace(
+  orchestrator: Orchestrator,
+  namespace: string | undefined,
+): string | undefined {
+  const normalized = asTrimmed(namespace);
+  if (!normalized) return undefined;
+  try {
+    return resolveExplicitCaptureNamespace(orchestrator, normalized);
+  } catch {
+    return orchestrator.config.namespacesEnabled ? normalized : undefined;
+  }
+}
+
+function resolveExplicitCaptureNamespace(
+  orchestrator: Orchestrator,
+  namespace: string | undefined,
+): string | undefined {
+  const normalized = asTrimmed(namespace);
+  if (!normalized) return undefined;
+  if (!orchestrator.config.namespacesEnabled) {
+    if (normalized !== orchestrator.config.defaultNamespace) {
+      throw new Error(`unsupported namespace: ${normalized}`);
+    }
+    return normalized;
+  }
+  const allowed = new Set([
+    orchestrator.config.defaultNamespace,
+    orchestrator.config.sharedNamespace,
+    ...orchestrator.config.namespacePolicies.map((policy) => policy.name),
+  ].map((value) => value.trim()).filter(Boolean));
+  if (!allowed.has(normalized)) {
+    throw new Error(`unsupported namespace: ${normalized}`);
+  }
+  return normalized;
 }
 
 function parseExplicitCaptureTtl(ttl: string | undefined): string | undefined {
@@ -232,7 +296,7 @@ async function findDuplicateExplicitCapture(
   orchestrator: Orchestrator,
   candidate: ValidExplicitCapture,
 ): Promise<string | null> {
-  const storage = await orchestrator.getStorage(candidate.namespace);
+  const storage = await orchestrator.getStorage(resolveExplicitCaptureNamespace(orchestrator, candidate.namespace));
   if (
     candidate.category === "fact"
     && typeof (storage as { hasFactContentHash?: (content: string) => Promise<boolean> }).hasFactContentHash === "function"
@@ -271,12 +335,13 @@ export async function persistExplicitCapture(
   candidate: ValidExplicitCapture,
   source: ExplicitCaptureSource,
 ): Promise<{ id: string; duplicateOf?: string }> {
+  const resolvedNamespace = resolveExplicitCaptureNamespace(orchestrator, candidate.namespace);
   const duplicateOf = await findDuplicateExplicitCapture(orchestrator, candidate);
   if (duplicateOf) {
     return { id: duplicateOf, duplicateOf };
   }
 
-  const storage = await orchestrator.getStorage(candidate.namespace);
+  const storage = await orchestrator.getStorage(resolvedNamespace);
   const id = await storage.writeMemory(candidate.category, candidate.content, {
     confidence: candidate.confidence,
     tags: candidate.tags,
@@ -302,6 +367,112 @@ export async function persistExplicitCapture(
   };
   await storage.appendMemoryLifecycleEvents([event]);
 
+  return { id };
+}
+
+function buildExplicitCaptureReviewContent(input: ExplicitCaptureInput, reason: string): string {
+  const requestedContent = asTrimmed(input.content);
+  const sanitized = sanitizeMemoryContent(redactSecrets(requestedContent ?? "[empty explicit capture]"));
+  const safeContent = sanitized.text.trim().length > 0 ? sanitized.text.trim() : "[empty explicit capture]";
+  const lines = [
+    "Explicit capture queued for review.",
+    "",
+    `Reason: ${reason}`,
+    "",
+    "Submitted content:",
+    safeContent,
+  ];
+  const metadata = [
+    input.category ? `Requested category: ${input.category}` : undefined,
+    input.namespace ? `Requested namespace: ${input.namespace}` : undefined,
+    input.entityRef ? `Requested entityRef: ${input.entityRef}` : undefined,
+    input.ttl ? `Requested ttl: ${input.ttl}` : undefined,
+    input.sourceReason ? `Requested sourceReason: ${input.sourceReason}` : undefined,
+    input.tags && input.tags.length > 0 ? `Requested tags: ${input.tags.join(", ")}` : undefined,
+  ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  if (metadata.length > 0) {
+    lines.push("", ...metadata);
+  }
+  return lines.join("\n");
+}
+
+async function findQueuedExplicitCaptureDuplicate(
+  orchestrator: Orchestrator,
+  namespace: string | undefined,
+  content: string,
+): Promise<string | null> {
+  const storage = await orchestrator.getStorage(namespace);
+  const existing = await storage.readAllMemories();
+  const normalized = normalizeCaptureContent(content);
+  const match = existing.find((memory) => {
+    const status = memory.frontmatter.status ?? "active";
+    if (status !== "pending_review") return false;
+    if (!(memory.frontmatter.tags ?? []).includes("queued-review")) return false;
+    return normalizeCaptureContent(memory.content) === normalized;
+  });
+  return match?.frontmatter.id ?? null;
+}
+
+export async function queueExplicitCaptureForReview(
+  orchestrator: Orchestrator,
+  input: ExplicitCaptureInput,
+  source: ExplicitCaptureSource,
+  error: unknown,
+): Promise<{ id: string; duplicateOf?: string }> {
+  const reason = normalizeExplicitCaptureError(error);
+  const requestedNamespace = asTrimmed(input.namespace);
+  const queueNamespace = resolveExplicitCaptureReviewNamespace(orchestrator, requestedNamespace);
+  const content = buildExplicitCaptureReviewContent(input, reason);
+  const duplicateOf = await findQueuedExplicitCaptureDuplicate(orchestrator, queueNamespace, content);
+  if (duplicateOf) {
+    return { id: duplicateOf, duplicateOf };
+  }
+
+  const requestedCategory = asTrimmed(input.category);
+  const reviewCategory = requestedCategory && INLINE_ALLOWED_CATEGORIES.has(requestedCategory as MemoryCategory)
+    ? requestedCategory as MemoryCategory
+    : "fact";
+  const requestedTags = Array.isArray(input.tags)
+    ? input.tags.map((tag) => tag.trim()).filter(Boolean)
+    : [];
+  const storage = await orchestrator.getStorage(queueNamespace);
+  const id = await storage.writeMemory(reviewCategory, content, {
+    confidence: 0.2,
+    tags: Array.from(new Set([...EXPLICIT_CAPTURE_REVIEW_TAGS, ...requestedTags])),
+    entityRef: asTrimmed(input.entityRef),
+    source: source === "inline" ? "explicit-inline-review" : "explicit-review",
+  });
+  const created = await storage.getMemoryById(id);
+  if (created) {
+    await storage.writeMemoryFrontmatter(created, {
+      status: "pending_review",
+      updated: new Date().toISOString(),
+    }, {
+      actor:
+        source === "inline"
+          ? "inline.memory_note"
+          : source === "memory_store"
+            ? "tool.memory_store"
+            : "tool.memory_capture",
+      reasonCode: reason,
+      ruleVersion: "explicit-capture.v1",
+    });
+  }
+  const event: MemoryLifecycleEvent = {
+    eventId: `mle-${randomUUID()}`,
+    memoryId: id,
+    eventType: "explicit_capture_queued",
+    timestamp: new Date().toISOString(),
+    actor:
+      source === "inline"
+        ? "inline.memory_note"
+        : source === "memory_store"
+          ? "tool.memory_store"
+          : "tool.memory_capture",
+    reasonCode: reason,
+    ruleVersion: "explicit-capture.v1",
+  };
+  await storage.appendMemoryLifecycleEvents([event]);
   return { id };
 }
 

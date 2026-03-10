@@ -28,7 +28,37 @@ Manually store a memory without going through the extraction pipeline.
 - `confidence` (number, optional, default: 0.9) — Confidence score 0–1.
 - `tags` (string[], optional) — Tags to attach.
 
-**Returns:** The stored memory's ID and file path.
+`memory_store` shares the same explicit-capture validation, sanitization, duplicate handling, lifecycle logging, and review-queue fallback used by `memory_capture`.
+
+**Returns:** The stored memory's ID and file path, or the duplicate/review item identifier when Engram suppresses a direct write.
+
+---
+
+### `memory_capture`
+
+Create a structured explicit memory note that obeys `captureMode` policy.
+
+Prefer this tool over inline notes when tool use is available. In `explicit` mode it is the primary write path; in `hybrid` mode it bypasses buffering and persists immediately when validation passes.
+
+**Parameters:**
+- `content` (string, required) — One durable fact, decision, correction, commitment, or other standalone note.
+- `category` (string, optional, default: `fact`) — One of: `fact`, `preference`, `correction`, `entity`, `decision`, `relationship`, `principle`, `commitment`, `moment`, `skill`, `rule`.
+- `confidence` (number, optional, default: `0.95`) — Confidence score 0–1.
+- `namespace` (string, optional) — Requested namespace, subject to namespace policy.
+- `tags` (string[], optional) — Tags to attach.
+- `entityRef` (string, optional) — Related entity id.
+- `ttl` (string, optional) — ISO timestamp or relative duration like `30m`, `12h`, `7d`, or `2w`.
+- `sourceReason` (string, optional) — Human/operator rationale recorded in lifecycle metadata.
+
+Validation rules:
+- content must be 10–4000 chars
+- nested `<memory_note>` blocks are rejected
+- unsafe categories, secrets, credentials, and invalid namespace targets are rejected
+- exact duplicates are suppressed before write
+
+If a direct write is rejected, Engram queues a sanitized `pending_review` memory instead of silently dropping the request.
+
+**Returns:** The accepted memory id, duplicate target id, or queued review item id.
 
 ---
 

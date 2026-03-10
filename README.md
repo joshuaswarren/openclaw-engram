@@ -26,6 +26,7 @@ That product thesis drives the roadmap order:
 AI agents forget everything between conversations. Engram fixes that.
 
 - **Automatic extraction** — Engram watches conversations and extracts facts, decisions, preferences, corrections, and more. No manual tagging required.
+- **Explicit capture modes** — Run in `implicit`, `explicit`, or `hybrid` mode when memory writes need stricter consent, immediate explicit capture, or review-first handling.
 - **Smart recall** — Before each conversation, Engram injects the most relevant memories into the agent's context. Your agents remember what they need, when they need it.
 - **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
@@ -94,6 +95,27 @@ openclaw engram setup --json      # Validates config, scaffolds directories, pri
 openclaw engram doctor --json     # Aggregated safe health diagnostics
 openclaw engram inventory --json  # Baseline memory/entity/storage footprint
 ```
+
+## Explicit Capture
+
+Set `captureMode` to control how memories are created:
+
+- `implicit`: normal extraction behavior.
+- `explicit`: only structured explicit capture writes or queues review items.
+- `hybrid`: explicit capture writes immediately and normal extraction still runs.
+
+Prefer the `memory_capture` tool when tool use is available. In constrained runtimes, Engram also accepts an inline fallback block:
+
+```text
+<memory_note>
+category: decision
+content: |
+  Recall benchmark packs live under state/evals/benchmarks/.
+tags: benchmarks, evals
+</memory_note>
+```
+
+If the note fails direct-write policy, Engram sanitizes it and queues a `pending_review` memory instead of dropping it silently.
 
 ## How It Works
 
@@ -178,6 +200,9 @@ If you want a supported starting point for the advanced surface, set `memoryOsPr
 ```bash
 openclaw engram stats                        # Memory counts, search status, health
 openclaw engram setup                       # Guided first-run setup + directory scaffolding
+openclaw engram setup --preview-capture-instructions  # Preview the managed explicit-capture snippet
+openclaw engram setup --install-capture-instructions  # Install or update the managed explicit-capture snippet
+openclaw engram setup --remove-capture-instructions   # Remove the managed explicit-capture snippet
 openclaw engram doctor                      # Aggregated setup/runtime diagnostics with remediation hints
 openclaw engram inventory                   # Memory, namespace, review queue, storage, and native-knowledge inventory
 openclaw engram search "your query"          # Search memories from CLI
@@ -241,6 +266,7 @@ Key settings:
 | `evalShadowModeEnabled` | `false` | Record live recall decisions to the eval store without changing injected output |
 | `benchmarkBaselineSnapshotsEnabled` | `false` | Enable versioned baseline snapshot artifacts for the latest completed benchmark runs |
 | `benchmarkDeltaReporterEnabled` | `false` | Enable named-baseline delta reports against the current eval store |
+| `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, or `hybrid` |
 | `nativeKnowledge.enabled` | `false` | Enable curated workspace and synced native-knowledge recall without converting source docs into durable memory files |
 | `nativeKnowledge.openclawWorkspace` | unset | Optional backend-agnostic adapter for OpenClaw workspace bootstrap docs, handoffs, daily summaries, and automation notes |
 | `nativeKnowledge.obsidianVaults` | `[]` | Optional backend-agnostic Obsidian vault adapters that sync markdown notes, tags, aliases, links, and daily-note dates into native knowledge recall |
