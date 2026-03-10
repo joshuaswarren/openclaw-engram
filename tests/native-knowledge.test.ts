@@ -200,6 +200,59 @@ test("collectNativeKnowledgeChunks persists incremental state for includeFiles w
   }
 });
 
+test("include-file sync keeps namespaced identity variants active across recall scopes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-sync-scope-"));
+  const workspaceDir = path.join(root, "workspace");
+  const memoryDir = path.join(root, "memory");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.shared.md"),
+    "# Shared Identity\n\nShared operator guidance.\n",
+    "utf-8",
+  );
+
+  const config = {
+    enabled: true,
+    includeFiles: ["IDENTITY.md"],
+    maxChunkChars: 200,
+    maxResults: 4,
+    maxChars: 2400,
+    stateDir: "state/native-knowledge",
+    obsidianVaults: [],
+  };
+
+  const statePath = resolveCuratedIncludeFilesStatePath(memoryDir, config);
+  await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["shared"],
+    defaultNamespace: "default",
+  });
+
+  const sharedScopeState = JSON.parse(await readFile(statePath, "utf-8")) as {
+    files: Record<string, { deleted: boolean; namespace?: string }>;
+  };
+  assert.equal(sharedScopeState.files["IDENTITY.shared.md"]?.deleted, false);
+  assert.equal(sharedScopeState.files["IDENTITY.shared.md"]?.namespace, "shared");
+
+  const defaultScopeChunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["default"],
+    defaultNamespace: "default",
+  });
+  assert.equal(defaultScopeChunks.some((chunk) => chunk.sourcePath === "IDENTITY.shared.md"), false);
+
+  const defaultScopeState = JSON.parse(await readFile(statePath, "utf-8")) as {
+    files: Record<string, { deleted: boolean; namespace?: string }>;
+  };
+  assert.equal(defaultScopeState.files["IDENTITY.shared.md"]?.deleted, false);
+  assert.equal(defaultScopeState.files["IDENTITY.shared.md"]?.namespace, "shared");
+});
+
 test("searchNativeKnowledge ranks identity and phrase matches highest", () => {
   const results = searchNativeKnowledge({
     query: "deterministic tests",

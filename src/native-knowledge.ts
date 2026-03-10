@@ -247,6 +247,12 @@ function deriveArtifactDate(filePath: string, parsed: ParsedFrontmatter): string
   );
 }
 
+function deriveNamespaceFromIncludePath(sourcePath: string): string | undefined {
+  const basename = path.basename(sourcePath);
+  const match = /^identity\.([^.\/]+)\.md$/i.exec(basename);
+  return match?.[1];
+}
+
 function compileDailyNotePattern(pattern: string): RegExp {
   const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = escaped
@@ -473,6 +479,34 @@ function resolveCandidatePaths(options: {
           ),
         );
       }
+    }
+  }
+  return Array.from(out);
+}
+
+async function resolveSyncCandidatePaths(options: {
+  workspaceDir: string;
+  includeFiles: string[];
+}): Promise<string[]> {
+  const out = new Set<string>();
+  for (const rel of options.includeFiles) {
+    const trimmed = rel.trim();
+    if (!trimmed) continue;
+    const candidatePath = path.join(options.workspaceDir, trimmed);
+    out.add(candidatePath);
+    if (path.basename(trimmed).toLowerCase() !== "identity.md") continue;
+
+    const relativeDir = path.dirname(trimmed);
+    const absoluteDir = path.dirname(candidatePath);
+    let entries: string[] = [];
+    try {
+      entries = await readdir(absoluteDir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!/^identity\.[^.\/]+\.md$/i.test(entry)) continue;
+      out.add(path.join(options.workspaceDir, relativeDir, entry));
     }
   }
   return Array.from(out);
@@ -1067,7 +1101,7 @@ function deriveCuratedFileMetadata(options: {
 }): Pick<NativeKnowledgeChunk, "derivedDate" | "namespace" | "privacyClass"> {
   return {
     derivedDate: deriveArtifactDate(options.sourcePath, options.parsed),
-    namespace: firstStringValue(options.parsed.data, ["namespace"]),
+    namespace: firstStringValue(options.parsed.data, ["namespace"]) ?? deriveNamespaceFromIncludePath(options.sourcePath),
     privacyClass: firstStringValue(options.parsed.data, ["privacyClass", "privacy"]),
   };
 }
@@ -1342,11 +1376,9 @@ export async function syncCuratedIncludeFiles(options: {
   }
 
   const skipped = new Set((options.skipSourcePaths ?? []).map((value) => value.replace(/\\/g, "/")));
-  const candidatePaths = resolveCandidatePaths({
+  const candidatePaths = await resolveSyncCandidatePaths({
     workspaceDir: options.workspaceDir,
     includeFiles: options.config.includeFiles,
-    recallNamespaces: options.recallNamespaces,
-    defaultNamespace: options.defaultNamespace,
   });
   const nextFiles: Record<string, CuratedIncludeFileState> = {};
   const seen = new Set<string>();
