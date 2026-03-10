@@ -8,7 +8,10 @@ import {
   normalizeProjectionPreview,
   normalizeProjectionTags,
 } from "./memory-projection-format.js";
-import { inferMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
+import {
+  inferMemoryStatus,
+  toMemoryPathRel,
+} from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import { parseEntityFile } from "./storage.js";
@@ -272,7 +275,7 @@ export class EngramAccessService {
 
     let memories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()];
     memories = memories.filter((memory) => {
-      const status = inferMemoryStatus(memory.frontmatter, memory.path).toLowerCase();
+      const status = inferMemoryStatus(memory.frontmatter, toMemoryPathRel(storage.dir, memory.path)).toLowerCase();
       if (statusFilter && status !== statusFilter) return false;
       if (categoryFilter && memory.frontmatter.category.toLowerCase() !== categoryFilter) return false;
       if (!query) return true;
@@ -292,7 +295,9 @@ export class EngramAccessService {
       return rightAt.localeCompare(leftAt);
     });
 
-    const page = memories.slice(offset, offset + limit).map((memory) => this.serializeMemorySummary(memory));
+    const page = memories
+      .slice(offset, offset + limit)
+      .map((memory) => this.serializeMemorySummary(memory, storage.dir));
     return {
       namespace: resolvedNamespace,
       total: memories.length,
@@ -511,12 +516,12 @@ export class EngramAccessService {
     };
   }
 
-  private serializeMemorySummary(memory: MemoryFile): EngramAccessMemorySummary {
+  private serializeMemorySummary(memory: MemoryFile, baseDir: string): EngramAccessMemorySummary {
     return {
       id: memory.frontmatter.id,
       path: memory.path,
       category: memory.frontmatter.category,
-      status: inferMemoryStatus(memory.frontmatter, memory.path),
+      status: inferMemoryStatus(memory.frontmatter, toMemoryPathRel(baseDir, memory.path)),
       created: memory.frontmatter.created,
       updated: memory.frontmatter.updated,
       tags: normalizeProjectionTags(memory.frontmatter.tags),

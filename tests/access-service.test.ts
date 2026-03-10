@@ -206,7 +206,7 @@ test("access service uses projection-backed browse filters, including archived m
   }
 });
 
-test("access service fallback browse includes archived memories without a projection", async () => {
+test("access service fallback browse infers archived status from archive paths without a projection", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-fallback-archived-"));
   try {
     await writeText(
@@ -215,7 +215,7 @@ test("access service fallback browse includes archived memories without a projec
       memoryDoc(
         "fact-archived",
         "Archived memory that should still appear without projection browse.",
-        ['entityRef: person-retired', 'archivedAt: 2026-03-08T02:00:00.000Z', 'tags: ["legacy", "browser", "legacy"]'],
+        ['entityRef: person-retired', 'tags: ["legacy", "browser", "legacy"]'],
       ),
     );
 
