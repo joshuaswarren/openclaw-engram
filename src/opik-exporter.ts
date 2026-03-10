@@ -17,6 +17,10 @@ import path from "node:path";
 
 import type { LoggerBackend } from "./logger.js";
 
+// GlobalThis slot that tracks the active OpikExporter instance.
+// Used to make subscribe() idempotent across hot-reload / stop-start cycles.
+const OPIK_EXPORTER_SLOT = "__openclawOpikExporter";
+
 // ---------------------------------------------------------------------------
 // Engram event types (mirrors types.ts without importing from it)
 // ---------------------------------------------------------------------------
@@ -151,6 +155,7 @@ type InFlightLlm = {
 export class OpikExporter {
   private readonly cfg: OpikExporterConfig;
   private readonly log: LoggerBackend;
+  private _handler: ((e: EngramTraceEvent) => void) | undefined;
   private readonly inFlight = new Map<string, InFlightLlm>();
   /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
   private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -167,7 +172,20 @@ export class OpikExporter {
   subscribe(): void {
     if (!this.cfg.enabled) return;
 
-    const existing = (globalThis as Record<string, unknown>).__openclawEngramTrace as
+    // Idempotency guard: if this exact instance is already registered on globalThis,
+    // skip re-wrapping to avoid stacking callbacks on hot-reload / stop-start cycles.
+    const g = globalThis as Record<string, unknown>;
+    const active = g[OPIK_EXPORTER_SLOT] as OpikExporter | undefined;
+    if (active === this) {
+      this.log.debug?.("[opik-exporter] already subscribed — skipping duplicate");
+      return;
+    }
+    // If a different (stale) exporter instance is registered, evict it first.
+    if (active) active._detach();
+
+    g[OPIK_EXPORTER_SLOT] = this;
+
+    const existing = g.__openclawEngramTrace as
       | ((e: EngramTraceEvent) => void)
       | undefined;
 
@@ -178,8 +196,10 @@ export class OpikExporter {
         this.log.debug?.(`[opik-exporter] handler error: ${err}`);
       }
     };
+    // Store handler ref so _detach() can remove it from the chain.
+    this._handler = handler;
 
-    (globalThis as Record<string, unknown>).__openclawEngramTrace =
+    g.__openclawEngramTrace =
       typeof existing === "function"
         ? (event: EngramTraceEvent) => {
             existing(event);
@@ -192,13 +212,19 @@ export class OpikExporter {
     );
   }
 
+  /** Remove this exporter from the globalThis trace chain. */
+  _detach(): void {
+    const g = globalThis as Record<string, unknown>;
+    if (g[OPIK_EXPORTER_SLOT] === this) delete g[OPIK_EXPORTER_SLOT];
+    // Reset the trace slot — remaining subscribers will re-chain on their next start().
+    // This is safe: Langfuse/other plugins subscribe fresh on each service start.
+    g.__openclawEngramTrace = undefined;
+    this._handler = undefined;
+    this.log.debug?.("[opik-exporter] detached from trace chain");
+  }
+
   unsubscribe(): void {
-    // Best-effort: if we're the outermost handler, clear it. In practice the
-    // gateway restart path handles this via process exit.
-    const current = (globalThis as Record<string, unknown>).__openclawEngramTrace;
-    if (current === undefined) return;
-    // We can't easily un-chain, so just log. The gateway will restart anyway.
-    this.log.debug?.("[opik-exporter] unsubscribe called (no-op in chained mode)");
+    this._detach();
   }
 
   private handleEvent(event: EngramTraceEvent): void {

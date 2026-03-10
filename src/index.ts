@@ -625,6 +625,8 @@ export default {
     // ========================================================================
     // Register service
     // ========================================================================
+    // Holds the active Opik exporter so stop() can unsubscribe it.
+    let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
     if (isFirstRegistration) api.registerService({
       id: "openclaw-engram",
       start: async () => {
@@ -632,8 +634,8 @@ export default {
         await orchestrator.initialize();
 
         // Initialize Opik exporter if configured
-        const opikExporter = createOpikExporter({}, log);
-        if (opikExporter) opikExporter.subscribe();
+        activeOpikExporter = createOpikExporter({}, log);
+        if (activeOpikExporter) activeOpikExporter.subscribe();
 
         // Cleanup old transcripts
         if (orchestrator.config.transcriptEnabled) {
@@ -664,6 +666,8 @@ export default {
         log.info("engram memory system ready");
       },
       stop: async () => {
+        activeOpikExporter?.unsubscribe();
+        activeOpikExporter = null;
         try {
           await accessHttpServer.stop();
         } catch (err) {
