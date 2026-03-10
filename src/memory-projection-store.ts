@@ -100,9 +100,6 @@ export interface ProjectedReviewQueueSnapshot {
   report?: string;
 }
 
-export type MemoryProjectionEntityMention = ProjectedEntityMentionRow;
-export type MemoryProjectionNativeKnowledgeChunk = ProjectedNativeKnowledgeChunkRow;
-
 export function getMemoryProjectionPath(memoryDir: string): string {
   return path.join(memoryDir, "state", "memory-projection.sqlite");
 }
@@ -148,7 +145,7 @@ function migrateProjectionSchemaIfNeeded(memoryDir: string): void {
   }
 }
 
-function memoryCurrentSelectExpressions(db: Database.Database): {
+export function memoryCurrentSelectExpressions(db: Database.Database): {
   tagsJson: string;
   previewText: string;
 } {

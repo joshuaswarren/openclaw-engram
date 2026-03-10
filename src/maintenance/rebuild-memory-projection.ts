@@ -29,6 +29,7 @@ import {
   type MemoryProjectionGovernanceReviewQueueRow,
   type ProjectedNativeKnowledgeChunkRow,
   MEMORY_PROJECTION_SCHEMA_VERSION,
+  memoryCurrentSelectExpressions,
   parseCurrentRow,
   readProjectedEntityMentions,
   readProjectedGovernanceRecord,
@@ -365,8 +366,8 @@ function serializeCurrentStateRow(row: MemoryProjectionCurrentState): string {
     memoryKind: row.memoryKind ?? null,
     accessCount: row.accessCount ?? null,
     lastAccessed: row.lastAccessed ?? null,
-    tags: row.tags,
-    preview: row.preview,
+    tags: row.tags ?? [],
+    preview: row.preview ?? "",
   });
 }
 
@@ -509,6 +510,7 @@ function readProjectedCurrentRows(
   try {
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {
+      const selectExpressions = memoryCurrentSelectExpressions(db);
       const rows = db.prepare(`
         SELECT
           memory_id,
@@ -527,8 +529,8 @@ function readProjectedCurrentRows(
           memory_kind,
           access_count,
           last_accessed,
-          tags_json,
-          preview_text
+          ${selectExpressions.tagsJson},
+          ${selectExpressions.previewText}
         FROM memory_current
       `).all() as Array<Record<string, unknown>>;
 

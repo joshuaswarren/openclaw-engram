@@ -292,6 +292,294 @@ test("projection reads lazily migrate legacy schema columns for existing project
   }
 });
 
+test("verifyMemoryProjection treats legacy projection schemas as existing rows", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-legacy-verify-"));
+  try {
+    const projectionPath = getMemoryProjectionPath(memoryDir);
+    await mkdir(path.dirname(projectionPath), { recursive: true });
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-legacy.md",
+      memoryDoc({
+        id: "fact-legacy",
+        content: "legacy verify row",
+        created: "2026-03-08T00:00:00.000Z",
+        updated: "2026-03-08T01:00:00.000Z",
+      }),
+    );
+
+    const db = new Database(projectionPath);
+    try {
+      db.exec(`
+        CREATE TABLE memory_current (
+          memory_id TEXT PRIMARY KEY,
+          category TEXT NOT NULL,
+          status TEXT NOT NULL,
+          lifecycle_state TEXT,
+          path_rel TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          archived_at TEXT,
+          superseded_at TEXT,
+          entity_ref TEXT,
+          source TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          confidence_tier TEXT NOT NULL,
+          memory_kind TEXT,
+          access_count INTEGER,
+          last_accessed TEXT
+        );
+      `);
+      db.prepare(`
+        INSERT INTO memory_current (
+          memory_id,
+          category,
+          status,
+          lifecycle_state,
+          path_rel,
+          created_at,
+          updated_at,
+          archived_at,
+          superseded_at,
+          entity_ref,
+          source,
+          confidence,
+          confidence_tier,
+          memory_kind,
+          access_count,
+          last_accessed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "fact-legacy",
+        "fact",
+        "active",
+        null,
+        "facts/2026-03-08/fact-legacy.md",
+        "2026-03-08T00:00:00.000Z",
+        "2026-03-08T01:00:00.000Z",
+        null,
+        null,
+        null,
+        "test",
+        0.8,
+        "implied",
+        null,
+        null,
+        null,
+      );
+    } finally {
+      db.close();
+    }
+
+    const verify = await verifyMemoryProjection({ memoryDir });
+    assert.equal(verify.projectionExists, true);
+    assert.equal(verify.actualCurrentRows, 1);
+    assert.deepEqual(verify.missingCurrentMemoryIds, []);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("scoped rebuild preserves out-of-scope legacy projection rows", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-legacy-scope-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-older.md",
+      `---
+id: fact-older
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+entityRef: project-original
+tags: ["older"]
+---
+
+older
+`,
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-recent.md",
+      `---
+id: fact-recent
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T05:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+entityRef: project-after
+tags: ["recent"]
+---
+
+recent updated
+`,
+    );
+
+    const projectionPath = getMemoryProjectionPath(memoryDir);
+    await mkdir(path.dirname(projectionPath), { recursive: true });
+    const db = new Database(projectionPath);
+    try {
+      db.exec(`
+        CREATE TABLE memory_current (
+          memory_id TEXT PRIMARY KEY,
+          category TEXT NOT NULL,
+          status TEXT NOT NULL,
+          lifecycle_state TEXT,
+          path_rel TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          archived_at TEXT,
+          superseded_at TEXT,
+          entity_ref TEXT,
+          source TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          confidence_tier TEXT NOT NULL,
+          memory_kind TEXT,
+          access_count INTEGER,
+          last_accessed TEXT
+        );
+
+        CREATE TABLE memory_timeline (
+          event_id TEXT PRIMARY KEY,
+          memory_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          event_order INTEGER NOT NULL,
+          actor TEXT NOT NULL,
+          reason_code TEXT,
+          rule_version TEXT NOT NULL,
+          related_memory_ids_json TEXT,
+          before_json TEXT,
+          after_json TEXT,
+          correlation_id TEXT
+        );
+      `);
+      const insert = db.prepare(`
+        INSERT INTO memory_current (
+          memory_id,
+          category,
+          status,
+          lifecycle_state,
+          path_rel,
+          created_at,
+          updated_at,
+          archived_at,
+          superseded_at,
+          entity_ref,
+          source,
+          confidence,
+          confidence_tier,
+          memory_kind,
+          access_count,
+          last_accessed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      insert.run(
+        "fact-older",
+        "fact",
+        "active",
+        null,
+        "facts/2026-03-08/fact-older.md",
+        "2026-03-08T00:00:00.000Z",
+        "2026-03-08T01:00:00.000Z",
+        null,
+        null,
+        "project-corrupt",
+        "test",
+        0.8,
+        "implied",
+        null,
+        null,
+        null,
+      );
+      insert.run(
+        "fact-recent",
+        "fact",
+        "active",
+        null,
+        "facts/2026-03-08/fact-recent.md",
+        "2026-03-08T00:00:00.000Z",
+        "2026-03-08T05:00:00.000Z",
+        null,
+        null,
+        "project-before",
+        "test",
+        0.8,
+        "implied",
+        null,
+        null,
+        null,
+      );
+      const insertTimeline = db.prepare(`
+        INSERT INTO memory_timeline (
+          event_id,
+          memory_id,
+          event_type,
+          timestamp,
+          event_order,
+          actor,
+          reason_code,
+          rule_version,
+          related_memory_ids_json,
+          before_json,
+          after_json,
+          correlation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      insertTimeline.run(
+        "fact-older-created",
+        "fact-older",
+        "created",
+        "2026-03-08T00:00:00.000Z",
+        0,
+        "system",
+        null,
+        "legacy",
+        null,
+        null,
+        null,
+        null,
+      );
+      insertTimeline.run(
+        "fact-recent-created",
+        "fact-recent",
+        "created",
+        "2026-03-08T00:00:00.000Z",
+        0,
+        "system",
+        null,
+        "legacy",
+        null,
+        null,
+        null,
+        null,
+      );
+    } finally {
+      db.close();
+    }
+
+    const scoped = await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      updatedAfter: "2026-03-08T02:00:00.000Z",
+      now: new Date("2026-03-08T06:00:00.000Z"),
+    });
+
+    assert.equal(scoped.currentRows, 1);
+    const older = readProjectedMemoryState(memoryDir, "fact-older");
+    const recent = readProjectedMemoryState(memoryDir, "fact-recent");
+    assert.equal(older?.entityRef, "project-corrupt");
+    assert.equal(recent?.entityRef, "project-after");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("projection browse returns null for text queries so callers can preserve full-content fallback parity", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-query-fallback-"));
   try {
