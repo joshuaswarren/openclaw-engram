@@ -14,6 +14,17 @@ function createService() {
       memoryDir: "/tmp/engram",
       namespacesEnabled: true,
       defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
@@ -68,8 +79,26 @@ test("access service rejects empty recall queries as input errors", async () => 
 
 test("access service allows namespace-scoped recall when namespaces are enabled", async () => {
   const service = createService();
-  const response = await service.recall({ query: "hello", namespace: "project-x" });
+  const response = await service.recall({
+    query: "hello",
+    sessionKey: "agent:project-x:chat",
+    namespace: "project-x",
+  });
   assert.equal(response.namespace, "project-x");
+});
+
+test("access service rejects unreadable namespace-scoped recall overrides", async () => {
+  const service = createService();
+  await assert.rejects(
+    () => service.recall({
+      query: "hello",
+      sessionKey: "agent:project-x:chat",
+      namespace: "global",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message === "namespace override is not readable: global",
+  );
 });
 
 test("access service recall forwards overrides and returns explainable metadata", async () => {
@@ -112,6 +141,11 @@ test("access service recall forwards overrides and returns explainable metadata"
         memoryDir,
         namespacesEnabled: true,
         defaultNamespace: "global",
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+        defaultRecallNamespaces: ["self"],
         searchBackend: "qmd",
         qmdEnabled: true,
         nativeKnowledge: undefined,
@@ -181,6 +215,11 @@ test("access service memoryStore persists and enforces idempotency conflicts", a
         memoryDir,
         namespacesEnabled: false,
         defaultNamespace: "global",
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+        defaultRecallNamespaces: ["self"],
         searchBackend: "qmd",
         qmdEnabled: true,
         nativeKnowledge: undefined,
@@ -228,6 +267,26 @@ test("access service memoryStore persists and enforces idempotency conflicts", a
         err instanceof EngramAccessInputError &&
         /idempotencyKey reuse conflict/.test(err.message),
     );
+
+    const dryRun = await service.memoryStore({
+      schemaVersion: 1,
+      idempotencyKey: "store-dry-run",
+      dryRun: true,
+      content: "Validate this explicit capture before the real write happens.",
+      category: "fact",
+      namespace: "global",
+    });
+    const storedAfterDryRun = await service.memoryStore({
+      schemaVersion: 1,
+      idempotencyKey: "store-dry-run",
+      dryRun: false,
+      content: "Validate this explicit capture before the real write happens.",
+      category: "fact",
+      namespace: "global",
+    });
+
+    assert.equal(dryRun.status, "validated");
+    assert.equal(storedAfterDryRun.status, "stored");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -242,6 +301,11 @@ test("access service suggestionSubmit queues pending review memories", async () 
         memoryDir,
         namespacesEnabled: false,
         defaultNamespace: "global",
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+        defaultRecallNamespaces: ["self"],
         searchBackend: "qmd",
         qmdEnabled: true,
         nativeKnowledge: undefined,
@@ -265,6 +329,20 @@ test("access service suggestionSubmit queues pending review memories", async () 
     assert.equal(response.queued, true);
     assert.equal(response.status, "queued_for_review");
     assert.equal(queued?.frontmatter.status, "pending_review");
+
+    await assert.rejects(
+      () => service.suggestionSubmit({
+        schemaVersion: 1,
+        dryRun: false,
+        content: "Rejected because the confidence is invalid.",
+        category: "fact",
+        confidence: 2,
+        namespace: "global",
+      }),
+      (err: unknown) =>
+        err instanceof Error &&
+        err.message === "confidence must be between 0 and 1",
+    );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

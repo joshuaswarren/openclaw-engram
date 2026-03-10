@@ -680,6 +680,42 @@ test("recall records empty impression when explicitly enabled", async () => {
   assert.equal(recorded[0]?.appendImpression, true);
 });
 
+test("recall rejects unreadable namespace overrides before fetching memories", async () => {
+  const memoryDir = tmpDir("engram-namespace-override-guard");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.namespacesEnabled = true;
+  cfg.defaultNamespace = "global";
+  cfg.defaultRecallNamespaces = ["self"];
+  cfg.namespacePolicies = [
+    {
+      name: "project-x",
+      readPrincipals: ["project-x"],
+      writePrincipals: ["project-x"],
+    },
+  ];
+  const orchestrator = new Orchestrator(cfg);
+
+  let storageRouterTouched = false;
+  (orchestrator as any).storageRouter = {
+    storageFor: async () => {
+      storageRouterTouched = true;
+      throw new Error("storageFor should not run for unreadable namespace overrides");
+    },
+  };
+
+  await assert.rejects(
+    () => (orchestrator as any).recallInternal(
+      "Need namespace-guard coverage.",
+      "agent:project-x:chat",
+      { namespace: "global" },
+    ),
+    /namespace override is not readable: global/,
+  );
+  assert.equal(storageRouterTouched, false);
+});
+
 test("cold fallback uses configured cold QMD collection before archive scan", async () => {
   const memoryDir = tmpDir("engram-cold-qmd");
   await mkdir(memoryDir, { recursive: true });

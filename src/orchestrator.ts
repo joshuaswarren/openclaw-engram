@@ -2712,10 +2712,14 @@ export class Orchestrator {
     const embeddingFetchLimit = computedFetchLimit;
     const principal = resolvePrincipal(sessionKey, this.config);
     const namespaceOverride = options.namespace?.trim() || undefined;
+    const readableRecallNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    if (namespaceOverride && !readableRecallNamespaces.includes(namespaceOverride)) {
+      throw new Error(`namespace override is not readable: ${namespaceOverride}`);
+    }
     const selfNamespace = namespaceOverride ?? defaultNamespaceForPrincipal(principal, this.config);
     const recallNamespaces = namespaceOverride
       ? [namespaceOverride]
-      : recallNamespacesForPrincipal(principal, this.config);
+      : readableRecallNamespaces;
     const qmdAvailable = this.qmd.isAvailable();
     let graphDecisionStatus: IntentDebugSnapshot["graphDecision"]["status"] = recallDecision.plannedMode === "graph_mode"
       ? "skipped"
@@ -2751,8 +2755,8 @@ export class Orchestrator {
       retrievalQueryHash,
       retrievalQueryLength: retrievalQuery.length,
       plannerEnabled: this.config.recallPlannerEnabled,
-        plannedMode: requestedMode ?? recallDecision.plannedMode,
-        effectiveMode: recallMode,
+      plannedMode: requestedMode ?? recallDecision.plannedMode,
+      effectiveMode: recallMode,
       recallResultLimit,
       queryIntent,
       graphExpandedIntentDetected: recallDecision.graphExpandedIntentDetected,

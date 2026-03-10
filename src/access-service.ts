@@ -20,6 +20,7 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
+import { recallNamespacesForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type {
   GraphRecallSnapshot,
@@ -255,6 +256,18 @@ export class EngramAccessService {
     throw new EngramAccessInputError(`unsupported recall mode: ${mode}`);
   }
 
+  private resolveRecallNamespace(namespace: string | undefined, sessionKey: string | undefined): string | undefined {
+    const requested = namespace?.trim();
+    if (!requested) return undefined;
+    const resolved = this.resolveNamespace(requested);
+    const principal = resolvePrincipal(sessionKey, this.orchestrator.config);
+    const readableNamespaces = recallNamespacesForPrincipal(principal, this.orchestrator.config);
+    if (!readableNamespaces.includes(resolved)) {
+      throw new EngramAccessInputError(`namespace override is not readable: ${resolved}`);
+    }
+    return resolved;
+  }
+
   private async buildRecallDebug(
     snapshot: LastRecallSnapshot | null,
     namespace: string,
@@ -304,16 +317,20 @@ export class EngramAccessService {
   private async handleIdempotentWrite<T extends EngramAccessWriteResponse>(options: {
     operation: T["operation"];
     idempotencyKey?: string;
-    request: unknown;
+    requestFingerprint: unknown;
+    skip?: boolean;
     execute: () => Promise<T>;
   }): Promise<T> {
+    if (options.skip === true) {
+      return options.execute();
+    }
     const key = options.idempotencyKey?.trim();
     if (!key) {
       return options.execute();
     }
     const requestHash = hashAccessIdempotencyPayload({
       operation: options.operation,
-      request: options.request,
+      request: options.requestFingerprint,
     });
     const existing = await this.idempotency.get(key, requestHash);
     if (existing.conflict) {
@@ -353,11 +370,12 @@ export class EngramAccessService {
     if (query.length === 0) {
       throw new EngramAccessInputError("query is required");
     }
-    const namespace = this.resolveNamespace(request.namespace);
+    const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
+    const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;
     const mode = this.normalizeRecallMode(request.mode);
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
-      namespace,
+      namespace: namespaceOverride,
       topK,
       mode,
     };
@@ -391,7 +409,7 @@ export class EngramAccessService {
   async recallExplain(
     request: EngramAccessRecallExplainRequest = {},
   ): Promise<EngramAccessRecallExplainResponse> {
-    const requestedNamespace = request.namespace ? this.resolveNamespace(request.namespace) : undefined;
+    const requestedNamespace = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : this.orchestrator.lastRecall.getMostRecent();
@@ -451,10 +469,18 @@ export class EngramAccessService {
     return this.handleIdempotentWrite({
       operation: "memory_store",
       idempotencyKey: request.idempotencyKey,
-      request: {
-        ...request,
+      requestFingerprint: {
+        schemaVersion,
+        content: request.content,
+        category: request.category,
+        confidence: request.confidence,
         namespace,
+        tags: request.tags,
+        entityRef: request.entityRef,
+        ttl: request.ttl,
+        sourceReason: request.sourceReason,
       },
+      skip: request.dryRun === true,
       execute,
     });
   }
@@ -466,11 +492,11 @@ export class EngramAccessService {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
     }
     const execute = async (): Promise<EngramAccessWriteResponse> => {
+      validateExplicitCaptureInput({
+        ...request,
+        namespace,
+      }, "legacy_tool");
       if (request.dryRun === true) {
-        validateExplicitCaptureInput({
-          ...request,
-          namespace,
-        }, "legacy_tool");
         return {
           schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
           operation: "suggestion_submit",
@@ -511,10 +537,18 @@ export class EngramAccessService {
     return this.handleIdempotentWrite({
       operation: "suggestion_submit",
       idempotencyKey: request.idempotencyKey,
-      request: {
-        ...request,
+      requestFingerprint: {
+        schemaVersion,
+        content: request.content,
+        category: request.category,
+        confidence: request.confidence,
         namespace,
+        tags: request.tags,
+        entityRef: request.entityRef,
+        ttl: request.ttl,
+        sourceReason: request.sourceReason,
       },
+      skip: request.dryRun === true,
       execute,
     });
   }
