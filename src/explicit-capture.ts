@@ -294,9 +294,10 @@ export function validateExplicitCaptureInput(
 
 async function findDuplicateExplicitCapture(
   orchestrator: Orchestrator,
+  resolvedNamespace: string | undefined,
   candidate: ValidExplicitCapture,
 ): Promise<string | null> {
-  const storage = await orchestrator.getStorage(resolveExplicitCaptureNamespace(orchestrator, candidate.namespace));
+  const storage = await orchestrator.getStorage(resolvedNamespace);
   if (
     candidate.category === "fact"
     && typeof (storage as { hasFactContentHash?: (content: string) => Promise<boolean> }).hasFactContentHash === "function"
@@ -336,7 +337,7 @@ export async function persistExplicitCapture(
   source: ExplicitCaptureSource,
 ): Promise<{ id: string; duplicateOf?: string }> {
   const resolvedNamespace = resolveExplicitCaptureNamespace(orchestrator, candidate.namespace);
-  const duplicateOf = await findDuplicateExplicitCapture(orchestrator, candidate);
+  const duplicateOf = await findDuplicateExplicitCapture(orchestrator, resolvedNamespace, candidate);
   if (duplicateOf) {
     return { id: duplicateOf, duplicateOf };
   }
