@@ -35,6 +35,10 @@ import {
   readProjectedNativeKnowledgeChunks,
   parseTimelineRows,
 } from "../memory-projection-store.js";
+import {
+  normalizeProjectionPreview,
+  normalizeProjectionTags,
+} from "../memory-projection-format.js";
 
 export interface RebuildMemoryProjectionOptions {
   memoryDir: string;
@@ -139,18 +143,6 @@ function inferProjectedStatus(pathRel: string, memory: MemoryFile): MemoryStatus
   return inferMemoryStatus(memory.frontmatter, pathRel);
 }
 
-function normalizePreview(content: string, maxChars = 180): string {
-  return content.replace(/\s+/g, " ").trim().slice(0, maxChars);
-}
-
-function dedupeStrings(values: string[] | undefined): string[] {
-  return [...new Set(
-    (values ?? [])
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0),
-  )].sort();
-}
-
 function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProjectionCurrentState {
   const pathRel = toMemoryPathRel(memoryDir, memory.path);
   return {
@@ -171,8 +163,8 @@ function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProject
     memoryKind: memory.frontmatter.memoryKind,
     accessCount: memory.frontmatter.accessCount,
     lastAccessed: memory.frontmatter.lastAccessed,
-    tags: dedupeStrings(memory.frontmatter.tags),
-    preview: normalizePreview(memory.content),
+    tags: normalizeProjectionTags(memory.frontmatter.tags),
+    preview: normalizeProjectionPreview(memory.content),
   };
 }
 
@@ -190,7 +182,7 @@ function buildEntityMentionRows(
         updated: row.updated,
       });
     }
-    for (const tag of dedupeStrings(row.tags)) {
+    for (const tag of normalizeProjectionTags(row.tags)) {
       if (!tag.includes(":")) continue;
       mentions.push({
         memoryId: row.memoryId,
@@ -490,7 +482,7 @@ async function loadAuthoritativeProjectionSnapshot(options: {
     author: row.author,
     agent: row.agent,
     sourceHash: row.sourceHash,
-    preview: normalizePreview(row.content),
+    preview: normalizeProjectionPreview(row.content),
   })));
   const governance = await loadLatestGovernanceProjection(options.memoryDir);
   const entityMentionRows = buildEntityMentionRows(currentRows);
@@ -786,7 +778,7 @@ function writeProjectionDb(
           row.memoryKind ?? null,
           row.accessCount ?? null,
           row.lastAccessed ?? null,
-          JSON.stringify(dedupeStrings(row.tags)),
+          JSON.stringify(normalizeProjectionTags(row.tags)),
           row.preview,
         );
       }

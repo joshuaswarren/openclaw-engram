@@ -215,7 +215,7 @@ test("access service fallback browse includes archived memories without a projec
       memoryDoc(
         "fact-archived",
         "Archived memory that should still appear without projection browse.",
-        ['entityRef: person-retired', 'archivedAt: 2026-03-08T02:00:00.000Z', 'tags: ["legacy", "browser"]'],
+        ['entityRef: person-retired', 'archivedAt: 2026-03-08T02:00:00.000Z', 'tags: ["legacy", "browser", "legacy"]'],
       ),
     );
 
@@ -242,6 +242,7 @@ test("access service fallback browse includes archived memories without a projec
     assert.equal(browse.total, 1);
     assert.equal(browse.memories[0]?.id, "fact-archived");
     assert.equal(browse.memories[0]?.status, "archived");
+    assert.deepEqual(browse.memories[0]?.tags, ["browser", "legacy"]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -393,6 +394,7 @@ test("access service serves reviewQueue and maintenance from projection when gov
     assert.equal(queue.found, true);
     assert.equal(queue.runId, governance.runId);
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+    assert.equal("runId" in (queue.reviewQueue?.[0] ?? {}), false);
 
     const maintenance = await service.maintenance();
     assert.equal(maintenance.health.projectionAvailable, true);
@@ -402,6 +404,7 @@ test("access service serves reviewQueue and maintenance from projection when gov
       maintenance.latestGovernanceRun.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"),
       true,
     );
+    assert.equal("runId" in (maintenance.latestGovernanceRun.reviewQueue?.[0] ?? {}), false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

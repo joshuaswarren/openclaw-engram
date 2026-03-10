@@ -4,6 +4,10 @@ import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
+import {
+  normalizeProjectionPreview,
+  normalizeProjectionTags,
+} from "./memory-projection-format.js";
 import { inferMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
@@ -159,10 +163,6 @@ function normalizePagination(limit?: number, offset?: number): { limit: number; 
   const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit ?? 50))) : 50;
   const normalizedOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset ?? 0)) : 0;
   return { limit: normalizedLimit, offset: normalizedOffset };
-}
-
-function normalizePreview(content: string, maxChars = 180): string {
-  return content.replace(/\s+/g, " ").trim().slice(0, maxChars);
 }
 
 export class EngramAccessService {
@@ -388,7 +388,16 @@ export class EngramAccessService {
         runId: projected.runId,
         summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
         metrics: projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"],
-        reviewQueue: projected.reviewQueueRows as Awaited<
+        reviewQueue: projected.reviewQueueRows.map((row) => ({
+          entryId: row.entryId,
+          memoryId: row.memoryId,
+          path: row.path,
+          reasonCode: row.reasonCode,
+          severity: row.severity,
+          suggestedAction: row.suggestedAction,
+          suggestedStatus: row.suggestedStatus,
+          relatedMemoryIds: row.relatedMemoryIds,
+        })) as Awaited<
           ReturnType<typeof readMemoryGovernanceRunArtifact>
         >["reviewQueue"],
         appliedActions: projected.appliedActionRows.map((row) => ({
@@ -510,9 +519,9 @@ export class EngramAccessService {
       status: inferMemoryStatus(memory.frontmatter, memory.path),
       created: memory.frontmatter.created,
       updated: memory.frontmatter.updated,
-      tags: [...memory.frontmatter.tags],
+      tags: normalizeProjectionTags(memory.frontmatter.tags),
       entityRef: memory.frontmatter.entityRef,
-      preview: normalizePreview(memory.content),
+      preview: normalizeProjectionPreview(memory.content),
     };
   }
 }

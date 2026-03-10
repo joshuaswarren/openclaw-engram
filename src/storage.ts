@@ -58,6 +58,10 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import {
+  normalizeProjectionPreview,
+  normalizeProjectionTags,
+} from "./memory-projection-format.js";
+import {
   closeContinuityIncidentRecord,
   createContinuityIncidentRecord,
   parseContinuityIncident,
@@ -3086,8 +3090,8 @@ export class StorageManager {
       memoryKind: memory.frontmatter.memoryKind,
       accessCount: memory.frontmatter.accessCount,
       lastAccessed: memory.frontmatter.lastAccessed,
-      tags: [...(memory.frontmatter.tags ?? [])],
-      preview: memory.content.replace(/\s+/g, " ").trim().slice(0, 180),
+      tags: normalizeProjectionTags(memory.frontmatter.tags),
+      preview: normalizeProjectionPreview(memory.content),
     };
   }
 
