@@ -24,12 +24,6 @@ function parseOpenClawVersion(
   };
 }
 
-function parseOpenClawVersionTriple(
-  value: string | undefined,
-): VersionTriple | null {
-  return parseOpenClawVersion(value)?.triple ?? null;
-}
-
 export function shouldRegisterTypedAgentHeartbeat(
   runtimeVersion: string | undefined,
 ): boolean {
