@@ -8,8 +8,10 @@ import {
   runMemoryTimelineCliCommand,
   runRebuildMemoryLifecycleLedgerCliCommand,
   runRebuildMemoryProjectionCliCommand,
+  runRepairMemoryProjectionCliCommand,
   runMigrateObservationsCliCommand,
   runRebuildObservationsCliCommand,
+  runVerifyMemoryProjectionCliCommand,
 } from "../src/cli.js";
 
 async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
@@ -157,6 +159,69 @@ alpha
     memoryId: "fact-1",
   });
   assert.deepEqual(rows.map((row) => row.eventType), ["created", "updated"]);
+});
+
+test("verify-memory-projection and repair-memory-projection CLI wrappers detect and repair drift", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-verify-memory-projection-"));
+  await writeText(
+    memoryDir,
+    "facts/2026-03-08/fact-1.md",
+    `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+---
+
+alpha
+`,
+  );
+  await runRebuildMemoryProjectionCliCommand({
+    memoryDir,
+    write: true,
+    now: new Date("2026-03-08T02:00:00.000Z"),
+  });
+
+  await writeText(
+    memoryDir,
+    "facts/2026-03-08/fact-2.md",
+    `---
+id: fact-2
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T03:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["beta"]
+---
+
+beta
+`,
+  );
+
+  const verify = await runVerifyMemoryProjectionCliCommand({ memoryDir });
+  assert.equal(verify.ok, false);
+  assert.deepEqual(verify.missingCurrentMemoryIds, ["fact-2"]);
+
+  const dryRunRepair = await runRepairMemoryProjectionCliCommand({ memoryDir });
+  assert.equal(dryRunRepair.dryRun, true);
+  assert.equal(dryRunRepair.repaired, false);
+
+  const writeRepair = await runRepairMemoryProjectionCliCommand({
+    memoryDir,
+    write: true,
+    now: new Date("2026-03-08T04:00:00.000Z"),
+  });
+  assert.equal(writeRepair.dryRun, false);
+  assert.equal(writeRepair.repaired, true);
+
+  const verifiedAfter = await runVerifyMemoryProjectionCliCommand({ memoryDir });
+  assert.equal(verifiedAfter.ok, true);
 });
 
 test("migrate-observations CLI wrapper respects dry-run default and write mode", async () => {

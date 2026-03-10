@@ -5,7 +5,11 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { StorageManager } from "../src/storage.ts";
-import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
+import {
+  rebuildMemoryProjection,
+  repairMemoryProjection,
+  verifyMemoryProjection,
+} from "../src/maintenance/rebuild-memory-projection.ts";
 import {
   getMemoryProjectionPath,
   initializeMemoryProjectionDb,
@@ -212,6 +216,269 @@ archivedAt should override active
     const current = readProjectedMemoryState(memoryDir, "fact-archived-override");
     assert.ok(current);
     assert.equal(current?.status, "archived");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("rebuildMemoryProjection can refresh only memories inside an updated-at window", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-older.md",
+      `---
+id: fact-older
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+entityRef: project-older
+tags: ["older"]
+---
+
+older
+`,
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-recent.md",
+      `---
+id: fact-recent
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T03:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+entityRef: project-before
+tags: ["recent"]
+---
+
+recent
+`,
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T04:00:00.000Z"),
+    });
+    {
+      const db = new Database(getMemoryProjectionPath(memoryDir));
+      try {
+        db.prepare("UPDATE memory_current SET entity_ref = ? WHERE memory_id = ?")
+          .run("project-corrupt", "fact-older");
+      } finally {
+        db.close();
+      }
+    }
+
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-recent.md",
+      `---
+id: fact-recent
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T05:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+entityRef: project-after
+tags: ["recent"]
+---
+
+recent updated
+`,
+    );
+
+    const scoped = await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      updatedAfter: "2026-03-08T02:00:00.000Z",
+      now: new Date("2026-03-08T06:00:00.000Z"),
+    });
+
+    assert.equal(scoped.currentRows, 1);
+    const scopedVerify = await verifyMemoryProjection({
+      memoryDir,
+      updatedAfter: "2026-03-08T02:00:00.000Z",
+    });
+    assert.equal(scopedVerify.ok, true);
+    const older = readProjectedMemoryState(memoryDir, "fact-older");
+    const recent = readProjectedMemoryState(memoryDir, "fact-recent");
+    assert.equal(older?.entityRef, "project-corrupt");
+    assert.equal(recent?.entityRef, "project-after");
+
+    const fullVerify = await verifyMemoryProjection({ memoryDir });
+    assert.equal(fullVerify.ok, false);
+    assert.deepEqual(fullVerify.mismatchedCurrentMemoryIds, ["fact-older"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("scoped rebuild removes deleted memories that still exist in the projection", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-delete-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-recent.md",
+      `---
+id: fact-recent
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T05:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["recent"]
+---
+
+recent
+`,
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T06:00:00.000Z"),
+    });
+
+    await rm(path.join(memoryDir, "facts/2026-03-08/fact-recent.md"));
+
+    const scoped = await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      updatedAfter: "2026-03-08T02:00:00.000Z",
+      now: new Date("2026-03-08T07:00:00.000Z"),
+    });
+
+    assert.equal(scoped.currentRows, 0);
+    assert.equal(readProjectedMemoryState(memoryDir, "fact-recent"), null);
+    assert.equal(readProjectedMemoryTimeline(memoryDir, "fact-recent", 20), null);
+
+    const verify = await verifyMemoryProjection({ memoryDir });
+    assert.equal(verify.ok, true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("verifyMemoryProjection reports drift when projection is missing current rows", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-verify-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-1.md",
+      `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+---
+
+alpha
+`,
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T02:00:00.000Z"),
+    });
+
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-2.md",
+      `---
+id: fact-2
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T03:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["beta"]
+---
+
+beta
+`,
+    );
+
+    const verify = await verifyMemoryProjection({ memoryDir });
+    assert.equal(verify.ok, false);
+    assert.deepEqual(verify.missingCurrentMemoryIds, ["fact-2"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("repairMemoryProjection dry-run reports drift and write mode repairs it", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-repair-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-1.md",
+      `---
+id: fact-1
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T01:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["alpha"]
+---
+
+alpha
+`,
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T02:00:00.000Z"),
+    });
+
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-2.md",
+      `---
+id: fact-2
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T03:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["beta"]
+---
+
+beta
+`,
+    );
+
+    const dryRun = await repairMemoryProjection({ memoryDir });
+    assert.equal(dryRun.dryRun, true);
+    assert.equal(dryRun.repaired, false);
+    assert.equal(dryRun.verify.ok, false);
+
+    const writeResult = await repairMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T04:00:00.000Z"),
+    });
+    assert.equal(writeResult.dryRun, false);
+    assert.equal(writeResult.repaired, true);
+    assert.equal(writeResult.verify.ok, true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

@@ -70,7 +70,7 @@ function openProjectionReadonly(memoryDir: string): Database.Database | null {
   }
 }
 
-function parseCurrentRow(
+export function parseCurrentRow(
   memoryDir: string,
   row: Record<string, unknown> | undefined,
 ): MemoryProjectionCurrentState | null {
@@ -116,7 +116,7 @@ function parseCurrentRow(
   };
 }
 
-function parseTimelineRows(rows: Array<Record<string, unknown>>): MemoryLifecycleEvent[] {
+export function parseTimelineRows(rows: Array<Record<string, unknown>>): MemoryLifecycleEvent[] {
   const out: MemoryLifecycleEvent[] = [];
   for (const row of rows) {
     if (
