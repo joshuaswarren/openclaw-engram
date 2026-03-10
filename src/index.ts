@@ -8,6 +8,7 @@ import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
+import { shouldRegisterTypedAgentHeartbeat } from "./legacy-hook-compat.js";
 import {
   hasInlineExplicitCaptureMarkup,
   parseInlineExplicitCaptureNotes,
@@ -20,12 +21,31 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createOpikExporter } from "./opik-exporter.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
 const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
 const ENGRAM_ACCESS_SERVICE = "__openclawEngramAccessService";
 const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
+
+type LegacyHeartbeatHookEvent = {
+  context?: Record<string, unknown>;
+};
+
+type LegacyHeartbeatRuntimeApi = OpenClawPluginApi & {
+  registerHook?: (
+    events: string | string[],
+    handler: (event: LegacyHeartbeatHookEvent) => void,
+    opts?: {
+      name?: string;
+      description?: string;
+    },
+  ) => void;
+  runtime?: {
+    version?: string;
+  };
+};
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
@@ -72,6 +92,17 @@ function shouldSkipRecallForSession(
     } catch {
       return false;
     }
+  });
+}
+
+function observeSessionHeartbeat(
+  orchestrator: Orchestrator,
+  ctx: Record<string, unknown> | undefined,
+): void {
+  if (orchestrator.config.sessionObserverEnabled !== true) return;
+  const sessionKey = (ctx?.sessionKey as string) ?? "default";
+  void orchestrator.observeSessionHeartbeat(sessionKey).catch((err) => {
+    log.debug(`agent_heartbeat observer failed: ${err}`);
   });
 }
 
@@ -347,22 +378,46 @@ export default {
       },
     );
 
-    // ========================================================================
-    // HOOK: agent_heartbeat — Observe active session growth (non-blocking)
-    // ========================================================================
-    api.on(
-      "agent_heartbeat",
-      (
-        _event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
-      ) => {
-        if (orchestrator.config.sessionObserverEnabled !== true) return;
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
-        void orchestrator.observeSessionHeartbeat(sessionKey).catch((err) => {
-          log.debug(`agent_heartbeat observer failed: ${err}`);
-        });
+    // Keep the historical heartbeat observer for older/custom runtimes without
+    // warning on current published OpenClaw builds where the typed hook is gone.
+    const runtimeApi = api as LegacyHeartbeatRuntimeApi;
+
+    runtimeApi.registerHook?.(
+      ["agent_heartbeat", "agent:heartbeat"],
+      (event: LegacyHeartbeatHookEvent) => {
+        observeSessionHeartbeat(orchestrator, event.context);
+      },
+      {
+        name: "engram_agent_heartbeat_legacy",
+        description:
+          "Observe legacy OpenClaw heartbeat events when the runtime still emits them.",
       },
     );
+
+    const runtimeVersion =
+      runtimeApi.runtime?.version ||
+      process.env.OPENCLAW_SERVICE_VERSION ||
+      "unknown";
+    if (shouldRegisterTypedAgentHeartbeat(runtimeVersion)) {
+      (
+        api.on as unknown as (
+          hookName: string,
+          handler: (
+            event: Record<string, unknown>,
+            ctx: Record<string, unknown>,
+          ) => void,
+        ) => void
+      )("agent_heartbeat", (_event, ctx) => {
+        observeSessionHeartbeat(orchestrator, ctx);
+      });
+      log.info(
+        `registered legacy typed agent_heartbeat hook for OpenClaw ${runtimeVersion}`,
+      );
+    } else {
+      log.debug(
+        `skipping legacy typed agent_heartbeat hook for OpenClaw ${runtimeVersion}; published builds from 2026.1.29 onward do not expose it`,
+      );
+    }
 
     // ========================================================================
     // HOOK: before_compaction — Save checkpoint before context is lost
@@ -575,6 +630,10 @@ export default {
       start: async () => {
         log.info("initializing engram memory system...");
         await orchestrator.initialize();
+
+        // Initialize Opik exporter if configured
+        const opikExporter = createOpikExporter({}, log);
+        if (opikExporter) opikExporter.subscribe();
 
         // Cleanup old transcripts
         if (orchestrator.config.transcriptEnabled) {
