@@ -82,7 +82,7 @@ export interface OpikExporterConfig {
 // Auto-detect from opik-openclaw plugin config
 // ---------------------------------------------------------------------------
 
-function readOpikOpenclawConfig(): Partial<OpikExporterConfig> {
+function readOpikOpenclawConfig(log?: LoggerBackend): Partial<OpikExporterConfig> {
   try {
     const configPath =
       process.env.OPENCLAW_ENGRAM_CONFIG_PATH ??
@@ -98,7 +98,8 @@ function readOpikOpenclawConfig(): Partial<OpikExporterConfig> {
       workspaceName: typeof c.workspaceName === "string" ? c.workspaceName : undefined,
       apiKey: typeof c.apiKey === "string" && c.apiKey.length > 0 ? c.apiKey : undefined,
     };
-  } catch {
+  } catch (err) {
+    log?.debug?.(`[opik-exporter] could not read opik-openclaw config: ${err}`);
     return {};
   }
 }
@@ -207,7 +208,7 @@ export class OpikExporter {
     g.__openclawEngramTrace =
       typeof existing === "function"
         ? (event: EngramTraceEvent) => {
-            existing(event);
+            try { existing(event); } catch { /* prior subscriber threw; continue */ }
             handler(event);
           }
         : handler;
@@ -217,16 +218,25 @@ export class OpikExporter {
     );
   }
 
-  /** Remove this exporter from the globalThis trace chain. */
+  /** Deactivate this exporter instance.
+   *
+   * We intentionally do NOT restore __openclawEngramTrace to _prevHandler
+   * because any subscriber that chained *after* us would be silently dropped
+   * by such a restoration. Instead we mark the instance as disabled so that
+   * handleEvent() becomes a no-op while the callback chain itself is left
+   * untouched. The next subscribe() call from a fresh instance will re-enter
+   * the chain on top of whatever is there at that point.
+   */
   _detach(): void {
     const g = globalThis as Record<string, unknown>;
+    // Only clear the global slot if we are still the active exporter.
+    // A stale instance must not evict a newer exporter that already took over.
     if (g[OPIK_EXPORTER_SLOT] === this) delete g[OPIK_EXPORTER_SLOT];
-    // Restore whatever was in the slot before we subscribed (e.g. Langfuse)
-    // rather than zeroing it out, so other subscribers keep working.
-    g.__openclawEngramTrace = this._prevHandler;
+    // Disable event processing; the wrapper closure in the chain becomes a no-op.
+    (this.cfg as OpikExporterConfig & { enabled: boolean }).enabled = false;
     this._handler = undefined;
     this._prevHandler = undefined;
-    this.log.debug?.("[opik-exporter] detached from trace chain");
+    this.log.debug?.("[opik-exporter] detached — events silenced, chain preserved");
   }
 
   unsubscribe(): void {
@@ -412,7 +422,7 @@ export function createOpikExporter(
   // If opikTraceEnabled is not set (undefined), we enable automatically
   // whenever opik-openclaw is configured — avoids needing extra fields in
   // Engram's openclaw.json config section (which would fail schema validation).
-  const detected = readOpikOpenclawConfig();
+  const detected = readOpikOpenclawConfig(log);
 
   const apiUrl = raw.opikApiUrl ?? detected.apiUrl;
   if (!apiUrl) {
