@@ -44,7 +44,11 @@ import type {
 } from "./types.js";
 import { confidenceTier, SPECULATIVE_TTL_DAYS } from "./types.js";
 import {
+  type ProjectedMemoryBrowseOptions,
+  type ProjectedMemoryBrowsePage,
   readProjectedMemoryState,
+  readProjectedMemoryBrowse,
+  readProjectedGovernanceRecord,
   readProjectedMemoryTimeline,
 } from "./memory-projection-store.js";
 import {
@@ -53,6 +57,10 @@ import {
   sortMemoryLifecycleEvents,
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
+import {
+  normalizeProjectionPreview,
+  normalizeProjectionTags,
+} from "./memory-projection-format.js";
 import {
   closeContinuityIncidentRecord,
   createContinuityIncidentRecord,
@@ -3049,6 +3057,16 @@ export class StorageManager {
     return this.toProjectedCurrentState(archived, "archived");
   }
 
+  async browseProjectedMemories(
+    options: ProjectedMemoryBrowseOptions,
+  ): Promise<ProjectedMemoryBrowsePage | null> {
+    return readProjectedMemoryBrowse(this.baseDir, options);
+  }
+
+  async getProjectedGovernanceRecord(): Promise<ReturnType<typeof readProjectedGovernanceRecord>> {
+    return readProjectedGovernanceRecord(this.baseDir);
+  }
+
   private toProjectedCurrentState(
     memory: MemoryFile,
     fallbackStatus: MemoryStatus,
@@ -3072,6 +3090,8 @@ export class StorageManager {
       memoryKind: memory.frontmatter.memoryKind,
       accessCount: memory.frontmatter.accessCount,
       lastAccessed: memory.frontmatter.lastAccessed,
+      tags: normalizeProjectionTags(memory.frontmatter.tags),
+      preview: normalizeProjectionPreview(memory.content),
     };
   }
 

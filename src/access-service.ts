@@ -4,6 +4,14 @@ import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
+import {
+  normalizeProjectionPreview,
+  normalizeProjectionTags,
+} from "./memory-projection-format.js";
+import {
+  inferMemoryStatus,
+  toMemoryPathRel,
+} from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import { parseEntityFile } from "./storage.js";
@@ -160,10 +168,6 @@ function normalizePagination(limit?: number, offset?: number): { limit: number; 
   return { limit: normalizedLimit, offset: normalizedOffset };
 }
 
-function normalizePreview(content: string, maxChars = 180): string {
-  return content.replace(/\s+/g, " ").trim().slice(0, maxChars);
-}
-
 export class EngramAccessService {
   constructor(private readonly orchestrator: Orchestrator) {}
 
@@ -251,9 +255,27 @@ export class EngramAccessService {
     const statusFilter = request.status?.trim().toLowerCase();
     const categoryFilter = request.category?.trim().toLowerCase();
 
-    let memories = await storage.readAllMemories();
+    const projected = await storage.browseProjectedMemories({
+      query,
+      status: statusFilter,
+      category: categoryFilter,
+      limit,
+      offset,
+    });
+    if (projected) {
+      return {
+        namespace: resolvedNamespace,
+        total: projected.total,
+        count: projected.memories.length,
+        limit,
+        offset,
+        memories: projected.memories.map((row) => ({ ...row })),
+      };
+    }
+
+    let memories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()];
     memories = memories.filter((memory) => {
-      const status = (memory.frontmatter.status ?? "active").toLowerCase();
+      const status = inferMemoryStatus(memory.frontmatter, toMemoryPathRel(storage.dir, memory.path)).toLowerCase();
       if (statusFilter && status !== statusFilter) return false;
       if (categoryFilter && memory.frontmatter.category.toLowerCase() !== categoryFilter) return false;
       if (!query) return true;
@@ -273,7 +295,9 @@ export class EngramAccessService {
       return rightAt.localeCompare(leftAt);
     });
 
-    const page = memories.slice(offset, offset + limit).map((memory) => this.serializeMemorySummary(memory));
+    const page = memories
+      .slice(offset, offset + limit)
+      .map((memory) => this.serializeMemorySummary(memory, storage.dir));
     return {
       namespace: resolvedNamespace,
       total: memories.length,
@@ -361,6 +385,41 @@ export class EngramAccessService {
   }
 
   async reviewQueue(runId?: string): Promise<EngramAccessReviewQueueResponse> {
+    const storage = await this.orchestrator.getStorage();
+    const projected = await storage.getProjectedGovernanceRecord();
+    if (projected && (!runId || projected.runId === runId.trim())) {
+      return {
+        found: true,
+        runId: projected.runId,
+        summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
+        metrics: projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"],
+        reviewQueue: projected.reviewQueueRows.map((row) => ({
+          entryId: row.entryId,
+          memoryId: row.memoryId,
+          path: row.path,
+          reasonCode: row.reasonCode,
+          severity: row.severity,
+          suggestedAction: row.suggestedAction,
+          suggestedStatus: row.suggestedStatus,
+          relatedMemoryIds: row.relatedMemoryIds,
+        })) as Awaited<
+          ReturnType<typeof readMemoryGovernanceRunArtifact>
+        >["reviewQueue"],
+        appliedActions: projected.appliedActionRows.map((row) => ({
+          action: row.action,
+          memoryId: row.memoryId,
+          reasonCode: row.reasonCode,
+          beforeStatus: row.beforeStatus,
+          afterStatus: row.afterStatus,
+          originalPath: row.originalPath,
+          currentPath: row.currentPath,
+        })) as Awaited<
+          ReturnType<typeof readMemoryGovernanceRunArtifact>
+        >["appliedActions"],
+        report: projected.report,
+      };
+    }
+
     const resolvedRunId = runId?.trim() || (await listMemoryGovernanceRuns(this.orchestrator.config.memoryDir))[0];
     if (!resolvedRunId) return { found: false };
     const artifact = await readMemoryGovernanceRunArtifact(this.orchestrator.config.memoryDir, resolvedRunId);
@@ -457,17 +516,17 @@ export class EngramAccessService {
     };
   }
 
-  private serializeMemorySummary(memory: MemoryFile): EngramAccessMemorySummary {
+  private serializeMemorySummary(memory: MemoryFile, baseDir: string): EngramAccessMemorySummary {
     return {
       id: memory.frontmatter.id,
       path: memory.path,
       category: memory.frontmatter.category,
-      status: memory.frontmatter.status ?? "active",
+      status: inferMemoryStatus(memory.frontmatter, toMemoryPathRel(baseDir, memory.path)),
       created: memory.frontmatter.created,
       updated: memory.frontmatter.updated,
-      tags: [...memory.frontmatter.tags],
+      tags: normalizeProjectionTags(memory.frontmatter.tags),
       entityRef: memory.frontmatter.entityRef,
-      preview: normalizePreview(memory.content),
+      preview: normalizeProjectionPreview(memory.content),
     };
   }
 }
