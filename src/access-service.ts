@@ -537,7 +537,7 @@ export class EngramAccessService {
       const result = await queueExplicitCaptureForReview(
         this.orchestrator,
         candidate,
-        "memory_capture",
+        "suggestion_submit",
         new Error(request.sourceReason?.trim() || "submitted via engram suggestion_submit"),
       );
       const response: EngramAccessWriteResponse = {
