@@ -309,14 +309,17 @@ export class OpikExporter {
   // -------------------------------------------------------------------------
 
   private onLlmStart(evt: EngramLlmTraceEvent): void {
+    // Use evt.traceId (Engram's correlation key) as the Opik spanId so spans
+    // are deterministic and stable across retries. Derive a per-call Opik
+    // trace_id from the same key so each LLM call maps to its own trace.
     this.inFlight.set(evt.traceId, {
       startedAt: Date.now(),
       startTime: new Date().toISOString(),
       model: evt.model,
       operation: evt.operation,
       input: evt.input,
-      spanId: randomUUID(),
-      traceId: randomUUID(),
+      spanId: this.sessionToTraceId(evt.traceId + ":span"),
+      traceId: this.sessionToTraceId(evt.traceId),
     });
   }
 
