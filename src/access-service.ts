@@ -418,7 +418,7 @@ export class EngramAccessService {
       sessionKey: request.sessionKey,
       namespace: effectiveNamespace,
       context,
-      count: results.length,
+      count: snapshot?.memoryIds.length ?? results.length,
       memoryIds: snapshot?.memoryIds ?? [],
       results,
       recordedAt: snapshot?.recordedAt,

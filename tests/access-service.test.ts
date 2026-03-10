@@ -268,6 +268,63 @@ test("access service recall reports the effective snapshot namespace in response
   }
 });
 
+test("access service recall count stays aligned with snapshot memory ids when some memories cannot be serialized", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-recall-count-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-08/fact-present.md");
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-present.md",
+      memoryDoc("fact-present", "Only one memory is still readable."),
+    );
+    const storage = new StorageManager(memoryDir);
+    const snapshot = {
+      sessionKey: "sess-count",
+      recordedAt: "2026-03-10T00:00:00.000Z",
+      queryHash: "hash",
+      queryLen: 8,
+      memoryIds: ["fact-present", "fact-missing"],
+      namespace: "global",
+      traceId: "trace-count",
+      plannerMode: "minimal",
+      requestedMode: "minimal",
+      fallbackUsed: false,
+      sourcesUsed: ["memories"],
+      budgetsApplied: undefined,
+      latencyMs: 9,
+      resultPaths: [memoryPath, path.join(memoryDir, "facts/2026-03-08/fact-missing.md")],
+    };
+
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => snapshot, getMostRecent: () => snapshot },
+      getStorage: async () => storage,
+      getLastIntentSnapshot: async () => null,
+      getLastGraphRecallSnapshot: async () => null,
+    } as any);
+
+    const response = await service.recall({
+      query: "missing?",
+      sessionKey: "sess-count",
+    });
+
+    assert.equal(response.count, 2);
+    assert.deepEqual(response.memoryIds, ["fact-present", "fact-missing"]);
+    assert.equal(response.results.length, 1);
+    assert.equal(response.results[0]?.id, "fact-present");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service memoryStore persists and enforces idempotency conflicts", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
   try {
