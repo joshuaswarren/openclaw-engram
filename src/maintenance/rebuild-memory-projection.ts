@@ -989,14 +989,10 @@ export async function rebuildMemoryProjection(
         nextNativeKnowledgeRows = snapshot.nativeKnowledgeRows;
       }
       if (projectedGovernance.projectionExists && projectedGovernance.runId) {
-        nextGovernance = {
-          runId: projectedGovernance.runId,
-          summary: projectedGovernance.summary,
-          metrics: projectedGovernance.metrics,
-          reviewQueueRows: projectedGovernance.reviewQueueRows,
-          appliedActionRows: projectedGovernance.appliedActionRows,
-          report: projectedGovernance.report,
-        };
+        // Governance rows are also sourced from standalone artifact snapshots, so
+        // scoped memory rebuilds should keep the latest governance artifact data
+        // instead of restoring whatever happened to be in the prior projection.
+        nextGovernance = snapshot.governance;
       }
     }
 

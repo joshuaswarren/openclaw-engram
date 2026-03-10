@@ -893,6 +893,11 @@ recent
         2,
       ),
     );
+    const initialGovernance = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-08T06:10:00.000Z"),
+    });
 
     await rebuildMemoryProjection({
       memoryDir,
@@ -956,6 +961,11 @@ recent updated
         2,
       ),
     );
+    const updatedGovernance = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-08T07:10:00.000Z"),
+    });
 
     const scoped = await rebuildMemoryProjection({
       memoryDir,
@@ -967,6 +977,7 @@ recent updated
 
     assert.equal(scoped.currentRows, 1);
     assert.equal(scoped.nativeKnowledgeRows, 1);
+    assert.equal(scoped.reviewQueueRows, updatedGovernance.reviewQueue.length);
     assert.deepEqual(readProjectedNativeKnowledgeChunks(memoryDir), [
       {
         chunkId: "nk-identity-2",
@@ -986,6 +997,10 @@ recent updated
         preview: "Updated identity note.",
       },
     ]);
+    const projectedReviewQueue = readProjectedLatestReviewQueue(memoryDir);
+    assert.ok(projectedReviewQueue?.found);
+    assert.equal(projectedReviewQueue?.runId, updatedGovernance.runId);
+    assert.notEqual(projectedReviewQueue?.runId, initialGovernance.runId);
 
     const verify = await verifyMemoryProjection({ memoryDir, defaultNamespace: "global" });
     assert.equal(verify.ok, true);
