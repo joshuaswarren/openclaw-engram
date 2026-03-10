@@ -180,7 +180,7 @@ alpha
   }
 });
 
-test("initializeMemoryProjectionDb migrates legacy schema columns for existing projection stores", async () => {
+test("projection reads lazily migrate legacy schema columns for existing projection stores", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-legacy-browse-"));
   try {
     const projectionPath = getMemoryProjectionPath(memoryDir);
@@ -261,10 +261,13 @@ test("initializeMemoryProjectionDb migrates legacy schema columns for existing p
         null,
       );
 
-      initializeMemoryProjectionDb(db);
     } finally {
       db.close();
     }
+
+    const projected = readProjectedMemoryState(memoryDir, "fact-legacy");
+    assert.ok(projected);
+    assert.equal(projected?.memoryId, "fact-legacy");
 
     const browse = readProjectedMemoryBrowse(memoryDir, {
       limit: 20,
@@ -284,6 +287,39 @@ test("initializeMemoryProjectionDb migrates legacy schema columns for existing p
     } finally {
       migrated.close();
     }
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("projection browse returns null for text queries so callers can preserve full-content fallback parity", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-query-fallback-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-query.md",
+      memoryDoc({
+        id: "fact-query",
+        content: `${"alpha ".repeat(60)}needle beyond preview depth`,
+        created: "2026-03-08T00:00:00.000Z",
+        updated: "2026-03-08T01:00:00.000Z",
+      }),
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+
+    const browse = readProjectedMemoryBrowse(memoryDir, {
+      query: "needle beyond preview depth",
+      status: "active",
+      category: "fact",
+      limit: 20,
+      offset: 0,
+    });
+    assert.equal(browse, null);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

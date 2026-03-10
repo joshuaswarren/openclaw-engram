@@ -128,6 +128,26 @@ function migrateMemoryCurrentTable(db: Database.Database): void {
   }
 }
 
+function memoryCurrentRequiresMigration(db: Database.Database): boolean {
+  const columns = listTableColumns(db, "memory_current");
+  return columns.size > 0 && (!columns.has("tags_json") || !columns.has("preview_text"));
+}
+
+function migrateProjectionSchemaIfNeeded(memoryDir: string): void {
+  const dbPath = getMemoryProjectionPath(memoryDir);
+  try {
+    const db = new Database(dbPath, { fileMustExist: true });
+    try {
+      if (!memoryCurrentRequiresMigration(db)) return;
+      initializeMemoryProjectionDb(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Fail open on migration attempts so readonly consumers can still use legacy rows.
+  }
+}
+
 function memoryCurrentSelectExpressions(db: Database.Database): {
   tagsJson: string;
   previewText: string;
@@ -288,6 +308,27 @@ function openProjectionReadonly(memoryDir: string): Database.Database | null {
   }
 }
 
+function withProjectionReadonly<T>(
+  memoryDir: string,
+  reader: (db: Database.Database) => T,
+): T | null {
+  const db = openProjectionReadonly(memoryDir);
+  if (!db) return null;
+
+  let needsMigration = false;
+  try {
+    needsMigration = memoryCurrentRequiresMigration(db);
+    return reader(db);
+  } catch {
+    return null;
+  } finally {
+    db.close();
+    if (needsMigration) {
+      migrateProjectionSchemaIfNeeded(memoryDir);
+    }
+  }
+}
+
 function parseStringArray(value: unknown): string[] {
   if (typeof value !== "string" || value.length === 0) return [];
   try {
@@ -391,10 +432,7 @@ export function readProjectedMemoryState(
   memoryDir: string,
   memoryId: string,
 ): MemoryProjectionCurrentState | null {
-  const db = openProjectionReadonly(memoryDir);
-  if (!db) return null;
-
-  try {
+  return withProjectionReadonly(memoryDir, (db) => {
     const currentSelect = memoryCurrentSelectExpressions(db);
     const row = db
       .prepare(
@@ -424,11 +462,7 @@ export function readProjectedMemoryState(
       )
       .get(memoryId) as Record<string, unknown> | undefined;
     return parseCurrentRow(memoryDir, row);
-  } catch {
-    return null;
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function readProjectedMemoryTimeline(
@@ -479,10 +513,7 @@ export function readProjectedMemoryBrowse(
   memoryDir: string,
   options: ProjectedMemoryBrowseOptions,
 ): ProjectedMemoryBrowsePage | null {
-  const db = openProjectionReadonly(memoryDir);
-  if (!db) return null;
-
-  try {
+  return withProjectionReadonly(memoryDir, (db) => {
     const normalizedQuery = options.query?.trim().toLowerCase() ?? "";
     if (normalizedQuery) {
       return null;
@@ -545,11 +576,7 @@ export function readProjectedMemoryBrowse(
           preview: typeof row.preview_text === "string" ? row.preview_text : "",
         })),
     };
-  } catch {
-    return null;
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function readProjectedEntityMentions(
