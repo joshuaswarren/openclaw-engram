@@ -62,6 +62,9 @@ openclaw engram session-repair      # Bounded repair plan/apply (dry-run default
 openclaw engram dashboard start     # Start live graph dashboard service
 openclaw engram dashboard status    # Dashboard health/status
 openclaw engram dashboard stop      # Stop dashboard service
+openclaw engram access http-serve   # Start local HTTP API + admin console shell
+openclaw engram access http-status  # Access server health/status
+openclaw engram access http-stop    # Stop local HTTP API
 openclaw engram action-audit        # Namespace-aware memory action policy audit
 openclaw engram tier-status         # Tier migration telemetry + last-cycle summary
 openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run default)
@@ -116,6 +119,11 @@ Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.
 - Rules are applied at write-time for extracted facts before persistence.
 - Rule targets may override `category`, `namespace`, or both; invalid targets fail-open to default writes.
+
+Admin console notes:
+- Start the local access server, then open `http://127.0.0.1:4318/engram/ui/` in a browser.
+- Paste the same bearer token used for `/engram/v1/...` requests into the console login field.
+- The console is read-only by default, but governance review actions still write auditable lifecycle events through the same local access layer.
 
 ## Compression Guideline Optimizer Tool (v8.11)
 

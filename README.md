@@ -199,6 +199,7 @@ openclaw engram governance-run --mode apply  # Apply reversible governance trans
 openclaw engram governance-report         # Read the latest or named governance artifact bundle
 openclaw engram governance-restore --run-id <runId> # Restore one applied governance run
 openclaw engram review-disposition <memoryId> --status rejected # Record an explicit operator review outcome
+openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN" # Start the local access API + admin console shell
 openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
 openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger
@@ -213,6 +214,8 @@ openclaw engram policy-status                # Lifecycle policy snapshot
 ```
 
 Governance runs write durable artifacts under `{memoryDir}/state/memory-governance/runs/<runId>/`, including `summary.json`, `review-queue.json`, `kept-memories.json`, `applied-actions.json`, `metrics.json`, `manifest.json`, `report.md`, and `restore.json` for apply runs.
+
+When the local HTTP access server is running, Engram also serves a lightweight operator UI shell at `http://127.0.0.1:4318/engram/ui/`. Paste the same bearer token into the console UI and it will use the authenticated `/engram/v1/...` endpoints for memory browsing, recall inspection, governance review, entity exploration, and maintenance status.
 
 ## Configuration
 
