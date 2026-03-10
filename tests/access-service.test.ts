@@ -325,6 +325,74 @@ test("access service recall count stays aligned with snapshot memory ids when so
   }
 });
 
+test("access service recall without a session key does not reuse another session snapshot", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-recall-no-session-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-08/fact-stale.md");
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-stale.md",
+      memoryDoc("fact-stale", "This memory belongs to a different session."),
+    );
+    const storage = new StorageManager(memoryDir);
+    let getMostRecentCalls = 0;
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx-without-session",
+      lastRecall: {
+        get: () => null,
+        getMostRecent: () => {
+          getMostRecentCalls += 1;
+          return {
+            sessionKey: "other-session",
+            recordedAt: "2026-03-10T00:00:00.000Z",
+            queryHash: "hash",
+            queryLen: 8,
+            memoryIds: ["fact-stale"],
+            namespace: "other-namespace",
+            traceId: "trace-stale",
+            plannerMode: "minimal",
+            requestedMode: "minimal",
+            fallbackUsed: false,
+            sourcesUsed: ["memories"],
+            budgetsApplied: undefined,
+            latencyMs: 4,
+            resultPaths: [memoryPath],
+          };
+        },
+      },
+      getStorage: async () => storage,
+      getLastIntentSnapshot: async () => null,
+      getLastGraphRecallSnapshot: async () => null,
+    } as any);
+
+    const response = await service.recall({
+      query: "fresh request",
+      includeDebug: true,
+    });
+
+    assert.equal(getMostRecentCalls, 0);
+    assert.equal(response.sessionKey, undefined);
+    assert.equal(response.namespace, "global");
+    assert.equal(response.context, "ctx-without-session");
+    assert.equal(response.count, 0);
+    assert.deepEqual(response.memoryIds, []);
+    assert.deepEqual(response.results, []);
+    assert.equal(response.recordedAt, undefined);
+    assert.equal(response.traceId, undefined);
+    assert.equal(response.debug, undefined);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service memoryStore persists and enforces idempotency conflicts", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
   try {

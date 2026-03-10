@@ -406,7 +406,7 @@ export class EngramAccessService {
     const context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
-      : this.orchestrator.lastRecall.getMostRecent();
+      : null;
     const effectiveNamespace = snapshot?.namespace
       ? this.resolveNamespace(snapshot.namespace)
       : namespace;

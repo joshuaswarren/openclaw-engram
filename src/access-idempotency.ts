@@ -28,7 +28,6 @@ export function hashAccessIdempotencyPayload(payload: unknown): string {
 
 export class AccessIdempotencyStore {
   private readonly statePath: string;
-  private loaded = false;
   private state: Record<string, AccessIdempotencyEntry> = {};
 
   constructor(memoryDir: string) {
@@ -36,7 +35,7 @@ export class AccessIdempotencyStore {
   }
 
   async get(key: string, requestHash: string): Promise<{ response?: unknown; conflict: boolean }> {
-    await this.ensureLoaded();
+    await this.reload();
     const entry = this.state[key];
     if (!entry) return { conflict: false };
     if (entry.requestHash !== requestHash) {
@@ -49,7 +48,7 @@ export class AccessIdempotencyStore {
   }
 
   async put(key: string, requestHash: string, response: unknown): Promise<void> {
-    await this.ensureLoaded();
+    await this.reload();
     this.state[key] = {
       recordedAt: new Date().toISOString(),
       requestHash,
@@ -59,18 +58,18 @@ export class AccessIdempotencyStore {
     await this.flush();
   }
 
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-    this.loaded = true;
+  private async reload(): Promise<void> {
     try {
       const raw = await readFile(this.statePath, "utf-8");
       const parsed = JSON.parse(raw) as Record<string, AccessIdempotencyEntry>;
       if (parsed && typeof parsed === "object") {
         this.state = parsed;
+        return;
       }
     } catch {
-      this.state = {};
+      // Missing or malformed state should fail open to an empty store.
     }
+    this.state = {};
   }
 
   private async prune(): Promise<void> {
