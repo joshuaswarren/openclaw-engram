@@ -152,6 +152,8 @@ export class OpikExporter {
   private readonly cfg: OpikExporterConfig;
   private readonly log: LoggerBackend;
   private readonly inFlight = new Map<string, InFlightLlm>();
+  /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
+  private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(cfg: OpikExporterConfig, log: LoggerBackend) {
     this.cfg = cfg;
@@ -280,7 +282,18 @@ export class OpikExporter {
     });
   }
 
+  private sweepStaleInFlight(): void {
+    const cutoff = Date.now() - OpikExporter.IN_FLIGHT_TTL_MS;
+    for (const [id, entry] of this.inFlight) {
+      if (entry.startedAt < cutoff) {
+        this.inFlight.delete(id);
+      }
+    }
+  }
+
   private async onLlmEnd(evt: EngramLlmTraceEvent): Promise<void> {
+    // Opportunistically sweep stale entries to prevent unbounded map growth.
+    if (this.inFlight.size > 20) this.sweepStaleInFlight();
     const state = this.inFlight.get(evt.traceId);
     this.inFlight.delete(evt.traceId);
 
@@ -371,10 +384,15 @@ export function createOpikExporter(
 
   const apiUrl = raw.opikApiUrl ?? detected.apiUrl;
   if (!apiUrl) {
-    log.warn(
-      "[opik-exporter] opikTraceEnabled=true but no apiUrl found — " +
-        "set opikApiUrl in Engram config or ensure opik-openclaw plugin is enabled",
-    );
+    // Only warn when the user explicitly opted in but forgot to set the URL.
+    // When auto-detecting (opikTraceEnabled not set), return silently so non-Opik
+    // users see no log noise on every startup.
+    if (raw.opikTraceEnabled === true) {
+      log.warn(
+        "[opik-exporter] opikTraceEnabled=true but no apiUrl found — " +
+          "set opikApiUrl in Engram config or ensure opik-openclaw plugin is configured",
+      );
+    }
     return null;
   }
 
