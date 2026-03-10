@@ -5090,6 +5090,9 @@ export class Orchestrator {
       const inferredIntent = this.config.intentRoutingEnabled
         ? inferIntentFromText(`${writeCategory} ${fact.tags.join(" ")} ${fact.content}`)
         : null;
+      const extractionWriteSource = (fact as any).source === "proactive"
+        ? "extraction-proactive"
+        : "extraction";
 
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
@@ -5106,7 +5109,7 @@ export class Orchestrator {
             confidence: fact.confidence,
             tags: [...fact.tags, "chunked"],
             entityRef: fact.entityRef,
-            source: "extraction",
+            source: extractionWriteSource,
             importance,
             intentGoal: inferredIntent?.goal,
             intentActionType: inferredIntent?.actionType,
@@ -5129,7 +5132,7 @@ export class Orchestrator {
                 confidence: fact.confidence,
                 tags: fact.tags,
                 entityRef: fact.entityRef,
-                source: "chunking",
+                source: extractionWriteSource,
                 importance: chunkImportance,
                 intentGoal: inferredIntent?.goal,
                 intentActionType: inferredIntent?.actionType,
@@ -5284,7 +5287,7 @@ export class Orchestrator {
         confidence: fact.confidence,
         tags: fact.tags,
         entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
-        source: "extraction",
+        source: extractionWriteSource,
         importance,
         supersedes,
         links: links.length > 0 ? links : undefined,

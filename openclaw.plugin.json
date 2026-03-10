@@ -2055,6 +2055,21 @@
         "default": 2,
         "description": "Maximum proactive self-questions generated per extraction pass (0 disables question generation)."
       },
+      "proactiveExtractionTimeoutMs": {
+        "type": "number",
+        "default": 2500,
+        "description": "Hard timeout in milliseconds for proactive self-question generation and answer synthesis (0 disables the proactive second pass)."
+      },
+      "proactiveExtractionMaxTokens": {
+        "type": "number",
+        "default": 900,
+        "description": "Token budget for each proactive extraction sub-call (0 disables the proactive second pass)."
+      },
+      "proactiveExtractionCategoryAllowlist": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional memory categories allowed from proactive second-pass writes. When omitted, proactive writes can emit any standard memory category."
+      },
       "maxCompressionTokensPerHour": {
         "type": "number",
         "default": 1500,
@@ -3005,6 +3020,21 @@
       "label": "Max Proactive Questions / Extraction",
       "advanced": true,
       "placeholder": "2"
+    },
+    "proactiveExtractionTimeoutMs": {
+      "label": "Proactive Extraction Timeout (ms)",
+      "advanced": true,
+      "placeholder": "2500"
+    },
+    "proactiveExtractionMaxTokens": {
+      "label": "Proactive Extraction Max Tokens",
+      "advanced": true,
+      "placeholder": "900"
+    },
+    "proactiveExtractionCategoryAllowlist": {
+      "label": "Proactive Category Allowlist",
+      "advanced": true,
+      "help": "Optional list of memory categories that proactive second-pass writes may emit"
     },
     "maxCompressionTokensPerHour": {
       "label": "Max Compression Tokens / Hour",

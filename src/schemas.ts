@@ -83,6 +83,31 @@ export const ExtractedRelationshipSchema = z.object({
   label: z.string().describe("Relationship label (e.g. 'works at', 'created', 'manages')"),
 });
 
+export const ProactiveExtractionResultSchema = z.object({
+  facts: z
+    .array(ExtractedFactSchema)
+    .describe(
+      "Additional high-confidence memories recovered only after answering proactive follow-up questions from the same buffered conversation.",
+    ),
+  profileUpdates: z
+    .array(z.string())
+    .describe(
+      "Additional profile updates directly supported by the buffered conversation. Omit anything speculative.",
+    ),
+  entities: z
+    .array(EntityMentionSchema)
+    .describe(
+      "Additional entities or entity facts surfaced by the proactive follow-up pass.",
+    ),
+  relationships: z
+    .array(ExtractedRelationshipSchema)
+    .optional()
+    .nullable()
+    .describe(
+      "Additional relationships surfaced by the proactive follow-up pass.",
+    ),
+});
+
 export const ExtractionResultSchema = z.object({
   facts: z
     .array(ExtractedFactSchema)

@@ -11,6 +11,7 @@ export type CronConversationRecallMode = "auto" | "always" | "never";
 export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 export type CaptureMode = "implicit" | "explicit" | "hybrid";
 export type MemoryOsPresetName = "conservative" | "balanced" | "research-max" | "local-llm-heavy";
+export type ExtractionPassSource = "base" | "proactive";
 
 export interface RecallSectionConfig {
   id: string;
@@ -503,6 +504,9 @@ export interface PluginConfig {
   compressionGuidelineSemanticRefinementEnabled: boolean;
   compressionGuidelineSemanticTimeoutMs: number;
   maxProactiveQuestionsPerExtraction: number;
+  proactiveExtractionTimeoutMs: number;
+  proactiveExtractionMaxTokens: number;
+  proactiveExtractionCategoryAllowlist?: MemoryCategory[];
   maxCompressionTokensPerHour: number;
   behaviorLoopAutoTuneEnabled: boolean;
   behaviorLoopLearningWindowDays: number;
@@ -862,6 +866,8 @@ export interface ExtractedFact {
   confidence: number;
   tags: string[];
   entityRef?: string;
+  source?: ExtractionPassSource;
+  promptedByQuestion?: string;
 }
 
 export interface MemoryIntent {
@@ -899,6 +905,8 @@ export interface EntityMention {
   name: string;
   type: "person" | "project" | "tool" | "company" | "place" | "other";
   facts: string[];
+  source?: ExtractionPassSource;
+  promptedByQuestion?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +947,8 @@ export interface ExtractedRelationship {
   source: string;
   target: string;
   label: string;
+  extractionSource?: ExtractionPassSource;
+  promptedByQuestion?: string;
 }
 
 export interface ConsolidationItem {
