@@ -835,6 +835,165 @@ recent
   }
 });
 
+test("scoped rebuild refreshes native knowledge rows from the latest sync snapshot", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-native-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-recent.md",
+      `---
+id: fact-recent
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T05:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["recent"]
+---
+
+recent
+`,
+    );
+    await writeText(
+      memoryDir,
+      "state/native-knowledge/curated-include-sync.json",
+      JSON.stringify(
+        {
+          version: 1,
+          updatedAt: "2026-03-08T06:00:00.000Z",
+          files: {
+            "docs/identity.md": {
+              sourcePath: "docs/identity.md",
+              sourceKind: "identity",
+              title: "Identity",
+              privacyClass: "internal",
+              derivedDate: "2026-03-08",
+              sourceHash: "hash-initial",
+              syncConfigHash: "sync-identity",
+              mtimeMs: 1,
+              deleted: false,
+              chunks: [
+                {
+                  chunkId: "nk-identity-1",
+                  sourcePath: "docs/identity.md",
+                  title: "Identity",
+                  sourceKind: "identity",
+                  startLine: 1,
+                  endLine: 2,
+                  content: "Initial identity note.",
+                  privacyClass: "internal",
+                  sourceHash: "hash-initial",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      defaultNamespace: "global",
+      dryRun: false,
+      now: new Date("2026-03-08T06:30:00.000Z"),
+    });
+
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-recent.md",
+      `---
+id: fact-recent
+category: fact
+created: 2026-03-08T00:00:00.000Z
+updated: 2026-03-08T07:00:00.000Z
+source: test
+confidence: 0.8
+confidenceTier: implied
+tags: ["recent"]
+---
+
+recent updated
+`,
+    );
+    await writeText(
+      memoryDir,
+      "state/native-knowledge/curated-include-sync.json",
+      JSON.stringify(
+        {
+          version: 1,
+          updatedAt: "2026-03-08T07:00:00.000Z",
+          files: {
+            "docs/identity.md": {
+              sourcePath: "docs/identity.md",
+              sourceKind: "identity",
+              title: "Identity",
+              privacyClass: "internal",
+              derivedDate: "2026-03-08",
+              sourceHash: "hash-updated",
+              syncConfigHash: "sync-identity",
+              mtimeMs: 2,
+              deleted: false,
+              chunks: [
+                {
+                  chunkId: "nk-identity-2",
+                  sourcePath: "docs/identity.md",
+                  title: "Identity",
+                  sourceKind: "identity",
+                  startLine: 1,
+                  endLine: 2,
+                  content: "Updated identity note.",
+                  privacyClass: "internal",
+                  sourceHash: "hash-updated",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const scoped = await rebuildMemoryProjection({
+      memoryDir,
+      defaultNamespace: "global",
+      dryRun: false,
+      updatedAfter: "2026-03-08T06:45:00.000Z",
+      now: new Date("2026-03-08T07:30:00.000Z"),
+    });
+
+    assert.equal(scoped.currentRows, 1);
+    assert.equal(scoped.nativeKnowledgeRows, 1);
+    assert.deepEqual(readProjectedNativeKnowledgeChunks(memoryDir), [
+      {
+        chunkId: "nk-identity-2",
+        sourcePath: "docs/identity.md",
+        title: "Identity",
+        sourceKind: "identity",
+        startLine: 1,
+        endLine: 2,
+        derivedDate: "2026-03-08",
+        sessionKey: undefined,
+        workflowKey: undefined,
+        author: undefined,
+        agent: undefined,
+        namespace: "global",
+        privacyClass: "internal",
+        sourceHash: "hash-updated",
+        preview: "Updated identity note.",
+      },
+    ]);
+
+    const verify = await verifyMemoryProjection({ memoryDir, defaultNamespace: "global" });
+    assert.equal(verify.ok, true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("verifyMemoryProjection reports drift when projection is missing current rows", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-verify-"));
   try {

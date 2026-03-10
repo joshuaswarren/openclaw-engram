@@ -983,7 +983,10 @@ export async function rebuildMemoryProjection(
         );
       }
       if (projectedNativeKnowledge.projectionExists) {
-        nextNativeKnowledgeRows = projectedNativeKnowledge.rows;
+        // Native knowledge rows are always loaded from the full persisted sync state,
+        // so scoped memory rebuilds should publish the fresh snapshot instead of
+        // pinning the projection to stale previously projected rows.
+        nextNativeKnowledgeRows = snapshot.nativeKnowledgeRows;
       }
       if (projectedGovernance.projectionExists && projectedGovernance.runId) {
         nextGovernance = {
