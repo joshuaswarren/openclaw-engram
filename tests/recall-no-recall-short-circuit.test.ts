@@ -173,6 +173,33 @@ test("recallInternal short-circuits no_recall before preamble reads", async () =
   assert.equal(storageRouterTouched, false);
 });
 
+test("recallInternal no_recall records last recall without blocking the response", async () => {
+  const memoryDir = tmpDir("engram-no-recall-last-recall");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  let settled = false;
+  (orchestrator.lastRecall as any).record = () =>
+    new Promise<void>((resolve) => {
+      setTimeout(() => {
+        settled = true;
+        resolve();
+      }, 50);
+    });
+
+  const startedAt = Date.now();
+  const out = await (orchestrator as any).recallInternal("ok", "user:test:no-recall-record");
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(out, "");
+  assert.equal(settled, false);
+  assert.ok(elapsedMs < 50);
+
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  assert.equal(settled, true);
+});
+
 test("artifact recall searches all readable namespaces", async () => {
   const memoryDir = tmpDir("engram-artifact-ns");
   await mkdir(memoryDir, { recursive: true });

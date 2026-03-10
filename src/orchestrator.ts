@@ -2781,33 +2781,35 @@ export class Orchestrator {
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
       if (sessionKey) {
-        await this.lastRecall.record({
-          sessionKey,
-          query: retrievalQuery,
-          memoryIds: [],
-          namespace: selfNamespace,
-          traceId,
-          plannerMode: recallMode,
-          requestedMode,
-          source: recallSource,
-          fallbackUsed: false,
-          sourcesUsed: [],
-          budgetsApplied: this.buildLastRecallBudgetSummary({
-            requestedTopK,
-            recallResultLimit,
-            qmdFetchLimit,
-            qmdHybridFetchLimit,
-          }),
-          latencyMs: Date.now() - recallStart,
-          resultPaths: [],
-          policyVersion,
-          appendImpression: this.config.recordEmptyRecallImpressions,
-          identityInjection: {
-            mode: identityInjectionModeUsed,
-            injectedChars: identityInjectedChars,
-            truncated: identityInjectionTruncated,
-          },
-        });
+        this.lastRecall
+          .record({
+            sessionKey,
+            query: retrievalQuery,
+            memoryIds: [],
+            namespace: selfNamespace,
+            traceId,
+            plannerMode: recallMode,
+            requestedMode,
+            source: recallSource,
+            fallbackUsed: false,
+            sourcesUsed: [],
+            budgetsApplied: this.buildLastRecallBudgetSummary({
+              requestedTopK,
+              recallResultLimit,
+              qmdFetchLimit,
+              qmdHybridFetchLimit,
+            }),
+            latencyMs: Date.now() - recallStart,
+            resultPaths: [],
+            policyVersion,
+            appendImpression: this.config.recordEmptyRecallImpressions,
+            identityInjection: {
+              mode: identityInjectionModeUsed,
+              injectedChars: identityInjectedChars,
+              truncated: identityInjectionTruncated,
+            },
+          })
+          .catch((err) => log.debug(`last recall record failed: ${err}`));
       }
       if (sessionKey) {
         this.queueEvalShadowRecall({
