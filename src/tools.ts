@@ -948,6 +948,33 @@ Best for:
 
   api.registerTool(
     {
+      name: "memory_intent_debug",
+      label: "Inspect Intent Debug",
+      description:
+        "Inspect the last persisted planner/intent snapshot, including recall mode selection, query intent classification, and graph fallback decisions.",
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Optional namespace to inspect. Defaults to defaultNamespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { namespace } = params as {
+          namespace?: string;
+        };
+        const text = await orchestrator.explainLastIntent({
+          namespace,
+        });
+        return toolResult(text);
+      },
+    },
+    { name: "memory_intent_debug" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_graph_explain_last_recall",
       label: "Explain Graph Recall",
       description:

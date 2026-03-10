@@ -120,6 +120,13 @@ Graph recall explainability (`memory_graph_explain_last_recall`):
 - expanded entries include provenance: `seed`, `hopDepth`, `decayedWeight`, `graphType`
 - output remains concise by honoring `maxExpanded` and rendering a compact per-entry provenance line
 
+Retrieval debug artifacts (`state/last_graph_recall.json`, `state/last_intent.json`):
+- `memory_graph_explain_last_recall` reads `state/last_graph_recall.json`
+- the companion `memory_intent_debug` surface reads `state/last_intent.json` when the runtime exposes intent-debug snapshots
+- `last_intent.json` is the planner-side snapshot: query text, inferred intent, selected recall mode, and any classifier reasons the runtime records
+- `last_graph_recall.json` is the graph-side snapshot: mode, namespaces, seed paths, expanded paths, and graph provenance for each expansion
+- richer graph snapshots may also include skip or fallback metadata and final ranked result summaries; explain tooling should tolerate those extra fields even when older builds only emit the core seed/expanded schema
+
 ## Namespace Routing (v3.0)
 
 With namespaces enabled, retrieval filters candidates to allowed namespaces (local and shared) and returns results in score order. See [Namespaces](../namespaces.md).

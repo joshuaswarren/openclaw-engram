@@ -88,7 +88,7 @@ import {
   searchNativeKnowledge,
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
-import type { MemorySummary } from "./types.js";
+import type { MemoryIntent, MemorySummary } from "./types.js";
 import { shouldSkipImplicitExtraction } from "./explicit-capture.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -158,6 +158,57 @@ export interface GraphRecallSnapshot {
   expandedCount: number;
   seeds: string[];
   expanded: GraphRecallExpandedEntry[];
+  status?: "completed" | "skipped" | "aborted";
+  reason?: string;
+  shadowMode?: boolean;
+  queryIntent?: MemoryIntent;
+  seedResults?: GraphRecallRankedResult[];
+  finalResults?: GraphRecallRankedResult[];
+  shadowComparison?: GraphRecallShadowComparison;
+}
+
+export interface GraphRecallRankedResult {
+  path: string;
+  score: number;
+  docid?: string;
+  sourceLabels: string[];
+}
+
+export interface GraphRecallShadowComparison {
+  baselineCount: number;
+  graphCount: number;
+  overlapCount: number;
+  overlapRatio: number;
+  averageOverlapDelta: number;
+}
+
+export interface IntentDebugSnapshot {
+  recordedAt: string;
+  promptHash: string;
+  promptLength: number;
+  retrievalQueryHash: string;
+  retrievalQueryLength: number;
+  plannerEnabled: boolean;
+  plannedMode: RecallPlanMode;
+  effectiveMode: RecallPlanMode;
+  recallResultLimit: number;
+  queryIntent: MemoryIntent;
+  graphExpandedIntentDetected: boolean;
+  graphDecision: {
+    status: "not_requested" | "skipped" | "completed" | "aborted";
+    reason?: string;
+    shadowMode: boolean;
+    qmdAvailable: boolean;
+    graphRecallEnabled: boolean;
+    multiGraphMemoryEnabled: boolean;
+  };
+}
+
+export interface RecallModeDecision {
+  plannedMode: RecallPlanMode;
+  effectiveMode: RecallPlanMode;
+  graphExpandedIntentDetected: boolean;
+  graphReason?: string;
 }
 
 type QueryAwarePrefilter = {
@@ -351,14 +402,26 @@ export function resolveEffectiveRecallMode(options: {
   graphExpandedIntentEnabled?: boolean;
   prompt: string;
 }): RecallPlanMode {
+  return resolveRecallModeDecision(options).effectiveMode;
+}
+
+export function resolveRecallModeDecision(options: {
+  plannerEnabled: boolean;
+  graphRecallEnabled: boolean;
+  multiGraphMemoryEnabled: boolean;
+  graphExpandedIntentEnabled?: boolean;
+  prompt: string;
+}): RecallModeDecision {
   let plannedMode: RecallPlanMode = options.plannerEnabled
     ? planRecallMode(options.prompt)
     : "full";
-  if (
-    plannedMode !== "graph_mode" &&
+  const graphExpandedIntentDetected =
     options.plannerEnabled &&
     options.graphExpandedIntentEnabled === true &&
-    hasBroadGraphIntent(options.prompt)
+    hasBroadGraphIntent(options.prompt);
+  if (
+    plannedMode !== "graph_mode" &&
+    graphExpandedIntentDetected
   ) {
     plannedMode = "graph_mode";
   }
@@ -366,9 +429,20 @@ export function resolveEffectiveRecallMode(options: {
     plannedMode === "graph_mode" &&
     (!options.graphRecallEnabled || !options.multiGraphMemoryEnabled)
   ) {
-    return "full";
+    return {
+      plannedMode,
+      effectiveMode: "full",
+      graphExpandedIntentDetected,
+      graphReason: !options.graphRecallEnabled
+        ? "graph recall disabled by config"
+        : "multi-graph memory disabled by config",
+    };
   }
-  return plannedMode;
+  return {
+    plannedMode,
+    effectiveMode: plannedMode,
+    graphExpandedIntentDetected,
+  };
 }
 
 export function hasIdentityRecoveryIntent(prompt: string): boolean {
@@ -500,6 +574,38 @@ export function summarizeGraphShadowComparison(
     overlapCount,
     overlapRatio: baselineCount > 0 ? overlapCount / baselineCount : 0,
     averageOverlapDelta: overlapCount > 0 ? overlapDeltaSum / overlapCount : 0,
+  };
+}
+
+function parseGraphRecallRankedResults(value: unknown): GraphRecallRankedResult[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: GraphRecallRankedResult[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const candidate = entry as Partial<GraphRecallRankedResult>;
+    if (typeof candidate.path !== "string" || typeof candidate.score !== "number") continue;
+    parsed.push({
+      path: candidate.path,
+      score: candidate.score,
+      docid: typeof candidate.docid === "string" ? candidate.docid : undefined,
+      sourceLabels: Array.isArray(candidate.sourceLabels)
+        ? candidate.sourceLabels.filter((item): item is string => typeof item === "string")
+        : [],
+    });
+  }
+  return parsed.slice(0, 64);
+}
+
+function parseMemoryIntentSnapshot(value: unknown): MemoryIntent {
+  const candidate = value && typeof value === "object"
+    ? value as Partial<MemoryIntent>
+    : {};
+  return {
+    goal: typeof candidate.goal === "string" ? candidate.goal : "unknown",
+    actionType: typeof candidate.actionType === "string" ? candidate.actionType : "unknown",
+    entityTypes: Array.isArray(candidate.entityTypes)
+      ? candidate.entityTypes.filter((item): item is string => typeof item === "string")
+      : [],
   };
 }
 
@@ -1362,6 +1468,96 @@ export class Orchestrator {
           ? parsed.seeds.filter((v): v is string => typeof v === "string")
           : [],
         expanded: clampGraphRecallExpandedEntries(parsed.expanded, 64),
+        status:
+          parsed.status === "completed" || parsed.status === "skipped" || parsed.status === "aborted"
+            ? parsed.status
+            : undefined,
+        reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+        shadowMode: parsed.shadowMode === true,
+        queryIntent: parseMemoryIntentSnapshot(parsed.queryIntent),
+        seedResults: parseGraphRecallRankedResults(parsed.seedResults),
+        finalResults: parseGraphRecallRankedResults(parsed.finalResults),
+        shadowComparison:
+          parsed.shadowComparison && typeof parsed.shadowComparison === "object"
+            ? {
+              baselineCount:
+                typeof parsed.shadowComparison.baselineCount === "number"
+                  ? parsed.shadowComparison.baselineCount
+                  : 0,
+              graphCount:
+                typeof parsed.shadowComparison.graphCount === "number"
+                  ? parsed.shadowComparison.graphCount
+                  : 0,
+              overlapCount:
+                typeof parsed.shadowComparison.overlapCount === "number"
+                  ? parsed.shadowComparison.overlapCount
+                  : 0,
+              overlapRatio:
+                typeof parsed.shadowComparison.overlapRatio === "number"
+                  ? parsed.shadowComparison.overlapRatio
+                  : 0,
+              averageOverlapDelta:
+                typeof parsed.shadowComparison.averageOverlapDelta === "number"
+                  ? parsed.shadowComparison.averageOverlapDelta
+                  : 0,
+            }
+            : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async getLastIntentSnapshot(namespace?: string): Promise<IntentDebugSnapshot | null> {
+    const storage = await this.getStorage(namespace);
+    const snapshotPath = path.join(storage.dir, "state", "last_intent.json");
+    try {
+      const raw = await readFile(snapshotPath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<IntentDebugSnapshot>;
+      if (!parsed || typeof parsed !== "object") return null;
+      const graphDecision = parsed.graphDecision && typeof parsed.graphDecision === "object"
+        ? parsed.graphDecision
+        : undefined;
+      return {
+        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        promptHash: typeof parsed.promptHash === "string" ? parsed.promptHash : "",
+        promptLength: typeof parsed.promptLength === "number" ? parsed.promptLength : 0,
+        retrievalQueryHash:
+          typeof parsed.retrievalQueryHash === "string" ? parsed.retrievalQueryHash : "",
+        retrievalQueryLength:
+          typeof parsed.retrievalQueryLength === "number" ? parsed.retrievalQueryLength : 0,
+        plannerEnabled: parsed.plannerEnabled !== false,
+        plannedMode:
+          parsed.plannedMode === "no_recall" ||
+            parsed.plannedMode === "minimal" ||
+            parsed.plannedMode === "full" ||
+            parsed.plannedMode === "graph_mode"
+            ? parsed.plannedMode
+            : "full",
+        effectiveMode:
+          parsed.effectiveMode === "no_recall" ||
+            parsed.effectiveMode === "minimal" ||
+            parsed.effectiveMode === "full" ||
+            parsed.effectiveMode === "graph_mode"
+            ? parsed.effectiveMode
+            : "full",
+        recallResultLimit:
+          typeof parsed.recallResultLimit === "number" ? parsed.recallResultLimit : 0,
+        queryIntent: parseMemoryIntentSnapshot(parsed.queryIntent),
+        graphExpandedIntentDetected: parsed.graphExpandedIntentDetected === true,
+        graphDecision: {
+          status:
+            graphDecision?.status === "skipped" ||
+              graphDecision?.status === "completed" ||
+              graphDecision?.status === "aborted"
+              ? graphDecision.status
+              : "not_requested",
+          reason: typeof graphDecision?.reason === "string" ? graphDecision.reason : undefined,
+          shadowMode: graphDecision?.shadowMode === true,
+          qmdAvailable: graphDecision?.qmdAvailable !== false,
+          graphRecallEnabled: graphDecision?.graphRecallEnabled !== false,
+          multiGraphMemoryEnabled: graphDecision?.multiGraphMemoryEnabled !== false,
+        },
       };
     } catch {
       return null;
@@ -1376,13 +1572,28 @@ export class Orchestrator {
     if (!snapshot) return "No graph-recall snapshot found yet.";
     const maxExpanded = Math.max(1, Math.min(50, options?.maxExpanded ?? 10));
     const expanded = snapshot.expanded.slice(0, maxExpanded);
+    const seedResults = (snapshot.seedResults ?? []).slice(0, maxExpanded);
+    const finalResults = (snapshot.finalResults ?? []).slice(0, maxExpanded);
+    const queryIntent = snapshot.queryIntent ?? {
+      goal: "unknown",
+      actionType: "unknown",
+      entityTypes: [],
+    };
     return [
       "## Last Graph Recall",
       "",
       `Recorded at: ${snapshot.recordedAt || "unknown"}`,
       `Mode: ${snapshot.mode}`,
+      `Status: ${snapshot.status ?? "completed"}${snapshot.shadowMode ? " (shadow)" : ""}`,
+      `Reason: ${snapshot.reason ?? "n/a"}`,
       `Query hash: ${snapshot.queryHash || "unknown"} (len=${snapshot.queryLength})`,
+      `Query intent: goal=${queryIntent.goal}, action=${queryIntent.actionType}, entityTypes=${queryIntent.entityTypes.length > 0 ? queryIntent.entityTypes.join(", ") : "none"}`,
       `Namespaces: ${snapshot.namespaces.length > 0 ? snapshot.namespaces.join(", ") : "none"}`,
+      `Seed results (${snapshot.seedResults?.length ?? 0}, showing ${seedResults.length}):`,
+      ...seedResults.map(
+        (entry) =>
+          `- ${entry.path} (score=${entry.score.toFixed(3)}, sources=${entry.sourceLabels.join(",") || "baseline"})`,
+      ),
       `Seed paths (${snapshot.seedCount}):`,
       ...snapshot.seeds.map((p) => `- ${p}`),
       `Expanded paths (${snapshot.expandedCount}, showing ${expanded.length}):`,
@@ -1390,6 +1601,35 @@ export class Orchestrator {
         (e) =>
           `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType})`,
       ),
+      `Final ranked results (${snapshot.finalResults?.length ?? 0}, showing ${finalResults.length}):`,
+      ...finalResults.map(
+        (entry) =>
+          `- ${entry.path} (score=${entry.score.toFixed(3)}, sources=${entry.sourceLabels.join(",") || "baseline"})`,
+      ),
+      ...(snapshot.shadowComparison
+        ? [
+          `Shadow comparison: baseline=${snapshot.shadowComparison.baselineCount}, graph=${snapshot.shadowComparison.graphCount}, overlap=${snapshot.shadowComparison.overlapCount} (${snapshot.shadowComparison.overlapRatio.toFixed(2)}), avgDelta=${snapshot.shadowComparison.averageOverlapDelta.toFixed(3)}`,
+        ]
+        : []),
+    ].join("\n");
+  }
+
+  async explainLastIntent(options?: { namespace?: string }): Promise<string> {
+    const snapshot = await this.getLastIntentSnapshot(options?.namespace);
+    if (!snapshot) return "No intent-debug snapshot found yet.";
+    return [
+      "## Last Intent Debug",
+      "",
+      `Recorded at: ${snapshot.recordedAt || "unknown"}`,
+      `Prompt hash: ${snapshot.promptHash || "unknown"} (len=${snapshot.promptLength})`,
+      `Retrieval query hash: ${snapshot.retrievalQueryHash || "unknown"} (len=${snapshot.retrievalQueryLength})`,
+      `Planner enabled: ${snapshot.plannerEnabled ? "yes" : "no"}`,
+      `Planned mode: ${snapshot.plannedMode}`,
+      `Effective mode: ${snapshot.effectiveMode}`,
+      `Recall result limit: ${snapshot.recallResultLimit}`,
+      `Query intent: goal=${snapshot.queryIntent.goal}, action=${snapshot.queryIntent.actionType}, entityTypes=${snapshot.queryIntent.entityTypes.length > 0 ? snapshot.queryIntent.entityTypes.join(", ") : "none"}`,
+      `Broad graph intent: ${snapshot.graphExpandedIntentDetected ? "yes" : "no"}`,
+      `Graph decision: status=${snapshot.graphDecision.status}, reason=${snapshot.graphDecision.reason ?? "n/a"}, shadow=${snapshot.graphDecision.shadowMode ? "yes" : "no"}, qmdAvailable=${snapshot.graphDecision.qmdAvailable ? "yes" : "no"}, graphRecallEnabled=${snapshot.graphDecision.graphRecallEnabled ? "yes" : "no"}, multiGraphMemoryEnabled=${snapshot.graphDecision.multiGraphMemoryEnabled ? "yes" : "no"}`,
     ].join("\n");
   }
 
@@ -2110,6 +2350,7 @@ export class Orchestrator {
     merged: QmdSearchResult[];
     seedPaths: string[];
     expandedPaths: GraphRecallExpandedEntry[];
+    seedResults: QmdSearchResult[];
   }> {
     const byNamespace = new Map<string, QmdSearchResult[]>();
     for (const result of options.memoryResults) {
@@ -2126,12 +2367,14 @@ export class Orchestrator {
     const perNamespaceSeedCap = Math.max(3, options.recallResultLimit);
     const perNamespaceExpandedCap = Math.max(8, options.recallResultLimit * 2);
     const seedPaths: string[] = [];
+    const seedResults: QmdSearchResult[] = [];
     const expandedPaths: GraphRecallExpandedEntry[] = [];
     const expandedResults: QmdSearchResult[] = [];
 
     for (const [namespace, nsResults] of byNamespace.entries()) {
       const storage = await this.storageRouter.storageFor(namespace);
       const seedCandidates = nsResults.slice(0, perNamespaceSeedCap);
+      seedResults.push(...seedCandidates);
       const seedRelativePaths = seedCandidates
         .map((result) => graphPathRelativeToStorage(storage.dir, result.path))
         .filter((value): value is string => typeof value === "string" && value.length > 0);
@@ -2184,6 +2427,7 @@ export class Orchestrator {
       merged: mergeGraphExpandedResults(options.memoryResults, expandedResults),
       seedPaths,
       expandedPaths,
+      seedResults,
     };
   }
 
@@ -2194,6 +2438,13 @@ export class Orchestrator {
     recallNamespaces: string[];
     seedPaths: string[];
     expandedPaths: GraphRecallExpandedEntry[];
+    status: "completed" | "skipped" | "aborted";
+    reason?: string;
+    shadowMode?: boolean;
+    queryIntent: MemoryIntent;
+    seedResults?: GraphRecallRankedResult[];
+    finalResults?: GraphRecallRankedResult[];
+    shadowComparison?: GraphRecallShadowComparison;
   }): Promise<void> {
     try {
       const snapshotPath = path.join(options.storage.dir, "state", "last_graph_recall.json");
@@ -2213,11 +2464,77 @@ export class Orchestrator {
         expandedCount: totalExpandedCount,
         seeds,
         expanded,
+        status: options.status,
+        reason: options.reason,
+        shadowMode: options.shadowMode === true,
+        queryIntent: options.queryIntent,
+        seedResults: (options.seedResults ?? []).slice(0, 64),
+        finalResults: (options.finalResults ?? []).slice(0, 64),
+        shadowComparison: options.shadowComparison,
       };
       await writeFile(snapshotPath, JSON.stringify(payload, null, 2), "utf-8");
     } catch (err) {
       log.debug(`last graph recall write failed: ${err}`);
     }
+  }
+
+  private async recordLastIntentSnapshot(options: {
+    storage: StorageManager;
+    snapshot: IntentDebugSnapshot;
+  }): Promise<void> {
+    try {
+      const snapshotPath = path.join(options.storage.dir, "state", "last_intent.json");
+      await mkdir(path.dirname(snapshotPath), { recursive: true });
+      await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`last intent write failed: ${err}`);
+    }
+  }
+
+  private async recordLastIntentSnapshotForNamespace(options: {
+    namespace: string;
+    snapshot: IntentDebugSnapshot;
+  }): Promise<void> {
+    try {
+      const stateDir = await this.resolveStateDirForNamespace(options.namespace);
+      const snapshotPath = path.join(stateDir, "last_intent.json");
+      await mkdir(path.dirname(snapshotPath), { recursive: true });
+      await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`last intent write failed: ${err}`);
+    }
+  }
+
+  private async resolveStateDirForNamespace(namespace: string): Promise<string> {
+    if (!this.config.namespacesEnabled) {
+      return path.join(this.config.memoryDir, "state");
+    }
+    if (namespace !== this.config.defaultNamespace) {
+      return path.join(this.config.memoryDir, "namespaces", namespace, "state");
+    }
+    const candidate = path.join(this.config.memoryDir, "namespaces", this.config.defaultNamespace);
+    try {
+      const candidateStat = await stat(candidate);
+      if (candidateStat.isDirectory()) {
+        return path.join(candidate, "state");
+      }
+    } catch {
+      // Fall back to the legacy root when the migrated default namespace directory is absent.
+    }
+    return path.join(this.config.memoryDir, "state");
+  }
+
+  private buildGraphRecallRankedResults(
+    results: QmdSearchResult[],
+    sourceLabelResolver: (path: string) => string[],
+    limit: number = 64,
+  ): GraphRecallRankedResult[] {
+    return results.slice(0, limit).map((result) => ({
+      path: result.path,
+      score: result.score,
+      docid: result.docid,
+      sourceLabels: sourceLabelResolver(result.path),
+    }));
   }
 
   private getRecallSectionEntry(sectionId: string): RecallSectionConfig | undefined {
@@ -2323,13 +2640,15 @@ export class Orchestrator {
     let identityInjectedChars = 0;
     let identityInjectionTruncated = false;
     timings.queryPolicy = `${queryPolicy.promptShape}/${queryPolicy.retrievalBudgetMode}${queryPolicy.skipConversationRecall ? "/skip-conv" : ""}`;
-    const recallMode: RecallPlanMode = resolveEffectiveRecallMode({
+    const recallDecision = resolveRecallModeDecision({
       plannerEnabled: this.config.recallPlannerEnabled,
       graphRecallEnabled: this.config.graphRecallEnabled,
       multiGraphMemoryEnabled: this.config.multiGraphMemoryEnabled,
       graphExpandedIntentEnabled: this.config.graphExpandedIntentEnabled === true,
       prompt,
     });
+    const recallMode: RecallPlanMode = recallDecision.effectiveMode;
+    const queryIntent = inferIntentFromText(retrievalQuery);
     timings.recallPlan = recallMode;
     const plannerRecallResultLimit = recallMode === "no_recall"
       ? 0
@@ -2364,8 +2683,64 @@ export class Orchestrator {
       this.config.verbatimArtifactsMaxRecall,
     );
     const embeddingFetchLimit = computedFetchLimit;
+    const principal = resolvePrincipal(sessionKey, this.config);
+    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
+    const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    const qmdAvailable = this.qmd.isAvailable();
+    let graphDecisionStatus: IntentDebugSnapshot["graphDecision"]["status"] = recallDecision.plannedMode === "graph_mode"
+      ? "skipped"
+      : "not_requested";
+    let graphDecisionReason = recallDecision.graphReason;
+    let graphDecisionShadowMode = false;
+    let shouldPersistGraphSnapshot = recallDecision.plannedMode === "graph_mode";
+    let graphSnapshotStatus: GraphRecallSnapshot["status"] | undefined = recallDecision.plannedMode === "graph_mode"
+      ? "skipped"
+      : undefined;
+    let graphSnapshotReason = recallDecision.graphReason;
+    let graphSnapshotSeedPaths: string[] = [];
+    let graphSnapshotExpandedPaths: GraphRecallExpandedEntry[] = [];
+    let graphSnapshotSeedResults: GraphRecallRankedResult[] = [];
+    let graphSnapshotFinalResults: GraphRecallRankedResult[] = [];
+    let graphSnapshotShadowComparison: GraphRecallShadowComparison | undefined;
+    const graphBaselinePaths = new Set<string>();
+    const graphExpandedResultPaths = new Set<string>();
+    const graphSourceLabelsForPath = (resultPath: string): string[] => {
+      const labels: string[] = [];
+      const normalizedPath = resultPath.split(path.sep).join("/");
+      const isEntityPath = normalizedPath.startsWith("entities/")
+        || normalizedPath.includes("/entities/");
+      if (graphBaselinePaths.has(resultPath)) labels.push("baseline");
+      if (graphExpandedResultPaths.has(resultPath)) labels.push("graph_expanded");
+      if (isEntityPath) labels.push("reconstructed_entity");
+      return labels.length > 0 ? labels : ["baseline"];
+    };
+    const buildIntentDebugSnapshot = (): IntentDebugSnapshot => ({
+      recordedAt: new Date().toISOString(),
+      promptHash,
+      promptLength: prompt.length,
+      retrievalQueryHash,
+      retrievalQueryLength: retrievalQuery.length,
+      plannerEnabled: this.config.recallPlannerEnabled,
+      plannedMode: recallDecision.plannedMode,
+      effectiveMode: recallMode,
+      recallResultLimit,
+      queryIntent,
+      graphExpandedIntentDetected: recallDecision.graphExpandedIntentDetected,
+      graphDecision: {
+        status: graphDecisionStatus,
+        reason: graphDecisionReason,
+        shadowMode: graphDecisionShadowMode,
+        qmdAvailable,
+        graphRecallEnabled: this.config.graphRecallEnabled,
+        multiGraphMemoryEnabled: this.config.multiGraphMemoryEnabled,
+      },
+    });
 
     if (recallMode === "no_recall") {
+      await this.recordLastIntentSnapshotForNamespace({
+        namespace: selfNamespace,
+        snapshot: buildIntentDebugSnapshot(),
+      });
       // Clean up workspace override before early return to prevent Map leaks.
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
@@ -2422,9 +2797,6 @@ export class Orchestrator {
       return "";
     }
 
-    const principal = resolvePrincipal(sessionKey, this.config);
-    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
-    const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
     const profileStorage = await this.storageRouter.storageFor(selfNamespace);
 
     // --- Phase 1: Launch ALL independent data fetches in parallel ---
@@ -3241,38 +3613,80 @@ export class Orchestrator {
         isFullModeGraphAssist &&
         this.config.graphAssistShadowEvalEnabled === true;
       if (shouldRunGraphExpansion) {
+        shouldPersistGraphSnapshot = true;
+        graphDecisionShadowMode = graphShadowEvalEnabled;
+      }
+      if (shouldRunGraphExpansion) {
         const baselineMemoryResults = memoryResults;
-        const {
-          merged,
-          seedPaths,
-          expandedPaths,
-        } = await this.expandResultsViaGraph({
-          memoryResults,
-          recallNamespaces,
-          recallResultLimit,
-        });
-        memoryResults = graphShadowEvalEnabled ? baselineMemoryResults : merged;
-
-        if (graphShadowEvalEnabled) {
-          const comparison = summarizeGraphShadowComparison(
-            baselineMemoryResults,
+        graphBaselinePaths.clear();
+        baselineMemoryResults.forEach((result) => graphBaselinePaths.add(result.path));
+        if (baselineMemoryResults.length === 0) {
+          graphSnapshotStatus = "skipped";
+          graphDecisionStatus = "skipped";
+          graphDecisionReason = "graph recall skipped because baseline retrieval produced no seed results";
+          graphSnapshotReason = graphDecisionReason;
+          graphSnapshotSeedPaths = [];
+          graphSnapshotSeedResults = [];
+          graphSnapshotExpandedPaths = [];
+          graphExpandedResultPaths.clear();
+        } else {
+          try {
+          const {
             merged,
+            seedPaths,
+            expandedPaths,
+            seedResults = baselineMemoryResults,
+          } = await this.expandResultsViaGraph({
+            memoryResults,
+            recallNamespaces,
             recallResultLimit,
+          });
+          graphSnapshotStatus = "completed";
+          graphDecisionStatus = "completed";
+          graphDecisionReason = graphShadowEvalEnabled
+            ? "graph shadow evaluation completed without altering injected context"
+            : "graph expansion merged into recall ranking";
+          graphSnapshotReason = graphDecisionReason;
+          graphSnapshotSeedPaths = seedPaths;
+          graphSnapshotExpandedPaths = expandedPaths;
+          graphSnapshotSeedResults = this.buildGraphRecallRankedResults(
+            seedResults,
+            () => ["baseline"],
           );
-          timings.graphShadow =
-            `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
-            `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
-            `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`;
-        }
+          graphExpandedResultPaths.clear();
+          expandedPaths.forEach((entry) => graphExpandedResultPaths.add(entry.path));
+          memoryResults = graphShadowEvalEnabled ? baselineMemoryResults : merged;
 
-        await this.recordLastGraphRecallSnapshot({
-          storage: profileStorage,
-          prompt: retrievalQuery,
-          recallMode,
-          recallNamespaces,
-          seedPaths,
-          expandedPaths,
-        });
+          if (graphShadowEvalEnabled) {
+            const comparison = summarizeGraphShadowComparison(
+              baselineMemoryResults,
+              merged,
+              recallResultLimit,
+            );
+            graphSnapshotShadowComparison = comparison;
+            timings.graphShadow =
+              `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
+              `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
+              `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`;
+          }
+          } catch (err) {
+            graphSnapshotStatus = "aborted";
+            graphDecisionStatus = "aborted";
+            graphDecisionReason = `graph expansion failed: ${err instanceof Error ? err.message : String(err)}`;
+            graphSnapshotReason = graphDecisionReason;
+            graphSnapshotSeedPaths = baselineMemoryResults
+              .slice(0, Math.max(1, recallResultLimit))
+              .map((result) => result.path);
+            graphSnapshotSeedResults = this.buildGraphRecallRankedResults(
+              baselineMemoryResults,
+              () => ["baseline"],
+            );
+            graphSnapshotExpandedPaths = [];
+            graphExpandedResultPaths.clear();
+            log.warn(`graph recall failed open: ${graphDecisionReason}`);
+            memoryResults = baselineMemoryResults;
+          }
+        }
       }
 
       // Apply recency and access count boosting
@@ -3366,6 +3780,12 @@ export class Orchestrator {
       }
 
       if (memoryResults.length > 0) {
+        if (shouldPersistGraphSnapshot) {
+          graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+            memoryResults,
+            graphSourceLabelsForPath,
+          );
+        }
         recallSource = "hot_qmd";
         recalledMemoryCount = memoryResults.length;
         this.publishRecallResults({
@@ -3404,6 +3824,12 @@ export class Orchestrator {
           recallResultLimit,
         );
         if (scoped.length > 0) {
+          if (shouldPersistGraphSnapshot) {
+            graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+              scoped,
+              graphSourceLabelsForPath,
+            );
+          }
           recallSource = "hot_embedding";
           recalledMemoryCount = scoped.length;
           this.publishRecallResults({
@@ -3430,6 +3856,12 @@ export class Orchestrator {
             queryAwarePrefilter,
           });
           if (longTerm.length > 0) {
+            if (shouldPersistGraphSnapshot) {
+              graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+                longTerm,
+                graphSourceLabelsForPath,
+              );
+            }
             recallSource = "cold_fallback";
             recalledMemoryCount = longTerm.length;
             this.publishRecallResults({
@@ -3469,6 +3901,7 @@ export class Orchestrator {
             "",
             "The user may be disputing an answer. To debug whether retrieval misled the response:",
             "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+            "- Use tool `memory_intent_debug` to inspect the planner mode decision and graph fallback reason.",
             "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
             "",
             "Safety: do not mass-mark negatives automatically; prefer explicit IDs.",
@@ -3495,6 +3928,12 @@ export class Orchestrator {
         retrievalQuery,
       )).slice(0, recallResultLimit);
       if (scoped.length > 0) {
+        if (shouldPersistGraphSnapshot) {
+          graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+            scoped,
+            graphSourceLabelsForPath,
+          );
+        }
         recallSource = "hot_embedding";
         recalledMemoryCount = scoped.length;
         this.publishRecallResults({
@@ -3583,6 +4022,12 @@ export class Orchestrator {
               .slice(0, recallResultLimit);
 
             if (recent.length > 0) {
+              if (shouldPersistGraphSnapshot) {
+                graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+                  recent,
+                  graphSourceLabelsForPath,
+                );
+              }
               recallSource = "recent_scan";
               recalledMemoryCount = recent.length;
               this.publishRecallResults({
@@ -3609,6 +4054,12 @@ export class Orchestrator {
                 queryAwarePrefilter,
               });
               if (longTerm.length > 0) {
+                if (shouldPersistGraphSnapshot) {
+                  graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+                    longTerm,
+                    graphSourceLabelsForPath,
+                  );
+                }
                 recallSource = "cold_fallback";
                 recalledMemoryCount = longTerm.length;
                 this.publishRecallResults({
@@ -3638,6 +4089,12 @@ export class Orchestrator {
             queryAwarePrefilter,
           });
           if (longTerm.length > 0) {
+            if (shouldPersistGraphSnapshot) {
+              graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
+                longTerm,
+                graphSourceLabelsForPath,
+              );
+            }
             recallSource = "cold_fallback";
             recalledMemoryCount = longTerm.length;
             this.publishRecallResults({
@@ -3666,6 +4123,7 @@ export class Orchestrator {
             "",
             "The user may be disputing an answer. To debug whether retrieval misled the response:",
             "- Use tool `memory_last_recall` to see which memory IDs were injected into context.",
+            "- Use tool `memory_intent_debug` to inspect the planner mode decision and graph fallback reason.",
             "- If graph recall is enabled, use `memory_graph_explain_last_recall` to inspect seed/expanded graph paths.",
             "- If negative examples are enabled, you can use `memory_feedback_last_recall` to mark specific recalled IDs as not useful.",
             "",
@@ -3674,6 +4132,42 @@ export class Orchestrator {
         );
       }
     }
+
+    if (shouldPersistGraphSnapshot) {
+      if (!graphSnapshotStatus) {
+        graphSnapshotStatus = "skipped";
+      }
+      if (!graphSnapshotReason) {
+        graphSnapshotReason = qmdAvailable
+          ? "graph recall skipped before expansion"
+          : "graph recall skipped because QMD was unavailable";
+      }
+      if (graphDecisionStatus === "not_requested") {
+        graphDecisionStatus = graphSnapshotStatus;
+      }
+      if (!graphDecisionReason) {
+        graphDecisionReason = graphSnapshotReason;
+      }
+      await this.recordLastGraphRecallSnapshot({
+        storage: profileStorage,
+        prompt: retrievalQuery,
+        recallMode,
+        recallNamespaces,
+        seedPaths: graphSnapshotSeedPaths,
+        expandedPaths: graphSnapshotExpandedPaths,
+        status: graphSnapshotStatus,
+        reason: graphSnapshotReason,
+        shadowMode: graphDecisionShadowMode,
+        queryIntent,
+        seedResults: graphSnapshotSeedResults,
+        finalResults: graphSnapshotFinalResults,
+        shadowComparison: graphSnapshotShadowComparison,
+      });
+    }
+    await this.recordLastIntentSnapshot({
+      storage: profileStorage,
+      snapshot: buildIntentDebugSnapshot(),
+    });
 
     // 2.5. Compression guideline recall section (v8.11 Task 5)
     if (this.isRecallSectionEnabled("compression-guidelines", this.config.compressionGuidelineLearningEnabled === true)) {
