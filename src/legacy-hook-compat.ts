@@ -24,7 +24,7 @@ function parseOpenClawVersion(
   };
 }
 
-export function parseOpenClawVersionTriple(
+function parseOpenClawVersionTriple(
   value: string | undefined,
 ): VersionTriple | null {
   return parseOpenClawVersion(value)?.triple ?? null;
