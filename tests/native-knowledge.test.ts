@@ -288,6 +288,39 @@ test("include-file sync chunkCount reports synced chunks even when recall filter
   assert.equal(result.chunkCount, 1);
 });
 
+test("default private curated chunks remain visible when shared recall also includes default namespace", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-private-default-"));
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.md"),
+    ["---", "privacyClass: private", "---", "# Identity", "", "Default-only operator note.", ""].join("\n"),
+    "utf-8",
+  );
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.shared.md"),
+    ["---", "privacyClass: private", "---", "# Shared Identity", "", "Shared private note.", ""].join("\n"),
+    "utf-8",
+  );
+
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    config: {
+      enabled: true,
+      includeFiles: ["IDENTITY.md"],
+      maxChunkChars: 200,
+      maxResults: 4,
+      maxChars: 2400,
+      stateDir: "state/native-knowledge",
+      obsidianVaults: [],
+    },
+    recallNamespaces: ["default", "shared"],
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.some((chunk) => chunk.sourcePath === "IDENTITY.md"), true);
+  assert.equal(chunks.some((chunk) => chunk.sourcePath === "IDENTITY.shared.md"), false);
+});
+
 test("searchNativeKnowledge ranks identity and phrase matches highest", () => {
   const results = searchNativeKnowledge({
     query: "deterministic tests",

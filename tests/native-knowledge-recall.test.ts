@@ -173,7 +173,7 @@ test("native knowledge collection omits private curated include chunks from shar
     workspaceDir,
     memoryDir,
     config: cfg.nativeKnowledge,
-    recallNamespaces: ["default", "shared"],
+    recallNamespaces: ["shared"],
     defaultNamespace: "default",
   });
 

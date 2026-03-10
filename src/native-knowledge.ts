@@ -453,40 +453,12 @@ async function readableFile(filePath: string): Promise<boolean> {
   }
 }
 
-function resolveCandidatePaths(options: {
+async function resolveCandidatePaths(options: {
   workspaceDir: string;
   includeFiles: string[];
   recallNamespaces?: string[];
   defaultNamespace: string;
-}): string[] {
-  const out = new Set<string>();
-  for (const rel of options.includeFiles) {
-    const trimmed = rel.trim();
-    if (!trimmed) continue;
-    out.add(path.join(options.workspaceDir, trimmed));
-    if (
-      path.basename(trimmed).toLowerCase() === "identity.md" &&
-      Array.isArray(options.recallNamespaces)
-    ) {
-      const relativeDir = path.dirname(trimmed);
-      for (const namespace of options.recallNamespaces) {
-        if (!namespace || namespace === options.defaultNamespace) continue;
-        out.add(
-          path.join(
-            options.workspaceDir,
-            relativeDir,
-            `IDENTITY.${namespace}.md`,
-          ),
-        );
-      }
-    }
-  }
-  return Array.from(out);
-}
-
-async function resolveSyncCandidatePaths(options: {
-  workspaceDir: string;
-  includeFiles: string[];
+  identityVariantMode: "recall" | "disk";
 }): Promise<string[]> {
   const out = new Set<string>();
   for (const rel of options.includeFiles) {
@@ -497,6 +469,15 @@ async function resolveSyncCandidatePaths(options: {
     if (path.basename(trimmed).toLowerCase() !== "identity.md") continue;
 
     const relativeDir = path.dirname(trimmed);
+    if (options.identityVariantMode === "recall") {
+      if (!Array.isArray(options.recallNamespaces)) continue;
+      for (const namespace of options.recallNamespaces) {
+        if (!namespace || namespace === options.defaultNamespace) continue;
+        out.add(path.join(options.workspaceDir, relativeDir, `IDENTITY.${namespace}.md`));
+      }
+      continue;
+    }
+
     const absoluteDir = path.dirname(candidatePath);
     let entries: string[] = [];
     try {
@@ -1061,9 +1042,8 @@ function isChunkAllowedForRecall(
   recallNamespaces: string[] | undefined,
   defaultNamespace: string,
 ): boolean {
-  const namespace = chunk.namespace;
+  const namespace = chunk.namespace?.trim() || defaultNamespace;
   if (
-    namespace &&
     Array.isArray(recallNamespaces) &&
     namespace !== defaultNamespace &&
     !recallNamespaces.includes(namespace)
@@ -1074,7 +1054,7 @@ function isChunkAllowedForRecall(
   if (
     privacyClass === "private" &&
     Array.isArray(recallNamespaces) &&
-    recallNamespaces.some((value) => value && value !== defaultNamespace)
+    (namespace !== defaultNamespace || !recallNamespaces.includes(defaultNamespace))
   ) {
     return false;
   }
@@ -1376,9 +1356,11 @@ export async function syncCuratedIncludeFiles(options: {
   }
 
   const skipped = new Set((options.skipSourcePaths ?? []).map((value) => value.replace(/\\/g, "/")));
-  const candidatePaths = await resolveSyncCandidatePaths({
+  const candidatePaths = await resolveCandidatePaths({
     workspaceDir: options.workspaceDir,
     includeFiles: options.config.includeFiles,
+    defaultNamespace: options.defaultNamespace,
+    identityVariantMode: "disk",
   });
   const nextFiles: Record<string, CuratedIncludeFileState> = {};
   const seen = new Set<string>();
@@ -1521,11 +1503,12 @@ export async function collectNativeKnowledgeChunks(options: {
     });
     chunks.push(...syncResult.activeChunks);
   } else {
-    const candidatePaths = resolveCandidatePaths({
+    const candidatePaths = await resolveCandidatePaths({
       workspaceDir: options.workspaceDir,
       includeFiles: options.config.includeFiles,
       recallNamespaces: options.recallNamespaces,
       defaultNamespace: options.defaultNamespace,
+      identityVariantMode: "recall",
     });
     for (const filePath of candidatePaths) {
       if (!(await readableFile(filePath))) continue;
