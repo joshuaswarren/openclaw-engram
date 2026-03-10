@@ -244,6 +244,7 @@ export class OpikExporter {
   }
 
   private handleEvent(event: EngramTraceEvent): void {
+    if (!this.cfg.enabled) return; // guard for after _detach()
     if (event.kind === "recall_summary") {
       void this.onRecall(event);
     } else if (event.kind === "llm_start") {
