@@ -5,6 +5,7 @@ import { extractJsonCandidates } from "./json-extract.js";
 export interface FallbackLlmOptions {
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
 }
 
 export interface FallbackLlmResponse {
@@ -58,32 +59,57 @@ export class FallbackLlmClient {
       return null;
     }
 
-    // Try each model in the chain
-    for (let i = 0; i < models.length; i++) {
-      const model = models[i];
-      const isFallback = i > 0;
+    const runChain = async (): Promise<FallbackLlmResponse | null> => {
+      // Try each model in the chain
+      for (let i = 0; i < models.length; i++) {
+        const model = models[i];
+        const isFallback = i > 0;
 
-      try {
-        const result = await this.tryModel(model, messages, options);
-        if (result) {
-          if (isFallback) {
-            log.info(`fallback LLM: succeeded using ${model.modelString} (fallback ${i})`);
+        try {
+          const result = await this.tryModel(model, messages, options);
+          if (result) {
+            if (isFallback) {
+              log.info(`fallback LLM: succeeded using ${model.modelString} (fallback ${i})`);
+            }
+            return {
+              content: result.content,
+              modelUsed: model.modelString,
+              usage: result.usage,
+            };
           }
-          return {
-            content: result.content,
-            modelUsed: model.modelString,
-            usage: result.usage,
-          };
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          log.debug(`fallback LLM: ${model.modelString} failed (${errorMsg}), trying next...`);
+          // Continue to next model in chain
         }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        log.debug(`fallback LLM: ${model.modelString} failed (${errorMsg}), trying next...`);
-        // Continue to next model in chain
+      }
+
+      log.warn(`fallback LLM: all ${models.length} models in chain failed`);
+      return null;
+    };
+
+    if (typeof options.timeoutMs === "number") {
+      if (options.timeoutMs <= 0) {
+        log.warn("fallback LLM: timed out before request started");
+        return null;
+      }
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          runChain(),
+          new Promise<null>((resolve) => {
+            timeoutHandle = setTimeout(() => {
+              log.warn(`fallback LLM: timed out after ${options.timeoutMs}ms`);
+              resolve(null);
+            }, options.timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     }
 
-    log.warn(`fallback LLM: all ${models.length} models in chain failed`);
-    return null;
+    return await runChain();
   }
 
   /**

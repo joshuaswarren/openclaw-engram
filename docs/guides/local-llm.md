@@ -1,0 +1,61 @@
+# Local LLM Guide
+
+Use Engram's local LLM path when you want extraction, reranking, and selected helper flows to stay on an OpenAI-compatible endpoint you control.
+
+## Fast Start
+
+If you want the preset first:
+
+```jsonc
+{
+  "memoryOsPreset": "local-llm-heavy",
+  "localLlmEnabled": true,
+  "localLlmUrl": "http://localhost:1234/v1",
+  "localLlmModel": "qwen2.5-32b-instruct",
+  "localLlmFastEnabled": true,
+  "localLlmFastModel": "qwen2.5-7b-instruct"
+}
+```
+
+The preset seeds the broader advanced surface, but your explicit `localLlm*` values still win.
+
+## Recommended Split
+
+Use the primary local model for slower tasks:
+
+- extraction
+- consolidation
+- profile / identity consolidation
+
+Use the fast local tier for short-turn helpers:
+
+- rerank
+- entity summary
+- temporal-memory summaries
+- compression-guideline refinement
+
+## Key Settings
+
+| Setting | Why it matters |
+|---------|----------------|
+| `localLlmEnabled` | Master switch for local inference |
+| `localLlmUrl` | Base URL for the OpenAI-compatible endpoint |
+| `localLlmModel` | Main local model ID |
+| `localLlmFastEnabled` | Enables the smaller/faster local tier |
+| `localLlmFastModel` | Model ID for the fast tier |
+| `localLlmFallback` | If `true`, fail open to the gateway/cloud chain when the local endpoint is unavailable |
+| `localLlmTimeoutMs` | Upper bound for heavier local requests |
+| `localLlmFastTimeoutMs` | Lower bound for fast helper requests |
+| `embeddingFallbackProvider` | Use `local` if you also want embedding fallback to stay local |
+
+## Operational Notes
+
+- Keep `localLlmFallback=true` during bring-up unless you explicitly want hard failures.
+- If the local server reports a smaller context window than the model supports, set `localLlmMaxContext`.
+- If reranking feels slow, lower `rerankTimeoutMs` before changing the main extraction timeout.
+- The local path is fail-open by default. If the endpoint disappears, Engram should degrade rather than block the gateway.
+
+## When Not To Use It
+
+- If you do not have a stable local endpoint yet, start with `memoryOsPreset: "balanced"`.
+- If you want the lowest moving-part count, start with `conservative` and leave local inference disabled until the rest of the install is stable.

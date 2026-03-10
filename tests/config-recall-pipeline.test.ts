@@ -39,10 +39,14 @@ test("parseConfig accepts custom recall pipeline entries", () => {
     id: "profile",
     enabled: true,
     maxChars: undefined,
+    maxHints: undefined,
     consolidateTriggerLines: 75,
     consolidateTargetLines: 35,
+    maxSupportingFacts: undefined,
+    maxRelatedEntities: undefined,
     maxEntities: undefined,
     maxResults: undefined,
+    recentTurns: undefined,
     maxTurns: undefined,
     maxTokens: undefined,
     lookbackHours: undefined,
@@ -50,6 +54,7 @@ test("parseConfig accepts custom recall pipeline entries", () => {
     topK: undefined,
     timeoutMs: undefined,
     maxPatterns: undefined,
+    maxRubrics: undefined,
   });
   assert.equal(cfg.recallPipeline[1]?.maxResults, 3);
   assert.equal(cfg.recallPipeline[2]?.enabled, false);

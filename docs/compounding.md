@@ -20,8 +20,12 @@ Write feedback via tool:
 
 On each weekly synthesis run, Engram writes:
 - `memoryDir/compounding/weekly/<YYYY-Www>.md`
+- `memoryDir/compounding/weekly/<YYYY-Www>.json`
 - `memoryDir/compounding/mistakes.json`
 - `memoryDir/compounding/rubrics.md`
+- `memoryDir/compounding/rubrics/index.json`
+- `memoryDir/compounding/rubrics/agents/*.md`
+- `memoryDir/compounding/rubrics/workflows/*.md`
 
 The weekly report is written even if there are no feedback entries yet (day-one outcomes).
 
@@ -30,7 +34,21 @@ Weekly reports now include:
 - Outcome-aware weighting summaries (`applied/skipped/failed` by action type)
 - Optional `Promotion Candidates (Advisory)` section when `compoundingSemanticEnabled=true`
 
+`mistakes.json` is now a backward-compatible stable registry:
+- legacy `patterns[]` is preserved for existing readers
+- `registry[]` adds stable IDs, recurrence counts, first/last-seen timestamps, scope metadata, tags, and retirement status
+
+`shared_feedback_record` also accepts optional compounding metadata:
+- `workflow`
+- `severity`
+- `confidence`
+- `tags`
+- `evidenceWindowStart`
+- `evidenceWindowEnd`
+
 Promotion candidates are advisory only and do not auto-write into shared memory.
+
+When `compoundingInjectEnabled=true`, recall injection can include both recurring mistake patterns and rubric snippets that match the current query/workflow.
 
 ## Running Weekly Synthesis
 

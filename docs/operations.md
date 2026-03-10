@@ -42,6 +42,9 @@ openclaw engram export --namespace shared --format json --out /tmp/shared-export
 ```bash
 openclaw engram search "query"      # Semantic search
 openclaw engram stats               # Memory counts and index state
+openclaw engram setup              # First-run setup validation + directory scaffolding
+openclaw engram doctor             # Aggregated runtime diagnostics + remediation hints
+openclaw engram inventory          # Memory/entity/storage footprint, review queue, and native-knowledge sync counts
 openclaw engram topics              # View extracted topic list
 openclaw engram threads             # View conversation threads
 openclaw engram access              # Most-accessed memories
@@ -53,15 +56,21 @@ openclaw engram export              # Export memory store
 openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
+openclaw engram benchmark recall    # Status/validate/compare/snapshot recall benchmark artifacts
 openclaw engram conversation-index-health  # Backend health + index stats
 openclaw engram conversation-index-inspect # Backend metadata + artifact diagnostics
 openclaw engram conversation-index-rebuild # Rebuild backend from transcript history
+openclaw engram rebuild-index       # Alias for conversation-index-rebuild
 openclaw engram graph-health        # Graph edge-file integrity + coverage
 openclaw engram session-check       # Transcript/checkpoint continuity diagnostics
 openclaw engram session-repair      # Bounded repair plan/apply (dry-run default)
+openclaw engram repair              # Aggregate session repair planning + graph guidance
 openclaw engram dashboard start     # Start live graph dashboard service
 openclaw engram dashboard status    # Dashboard health/status
 openclaw engram dashboard stop      # Stop dashboard service
+openclaw engram access http-serve   # Start local HTTP API + admin console shell
+openclaw engram access http-status  # Access server health/status
+openclaw engram access http-stop    # Stop local HTTP API
 openclaw engram action-audit        # Namespace-aware memory action policy audit
 openclaw engram tier-status         # Tier migration telemetry + last-cycle summary
 openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run default)
@@ -78,6 +87,21 @@ Compatibility diagnostics:
 - `openclaw engram compat` reports `ok|warn|error` checks for manifest wiring, startup hooks/service registration, CLI wiring, Node engine floor, and qmd availability.
 - Use `openclaw engram compat --json` for CI/automation consumers.
 - Use `openclaw engram compat --strict` to fail with non-zero exit code on warnings or errors.
+
+Operator toolkit:
+- `openclaw engram setup` validates the loaded OpenClaw config, creates missing Engram-owned directories, checks QMD reachability/collection presence, and can scaffold `MEMORY.md` when explicit capture is enabled.
+- `openclaw engram setup --preview-capture-instructions` prints the managed explicit-capture snippet without writing files.
+- `openclaw engram setup --install-capture-instructions` writes or updates only the managed explicit-capture block inside `MEMORY.md`.
+- `openclaw engram setup --remove-capture-instructions` removes the managed explicit-capture block and deletes `MEMORY.md` if that block was the file's only content.
+- `openclaw engram doctor` aggregates config, directory, QMD, conversation-index, maintenance, HTTP bridge auth, and file-hygiene checks into one stable report.
+- `openclaw engram inventory` reports counts by category/status, namespace summaries, profile size, review queue size, conversation-index freshness, native-knowledge sync counts, and storage footprint.
+- Use `--json` on each of these commands for script/CI-friendly output.
+
+Explicit capture protocol:
+- Prefer the `memory_capture` tool when tool use is available.
+- Inline fallback is available in `explicit` and `hybrid` modes through a `<memory_note>...</memory_note>` block in assistant output.
+- Failed inline writes are sanitized and queued as `pending_review` memories instead of being dropped.
+- Managed `MEMORY.md` setup snippets are opt-in, previewable, and reversible through the setup flags above.
 
 Graph diagnostics:
 - `openclaw engram graph-health` reports per-edge-file integrity (`entity/time/causal`), corruption counts, and unique node coverage.
@@ -116,6 +140,11 @@ Routing behavior notes:
 - Routing is optional and disabled unless `routingRulesEnabled=true`.
 - Rules are applied at write-time for extracted facts before persistence.
 - Rule targets may override `category`, `namespace`, or both; invalid targets fail-open to default writes.
+
+Admin console notes:
+- Start the local access server, then open `http://127.0.0.1:4318/engram/ui/` in a browser.
+- Paste the same bearer token used for `/engram/v1/...` requests into the console login field.
+- The console is read-only by default, but governance review actions still write auditable lifecycle events through the same local access layer.
 
 ## Compression Guideline Optimizer Tool (v8.11)
 
@@ -173,6 +202,7 @@ openclaw engram conversation-index-inspect
 
 # Rebuild conversation-index backend from the last 24h of transcripts
 openclaw engram conversation-index-rebuild
+openclaw engram rebuild-index
 
 # Show graph health with optional repair guidance notes
 openclaw engram graph-health --repair-guidance
@@ -181,6 +211,7 @@ openclaw engram graph-health --repair-guidance
 openclaw engram session-check
 openclaw engram session-repair --dry-run
 openclaw engram session-repair --apply
+openclaw engram repair --dry-run
 
 # Live graph dashboard process
 openclaw engram dashboard start --host 127.0.0.1 --port 4319
@@ -349,6 +380,16 @@ Engram can also rebuild a derived SQLite projection for current-state inspection
 # Rebuild the derived projection from markdown memory files plus lifecycle events
 openclaw engram rebuild-memory-projection
 
+# Scope the rebuild to one namespace root and one updated-at window
+openclaw engram rebuild-memory-projection --namespace shared --updated-after 2026-03-01T00:00:00Z --write
+
+# Verify projection drift against authoritative markdown + lifecycle data
+openclaw engram verify-memory-projection
+
+# Preview a projection repair, then apply it
+openclaw engram repair-memory-projection
+openclaw engram repair-memory-projection --write
+
 # Inspect one memory timeline from the derived projection (or fail-open fallback path)
 openclaw engram memory-timeline fact-123
 ```
@@ -362,8 +403,48 @@ openclaw engram rebuild-memory-projection --write
 Operational guarantees:
 - markdown memories remain authoritative
 - projection rebuilds are backup-first and safe to discard/regenerate
+- projection verify/repair can target a namespace root plus optional updated-at window
+- scoped projection rebuilds only replace rows inside the selected window; out-of-scope rows stay untouched
 - timeline reads fail open to the lifecycle ledger when projection data is unavailable
 - projection writes use a separate derived SQLite store under `state/memory-projection.sqlite`
+
+## Memory Governance Maintenance
+
+Engram can run a deterministic memory-governance sweep that builds a review queue, applies reversible status/archive transitions, and writes durable audit artifacts for each run.
+
+```bash
+# Simulate a governance run and write review artifacts only
+openclaw engram governance-run --mode shadow
+
+# Apply governance actions and write restore metadata
+openclaw engram governance-run --mode apply
+
+# Read the latest governance artifact bundle
+openclaw engram governance-report
+
+# Restore one applied governance run
+openclaw engram governance-restore --run-id gov-2026-03-09T12-00-00-000Z
+
+# Record an explicit operator disposition for one memory
+openclaw engram review-disposition fact-123 --status rejected --reason-code operator_review
+```
+
+Each governance run writes artifacts under `state/memory-governance/runs/<runId>/`:
+
+- `summary.json`
+- `review-queue.json`
+- `kept-memories.json`
+- `applied-actions.json`
+- `metrics.json`
+- `manifest.json`
+- `report.md`
+- `restore.json` for `apply` runs only
+
+Operational guarantees:
+- `shadow` mode never mutates markdown memories
+- `apply` mode writes rollback-safe restore metadata before the run is considered complete
+- governance lifecycle events record actor, reason code, rule version, correlation ID, and related memory IDs where available
+- the rule set is versioned as `memory-governance.v1` so artifact interpretation stays reproducible
 
 ## Work Board Helpers
 

@@ -1,6 +1,7 @@
 import path from "node:path";
 import type {
   IdentityInjectionMode,
+  MemoryOsPresetName,
   PluginConfig,
   PrincipalRule,
   RecallPipelineConfig,
@@ -80,6 +81,12 @@ function normalizeMemoryRelativeDir(raw: unknown, fallback: string): string {
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
 const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
+const VALID_MEMORY_OS_PRESETS: MemoryOsPresetName[] = [
+  "conservative",
+  "balanced",
+  "research-max",
+  "local-llm-heavy",
+];
 const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
@@ -102,11 +109,124 @@ const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [
   "verbatimArtifactsMaxRecall",
 ];
 
+const MEMORY_OS_PRESET_ALIASES: Record<string, MemoryOsPresetName> = {
+  research: "research-max",
+};
+
+const MEMORY_OS_PRESETS: Record<MemoryOsPresetName, Record<string, unknown>> = {
+  conservative: {
+    maxMemoryTokens: 1500,
+    recallPlannerMaxQmdResultsMinimal: 2,
+    recallPlannerMaxQmdResultsFull: 5,
+    queryAwareIndexingEnabled: false,
+    verbatimArtifactsEnabled: false,
+    verbatimArtifactsMaxRecall: 2,
+    rerankEnabled: false,
+    localLlmEnabled: false,
+    localLlmFastEnabled: false,
+    multiGraphMemoryEnabled: false,
+    graphRecallEnabled: false,
+    graphAssistInFullModeEnabled: false,
+    proactiveExtractionEnabled: false,
+    contextCompressionActionsEnabled: false,
+    compressionGuidelineLearningEnabled: false,
+    compressionGuidelineSemanticRefinementEnabled: false,
+    maxProactiveQuestionsPerExtraction: 0,
+    maxCompressionTokensPerHour: 0,
+    behaviorLoopAutoTuneEnabled: false,
+  },
+  balanced: {
+    maxMemoryTokens: 2000,
+    recallPlannerMaxQmdResultsMinimal: 4,
+    recallPlannerMaxQmdResultsFull: 8,
+    queryAwareIndexingEnabled: true,
+    verbatimArtifactsEnabled: true,
+    verbatimArtifactsMaxRecall: 4,
+    rerankEnabled: true,
+    rerankProvider: "local",
+    localLlmEnabled: false,
+    localLlmFastEnabled: false,
+    multiGraphMemoryEnabled: false,
+    graphRecallEnabled: false,
+    graphAssistInFullModeEnabled: false,
+    proactiveExtractionEnabled: false,
+    contextCompressionActionsEnabled: false,
+    compressionGuidelineLearningEnabled: false,
+    compressionGuidelineSemanticRefinementEnabled: false,
+    maxProactiveQuestionsPerExtraction: 2,
+    maxCompressionTokensPerHour: 1500,
+    behaviorLoopAutoTuneEnabled: false,
+  },
+  "research-max": {
+    maxMemoryTokens: 3200,
+    recallPlannerMaxQmdResultsMinimal: 6,
+    recallPlannerMaxQmdResultsFull: 12,
+    queryAwareIndexingEnabled: true,
+    verbatimArtifactsEnabled: true,
+    verbatimArtifactsMaxRecall: 6,
+    rerankEnabled: true,
+    rerankProvider: "local",
+    localLlmEnabled: false,
+    localLlmFastEnabled: false,
+    multiGraphMemoryEnabled: true,
+    graphRecallEnabled: true,
+    graphAssistInFullModeEnabled: true,
+    proactiveExtractionEnabled: true,
+    contextCompressionActionsEnabled: true,
+    compressionGuidelineLearningEnabled: true,
+    compressionGuidelineSemanticRefinementEnabled: true,
+    maxProactiveQuestionsPerExtraction: 4,
+    maxCompressionTokensPerHour: 3000,
+    behaviorLoopAutoTuneEnabled: true,
+  },
+  "local-llm-heavy": {
+    maxMemoryTokens: 2400,
+    recallPlannerMaxQmdResultsMinimal: 4,
+    recallPlannerMaxQmdResultsFull: 8,
+    queryAwareIndexingEnabled: true,
+    verbatimArtifactsEnabled: true,
+    verbatimArtifactsMaxRecall: 4,
+    rerankEnabled: true,
+    rerankProvider: "local",
+    localLlmEnabled: true,
+    localLlmFastEnabled: true,
+    embeddingFallbackProvider: "local",
+    localLlmFallback: true,
+    multiGraphMemoryEnabled: false,
+    graphRecallEnabled: false,
+    graphAssistInFullModeEnabled: false,
+    proactiveExtractionEnabled: true,
+    contextCompressionActionsEnabled: true,
+    compressionGuidelineLearningEnabled: true,
+    compressionGuidelineSemanticRefinementEnabled: false,
+    maxProactiveQuestionsPerExtraction: 2,
+    maxCompressionTokensPerHour: 1500,
+    behaviorLoopAutoTuneEnabled: false,
+  },
+};
+
+function resolveMemoryOsPreset(value: unknown): MemoryOsPresetName | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (VALID_MEMORY_OS_PRESETS.includes(normalized as MemoryOsPresetName)) {
+    return normalized as MemoryOsPresetName;
+  }
+  return MEMORY_OS_PRESET_ALIASES[normalized];
+}
+
 export function parseConfig(raw: unknown): PluginConfig {
-  const cfg =
+  const baseCfg =
     raw && typeof raw === "object" && !Array.isArray(raw)
       ? (raw as Record<string, unknown>)
       : {};
+  const memoryOsPreset = resolveMemoryOsPreset(baseCfg.memoryOsPreset);
+  const cfg = memoryOsPreset
+    ? {
+        ...MEMORY_OS_PRESETS[memoryOsPreset],
+        ...baseCfg,
+        memoryOsPreset,
+      }
+    : baseCfg;
 
   let apiKey: string | undefined;
   if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {
@@ -247,6 +367,68 @@ export function parseConfig(raw: unknown): PluginConfig {
             : 2400,
         stateDir:
           normalizeMemoryRelativeDir(rawNativeKnowledge.stateDir, "state/native-knowledge"),
+        openclawWorkspace:
+          rawNativeKnowledge.openclawWorkspace &&
+            typeof rawNativeKnowledge.openclawWorkspace === "object" &&
+            !Array.isArray(rawNativeKnowledge.openclawWorkspace) &&
+            (rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).enabled === true
+            ? {
+              enabled: true,
+              bootstrapFiles: Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).bootstrapFiles)
+                ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).bootstrapFiles as unknown[])
+                  .filter((value): value is string => typeof value === "string")
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+                : ["IDENTITY.md", "MEMORY.md", "USER.md"],
+              handoffGlobs: Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).handoffGlobs)
+                ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).handoffGlobs as unknown[])
+                  .filter((value): value is string => typeof value === "string")
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+                : ["**/*handoff*.md", "handoffs/**/*.md"],
+              dailySummaryGlobs: Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).dailySummaryGlobs)
+                ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).dailySummaryGlobs as unknown[])
+                  .filter((value): value is string => typeof value === "string")
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+                : ["**/*daily*summary*.md", "summaries/**/*.md"],
+              automationNoteGlobs: Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).automationNoteGlobs)
+                ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).automationNoteGlobs as unknown[])
+                  .filter((value): value is string => typeof value === "string")
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+                : [],
+              workspaceDocGlobs: Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).workspaceDocGlobs)
+                ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).workspaceDocGlobs as unknown[])
+                  .filter((value): value is string => typeof value === "string")
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+                : [],
+              excludeGlobs: [
+                ".git/**",
+                "node_modules/**",
+                "dist/**",
+                "build/**",
+                "coverage/**",
+                "**/*.log",
+                "**/.env*",
+                "**/*.pem",
+                "**/*.key",
+                ...(Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).excludeGlobs)
+                  ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).excludeGlobs as unknown[])
+                    .filter((value): value is string => typeof value === "string")
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                  : []),
+              ].filter((value, index, array) => array.indexOf(value) === index),
+              sharedSafeGlobs: Array.isArray((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).sharedSafeGlobs)
+                ? ((rawNativeKnowledge.openclawWorkspace as Record<string, unknown>).sharedSafeGlobs as unknown[])
+                  .filter((value): value is string => typeof value === "string")
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+                : [],
+            }
+            : undefined,
         obsidianVaults: Array.isArray(rawNativeKnowledge.obsidianVaults)
           ? (rawNativeKnowledge.obsidianVaults as unknown[])
             .filter((value): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value))
@@ -372,6 +554,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       : [],
     maxMemoryTokens:
       typeof cfg.maxMemoryTokens === "number" ? cfg.maxMemoryTokens : 2000,
+    memoryOsPreset,
     qmdEnabled: cfg.qmdEnabled !== false,
     qmdCollection:
       typeof cfg.qmdCollection === "string"
@@ -894,6 +1077,17 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.knowledgeIndexMaxEntities === "number" ? cfg.knowledgeIndexMaxEntities : 40,
     knowledgeIndexMaxChars:
       typeof cfg.knowledgeIndexMaxChars === "number" ? cfg.knowledgeIndexMaxChars : 4000,
+    entityRetrievalEnabled: cfg.entityRetrievalEnabled !== false,
+    entityRetrievalMaxChars:
+      typeof cfg.entityRetrievalMaxChars === "number" ? cfg.entityRetrievalMaxChars : 2400,
+    entityRetrievalMaxHints:
+      typeof cfg.entityRetrievalMaxHints === "number" ? cfg.entityRetrievalMaxHints : 2,
+    entityRetrievalMaxSupportingFacts:
+      typeof cfg.entityRetrievalMaxSupportingFacts === "number" ? cfg.entityRetrievalMaxSupportingFacts : 6,
+    entityRetrievalMaxRelatedEntities:
+      typeof cfg.entityRetrievalMaxRelatedEntities === "number" ? cfg.entityRetrievalMaxRelatedEntities : 3,
+    entityRetrievalRecentTurns:
+      typeof cfg.entityRetrievalRecentTurns === "number" ? cfg.entityRetrievalRecentTurns : 6,
     recallBudgetChars: recallPipelineConfig.recallBudgetChars,
     recallPipeline: recallPipelineConfig.pipeline,
     entityRelationshipsEnabled: cfg.entityRelationshipsEnabled !== false,
@@ -988,6 +1182,20 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.maxProactiveQuestionsPerExtraction === "number"
         ? Math.max(0, Math.floor(cfg.maxProactiveQuestionsPerExtraction))
         : 2,
+    proactiveExtractionTimeoutMs:
+      typeof cfg.proactiveExtractionTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.proactiveExtractionTimeoutMs))
+        : 2500,
+    proactiveExtractionMaxTokens:
+      typeof cfg.proactiveExtractionMaxTokens === "number"
+        ? Math.max(0, Math.floor(cfg.proactiveExtractionMaxTokens))
+        : 900,
+    proactiveExtractionCategoryAllowlist: Array.isArray(cfg.proactiveExtractionCategoryAllowlist)
+      ? (cfg.proactiveExtractionCategoryAllowlist as unknown[]).filter(
+          (category): category is PluginConfig["lifecycleProtectedCategories"][number] =>
+            typeof category === "string" && VALID_MEMORY_CATEGORIES.has(category),
+        )
+      : undefined,
     maxCompressionTokensPerHour:
       typeof cfg.maxCompressionTokensPerHour === "number"
         ? Math.max(0, Math.floor(cfg.maxCompressionTokensPerHour))
@@ -1223,10 +1431,14 @@ function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {
       entry.maxChars === null
         ? null
         : clampNonNegativeNumber(entry.maxChars),
+    maxHints: clampNonNegativeNumber(entry.maxHints),
+    maxSupportingFacts: clampNonNegativeNumber(entry.maxSupportingFacts),
+    maxRelatedEntities: clampNonNegativeNumber(entry.maxRelatedEntities),
     consolidateTriggerLines: clampNonNegativeNumber(entry.consolidateTriggerLines),
     consolidateTargetLines: clampNonNegativeNumber(entry.consolidateTargetLines),
     maxEntities: clampNonNegativeNumber(entry.maxEntities),
     maxResults: clampNonNegativeNumber(entry.maxResults),
+    recentTurns: clampNonNegativeNumber(entry.recentTurns),
     maxTurns: clampNonNegativeNumber(entry.maxTurns),
     maxTokens: clampNonNegativeNumber(entry.maxTokens),
     lookbackHours: clampNonNegativeNumber(entry.lookbackHours),
@@ -1234,6 +1446,7 @@ function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {
     topK: clampNonNegativeNumber(entry.topK),
     timeoutMs: clampNonNegativeNumber(entry.timeoutMs),
     maxPatterns: clampNonNegativeNumber(entry.maxPatterns),
+    maxRubrics: clampNonNegativeNumber(entry.maxRubrics),
   };
 }
 
@@ -1256,6 +1469,30 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     {
       id: "identity-continuity",
       enabled: cfg.identityContinuityEnabled === true,
+    },
+    {
+      id: "entity-retrieval",
+      enabled: cfg.entityRetrievalEnabled !== false,
+      maxChars:
+        typeof cfg.entityRetrievalMaxChars === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxChars))
+          : 2400,
+      maxHints:
+        typeof cfg.entityRetrievalMaxHints === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxHints))
+          : 2,
+      maxSupportingFacts:
+        typeof cfg.entityRetrievalMaxSupportingFacts === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxSupportingFacts))
+          : 6,
+      maxRelatedEntities:
+        typeof cfg.entityRetrievalMaxRelatedEntities === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalMaxRelatedEntities))
+          : 3,
+      recentTurns:
+        typeof cfg.entityRetrievalRecentTurns === "number"
+          ? Math.max(0, Math.floor(cfg.entityRetrievalRecentTurns))
+          : 6,
     },
     {
       id: "knowledge-index",
@@ -1390,6 +1627,7 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
       id: "compounding",
       enabled: cfg.compoundingEnabled === true && cfg.compoundingInjectEnabled !== false,
       maxPatterns: 40,
+      maxRubrics: 4,
     },
     { id: "questions", enabled: cfg.injectQuestions === true },
   ];

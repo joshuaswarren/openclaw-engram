@@ -12,7 +12,31 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `reasoningEffort` | `low` | `none`, `low`, `medium`, `high` |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `workspaceDir` | `~/.openclaw/workspace` | Workspace root (IDENTITY.md location) |
+| `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, or `hybrid` |
 | `debug` | `false` | Enable debug logging |
+
+`captureMode` behavior:
+
+- `implicit`: normal extraction/write behavior.
+- `explicit`: normal conversation turns never create memories; only structured explicit capture writes or queues review items.
+- `hybrid`: explicit capture writes immediately, while the normal extraction pipeline remains available.
+
+## Memory OS Presets
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `memoryOsPreset` | `(unset)` | Optional advanced preset: `conservative`, `balanced`, `research-max`, or `local-llm-heavy`. Preset values seed the advanced config surface before explicit per-setting overrides are applied. |
+
+Preset intent:
+
+- `conservative` keeps recall budgets lower and leaves experimental learning/graph features off.
+- `balanced` enables the recommended indexing, artifact, and rerank defaults without turning on the higher-churn learning loops.
+- `research-max` enables the broadest shipped experimental surface, including graph recall and adaptive policy loops.
+- `local-llm-heavy` biases extraction/rerank/tooling toward local OpenAI-compatible endpoints and the fast local tier.
+
+Backward compatibility note:
+
+- `memoryOsPreset: "research"` is accepted as an alias for `research-max`, but new configs should use `research-max`.
 
 ## Access Layer
 
@@ -23,6 +47,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `agentAccessHttp.port` | `4318` | Bind port for the Engram HTTP API (`0` = ephemeral port) |
 | `agentAccessHttp.authToken` | `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API; supports `${ENV_VAR}` references |
 | `agentAccessHttp.maxBodyBytes` | `131072` | Maximum accepted JSON request body size |
+
+When `agentAccessHttp.enabled` is on (or `openclaw engram access http-serve` is running), the same loopback server also serves the browser-based admin console shell at `/engram/ui/`. The shell is static; memory data and operator actions still require the configured bearer token over `/engram/v1/...`.
 
 ## Buffer & Triggers
 
@@ -85,6 +111,12 @@ See [Search Backends](search-backends.md) for detailed configuration and compari
 | `knowledgeIndexEnabled` | `true` | Inject entity/topic index into recall context |
 | `knowledgeIndexMaxEntities` | `40` | Max entities included in the knowledge index |
 | `knowledgeIndexMaxChars` | `4000` | Max characters of knowledge index injected |
+| `entityRetrievalEnabled` | `true` | Enable entity-oriented recall hints for `who is`, `what do we know about`, and transcript-backed recent-turn pronoun follow-ups within the active recall namespace |
+| `entityRetrievalMaxChars` | `2400` | Max characters injected by the entity retrieval section |
+| `entityRetrievalMaxHints` | `2` | Max entity targets summarized in a single recall pass |
+| `entityRetrievalMaxSupportingFacts` | `6` | Max direct-answer supporting facts/timeline snippets considered per target |
+| `entityRetrievalMaxRelatedEntities` | `3` | Max related entities listed per target when confidence is high |
+| `entityRetrievalRecentTurns` | `6` | Number of recent transcript turns scanned for pronoun carry-forward and short follow-up resolution |
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Hard cap for total assembled recall context (final safety trim before system prompt injection) |
 | `recallPipeline` | `(built-in ordered defaults)` | Ordered section controls for recall assembly, including per-section caps and knobs |
 
@@ -108,10 +140,14 @@ Supported keys:
 | `id` | `string` | Section identifier (required) |
 | `enabled` | `boolean` | Enable/disable the section |
 | `maxChars` | `number \| null` | Per-section char cap (`null` = uncapped by section) |
+| `maxHints` | `number` | `entity-retrieval` section only; max resolved entity targets |
+| `maxSupportingFacts` | `number` | `entity-retrieval` section only; direct-answer evidence budget per target |
+| `maxRelatedEntities` | `number` | `entity-retrieval` section only; related-entity cap per target |
 | `consolidateTriggerLines` | `number` | `profile` section only; profile consolidation trigger line count |
 | `consolidateTargetLines` | `number` | `profile` section only; consolidation target line count |
 | `maxEntities` | `number` | `knowledge-index` section only; per-section entity cap |
 | `maxResults` | `number` | `memories` section only; cap injected memory result count |
+| `recentTurns` | `number` | `entity-retrieval` section only; transcript follow-up window |
 | `maxTurns` | `number` | `transcript` section only |
 | `maxTokens` | `number` | `transcript` section only |
 | `lookbackHours` | `number` | `transcript` / `summaries` section only |
@@ -125,12 +161,26 @@ Supported keys:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `nativeKnowledge.enabled` | `false` | Enable curated-file and adapter-backed native knowledge recall. |
-| `nativeKnowledge.includeFiles` | `["IDENTITY.md","MEMORY.md"]` | Workspace-relative markdown files to chunk directly into the native knowledge recall section. |
+| `nativeKnowledge.includeFiles` | `["IDENTITY.md","MEMORY.md"]` | Workspace-relative markdown files to chunk into the native knowledge recall section and track incrementally in backend-agnostic sync state. |
 | `nativeKnowledge.maxChunkChars` | `900` | Maximum chunk size before heading/paragraph-aware splitting. |
 | `nativeKnowledge.maxResults` | `4` | Maximum native knowledge chunks injected into recall. |
 | `nativeKnowledge.maxChars` | `2400` | Maximum total characters injected by the native knowledge section. |
 | `nativeKnowledge.stateDir` | `state/native-knowledge` | `memoryDir`-relative directory used for backend-agnostic adapter sync state. |
+| `nativeKnowledge.openclawWorkspace` | unset | Optional OpenClaw workspace adapter for bootstrap docs, handoffs, daily summaries, and automation notes. |
 | `nativeKnowledge.obsidianVaults` | `[]` | Optional Obsidian vault adapters to sync into native knowledge recall. |
+
+### `nativeKnowledge.openclawWorkspace`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable the OpenClaw workspace artifact adapter. |
+| `bootstrapFiles` | `["IDENTITY.md","MEMORY.md","USER.md"]` | Workspace-relative bootstrap docs treated as high-confidence native knowledge. |
+| `handoffGlobs` | `["**/*handoff*.md","handoffs/**/*.md"]` | Workspace-relative globs used to discover handoff notes. |
+| `dailySummaryGlobs` | `["**/*daily*summary*.md","summaries/**/*.md"]` | Workspace-relative globs used to discover daily summary notes. |
+| `automationNoteGlobs` | `[]` | Optional workspace-relative globs for automation-written status or operating notes. |
+| `workspaceDocGlobs` | `[]` | Optional workspace-relative globs for other explicitly allowlisted workspace docs. |
+| `excludeGlobs` | `[]` | Additional excludes appended to the built-in safety exclusions (`.git/**`, `node_modules/**`, `dist/**`, `build/**`, `coverage/**`, `**/*.log`, `**/.env*`, `**/*.pem`, `**/*.key`). |
+| `sharedSafeGlobs` | `[]` | Optional workspace-relative globs tagged as `shared_safe` when no explicit privacy class is present. |
 
 ### `nativeKnowledge.obsidianVaults` entries
 
@@ -155,6 +205,14 @@ Example:
   "nativeKnowledge": {
     "enabled": true,
     "includeFiles": ["IDENTITY.md", "MEMORY.md", "TEAM.md"],
+    "openclawWorkspace": {
+      "enabled": true,
+      "bootstrapFiles": ["IDENTITY.md", "MEMORY.md", "USER.md"],
+      "handoffGlobs": ["handoffs/**/*.md"],
+      "dailySummaryGlobs": ["summaries/**/*.md"],
+      "automationNoteGlobs": ["automation/**/*.md"],
+      "sharedSafeGlobs": ["automation/shared/**/*.md"]
+    },
     "obsidianVaults": [
       {
         "id": "personal",
@@ -171,6 +229,8 @@ Example:
   }
 }
 ```
+
+Direct `includeFiles` sync plus the OpenClaw workspace adapter both persist incremental sync state and tombstones under `nativeKnowledge.stateDir`, preserve source metadata on each chunk when derivable, and dedupe exact overlaps so enabling the adapter does not double-inject bootstrap docs.
 
 ## v8.0 Memory OS
 
@@ -221,6 +281,9 @@ Example:
 | `contextCompressionActionsEnabled` | `false` | Enable context compression action tool paths and action telemetry wiring. |
 | `compressionGuidelineLearningEnabled` | `false` | Enable adaptive compression guideline learning loop. |
 | `maxProactiveQuestionsPerExtraction` | `2` | Hard cap on proactive self-questions per extraction (`0` disables). |
+| `proactiveExtractionTimeoutMs` | `2500` | Hard timeout for proactive question generation plus bounded answer synthesis (`0` disables the second pass). |
+| `proactiveExtractionMaxTokens` | `900` | Token budget applied to each proactive extraction sub-call (`0` disables the second pass). |
+| `proactiveExtractionCategoryAllowlist` | unset | Optional category allowlist for proactive second-pass writes; when set, lower-confidence or off-category proactive facts are dropped before persistence. |
 | `maxCompressionTokensPerHour` | `1500` | Hourly token budget for compression-learning workflows (`0` disables). |
 
 ### v8.3 Tool + State Artifacts
@@ -235,6 +298,12 @@ Example:
   - consolidation synthesizes/updates `state/compression-guidelines.md`
   - optimizer metadata/version state persists to `state/compression-guideline-state.json`
   - synthesis is fail-open and never blocks consolidation
+- `proactiveExtractionTimeoutMs` / `proactiveExtractionMaxTokens`:
+  - bound both proactive self-question generation and the same-buffer answer-synthesis pass
+  - `0` remains a hard disable for the proactive second pass
+- `proactiveExtractionCategoryAllowlist`:
+  - filters proactive second-pass facts before persistence so only allowlisted categories are emitted
+  - does not affect the base extraction pass
 
 ### v8.13 Action-Policy Rollout Presets
 
@@ -248,6 +317,8 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
   "proactiveExtractionEnabled": false,
   "compressionGuidelineLearningEnabled": false,
   "compressionGuidelineSemanticRefinementEnabled": false,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 0
 }
 ```
@@ -260,11 +331,13 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
   "proactiveExtractionEnabled": true,
   "compressionGuidelineLearningEnabled": true,
   "compressionGuidelineSemanticRefinementEnabled": false,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 1500
 }
 ```
 
-`research`:
+`research-max`:
 
 ```jsonc
 {
@@ -273,14 +346,33 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
   "compressionGuidelineLearningEnabled": true,
   "compressionGuidelineSemanticRefinementEnabled": true,
   "compressionGuidelineSemanticTimeoutMs": 2500,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 3000
 }
 ```
 
 Disabled-path compatibility guarantees:
 - `contextCompressionActionsEnabled=false` keeps action tooling and action-policy telemetry inactive.
+- `proactiveExtractionTimeoutMs=0` or `proactiveExtractionMaxTokens=0` keeps the proactive second pass fully disabled.
 - `maxCompressionTokensPerHour=0` remains a hard disable (no implicit non-zero coercion).
 - `compressionGuidelineLearningEnabled=false` keeps consolidation behavior baseline-equivalent.
+
+## Budget Mapping Notes
+
+The original v8 roadmap listed several operator knobs that are now split across the live config surface.
+
+| Roadmap knob | Live config surface |
+|--------------|---------------------|
+| `maxRecallTokens` | `maxMemoryTokens` for token budget, plus `recallBudgetChars` for final assembled-context trimming. |
+| `maxRecallMs` | No single global wall-clock cap. Use stage-specific limits such as `recallPlannerTimeoutMs`, `conversationRecallTimeoutMs`, and `rerankTimeoutMs`. |
+| `maxCompressionTokensPerHour` | `maxCompressionTokensPerHour` |
+| `maxGraphTraversalSteps` | `maxGraphTraversalSteps` |
+| `maxArtifactsPerSession` | No dedicated per-session write cap. The nearest shipped controls are `verbatimArtifactsEnabled`, `verbatimArtifactsMaxRecall`, and `verbatimArtifactCategories`. |
+| `maxProactiveQuestionsPerExtraction` | `maxProactiveQuestionsPerExtraction` |
+| `maxProactiveExtractionMs` | `proactiveExtractionTimeoutMs` |
+| `maxProactiveExtractionTokens` | `proactiveExtractionMaxTokens` |
+| `indexRefreshBudgetMs` | Use refresh cadence + timeout controls such as `qmdUpdateMinIntervalMs`, `qmdUpdateTimeoutMs`, and `conversationIndexMinUpdateIntervalMs`. |
 
 ## v8.14 Hot/Cold Tier Parity + Migration
 

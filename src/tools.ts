@@ -4,7 +4,11 @@ import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
 import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
-import { persistExplicitCapture, validateExplicitCaptureInput } from "./explicit-capture.js";
+import {
+  persistExplicitCapture,
+  queueExplicitCaptureForReview,
+  validateExplicitCaptureInput,
+} from "./explicit-capture.js";
 import { log } from "./logger.js";
 import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
@@ -258,8 +262,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       ttl,
       sourceReason,
     } = params;
-
-    const candidate = validateExplicitCaptureInput({
+    const rawInput = {
       content,
       namespace,
       category,
@@ -268,28 +271,44 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       confidence,
       ttl,
       sourceReason,
-    }, source === "memory_store" ? "legacy_tool" : "strict_explicit");
-    const result = await persistExplicitCapture(orchestrator, candidate, source);
+    };
 
-    if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
-      const storage = await orchestrator.getStorage(candidate.namespace);
-      const mem = await storage.getMemoryById(result.id).catch(() => null);
-      if (mem?.path && mem.frontmatter?.created) {
-        indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
+    try {
+      const candidate = validateExplicitCaptureInput(
+        rawInput,
+        source === "memory_store" ? "legacy_tool" : "strict_explicit",
+      );
+      const result = await persistExplicitCapture(orchestrator, candidate, source);
+
+      if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
+        const storage = await orchestrator.getStorage(candidate.namespace);
+        const mem = await storage.getMemoryById(result.id).catch(() => null);
+        if (mem?.path && mem.frontmatter?.created) {
+          indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
+        }
+      }
+
+      orchestrator.requestQmdMaintenanceForTool(maintenanceReason);
+
+      return toolResult(
+        result.duplicateOf
+          ? `Memory already exists: ${result.duplicateOf}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`
+          : `Memory stored: ${result.id}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
+      );
+    } catch (error) {
+      try {
+        const queued = await queueExplicitCaptureForReview(orchestrator, rawInput, source, error);
+        orchestrator.requestQmdMaintenanceForTool(`${maintenanceReason}.review`);
+        return toolResult(
+          queued.duplicateOf
+            ? `Memory already queued for review: ${queued.duplicateOf}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`
+            : `Memory queued for review: ${queued.id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`,
+        );
+      } catch (queueError) {
+        log.warn(`explicit tool capture rejected: ${error}; review queue fallback failed: ${queueError}`);
+        return toolResult(`Memory capture failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-
-    orchestrator.requestQmdMaintenanceForTool(maintenanceReason);
-
-    if (result.duplicateOf) {
-      return toolResult(
-        `Memory already exists: ${result.duplicateOf}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
-      );
-    }
-
-    return toolResult(
-      `Memory stored: ${result.id}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
-    );
   }
 
   api.registerTool(
@@ -925,6 +944,33 @@ Best for:
       },
     },
     { name: "memory_last_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_intent_debug",
+      label: "Inspect Intent Debug",
+      description:
+        "Inspect the last persisted planner/intent snapshot, including recall mode selection, query intent classification, and graph fallback decisions.",
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Optional namespace to inspect. Defaults to defaultNamespace.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { namespace } = params as {
+          namespace?: string;
+        };
+        const text = await orchestrator.explainLastIntent({
+          namespace,
+        });
+        return toolResult(text);
+      },
+    },
+    { name: "memory_intent_debug" },
   );
 
   api.registerTool(
@@ -2086,6 +2132,15 @@ Best for:
         date: Type.Optional(Type.String({ description: "ISO timestamp. Defaults to now." })),
         learning: Type.Optional(Type.String({ description: "Optional distilled learning/pattern." })),
         outcome: Type.Optional(Type.String({ description: "Optional downstream outcome (day-one supported; may be empty initially)." })),
+        severity: Type.Optional(Type.String({
+          enum: ["low", "medium", "high"],
+          description: "Optional severity rating for the mistake/outcome.",
+        })),
+        confidence: Type.Optional(Type.Number({ description: "Optional confidence score from 0 to 1." })),
+        workflow: Type.Optional(Type.String({ description: "Optional workflow or playbook name associated with the feedback." })),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Optional tags for rubric grouping and recall matching." })),
+        evidenceWindowStart: Type.Optional(Type.String({ description: "Optional start timestamp for the evidence window." })),
+        evidenceWindowEnd: Type.Optional(Type.String({ description: "Optional end timestamp for the evidence window." })),
         refs: Type.Optional(Type.Array(Type.String(), { description: "Optional references (URLs, IDs, filenames)." })),
       }),
       async execute(_toolCallId, params) {
@@ -2102,6 +2157,12 @@ Best for:
           date: typeof p.date === "string" && p.date.length > 0 ? p.date : new Date().toISOString(),
           learning: typeof p.learning === "string" ? p.learning : undefined,
           outcome: typeof p.outcome === "string" ? p.outcome : undefined,
+          severity: p.severity === "low" || p.severity === "medium" || p.severity === "high" ? p.severity : undefined,
+          confidence: typeof p.confidence === "number" && Number.isFinite(p.confidence) ? p.confidence : undefined,
+          workflow: typeof p.workflow === "string" ? p.workflow : undefined,
+          tags: Array.isArray(p.tags) ? p.tags.map(String) : undefined,
+          evidenceWindowStart: typeof p.evidenceWindowStart === "string" ? p.evidenceWindowStart : undefined,
+          evidenceWindowEnd: typeof p.evidenceWindowEnd === "string" ? p.evidenceWindowEnd : undefined,
           refs: Array.isArray(p.refs) ? p.refs.map(String) : undefined,
         };
         await orchestrator.sharedContext.appendFeedback(entry);
@@ -2169,7 +2230,7 @@ Best for:
       name: "compounding_weekly_synthesize",
       label: "Synthesize Weekly Learning",
       description:
-        "Generate weekly compounding outputs (v5.0): weekly report + mistakes.json. Designed to work from day one (writes even if no feedback exists yet).",
+        "Generate weekly compounding outputs (v5.0): weekly markdown + JSON reports, stable mistake registry, and rubric artifacts. Designed to work from day one (writes even if no feedback exists yet).",
       parameters: Type.Object({
         weekId: Type.Optional(
           Type.String({
@@ -2187,7 +2248,7 @@ Best for:
         const { weekId } = params as { weekId?: string };
         const res = await orchestrator.compounding.synthesizeWeekly({ weekId });
         return toolResult(
-          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nrubrics: ${res.rubricsPath}\nmistakes: ${res.mistakesCount} patterns\npromotionCandidates: ${res.promotionCandidateCount}`,
+          `OK\n\nweekId: ${res.weekId}\nreport: ${res.reportPath}\nreportJson: ${res.reportJsonPath}\nrubrics: ${res.rubricsPath}\nrubricsIndex: ${res.rubricsIndexPath}\nmistakes: ${res.mistakesCount} patterns\npromotionCandidates: ${res.promotionCandidateCount}`,
         );
       },
     },

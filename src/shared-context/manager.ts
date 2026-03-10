@@ -12,6 +12,12 @@ export const SharedFeedbackEntrySchema = z.object({
   date: z.string().min(8), // ISO-ish; keep loose
   learning: z.string().optional(),
   outcome: z.string().optional(),
+  severity: z.enum(["low", "medium", "high"]).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  workflow: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  evidenceWindowStart: z.string().min(8).optional(),
+  evidenceWindowEnd: z.string().min(8).optional(),
   refs: z.array(z.string()).optional(),
 });
 

@@ -12,7 +12,14 @@
 - [Overview](architecture/overview.md) — System design, components, storage layout
 - [Retrieval Pipeline](architecture/retrieval-pipeline.md) — How recall works end-to-end
 - [Memory Lifecycle](architecture/memory-lifecycle.md) — Write, consolidation, expiry
+- [Graph Reasoning](architecture/graph-reasoning.md) — Opt-in graph traversal, assist, and explainability
 - [Writing a Search Backend](writing-a-search-backend.md) — Build your own search adapter (v9.0)
+
+## Guides
+
+- [Local LLM Guide](guides/local-llm.md) — Setup and tune local-first extraction/rerank flows
+- [Cost Control Guide](guides/cost-control.md) — Budget mappings, presets, and rollout discipline
+- [Migration Guide](guides/migrations.md) — Move from manual tuning and historical roadmap docs to the current config surface
 
 ## Operations
 
@@ -35,3 +42,4 @@
 
 - [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1) — Current priority order, blockers, and next work
 - [Plans Index](plans/README.md) — Historical design plans and archive layout
+- [Research Paper Mapping](research/paper-mapping.md) — How live features map to the papers and concepts that inspired them

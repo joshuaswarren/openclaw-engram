@@ -21,6 +21,7 @@ This slice ships:
 - `benchmarkDeltaReporterEnabled`
 - `evalStoreDir`
 - `openclaw engram benchmark-status`
+- `openclaw engram benchmark recall`
 - `openclaw engram benchmark-validate <path>`
 - `openclaw engram benchmark-import <path> [--force]`
 - `openclaw engram benchmark-baseline-snapshot --snapshot-id <id>`
@@ -175,6 +176,10 @@ These records are intentionally compact:
 ## CLI
 
 ```bash
+openclaw engram benchmark recall
+openclaw engram benchmark recall --validate ./benchmarks/ama-memory
+openclaw engram benchmark recall --snapshot-id main-baseline
+openclaw engram benchmark recall --base ./base-evals --candidate ./candidate-evals
 openclaw engram benchmark-status
 openclaw engram benchmark-validate ./benchmarks/ama-memory
 openclaw engram benchmark-import ./benchmarks/ama-memory
@@ -206,6 +211,14 @@ The validation/import tools:
 - preserve extra files when importing a directory pack
 - require `--force` to replace an existing imported benchmark pack
 - preserve red-team benchmark metadata alongside standard benchmark packs
+
+The grouped `benchmark recall` workflow:
+
+- defaults to harness status when no extra flags are provided
+- validates a candidate benchmark pack with `--validate <path>`
+- compares the current eval store against a stored baseline with `--snapshot-id <id>`
+- compares two eval stores with `--base <dir> --candidate <dir>`
+- can create a new stored baseline snapshot with `--snapshot-id <id> --create-snapshot`
 
 The baseline snapshot tool:
 
@@ -244,7 +257,8 @@ The CI gate:
 
 See:
 
-- [Agentic Memory Roadmap](plans/2026-03-06-engram-agentic-memory-roadmap.md)
+- [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1)
+- [Historical Plans Index](plans/README.md)
 - [PR1 Eval Harness Foundation Plan](plans/2026-03-06-engram-pr1-eval-harness-foundation.md)
 - [PR2 Benchmark Pack Validator And Import Tools](plans/2026-03-06-engram-pr2-benchmark-tools.md)
 - [PR3 Shadow Recording For Live Recall Decisions](plans/2026-03-07-engram-pr3-shadow-recording.md)

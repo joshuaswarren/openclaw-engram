@@ -10,15 +10,21 @@ export type CronRecallMode = "all" | "none" | "allowlist";
 export type CronConversationRecallMode = "auto" | "always" | "never";
 export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 export type CaptureMode = "implicit" | "explicit" | "hybrid";
+export type MemoryOsPresetName = "conservative" | "balanced" | "research-max" | "local-llm-heavy";
+export type ExtractionPassSource = "base" | "proactive";
 
 export interface RecallSectionConfig {
   id: string;
   enabled?: boolean;
   maxChars?: number | null;
+  maxHints?: number;
+  maxSupportingFacts?: number;
+  maxRelatedEntities?: number;
   consolidateTriggerLines?: number;
   consolidateTargetLines?: number;
   maxEntities?: number;
   maxResults?: number;
+  recentTurns?: number;
   maxTurns?: number;
   maxTokens?: number;
   lookbackHours?: number;
@@ -26,6 +32,7 @@ export interface RecallSectionConfig {
   topK?: number;
   timeoutMs?: number;
   maxPatterns?: number;
+  maxRubrics?: number;
 }
 
 export interface RecallPipelineConfig {
@@ -70,6 +77,7 @@ export interface NativeKnowledgeConfig {
   maxChars: number;
   stateDir: string;
   obsidianVaults: NativeKnowledgeObsidianVaultConfig[];
+  openclawWorkspace?: NativeKnowledgeOpenClawWorkspaceConfig;
 }
 
 export interface NativeKnowledgeFolderRuleConfig {
@@ -88,6 +96,17 @@ export interface NativeKnowledgeObsidianVaultConfig {
   folderRules: NativeKnowledgeFolderRuleConfig[];
   dailyNotePatterns: string[];
   materializeBacklinks: boolean;
+}
+
+export interface NativeKnowledgeOpenClawWorkspaceConfig {
+  enabled: boolean;
+  bootstrapFiles: string[];
+  handoffGlobs: string[];
+  dailySummaryGlobs: string[];
+  automationNoteGlobs: string[];
+  workspaceDocGlobs: string[];
+  excludeGlobs: string[];
+  sharedSafeGlobs: string[];
 }
 
 export interface AgentAccessHttpConfig {
@@ -119,6 +138,7 @@ export interface PluginConfig {
   consolidateEveryN: number;
   highSignalPatterns: string[];
   maxMemoryTokens: number;
+  memoryOsPreset?: MemoryOsPresetName;
   qmdEnabled: boolean;
   qmdCollection: string;
   qmdMaxResults: number;
@@ -441,6 +461,12 @@ export interface PluginConfig {
   knowledgeIndexEnabled: boolean;
   knowledgeIndexMaxEntities: number;
   knowledgeIndexMaxChars: number;
+  entityRetrievalEnabled: boolean;
+  entityRetrievalMaxChars: number;
+  entityRetrievalMaxHints: number;
+  entityRetrievalMaxSupportingFacts: number;
+  entityRetrievalMaxRelatedEntities: number;
+  entityRetrievalRecentTurns: number;
   // Recall assembly controls
   recallBudgetChars: number;
   recallPipeline: RecallSectionConfig[];
@@ -478,6 +504,9 @@ export interface PluginConfig {
   compressionGuidelineSemanticRefinementEnabled: boolean;
   compressionGuidelineSemanticTimeoutMs: number;
   maxProactiveQuestionsPerExtraction: number;
+  proactiveExtractionTimeoutMs: number;
+  proactiveExtractionMaxTokens: number;
+  proactiveExtractionCategoryAllowlist?: MemoryCategory[];
   maxCompressionTokensPerHour: number;
   behaviorLoopAutoTuneEnabled: boolean;
   behaviorLoopLearningWindowDays: number;
@@ -698,7 +727,7 @@ export interface BehaviorSignalEvent {
 }
 
 /** Memory status for lifecycle management */
-export type MemoryStatus = "active" | "superseded" | "archived";
+export type MemoryStatus = "active" | "pending_review" | "rejected" | "quarantined" | "superseded" | "archived";
 export type LifecycleState = "candidate" | "validated" | "active" | "stale" | "archived";
 export type VerificationState = "unverified" | "user_confirmed" | "system_inferred" | "disputed";
 export type PolicyClass = "ephemeral" | "durable" | "protected";
@@ -733,7 +762,7 @@ export interface MemoryFrontmatter {
   expiresAt?: string;
   /** IDs of parent memories this was derived from (lineage tracking) */
   lineage?: string[];
-  /** Memory status: active (default), superseded, or archived */
+  /** Memory status: active (default), pending_review, rejected, quarantined, superseded, or archived */
   status?: MemoryStatus;
   /** ID of memory that superseded this one */
   supersededBy?: string;
@@ -837,6 +866,8 @@ export interface ExtractedFact {
   confidence: number;
   tags: string[];
   entityRef?: string;
+  source?: ExtractionPassSource;
+  promptedByQuestion?: string;
 }
 
 export interface MemoryIntent {
@@ -874,6 +905,8 @@ export interface EntityMention {
   name: string;
   type: "person" | "project" | "tool" | "company" | "place" | "other";
   facts: string[];
+  source?: ExtractionPassSource;
+  promptedByQuestion?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -914,6 +947,8 @@ export interface ExtractedRelationship {
   source: string;
   target: string;
   label: string;
+  extractionSource?: ExtractionPassSource;
+  promptedByQuestion?: string;
 }
 
 export interface ConsolidationItem {
@@ -1044,6 +1079,8 @@ export interface MemoryProjectionCurrentState {
   memoryKind?: MemoryFrontmatter["memoryKind"];
   accessCount?: number;
   lastAccessed?: string;
+  tags?: string[];
+  preview?: string;
 }
 
 export interface CompressionGuidelineOptimizerSourceWindow {

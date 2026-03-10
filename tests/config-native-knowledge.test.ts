@@ -31,6 +31,7 @@ test("parseConfig supports explicit native knowledge settings", () => {
     maxResults: 6,
     maxChars: 3000,
     stateDir: "state/native-knowledge",
+    openclawWorkspace: undefined,
     obsidianVaults: [],
   });
   const section = cfg.recallPipeline.find((entry) => entry.id === "native-knowledge");
@@ -71,6 +72,7 @@ test("parseConfig sanitizes obsidian vault adapter settings", () => {
     maxResults: 4,
     maxChars: 2400,
     stateDir: "state/custom-native-knowledge",
+    openclawWorkspace: undefined,
     obsidianVaults: [
       {
         id: "personal",
@@ -99,4 +101,44 @@ test("parseConfig keeps native knowledge stateDir memory-relative", () => {
   });
 
   assert.equal(cfg.nativeKnowledge?.stateDir, "tmp/custom/native-state");
+});
+
+test("parseConfig sanitizes openclaw workspace adapter settings", () => {
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    nativeKnowledge: {
+      enabled: true,
+      openclawWorkspace: {
+        enabled: true,
+        bootstrapFiles: [" IDENTITY.md ", "USER.md", " "],
+        handoffGlobs: ["handoffs/**/*.md", " "],
+        dailySummaryGlobs: ["summaries/daily/**/*.md", ""],
+        automationNoteGlobs: ["automation/**/*.md", " "],
+        workspaceDocGlobs: ["docs/**/*.md", " "],
+        excludeGlobs: ["node_modules/**", ""],
+        sharedSafeGlobs: ["shared/**/*.md", " "],
+      },
+    },
+  });
+
+  assert.deepEqual(cfg.nativeKnowledge?.openclawWorkspace, {
+    enabled: true,
+    bootstrapFiles: ["IDENTITY.md", "USER.md"],
+    handoffGlobs: ["handoffs/**/*.md"],
+    dailySummaryGlobs: ["summaries/daily/**/*.md"],
+    automationNoteGlobs: ["automation/**/*.md"],
+    workspaceDocGlobs: ["docs/**/*.md"],
+    excludeGlobs: [
+      ".git/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      "coverage/**",
+      "**/*.log",
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+    ],
+    sharedSafeGlobs: ["shared/**/*.md"],
+  });
 });

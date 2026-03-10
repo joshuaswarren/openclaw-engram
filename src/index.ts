@@ -13,6 +13,7 @@ import {
   hasInlineExplicitCaptureMarkup,
   parseInlineExplicitCaptureNotes,
   persistExplicitCapture,
+  queueExplicitCaptureForReview,
   shouldProcessInlineExplicitCapture,
   stripInlineExplicitCaptureNotes,
   validateExplicitCaptureInput,
@@ -250,7 +251,7 @@ export default {
 
           log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
           return {
-            systemPrompt: memoryContextPrompt,
+            prependSystemContext: memoryContextPrompt,
             // Backward-compat path for gateway builds that consume prependContext.
             prependContext: memoryContextPrompt,
           };
@@ -353,7 +354,20 @@ export default {
                 );
                 orchestrator.requestQmdMaintenanceForTool("inline.memory_note");
               } catch (error) {
-                log.warn(`explicit inline capture rejected: ${error}`);
+                try {
+                  const queued = await queueExplicitCaptureForReview(
+                    orchestrator,
+                    note,
+                    "inline",
+                    error,
+                  );
+                  orchestrator.requestQmdMaintenanceForTool("inline.memory_note.review");
+                  log.warn(
+                    `explicit inline capture queued for review: ${queued.id}${queued.duplicateOf ? ` (duplicate of ${queued.duplicateOf})` : ""}`,
+                  );
+                } catch (queueError) {
+                  log.warn(`explicit inline capture rejected: ${error}; review queue fallback failed: ${queueError}`);
+                }
               }
             }
 
@@ -378,6 +392,9 @@ export default {
       },
     );
 
+    // ========================================================================
+    // HOOK: agent_heartbeat — Observe active session growth (non-blocking)
+    // ========================================================================
     // Keep the historical heartbeat observer for older/custom runtimes without
     // warning on current published OpenClaw builds where the typed hook is gone.
     const runtimeApi = api as LegacyHeartbeatRuntimeApi;

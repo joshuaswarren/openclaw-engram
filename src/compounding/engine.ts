@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { log } from "../logger.js";
@@ -7,8 +8,10 @@ import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-c
 import { parseContinuityIncident, parseContinuityImprovementLoops } from "../identity-continuity.js";
 
 type MistakesFile = {
+  version?: number;
   updatedAt: string;
   patterns: string[];
+  registry?: MistakeRegistryEntry[];
 };
 
 type FeedbackEntryWithProvenance = {
@@ -46,6 +49,86 @@ type PromotionCandidate = {
   provenance: string[];
 };
 
+type CompoundingEntrySeverity = "low" | "medium" | "high";
+
+type EvidenceWindow = {
+  start: string | null;
+  end: string | null;
+};
+
+type MistakeRegistryEntry = {
+  id: string;
+  pattern: string;
+  category: "feedback" | "action";
+  status: "active" | "retired";
+  agent: string | null;
+  workflow: string | null;
+  tags: string[];
+  severity: CompoundingEntrySeverity | null;
+  confidence: number | null;
+  outcome: string | null;
+  provenance: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  recurrenceCount: number;
+  lastWeekId: string;
+  evidenceWindow: EvidenceWindow;
+  mergedFromIds?: string[];
+  retiredAt?: string | null;
+};
+
+type RubricSnapshotEntry = {
+  id: string;
+  kind: "agent" | "workflow";
+  subject: string;
+  observations: string[];
+  tags: string[];
+  provenance: string[];
+  observationEntries?: Array<{
+    note: string;
+    provenance: string[];
+  }>;
+  updatedAt: string;
+};
+
+type RubricSnapshot = {
+  updatedAt: string;
+  agents: RubricSnapshotEntry[];
+  workflows: RubricSnapshotEntry[];
+};
+
+type WeeklyCompoundingArtifact = {
+  version: number;
+  generatedAt: string;
+  weekId: string;
+  feedback: {
+    count: number;
+    byDecision: Record<"approved" | "approved_with_feedback" | "rejected", number>;
+    entries: Array<{
+      agent: string;
+      workflow: string | null;
+      decision: SharedFeedbackEntry["decision"];
+      reason: string;
+      learning: string | null;
+      outcome: string | null;
+      severity: CompoundingEntrySeverity | null;
+      confidence: number | null;
+      tags: string[];
+      provenance: string;
+      evidenceWindow: EvidenceWindow;
+    }>;
+  };
+  mistakes: {
+    count: number;
+    patterns: string[];
+    registry: MistakeRegistryEntry[];
+  };
+  rubrics: RubricSnapshot;
+  outcomes: ActionOutcomeSummary[];
+  promotionCandidates: PromotionCandidate[];
+  continuity: { monthId: string; weeklyPath: string | null; monthlyPath: string | null };
+};
+
 type WeeklyActionEvent = {
   line: number;
   action: string;
@@ -54,6 +137,132 @@ type WeeklyActionEvent = {
   namespace: string;
   reason: string | null;
 };
+
+const COMPOUNDING_VERSION = 2;
+const RETIREMENT_WINDOW_WEEKS = 8;
+
+function stableSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "item";
+}
+
+function tokenizeRecallQuery(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3)) {
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+function weekIdToIndex(weekId: string): number {
+  const match = weekId.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(week) || week < 1 || week > 53) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const isoWeekOneStart = new Date(jan4);
+  isoWeekOneStart.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const targetWeekStart = new Date(isoWeekOneStart);
+  targetWeekStart.setUTCDate(isoWeekOneStart.getUTCDate() + ((week - 1) * 7));
+  return Math.floor(targetWeekStart.getTime() / (7 * 24 * 60 * 60 * 1000));
+}
+
+function normalizeConfidence(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const clamped = Math.max(0, Math.min(1, value));
+  return Number(clamped.toFixed(3));
+}
+
+function normalizeTags(tags: string[] | undefined): string[] {
+  if (!Array.isArray(tags)) return [];
+  return [...new Set(tags.map((tag) => String(tag).trim()).filter((tag) => tag.length > 0))].sort();
+}
+
+function normalizeEvidenceWindow(start?: string, end?: string): EvidenceWindow {
+  const safeStart = typeof start === "string" && start.trim().length > 0 ? start : null;
+  const safeEnd = typeof end === "string" && end.trim().length > 0 ? end : null;
+  return { start: safeStart, end: safeEnd };
+}
+
+function mergeEvidenceWindows(current: EvidenceWindow, next: EvidenceWindow): EvidenceWindow {
+  return {
+    start: current.start === null ? next.start : next.start === null ? current.start : current.start <= next.start ? current.start : next.start,
+    end: current.end === null ? next.end : next.end === null ? current.end : current.end >= next.end ? current.end : next.end,
+  };
+}
+
+function stableMistakeId(
+  category: "feedback" | "action",
+  pattern: string,
+  agent: string | null,
+  workflow: string | null,
+): string {
+  return [
+    category,
+    agent ? stableSlug(agent) : "global",
+    workflow ? stableSlug(workflow) : "default",
+    stableSlug(pattern).slice(0, 48),
+  ].join(":");
+}
+
+function stableRubricId(kind: "agent" | "workflow", subject: string): string {
+  return `${kind}:${stableSlug(subject)}`;
+}
+
+function rubricArtifactFileName(
+  entry: Pick<RubricSnapshotEntry, "kind" | "subject">,
+  slugCollisions: ReadonlyMap<string, number>,
+): string {
+  const slug = stableSlug(entry.subject);
+  if ((slugCollisions.get(slug) ?? 0) <= 1) return `${slug}.md`;
+  const suffix = createHash("sha256").update(`${entry.kind}:${entry.subject}`).digest("hex").slice(0, 8);
+  return `${slug}-${suffix}.md`;
+}
+
+function inferLegacyMistakeScope(pattern: string): { agent: string | null; workflow: string | null } {
+  const separatorIndex = pattern.indexOf(":");
+  if (separatorIndex <= 0) return { agent: null, workflow: null };
+  const subject = pattern.slice(0, separatorIndex).trim();
+  return {
+    agent: subject.length > 0 ? subject : null,
+    workflow: null,
+  };
+}
+
+function inferLegacyMistakeMetadata(pattern: string): {
+  category: "feedback" | "action";
+  agent: string | null;
+  workflow: string | null;
+} {
+  if (pattern.startsWith("memory-action/")) {
+    return {
+      category: "action",
+      agent: null,
+      workflow: "memory-actions",
+    };
+  }
+  const scope = inferLegacyMistakeScope(pattern);
+  return {
+    category: "feedback",
+    agent: scope.agent,
+    workflow: scope.workflow,
+  };
+}
 
 export type TierMigrationCycleTrigger = "extraction" | "maintenance";
 export interface TierMigrationCycleBudget {
@@ -135,6 +344,10 @@ function cadenceStaleWindowMs(cadence: "daily" | "weekly" | "monthly" | "quarter
 
 export class CompoundingEngine {
   private readonly weeklyDir: string;
+  private readonly rubricsDir: string;
+  private readonly rubricsIndexPath: string;
+  private readonly rubricsAgentsDir: string;
+  private readonly rubricsWorkflowsDir: string;
   private readonly rubricsPath: string;
   private readonly mistakesPath: string;
   private readonly feedbackInboxPath: string;
@@ -147,6 +360,10 @@ export class CompoundingEngine {
 
   constructor(private readonly config: PluginConfig) {
     this.weeklyDir = path.join(config.memoryDir, "compounding", "weekly");
+    this.rubricsDir = path.join(config.memoryDir, "compounding", "rubrics");
+    this.rubricsIndexPath = path.join(this.rubricsDir, "index.json");
+    this.rubricsAgentsDir = path.join(this.rubricsDir, "agents");
+    this.rubricsWorkflowsDir = path.join(this.rubricsDir, "workflows");
     this.rubricsPath = path.join(config.memoryDir, "compounding", "rubrics.md");
     this.mistakesPath = path.join(config.memoryDir, "compounding", "mistakes.json");
     this.feedbackInboxPath = path.join(sharedContextDir(config), "feedback", "inbox.jsonl");
@@ -162,21 +379,35 @@ export class CompoundingEngine {
     await mkdir(this.weeklyDir, { recursive: true });
     await mkdir(path.dirname(this.mistakesPath), { recursive: true });
     await mkdir(path.dirname(this.rubricsPath), { recursive: true });
+    await mkdir(this.rubricsDir, { recursive: true });
+    await mkdir(this.rubricsAgentsDir, { recursive: true });
+    await mkdir(this.rubricsWorkflowsDir, { recursive: true });
   }
 
   async synthesizeWeekly(opts?: {
     weekId?: string;
-  }): Promise<{ weekId: string; reportPath: string; mistakesCount: number; rubricsPath: string; promotionCandidateCount: number }> {
+  }): Promise<{
+    weekId: string;
+    reportPath: string;
+    reportJsonPath: string;
+    mistakesCount: number;
+    rubricsPath: string;
+    rubricsIndexPath: string;
+    promotionCandidateCount: number;
+  }> {
     await this.ensureDirs();
     const weekId = opts?.weekId ?? isoWeekId(new Date());
 
     const entries = await this.readFeedbackEntriesForWeek(weekId);
-    const actionPatterns = await this.readActionFailurePatternsForWeek(weekId);
-    const outcomeSummary = await this.readActionOutcomeSummaryForWeek(weekId);
+    const actionEvents = await this.readActionEventsForWeek(weekId);
+    const actionPatterns = this.buildActionFailurePatterns(actionEvents);
+    const outcomeSummary = this.buildActionOutcomeSummary(actionEvents);
     const promotionCandidates = this.config.compoundingSemanticEnabled
       ? this.derivePromotionCandidates(outcomeSummary)
       : [];
-    const mistakes = this.buildMistakes(entries, actionPatterns);
+    const previousMistakes = await this.readMistakes();
+    const mistakes = this.buildMistakes(entries, actionPatterns, weekId, previousMistakes?.registry ?? []);
+    const rubrics = this.buildRubricSnapshot(entries, outcomeSummary);
     const continuity = this.config.continuityAuditEnabled
       ? await this.readContinuityAuditReferences(weekId)
       : { monthId: monthIdFromIsoWeek(weekId), weeklyPath: null, monthlyPath: null };
@@ -186,19 +417,74 @@ export class CompoundingEngine {
     const md = this.formatWeeklyReport(weekId, entries, mistakes.patterns, mistakes.details, continuity, outcomeSummary, promotionCandidates);
     await writeFile(reportPath, md, "utf-8");
 
+    const reportJsonPath = path.join(this.weeklyDir, `${weekId}.json`);
+    const weeklyArtifact: WeeklyCompoundingArtifact = {
+      version: COMPOUNDING_VERSION,
+      generatedAt: mistakes.updatedAt,
+      weekId,
+      feedback: {
+        count: entries.length,
+        byDecision: {
+          approved: entries.filter((wrapped) => wrapped.entry.decision === "approved").length,
+          approved_with_feedback: entries.filter((wrapped) => wrapped.entry.decision === "approved_with_feedback").length,
+          rejected: entries.filter((wrapped) => wrapped.entry.decision === "rejected").length,
+        },
+        entries: entries.map((wrapped) => ({
+          agent: wrapped.entry.agent,
+          workflow: wrapped.entry.workflow ?? null,
+          decision: wrapped.entry.decision,
+          reason: wrapped.entry.reason,
+          learning: wrapped.entry.learning?.trim() || null,
+          outcome: wrapped.entry.outcome?.trim() || null,
+          severity: wrapped.entry.severity ?? null,
+          confidence: normalizeConfidence(wrapped.entry.confidence),
+          tags: normalizeTags(wrapped.entry.tags),
+          provenance: `${path.basename(wrapped.sourcePath)}:L${wrapped.sourceLine}#${wrapped.entryId}`,
+          evidenceWindow: normalizeEvidenceWindow(wrapped.entry.evidenceWindowStart, wrapped.entry.evidenceWindowEnd),
+        })),
+      },
+      mistakes: {
+        count: mistakes.patterns.length,
+        patterns: mistakes.patterns,
+        registry: mistakes.registry,
+      },
+      rubrics,
+      outcomes: outcomeSummary,
+      promotionCandidates,
+      continuity,
+    };
+    await writeFile(reportJsonPath, JSON.stringify(weeklyArtifact, null, 2) + "\n", "utf-8");
+
     // Write stable rubric artifact.
-    const rubrics = this.formatRubrics(entries, outcomeSummary);
-    await writeFile(this.rubricsPath, rubrics, "utf-8");
+    const rubricsMarkdown = this.formatRubrics(outcomeSummary, rubrics);
+    await writeFile(this.rubricsPath, rubricsMarkdown, "utf-8");
+    await writeFile(this.rubricsIndexPath, JSON.stringify(rubrics, null, 2) + "\n", "utf-8");
+    await this.syncRubricArtifacts(rubrics);
 
     // Update mistakes.json (always).
     await writeFile(
       this.mistakesPath,
-      JSON.stringify({ updatedAt: mistakes.updatedAt, patterns: mistakes.patterns }, null, 2) + "\n",
+      JSON.stringify({
+        version: COMPOUNDING_VERSION,
+        updatedAt: mistakes.updatedAt,
+        patterns: mistakes.patterns,
+        registry: mistakes.registry,
+      }, null, 2) + "\n",
       "utf-8",
     );
 
-    log.info(`compounding: wrote weekly=${reportPath} rubrics=${this.rubricsPath} mistakes=${this.mistakesPath}`);
-    return { weekId, reportPath, rubricsPath: this.rubricsPath, mistakesCount: mistakes.patterns.length, promotionCandidateCount: promotionCandidates.length };
+    log.info(
+      `compounding: wrote weekly=${reportPath} weeklyJson=${reportJsonPath} rubrics=${this.rubricsPath} rubricsIndex=${this.rubricsIndexPath} mistakes=${this.mistakesPath}`,
+    );
+    return {
+      weekId,
+      reportPath,
+      reportJsonPath,
+      rubricsPath: this.rubricsPath,
+      rubricsIndexPath: this.rubricsIndexPath,
+      mistakesCount: mistakes.patterns.length,
+      promotionCandidateCount: promotionCandidates.length,
+    };
   }
 
   async synthesizeContinuityAudit(opts?: {
@@ -294,10 +580,118 @@ export class CompoundingEngine {
       const raw = await readFile(this.mistakesPath, "utf-8");
       const parsed = JSON.parse(raw) as MistakesFile;
       if (!parsed || !Array.isArray(parsed.patterns)) return null;
+      if (!Array.isArray(parsed.registry)) {
+        const updatedAt = typeof parsed.updatedAt === "string" && parsed.updatedAt.length > 0
+          ? parsed.updatedAt
+          : new Date(0).toISOString();
+        parsed.registry = parsed.patterns.map((pattern) => {
+          const metadata = inferLegacyMistakeMetadata(pattern);
+          return {
+            id: stableMistakeId(metadata.category, pattern, metadata.agent, metadata.workflow),
+            pattern,
+            category: metadata.category,
+            status: "active",
+            agent: metadata.agent,
+            workflow: metadata.workflow,
+            tags: [],
+            severity: null,
+            confidence: null,
+            outcome: null,
+            provenance: [],
+            firstSeenAt: updatedAt,
+            lastSeenAt: updatedAt,
+            recurrenceCount: 1,
+            lastWeekId: isoWeekId(new Date(updatedAt)),
+            evidenceWindow: { start: null, end: null },
+          };
+        });
+      }
       return parsed;
     } catch {
       return null;
     }
+  }
+
+  async readRubrics(): Promise<RubricSnapshot | null> {
+    try {
+      const raw = await readFile(this.rubricsIndexPath, "utf-8");
+      const parsed = JSON.parse(raw) as RubricSnapshot;
+      if (!parsed || !Array.isArray(parsed.agents) || !Array.isArray(parsed.workflows)) return null;
+      parsed.agents = parsed.agents.map((entry) => this.normalizeRubricEntry(entry));
+      parsed.workflows = parsed.workflows.map((entry) => this.normalizeRubricEntry(entry));
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async buildRecallSection(
+    query: string,
+    opts?: { maxPatterns?: number; maxRubrics?: number },
+  ): Promise<string | null> {
+    const [mistakes, rubrics] = await Promise.all([
+      this.readMistakes(),
+      this.readRubrics(),
+    ]);
+    const maxPatterns = Math.max(0, Math.floor(opts?.maxPatterns ?? 40));
+    const maxRubrics = Math.max(0, Math.floor(opts?.maxRubrics ?? 4));
+    const queryTokens = tokenizeRecallQuery(query);
+
+    const activePatterns = (mistakes?.registry ?? [])
+      .filter((entry) => entry.status === "active")
+      .sort((a, b) =>
+        b.recurrenceCount - a.recurrenceCount ||
+        b.lastSeenAt.localeCompare(a.lastSeenAt) ||
+        a.pattern.localeCompare(b.pattern),
+      );
+    const topPatterns = activePatterns.slice(0, maxPatterns);
+
+    const allRubrics = [
+      ...(rubrics?.workflows ?? []),
+      ...(rubrics?.agents ?? []),
+    ];
+    const scoredRubrics = allRubrics
+      .map((entry) => ({
+        entry,
+        score: this.scoreRubricForQuery(entry, queryTokens),
+      }))
+      .sort((a, b) =>
+        b.score - a.score ||
+        b.entry.observations.length - a.entry.observations.length ||
+        a.entry.subject.localeCompare(b.entry.subject),
+      );
+    const topRubrics = scoredRubrics
+      .filter((item) => item.score > 0 || queryTokens.length === 0)
+      .slice(0, maxRubrics)
+      .map((item) => item.entry);
+
+    if (topPatterns.length === 0 && topRubrics.length === 0) return null;
+
+    const lines: string[] = [
+      "## Institutional Learning (Compounded)",
+      "",
+    ];
+
+    if (topPatterns.length > 0) {
+      lines.push("Avoid repeating these patterns:");
+      for (const entry of topPatterns) {
+        const scope = entry.workflow ?? entry.agent ?? null;
+        const metadata = [`recurrence=${entry.recurrenceCount}`];
+        if (scope) metadata.push(`scope=${scope}`);
+        lines.push(`- ${entry.pattern} _(${metadata.join(", ")})_`);
+      }
+      lines.push("");
+    }
+
+    if (topRubrics.length > 0) {
+      lines.push("Active rubrics:");
+      for (const rubric of topRubrics) {
+        const notes = rubric.observations.slice(0, 2).join("; ");
+        lines.push(`- ${rubric.kind} ${rubric.subject}: ${notes}`);
+      }
+    }
+
+    return lines.join("\n");
   }
 
   tierMigrationCycleBudget(trigger: TierMigrationCycleTrigger): TierMigrationCycleBudget {
@@ -338,9 +732,8 @@ export class CompoundingEngine {
     return out;
   }
 
-  private async readActionFailurePatternsForWeek(weekId: string): Promise<string[]> {
+  private buildActionFailurePatterns(events: WeeklyActionEvent[]): string[] {
     const out: string[] = [];
-    const events = await this.readActionEventsForWeek(weekId);
     for (const event of events) {
       const failed = event.outcome === "failed" || event.outcome === "skipped";
       if (!failed && event.policyDecision === null) continue;
@@ -396,9 +789,8 @@ export class CompoundingEngine {
     return out;
   }
 
-  private async readActionOutcomeSummaryForWeek(weekId: string): Promise<ActionOutcomeSummary[]> {
+  private buildActionOutcomeSummary(events: WeeklyActionEvent[]): ActionOutcomeSummary[] {
     const byAction = new Map<string, { counts: ActionOutcomeCounts; provenance: Set<string> }>();
-    const events = await this.readActionEventsForWeek(weekId);
     for (const event of events) {
       const key = event.action;
       const acc = byAction.get(key) ?? {
@@ -452,35 +844,144 @@ export class CompoundingEngine {
   private buildMistakes(
     entries: FeedbackEntryWithProvenance[],
     actionPatterns: string[] = [],
-  ): MistakesFile & { details: PatternWithProvenance[] } {
+    weekId: string,
+    previousRegistry: MistakeRegistryEntry[] = [],
+  ): MistakesFile & { details: PatternWithProvenance[]; registry: MistakeRegistryEntry[] } {
     const patterns: PatternWithProvenance[] = [];
+    const evidenceByPattern = new Map<string, {
+      category: "feedback" | "action";
+      agent: string | null;
+      workflow: string | null;
+      tags: Set<string>;
+      severity: CompoundingEntrySeverity | null;
+      confidence: number | null;
+      outcome: string | null;
+      timestamps: string[];
+      evidenceWindow: EvidenceWindow;
+    }>();
+
     for (const wrapped of entries) {
       const e = wrapped.entry;
+      const pattern = e.learning && e.learning.trim().length > 0
+        ? `${e.agent}: ${e.learning.trim()}`
+        : e.decision === "rejected"
+          ? `${e.agent}: ${e.reason.trim()}`.slice(0, 240)
+          : null;
+      if (!pattern) continue;
       const provenance = [`${path.basename(wrapped.sourcePath)}:L${wrapped.sourceLine}#${wrapped.entryId}`];
-      if (e.learning && e.learning.trim().length > 0) {
-        patterns.push({ pattern: `${e.agent}: ${e.learning.trim()}`, provenance });
-        continue;
-      }
-      if (e.decision === "rejected") {
-        patterns.push({ pattern: `${e.agent}: ${e.reason.trim()}`.slice(0, 240), provenance });
-      }
+      patterns.push({ pattern, provenance });
+
+      const previous = evidenceByPattern.get(pattern) ?? {
+        category: "feedback" as const,
+        agent: e.agent,
+        workflow: e.workflow ?? null,
+        tags: new Set<string>(),
+        severity: e.severity ?? null,
+        confidence: normalizeConfidence(e.confidence),
+        outcome: e.outcome?.trim() || null,
+        timestamps: [],
+        evidenceWindow: normalizeEvidenceWindow(e.evidenceWindowStart, e.evidenceWindowEnd),
+      };
+      for (const tag of normalizeTags(e.tags)) previous.tags.add(tag);
+      previous.timestamps.push(e.date);
+      if (previous.workflow === null && e.workflow) previous.workflow = e.workflow;
+      if (previous.severity === null && e.severity) previous.severity = e.severity;
+      if (previous.confidence === null) previous.confidence = normalizeConfidence(e.confidence);
+      if (previous.outcome === null && e.outcome) previous.outcome = e.outcome.trim();
+      const nextEvidenceWindow = normalizeEvidenceWindow(e.evidenceWindowStart, e.evidenceWindowEnd);
+      previous.evidenceWindow = mergeEvidenceWindows(previous.evidenceWindow, nextEvidenceWindow);
+      evidenceByPattern.set(pattern, previous);
     }
 
-    for (const p of actionPatterns) {
-      patterns.push({ pattern: p, provenance: [`${path.basename(this.memoryActionEventsPath)}:*`] });
+    for (const pattern of actionPatterns) {
+      patterns.push({ pattern, provenance: [`${path.basename(this.memoryActionEventsPath)}:*`] });
+      const previous = evidenceByPattern.get(pattern) ?? {
+        category: "action" as const,
+        agent: null,
+        workflow: "memory-actions",
+        tags: new Set<string>(),
+        severity: "medium" as CompoundingEntrySeverity,
+        confidence: null,
+        outcome: null,
+        timestamps: [],
+        evidenceWindow: { start: null, end: null },
+      };
+      evidenceByPattern.set(pattern, previous);
     }
 
     const byPattern = new Map<string, Set<string>>();
-    for (const p of patterns) {
-      const set = byPattern.get(p.pattern) ?? new Set<string>();
-      for (const prov of p.provenance) set.add(prov);
-      byPattern.set(p.pattern, set);
+    for (const item of patterns) {
+      const existing = byPattern.get(item.pattern) ?? new Set<string>();
+      for (const provenance of item.provenance) existing.add(provenance);
+      byPattern.set(item.pattern, existing);
     }
 
     const details = [...byPattern.entries()]
       .map(([pattern, provenance]) => ({ pattern, provenance: [...provenance].sort() }))
       .slice(0, 500);
-    return { updatedAt: new Date().toISOString(), patterns: details.map((d) => d.pattern), details };
+    const previousById = new Map(previousRegistry.map((entry) => [entry.id, entry]));
+    const previousByPattern = new Map(previousRegistry.map((entry) => [entry.pattern, entry]));
+    const registry: MistakeRegistryEntry[] = details.map((detail) => {
+      const evidence = evidenceByPattern.get(detail.pattern);
+      const id = stableMistakeId(
+        evidence?.category ?? "feedback",
+        detail.pattern,
+        evidence?.agent ?? null,
+        evidence?.workflow ?? null,
+      );
+      const previous = previousById.get(id) ?? previousByPattern.get(detail.pattern);
+      const timestamps = (evidence?.timestamps ?? []).filter((value) => typeof value === "string" && value.length > 0).sort();
+      const firstSeenAt = previous?.firstSeenAt ?? timestamps[0] ?? new Date().toISOString();
+      const lastSeenAt = timestamps[timestamps.length - 1] ?? previous?.lastSeenAt ?? firstSeenAt;
+      return {
+        id,
+        pattern: detail.pattern,
+        category: evidence?.category ?? "feedback",
+        status: "active" as const,
+        agent: evidence?.agent ?? null,
+        workflow: evidence?.workflow ?? null,
+        tags: evidence ? [...evidence.tags].sort() : [],
+        severity: evidence?.severity ?? null,
+        confidence: evidence?.confidence ?? null,
+        outcome: evidence?.outcome ?? null,
+        provenance: detail.provenance,
+        firstSeenAt,
+        lastSeenAt,
+        recurrenceCount: previous?.lastWeekId === weekId ? previous.recurrenceCount : (previous?.recurrenceCount ?? 0) + 1,
+        lastWeekId: weekId,
+        evidenceWindow: evidence?.evidenceWindow ?? { start: null, end: null },
+        retiredAt: null,
+      } satisfies MistakeRegistryEntry;
+    });
+
+    const seenIds = new Set(registry.map((entry) => entry.id));
+    const seenPatterns = new Set(registry.map((entry) => entry.pattern));
+    for (const previous of previousRegistry) {
+      if (seenIds.has(previous.id) || seenPatterns.has(previous.pattern)) continue;
+      const staleWeeks = weekIdToIndex(weekId) - weekIdToIndex(previous.lastWeekId);
+      registry.push({
+        ...previous,
+        status: staleWeeks >= RETIREMENT_WINDOW_WEEKS ? "retired" : previous.status,
+        retiredAt: staleWeeks >= RETIREMENT_WINDOW_WEEKS
+          ? previous.retiredAt ?? new Date().toISOString()
+          : previous.retiredAt ?? null,
+      });
+    }
+
+    registry.sort((a, b) =>
+      Number(b.status === "active") - Number(a.status === "active") ||
+      b.recurrenceCount - a.recurrenceCount ||
+      b.lastSeenAt.localeCompare(a.lastSeenAt) ||
+      a.pattern.localeCompare(b.pattern),
+    );
+
+    return {
+      version: COMPOUNDING_VERSION,
+      updatedAt: new Date().toISOString(),
+      patterns: details.map((d) => d.pattern),
+      details,
+      registry,
+    };
   }
 
   private formatWeeklyReport(
@@ -594,41 +1095,117 @@ export class CompoundingEngine {
     return lines.join("\n");
   }
 
-  private formatRubrics(entries: FeedbackEntryWithProvenance[], outcomeSummary: ActionOutcomeSummary[]): string {
+  private buildRubricSnapshot(
+    entries: FeedbackEntryWithProvenance[],
+    outcomeSummary: ActionOutcomeSummary[],
+  ): RubricSnapshot {
+    const updatedAt = new Date().toISOString();
+    const byAgent = new Map<string, RubricSnapshotEntry>();
+    const byWorkflow = new Map<string, RubricSnapshotEntry>();
+
+    for (const wrapped of entries) {
+      const note = ((wrapped.entry.learning && wrapped.entry.learning.trim().length > 0)
+        ? wrapped.entry.learning
+        : wrapped.entry.decision === "rejected"
+          ? wrapped.entry.reason
+          : "").trim();
+      if (!note) continue;
+      const provenance = `${path.basename(wrapped.sourcePath)}:L${wrapped.sourceLine}#${wrapped.entryId}`;
+      const agentEntry = byAgent.get(wrapped.entry.agent) ?? {
+        id: stableRubricId("agent", wrapped.entry.agent),
+        kind: "agent" as const,
+        subject: wrapped.entry.agent,
+        observations: [],
+        tags: [],
+        provenance: [],
+        observationEntries: [],
+        updatedAt,
+      };
+      this.addRubricObservation(agentEntry, note, provenance);
+      agentEntry.tags = normalizeTags([...agentEntry.tags, ...normalizeTags(wrapped.entry.tags)]);
+      byAgent.set(wrapped.entry.agent, agentEntry);
+
+      const workflow = wrapped.entry.workflow?.trim();
+      if (!workflow) continue;
+      const workflowEntry = byWorkflow.get(workflow) ?? {
+        id: stableRubricId("workflow", workflow),
+        kind: "workflow" as const,
+        subject: workflow,
+        observations: [],
+        tags: [],
+        provenance: [],
+        observationEntries: [],
+        updatedAt,
+      };
+      this.addRubricObservation(workflowEntry, note, provenance);
+      workflowEntry.tags = normalizeTags([...workflowEntry.tags, ...normalizeTags(wrapped.entry.tags)]);
+      byWorkflow.set(workflow, workflowEntry);
+    }
+
+    for (const item of outcomeSummary) {
+      const workflowEntry = byWorkflow.get(item.action) ?? {
+        id: stableRubricId("workflow", item.action),
+        kind: "workflow" as const,
+        subject: item.action,
+        observations: [],
+        tags: [],
+        provenance: [],
+        observationEntries: [],
+        updatedAt,
+      };
+      this.addRubricObservation(
+        workflowEntry,
+        `Outcome weight=${item.weightedScore} (applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown})`,
+        ...item.provenance,
+      );
+      byWorkflow.set(item.action, workflowEntry);
+    }
+
+    return {
+      updatedAt,
+      agents: [...byAgent.values()].sort((a, b) => a.subject.localeCompare(b.subject)),
+      workflows: [...byWorkflow.values()].sort((a, b) => a.subject.localeCompare(b.subject)),
+    };
+  }
+
+  private formatRubrics(outcomeSummary: ActionOutcomeSummary[], snapshot: RubricSnapshot): string {
     const lines: string[] = [
       "# Compounding Rubrics",
       "",
-      `Generated: ${new Date().toISOString()}`,
+      `Generated: ${snapshot.updatedAt}`,
       "",
       "Stable, deterministic rubric snapshot generated from weekly feedback + action outcomes.",
       "",
     ];
 
-    const byAgent = new Map<string, FeedbackEntryWithProvenance[]>();
-    for (const wrapped of entries) {
-      const list = byAgent.get(wrapped.entry.agent) ?? [];
-      list.push(wrapped);
-      byAgent.set(wrapped.entry.agent, list);
-    }
-
     lines.push("## Agent Rubrics");
-    if (byAgent.size === 0) {
+    if (snapshot.agents.length === 0) {
       lines.push("- (none yet)");
     } else {
-      for (const [agent, list] of [...byAgent.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-        lines.push(`### ${agent}`);
-        const learnings = list
-          .filter((w) => (w.entry.learning ?? "").trim().length > 0 || w.entry.decision === "rejected")
-          .slice(0, 8);
-        if (learnings.length === 0) {
+      for (const rubric of snapshot.agents) {
+        lines.push(`### ${rubric.subject}`);
+        const observations = this.getRubricObservationEntries(rubric).slice(0, 8);
+        if (observations.length === 0) {
           lines.push("- No rubric deltas this week.");
         } else {
-          for (const item of learnings) {
-            const note = ((item.entry.learning && item.entry.learning.trim().length > 0)
-              ? item.entry.learning
-              : item.entry.reason).trim();
-            lines.push(`- ${note} _(source: ${path.basename(item.sourcePath)}:L${item.sourceLine}#${item.entryId})_`);
+          for (const observation of observations) {
+            const provenance = observation.provenance.join(", ");
+            lines.push(`- ${observation.note}${provenance ? ` _(source: ${provenance})_` : ""}`);
           }
+        }
+        lines.push("");
+      }
+    }
+
+    lines.push("## Workflow Rubrics");
+    if (snapshot.workflows.length === 0) {
+      lines.push("- (none yet)");
+    } else {
+      for (const rubric of snapshot.workflows) {
+        lines.push(`### ${rubric.subject}`);
+        for (const observation of this.getRubricObservationEntries(rubric).slice(0, 8)) {
+          const provenance = observation.provenance.join(", ");
+          lines.push(`- ${observation.note}${provenance ? ` _(source: ${provenance})_` : ""}`);
         }
         lines.push("");
       }
@@ -646,6 +1223,101 @@ export class CompoundingEngine {
     }
     lines.push("");
     return lines.join("\n");
+  }
+
+  private async syncRubricArtifacts(snapshot: RubricSnapshot): Promise<void> {
+    await this.replaceRubricDirectory(this.rubricsAgentsDir, snapshot.agents);
+    await this.replaceRubricDirectory(this.rubricsWorkflowsDir, snapshot.workflows);
+  }
+
+  private async replaceRubricDirectory(dir: string, entries: RubricSnapshotEntry[]): Promise<void> {
+    await mkdir(dir, { recursive: true });
+    try {
+      const names = await readdir(dir);
+      await Promise.all(
+        names.filter((name) => name.endsWith(".md")).map((name) => unlink(path.join(dir, name)).catch(() => undefined)),
+      );
+    } catch {
+      // fail-open
+    }
+
+    const slugCollisions = new Map<string, number>();
+    for (const entry of entries) {
+      const slug = stableSlug(entry.subject);
+      slugCollisions.set(slug, (slugCollisions.get(slug) ?? 0) + 1);
+    }
+
+    await Promise.all(entries.map(async (entry) => {
+      const observationEntries = this.getRubricObservationEntries(entry);
+      const body = [
+        `# ${entry.kind === "agent" ? "Agent" : "Workflow"} Rubric — ${entry.subject}`,
+        "",
+        `Updated: ${entry.updatedAt}`,
+        "",
+        "## Observations",
+        ...(observationEntries.length > 0
+          ? observationEntries.map((item) => `- ${item.note}`)
+          : ["- (none yet)"]),
+        "",
+        "## Provenance",
+        ...(entry.provenance.length > 0 ? entry.provenance.map((item) => `- ${item}`) : ["- (none yet)"]),
+        "",
+      ].join("\n");
+      const fileName = rubricArtifactFileName(entry, slugCollisions);
+      await writeFile(path.join(dir, fileName), body, "utf-8");
+    }));
+  }
+
+  private scoreRubricForQuery(entry: RubricSnapshotEntry, queryTokens: string[]): number {
+    if (queryTokens.length === 0) return entry.observations.length;
+    const haystack = [entry.subject, ...entry.observations, ...entry.tags].join(" ").toLowerCase();
+    let score = 0;
+    for (const token of queryTokens) {
+      if (haystack.includes(token)) score += 2;
+      if (entry.subject.toLowerCase().includes(token)) score += 2;
+    }
+    if (score === 0) return 0;
+    return score + Math.min(entry.observations.length, 3);
+  }
+
+  private normalizeRubricEntry(entry: RubricSnapshotEntry): RubricSnapshotEntry {
+    const normalizedEntries = this.getRubricObservationEntries(entry);
+    return {
+      ...entry,
+      observations: normalizedEntries.map((item) => item.note),
+      provenance: [...new Set(normalizedEntries.flatMap((item) => item.provenance))],
+      observationEntries: normalizedEntries,
+    };
+  }
+
+  private getRubricObservationEntries(entry: RubricSnapshotEntry): Array<{ note: string; provenance: string[] }> {
+    if (Array.isArray(entry.observationEntries) && entry.observationEntries.length > 0) {
+      return entry.observationEntries.map((item) => ({
+        note: item.note,
+        provenance: [...new Set(item.provenance)].sort(),
+      }));
+    }
+
+    return entry.observations.map((note, index) => ({
+      note,
+      provenance: entry.provenance[index] ? [entry.provenance[index]] : (entry.provenance[0] ? [entry.provenance[0]] : []),
+    }));
+  }
+
+  private addRubricObservation(entry: RubricSnapshotEntry, note: string, ...provenance: string[]): void {
+    const normalized = this.normalizeRubricEntry(entry);
+    const existing = normalized.observationEntries?.find((item) => item.note === note);
+    if (existing) {
+      existing.provenance = [...new Set([...existing.provenance, ...provenance])].sort();
+    } else {
+      normalized.observationEntries?.push({
+        note,
+        provenance: [...new Set(provenance)].sort(),
+      });
+    }
+    entry.observationEntries = normalized.observationEntries;
+    entry.observations = normalized.observationEntries?.map((item) => item.note) ?? [];
+    entry.provenance = [...new Set((normalized.observationEntries ?? []).flatMap((item) => item.provenance))];
   }
 
   private async readNonEmptyFile(filePath: string): Promise<boolean> {

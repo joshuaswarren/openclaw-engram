@@ -26,11 +26,12 @@ That product thesis drives the roadmap order:
 AI agents forget everything between conversations. Engram fixes that.
 
 - **Automatic extraction** — Engram watches conversations and extracts facts, decisions, preferences, corrections, and more. No manual tagging required.
+- **Explicit capture modes** — Run in `implicit`, `explicit`, or `hybrid` mode when memory writes need stricter consent, immediate explicit capture, or review-first handling.
 - **Smart recall** — Before each conversation, Engram injects the most relevant memories into the agent's context. Your agents remember what they need, when they need it.
 - **Local-first** — All memory data stays on your filesystem as plain markdown files. No cloud dependency, no vendor lock-in, fully portable.
 - **Pluggable search** — Choose from six search backends: QMD (hybrid BM25+vector+reranking), LanceDB, Meilisearch, Orama, remote HTTP, or bring your own.
 - **External agent access** — Run a local authenticated HTTP API and a stdio MCP server so Codex, Claude Code, and scripts can query Engram without OpenClaw-specific glue.
-- **Memory OS features** — Graph recall, temporal memory tree, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
+- **Memory OS features** — Temporal memory tree, graph reasoning, lifecycle policy, compounding, shared context, memory boxes, and identity continuity can be enabled progressively as your install grows.
 - **Benchmark-first roadmap** — Engram now has an evaluation harness with live shadow recall recording and a CI benchmark delta gate, so memory improvements can be measured and regression-checked instead of argued from anecdotes.
 - **Baseline snapshot discipline** — Engram can now, when `benchmarkBaselineSnapshotsEnabled` is enabled, capture typed baseline snapshots of the latest completed benchmark runs so later PR delta reporting can compare candidates against a stable stored reference instead of an ad hoc branch state.
 - **Named baseline delta reporting** — Engram can now, when `benchmarkDeltaReporterEnabled` is enabled, compare the current eval store against a stored baseline snapshot, emit a machine-readable delta report plus markdown summary, and fail fast when a candidate regresses a benchmark that previously passed.
@@ -90,9 +91,31 @@ That's it. Start a conversation — Engram begins learning immediately.
 ## Verify Installation
 
 ```bash
-openclaw engram compat --strict   # Should exit 0
-openclaw engram stats             # Shows memory counts and search status
+openclaw engram setup --json      # Validates config, scaffolds directories, prints next steps
+openclaw engram doctor --json     # Aggregated safe health diagnostics
+openclaw engram inventory --json  # Baseline memory/entity/storage footprint
 ```
+
+## Explicit Capture
+
+Set `captureMode` to control how memories are created:
+
+- `implicit`: normal extraction behavior.
+- `explicit`: only structured explicit capture writes or queues review items.
+- `hybrid`: explicit capture writes immediately and normal extraction still runs.
+
+Prefer the `memory_capture` tool when tool use is available. In constrained runtimes, Engram also accepts an inline fallback block:
+
+```text
+<memory_note>
+category: decision
+content: |
+  Recall benchmark packs live under state/evals/benchmarks/.
+tags: benchmarks, evals
+</memory_note>
+```
+
+If the note fails direct-write policy, Engram sanitizes it and queues a `pending_review` memory instead of dropping it silently.
 
 ## How It Works
 
@@ -170,12 +193,21 @@ Engram's capabilities are organized into feature families that you can enable pr
 
 Start with defaults, then enable features as needed. See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profile.
 
+If you want a supported starting point for the advanced surface, set `memoryOsPreset` to one of `conservative`, `balanced`, `research-max`, or `local-llm-heavy`, then override only the few knobs you actually need.
+
 ## Agent & Operator Commands
 
 ```bash
 openclaw engram stats                        # Memory counts, search status, health
+openclaw engram setup                       # Guided first-run setup + directory scaffolding
+openclaw engram setup --preview-capture-instructions  # Preview the managed explicit-capture snippet
+openclaw engram setup --install-capture-instructions  # Install or update the managed explicit-capture snippet
+openclaw engram setup --remove-capture-instructions   # Remove the managed explicit-capture snippet
+openclaw engram doctor                      # Aggregated setup/runtime diagnostics with remediation hints
+openclaw engram inventory                   # Memory, namespace, review queue, storage, and native-knowledge inventory
 openclaw engram search "your query"          # Search memories from CLI
 openclaw engram compat --strict              # Compatibility check
+openclaw engram benchmark recall             # Status/validate/compare/snapshot recall benchmark artifacts
 openclaw engram benchmark-status             # Benchmark/eval harness packs, runs, shadow recalls, latest summaries
 openclaw engram benchmark-validate <path>    # Validate a benchmark manifest or pack directory
 openclaw engram benchmark-import <path>      # Import a validated benchmark pack into the eval store
@@ -192,6 +224,12 @@ openclaw engram commitment-status          # Commitment ledger counts and latest
 openclaw engram commitment-record          # Record a typed commitment ledger entry
 openclaw engram commitment-set-state      # Transition a commitment to open|fulfilled|cancelled|expired
 openclaw engram commitment-lifecycle-run  # Expire overdue commitments and clean aged resolved entries
+openclaw engram governance-run --mode shadow # Build review queue + audit artifacts without mutating memories
+openclaw engram governance-run --mode apply  # Apply reversible governance transitions and write restore metadata
+openclaw engram governance-report         # Read the latest or named governance artifact bundle
+openclaw engram governance-restore --run-id <runId> # Restore one applied governance run
+openclaw engram review-disposition <memoryId> --status rejected # Record an explicit operator review outcome
+openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN" # Start the local access API + admin console shell
 openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
 openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger
@@ -200,10 +238,16 @@ openclaw engram utility-record              # Record a typed utility-learning te
 openclaw engram utility-learning-status     # Latest offline utility-learning snapshot and learned weight counts
 openclaw engram utility-learn               # Learn bounded offline promotion/ranking weights from recorded utility events
 openclaw engram conversation-index-health    # Conversation index status
+openclaw engram rebuild-index                # Operator-friendly alias for conversation-index-rebuild
 openclaw engram graph-health                 # Entity graph status
+openclaw engram repair                       # Aggregate session repair planning + graph guidance
 openclaw engram tier-status                  # Hot/cold tier metrics
 openclaw engram policy-status                # Lifecycle policy snapshot
 ```
+
+Governance runs write durable artifacts under `{memoryDir}/state/memory-governance/runs/<runId>/`, including `summary.json`, `review-queue.json`, `kept-memories.json`, `applied-actions.json`, `metrics.json`, `manifest.json`, `report.md`, and `restore.json` for apply runs.
+
+When the local HTTP access server is running, Engram also serves a lightweight operator UI shell at `http://127.0.0.1:4318/engram/ui/`. Paste the same bearer token into the console UI and it will use the authenticated `/engram/v1/...` endpoints for memory browsing, recall inspection, governance review, entity exploration, and maintenance status.
 
 ## Configuration
 
@@ -222,8 +266,11 @@ Key settings:
 | `evalShadowModeEnabled` | `false` | Record live recall decisions to the eval store without changing injected output |
 | `benchmarkBaselineSnapshotsEnabled` | `false` | Enable versioned baseline snapshot artifacts for the latest completed benchmark runs |
 | `benchmarkDeltaReporterEnabled` | `false` | Enable named-baseline delta reports against the current eval store |
+| `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, or `hybrid` |
 | `nativeKnowledge.enabled` | `false` | Enable curated workspace and synced native-knowledge recall without converting source docs into durable memory files |
+| `nativeKnowledge.openclawWorkspace` | unset | Optional backend-agnostic adapter for OpenClaw workspace bootstrap docs, handoffs, daily summaries, and automation notes |
 | `nativeKnowledge.obsidianVaults` | `[]` | Optional backend-agnostic Obsidian vault adapters that sync markdown notes, tags, aliases, links, and daily-note dates into native knowledge recall |
+| `entityRetrievalEnabled` | `true` | Enable entity-oriented answer hints for direct entity questions and transcript-backed recent-turn pronoun follow-ups in the active recall namespace |
 | `evalStoreDir` | `{memoryDir}/state/evals` | Root directory for benchmark packs, run summaries, and shadow recall records |
 | `objectiveStateMemoryEnabled` | `false` | Enable the objective-state memory foundation for normalized world/tool state snapshots |
 | `objectiveStateSnapshotWritesEnabled` | `false` | Permit objective-state snapshot writers to persist typed state records |
@@ -273,6 +320,14 @@ Example:
   "nativeKnowledge": {
     "enabled": true,
     "includeFiles": ["IDENTITY.md", "MEMORY.md", "TEAM.md"],
+    "openclawWorkspace": {
+      "enabled": true,
+      "bootstrapFiles": ["IDENTITY.md", "MEMORY.md", "USER.md"],
+      "handoffGlobs": ["handoffs/**/*.md"],
+      "dailySummaryGlobs": ["summaries/**/*.md"],
+      "automationNoteGlobs": ["automation/**/*.md"],
+      "sharedSafeGlobs": ["automation/shared/**/*.md"]
+    },
     "obsidianVaults": [
       {
         "id": "personal",
@@ -292,9 +347,22 @@ Example:
 }
 ```
 
+Direct `includeFiles` plus the OpenClaw workspace adapter both sync into backend-agnostic state under `{memoryDir}/state/native-knowledge`, preserve source metadata and deletion tombstones, and dedupe exact overlaps so bootstrap docs are not injected twice.
+
 When an Obsidian vault adapter is enabled, Engram syncs active notes into backend-agnostic native-knowledge state under `{memoryDir}/state/native-knowledge`, preserves aliases, inline/frontmatter tags, wikilinks, optional backlinks, and daily-note dates, and then blends those chunks into the existing `Curated Workspace Knowledge` recall section with namespace filtering applied before injection.
 
 Full reference: [Config Reference](docs/config-reference.md)
+
+Preset example:
+
+```jsonc
+{
+  "memoryOsPreset": "balanced",
+  "localLlmEnabled": true,
+  "localLlmUrl": "http://localhost:1234/v1",
+  "localLlmModel": "qwen2.5-32b-instruct"
+}
+```
 
 ## Documentation
 
@@ -302,16 +370,20 @@ Full reference: [Config Reference](docs/config-reference.md)
 - [Search Backends](docs/search-backends.md) — Choosing and configuring search engines
 - [Writing a Search Backend](docs/writing-a-search-backend.md) — Build your own adapter
 - [Config Reference](docs/config-reference.md) — Every setting with defaults
+- [Local LLM Guide](docs/guides/local-llm.md) — Setup and tune local-first extraction/rerank flows
+- [Cost Control Guide](docs/guides/cost-control.md) — Budget mappings, presets, and rollout discipline
+- [Migration Guide](docs/guides/migrations.md) — Move from manual tuning and historical roadmap docs to the current config surface
 - [Evaluation Harness](docs/evaluation-harness.md) — Benchmark pack, shadow recall, and CI delta gate format
 - [Architecture Overview](docs/architecture/overview.md) — System design and storage layout
 - [Retrieval Pipeline](docs/architecture/retrieval-pipeline.md) — How recall works
 - [Memory Lifecycle](docs/architecture/memory-lifecycle.md) — Write, consolidation, expiry
+- [Graph Reasoning](docs/architecture/graph-reasoning.md) — Opt-in graph traversal, assist, and explainability
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Operations](docs/operations.md) — Backup, export, maintenance
 - [Namespaces](docs/namespaces.md) — Multi-agent memory isolation
 - [Shared Context](docs/shared-context.md) — Cross-agent intelligence
 - [Identity Continuity](docs/identity-continuity.md) — Consistent agent personality
-- [Agentic Memory Roadmap](docs/plans/2026-03-06-engram-agentic-memory-roadmap.md) — Benchmark-first roadmap and PR slices
+- [Historical Plans Index](docs/plans/README.md) — Archived design context; GitHub Project remains the roadmap source of truth
 
 ## Developer Install
 

@@ -53,6 +53,11 @@ export const ExtractedFactSchema = z.object({
     .optional()
     .nullable()
     .describe("If about an entity, its normalized name (e.g. person-jane-doe)"),
+  promptedByQuestion: z
+    .string()
+    .optional()
+    .nullable()
+    .describe("Optional proactive follow-up question that surfaced this fact."),
 });
 
 export const EntityMentionSchema = z.object({
@@ -63,6 +68,11 @@ export const EntityMentionSchema = z.object({
   facts: z
     .array(z.string())
     .describe("New facts learned about this entity in this conversation"),
+  promptedByQuestion: z
+    .string()
+    .optional()
+    .nullable()
+    .describe("Optional proactive follow-up question that surfaced this entity."),
 });
 
 export const ExtractedQuestionSchema = z.object({
@@ -81,6 +91,36 @@ export const ExtractedRelationshipSchema = z.object({
   source: z.string().describe("Source entity name (normalized, e.g. person-jane-doe)"),
   target: z.string().describe("Target entity name (normalized, e.g. company-acme-corp)"),
   label: z.string().describe("Relationship label (e.g. 'works at', 'created', 'manages')"),
+  promptedByQuestion: z
+    .string()
+    .optional()
+    .nullable()
+    .describe("Optional proactive follow-up question that surfaced this relationship."),
+});
+
+export const ProactiveExtractionResultSchema = z.object({
+  facts: z
+    .array(ExtractedFactSchema)
+    .describe(
+      "Additional high-confidence memories recovered only after answering proactive follow-up questions from the same buffered conversation.",
+    ),
+  profileUpdates: z
+    .array(z.string())
+    .describe(
+      "Additional profile updates directly supported by the buffered conversation. Omit anything speculative.",
+    ),
+  entities: z
+    .array(EntityMentionSchema)
+    .describe(
+      "Additional entities or entity facts surfaced by the proactive follow-up pass.",
+    ),
+  relationships: z
+    .array(ExtractedRelationshipSchema)
+    .optional()
+    .nullable()
+    .describe(
+      "Additional relationships surfaced by the proactive follow-up pass.",
+    ),
 });
 
 export const ExtractionResultSchema = z.object({

@@ -10,6 +10,9 @@ test("parseConfig sets proactive/policy-learning defaults", () => {
   assert.equal(cfg.compressionGuidelineSemanticRefinementEnabled, false);
   assert.equal(cfg.compressionGuidelineSemanticTimeoutMs, 2500);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 2);
+  assert.equal(cfg.proactiveExtractionTimeoutMs, 2500);
+  assert.equal(cfg.proactiveExtractionMaxTokens, 900);
+  assert.equal(cfg.proactiveExtractionCategoryAllowlist, undefined);
   assert.equal(cfg.maxCompressionTokensPerHour, 1500);
   assert.equal(cfg.behaviorLoopAutoTuneEnabled, false);
   assert.equal(cfg.behaviorLoopLearningWindowDays, 14);
@@ -33,6 +36,9 @@ test("parseConfig supports explicit proactive/policy-learning settings and prese
     compressionGuidelineSemanticRefinementEnabled: true,
     compressionGuidelineSemanticTimeoutMs: 1,
     maxProactiveQuestionsPerExtraction: 0,
+    proactiveExtractionTimeoutMs: 0,
+    proactiveExtractionMaxTokens: 0,
+    proactiveExtractionCategoryAllowlist: ["decision", "invalid", "fact"],
     maxCompressionTokensPerHour: 0,
     behaviorLoopAutoTuneEnabled: true,
     behaviorLoopLearningWindowDays: 0,
@@ -47,6 +53,9 @@ test("parseConfig supports explicit proactive/policy-learning settings and prese
   assert.equal(cfg.compressionGuidelineSemanticRefinementEnabled, true);
   assert.equal(cfg.compressionGuidelineSemanticTimeoutMs, 1);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 0);
+  assert.equal(cfg.proactiveExtractionTimeoutMs, 0);
+  assert.equal(cfg.proactiveExtractionMaxTokens, 0);
+  assert.deepEqual(cfg.proactiveExtractionCategoryAllowlist, ["decision", "fact"]);
   assert.equal(cfg.maxCompressionTokensPerHour, 0);
   assert.equal(cfg.behaviorLoopAutoTuneEnabled, true);
   assert.equal(cfg.behaviorLoopLearningWindowDays, 0);
@@ -60,6 +69,8 @@ test("parseConfig clamps proactive/policy-learning numeric limits to non-negativ
     openaiApiKey: "sk-test",
     compressionGuidelineSemanticTimeoutMs: -50,
     maxProactiveQuestionsPerExtraction: -1.7,
+    proactiveExtractionTimeoutMs: -2,
+    proactiveExtractionMaxTokens: -9.4,
     maxCompressionTokensPerHour: -500.9,
     behaviorLoopLearningWindowDays: -1,
     behaviorLoopMinSignalCount: -7.9,
@@ -68,6 +79,8 @@ test("parseConfig clamps proactive/policy-learning numeric limits to non-negativ
 
   assert.equal(cfg.compressionGuidelineSemanticTimeoutMs, 1);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 0);
+  assert.equal(cfg.proactiveExtractionTimeoutMs, 0);
+  assert.equal(cfg.proactiveExtractionMaxTokens, 0);
   assert.equal(cfg.maxCompressionTokensPerHour, 0);
   assert.equal(cfg.behaviorLoopLearningWindowDays, 0);
   assert.equal(cfg.behaviorLoopMinSignalCount, 0);

@@ -8,6 +8,7 @@ import type {
   ContinuityIncidentRecord,
   MemoryActionEvent,
   MemoryFile,
+  MemoryStatus,
   TranscriptEntry,
 } from "./types.js";
 import { chunkContent } from "./chunking.js";
@@ -27,7 +28,17 @@ import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifecycle-ledger.js";
-import { rebuildMemoryProjection } from "./maintenance/rebuild-memory-projection.js";
+import {
+  listMemoryGovernanceRuns,
+  readMemoryGovernanceRunArtifact,
+  restoreMemoryGovernanceRun,
+  runMemoryGovernance,
+} from "./maintenance/memory-governance.js";
+import {
+  rebuildMemoryProjection,
+  repairMemoryProjection,
+  verifyMemoryProjection,
+} from "./maintenance/rebuild-memory-projection.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
 import {
@@ -35,6 +46,18 @@ import {
   runNamespaceMigration,
   verifyNamespaces,
 } from "./namespaces/migrate.js";
+import {
+  runBenchmarkRecall,
+  runOperatorDoctor,
+  runOperatorInventory,
+  runOperatorRepair,
+  runOperatorSetup,
+  type BenchmarkRecallReport,
+  type OperatorDoctorReport,
+  type OperatorInventoryReport,
+  type OperatorRepairReport,
+  type OperatorSetupReport,
+} from "./operator-toolkit.js";
 import { WorkStorage } from "./work/storage.js";
 import type { WorkProjectStatus, WorkTaskPriority, WorkTaskStatus } from "./work/types.js";
 import {
@@ -307,14 +330,58 @@ export interface RebuildMemoryLifecycleLedgerCliCommandOptions {
 
 export interface RebuildMemoryProjectionCliCommandOptions {
   memoryDir: string;
+  defaultNamespace?: string;
   write?: boolean;
   now?: Date;
+  updatedAfter?: string;
+  updatedBefore?: string;
+}
+
+export interface VerifyMemoryProjectionCliCommandOptions {
+  memoryDir: string;
+  defaultNamespace?: string;
+  updatedAfter?: string;
+  updatedBefore?: string;
+}
+
+export interface RepairMemoryProjectionCliCommandOptions {
+  memoryDir: string;
+  defaultNamespace?: string;
+  write?: boolean;
+  now?: Date;
+  updatedAfter?: string;
+  updatedBefore?: string;
 }
 
 export interface MemoryTimelineCliCommandOptions {
   memoryDir: string;
   memoryId: string;
   limit?: number;
+}
+
+export interface MemoryGovernanceCliCommandOptions {
+  memoryDir: string;
+  mode: "shadow" | "apply";
+  now?: Date;
+}
+
+export interface MemoryGovernanceReportCliCommandOptions {
+  memoryDir: string;
+  runId?: string;
+}
+
+export interface MemoryGovernanceRestoreCliCommandOptions {
+  memoryDir: string;
+  runId: string;
+  now?: Date;
+}
+
+export interface MemoryReviewDispositionCliCommandOptions {
+  memoryDir: string;
+  memoryId: string;
+  status: Extract<MemoryStatus, "active" | "pending_review" | "rejected" | "quarantined">;
+  reasonCode?: string;
+  now?: Date;
 }
 
 export interface MigrateObservationsCliCommandOptions {
@@ -741,8 +808,35 @@ export async function runRebuildMemoryProjectionCliCommand(
 ) {
   return rebuildMemoryProjection({
     memoryDir: options.memoryDir,
+    defaultNamespace: options.defaultNamespace,
     dryRun: options.write !== true,
     now: options.now,
+    updatedAfter: options.updatedAfter,
+    updatedBefore: options.updatedBefore,
+  });
+}
+
+export async function runVerifyMemoryProjectionCliCommand(
+  options: VerifyMemoryProjectionCliCommandOptions,
+) {
+  return verifyMemoryProjection({
+    memoryDir: options.memoryDir,
+    defaultNamespace: options.defaultNamespace,
+    updatedAfter: options.updatedAfter,
+    updatedBefore: options.updatedBefore,
+  });
+}
+
+export async function runRepairMemoryProjectionCliCommand(
+  options: RepairMemoryProjectionCliCommandOptions,
+) {
+  return repairMemoryProjection({
+    memoryDir: options.memoryDir,
+    defaultNamespace: options.defaultNamespace,
+    dryRun: options.write !== true,
+    now: options.now,
+    updatedAfter: options.updatedAfter,
+    updatedBefore: options.updatedBefore,
   });
 }
 
@@ -751,6 +845,60 @@ export async function runMemoryTimelineCliCommand(
 ) {
   const storage = new (await import("./storage.js")).StorageManager(options.memoryDir);
   return storage.getMemoryTimeline(options.memoryId, options.limit);
+}
+
+export async function runMemoryGovernanceCliCommand(
+  options: MemoryGovernanceCliCommandOptions,
+) {
+  return runMemoryGovernance({
+    memoryDir: options.memoryDir,
+    mode: options.mode,
+    now: options.now,
+  });
+}
+
+export async function runMemoryGovernanceReportCliCommand(
+  options: MemoryGovernanceReportCliCommandOptions,
+) {
+  const runId = options.runId ?? (await listMemoryGovernanceRuns(options.memoryDir))[0];
+  if (!runId) {
+    throw new Error("no governance runs found");
+  }
+  return readMemoryGovernanceRunArtifact(options.memoryDir, runId);
+}
+
+export async function runMemoryGovernanceRestoreCliCommand(
+  options: MemoryGovernanceRestoreCliCommandOptions,
+) {
+  return restoreMemoryGovernanceRun({
+    memoryDir: options.memoryDir,
+    runId: options.runId,
+    now: options.now,
+  });
+}
+
+export async function runMemoryReviewDispositionCliCommand(
+  options: MemoryReviewDispositionCliCommandOptions,
+) {
+  const storage = new (await import("./storage.js")).StorageManager(options.memoryDir);
+  const memory = await storage.getMemoryById(options.memoryId);
+  if (!memory) throw new Error(`memory not found: ${options.memoryId}`);
+  const updated = await storage.writeMemoryFrontmatter(memory, {
+    status: options.status,
+    updated: (options.now ?? new Date()).toISOString(),
+  }, {
+    actor: "cli.review-disposition",
+    reasonCode: options.reasonCode,
+    ruleVersion: "memory-governance.v1",
+  });
+  if (!updated) {
+    throw new Error(`failed to update memory disposition: ${options.memoryId}`);
+  }
+  return {
+    memoryId: options.memoryId,
+    status: options.status,
+    reasonCode: options.reasonCode,
+  };
 }
 
 export async function runMigrateObservationsCliCommand(
@@ -2619,6 +2767,135 @@ function formatContinuityIncidentCli(incident: ContinuityIncidentRecord): string
   return lines.join("\n");
 }
 
+function formatOperatorSetupCli(report: OperatorSetupReport): string {
+  const lines = [
+    "=== Engram Setup ===",
+    "",
+    `Config: ${report.config.parsed ? "ok" : "error"} (${report.config.path})`,
+    `Memory dir: ${report.memoryDir}`,
+    `Workspace dir: ${report.workspaceDir}`,
+    `QMD: ${report.qmd.enabled ? `${report.qmd.available ? "available" : "unavailable"} (${report.qmd.collectionState})` : "disabled"}`,
+    `Explicit capture: ${report.explicitCapture.enabled ? report.explicitCapture.captureMode : "disabled"}`,
+    "",
+    "Directories:",
+    ...report.directories.map((entry) => `- ${entry.path} (${entry.exists ? "present" : "missing"}, ${entry.writable ? "writable" : "read-only"})`),
+  ];
+  if (report.explicitCapture.enabled) {
+    lines.push(`Capture doc: ${report.explicitCapture.memoryDocPath} (${report.explicitCapture.memoryDocExists ? "present" : "missing"})`);
+    if (report.explicitCapture.memoryDocInstalled) lines.push("Capture instructions: installed");
+    if (report.explicitCapture.memoryDocUpdated) lines.push("Capture instructions: updated");
+    if (report.explicitCapture.memoryDocRemoved) lines.push("Capture instructions: removed");
+    if (report.explicitCapture.preview) {
+      lines.push("", "Capture instructions preview:", report.explicitCapture.preview);
+    }
+  }
+  lines.push("", "Next steps:", ...report.nextSteps.map((step) => `- ${step}`));
+  return lines.join("\n");
+}
+
+function formatOperatorDoctorCli(report: OperatorDoctorReport): string {
+  const lines = [
+    "=== Engram Doctor ===",
+    "",
+    `Summary: ok=${report.summary.ok} warn=${report.summary.warn} error=${report.summary.error}`,
+  ];
+  for (const check of report.checks) {
+    lines.push(`- [${check.status.toUpperCase()}] ${check.key}: ${check.summary}`);
+    if (check.remediation) lines.push(`  remediation: ${check.remediation}`);
+  }
+  return lines.join("\n");
+}
+
+function formatOperatorInventoryCli(report: OperatorInventoryReport): string {
+  const lines = [
+    "=== Engram Inventory ===",
+    "",
+    `Memories: ${report.totals.memories}`,
+    `Entities: ${report.totals.entities}`,
+    `Namespaces: ${report.totals.namespaces}`,
+    `Review queue: ${report.totals.reviewQueue}`,
+    `Storage: ${report.totals.storageBytes} bytes`,
+    `Conversation index: ${report.conversationIndex.status} (${report.conversationIndex.backend})`,
+    "",
+    "By status:",
+    ...Object.entries(report.statuses).sort((a, b) => a[0].localeCompare(b[0])).map(([status, count]) => `- ${status}: ${count}`),
+    "",
+    "By category:",
+    ...Object.entries(report.categories).sort((a, b) => a[0].localeCompare(b[0])).map(([category, count]) => `- ${category}: ${count}`),
+  ];
+  return lines.join("\n");
+}
+
+function formatBenchmarkRecallCli(report: BenchmarkRecallReport): string {
+  const lines = [
+    "=== Engram Benchmark Recall ===",
+    "",
+    `Mode: ${report.mode}`,
+    `Harness enabled: ${report.status.enabled ? "yes" : "no"}`,
+    `Benchmarks: ${report.status.benchmarks.valid}/${report.status.benchmarks.total} valid`,
+    `Latest run: ${report.status.runs.latestRunId ?? "none"}`,
+  ];
+  if (report.validate) {
+    lines.push(`Validated pack: ${report.validate.benchmarkId} (${report.validate.totalCases} cases)`);
+  }
+  if (report.snapshot) {
+    lines.push(`Snapshot: ${report.snapshot.snapshotId}`);
+    lines.push(`Path: ${report.snapshot.targetPath}`);
+  }
+  if (report.baselineReport) {
+    lines.push(`Baseline passed: ${report.baselineReport.passed ? "yes" : "no"}`);
+  }
+  if (report.ciGate) {
+    lines.push(`CI gate passed: ${report.ciGate.passed ? "yes" : "no"}`);
+  }
+  return lines.join("\n");
+}
+
+function formatOperatorRepairCli(report: OperatorRepairReport): string {
+  const lines = [
+    "=== Engram Repair ===",
+    "",
+    `Mode: ${report.dryRun ? "dry-run" : "apply"}`,
+    `Session actions planned: ${report.sessionRepairPlan.actions.length}`,
+    `Session actions applied: ${report.sessionRepairApply.actionsApplied}`,
+    `Graph health: corruptLines=${report.graphHealth.totals.corruptLines}, validEdges=${report.graphHealth.totals.validEdges}`,
+  ];
+  if (report.graphHealth.repairGuidance && report.graphHealth.repairGuidance.length > 0) {
+    lines.push("Graph guidance:");
+    for (const entry of report.graphHealth.repairGuidance) {
+      lines.push(`- ${entry}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function reportHasMachineReadableOutput(options: Record<string, unknown>): boolean {
+  return options.json === true;
+}
+
+function setupReportPassed(report: OperatorSetupReport): boolean {
+  return report.directories.every((entry) => entry.exists && entry.writable);
+}
+
+function buildConversationIndexRebuildAction(orchestrator: Orchestrator) {
+  return async (...args: unknown[]) => {
+    const options = (args[0] ?? {}) as Record<string, unknown>;
+    const hours = typeof options.hours === "string"
+      ? Number.parseInt(options.hours, 10)
+      : 24;
+    const result = await runConversationIndexRebuildCliCommand(orchestrator, {
+      sessionKey:
+        typeof options.sessionKey === "string" && options.sessionKey.trim().length > 0
+          ? options.sessionKey.trim()
+          : undefined,
+      hours: Number.isFinite(hours) ? hours : 24,
+      embed: options.embed === true,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    console.log("OK");
+  };
+}
+
 export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
   api.registerCli(
     ({ program }) => {
@@ -2661,6 +2938,74 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ${cat}: ${count}`);
             }
           }
+        });
+
+      cmd
+        .command("setup")
+        .description("Validate config, scaffold directories, and print first-run next steps")
+        .option("--install-capture-instructions", "Create workspace MEMORY.md when explicit capture is enabled and missing")
+        .option("--preview-capture-instructions", "Print the managed explicit-capture instruction snippet without writing files")
+        .option("--remove-capture-instructions", "Remove the managed explicit-capture instruction snippet from MEMORY.md")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const captureInstructionsMode =
+            options.removeCaptureInstructions === true
+              ? "remove"
+              : options.previewCaptureInstructions === true
+                ? "preview"
+                : options.installCaptureInstructions === true
+                  ? "install"
+                  : undefined;
+          const report = await runOperatorSetup({
+            orchestrator,
+            installCaptureInstructions: options.installCaptureInstructions === true,
+            captureInstructionsMode,
+          });
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(formatOperatorSetupCli(report));
+          }
+          if (!setupReportPassed(report)) {
+            process.exitCode = 1;
+            return;
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
+        });
+
+      cmd
+        .command("doctor")
+        .description("Run safe Engram health diagnostics with remediation guidance")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runOperatorDoctor({ orchestrator });
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(formatOperatorDoctorCli(report));
+          }
+          if (!report.ok) {
+            process.exitCode = 1;
+            return;
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
+        });
+
+      cmd
+        .command("inventory")
+        .description("Report namespace, memory, review, and storage inventory")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runOperatorInventory({ orchestrator });
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(formatOperatorInventoryCli(report));
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       const namespacesCmd = cmd
@@ -3015,6 +3360,56 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
+        });
+
+      const benchmarkCmd = cmd
+        .command("benchmark")
+        .description("Grouped benchmark and recall-evaluation operator workflows");
+
+      benchmarkCmd
+        .command("recall")
+        .description("Status, validate, snapshot, or compare recall benchmark artifacts")
+        .option("--validate <path>", "Validate a benchmark pack/manifest before import or rollout")
+        .option("--snapshot-id <id>", "Compare against or create a named stored baseline snapshot")
+        .option("--create-snapshot", "Create a baseline snapshot instead of reading an existing one")
+        .option("--notes <text>", "Optional notes to attach when creating a snapshot")
+        .option("--git-ref <ref>", "Git ref to record when creating a snapshot")
+        .option("--created-at <iso>", "Override snapshot creation timestamp")
+        .option("--base <path>", "Base eval store directory for CI-style comparison")
+        .option("--candidate <path>", "Candidate eval store directory for CI-style comparison")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runBenchmarkRecall({
+            config: {
+              memoryDir: orchestrator.config.memoryDir,
+              evalStoreDir: orchestrator.config.evalStoreDir,
+              evalHarnessEnabled: orchestrator.config.evalHarnessEnabled,
+              evalShadowModeEnabled: orchestrator.config.evalShadowModeEnabled,
+              benchmarkBaselineSnapshotsEnabled: orchestrator.config.benchmarkBaselineSnapshotsEnabled,
+              benchmarkDeltaReporterEnabled: orchestrator.config.benchmarkDeltaReporterEnabled,
+              memoryRedTeamBenchEnabled: orchestrator.config.memoryRedTeamBenchEnabled,
+            },
+            validatePath: typeof options.validate === "string" ? options.validate : undefined,
+            baseEvalStoreDir: typeof options.base === "string" ? options.base : undefined,
+            candidateEvalStoreDir: typeof options.candidate === "string" ? options.candidate : undefined,
+            snapshotId: typeof options.snapshotId === "string" ? options.snapshotId : undefined,
+            createSnapshot: options.createSnapshot === true,
+            snapshotNotes: typeof options.notes === "string" ? options.notes : undefined,
+            gitRef: typeof options.gitRef === "string" ? options.gitRef : undefined,
+            createdAt: typeof options.createdAt === "string" ? options.createdAt : undefined,
+          });
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(formatBenchmarkRecallCli(report));
+          }
+          const passed = report.ciGate?.passed ?? report.baselineReport?.passed ?? true;
+          if (!passed) {
+            process.exitCode = 1;
+            return;
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       cmd
@@ -3718,22 +4113,15 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--session-key <sessionKey>", "Optional session key to rebuild instead of all recent transcripts")
         .option("--hours <count>", "Hours of transcript history to scan", "24")
         .option("--embed", "Force embedding step for backends that support it")
-        .action(async (...args: unknown[]) => {
-          const options = (args[0] ?? {}) as Record<string, unknown>;
-          const hours = typeof options.hours === "string"
-            ? Number.parseInt(options.hours, 10)
-            : 24;
-          const result = await runConversationIndexRebuildCliCommand(orchestrator, {
-            sessionKey:
-              typeof options.sessionKey === "string" && options.sessionKey.trim().length > 0
-                ? options.sessionKey.trim()
-                : undefined,
-            hours: Number.isFinite(hours) ? hours : 24,
-            embed: options.embed === true,
-          });
-          console.log(JSON.stringify(result, null, 2));
-          console.log("OK");
-        });
+        .action(buildConversationIndexRebuildAction(orchestrator));
+
+      cmd
+        .command("rebuild-index")
+        .description("Alias for conversation-index-rebuild with operator-friendly naming")
+        .option("--session-key <sessionKey>", "Optional session key to rebuild instead of all recent transcripts")
+        .option("--hours <count>", "Hours of transcript history to scan", "24")
+        .option("--embed", "Force embedding step for backends that support it")
+        .action(buildConversationIndexRebuildAction(orchestrator));
 
       cmd
         .command("graph-health")
@@ -3784,6 +4172,39 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           });
           console.log(JSON.stringify(result, null, 2));
           console.log("OK");
+        });
+
+      cmd
+        .command("repair")
+        .description("Aggregate safe repair planning across session integrity and graph health")
+        .option("--apply", "Apply bounded Engram-managed session repairs")
+        .option("--dry-run", "Force dry-run output")
+        .option("--allow-session-file-repair", "Allow explicit OpenClaw session-file repair path (still no automatic rewiring)")
+        .option("--session-files-dir <path>", "Optional OpenClaw session files directory for guarded repair workflow")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runOperatorRepair({
+            config: {
+              memoryDir: orchestrator.config.memoryDir,
+              entityGraphEnabled: orchestrator.config.entityGraphEnabled,
+              timeGraphEnabled: orchestrator.config.timeGraphEnabled,
+              causalGraphEnabled: orchestrator.config.causalGraphEnabled,
+            },
+            apply: options.apply === true,
+            dryRun: options.dryRun === true,
+            allowSessionFileRepair: options.allowSessionFileRepair === true,
+            sessionFilesDir:
+              typeof options.sessionFilesDir === "string" && options.sessionFilesDir.trim().length > 0
+                ? options.sessionFilesDir.trim()
+                : undefined,
+          });
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(formatOperatorRepairCli(report));
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       cmd
@@ -4296,20 +4717,126 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("rebuild-memory-projection")
         .description("Rebuild the derived memory projection store from markdown memories and lifecycle events (dry-run by default)")
         .option("--write", "Write rebuilt projection (default: dry-run)")
+        .option("--namespace <ns>", "Namespace to rebuild (default: config defaultNamespace)", "")
+        .option("--updated-after <iso>", "Only report/rebuild memories updated on or after this ISO timestamp", "")
+        .option("--updated-before <iso>", "Only report/rebuild memories updated on or before this ISO timestamp", "")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runRebuildMemoryProjectionCliCommand({
-            memoryDir: orchestrator.config.memoryDir,
+            memoryDir,
+            defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,
             write: options.write === true,
+            updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
+              ? options.updatedAfter.trim()
+              : undefined,
+            updatedBefore: typeof options.updatedBefore === "string" && options.updatedBefore.trim().length > 0
+              ? options.updatedBefore.trim()
+              : undefined,
           });
 
           console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
           console.log(`Scanned memories: ${result.scannedMemories}`);
           console.log(`Current-state rows: ${result.currentRows}`);
           console.log(`Timeline rows: ${result.timelineRows}`);
+          console.log(`Entity-mention rows: ${result.entityMentionRows}`);
+          console.log(`Native-knowledge rows: ${result.nativeKnowledgeRows}`);
+          console.log(`Review-queue rows: ${result.reviewQueueRows}`);
           console.log(`Used lifecycle ledger: ${result.usedLifecycleLedger ? "yes" : "no"}`);
+          console.log(`Updated-after scope: ${result.scope.updatedAfter ?? "none"}`);
+          console.log(`Updated-before scope: ${result.scope.updatedBefore ?? "none"}`);
           console.log(`Output path: ${result.outputPath}`);
           if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("verify-memory-projection")
+        .description("Verify the derived memory projection against markdown memories and lifecycle events")
+        .option("--namespace <ns>", "Namespace to verify (default: config defaultNamespace)", "")
+        .option("--updated-after <iso>", "Only verify memories updated on or after this ISO timestamp", "")
+        .option("--updated-before <iso>", "Only verify memories updated on or before this ISO timestamp", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const result = await runVerifyMemoryProjectionCliCommand({
+            memoryDir,
+            defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,
+            updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
+              ? options.updatedAfter.trim()
+              : undefined,
+            updatedBefore: typeof options.updatedBefore === "string" && options.updatedBefore.trim().length > 0
+              ? options.updatedBefore.trim()
+              : undefined,
+          });
+
+          console.log(`Projection exists: ${result.projectionExists ? "yes" : "no"}`);
+          console.log(`OK: ${result.ok ? "yes" : "no"}`);
+          console.log(`Expected current rows: ${result.expectedCurrentRows}`);
+          console.log(`Actual current rows: ${result.actualCurrentRows}`);
+          console.log(`Expected timeline rows: ${result.expectedTimelineRows}`);
+          console.log(`Actual timeline rows: ${result.actualTimelineRows}`);
+          console.log(`Expected entity-mention rows: ${result.expectedEntityMentionRows}`);
+          console.log(`Actual entity-mention rows: ${result.actualEntityMentionRows}`);
+          console.log(`Expected native-knowledge rows: ${result.expectedNativeKnowledgeRows}`);
+          console.log(`Actual native-knowledge rows: ${result.actualNativeKnowledgeRows}`);
+          console.log(`Expected review-queue rows: ${result.expectedReviewQueueRows}`);
+          console.log(`Actual review-queue rows: ${result.actualReviewQueueRows}`);
+          console.log(`Missing current memories: ${result.missingCurrentMemoryIds.join(", ") || "none"}`);
+          console.log(`Extra current memories: ${result.extraCurrentMemoryIds.join(", ") || "none"}`);
+          console.log(`Mismatched current memories: ${result.mismatchedCurrentMemoryIds.join(", ") || "none"}`);
+          console.log(`Missing timeline events: ${result.missingTimelineEventIds.join(", ") || "none"}`);
+          console.log(`Extra timeline events: ${result.extraTimelineEventIds.join(", ") || "none"}`);
+          console.log(`Missing entity mentions: ${result.missingEntityMentionKeys.join(", ") || "none"}`);
+          console.log(`Extra entity mentions: ${result.extraEntityMentionKeys.join(", ") || "none"}`);
+          console.log(`Mismatched entity mentions: ${result.mismatchedEntityMentionKeys.join(", ") || "none"}`);
+          console.log(`Missing native-knowledge chunks: ${result.missingNativeKnowledgeChunkIds.join(", ") || "none"}`);
+          console.log(`Extra native-knowledge chunks: ${result.extraNativeKnowledgeChunkIds.join(", ") || "none"}`);
+          console.log(`Mismatched native-knowledge chunks: ${result.mismatchedNativeKnowledgeChunkIds.join(", ") || "none"}`);
+          console.log(`Missing review-queue entries: ${result.missingReviewQueueEntryIds.join(", ") || "none"}`);
+          console.log(`Extra review-queue entries: ${result.extraReviewQueueEntryIds.join(", ") || "none"}`);
+          console.log(`Mismatched review-queue entries: ${result.mismatchedReviewQueueEntryIds.join(", ") || "none"}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("repair-memory-projection")
+        .description("Repair projection drift by rebuilding the derived projection (dry-run by default)")
+        .option("--write", "Write repaired projection (default: dry-run)")
+        .option("--namespace <ns>", "Namespace to repair (default: config defaultNamespace)", "")
+        .option("--updated-after <iso>", "Only repair memories updated on or after this ISO timestamp", "")
+        .option("--updated-before <iso>", "Only repair memories updated on or before this ISO timestamp", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const result = await runRepairMemoryProjectionCliCommand({
+            memoryDir,
+            defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,
+            write: options.write === true,
+            updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
+              ? options.updatedAfter.trim()
+              : undefined,
+            updatedBefore: typeof options.updatedBefore === "string" && options.updatedBefore.trim().length > 0
+              ? options.updatedBefore.trim()
+              : undefined,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Repaired: ${result.repaired ? "yes" : "no"}`);
+          console.log(`Verification OK: ${result.verify.ok ? "yes" : "no"}`);
+          if (result.rebuild) {
+            console.log(`Output path: ${result.rebuild.outputPath}`);
+            if (result.rebuild.backupPath) console.log(`Backup path: ${result.rebuild.backupPath}`);
+          }
           console.log("OK");
         });
 
@@ -4336,6 +4863,83 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           for (const row of rows) {
             console.log(`${row.timestamp} ${row.eventType} ${row.actor}`);
           }
+          console.log("OK");
+        });
+
+      cmd
+        .command("governance-run")
+        .description("Run memory governance in shadow/apply mode and write audit artifacts")
+        .option("--mode <mode>", "Governance mode (shadow|apply)", "shadow")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const mode = options.mode === "apply" ? "apply" : "shadow";
+          const result = await runMemoryGovernanceCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            mode,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("governance-report")
+        .description("Read the latest or a named governance run artifact bundle")
+        .option("--run-id <id>", "Governance run id (default: latest)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runMemoryGovernanceReportCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            runId: typeof options.runId === "string" && options.runId.trim().length > 0
+              ? options.runId.trim()
+              : undefined,
+          });
+          console.log(JSON.stringify(report, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("governance-restore")
+        .description("Restore memory files from a previous governance apply run")
+        .requiredOption("--run-id <id>", "Governance run id to restore")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          if (typeof options.runId !== "string" || options.runId.trim().length === 0) {
+            throw new Error("missing --run-id");
+          }
+          const result = await runMemoryGovernanceRestoreCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            runId: options.runId.trim(),
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("review-disposition <memoryId>")
+        .description("Manually set an operator review disposition on one memory")
+        .requiredOption("--status <status>", "Disposition status (active|pending_review|rejected|quarantined)")
+        .option("--reason-code <code>", "Optional reason code recorded in CLI output")
+        .action(async (...args: unknown[]) => {
+          const memoryId = String(args[0] ?? "");
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const statusOpt = typeof options.status === "string" ? options.status.trim() : "";
+          if (
+            statusOpt !== "active"
+            && statusOpt !== "pending_review"
+            && statusOpt !== "rejected"
+            && statusOpt !== "quarantined"
+          ) {
+            throw new Error(`invalid review disposition status: ${statusOpt}`);
+          }
+          const result = await runMemoryReviewDispositionCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            memoryId,
+            status: statusOpt,
+            reasonCode: typeof options.reasonCode === "string" && options.reasonCode.trim().length > 0
+              ? options.reasonCode.trim()
+              : undefined,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 
