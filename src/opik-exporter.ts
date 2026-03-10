@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 /**
  * opik-exporter.ts — Engram-native Opik trace exporter
  *
@@ -158,8 +158,6 @@ export class OpikExporter {
   private readonly cfg: OpikExporterConfig;
   private readonly log: LoggerBackend;
   private _handler: ((e: EngramTraceEvent) => void) | undefined;
-  /** The trace callback that was active before we subscribed, so _detach() can restore it. */
-  private _prevHandler: ((e: EngramTraceEvent) => void) | undefined;
   private readonly inFlight = new Map<string, InFlightLlm>();
   /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
   private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -192,8 +190,6 @@ export class OpikExporter {
     const existing = g.__openclawEngramTrace as
       | ((e: EngramTraceEvent) => void)
       | undefined;
-    // Remember what was there before so _detach() can restore it.
-    this._prevHandler = existing;
 
     const handler = (event: EngramTraceEvent) => {
       try {
@@ -220,7 +216,7 @@ export class OpikExporter {
 
   /** Deactivate this exporter instance.
    *
-   * We intentionally do NOT restore __openclawEngramTrace to _prevHandler
+   * We intentionally do NOT restore __openclawEngramTrace to a prior handler
    * because any subscriber that chained *after* us would be silently dropped
    * by such a restoration. Instead we mark the instance as disabled so that
    * handleEvent() becomes a no-op while the callback chain itself is left
@@ -235,7 +231,6 @@ export class OpikExporter {
     // Disable event processing; the wrapper closure in the chain becomes a no-op.
     (this.cfg as OpikExporterConfig & { enabled: boolean }).enabled = false;
     this._handler = undefined;
-    this._prevHandler = undefined;
     this.log.debug?.("[opik-exporter] detached — events silenced, chain preserved");
   }
 
@@ -383,18 +378,15 @@ export class OpikExporter {
   /**
    * Convert a sessionKey to a stable UUID v5-like deterministic ID so that
    * spans for the same session share a trace_id and are threaded in Opik.
-   * We use a simple XOR fold rather than pulling in the `uuid` v5 module.
+   * Uses SHA-256 so sessions with similar keys produce distinct trace IDs.
    */
   private sessionToTraceId(sessionKey: string): string {
-    // Simple deterministic mapping: hash sessionKey bytes into 16 bytes
-    const bytes = new Uint8Array(16);
-    for (let i = 0; i < sessionKey.length; i++) {
-      bytes[i % 16] ^= sessionKey.charCodeAt(i);
-    }
-    // Stamp as UUID v4 format (not truly v4 but valid UUID hex shape)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+    // SHA-256 gives 32 bytes; we use the first 16 for a collision-resistant UUID.
+    const digest = createHash("sha256").update(sessionKey).digest();
+    // Stamp UUID v4/variant-1 bits so the output is a valid RFC-4122 UUID shape.
+    digest[6] = (digest[6] & 0x0f) | 0x40;
+    digest[8] = (digest[8] & 0x3f) | 0x80;
+    const hex = digest.slice(0, 16).toString("hex");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 }
