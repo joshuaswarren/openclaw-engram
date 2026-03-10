@@ -206,10 +206,79 @@ test("access service recall forwards overrides and returns explainable metadata"
   }
 });
 
+test("access service recall reports the effective snapshot namespace in response and debug lookups", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-recall-effective-ns-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    let intentNamespace = "";
+    let graphNamespace = "";
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: true,
+        defaultNamespace: "global",
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+        defaultRecallNamespaces: ["self"],
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: {
+        get: () => ({
+          sessionKey: "user:alpha:job",
+          namespace: "team-alpha",
+          memoryIds: [],
+          resultPaths: [],
+          plannerMode: "minimal",
+          fallbackUsed: false,
+          sourcesUsed: ["memories"],
+          recordedAt: "2026-03-10T00:00:00.000Z",
+          traceId: "trace-effective-ns",
+          budgetsApplied: undefined,
+          latencyMs: 12,
+        }),
+        getMostRecent: () => null,
+      },
+      getStorage: async () => storage,
+      getLastIntentSnapshot: async (namespace: string) => {
+        intentNamespace = namespace;
+        return null;
+      },
+      getLastGraphRecallSnapshot: async (namespace: string) => {
+        graphNamespace = namespace;
+        return null;
+      },
+    } as any);
+
+    const response = await service.recall({
+      query: "What is in my namespace?",
+      sessionKey: "user:alpha:job",
+      includeDebug: true,
+    });
+
+    assert.equal(response.namespace, "team-alpha");
+    assert.equal(intentNamespace, "team-alpha");
+    assert.equal(graphNamespace, "team-alpha");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service memoryStore persists and enforces idempotency conflicts", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
   try {
     const storage = new StorageManager(memoryDir);
+    const originalWriteMemory = storage.writeMemory.bind(storage);
+    let writeCalls = 0;
+    storage.writeMemory = (async (...args: Parameters<typeof originalWriteMemory>) => {
+      writeCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return originalWriteMemory(...args);
+    }) as typeof storage.writeMemory;
     const service = new EngramAccessService({
       config: {
         memoryDir,
@@ -287,6 +356,29 @@ test("access service memoryStore persists and enforces idempotency conflicts", a
 
     assert.equal(dryRun.status, "validated");
     assert.equal(storedAfterDryRun.status, "stored");
+
+    const [concurrentA, concurrentB] = await Promise.all([
+      service.memoryStore({
+        schemaVersion: 1,
+        idempotencyKey: "store-concurrent",
+        dryRun: false,
+        content: "A concurrent explicit memory that should only persist once.",
+        category: "fact",
+        namespace: "global",
+      }),
+      service.memoryStore({
+        schemaVersion: 1,
+        idempotencyKey: "store-concurrent",
+        dryRun: false,
+        content: "A concurrent explicit memory that should only persist once.",
+        category: "fact",
+        namespace: "global",
+      }),
+    ]);
+
+    assert.equal(concurrentA.memoryId, concurrentB.memoryId);
+    assert.equal(writeCalls, 3);
+    assert.equal((await storage.readAllMemories()).length, 3);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

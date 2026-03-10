@@ -234,6 +234,7 @@ function normalizePagination(limit?: number, offset?: number): { limit: number; 
 
 export class EngramAccessService {
   private readonly idempotency: AccessIdempotencyStore;
+  private readonly idempotencyLocks = new Map<string, Promise<void>>();
 
   constructor(private readonly orchestrator: Orchestrator) {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
@@ -328,20 +329,42 @@ export class EngramAccessService {
     if (!key) {
       return options.execute();
     }
-    const requestHash = hashAccessIdempotencyPayload({
-      operation: options.operation,
-      request: options.requestFingerprint,
+    return this.withIdempotencyLock(key, async () => {
+      const requestHash = hashAccessIdempotencyPayload({
+        operation: options.operation,
+        request: options.requestFingerprint,
+      });
+      const existing = await this.idempotency.get(key, requestHash);
+      if (existing.conflict) {
+        throw new EngramAccessInputError(`idempotencyKey reuse conflict: ${key}`);
+      }
+      if (existing.response) {
+        return existing.response as T;
+      }
+      const response = await options.execute();
+      await this.idempotency.put(key, requestHash, response);
+      return response;
     });
-    const existing = await this.idempotency.get(key, requestHash);
-    if (existing.conflict) {
-      throw new EngramAccessInputError(`idempotencyKey reuse conflict: ${key}`);
+  }
+
+  private async withIdempotencyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.idempotencyLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => current, () => current);
+    this.idempotencyLocks.set(key, queued);
+
+    await previous.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.idempotencyLocks.get(key) === queued) {
+        this.idempotencyLocks.delete(key);
+      }
     }
-    if (existing.response) {
-      return existing.response as T;
-    }
-    const response = await options.execute();
-    await this.idempotency.put(key, requestHash, response);
-    return response;
   }
 
   async health(): Promise<EngramAccessHealthResponse> {
@@ -384,13 +407,16 @@ export class EngramAccessService {
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : this.orchestrator.lastRecall.getMostRecent();
+    const effectiveNamespace = snapshot?.namespace
+      ? this.resolveNamespace(snapshot.namespace)
+      : namespace;
     const results = await this.serializeRecallResults(snapshot);
-    const debug = await this.buildRecallDebug(snapshot, namespace, request.includeDebug === true);
+    const debug = await this.buildRecallDebug(snapshot, effectiveNamespace, request.includeDebug === true);
 
     return {
       query,
       sessionKey: request.sessionKey,
-      namespace,
+      namespace: effectiveNamespace,
       context,
       count: results.length,
       memoryIds: snapshot?.memoryIds ?? [],
