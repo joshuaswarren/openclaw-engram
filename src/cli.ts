@@ -330,6 +330,7 @@ export interface RebuildMemoryLifecycleLedgerCliCommandOptions {
 
 export interface RebuildMemoryProjectionCliCommandOptions {
   memoryDir: string;
+  defaultNamespace?: string;
   write?: boolean;
   now?: Date;
   updatedAfter?: string;
@@ -338,12 +339,14 @@ export interface RebuildMemoryProjectionCliCommandOptions {
 
 export interface VerifyMemoryProjectionCliCommandOptions {
   memoryDir: string;
+  defaultNamespace?: string;
   updatedAfter?: string;
   updatedBefore?: string;
 }
 
 export interface RepairMemoryProjectionCliCommandOptions {
   memoryDir: string;
+  defaultNamespace?: string;
   write?: boolean;
   now?: Date;
   updatedAfter?: string;
@@ -805,6 +808,7 @@ export async function runRebuildMemoryProjectionCliCommand(
 ) {
   return rebuildMemoryProjection({
     memoryDir: options.memoryDir,
+    defaultNamespace: options.defaultNamespace,
     dryRun: options.write !== true,
     now: options.now,
     updatedAfter: options.updatedAfter,
@@ -817,6 +821,7 @@ export async function runVerifyMemoryProjectionCliCommand(
 ) {
   return verifyMemoryProjection({
     memoryDir: options.memoryDir,
+    defaultNamespace: options.defaultNamespace,
     updatedAfter: options.updatedAfter,
     updatedBefore: options.updatedBefore,
   });
@@ -827,6 +832,7 @@ export async function runRepairMemoryProjectionCliCommand(
 ) {
   return repairMemoryProjection({
     memoryDir: options.memoryDir,
+    defaultNamespace: options.defaultNamespace,
     dryRun: options.write !== true,
     now: options.now,
     updatedAfter: options.updatedAfter,
@@ -4722,6 +4728,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runRebuildMemoryProjectionCliCommand({
             memoryDir,
+            defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,
             write: options.write === true,
             updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
               ? options.updatedAfter.trim()
@@ -4760,6 +4767,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runVerifyMemoryProjectionCliCommand({
             memoryDir,
+            defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,
             updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
               ? options.updatedAfter.trim()
               : undefined,
@@ -4812,6 +4820,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runRepairMemoryProjectionCliCommand({
             memoryDir,
+            defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,
             write: options.write === true,
             updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
               ? options.updatedAfter.trim()

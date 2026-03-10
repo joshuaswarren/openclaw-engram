@@ -43,6 +43,7 @@ import {
 
 export interface RebuildMemoryProjectionOptions {
   memoryDir: string;
+  defaultNamespace?: string;
   dryRun?: boolean;
   now?: Date;
   updatedAfter?: string;
@@ -68,6 +69,7 @@ export interface RebuildMemoryProjectionResult {
 
 export interface VerifyMemoryProjectionOptions {
   memoryDir: string;
+  defaultNamespace?: string;
   updatedAfter?: string;
   updatedBefore?: string;
 }
@@ -183,7 +185,7 @@ function buildEntityMentionRows(
         updated: row.updated,
       });
     }
-    for (const tag of normalizeProjectionTags(row.tags)) {
+    for (const tag of row.tags ?? []) {
       if (!tag.includes(":")) continue;
       mentions.push({
         memoryId: row.memoryId,
@@ -429,6 +431,7 @@ function serializeGovernanceReviewQueueRow(
 
 async function loadAuthoritativeProjectionSnapshot(options: {
   memoryDir: string;
+  defaultNamespace?: string;
   updatedAfter?: string;
   updatedBefore?: string;
 }): Promise<{
@@ -467,7 +470,7 @@ async function loadAuthoritativeProjectionSnapshot(options: {
   const scopedMemoryIds = new Set(scopedMemories.map((memory) => memory.frontmatter.id));
   const nativeKnowledgeRows = await loadPersistedNativeKnowledgeChunks({
     memoryDir: options.memoryDir,
-    defaultNamespace: "default",
+    defaultNamespace: options.defaultNamespace ?? "default",
   }).then((rows) => rows.map((row) => ({
     chunkId: row.chunkId,
     sourceKind: row.sourceKind,
@@ -475,7 +478,7 @@ async function loadAuthoritativeProjectionSnapshot(options: {
     title: row.title,
     startLine: row.startLine,
     endLine: row.endLine,
-    namespace: row.namespace,
+    namespace: row.namespace ?? options.defaultNamespace ?? "default",
     privacyClass: row.privacyClass,
     derivedDate: row.derivedDate,
     sessionKey: row.sessionKey,
@@ -780,7 +783,7 @@ function writeProjectionDb(
           row.memoryKind ?? null,
           row.accessCount ?? null,
           row.lastAccessed ?? null,
-          JSON.stringify(normalizeProjectionTags(row.tags)),
+          JSON.stringify(row.tags ?? []),
           row.preview,
         );
       }

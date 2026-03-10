@@ -1163,7 +1163,6 @@ test("rebuildMemoryProjection projects entity mentions, native knowledge chunks,
               sourcePath: "docs/identity.md",
               sourceKind: "identity",
               title: "Identity",
-              namespace: "global",
               privacyClass: "internal",
               derivedDate: "2026-03-09",
               sourceHash: "hash-identity",
@@ -1179,7 +1178,6 @@ test("rebuildMemoryProjection projects entity mentions, native knowledge chunks,
                   startLine: 1,
                   endLine: 3,
                   content: "Alex maintains the Engram memory system.",
-                  namespace: "global",
                   privacyClass: "internal",
                   sourceHash: "hash-identity",
                 },
@@ -1199,6 +1197,7 @@ test("rebuildMemoryProjection projects entity mentions, native knowledge chunks,
     });
     const result = await rebuildMemoryProjection({
       memoryDir,
+      defaultNamespace: "global",
       dryRun: false,
       now: new Date("2026-03-09T12:05:00.000Z"),
     });
@@ -1247,7 +1246,7 @@ test("rebuildMemoryProjection projects entity mentions, native knowledge chunks,
     assert.equal(projectedReviewQueue?.runId, governance.runId);
     assert.equal(projectedReviewQueue?.reviewQueue.some((entry) => entry.reasonCode === "exact_duplicate"), true);
 
-    const verify = await verifyMemoryProjection({ memoryDir });
+    const verify = await verifyMemoryProjection({ memoryDir, defaultNamespace: "global" });
     assert.equal(verify.ok, true);
     assert.equal(verify.expectedEntityMentionRows, 2);
     assert.equal(verify.actualEntityMentionRows, 2);
@@ -1302,7 +1301,6 @@ test("verifyMemoryProjection reports drift in projected entity mentions, native 
               sourcePath: "docs/identity.md",
               sourceKind: "identity",
               title: "Identity",
-              namespace: "global",
               privacyClass: "internal",
               derivedDate: "2026-03-09",
               sourceHash: "hash-identity",
@@ -1318,7 +1316,6 @@ test("verifyMemoryProjection reports drift in projected entity mentions, native 
                   startLine: 1,
                   endLine: 3,
                   content: "Alex maintains the Engram memory system.",
-                  namespace: "global",
                   privacyClass: "internal",
                   sourceHash: "hash-identity",
                 },
@@ -1338,6 +1335,7 @@ test("verifyMemoryProjection reports drift in projected entity mentions, native 
     });
     await rebuildMemoryProjection({
       memoryDir,
+      defaultNamespace: "global",
       dryRun: false,
       now: new Date("2026-03-09T12:05:00.000Z"),
     });
@@ -1357,7 +1355,7 @@ test("verifyMemoryProjection reports drift in projected entity mentions, native 
       db.close();
     }
 
-    const verify = await verifyMemoryProjection({ memoryDir });
+    const verify = await verifyMemoryProjection({ memoryDir, defaultNamespace: "global" });
     assert.equal(verify.ok, false);
     assert.deepEqual(
       verify.missingEntityMentionKeys,
