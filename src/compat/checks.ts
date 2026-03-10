@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { CompatCheckOptions, CompatCheckResult, CompatReport, CompatRunner } from "./types.js";
+import { compareVersions } from "../version-utils.js";
 
 const REQUIRED_HOOKS = ["before_agent_start", "agent_end"];
 
@@ -194,14 +195,6 @@ function parseCurrentNodeVersion(raw: string): [number, number, number] | null {
   const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!match) return null;
   return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersions(a: [number, number, number], b: [number, number, number]): number {
-  for (let i = 0; i < 3; i += 1) {
-    if (a[i] > b[i]) return 1;
-    if (a[i] < b[i]) return -1;
-  }
-  return 0;
 }
 
 export async function runCompatChecks(options: CompatCheckOptions): Promise<CompatReport> {

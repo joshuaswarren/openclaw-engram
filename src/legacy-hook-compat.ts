@@ -1,36 +1,45 @@
-const FIRST_PUBLISHED_RUNTIME_WITHOUT_AGENT_HEARTBEAT = [2026, 1, 29] as const;
+import { compareVersions, type VersionTriple } from "./version-utils.js";
 
-type VersionTriple = readonly [number, number, number];
+const FIRST_PUBLISHED_RUNTIME_WITHOUT_AGENT_HEARTBEAT = [2026, 1, 29] as const;
+const OPENCLAW_VERSION_PREFIX = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/;
+
+type ParsedOpenClawVersion = {
+  triple: VersionTriple;
+  prerelease: boolean;
+};
+
+function parseOpenClawVersion(
+  value: string | undefined,
+): ParsedOpenClawVersion | null {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(OPENCLAW_VERSION_PREFIX);
+  if (!match) return null;
+  return {
+    triple: [
+      Number.parseInt(match[1], 10),
+      Number.parseInt(match[2], 10),
+      Number.parseInt(match[3], 10),
+    ],
+    prerelease: typeof match[4] === "string" && match[4].length > 0,
+  };
+}
 
 export function parseOpenClawVersionTriple(
   value: string | undefined,
 ): VersionTriple | null {
-  if (typeof value !== "string") return null;
-  const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return null;
-  return [
-    Number.parseInt(match[1], 10),
-    Number.parseInt(match[2], 10),
-    Number.parseInt(match[3], 10),
-  ];
-}
-
-function compareVersionTriples(a: VersionTriple, b: VersionTriple): number {
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return 0;
+  return parseOpenClawVersion(value)?.triple ?? null;
 }
 
 export function shouldRegisterTypedAgentHeartbeat(
   runtimeVersion: string | undefined,
 ): boolean {
-  const parsed = parseOpenClawVersionTriple(runtimeVersion);
+  const parsed = parseOpenClawVersion(runtimeVersion);
   if (!parsed) return false;
-  return (
-    compareVersionTriples(
-      parsed,
-      FIRST_PUBLISHED_RUNTIME_WITHOUT_AGENT_HEARTBEAT,
-    ) < 0
+  const comparison = compareVersions(
+    parsed.triple,
+    FIRST_PUBLISHED_RUNTIME_WITHOUT_AGENT_HEARTBEAT,
   );
+  if (comparison < 0) return true;
+  if (comparison > 0) return false;
+  return parsed.prerelease;
 }
