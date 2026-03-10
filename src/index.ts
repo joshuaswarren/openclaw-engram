@@ -219,7 +219,7 @@ export default {
 
           log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
           return {
-            systemPrompt: memoryContextPrompt,
+            prependSystemContext: memoryContextPrompt,
             // Backward-compat path for gateway builds that consume prependContext.
             prependContext: memoryContextPrompt,
           };
