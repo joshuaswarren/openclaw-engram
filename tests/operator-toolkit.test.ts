@@ -159,6 +159,33 @@ test("operator doctor surfaces auth and qmd problems", async () => {
   assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
 });
 
+test("operator doctor treats unreachable qmd as an error even when collection state is unknown", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+  });
+  fixture.orchestrator.qmd = {
+    async probe() {
+      return false;
+    },
+    isAvailable() {
+      return false;
+    },
+    async ensureCollection() {
+      return "unknown";
+    },
+    debugStatus() {
+      return "missing-binary";
+    },
+  };
+
+  const report = await runOperatorDoctor({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
+});
+
 test("operator inventory summarizes stored memories and profile footprint", async () => {
   const fixture = await makeFixture();
   const storage = new StorageManager(fixture.memoryDir);

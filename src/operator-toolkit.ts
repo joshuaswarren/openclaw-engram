@@ -511,7 +511,9 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
     key: "qmd",
     status: !config.qmdEnabled
       ? "warn"
-      : qmdAvailable && collectionState === "present"
+      : !qmdAvailable
+      ? "error"
+      : collectionState === "present"
       ? "ok"
       : collectionState === "missing"
       ? "error"

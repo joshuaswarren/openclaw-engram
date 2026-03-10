@@ -2813,6 +2813,15 @@ function formatOperatorRepairCli(report: OperatorRepairReport): string {
   return lines.join("\n");
 }
 
+function reportHasMachineReadableOutput(options: Record<string, unknown>): boolean {
+  return options.json === true;
+}
+
+function setupReportPassed(report: OperatorSetupReport): boolean {
+  return report.config.parsed
+    && report.directories.every((entry) => entry.exists && entry.writable);
+}
+
 export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
   api.registerCli(
     ({ program }) => {
@@ -2868,12 +2877,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             orchestrator,
             installCaptureInstructions: options.installCaptureInstructions === true,
           });
-          if (options.json === true) {
+          if (reportHasMachineReadableOutput(options)) {
             console.log(JSON.stringify(report, null, 2));
           } else {
             console.log(formatOperatorSetupCli(report));
           }
-          console.log("OK");
+          if (!setupReportPassed(report)) {
+            process.exitCode = 1;
+            return;
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       cmd
@@ -2883,7 +2896,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const report = await runOperatorDoctor({ orchestrator });
-          if (options.json === true) {
+          if (reportHasMachineReadableOutput(options)) {
             console.log(JSON.stringify(report, null, 2));
           } else {
             console.log(formatOperatorDoctorCli(report));
@@ -2892,7 +2905,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             process.exitCode = 1;
             return;
           }
-          console.log("OK");
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       cmd
@@ -2902,12 +2915,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const report = await runOperatorInventory({ orchestrator });
-          if (options.json === true) {
+          if (reportHasMachineReadableOutput(options)) {
             console.log(JSON.stringify(report, null, 2));
           } else {
             console.log(formatOperatorInventoryCli(report));
           }
-          console.log("OK");
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       const namespacesCmd = cmd
@@ -3301,7 +3314,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             gitRef: typeof options.gitRef === "string" ? options.gitRef : undefined,
             createdAt: typeof options.createdAt === "string" ? options.createdAt : undefined,
           });
-          if (options.json === true) {
+          if (reportHasMachineReadableOutput(options)) {
             console.log(JSON.stringify(report, null, 2));
           } else {
             console.log(formatBenchmarkRecallCli(report));
@@ -3311,7 +3324,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             process.exitCode = 1;
             return;
           }
-          console.log("OK");
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       cmd
@@ -4131,12 +4144,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 ? options.sessionFilesDir.trim()
                 : undefined,
           });
-          if (options.json === true) {
+          if (reportHasMachineReadableOutput(options)) {
             console.log(JSON.stringify(report, null, 2));
           } else {
             console.log(formatOperatorRepairCli(report));
           }
-          console.log("OK");
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
       cmd
