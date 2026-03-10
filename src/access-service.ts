@@ -1,5 +1,12 @@
 import { stat } from "node:fs/promises";
-import type { Orchestrator } from "./orchestrator.js";
+import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
+import {
+  persistExplicitCapture,
+  queueExplicitCaptureForReview,
+  validateExplicitCaptureInput,
+  type ExplicitCaptureInput,
+} from "./explicit-capture.js";
+import { log } from "./logger.js";
 import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
@@ -14,10 +21,24 @@ import {
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
+import type {
+  GraphRecallSnapshot,
+  IntentDebugSnapshot,
+  Orchestrator,
+  RecallInvocationOptions,
+} from "./orchestrator.js";
 import { parseEntityFile } from "./storage.js";
-import type { EntityFile, MemoryFile, MemoryLifecycleEvent, MemoryStatus } from "./types.js";
+import type {
+  EntityFile,
+  MemoryFile,
+  MemoryLifecycleEvent,
+  MemoryStatus,
+  RecallPlanMode,
+} from "./types.js";
 
 export class EngramAccessInputError extends Error {}
+
+export const ENGRAM_ACCESS_WRITE_SCHEMA_VERSION = 1;
 
 export interface EngramAccessHealthResponse {
   ok: true;
@@ -34,24 +55,43 @@ export interface EngramAccessRecallRequest {
   query: string;
   sessionKey?: string;
   namespace?: string;
+  topK?: number;
+  mode?: RecallPlanMode | "auto";
+  includeDebug?: boolean;
 }
 
 export interface EngramAccessRecallResponse {
   query: string;
   sessionKey?: string;
+  namespace: string;
   context: string;
   count: number;
   memoryIds: string[];
+  results: EngramAccessMemorySummary[];
   recordedAt?: string;
+  traceId?: string;
+  plannerMode?: RecallPlanMode;
+  fallbackUsed: boolean;
+  sourcesUsed: string[];
+  budgetsApplied?: LastRecallSnapshot["budgetsApplied"];
+  latencyMs?: number;
+  debug?: {
+    snapshot?: LastRecallSnapshot;
+    intent?: IntentDebugSnapshot | null;
+    graph?: GraphRecallSnapshot | null;
+  };
 }
 
 export interface EngramAccessRecallExplainRequest {
   sessionKey?: string;
+  namespace?: string;
 }
 
 export interface EngramAccessRecallExplainResponse {
   found: boolean;
   snapshot?: LastRecallSnapshot;
+  intent?: IntentDebugSnapshot | null;
+  graph?: GraphRecallSnapshot | null;
 }
 
 export interface EngramAccessMemoryRecord {
@@ -162,6 +202,29 @@ export interface EngramAccessReviewDispositionResponse {
   currentPath?: string;
 }
 
+export interface EngramAccessWriteEnvelope {
+  schemaVersion?: number;
+  idempotencyKey?: string;
+  dryRun?: boolean;
+}
+
+export interface EngramAccessMemoryStoreRequest extends EngramAccessWriteEnvelope, ExplicitCaptureInput {}
+
+export interface EngramAccessSuggestionSubmitRequest extends EngramAccessWriteEnvelope, ExplicitCaptureInput {}
+
+export interface EngramAccessWriteResponse {
+  schemaVersion: 1;
+  operation: "memory_store" | "suggestion_submit";
+  namespace: string;
+  dryRun: boolean;
+  accepted: boolean;
+  queued: boolean;
+  status: "validated" | "stored" | "duplicate" | "queued_for_review";
+  memoryId?: string;
+  duplicateOf?: string;
+  idempotencyKey?: string;
+}
+
 function normalizePagination(limit?: number, offset?: number): { limit: number; offset: number } {
   const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit ?? 50))) : 50;
   const normalizedOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset ?? 0)) : 0;
@@ -169,7 +232,100 @@ function normalizePagination(limit?: number, offset?: number): { limit: number; 
 }
 
 export class EngramAccessService {
-  constructor(private readonly orchestrator: Orchestrator) {}
+  private readonly idempotency: AccessIdempotencyStore;
+
+  constructor(private readonly orchestrator: Orchestrator) {
+    this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
+  }
+
+  private resolveNamespace(namespace?: string): string {
+    const requested = namespace?.trim();
+    if (!requested) return this.orchestrator.config.defaultNamespace;
+    if (!this.orchestrator.config.namespacesEnabled && requested !== this.orchestrator.config.defaultNamespace) {
+      throw new EngramAccessInputError(`unsupported namespace: ${requested}`);
+    }
+    return requested;
+  }
+
+  private normalizeRecallMode(mode?: RecallPlanMode | "auto"): RecallPlanMode | undefined {
+    if (!mode || mode === "auto") return undefined;
+    if (mode === "no_recall" || mode === "minimal" || mode === "full" || mode === "graph_mode") {
+      return mode;
+    }
+    throw new EngramAccessInputError(`unsupported recall mode: ${mode}`);
+  }
+
+  private async buildRecallDebug(
+    snapshot: LastRecallSnapshot | null,
+    namespace: string,
+    includeDebug: boolean,
+  ): Promise<EngramAccessRecallResponse["debug"] | undefined> {
+    if (!includeDebug) return undefined;
+    const [intent, graph] = await Promise.all([
+      this.orchestrator.getLastIntentSnapshot(namespace),
+      this.orchestrator.getLastGraphRecallSnapshot(namespace),
+    ]);
+    return snapshot || intent || graph
+      ? {
+        snapshot: snapshot ?? undefined,
+        intent,
+        graph,
+      }
+      : undefined;
+  }
+
+  private async serializeRecallResults(snapshot: LastRecallSnapshot | null): Promise<EngramAccessMemorySummary[]> {
+    if (!snapshot) return [];
+    const storage = await this.orchestrator.getStorage();
+    const results: EngramAccessMemorySummary[] = [];
+    const seen = new Set<string>();
+
+    for (const memoryPath of snapshot.resultPaths ?? []) {
+      if (!memoryPath || seen.has(memoryPath)) continue;
+      const memory = await storage.readMemoryByPath(memoryPath);
+      if (!memory) continue;
+      seen.add(memoryPath);
+      results.push(this.serializeMemorySummary(memory, this.orchestrator.config.memoryDir));
+    }
+
+    if (results.length > 0) return results;
+
+    const namespace = snapshot.namespace ? this.resolveNamespace(snapshot.namespace) : this.orchestrator.config.defaultNamespace;
+    const namespaceStorage = await this.orchestrator.getStorage(namespace);
+    for (const memoryId of snapshot.memoryIds) {
+      const memory = await namespaceStorage.getMemoryById(memoryId);
+      if (!memory || seen.has(memory.path)) continue;
+      seen.add(memory.path);
+      results.push(this.serializeMemorySummary(memory, this.orchestrator.config.memoryDir));
+    }
+    return results;
+  }
+
+  private async handleIdempotentWrite<T extends EngramAccessWriteResponse>(options: {
+    operation: T["operation"];
+    idempotencyKey?: string;
+    request: unknown;
+    execute: () => Promise<T>;
+  }): Promise<T> {
+    const key = options.idempotencyKey?.trim();
+    if (!key) {
+      return options.execute();
+    }
+    const requestHash = hashAccessIdempotencyPayload({
+      operation: options.operation,
+      request: options.request,
+    });
+    const existing = await this.idempotency.get(key, requestHash);
+    if (existing.conflict) {
+      throw new EngramAccessInputError(`idempotencyKey reuse conflict: ${key}`);
+    }
+    if (existing.response) {
+      return existing.response as T;
+    }
+    const response = await options.execute();
+    await this.idempotency.put(key, requestHash, response);
+    return response;
+  }
 
   async health(): Promise<EngramAccessHealthResponse> {
     let projectionAvailable = false;
@@ -197,38 +353,170 @@ export class EngramAccessService {
     if (query.length === 0) {
       throw new EngramAccessInputError("query is required");
     }
-    const requestedNamespace = request.namespace?.trim();
-    if (
-      requestedNamespace &&
-      requestedNamespace !== this.orchestrator.config.defaultNamespace
-    ) {
-      throw new EngramAccessInputError(
-        `namespace-scoped recall is not implemented for ${requestedNamespace}`,
-      );
-    }
-    const context = await this.orchestrator.recall(query, request.sessionKey);
+    const namespace = this.resolveNamespace(request.namespace);
+    const mode = this.normalizeRecallMode(request.mode);
+    const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
+    const recallOptions: RecallInvocationOptions = {
+      namespace,
+      topK,
+      mode,
+    };
+    const startedAt = Date.now();
+    const context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : this.orchestrator.lastRecall.getMostRecent();
+    const results = await this.serializeRecallResults(snapshot);
+    const debug = await this.buildRecallDebug(snapshot, namespace, request.includeDebug === true);
 
     return {
       query,
       sessionKey: request.sessionKey,
+      namespace,
       context,
-      count: snapshot?.memoryIds.length ?? 0,
+      count: results.length,
       memoryIds: snapshot?.memoryIds ?? [],
+      results,
       recordedAt: snapshot?.recordedAt,
+      traceId: snapshot?.traceId,
+      plannerMode: snapshot?.plannerMode ?? mode,
+      fallbackUsed: snapshot?.fallbackUsed ?? false,
+      sourcesUsed: snapshot?.sourcesUsed ?? [],
+      budgetsApplied: snapshot?.budgetsApplied,
+      latencyMs: snapshot?.latencyMs ?? (Date.now() - startedAt),
+      debug,
     };
   }
 
   async recallExplain(
     request: EngramAccessRecallExplainRequest = {},
   ): Promise<EngramAccessRecallExplainResponse> {
+    const requestedNamespace = request.namespace ? this.resolveNamespace(request.namespace) : undefined;
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : this.orchestrator.lastRecall.getMostRecent();
-    if (!snapshot) return { found: false };
-    return { found: true, snapshot };
+    const namespace = requestedNamespace ?? snapshot?.namespace ?? this.orchestrator.config.defaultNamespace;
+    const [intent, graph] = await Promise.all([
+      this.orchestrator.getLastIntentSnapshot(namespace),
+      this.orchestrator.getLastGraphRecallSnapshot(namespace),
+    ]);
+    if (!snapshot && !intent && !graph) return { found: false };
+    return { found: true, snapshot: snapshot ?? undefined, intent, graph };
+  }
+
+  async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
+    const namespace = this.resolveNamespace(request.namespace);
+    const schemaVersion = request.schemaVersion ?? ENGRAM_ACCESS_WRITE_SCHEMA_VERSION;
+    if (schemaVersion !== ENGRAM_ACCESS_WRITE_SCHEMA_VERSION) {
+      throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
+    }
+    const execute = async (): Promise<EngramAccessWriteResponse> => {
+      const candidate = validateExplicitCaptureInput(
+        {
+          ...request,
+          namespace,
+        },
+        "legacy_tool",
+      );
+      if (request.dryRun === true) {
+        return {
+          schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
+          operation: "memory_store",
+          namespace,
+          dryRun: true,
+          accepted: true,
+          queued: false,
+          status: "validated",
+          idempotencyKey: request.idempotencyKey?.trim() || undefined,
+        };
+      }
+      const result = await persistExplicitCapture(this.orchestrator, candidate, "memory_store");
+      const response: EngramAccessWriteResponse = {
+        schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
+        operation: "memory_store",
+        namespace,
+        dryRun: false,
+        accepted: true,
+        queued: false,
+        status: result.duplicateOf ? "duplicate" : "stored",
+        memoryId: result.id,
+        duplicateOf: result.duplicateOf,
+        idempotencyKey: request.idempotencyKey?.trim() || undefined,
+      };
+      log.info(
+        `access-write op=memory_store namespace=${namespace} dryRun=false status=${response.status} memoryId=${response.memoryId ?? "-"} idempotency=${response.idempotencyKey ? "yes" : "no"}`,
+      );
+      return response;
+    };
+    return this.handleIdempotentWrite({
+      operation: "memory_store",
+      idempotencyKey: request.idempotencyKey,
+      request: {
+        ...request,
+        namespace,
+      },
+      execute,
+    });
+  }
+
+  async suggestionSubmit(request: EngramAccessSuggestionSubmitRequest): Promise<EngramAccessWriteResponse> {
+    const namespace = this.resolveNamespace(request.namespace);
+    const schemaVersion = request.schemaVersion ?? ENGRAM_ACCESS_WRITE_SCHEMA_VERSION;
+    if (schemaVersion !== ENGRAM_ACCESS_WRITE_SCHEMA_VERSION) {
+      throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
+    }
+    const execute = async (): Promise<EngramAccessWriteResponse> => {
+      if (request.dryRun === true) {
+        validateExplicitCaptureInput({
+          ...request,
+          namespace,
+        }, "legacy_tool");
+        return {
+          schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
+          operation: "suggestion_submit",
+          namespace,
+          dryRun: true,
+          accepted: true,
+          queued: true,
+          status: "validated",
+          idempotencyKey: request.idempotencyKey?.trim() || undefined,
+        };
+      }
+      const result = await queueExplicitCaptureForReview(
+        this.orchestrator,
+        {
+          ...request,
+          namespace,
+        },
+        "memory_capture",
+        new Error(request.sourceReason?.trim() || "submitted via engram suggestion_submit"),
+      );
+      const response: EngramAccessWriteResponse = {
+        schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
+        operation: "suggestion_submit",
+        namespace,
+        dryRun: false,
+        accepted: true,
+        queued: true,
+        status: "queued_for_review",
+        memoryId: result.id,
+        duplicateOf: result.duplicateOf,
+        idempotencyKey: request.idempotencyKey?.trim() || undefined,
+      };
+      log.info(
+        `access-write op=suggestion_submit namespace=${namespace} dryRun=false status=${response.status} memoryId=${response.memoryId ?? "-"} idempotency=${response.idempotencyKey ? "yes" : "no"}`,
+      );
+      return response;
+    };
+    return this.handleIdempotentWrite({
+      operation: "suggestion_submit",
+      idempotencyKey: request.idempotencyKey,
+      request: {
+        ...request,
+        namespace,
+      },
+      execute,
+    });
   }
 
   async memoryGet(memoryId: string, namespace?: string): Promise<EngramAccessMemoryResponse> {

@@ -623,7 +623,7 @@ test("cold fallback remains eligible when lifecycle stale filtering is enabled",
   assert.match(context, /shard migration edge cases/i);
 });
 
-test("recall does not record empty impression when no memories are injected by default", async () => {
+test("recall suppresses empty impression append when no memories are injected by default", async () => {
   const memoryDir = tmpDir("engram-empty-impression");
   await mkdir(memoryDir, { recursive: true });
 
@@ -632,35 +632,9 @@ test("recall does not record empty impression when no memories are injected by d
   cfg.qmdEnabled = false;
   const orchestrator = new Orchestrator(cfg);
 
-  let recorded: Array<{ sessionKey: string; memoryIds: string[] }> = [];
+  let recorded: Array<{ sessionKey: string; memoryIds: string[]; appendImpression?: boolean }> = [];
   (orchestrator as any).lastRecall = {
-    record: async (payload: { sessionKey: string; memoryIds: string[] }) => {
-      recorded.push(payload);
-    },
-  };
-
-  const context = await (orchestrator as any).recallInternal(
-    "Please remember our QMD diagnostics.",
-    "session-empty-impression",
-  );
-
-  assert.equal(context.includes("## Relevant Memories"), false);
-  assert.equal(recorded.length, 0);
-});
-
-test("recall records empty impression when explicitly enabled", async () => {
-  const memoryDir = tmpDir("engram-empty-impression-enabled");
-  await mkdir(memoryDir, { recursive: true });
-
-  const cfg = baseConfig(memoryDir);
-  cfg.recallPlannerEnabled = false;
-  cfg.qmdEnabled = false;
-  cfg.recordEmptyRecallImpressions = true;
-  const orchestrator = new Orchestrator(cfg);
-
-  let recorded: Array<{ sessionKey: string; memoryIds: string[] }> = [];
-  (orchestrator as any).lastRecall = {
-    record: async (payload: { sessionKey: string; memoryIds: string[] }) => {
+    record: async (payload: { sessionKey: string; memoryIds: string[]; appendImpression?: boolean }) => {
       recorded.push(payload);
     },
   };
@@ -674,6 +648,36 @@ test("recall records empty impression when explicitly enabled", async () => {
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0]?.sessionKey, "session-empty-impression");
   assert.deepEqual(recorded[0]?.memoryIds, []);
+  assert.equal(recorded[0]?.appendImpression, false);
+});
+
+test("recall records empty impression when explicitly enabled", async () => {
+  const memoryDir = tmpDir("engram-empty-impression-enabled");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = false;
+  cfg.recordEmptyRecallImpressions = true;
+  const orchestrator = new Orchestrator(cfg);
+
+  let recorded: Array<{ sessionKey: string; memoryIds: string[]; appendImpression?: boolean }> = [];
+  (orchestrator as any).lastRecall = {
+    record: async (payload: { sessionKey: string; memoryIds: string[]; appendImpression?: boolean }) => {
+      recorded.push(payload);
+    },
+  };
+
+  const context = await (orchestrator as any).recallInternal(
+    "Please remember our QMD diagnostics.",
+    "session-empty-impression",
+  );
+
+  assert.equal(context.includes("## Relevant Memories"), false);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0]?.sessionKey, "session-empty-impression");
+  assert.deepEqual(recorded[0]?.memoryIds, []);
+  assert.equal(recorded[0]?.appendImpression, true);
 });
 
 test("cold fallback uses configured cold QMD collection before archive scan", async () => {

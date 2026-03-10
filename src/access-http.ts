@@ -24,6 +24,8 @@ export interface EngramAccessHttpServerStatus {
 }
 
 const defaultAdminConsolePublicDir = fileURLToPath(new URL("../admin-console/public", import.meta.url));
+const WRITE_RATE_LIMIT_WINDOW_MS = 60_000;
+const WRITE_RATE_LIMIT_MAX_REQUESTS = 30;
 
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -46,6 +48,7 @@ export class EngramAccessHttpServer {
   private readonly maxBodyBytes: number;
   private readonly adminConsoleEnabled: boolean;
   private readonly adminConsolePublicDir: string;
+  private readonly writeRequestTimestamps: number[] = [];
   private server: Server | null = null;
   private boundPort = 0;
 
@@ -158,6 +161,9 @@ export class EngramAccessHttpServer {
         query: typeof body.query === "string" ? body.query : "",
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        topK: typeof body.topK === "number" ? body.topK : undefined,
+        mode: typeof body.mode === "string" ? body.mode as never : undefined,
+        includeDebug: body.includeDebug === true,
       });
       this.respondJson(res, 200, response);
       return;
@@ -167,6 +173,47 @@ export class EngramAccessHttpServer {
       const body = await this.readJsonBody(req);
       const response = await this.service.recallExplain({
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+      });
+      this.respondJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/memories") {
+      this.enforceWriteRateLimit();
+      const body = await this.readJsonBody(req);
+      const response = await this.service.memoryStore({
+        schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        dryRun: body.dryRun === true,
+        content: typeof body.content === "string" ? body.content : "",
+        category: typeof body.category === "string" ? body.category : undefined,
+        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
+        entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
+        ttl: typeof body.ttl === "string" ? body.ttl : undefined,
+        sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
+      });
+      this.respondJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/suggestions") {
+      this.enforceWriteRateLimit();
+      const body = await this.readJsonBody(req);
+      const response = await this.service.suggestionSubmit({
+        schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        dryRun: body.dryRun === true,
+        content: typeof body.content === "string" ? body.content : "",
+        category: typeof body.category === "string" ? body.category : undefined,
+        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
+        entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
+        ttl: typeof body.ttl === "string" ? body.ttl : undefined,
+        sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       });
       this.respondJson(res, 200, response);
       return;
@@ -241,6 +288,7 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/review-disposition") {
+      this.enforceWriteRateLimit();
       const body = await this.readJsonBody(req);
       const status = typeof body.status === "string" ? body.status : "";
       if (
@@ -355,5 +403,19 @@ export class EngramAccessHttpServer {
     out.writeUInt16BE(encoded.length, 0);
     encoded.copy(out, 2);
     return out;
+  }
+
+  private enforceWriteRateLimit(): void {
+    const now = Date.now();
+    while (
+      this.writeRequestTimestamps.length > 0 &&
+      now - (this.writeRequestTimestamps[0] ?? 0) > WRITE_RATE_LIMIT_WINDOW_MS
+    ) {
+      this.writeRequestTimestamps.shift();
+    }
+    if (this.writeRequestTimestamps.length >= WRITE_RATE_LIMIT_MAX_REQUESTS) {
+      throw new HttpError(429, "write_rate_limited");
+    }
+    this.writeRequestTimestamps.push(now);
   }
 }

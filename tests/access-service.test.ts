@@ -66,14 +66,208 @@ test("access service rejects empty recall queries as input errors", async () => 
   );
 });
 
-test("access service rejects unsupported namespace-scoped recall", async () => {
+test("access service allows namespace-scoped recall when namespaces are enabled", async () => {
   const service = createService();
-  await assert.rejects(
-    () => service.recall({ query: "hello", namespace: "project-x" }),
-    (err: unknown) =>
-      err instanceof EngramAccessInputError &&
-      /namespace-scoped recall is not implemented/.test(err.message),
-  );
+  const response = await service.recall({ query: "hello", namespace: "project-x" });
+  assert.equal(response.namespace, "project-x");
+});
+
+test("access service recall forwards overrides and returns explainable metadata", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-recall-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-08/fact-1.md");
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-1.md",
+      memoryDoc("fact-1", "Operator-facing recall envelope coverage."),
+    );
+    const storage = new StorageManager(memoryDir);
+    let capturedOptions: unknown;
+    const snapshot = {
+      sessionKey: "sess-1",
+      recordedAt: "2026-03-08T00:00:00.000Z",
+      queryHash: "hash",
+      queryLen: 12,
+      memoryIds: ["fact-1"],
+      namespace: "global",
+      traceId: "trace-1",
+      plannerMode: "minimal",
+      requestedMode: "minimal",
+      fallbackUsed: true,
+      sourcesUsed: ["cold_fallback", "memories"],
+      budgetsApplied: {
+        requestedTopK: 3,
+        appliedTopK: 1,
+        recallBudgetChars: 8000,
+        maxMemoryTokens: 2000,
+        qmdFetchLimit: 4,
+        qmdHybridFetchLimit: 4,
+      },
+      latencyMs: 42,
+      resultPaths: [memoryPath],
+    };
+
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: true,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async (_query: string, _sessionKey?: string, options?: unknown) => {
+        capturedOptions = options;
+        return "ctx";
+      },
+      lastRecall: { get: () => snapshot, getMostRecent: () => snapshot },
+      getStorage: async () => storage,
+      getLastIntentSnapshot: async () => ({
+        recordedAt: "2026-03-08T00:00:00.000Z",
+        promptHash: "prompt",
+        promptLength: 5,
+        retrievalQueryHash: "retrieval",
+        retrievalQueryLength: 5,
+        plannerEnabled: true,
+        plannedMode: "minimal",
+        effectiveMode: "minimal",
+        recallResultLimit: 1,
+        queryIntent: { tense: "present", goal: "recall", action: "recall", scope: "specific" },
+        graphExpandedIntentDetected: false,
+        graphDecision: {
+          status: "not_requested",
+          shadowMode: false,
+          qmdAvailable: true,
+          graphRecallEnabled: false,
+          multiGraphMemoryEnabled: false,
+        },
+      }),
+      getLastGraphRecallSnapshot: async () => null,
+    } as any);
+
+    const response = await service.recall({
+      query: "hello",
+      sessionKey: "sess-1",
+      namespace: "global",
+      topK: 3,
+      mode: "minimal",
+      includeDebug: true,
+    });
+
+    assert.deepEqual(capturedOptions, {
+      namespace: "global",
+      topK: 3,
+      mode: "minimal",
+    });
+    assert.equal(response.namespace, "global");
+    assert.equal(response.traceId, "trace-1");
+    assert.equal(response.plannerMode, "minimal");
+    assert.equal(response.fallbackUsed, true);
+    assert.deepEqual(response.sourcesUsed, ["cold_fallback", "memories"]);
+    assert.equal(response.results[0]?.id, "fact-1");
+    assert.equal(response.budgetsApplied?.requestedTopK, 3);
+    assert.equal(response.debug?.intent?.effectiveMode, "minimal");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service memoryStore persists and enforces idempotency conflicts", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+      getLastIntentSnapshot: async () => null,
+      getLastGraphRecallSnapshot: async () => null,
+    } as any);
+
+    const first = await service.memoryStore({
+      schemaVersion: 1,
+      idempotencyKey: "store-1",
+      dryRun: false,
+      content: "A durable explicit memory for access-layer coverage.",
+      category: "fact",
+      namespace: "global",
+      sourceReason: "access regression coverage",
+    });
+    const second = await service.memoryStore({
+      schemaVersion: 1,
+      idempotencyKey: "store-1",
+      dryRun: false,
+      content: "A durable explicit memory for access-layer coverage.",
+      category: "fact",
+      namespace: "global",
+      sourceReason: "access regression coverage",
+    });
+
+    assert.equal(first.status, "stored");
+    assert.equal(second.memoryId, first.memoryId);
+    assert.equal((await storage.readAllMemories()).length, 1);
+
+    await assert.rejects(
+      () => service.memoryStore({
+        schemaVersion: 1,
+        idempotencyKey: "store-1",
+        dryRun: false,
+        content: "A different explicit memory with the same idempotency key.",
+        category: "fact",
+        namespace: "global",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /idempotencyKey reuse conflict/.test(err.message),
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service suggestionSubmit queues pending review memories", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-suggestion-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+      getLastIntentSnapshot: async () => null,
+      getLastGraphRecallSnapshot: async () => null,
+    } as any);
+
+    const response = await service.suggestionSubmit({
+      schemaVersion: 1,
+      dryRun: false,
+      content: "Suggestion content that should be queued for operator review.",
+      category: "fact",
+      namespace: "global",
+    });
+    const queued = response.memoryId ? await storage.getMemoryById(response.memoryId) : null;
+
+    assert.equal(response.queued, true);
+    assert.equal(response.status, "queued_for_review");
+    assert.equal(queued?.frontmatter.status, "pending_review");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
 });
 
 test("access service browses memories, lists entities, and applies review dispositions", async () => {

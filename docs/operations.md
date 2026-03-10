@@ -71,6 +71,7 @@ openclaw engram dashboard stop      # Stop dashboard service
 openclaw engram access http-serve   # Start local HTTP API + admin console shell
 openclaw engram access http-status  # Access server health/status
 openclaw engram access http-stop    # Stop local HTTP API
+openclaw engram access mcp-serve    # Run the stdio MCP server
 openclaw engram action-audit        # Namespace-aware memory action policy audit
 openclaw engram tier-status         # Tier migration telemetry + last-cycle summary
 openclaw engram tier-migrate        # Run a bounded tier migration pass (dry-run default)
@@ -145,6 +146,13 @@ Admin console notes:
 - Start the local access server, then open `http://127.0.0.1:4318/engram/ui/` in a browser.
 - Paste the same bearer token used for `/engram/v1/...` requests into the console login field.
 - The console is read-only by default, but governance review actions still write auditable lifecycle events through the same local access layer.
+
+Access layer notes:
+- `openclaw engram access http-serve` fails closed when no bearer token is configured.
+- HTTP recall accepts `query`, `sessionKey`, `namespace`, `topK`, `mode`, and `includeDebug`.
+- HTTP write endpoints (`/engram/v1/memories`, `/engram/v1/suggestions`, `/engram/v1/review-disposition`) enforce body-size limits, rate limiting, and idempotent retry support for explicit write flows.
+- `openclaw engram access mcp-serve` exposes the same recall/read/write service layer over stdio for MCP clients such as Codex and Claude Code.
+- Use `GET /engram/v1/health` or `GET /engram/v1/maintenance` as startup probes when local scripts need projection/governance readiness signals before issuing recall or review requests.
 
 ## Compression Guideline Optimizer Tool (v8.11)
 
