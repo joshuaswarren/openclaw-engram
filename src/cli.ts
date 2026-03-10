@@ -2890,6 +2890,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
           if (!report.ok) {
             process.exitCode = 1;
+            return;
           }
           console.log("OK");
         });

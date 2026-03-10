@@ -137,6 +137,14 @@ test("operator doctor surfaces auth and qmd problems", async () => {
       return "cli=false";
     },
   };
+  fixture.orchestrator.getConversationIndexHealth = async () => ({
+    enabled: true,
+    backend: "qmd",
+    status: "degraded",
+    chunkDocCount: 0,
+    lastUpdateAt: null,
+    qmdAvailable: false,
+  });
 
   const report = await runOperatorDoctor({
     orchestrator: fixture.orchestrator,
@@ -147,6 +155,7 @@ test("operator doctor surfaces auth and qmd problems", async () => {
   assert.ok(report.summary.error >= 1);
   assert.equal(report.checks.some((check) => check.key === "access_http_auth" && check.status === "error"), true);
   assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
+  assert.equal(report.checks.some((check) => check.key === "conversation_index" && check.status === "error"), true);
   assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
 });
 

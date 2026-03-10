@@ -535,7 +535,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
     status: conversationIndex.status === "ok"
       ? "ok"
       : conversationIndex.enabled
-      ? "warn"
+      ? "error"
       : "warn",
     summary: conversationIndex.enabled
       ? `Conversation index backend is ${conversationIndex.status}.`
