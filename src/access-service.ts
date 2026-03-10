@@ -518,7 +518,7 @@ export class EngramAccessService {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
     }
     const execute = async (): Promise<EngramAccessWriteResponse> => {
-      validateExplicitCaptureInput({
+      const candidate = validateExplicitCaptureInput({
         ...request,
         namespace,
       }, "legacy_tool");
@@ -536,10 +536,7 @@ export class EngramAccessService {
       }
       const result = await queueExplicitCaptureForReview(
         this.orchestrator,
-        {
-          ...request,
-          namespace,
-        },
+        candidate,
         "memory_capture",
         new Error(request.sourceReason?.trim() || "submitted via engram suggestion_submit"),
       );

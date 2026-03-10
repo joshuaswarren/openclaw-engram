@@ -560,6 +560,22 @@ test("access service suggestionSubmit queues pending review memories", async () 
         err instanceof Error &&
         err.message === "confidence must be between 0 and 1",
     );
+
+    const sanitized = await service.suggestionSubmit({
+      schemaVersion: 1,
+      dryRun: false,
+      content: "  Suggestion content that should be normalized before review.  ",
+      category: "fact",
+      namespace: "global",
+      tags: [" review ", "queue", "review"],
+      sourceReason: "  submitted via suggestion submit  ",
+    });
+    const sanitizedQueued = sanitized.memoryId ? await storage.getMemoryById(sanitized.memoryId) : null;
+
+    assert.equal(sanitizedQueued?.frontmatter.status, "pending_review");
+    assert.match(sanitizedQueued?.content ?? "", /Submitted content:\nSuggestion content that should be normalized before review\./);
+    assert.match(sanitizedQueued?.content ?? "", /Requested sourceReason: submitted via suggestion submit/);
+    assert.match(sanitizedQueued?.content ?? "", /Requested tags: review, queue/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
