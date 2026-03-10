@@ -113,14 +113,15 @@ Enable the most impactful features incrementally:
 Start a conversation with OpenClaw. After a few turns, check:
 
 ```bash
+openclaw engram setup --json
+openclaw engram doctor --json
+openclaw engram inventory --json
+
 # See extracted memories
 ls ~/.openclaw/workspace/memory/local/facts/
 
 # Search memories from CLI
 openclaw engram search "your query"
-
-# View stats
-openclaw engram stats
 ```
 
 ## Config Override (Service Environments)
