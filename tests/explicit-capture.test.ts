@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import {
   hasInlineExplicitCaptureMarkup,
   parseInlineExplicitCaptureNotes,
   persistExplicitCapture,
+  queueExplicitCaptureForReview,
   shouldProcessInlineExplicitCapture,
   shouldSkipImplicitExtraction,
   stripInlineExplicitCaptureNotes,
@@ -182,6 +186,141 @@ test("persistExplicitCapture writes lifecycle events and dedupes active duplicat
   assert.equal(second.duplicateOf, first.id);
   assert.equal(memories.length, 1);
   assert.equal(lifecycleEvents.length, 1);
+});
+
+test("persistExplicitCapture rejects namespaces outside the configured policy", async () => {
+  const storage = {
+    hasFactContentHash: async () => false,
+    isFactContentHashAuthoritative: async () => true,
+    readAllMemories: async () => [],
+    writeMemory: async () => "fact-1",
+    appendMemoryLifecycleEvents: async () => 1,
+  };
+
+  await assert.rejects(
+    () =>
+      persistExplicitCapture(
+        {
+          config: {
+            defaultNamespace: "default",
+            sharedNamespace: "shared",
+            namespacesEnabled: false,
+            namespacePolicies: [],
+          },
+          getStorage: async () => storage,
+        } as never,
+        validateExplicitCaptureInput({
+          content: "Store this in a namespace that is not configured.",
+          namespace: "team",
+        }),
+        "memory_capture",
+      ),
+    /unsupported namespace: team/,
+  );
+});
+
+test("queueExplicitCaptureForReview stores a pending-review memory and lifecycle event", async () => {
+  const memories: Array<{
+    frontmatter: { id: string; status?: string; tags?: string[]; category?: string };
+    content: string;
+    path: string;
+  }> = [];
+  const lifecycleEvents: Array<{ eventType: string; reasonCode?: string; memoryId: string }> = [];
+  let nextId = 1;
+  const storage = {
+    readAllMemories: async () => memories,
+    writeMemory: async (category: string, content: string, options: { tags?: string[] }) => {
+      const id = `fact-${nextId++}`;
+      memories.push({
+        frontmatter: { id, category, tags: options.tags, status: "active" },
+        content,
+        path: `/tmp/${id}.md`,
+      });
+      return id;
+    },
+    getMemoryById: async (id: string) => memories.find((memory) => memory.frontmatter.id === id) ?? null,
+    writeMemoryFrontmatter: async (
+      memory: { frontmatter: { status?: string } },
+      patch: { status: string },
+    ) => {
+      memory.frontmatter.status = patch.status;
+      return memory;
+    },
+    appendMemoryLifecycleEvents: async (events: Array<{ eventType: string; reasonCode?: string; memoryId: string }>) => {
+      lifecycleEvents.push(...events);
+      return events.length;
+    },
+  };
+
+  const queued = await queueExplicitCaptureForReview(
+    {
+      config: {
+        defaultNamespace: "default",
+        sharedNamespace: "shared",
+        namespacesEnabled: false,
+        namespacePolicies: [],
+      },
+      getStorage: async () => storage,
+    } as never,
+    {
+      content: "api_key=supersecretvalue123 should be reviewed, not dropped",
+      category: "fact",
+      tags: ["operator-review"],
+    },
+    "inline",
+    new Error("content appears to contain a secret or credential"),
+  );
+
+  assert.equal(queued.duplicateOf, undefined);
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0]?.frontmatter.status, "pending_review");
+  assert.deepEqual(
+    memories[0]?.frontmatter.tags,
+    ["explicit-capture", "queued-review", "operator-review"],
+  );
+  assert.match(memories[0]?.content ?? "", /Explicit capture queued for review/);
+  assert.doesNotMatch(memories[0]?.content ?? "", /supersecretvalue123/);
+  assert.match(memories[0]?.content ?? "", /\[redacted credential\]/);
+  assert.equal(lifecycleEvents.some((event) => event.eventType === "explicit_capture_queued"), true);
+});
+
+test("queueExplicitCaptureForReview preserves requested namespace isolation when namespaces are enabled", async () => {
+  const requestedNamespaces: string[] = [];
+  const storage = {
+    readAllMemories: async () => [],
+    writeMemory: async () => "fact-1",
+    getMemoryById: async () => ({
+      frontmatter: { id: "fact-1", status: "active" },
+      content: "queued review item",
+      path: "/tmp/fact-1.md",
+    }),
+    writeMemoryFrontmatter: async () => undefined,
+    appendMemoryLifecycleEvents: async () => 1,
+  };
+
+  await queueExplicitCaptureForReview(
+    {
+      config: {
+        defaultNamespace: "default",
+        sharedNamespace: "shared",
+        namespacesEnabled: true,
+        namespacePolicies: [],
+      },
+      getStorage: async (namespace?: string) => {
+        requestedNamespaces.push(namespace ?? "default");
+        return storage;
+      },
+    } as never,
+    {
+      content: "This explicit note targeted a private namespace and should stay isolated while queued.",
+      category: "fact",
+      namespace: "team",
+    },
+    "inline",
+    new Error("unsupported namespace: team"),
+  );
+
+  assert.deepEqual(requestedNamespaces, ["team", "team"]);
 });
 
 test("persistExplicitCapture attributes lifecycle actors to the correct tool source", async () => {
@@ -370,7 +509,7 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
     content: string;
     frontmatter: { id: string; created: string; tags: string[]; category: string; status?: string };
   }> = [];
-  let maintenanceRequests = 0;
+  const maintenanceReasons: string[] = [];
   let appendedEvents = 0;
   const orchestrator = {
     config: {
@@ -399,13 +538,20 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
         return id;
       },
       getMemoryById: async (id: string) => memories.find((memory) => memory.frontmatter.id === id) ?? null,
+      writeMemoryFrontmatter: async (
+        memory: { frontmatter: { status?: string } },
+        patch: { status: string },
+      ) => {
+        memory.frontmatter.status = patch.status;
+        return memory;
+      },
       appendMemoryLifecycleEvents: async (events: unknown[]) => {
         appendedEvents += events.length;
         return events.length;
       },
     }),
-    requestQmdMaintenanceForTool: (_reason: string) => {
-      maintenanceRequests += 1;
+    requestQmdMaintenanceForTool: (reason: string) => {
+      maintenanceReasons.push(reason);
     },
     qmd: {
       search: async () => [],
@@ -451,13 +597,107 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
   assert.match(duplicate.content[0]?.text ?? "", /Memory already exists: fact-1/);
   assert.equal(memories.length, 1);
   assert.equal(appendedEvents, 1);
-  assert.equal(maintenanceRequests, 2);
+  assert.deepEqual(maintenanceReasons, ["memory_store", "memory_capture"]);
 
-  await assert.rejects(
-    () =>
-      memoryCapture!.execute("tc-3", {
-        content: "sk-1234567890abcdef1234567890abcdef should never be stored",
-      }),
-    /secret or credential/,
-  );
+  const queued = await memoryCapture!.execute("tc-3", {
+    content: "sk-1234567890abcdef1234567890abcdef should never be stored",
+  });
+  assert.match(queued.content[0]?.text ?? "", /Memory queued for review: fact-2/);
+  assert.equal(memories.length, 2);
+  assert.equal(memories[1]?.frontmatter.status, "pending_review");
+  assert.equal(appendedEvents, 2);
+  assert.deepEqual(maintenanceReasons, ["memory_store", "memory_capture", "memory_capture.review"]);
+});
+
+test("memory_capture fails gracefully when review queue fallback also errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-explicit-capture-tool-double-fail-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-explicit-capture-tool-double-fail-workspace-"));
+  const tools = new Map<
+    string,
+    {
+      execute: (
+        toolCallId: string,
+        params: Record<string, unknown>,
+      ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+    }
+  >();
+  const api = {
+    registerTool(spec: {
+      name: string;
+      execute: (
+        toolCallId: string,
+        params: Record<string, unknown>,
+      ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+    }) {
+      tools.set(spec.name, { execute: spec.execute });
+    },
+  };
+
+  const orchestrator = {
+    config: {
+      defaultNamespace: "default",
+      namespacesEnabled: false,
+      namespacePolicy: [],
+      explicitCaptureEnabled: true,
+      captureMode: "explicit",
+      queryAwareIndexingEnabled: false,
+      memoryDir,
+      workspaceDir,
+      contextCompressionActionsEnabled: false,
+      contextCompressionMaxSummaryChars: 200,
+      contextCompressionMaxMemoryIds: 5,
+      contextCompressionMaxArtifactNames: 4,
+      graphRecallEnabled: false,
+      graphShadowEvaluationEnabled: false,
+      graphShadowEvalMaxCandidates: 0,
+      graphMaxExplainPaths: 0,
+      graphExpandedIntentEnabled: false,
+      enableTrustZones: false,
+      semanticRuleVerificationEnabled: false,
+      workArtifactRecallEnabled: false,
+      sharedContextEnabled: false,
+      localLlmEnabled: false,
+      localLlmProvider: "none",
+      localLlmTimeoutMs: 0,
+      qmdEnabled: false,
+    },
+    getStorage: async () => ({
+      writeMemory: async () => {
+        throw new Error("queue storage unavailable");
+      },
+      readAllMemories: async () => [],
+      appendMemoryLifecycleEvents: async () => 0,
+    }),
+    requestQmdMaintenanceForTool: () => {},
+    qmd: {
+      search: async () => [],
+      searchGlobal: async () => [],
+    },
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    recordMemoryFeedback: async () => {},
+    storage: {
+      readProfile: async () => "",
+      readIdentity: async () => "",
+      resolveQuestion: async () => false,
+      listQuestions: async () => [],
+      getMemoryById: async () => null,
+    },
+    summarizeNow: async () => undefined,
+    runConversationIndexUpdate: async () => ({ indexedSessions: 0, indexedChunks: 0, embeddedRuns: 0 }),
+    sharedContext: null,
+    compoundingEngine: null,
+  };
+
+  registerTools(api as never, orchestrator as never);
+  const memoryCapture = tools.get("memory_capture");
+  assert.ok(memoryCapture);
+
+  const result = await memoryCapture!.execute("tc-double-fail", {
+    content: "sk-1234567890abcdef1234567890abcdef should never be stored",
+  });
+
+  assert.match(result.content[0]?.text ?? "", /Memory capture failed: content appears to contain a secret or credential/);
 });

@@ -12,7 +12,14 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `reasoningEffort` | `low` | `none`, `low`, `medium`, `high` |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `workspaceDir` | `~/.openclaw/workspace` | Workspace root (IDENTITY.md location) |
+| `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, or `hybrid` |
 | `debug` | `false` | Enable debug logging |
+
+`captureMode` behavior:
+
+- `implicit`: normal extraction/write behavior.
+- `explicit`: normal conversation turns never create memories; only structured explicit capture writes or queues review items.
+- `hybrid`: explicit capture writes immediately, while the normal extraction pipeline remains available.
 
 ## Memory OS Presets
 

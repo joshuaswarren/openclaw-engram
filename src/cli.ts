@@ -2776,6 +2776,12 @@ function formatOperatorSetupCli(report: OperatorSetupReport): string {
   ];
   if (report.explicitCapture.enabled) {
     lines.push(`Capture doc: ${report.explicitCapture.memoryDocPath} (${report.explicitCapture.memoryDocExists ? "present" : "missing"})`);
+    if (report.explicitCapture.memoryDocInstalled) lines.push("Capture instructions: installed");
+    if (report.explicitCapture.memoryDocUpdated) lines.push("Capture instructions: updated");
+    if (report.explicitCapture.memoryDocRemoved) lines.push("Capture instructions: removed");
+    if (report.explicitCapture.preview) {
+      lines.push("", "Capture instructions preview:", report.explicitCapture.preview);
+    }
   }
   lines.push("", "Next steps:", ...report.nextSteps.map((step) => `- ${step}`));
   return lines.join("\n");
@@ -2932,12 +2938,23 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("setup")
         .description("Validate config, scaffold directories, and print first-run next steps")
         .option("--install-capture-instructions", "Create workspace MEMORY.md when explicit capture is enabled and missing")
+        .option("--preview-capture-instructions", "Print the managed explicit-capture instruction snippet without writing files")
+        .option("--remove-capture-instructions", "Remove the managed explicit-capture instruction snippet from MEMORY.md")
         .option("--json", "Emit machine-readable JSON only")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
+          const captureInstructionsMode =
+            options.removeCaptureInstructions === true
+              ? "remove"
+              : options.previewCaptureInstructions === true
+                ? "preview"
+                : options.installCaptureInstructions === true
+                  ? "install"
+                  : undefined;
           const report = await runOperatorSetup({
             orchestrator,
             installCaptureInstructions: options.installCaptureInstructions === true,
+            captureInstructionsMode,
           });
           if (reportHasMachineReadableOutput(options)) {
             console.log(JSON.stringify(report, null, 2));

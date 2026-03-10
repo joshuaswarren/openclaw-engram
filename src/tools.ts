@@ -4,7 +4,11 @@ import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
 import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
-import { persistExplicitCapture, validateExplicitCaptureInput } from "./explicit-capture.js";
+import {
+  persistExplicitCapture,
+  queueExplicitCaptureForReview,
+  validateExplicitCaptureInput,
+} from "./explicit-capture.js";
 import { log } from "./logger.js";
 import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
@@ -258,8 +262,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       ttl,
       sourceReason,
     } = params;
-
-    const candidate = validateExplicitCaptureInput({
+    const rawInput = {
       content,
       namespace,
       category,
@@ -268,28 +271,44 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
       confidence,
       ttl,
       sourceReason,
-    }, source === "memory_store" ? "legacy_tool" : "strict_explicit");
-    const result = await persistExplicitCapture(orchestrator, candidate, source);
+    };
 
-    if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
-      const storage = await orchestrator.getStorage(candidate.namespace);
-      const mem = await storage.getMemoryById(result.id).catch(() => null);
-      if (mem?.path && mem.frontmatter?.created) {
-        indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
+    try {
+      const candidate = validateExplicitCaptureInput(
+        rawInput,
+        source === "memory_store" ? "legacy_tool" : "strict_explicit",
+      );
+      const result = await persistExplicitCapture(orchestrator, candidate, source);
+
+      if (!result.duplicateOf && orchestrator.config.queryAwareIndexingEnabled && indexesExist(orchestrator.config.memoryDir)) {
+        const storage = await orchestrator.getStorage(candidate.namespace);
+        const mem = await storage.getMemoryById(result.id).catch(() => null);
+        if (mem?.path && mem.frontmatter?.created) {
+          indexMemory(orchestrator.config.memoryDir, mem.path, mem.frontmatter.created, mem.frontmatter.tags ?? []);
+        }
+      }
+
+      orchestrator.requestQmdMaintenanceForTool(maintenanceReason);
+
+      return toolResult(
+        result.duplicateOf
+          ? `Memory already exists: ${result.duplicateOf}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`
+          : `Memory stored: ${result.id}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
+      );
+    } catch (error) {
+      try {
+        const queued = await queueExplicitCaptureForReview(orchestrator, rawInput, source, error);
+        orchestrator.requestQmdMaintenanceForTool(`${maintenanceReason}.review`);
+        return toolResult(
+          queued.duplicateOf
+            ? `Memory already queued for review: ${queued.duplicateOf}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`
+            : `Memory queued for review: ${queued.id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`,
+        );
+      } catch (queueError) {
+        log.warn(`explicit tool capture rejected: ${error}; review queue fallback failed: ${queueError}`);
+        return toolResult(`Memory capture failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-
-    orchestrator.requestQmdMaintenanceForTool(maintenanceReason);
-
-    if (result.duplicateOf) {
-      return toolResult(
-        `Memory already exists: ${result.duplicateOf}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
-      );
-    }
-
-    return toolResult(
-      `Memory stored: ${result.id}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
-    );
   }
 
   api.registerTool(

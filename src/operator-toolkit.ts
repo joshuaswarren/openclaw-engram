@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { lintWorkspaceFiles } from "./hygiene.js";
 import { parseConfig } from "./config.js";
 import {
@@ -143,6 +143,9 @@ export interface OperatorSetupReport {
     memoryDocPath: string;
     memoryDocExists: boolean;
     memoryDocInstalled: boolean;
+    memoryDocUpdated: boolean;
+    memoryDocRemoved: boolean;
+    preview: string | null;
   };
   nextSteps: string[];
   verificationCommands: string[];
@@ -265,6 +268,7 @@ export interface OperatorRepairReport {
 export interface OperatorSetupOptions {
   orchestrator: OperatorToolkitOrchestrator;
   installCaptureInstructions?: boolean;
+  captureInstructionsMode?: "preview" | "install" | "remove";
   configPath?: string;
   now?: Date;
 }
@@ -546,8 +550,12 @@ async function summarizeNativeKnowledgeStatus(config: PluginConfig): Promise<{
   };
 }
 
+const CAPTURE_INSTRUCTIONS_START = "<!-- BEGIN ENGRAM EXPLICIT CAPTURE INSTRUCTIONS -->";
+const CAPTURE_INSTRUCTIONS_END = "<!-- END ENGRAM EXPLICIT CAPTURE INSTRUCTIONS -->";
+
 function buildCaptureInstructions(): string {
   return [
+    CAPTURE_INSTRUCTIONS_START,
     "# Memory",
     "",
     "Use this file for explicit memory capture notes when Engram runs in explicit or hybrid mode.",
@@ -563,7 +571,41 @@ function buildCaptureInstructions(): string {
     "- Decision: recall benchmark packs live under `state/evals/benchmarks/`.",
     "- Commitment: rerun `openclaw engram doctor --json` after changing retrieval settings.",
     "",
+    CAPTURE_INSTRUCTIONS_END,
   ].join("\n");
+}
+
+function upsertManagedCaptureInstructions(existing: string | null, snippet: string): { content: string; updated: boolean; installed: boolean } {
+  if (!existing || existing.trim().length === 0) {
+    return { content: `${snippet}\n`, updated: false, installed: true };
+  }
+  if (existing.includes(CAPTURE_INSTRUCTIONS_START) && existing.includes(CAPTURE_INSTRUCTIONS_END)) {
+    const next = existing.replace(
+      new RegExp(`${CAPTURE_INSTRUCTIONS_START}[\\s\\S]*?${CAPTURE_INSTRUCTIONS_END}`),
+      snippet,
+    );
+    return { content: next.endsWith("\n") ? next : `${next}\n`, updated: next !== existing, installed: false };
+  }
+  const trimmed = existing.trimEnd();
+  return {
+    content: `${trimmed}\n\n${snippet}\n`,
+    updated: false,
+    installed: true,
+  };
+}
+
+function removeManagedCaptureInstructions(existing: string): { content: string; removed: boolean } {
+  if (!existing.includes(CAPTURE_INSTRUCTIONS_START) || !existing.includes(CAPTURE_INSTRUCTIONS_END)) {
+    return { content: existing, removed: false };
+  }
+  const stripped = existing
+    .replace(new RegExp(`\\n*${CAPTURE_INSTRUCTIONS_START}[\\s\\S]*?${CAPTURE_INSTRUCTIONS_END}\\n*`), "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return {
+    content: stripped.length > 0 ? `${stripped}\n` : "",
+    removed: true,
+  };
 }
 
 export async function runOperatorSetup(options: OperatorSetupOptions): Promise<OperatorSetupReport> {
@@ -580,6 +622,9 @@ export async function runOperatorSetup(options: OperatorSetupOptions): Promise<O
   const nativeKnowledgeStatus = await summarizeNativeKnowledgeStatus(options.orchestrator.config);
 
   const memoryDocPath = path.join(options.orchestrator.config.workspaceDir, "MEMORY.md");
+  const captureInstructionsMode =
+    options.captureInstructionsMode
+    ?? (options.installCaptureInstructions ? "install" : undefined);
   let memoryDocExists = false;
   try {
     await access(memoryDocPath, fsConstants.F_OK);
@@ -588,12 +633,37 @@ export async function runOperatorSetup(options: OperatorSetupOptions): Promise<O
     memoryDocExists = false;
   }
   let memoryDocInstalled = false;
+  let memoryDocUpdated = false;
+  let memoryDocRemoved = false;
   const explicitCaptureEnabled = options.orchestrator.config.captureMode === "explicit"
     || options.orchestrator.config.captureMode === "hybrid";
-  if (options.installCaptureInstructions && explicitCaptureEnabled && !memoryDocExists) {
-    await writeFile(memoryDocPath, buildCaptureInstructions(), "utf-8");
-    memoryDocExists = true;
-    memoryDocInstalled = true;
+  const captureInstructionsPreview = captureInstructionsMode ? buildCaptureInstructions() : null;
+  if (captureInstructionsMode) {
+    if (captureInstructionsMode === "preview") {
+      // no-op, preview only
+    } else if (captureInstructionsMode === "install") {
+      const existing = memoryDocExists ? await readFile(memoryDocPath, "utf-8") : null;
+      const next = upsertManagedCaptureInstructions(existing, captureInstructionsPreview ?? "");
+      if (!existing || next.content !== existing) {
+        await writeFile(memoryDocPath, next.content, "utf-8");
+      }
+      memoryDocExists = true;
+      memoryDocInstalled = next.installed;
+      memoryDocUpdated = next.updated;
+    } else if (captureInstructionsMode === "remove" && memoryDocExists) {
+      const existing = await readFile(memoryDocPath, "utf-8");
+      const next = removeManagedCaptureInstructions(existing);
+      if (next.removed) {
+        if (next.content.length === 0) {
+          await unlink(memoryDocPath);
+          memoryDocExists = false;
+        } else {
+          await writeFile(memoryDocPath, next.content, "utf-8");
+          memoryDocExists = true;
+        }
+        memoryDocRemoved = true;
+      }
+    }
   }
 
   const directories = await gatherDirectoryStatus(getSetupPaths(options.orchestrator.config));
@@ -603,7 +673,7 @@ export async function runOperatorSetup(options: OperatorSetupOptions): Promise<O
     "If QMD is enabled and the collection is missing, add the collection to `~/.config/qmd/index.yml` and run `qmd update && qmd embed`.",
   ];
   if (explicitCaptureEnabled && !memoryDocExists) {
-    nextSteps.push("Re-run `openclaw engram setup --install-capture-instructions` to scaffold `MEMORY.md` for explicit capture.");
+    nextSteps.push("Run `openclaw engram setup --preview-capture-instructions` to review the managed explicit-capture snippet, then `--install-capture-instructions` to write it.");
   }
 
   return {
@@ -626,6 +696,9 @@ export async function runOperatorSetup(options: OperatorSetupOptions): Promise<O
       memoryDocPath,
       memoryDocExists,
       memoryDocInstalled,
+      memoryDocUpdated,
+      memoryDocRemoved,
+      preview: captureInstructionsMode === "preview" ? captureInstructionsPreview : null,
     },
     nextSteps,
     verificationCommands: [

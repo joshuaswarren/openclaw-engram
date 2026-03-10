@@ -90,9 +90,18 @@ Compatibility diagnostics:
 
 Operator toolkit:
 - `openclaw engram setup` validates the loaded OpenClaw config, creates missing Engram-owned directories, checks QMD reachability/collection presence, and can scaffold `MEMORY.md` when explicit capture is enabled.
+- `openclaw engram setup --preview-capture-instructions` prints the managed explicit-capture snippet without writing files.
+- `openclaw engram setup --install-capture-instructions` writes or updates only the managed explicit-capture block inside `MEMORY.md`.
+- `openclaw engram setup --remove-capture-instructions` removes the managed explicit-capture block and deletes `MEMORY.md` if that block was the file's only content.
 - `openclaw engram doctor` aggregates config, directory, QMD, conversation-index, maintenance, HTTP bridge auth, and file-hygiene checks into one stable report.
 - `openclaw engram inventory` reports counts by category/status, namespace summaries, profile size, review queue size, conversation-index freshness, native-knowledge sync counts, and storage footprint.
 - Use `--json` on each of these commands for script/CI-friendly output.
+
+Explicit capture protocol:
+- Prefer the `memory_capture` tool when tool use is available.
+- Inline fallback is available in `explicit` and `hybrid` modes through a `<memory_note>...</memory_note>` block in assistant output.
+- Failed inline writes are sanitized and queued as `pending_review` memories instead of being dropped.
+- Managed `MEMORY.md` setup snippets are opt-in, previewable, and reversible through the setup flags above.
 
 Graph diagnostics:
 - `openclaw engram graph-health` reports per-edge-file integrity (`entity/time/causal`), corruption counts, and unique node coverage.
