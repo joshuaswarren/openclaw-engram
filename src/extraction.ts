@@ -551,13 +551,11 @@ export class ExtractionEngine {
     maxAdditional: number,
   ): ExtractionResult {
     const allowlist = this.config.proactiveExtractionCategoryAllowlist;
-    const factBudget = Math.max(0, Math.floor(maxAdditional));
     let remainingBudget = Math.max(0, Math.floor(maxAdditional));
     const mergedFacts = [...base.facts];
     const seenFacts = new Set(base.facts.map((fact) => normalizeFactKey(fact)));
     for (const fact of proactive.facts) {
       if (remainingBudget <= 0) break;
-      if (mergedFacts.length - base.facts.length >= factBudget) break;
       if (fact.confidence < PROACTIVE_MIN_CONFIDENCE) continue;
       if (allowlist && !allowlist.includes(fact.category as MemoryCategory)) continue;
       const key = normalizeFactKey(fact);
