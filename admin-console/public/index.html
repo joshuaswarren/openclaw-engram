@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Engram Admin Console</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe6;
+        --surface: #fbf8f2;
+        --surface-strong: #fffdf8;
+        --ink: #1b1d22;
+        --muted: #646b74;
+        --line: #d7cfc0;
+        --accent: #0f6b63;
+        --accent-ink: #e7fffb;
+        --warn: #8b3a22;
+        --ok: #22543d;
+        --shadow: 0 18px 42px rgba(40, 33, 18, 0.08);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(15, 107, 99, 0.12), transparent 34%),
+          radial-gradient(circle at top right, rgba(139, 58, 34, 0.1), transparent 28%),
+          linear-gradient(180deg, #f9f4ea 0%, var(--bg) 100%);
+      }
+      main {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 28px 20px 48px;
+      }
+      header {
+        display: grid;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 3vw, 3.25rem);
+        line-height: 0.95;
+        letter-spacing: -0.03em;
+      }
+      .subtitle {
+        max-width: 820px;
+        color: var(--muted);
+        font-size: 0.98rem;
+      }
+      .auth-bar,
+      .grid,
+      .subgrid {
+        display: grid;
+        gap: 16px;
+      }
+      .auth-bar {
+        grid-template-columns: 1.3fr 1fr auto;
+        align-items: center;
+      }
+      .grid {
+        grid-template-columns: 1.2fr 0.8fr;
+      }
+      .subgrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .card {
+        background: linear-gradient(180deg, var(--surface-strong) 0%, var(--surface) 100%);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+      .card h2,
+      .card h3 {
+        margin: 0 0 10px;
+        font-size: 1rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #fffefb;
+        color: var(--ink);
+      }
+      textarea {
+        min-height: 140px;
+        resize: vertical;
+      }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        background: var(--ink);
+        color: white;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #ede6d9;
+        color: var(--ink);
+      }
+      button.accent {
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+      button.warn {
+        background: var(--warn);
+      }
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: end;
+      }
+      .list {
+        display: grid;
+        gap: 10px;
+        max-height: 460px;
+        overflow: auto;
+      }
+      .item {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.74);
+      }
+      .item button {
+        margin-top: 10px;
+      }
+      .meta,
+      .pill-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+        padding: 4px 9px;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SF Mono", "Monaco", monospace;
+        font-size: 0.82rem;
+        line-height: 1.45;
+      }
+      .mono-box {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fffdf9;
+        padding: 14px;
+        max-height: 360px;
+        overflow: auto;
+      }
+      .status {
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+      .status.ok {
+        color: var(--ok);
+      }
+      .status.error {
+        color: var(--warn);
+      }
+      @media (max-width: 1080px) {
+        .grid,
+        .subgrid,
+        .auth-bar {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Engram Admin Console</h1>
+        <div class="subtitle">
+          Local operator surface for recall inspection, memory review, entity browsing, and maintenance status.
+          The UI shell is static; every data fetch and operator action still goes through the loopback bearer-token API.
+        </div>
+      </header>
+
+      <section class="card auth-bar">
+        <label>
+          Bearer Token
+          <input id="tokenInput" type="password" placeholder="Paste the Engram access token" autocomplete="off" />
+        </label>
+        <div class="status" id="authStatus">Waiting for token.</div>
+        <div class="toolbar">
+          <button class="accent" id="connectButton">Connect</button>
+          <button class="secondary" id="clearTokenButton">Clear</button>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="card">
+          <h2>Memory Browser</h2>
+          <div class="toolbar">
+            <label>
+              Query
+              <input id="memoryQuery" type="text" placeholder="Search id, path, tags, or content" />
+            </label>
+            <label>
+              Status
+              <select id="memoryStatus">
+                <option value="">All</option>
+                <option value="active">active</option>
+                <option value="pending_review">pending_review</option>
+                <option value="quarantined">quarantined</option>
+                <option value="rejected">rejected</option>
+                <option value="superseded">superseded</option>
+              </select>
+            </label>
+            <label>
+              Category
+              <input id="memoryCategory" type="text" placeholder="fact, decision, preference..." />
+            </label>
+            <button id="searchMemoriesButton">Search</button>
+          </div>
+          <div class="status" id="memoryBrowserStatus">No search run yet.</div>
+          <div class="list" id="memoryList"></div>
+        </section>
+
+        <section class="card">
+          <h2>Memory Detail</h2>
+          <div class="status" id="memoryDetailStatus">Select a memory from the browser or review queue.</div>
+          <div class="pill-row" id="memoryDetailMeta"></div>
+          <div class="subgrid" style="margin-top: 12px;">
+            <div class="mono-box"><pre id="memoryContent">No memory selected.</pre></div>
+            <div class="mono-box"><pre id="memoryTimeline">Timeline will appear here.</pre></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <section class="card">
+          <h2>Recall Debugger</h2>
+          <div class="toolbar">
+            <label style="flex: 1;">
+              Query
+              <input id="recallQuery" type="text" placeholder="Ask what the model would recall" />
+            </label>
+            <label>
+              Session Key
+              <input id="recallSessionKey" type="text" placeholder="console-session" />
+            </label>
+            <button id="runRecallButton">Run Recall</button>
+          </div>
+          <div class="status" id="recallStatus">No recall run yet.</div>
+          <div class="subgrid" style="margin-top: 12px;">
+            <div class="mono-box"><pre id="recallContext">Injected context will appear here.</pre></div>
+            <div class="mono-box"><pre id="recallExplain">Recall snapshot will appear here.</pre></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Maintenance</h2>
+          <div class="status" id="maintenanceStatus">Not loaded.</div>
+          <div class="mono-box"><pre id="maintenanceJson">Maintenance summary will appear here.</pre></div>
+        </section>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <section class="card">
+          <h2>Review Queue</h2>
+          <div class="toolbar">
+            <button id="refreshQueueButton">Refresh Queue</button>
+          </div>
+          <div class="status" id="reviewQueueStatus">No governance review queue loaded yet.</div>
+          <div class="list" id="reviewQueueList"></div>
+        </section>
+
+        <section class="card">
+          <h2>Entity Explorer</h2>
+          <div class="toolbar">
+            <label style="flex: 1;">
+              Query
+              <input id="entityQuery" type="text" placeholder="Search entity names, aliases, or summaries" />
+            </label>
+            <button id="searchEntitiesButton">Search</button>
+          </div>
+          <div class="status" id="entityStatus">No entity search run yet.</div>
+          <div class="subgrid" style="margin-top: 12px;">
+            <div class="list" id="entityList"></div>
+            <div class="mono-box"><pre id="entityDetail">Entity detail will appear here.</pre></div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="/engram/ui/app.js"></script>
+  </body>
+</html>

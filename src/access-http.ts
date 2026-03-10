@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { URL } from "node:url";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, URL } from "node:url";
 import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
 
@@ -10,6 +12,8 @@ export interface EngramAccessHttpServerOptions {
   port?: number;
   authToken?: string;
   maxBodyBytes?: number;
+  adminConsoleEnabled?: boolean;
+  adminConsolePublicDir?: string;
 }
 
 export interface EngramAccessHttpServerStatus {
@@ -18,6 +22,8 @@ export interface EngramAccessHttpServerStatus {
   port: number;
   maxBodyBytes: number;
 }
+
+const defaultAdminConsolePublicDir = fileURLToPath(new URL("../admin-console/public", import.meta.url));
 
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -38,6 +44,8 @@ export class EngramAccessHttpServer {
   private readonly requestedPort: number;
   private readonly authToken?: string;
   private readonly maxBodyBytes: number;
+  private readonly adminConsoleEnabled: boolean;
+  private readonly adminConsolePublicDir: string;
   private server: Server | null = null;
   private boundPort = 0;
 
@@ -49,6 +57,8 @@ export class EngramAccessHttpServer {
     this.maxBodyBytes = Number.isFinite(options.maxBodyBytes)
       ? Math.max(1, Math.floor(options.maxBodyBytes ?? 131072))
       : 131072;
+    this.adminConsoleEnabled = options.adminConsoleEnabled !== false;
+    this.adminConsolePublicDir = options.adminConsolePublicDir ?? defaultAdminConsolePublicDir;
   }
 
   async start(): Promise<EngramAccessHttpServerStatus> {
@@ -121,6 +131,13 @@ export class EngramAccessHttpServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
+    const pathname = parsed.pathname;
+
+    if (this.adminConsoleEnabled && await this.handleAdminConsole(req, res, pathname)) {
+      return;
+    }
+
     if (!this.isAuthorized(req)) {
       res.writeHead(401, {
         "content-type": "application/json; charset=utf-8",
@@ -129,9 +146,6 @@ export class EngramAccessHttpServer {
       res.end(JSON.stringify({ error: "unauthorized" }));
       return;
     }
-
-    const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
-    const pathname = parsed.pathname;
 
     if (req.method === "GET" && pathname === "/engram/v1/health") {
       this.respondJson(res, 200, await this.service.health());
@@ -158,6 +172,21 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/engram/v1/memories") {
+      const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "50", 10);
+      const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      const response = await this.service.memoryBrowse({
+        query: parsed.searchParams.get("q") ?? undefined,
+        status: parsed.searchParams.get("status") ?? undefined,
+        category: parsed.searchParams.get("category") ?? undefined,
+        namespace: parsed.searchParams.get("namespace") ?? undefined,
+        limit: Number.isFinite(limitRaw) ? limitRaw : 50,
+        offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,
+      });
+      this.respondJson(res, 200, response);
+      return;
+    }
+
     const memoryMatch = pathname.match(/^\/engram\/v1\/memories\/([^/]+)$/);
     if (req.method === "GET" && memoryMatch) {
       const memoryId = decodeURIComponent(memoryMatch[1] ?? "");
@@ -178,6 +207,62 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/engram/v1/entities") {
+      const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "50", 10);
+      const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      const response = await this.service.entityList({
+        namespace: parsed.searchParams.get("namespace") ?? undefined,
+        query: parsed.searchParams.get("q") ?? undefined,
+        limit: Number.isFinite(limitRaw) ? limitRaw : 50,
+        offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,
+      });
+      this.respondJson(res, 200, response);
+      return;
+    }
+
+    const entityMatch = pathname.match(/^\/engram\/v1\/entities\/([^/]+)$/);
+    if (req.method === "GET" && entityMatch) {
+      const entityName = decodeURIComponent(entityMatch[1] ?? "");
+      const namespace = parsed.searchParams.get("namespace") ?? undefined;
+      const response = await this.service.entityGet(entityName, namespace);
+      this.respondJson(res, response.found ? 200 : 404, response);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/engram/v1/review-queue") {
+      const response = await this.service.reviewQueue(parsed.searchParams.get("runId") ?? undefined);
+      this.respondJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/engram/v1/maintenance") {
+      this.respondJson(res, 200, await this.service.maintenance());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/review-disposition") {
+      const body = await this.readJsonBody(req);
+      const status = typeof body.status === "string" ? body.status : "";
+      if (
+        status !== "active" &&
+        status !== "pending_review" &&
+        status !== "quarantined" &&
+        status !== "rejected" &&
+        status !== "superseded" &&
+        status !== "archived"
+      ) {
+        throw new HttpError(400, "invalid_review_status");
+      }
+      const response = await this.service.reviewDisposition({
+        memoryId: typeof body.memoryId === "string" ? body.memoryId : "",
+        status,
+        reasonCode: typeof body.reasonCode === "string" ? body.reasonCode : "",
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+      });
+      this.respondJson(res, 200, response);
+      return;
+    }
+
     this.respondJson(res, 404, { error: "not_found" });
   }
 
@@ -187,6 +272,35 @@ export class EngramAccessHttpServer {
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("content-length", String(Buffer.byteLength(body)));
     res.end(body);
+  }
+
+  private async handleAdminConsole(
+    req: IncomingMessage,
+    res: ServerResponse,
+    pathname: string,
+  ): Promise<boolean> {
+    if (req.method !== "GET") return false;
+    if (pathname === "/engram/ui" || pathname === "/engram/ui/") {
+      await this.respondStatic(res, path.join(this.adminConsolePublicDir, "index.html"), "text/html; charset=utf-8");
+      return true;
+    }
+    if (pathname === "/engram/ui/app.js") {
+      await this.respondStatic(res, path.join(this.adminConsolePublicDir, "app.js"), "application/javascript; charset=utf-8");
+      return true;
+    }
+    return false;
+  }
+
+  private async respondStatic(res: ServerResponse, filePath: string, contentType: string): Promise<void> {
+    try {
+      const body = await readFile(filePath, "utf-8");
+      res.statusCode = 200;
+      res.setHeader("content-type", contentType);
+      res.setHeader("content-length", String(Buffer.byteLength(body)));
+      res.end(body);
+    } catch {
+      this.respondJson(res, 404, { error: "not_found" });
+    }
   }
 
   private async readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
