@@ -19,14 +19,17 @@ The original roadmap named budgets at a higher level than the current runtime su
 | `maxGraphTraversalSteps` | `maxGraphTraversalSteps` |
 | `maxArtifactsPerSession` | No dedicated per-session cap; use `verbatimArtifactsEnabled`, `verbatimArtifactsMaxRecall`, and artifact-category scoping |
 | `maxProactiveQuestionsPerExtraction` | `maxProactiveQuestionsPerExtraction` |
+| `maxProactiveExtractionMs` | `proactiveExtractionTimeoutMs` |
+| `maxProactiveExtractionTokens` | `proactiveExtractionMaxTokens` |
 | `indexRefreshBudgetMs` | Use `qmdUpdateMinIntervalMs`, `qmdUpdateTimeoutMs`, and `conversationIndexMinUpdateIntervalMs` |
 
 ## Lowest-Risk Rollout
 
 1. Start with `memoryOsPreset: "conservative"` or `memoryOsPreset: "balanced"`.
 2. Keep `maxCompressionTokensPerHour` and `maxProactiveQuestionsPerExtraction` at their defaults until baseline recall is stable.
-3. Raise `maxMemoryTokens` only after you know which sections are providing real value.
-4. Enable graph traversal only after checking that standard recall already finds the right seeds.
+3. Keep `proactiveExtractionTimeoutMs` and `proactiveExtractionMaxTokens` low until you trust the second-pass memory additions.
+4. Raise `maxMemoryTokens` only after you know which sections are providing real value.
+5. Enable graph traversal only after checking that standard recall already finds the right seeds.
 
 ## Practical Levers
 
@@ -35,6 +38,7 @@ The original roadmap named budgets at a higher level than the current runtime su
 - If transcript recall is too expensive, lower `conversationRecallTopK` or `conversationRecallMaxChars`.
 - If compression-learning churn is too high, set `maxCompressionTokensPerHour: 0`.
 - If proactive extraction is noisy, set `maxProactiveQuestionsPerExtraction: 0`.
+- If proactive extraction is slow, lower `proactiveExtractionTimeoutMs` or `proactiveExtractionMaxTokens`, or set either to `0` to hard-disable the second pass.
 
 ## What Engram Does Not Currently Expose
 

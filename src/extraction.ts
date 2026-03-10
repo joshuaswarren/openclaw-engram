@@ -8,6 +8,7 @@ import {
   ConsolidationResultSchema,
   IdentityConsolidationResultSchema,
   buildProfileConsolidationResultSchema,
+  ProactiveExtractionResultSchema,
   ProactiveQuestionsResultSchema,
   type ContradictionVerificationResult,
   type SuggestedLinks,
@@ -22,6 +23,7 @@ import type {
   PluginConfig,
   LlmTraceEvent,
   GatewayConfig,
+  MemoryCategory,
 } from "./types.js";
 import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
@@ -29,6 +31,10 @@ import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
+type ExtractedFactResult = ExtractionResult["facts"][number];
+type ExtractedEntityResult = ExtractionResult["entities"][number];
+type ExtractedRelationshipResult = NonNullable<ExtractionResult["relationships"]>[number];
+const PROACTIVE_MIN_CONFIDENCE = 0.8;
 
 function normalizeQuestion(question: ExtractionQuestion): ExtractionQuestion {
   const priority = Number.isFinite(question.priority)
@@ -41,78 +47,22 @@ function normalizeQuestion(question: ExtractionQuestion): ExtractionQuestion {
   };
 }
 
-export function mergeProactiveQuestions(
-  baseQuestions: ExtractionQuestion[],
-  proactiveQuestions: ExtractionQuestion[],
-  maxAdditional: number,
-  maxTotalQuestions?: number,
-): ExtractionQuestion[] {
-  const cappedAdditional = Math.max(0, Math.floor(maxAdditional));
-  const totalCap =
-    typeof maxTotalQuestions === "number" ? Math.max(0, Math.floor(maxTotalQuestions)) : undefined;
-  const capOutput = (questions: ExtractionQuestion[]): ExtractionQuestion[] =>
-    typeof totalCap === "number" ? questions.slice(0, totalCap) : questions;
+function normalizeFactKey(fact: Pick<ExtractedFactResult, "category" | "content">): string {
+  return `${fact.category}:${fact.content.trim().toLowerCase()}`;
+}
 
-  if (cappedAdditional === 0 || proactiveQuestions.length === 0) {
-    return capOutput(baseQuestions);
-  }
+function normalizeEntityKey(entity: Pick<ExtractedEntityResult, "name" | "type">): string {
+  return `${entity.type}:${entity.name.trim().toLowerCase()}`;
+}
 
-  const normalizedProactive = proactiveQuestions
-    .map((q) => normalizeQuestion(q))
-    .filter((q) => q.question.length > 0);
-  if (normalizedProactive.length === 0) {
-    return capOutput(baseQuestions);
-  }
+function normalizeRelationshipKey(
+  relationship: Pick<ExtractedRelationshipResult, "source" | "target" | "label">,
+): string {
+  return `${relationship.source.trim().toLowerCase()}=>${relationship.target.trim().toLowerCase()}:${relationship.label.trim().toLowerCase()}`;
+}
 
-  const seenBase = new Set(
-    baseQuestions
-      .map((q) => q.question.trim().toLowerCase())
-      .filter((q) => q.length > 0),
-  );
-  const proactiveUnique: ExtractionQuestion[] = [];
-  const seenProactive = new Set<string>();
-  for (const question of normalizedProactive) {
-    const key = question.question.toLowerCase();
-    if (seenBase.has(key) || seenProactive.has(key)) continue;
-    seenProactive.add(key);
-    proactiveUnique.push(question);
-  }
-  if (proactiveUnique.length === 0) {
-    return capOutput(baseQuestions);
-  }
-
-  const proactiveTarget = Math.min(cappedAdditional, proactiveUnique.length);
-  const effectiveTotalCap =
-    typeof totalCap === "number" ? totalCap : baseQuestions.length + proactiveTarget;
-  const proactiveBudget = Math.min(proactiveTarget, effectiveTotalCap);
-  const baseBudget = Math.max(0, effectiveTotalCap - proactiveBudget);
-
-  const merged = baseQuestions.slice(0, baseBudget);
-  const seen = new Set(
-    merged
-      .map((q) => q.question.trim().toLowerCase())
-      .filter((q) => q.length > 0),
-  );
-  let added = 0;
-  for (const question of proactiveUnique) {
-    if (added >= proactiveBudget) break;
-    const key = question.question.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(question);
-    added += 1;
-  }
-  if (merged.length < effectiveTotalCap) {
-    for (const question of baseQuestions.slice(baseBudget)) {
-      if (merged.length >= effectiveTotalCap) break;
-      const key = question.question.trim().toLowerCase();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      merged.push(question);
-    }
-  }
-
-  return capOutput(merged);
+function normalizeProfileUpdateKey(update: string): string {
+  return update.trim().toLowerCase();
 }
 
 export class ExtractionEngine {
@@ -167,6 +117,14 @@ export class ExtractionEngine {
     return { ...result, facts };
   }
 
+  private hasExtractionOutputs(result: ExtractionResult): boolean {
+    return result.facts.length > 0
+      || result.entities.length > 0
+      || result.questions.length > 0
+      || result.profileUpdates.length > 0
+      || (result.relationships?.length ?? 0) > 0;
+  }
+
   private normalizeExtractionResultPayload(parsed: any): ExtractionResult {
     const entities = Array.isArray(parsed?.entities)
       ? parsed.entities
@@ -176,6 +134,8 @@ export class ExtractionEngine {
             facts: Array.isArray(e?.facts)
               ? e.facts.filter((f: any) => typeof f === "string")
               : [],
+            promptedByQuestion:
+              typeof e?.promptedByQuestion === "string" ? e.promptedByQuestion : undefined,
           }))
           .filter((e: any) => e.name.length > 0)
       : [];
@@ -188,6 +148,8 @@ export class ExtractionEngine {
             confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
             tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
             entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
+            promptedByQuestion:
+              typeof f?.promptedByQuestion === "string" ? f.promptedByQuestion : undefined,
           }))
           .filter((f: any) => f.content.length > 0)
       : [];
@@ -220,6 +182,13 @@ export class ExtractionEngine {
               typeof r?.target === "string" &&
               typeof r?.label === "string",
           )
+            .map((r: any) => ({
+              source: r.source,
+              target: r.target,
+              label: r.label,
+              promptedByQuestion:
+                typeof r?.promptedByQuestion === "string" ? r.promptedByQuestion : undefined,
+            }))
         : undefined,
     };
   }
@@ -330,19 +299,20 @@ export class ExtractionEngine {
     if (!this.config.proactiveExtractionEnabled) return base;
     const maxAdditional = Math.max(0, Math.floor(this.config.maxProactiveQuestionsPerExtraction));
     if (maxAdditional === 0) return base;
+    if (this.config.proactiveExtractionTimeoutMs === 0) return base;
+    if (this.config.proactiveExtractionMaxTokens === 0) return base;
 
     try {
       const proactive = await this.generateProactiveQuestions(conversation, base, maxAdditional);
       if (proactive.length === 0) return base;
-      return {
-        ...base,
-        questions: mergeProactiveQuestions(
-          base.questions ?? [],
-          proactive,
-          maxAdditional,
-          this.config.extractionMaxQuestionsPerRun,
-        ),
-      };
+      const proactiveAdditions = await this.answerProactiveQuestions(
+        conversation,
+        base,
+        proactive,
+        maxAdditional,
+      );
+      if (!this.hasExtractionOutputs(proactiveAdditions)) return base;
+      return this.mergeProactiveExtractionPass(base, proactiveAdditions, maxAdditional);
     } catch (err) {
       log.debug(`proactive extraction question pass failed (ignored): ${err}`);
       return base;
@@ -366,6 +336,21 @@ export class ExtractionEngine {
       }
     }
     return [];
+  }
+
+  private parseProactiveExtractionResultFromText(content: string): ExtractionResult | null {
+    for (const candidate of extractJsonCandidates(content)) {
+      try {
+        const parsed = ProactiveExtractionResultSchema.parse(JSON.parse(candidate));
+        return this.normalizeExtractionResultPayload({
+          ...parsed,
+          questions: [],
+        });
+      } catch {
+        // Continue to next candidate.
+      }
+    }
+    return null;
   }
 
   private async generateProactiveQuestions(
@@ -413,7 +398,12 @@ export class ExtractionEngine {
             },
             { role: "user", content: prompt },
           ],
-          { temperature: 0.2, maxTokens: 700, operation: "extraction" },
+          {
+            temperature: 0.2,
+            maxTokens: this.config.proactiveExtractionMaxTokens,
+            timeoutMs: this.config.proactiveExtractionTimeoutMs,
+            operation: "proactive_extraction",
+          },
         );
         if (localResponse?.content) {
           const localParsed = this.parseProactiveQuestionsFromText(
@@ -443,7 +433,11 @@ export class ExtractionEngine {
         { role: "user", content: prompt },
       ],
       ProactiveQuestionsResultSchema,
-      { temperature: 0.2, maxTokens: 900 },
+      {
+        temperature: 0.2,
+        maxTokens: this.config.proactiveExtractionMaxTokens,
+        timeoutMs: this.config.proactiveExtractionTimeoutMs,
+      },
     );
     if (!fallbackResult?.questions) return [];
     return fallbackResult.questions
@@ -451,6 +445,190 @@ export class ExtractionEngine {
       .filter((q) => q.question.length > 0)
       .filter((q) => !existingQuestionKeys.has(q.question.toLowerCase()))
       .slice(0, maxAdditional);
+  }
+
+  private async answerProactiveQuestions(
+    conversation: string,
+    base: ExtractionResult,
+    proactiveQuestions: ExtractionQuestion[],
+    maxAdditional: number,
+  ): Promise<ExtractionResult> {
+    const factsPreview = base.facts
+      .slice(0, 8)
+      .map((f) => `- (${f.category}) ${f.content}`)
+      .join("\n");
+    const entitiesPreview = base.entities
+      .slice(0, 8)
+      .map((entity) => `- (${entity.type}) ${entity.name}: ${entity.facts.join("; ") || "(no facts)"}`)
+      .join("\n");
+    const proactivePreview = proactiveQuestions
+      .slice(0, maxAdditional)
+      .map((question, index) => `${index + 1}. ${question.question}${question.context ? `\n   context: ${question.context}` : ""}`)
+      .join("\n");
+
+    const prompt = [
+      "You are answering proactive memory follow-up questions using only the provided buffered conversation.",
+      `Return at most ${maxAdditional} additional high-confidence memory candidates that were omitted from the base extraction.`,
+      "Only include information directly supported by the conversation. Do not speculate. Do not repeat the base extraction.",
+      "Return only valid JSON with this shape:",
+      '{"facts":[{"category":"fact","content":"...","confidence":0.0,"tags":["..."],"entityRef":"optional","promptedByQuestion":"optional"}],"profileUpdates":["..."],"entities":[{"name":"...","type":"person","facts":["..."],"promptedByQuestion":"optional"}],"relationships":[{"source":"...","target":"...","label":"...","promptedByQuestion":"optional"}]}',
+      "",
+      "Base extracted facts (do not repeat):",
+      factsPreview || "(none)",
+      "",
+      "Base extracted entities (do not repeat):",
+      entitiesPreview || "(none)",
+      "",
+      "Answer these follow-up questions from the same conversation only:",
+      proactivePreview || "(none)",
+      "",
+      "Conversation:",
+      conversation,
+    ].join("\n");
+
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResponse = await this.localLlm.chatCompletion(
+          [
+            {
+              role: "system",
+              content: "You are a proactive memory extraction assistant. Output valid JSON only.",
+            },
+            { role: "user", content: prompt },
+          ],
+          {
+            temperature: 0.2,
+            maxTokens: this.config.proactiveExtractionMaxTokens,
+            timeoutMs: this.config.proactiveExtractionTimeoutMs,
+            operation: "proactive_extraction",
+          },
+        );
+        if (localResponse?.content) {
+          const parsed = this.parseProactiveExtractionResultFromText(localResponse.content.trim());
+          if (parsed) {
+            return this.sanitizeExtractionResult(parsed);
+          }
+        }
+        if (!this.config.localLlmFallback) {
+          return { facts: [], profileUpdates: [], entities: [], questions: [] };
+        }
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          throw err;
+        }
+      }
+    }
+
+    const fallbackResult = await this.fallbackLlm.parseWithSchema(
+      [
+        {
+          role: "system",
+          content: "Answer proactive memory follow-up questions from the provided conversation only. Return valid JSON only.",
+        },
+        { role: "user", content: prompt },
+      ],
+      ProactiveExtractionResultSchema,
+      {
+        temperature: 0.2,
+        maxTokens: this.config.proactiveExtractionMaxTokens,
+        timeoutMs: this.config.proactiveExtractionTimeoutMs,
+      },
+    );
+    if (!fallbackResult) {
+      return { facts: [], profileUpdates: [], entities: [], questions: [] };
+    }
+    return this.sanitizeExtractionResult(
+      this.normalizeExtractionResultPayload({
+        ...fallbackResult,
+        questions: [],
+      }),
+    );
+  }
+
+  private mergeProactiveExtractionPass(
+    base: ExtractionResult,
+    proactive: ExtractionResult,
+    maxAdditional: number,
+  ): ExtractionResult {
+    const allowlist = this.config.proactiveExtractionCategoryAllowlist;
+    let remainingBudget = Math.max(0, Math.floor(maxAdditional));
+    const mergedFacts = [...base.facts];
+    const seenFacts = new Set(base.facts.map((fact) => normalizeFactKey(fact)));
+    for (const fact of proactive.facts) {
+      if (remainingBudget <= 0) break;
+      if (fact.confidence < PROACTIVE_MIN_CONFIDENCE) continue;
+      if (allowlist && !allowlist.includes(fact.category as MemoryCategory)) continue;
+      const key = normalizeFactKey(fact);
+      if (seenFacts.has(key)) continue;
+      seenFacts.add(key);
+      mergedFacts.push({ ...fact, source: "proactive" });
+      remainingBudget -= 1;
+    }
+
+    const mergedEntities = base.entities.map((entity) => ({
+      ...entity,
+      facts: [...entity.facts],
+    }));
+    const entityIndex = new Map(mergedEntities.map((entity, index) => [normalizeEntityKey(entity), index]));
+    for (const entity of proactive.entities) {
+      if (remainingBudget <= 0) break;
+      const key = normalizeEntityKey(entity);
+      const existingIndex = entityIndex.get(key);
+      if (typeof existingIndex === "number") {
+        const existing = mergedEntities[existingIndex]!;
+        const nextFacts = new Set(existing.facts.map((fact) => fact.trim()));
+        let changed = false;
+        for (const fact of entity.facts) {
+          const trimmed = fact.trim();
+          if (!trimmed || nextFacts.has(trimmed)) continue;
+          nextFacts.add(trimmed);
+          changed = true;
+        }
+        if (changed) {
+          mergedEntities[existingIndex] = {
+            ...existing,
+            facts: Array.from(nextFacts),
+            source: "proactive",
+            promptedByQuestion: existing.promptedByQuestion ?? entity.promptedByQuestion,
+          };
+          remainingBudget -= 1;
+        }
+        continue;
+      }
+      mergedEntities.push({ ...entity, source: "proactive" });
+      entityIndex.set(key, mergedEntities.length - 1);
+      remainingBudget -= 1;
+    }
+
+    const mergedProfileUpdates = [...base.profileUpdates];
+    const seenProfileUpdates = new Set(base.profileUpdates.map((update) => normalizeProfileUpdateKey(update)));
+    for (const update of proactive.profileUpdates) {
+      if (remainingBudget <= 0) break;
+      const key = normalizeProfileUpdateKey(update);
+      if (!key || seenProfileUpdates.has(key)) continue;
+      seenProfileUpdates.add(key);
+      mergedProfileUpdates.push(update.trim());
+      remainingBudget -= 1;
+    }
+
+    const mergedRelationships = [...(base.relationships ?? [])];
+    const seenRelationships = new Set(mergedRelationships.map((relationship) => normalizeRelationshipKey(relationship)));
+    for (const relationship of proactive.relationships ?? []) {
+      if (remainingBudget <= 0) break;
+      const key = normalizeRelationshipKey(relationship);
+      if (seenRelationships.has(key)) continue;
+      seenRelationships.add(key);
+      mergedRelationships.push({ ...relationship, extractionSource: "proactive" });
+      remainingBudget -= 1;
+    }
+
+    return {
+      ...base,
+      facts: mergedFacts,
+      entities: mergedEntities,
+      profileUpdates: mergedProfileUpdates,
+      relationships: mergedRelationships,
+    };
   }
 
   private async parseWithGatewayFallback<T>(
@@ -1020,6 +1198,11 @@ Consolidate the new memories against existing ones.`,
     );
     if (fallbackResult) {
       log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
+      const normalizedEntityUpdates = fallbackResult.entityUpdates.map((entity) => ({
+        ...entity,
+        promptedByQuestion:
+          typeof entity.promptedByQuestion === "string" ? entity.promptedByQuestion : undefined,
+      }));
       return this.sanitizeConsolidationResult({
         items: fallbackResult.items.map((item) => ({
           ...item,
@@ -1027,7 +1210,7 @@ Consolidate the new memories against existing ones.`,
           updatedContent: item.updatedContent ?? undefined,
         })),
         profileUpdates: fallbackResult.profileUpdates,
-        entityUpdates: fallbackResult.entityUpdates,
+        entityUpdates: normalizedEntityUpdates,
       });
     }
 
