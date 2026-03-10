@@ -5,42 +5,42 @@ import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { AccessIdempotencyStore } from "../src/access-idempotency.js";
 
-test("access idempotency store reloads cross-process writes on get", async () => {
-  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-get-"));
+test("access idempotency store refreshes when another process writes a key", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-refresh-"));
   try {
-    const writer = new AccessIdempotencyStore(memoryDir);
-    const reader = new AccessIdempotencyStore(memoryDir);
+    const storeA = new AccessIdempotencyStore(memoryDir);
+    const storeB = new AccessIdempotencyStore(memoryDir);
 
-    assert.deepEqual(await reader.get("shared-key", "hash-a"), { conflict: false });
+    await storeA.get("shared-key", "hash-a");
+    await storeB.put("shared-key", "hash-a", { accepted: true, memoryId: "fact-1" });
 
-    await writer.put("shared-key", "hash-a", { status: "stored", memoryId: "fact-1" });
+    const cachedRead = await storeA.get("shared-key", "hash-a");
+    assert.equal(cachedRead.conflict, false);
+    assert.deepEqual(cachedRead.response, { accepted: true, memoryId: "fact-1" });
 
-    assert.deepEqual(await reader.get("shared-key", "hash-a"), {
-      conflict: false,
-      response: { status: "stored", memoryId: "fact-1" },
-    });
+    const conflictRead = await storeA.get("shared-key", "hash-b");
+    assert.equal(conflictRead.conflict, true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
 
-test("access idempotency store reloads before put so it preserves other process keys", async () => {
-  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-put-"));
+test("access idempotency store merges shared state before flushing a local write", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-merge-"));
   try {
-    const first = new AccessIdempotencyStore(memoryDir);
-    const second = new AccessIdempotencyStore(memoryDir);
+    const storeA = new AccessIdempotencyStore(memoryDir);
+    const storeB = new AccessIdempotencyStore(memoryDir);
+    const storeC = new AccessIdempotencyStore(memoryDir);
 
-    await first.put("key-a", "hash-a", { status: "stored", memoryId: "fact-a" });
-    await second.put("key-b", "hash-b", { status: "stored", memoryId: "fact-b" });
+    await storeA.get("load-first", "hash-load");
+    await storeB.put("key-b", "hash-b", { queued: true });
+    await storeA.put("key-a", "hash-a", { queued: false });
 
-    assert.deepEqual(await first.get("key-a", "hash-a"), {
-      conflict: false,
-      response: { status: "stored", memoryId: "fact-a" },
-    });
-    assert.deepEqual(await first.get("key-b", "hash-b"), {
-      conflict: false,
-      response: { status: "stored", memoryId: "fact-b" },
-    });
+    const readA = await storeC.get("key-a", "hash-a");
+    const readB = await storeC.get("key-b", "hash-b");
+
+    assert.deepEqual(readA.response, { queued: false });
+    assert.deepEqual(readB.response, { queued: true });
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
