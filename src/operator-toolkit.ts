@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { lintWorkspaceFiles } from "./hygiene.js";
 import { parseConfig } from "./config.js";
 import { StorageManager } from "./storage.js";
@@ -84,6 +84,8 @@ export interface OperatorConfigLoadResult {
   found: boolean;
   path: string;
   parsed: boolean;
+  memoryDir?: string;
+  workspaceDir?: string;
   error?: string;
 }
 
@@ -279,7 +281,7 @@ export async function loadCliPluginConfig(configPath?: string): Promise<Operator
       pluginEntry && typeof pluginEntry === "object"
         ? (pluginEntry as Record<string, unknown>)["openclaw-engram"]
         : undefined;
-    parseConfig(
+    const parsedConfig = parseConfig(
       config && typeof config === "object"
         ? ((config as Record<string, unknown>).config ?? {})
         : {},
@@ -288,6 +290,8 @@ export async function loadCliPluginConfig(configPath?: string): Promise<Operator
       found: true,
       path: resolvedPath,
       parsed: true,
+      memoryDir: parsedConfig.memoryDir,
+      workspaceDir: parsedConfig.workspaceDir,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -519,9 +523,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
       : "QMD is not currently reachable.",
     remediation: !config.qmdEnabled
       ? "Enable `qmdEnabled` if you expect hybrid search."
+      : !qmdAvailable
+      ? "Ensure the `qmd` binary is installed and on PATH, or set `qmdPath`."
       : collectionState === "missing"
       ? "Add the configured collection to `~/.config/qmd/index.yml`."
-      : "Ensure the `qmd` binary is installed and on PATH, or set `qmdPath`.",
+      : "Re-run `openclaw engram setup` after restoring QMD access.",
     details: {
       available: qmdAvailable,
       collectionState,
@@ -625,7 +631,7 @@ async function dirSize(targetPath: string): Promise<number> {
   }
 
   let total = 0;
-  const entries = await import("node:fs/promises").then((mod) => mod.readdir(targetPath, { withFileTypes: true }));
+  const entries = await readdir(targetPath, { withFileTypes: true });
   for (const entry of entries) {
     total += await dirSize(path.join(targetPath, entry.name));
   }

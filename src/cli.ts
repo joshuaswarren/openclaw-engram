@@ -3307,7 +3307,10 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.log(formatBenchmarkRecallCli(report));
           }
           const passed = report.ciGate?.passed ?? report.baselineReport?.passed ?? true;
-          if (!passed) process.exitCode = 1;
+          if (!passed) {
+            process.exitCode = 1;
+            return;
+          }
           console.log("OK");
         });
 
