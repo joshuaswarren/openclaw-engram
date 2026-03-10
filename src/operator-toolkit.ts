@@ -4,6 +4,11 @@ import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { lintWorkspaceFiles } from "./hygiene.js";
 import { parseConfig } from "./config.js";
+import {
+  resolveCuratedIncludeFilesStatePath,
+  resolveNativeKnowledgeStatePath,
+  resolveOpenClawWorkspaceStatePath,
+} from "./native-knowledge.js";
 import { StorageManager } from "./storage.js";
 import { listNamespaces } from "./namespaces/migrate.js";
 import {
@@ -105,8 +110,32 @@ export interface OperatorSetupReport {
   nativeKnowledge: {
     enabled: boolean;
     includeFiles: string[];
+    curatedIncludeSync: {
+      statePath: string;
+      exists: boolean;
+      updatedAt: string | null;
+      fileCount: number;
+      activeChunkCount: number;
+      deletedFileCount: number;
+    };
     openclawWorkspaceAdapterEnabled: boolean;
     obsidianVaultAdapterEnabled: boolean;
+    obsidianSync: {
+      statePath: string;
+      exists: boolean;
+      updatedAt: string | null;
+      vaultCount: number;
+      activeChunkCount: number;
+      deletedNoteCount: number;
+    };
+    openclawWorkspaceSync: {
+      statePath: string;
+      exists: boolean;
+      updatedAt: string | null;
+      fileCount: number;
+      activeChunkCount: number;
+      deletedFileCount: number;
+    };
   };
   explicitCapture: {
     captureMode: string;
@@ -182,6 +211,30 @@ export interface OperatorInventoryReport {
     status: "ok" | "degraded" | "disabled";
     chunkDocCount: number;
     lastUpdateAt: string | null;
+  };
+  nativeKnowledge: {
+    enabled: boolean;
+    curatedIncludeSync: {
+      exists: boolean;
+      updatedAt: string | null;
+      fileCount: number;
+      activeChunkCount: number;
+      deletedFileCount: number;
+    };
+    obsidianSync: {
+      exists: boolean;
+      updatedAt: string | null;
+      vaultCount: number;
+      activeChunkCount: number;
+      deletedNoteCount: number;
+    };
+    openclawWorkspaceSync: {
+      exists: boolean;
+      updatedAt: string | null;
+      fileCount: number;
+      activeChunkCount: number;
+      deletedFileCount: number;
+    };
   };
 }
 
@@ -347,6 +400,152 @@ function getSetupPaths(config: PluginConfig): string[] {
   ];
 }
 
+async function readJsonIfExists(filePath: string): Promise<unknown | null> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf-8")) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function summarizeNativeKnowledgeStatus(config: PluginConfig): Promise<{
+  enabled: boolean;
+  includeFiles: string[];
+  curatedIncludeSync: {
+    statePath: string;
+    exists: boolean;
+    updatedAt: string | null;
+    fileCount: number;
+    activeChunkCount: number;
+    deletedFileCount: number;
+  };
+  openclawWorkspaceAdapterEnabled: boolean;
+  obsidianVaultAdapterEnabled: boolean;
+  obsidianSync: {
+    statePath: string;
+    exists: boolean;
+    updatedAt: string | null;
+    vaultCount: number;
+    activeChunkCount: number;
+    deletedNoteCount: number;
+  };
+  openclawWorkspaceSync: {
+    statePath: string;
+    exists: boolean;
+    updatedAt: string | null;
+    fileCount: number;
+    activeChunkCount: number;
+    deletedFileCount: number;
+  };
+}> {
+  const nativeKnowledge = config.nativeKnowledge;
+  const nativeKnowledgeStateDir = nativeKnowledge?.stateDir ?? "state/native-knowledge";
+  const curatedStatePath = nativeKnowledge
+    ? resolveCuratedIncludeFilesStatePath(config.memoryDir, nativeKnowledge)
+    : path.join(config.memoryDir, nativeKnowledgeStateDir, "curated-include-sync.json");
+  const obsidianStatePath = nativeKnowledge
+    ? resolveNativeKnowledgeStatePath(config.memoryDir, nativeKnowledge)
+    : path.join(config.memoryDir, nativeKnowledgeStateDir, "obsidian-sync.json");
+  const openclawStatePath = nativeKnowledge
+    ? resolveOpenClawWorkspaceStatePath(config.memoryDir, nativeKnowledge)
+    : path.join(config.memoryDir, nativeKnowledgeStateDir, "openclaw-workspace-sync.json");
+  const [curatedRaw, obsidianRaw, openclawRaw] = await Promise.all([
+    readJsonIfExists(curatedStatePath),
+    readJsonIfExists(obsidianStatePath),
+    readJsonIfExists(openclawStatePath),
+  ]);
+
+  const curatedFiles = curatedRaw && typeof curatedRaw === "object" && curatedRaw !== null
+    && "files" in curatedRaw && typeof (curatedRaw as { files?: unknown }).files === "object"
+    && (curatedRaw as { files?: unknown }).files !== null
+      ? (curatedRaw as {
+          updatedAt?: unknown;
+          files: Record<string, { deleted?: boolean; chunks?: unknown[] }>;
+        })
+      : null;
+
+  let curatedActiveChunkCount = 0;
+  let curatedDeletedFileCount = 0;
+  for (const file of Object.values(curatedFiles?.files ?? {})) {
+    if (file.deleted) {
+      curatedDeletedFileCount += 1;
+      continue;
+    }
+    curatedActiveChunkCount += Array.isArray(file.chunks) ? file.chunks.length : 0;
+  }
+
+  const obsidianVaults = obsidianRaw && typeof obsidianRaw === "object" && obsidianRaw !== null
+    && "vaults" in obsidianRaw && typeof (obsidianRaw as { vaults?: unknown }).vaults === "object"
+    && (obsidianRaw as { vaults?: unknown }).vaults !== null
+      ? (obsidianRaw as {
+          updatedAt?: unknown;
+          vaults: Record<string, { notes?: Record<string, { deleted?: boolean; chunks?: unknown[] }> }>;
+        })
+      : null;
+
+  let obsidianActiveChunkCount = 0;
+  let obsidianDeletedNoteCount = 0;
+  for (const vault of Object.values(obsidianVaults?.vaults ?? {})) {
+    for (const note of Object.values(vault.notes ?? {})) {
+      if (note.deleted) {
+        obsidianDeletedNoteCount += 1;
+        continue;
+      }
+      obsidianActiveChunkCount += Array.isArray(note.chunks) ? note.chunks.length : 0;
+    }
+  }
+
+  const openclawFiles = openclawRaw && typeof openclawRaw === "object" && openclawRaw !== null
+    && "files" in openclawRaw && typeof (openclawRaw as { files?: unknown }).files === "object"
+    && (openclawRaw as { files?: unknown }).files !== null
+      ? (openclawRaw as {
+          updatedAt?: unknown;
+          files: Record<string, { deleted?: boolean; chunks?: unknown[] }>;
+        })
+      : null;
+
+  let openclawActiveChunkCount = 0;
+  let openclawDeletedFileCount = 0;
+  for (const file of Object.values(openclawFiles?.files ?? {})) {
+    if (file.deleted) {
+      openclawDeletedFileCount += 1;
+      continue;
+    }
+    openclawActiveChunkCount += Array.isArray(file.chunks) ? file.chunks.length : 0;
+  }
+
+  return {
+    enabled: nativeKnowledge?.enabled === true,
+    includeFiles: nativeKnowledge?.includeFiles ?? [],
+    curatedIncludeSync: {
+      statePath: curatedStatePath,
+      exists: curatedFiles !== null,
+      updatedAt: typeof curatedFiles?.updatedAt === "string" ? curatedFiles.updatedAt : null,
+      fileCount: Object.keys(curatedFiles?.files ?? {}).length,
+      activeChunkCount: curatedActiveChunkCount,
+      deletedFileCount: curatedDeletedFileCount,
+    },
+    openclawWorkspaceAdapterEnabled: nativeKnowledge?.openclawWorkspace?.enabled === true,
+    obsidianVaultAdapterEnabled: (nativeKnowledge?.obsidianVaults?.length ?? 0) > 0,
+    obsidianSync: {
+      statePath: obsidianStatePath,
+      exists: obsidianVaults !== null,
+      updatedAt: typeof obsidianVaults?.updatedAt === "string" ? obsidianVaults.updatedAt : null,
+      vaultCount: Object.keys(obsidianVaults?.vaults ?? {}).length,
+      activeChunkCount: obsidianActiveChunkCount,
+      deletedNoteCount: obsidianDeletedNoteCount,
+    },
+    openclawWorkspaceSync: {
+      statePath: openclawStatePath,
+      exists: openclawFiles !== null,
+      updatedAt: typeof openclawFiles?.updatedAt === "string" ? openclawFiles.updatedAt : null,
+      fileCount: Object.keys(openclawFiles?.files ?? {}).length,
+      activeChunkCount: openclawActiveChunkCount,
+      deletedFileCount: openclawDeletedFileCount,
+    },
+  };
+}
+
 function buildCaptureInstructions(): string {
   return [
     "# Memory",
@@ -378,6 +577,7 @@ export async function runOperatorSetup(options: OperatorSetupOptions): Promise<O
   const collectionState = options.orchestrator.config.qmdEnabled
     ? await options.orchestrator.qmd.ensureCollection(options.orchestrator.config.memoryDir)
     : "skipped";
+  const nativeKnowledgeStatus = await summarizeNativeKnowledgeStatus(options.orchestrator.config);
 
   const memoryDocPath = path.join(options.orchestrator.config.workspaceDir, "MEMORY.md");
   let memoryDocExists = false;
@@ -419,14 +619,7 @@ export async function runOperatorSetup(options: OperatorSetupOptions): Promise<O
       collectionState,
       debugStatus: options.orchestrator.qmd.debugStatus(),
     },
-    nativeKnowledge: {
-      enabled: options.orchestrator.config.nativeKnowledge?.enabled === true,
-      includeFiles: options.orchestrator.config.nativeKnowledge?.includeFiles ?? [],
-      openclawWorkspaceAdapterEnabled:
-        options.orchestrator.config.nativeKnowledge?.openclawWorkspace?.enabled === true,
-      obsidianVaultAdapterEnabled:
-        (options.orchestrator.config.nativeKnowledge?.obsidianVaults?.length ?? 0) > 0,
-    },
+    nativeKnowledge: nativeKnowledgeStatus,
     explicitCapture: {
       captureMode: options.orchestrator.config.captureMode,
       enabled: explicitCaptureEnabled,
@@ -485,6 +678,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   const configStatus = await loadCliPluginConfig(options.configPath);
   const checks: OperatorDoctorCheck[] = [];
   const config = options.orchestrator.config;
+  const nativeKnowledgeStatus = await summarizeNativeKnowledgeStatus(config);
   const setupPaths = await gatherDirectoryStatus(getSetupPaths(config));
   const missingPaths = setupPaths.filter((entry) => !entry.exists).map((entry) => entry.path);
 
@@ -574,6 +768,34 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
       ? undefined
       : "Run a normal agent turn or `openclaw engram consolidate` after seeding memory.",
     details: meta,
+  });
+
+  const syncedChunkCount =
+    nativeKnowledgeStatus.curatedIncludeSync.activeChunkCount +
+    nativeKnowledgeStatus.obsidianSync.activeChunkCount +
+    nativeKnowledgeStatus.openclawWorkspaceSync.activeChunkCount;
+  const hasSyncState =
+    nativeKnowledgeStatus.curatedIncludeSync.exists ||
+    nativeKnowledgeStatus.obsidianSync.exists ||
+    nativeKnowledgeStatus.openclawWorkspaceSync.exists;
+  checks.push({
+    key: "native_knowledge",
+    status: !nativeKnowledgeStatus.enabled
+      ? "warn"
+      : hasSyncState
+        ? "ok"
+        : "warn",
+    summary: !nativeKnowledgeStatus.enabled
+      ? "Native knowledge sync is disabled."
+      : hasSyncState
+        ? `Native knowledge sync state is present (${syncedChunkCount} active chunks).`
+        : "Native knowledge sync is enabled but no sync state has been written yet.",
+    remediation: !nativeKnowledgeStatus.enabled
+      ? "Enable `nativeKnowledge.enabled` if curated workspace recall should participate in retrieval."
+      : hasSyncState
+        ? undefined
+        : "Run a recall, sync, or setup flow that touches native knowledge sources, then rerun `openclaw engram doctor --json`.",
+    details: nativeKnowledgeStatus,
   });
 
   const agentAccessEnabled = config.agentAccessHttp?.enabled === true;
@@ -745,6 +967,7 @@ export async function runOperatorInventory(options: OperatorInventoryOptions): P
     }
   }
   const conversationIndex = await options.orchestrator.getConversationIndexHealth();
+  const nativeKnowledgeStatus = await summarizeNativeKnowledgeStatus(config);
 
   return {
     schemaVersion: 1,
@@ -779,6 +1002,12 @@ export async function runOperatorInventory(options: OperatorInventoryOptions): P
       status: conversationIndex.status,
       chunkDocCount: conversationIndex.chunkDocCount,
       lastUpdateAt: conversationIndex.lastUpdateAt,
+    },
+    nativeKnowledge: {
+      enabled: nativeKnowledgeStatus.enabled,
+      curatedIncludeSync: nativeKnowledgeStatus.curatedIncludeSync,
+      obsidianSync: nativeKnowledgeStatus.obsidianSync,
+      openclawWorkspaceSync: nativeKnowledgeStatus.openclawWorkspaceSync,
     },
   };
 }

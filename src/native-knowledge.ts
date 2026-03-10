@@ -107,6 +107,27 @@ interface OpenClawWorkspaceSyncState {
   files: Record<string, OpenClawWorkspaceFileState>;
 }
 
+interface CuratedIncludeFileState {
+  sourcePath: string;
+  sourceKind: Extract<NativeKnowledgeChunk["sourceKind"], "identity" | "memory" | "workspace_doc">;
+  title: string;
+  namespace?: string;
+  privacyClass?: string;
+  derivedDate?: string;
+  sourceHash: string;
+  syncConfigHash: string;
+  mtimeMs: number;
+  deleted: boolean;
+  deletedAt?: string;
+  chunks: NativeKnowledgeChunk[];
+}
+
+interface CuratedIncludeFilesSyncState {
+  version: 1;
+  updatedAt: string;
+  files: Record<string, CuratedIncludeFileState>;
+}
+
 export interface NativeKnowledgeSyncResult {
   statePath: string;
   vaultCount: number;
@@ -224,6 +245,12 @@ function deriveArtifactDate(filePath: string, parsed: ParsedFrontmatter): string
     normalizeIsoDate(firstStringValue(parsed.data, ["date", "recordedAt", "generatedAt", "summaryDate", "day"]))
     ?? deriveDateFromPath(filePath)
   );
+}
+
+function deriveNamespaceFromIncludePath(sourcePath: string): string | undefined {
+  const basename = path.basename(sourcePath);
+  const match = /^identity\.([^.\/]+)\.md$/i.exec(basename);
+  return match?.[1];
 }
 
 function compileDailyNotePattern(pattern: string): RegExp {
@@ -426,32 +453,41 @@ async function readableFile(filePath: string): Promise<boolean> {
   }
 }
 
-function resolveCandidatePaths(options: {
+async function resolveCandidatePaths(options: {
   workspaceDir: string;
   includeFiles: string[];
   recallNamespaces?: string[];
   defaultNamespace: string;
-}): string[] {
+  identityVariantMode: "recall" | "disk";
+}): Promise<string[]> {
   const out = new Set<string>();
   for (const rel of options.includeFiles) {
     const trimmed = rel.trim();
     if (!trimmed) continue;
-    out.add(path.join(options.workspaceDir, trimmed));
-    if (
-      path.basename(trimmed).toLowerCase() === "identity.md" &&
-      Array.isArray(options.recallNamespaces)
-    ) {
-      const relativeDir = path.dirname(trimmed);
+    const candidatePath = path.join(options.workspaceDir, trimmed);
+    out.add(candidatePath);
+    if (path.basename(trimmed).toLowerCase() !== "identity.md") continue;
+
+    const relativeDir = path.dirname(trimmed);
+    if (options.identityVariantMode === "recall") {
+      if (!Array.isArray(options.recallNamespaces)) continue;
       for (const namespace of options.recallNamespaces) {
         if (!namespace || namespace === options.defaultNamespace) continue;
-        out.add(
-          path.join(
-            options.workspaceDir,
-            relativeDir,
-            `IDENTITY.${namespace}.md`,
-          ),
-        );
+        out.add(path.join(options.workspaceDir, relativeDir, `IDENTITY.${namespace}.md`));
       }
+      continue;
+    }
+
+    const absoluteDir = path.dirname(candidatePath);
+    let entries: string[] = [];
+    try {
+      entries = await readdir(absoluteDir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!/^identity\.[^.\/]+\.md$/i.test(entry)) continue;
+      out.add(path.join(options.workspaceDir, relativeDir, entry));
     }
   }
   return Array.from(out);
@@ -590,6 +626,10 @@ export function resolveNativeKnowledgeStatePath(memoryDir: string, config: Nativ
   return path.join(memoryDir, config.stateDir, "obsidian-sync.json");
 }
 
+export function resolveCuratedIncludeFilesStatePath(memoryDir: string, config: NativeKnowledgeConfig): string {
+  return path.join(memoryDir, config.stateDir, "curated-include-sync.json");
+}
+
 export function resolveOpenClawWorkspaceStatePath(memoryDir: string, config: NativeKnowledgeConfig): string {
   return path.join(memoryDir, config.stateDir, "openclaw-workspace-sync.json");
 }
@@ -629,6 +669,30 @@ async function loadOpenClawWorkspaceState(
       version: 1,
       updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date(0).toISOString(),
       files: raw.files as Record<string, OpenClawWorkspaceFileState>,
+    };
+  } catch {
+    return {
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      files: {},
+    };
+  }
+}
+
+async function loadCuratedIncludeFilesState(
+  memoryDir: string,
+  config: NativeKnowledgeConfig,
+): Promise<CuratedIncludeFilesSyncState> {
+  const statePath = resolveCuratedIncludeFilesStatePath(memoryDir, config);
+  try {
+    const raw = JSON.parse(await readFile(statePath, "utf-8")) as Partial<CuratedIncludeFilesSyncState>;
+    if (raw.version !== 1 || typeof raw.files !== "object" || !raw.files) {
+      throw new Error("invalid curated include native knowledge state");
+    }
+    return {
+      version: 1,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date(0).toISOString(),
+      files: raw.files as Record<string, CuratedIncludeFileState>,
     };
   } catch {
     return {
@@ -966,24 +1030,31 @@ function loadActiveObsidianChunks(options: {
   for (const vault of Object.values(options.state.vaults)) {
     for (const note of Object.values(vault.notes)) {
       if (note.deleted) continue;
-      if (!isChunkAllowedForRecallNamespace(note, options.recallNamespaces, options.defaultNamespace)) continue;
+      if (!isChunkAllowedForRecall(note, options.recallNamespaces, options.defaultNamespace)) continue;
       out.push(...note.chunks);
     }
   }
   return out;
 }
 
-function isChunkAllowedForRecallNamespace(
-  chunk: Pick<NativeKnowledgeChunk, "namespace">,
+function isChunkAllowedForRecall(
+  chunk: Pick<NativeKnowledgeChunk, "namespace" | "privacyClass">,
   recallNamespaces: string[] | undefined,
   defaultNamespace: string,
 ): boolean {
-  const namespace = chunk.namespace;
+  const namespace = chunk.namespace?.trim() || defaultNamespace;
   if (
-    namespace &&
     Array.isArray(recallNamespaces) &&
     namespace !== defaultNamespace &&
     !recallNamespaces.includes(namespace)
+  ) {
+    return false;
+  }
+  const privacyClass = chunk.privacyClass?.trim().toLowerCase();
+  if (
+    privacyClass === "private" &&
+    Array.isArray(recallNamespaces) &&
+    (namespace !== defaultNamespace || !recallNamespaces.includes(defaultNamespace))
   ) {
     return false;
   }
@@ -998,7 +1069,63 @@ function loadActiveOpenClawWorkspaceChunks(options: {
   const out: NativeKnowledgeChunk[] = [];
   for (const file of Object.values(options.state.files)) {
     if (file.deleted) continue;
-    if (!isChunkAllowedForRecallNamespace(file, options.recallNamespaces, options.defaultNamespace)) continue;
+    if (!isChunkAllowedForRecall(file, options.recallNamespaces, options.defaultNamespace)) continue;
+    out.push(...file.chunks);
+  }
+  return out;
+}
+
+function deriveCuratedFileMetadata(options: {
+  sourcePath: string;
+  parsed: ParsedFrontmatter;
+}): Pick<NativeKnowledgeChunk, "derivedDate" | "namespace" | "privacyClass"> {
+  return {
+    derivedDate: deriveArtifactDate(options.sourcePath, options.parsed),
+    namespace: firstStringValue(options.parsed.data, ["namespace"]) ?? deriveNamespaceFromIncludePath(options.sourcePath),
+    privacyClass: firstStringValue(options.parsed.data, ["privacyClass", "privacy"]),
+  };
+}
+
+function buildCuratedIncludeChunks(options: {
+  sourcePath: string;
+  body: string;
+  bodyStartLine: number;
+  maxChunkChars: number;
+  sourceHash: string;
+  mtimeMs: number;
+  metadata: Pick<NativeKnowledgeChunk, "derivedDate" | "namespace" | "privacyClass">;
+}): NativeKnowledgeChunk[] {
+  return chunkHeadingAware({
+    sourcePath: options.sourcePath,
+    content: options.body,
+    maxChunkChars: options.maxChunkChars,
+    startLineOffset: options.bodyStartLine - 1,
+    createChunk: ({ title, startLine, endLine, content }) => ({
+      chunkId: `${options.sourcePath}:${startLine}-${endLine}`,
+      sourcePath: options.sourcePath,
+      title,
+      sourceKind: detectSourceKind(options.sourcePath),
+      startLine,
+      endLine,
+      content,
+      derivedDate: options.metadata.derivedDate,
+      namespace: options.metadata.namespace,
+      privacyClass: options.metadata.privacyClass,
+      sourceHash: options.sourceHash,
+      mtimeMs: options.mtimeMs,
+    }),
+  });
+}
+
+function loadActiveCuratedIncludeChunks(options: {
+  state: CuratedIncludeFilesSyncState;
+  recallNamespaces?: string[];
+  defaultNamespace: string;
+}): NativeKnowledgeChunk[] {
+  const out: NativeKnowledgeChunk[] = [];
+  for (const file of Object.values(options.state.files)) {
+    if (file.deleted) continue;
+    if (!isChunkAllowedForRecall(file, options.recallNamespaces, options.defaultNamespace)) continue;
     out.push(...file.chunks);
   }
   return out;
@@ -1195,6 +1322,159 @@ export async function syncOpenClawWorkspaceArtifacts(options: {
   };
 }
 
+export async function syncCuratedIncludeFiles(options: {
+  workspaceDir: string;
+  memoryDir: string;
+  config: NativeKnowledgeConfig;
+  recallNamespaces?: string[];
+  defaultNamespace: string;
+  skipSourcePaths?: string[];
+}): Promise<{
+  statePath: string;
+  touchedFiles: number;
+  deletedFiles: number;
+  chunkCount: number;
+  activeChunks: NativeKnowledgeChunk[];
+}> {
+  const statePath = resolveCuratedIncludeFilesStatePath(options.memoryDir, options.config);
+  const previousState = await loadCuratedIncludeFilesState(options.memoryDir, options.config);
+  const workspaceInfo = await stat(options.workspaceDir).catch(() => null);
+  if (!workspaceInfo?.isDirectory()) {
+    return {
+      statePath,
+      touchedFiles: 0,
+      deletedFiles: 0,
+      chunkCount: Object.values(previousState.files)
+        .filter((file) => !file.deleted)
+        .reduce((total, file) => total + file.chunks.length, 0),
+      activeChunks: loadActiveCuratedIncludeChunks({
+        state: previousState,
+        recallNamespaces: options.recallNamespaces,
+        defaultNamespace: options.defaultNamespace,
+      }),
+    };
+  }
+
+  const skipped = new Set((options.skipSourcePaths ?? []).map((value) => value.replace(/\\/g, "/")));
+  const candidatePaths = await resolveCandidatePaths({
+    workspaceDir: options.workspaceDir,
+    includeFiles: options.config.includeFiles,
+    defaultNamespace: options.defaultNamespace,
+    identityVariantMode: "disk",
+  });
+  const nextFiles: Record<string, CuratedIncludeFileState> = {};
+  const seen = new Set<string>();
+  let touchedFiles = 0;
+  let deletedFiles = 0;
+
+  for (const filePath of candidatePaths) {
+    if (!(await readableFile(filePath))) continue;
+    const content = await readFile(filePath, "utf-8").catch(() => null);
+    if (content === null) continue;
+    const info = await stat(filePath).catch(() => null);
+    if (!info?.isFile()) continue;
+
+    const sourcePath = path.relative(options.workspaceDir, filePath).replace(/\\/g, "/");
+    if (skipped.has(sourcePath)) continue;
+
+    const parsed = parseFrontmatter(content);
+    const metadata = deriveCuratedFileMetadata({
+      sourcePath,
+      parsed,
+    });
+    const sourceKind = detectSourceKind(sourcePath) as CuratedIncludeFileState["sourceKind"];
+    const sourceHash = createHash("sha256").update(content).digest("hex");
+    const title = resolveNoteTitle(sourcePath, parsed);
+    const syncConfigHash = createHash("sha256")
+      .update(JSON.stringify({
+        sourceKind,
+        maxChunkChars: options.config.maxChunkChars,
+        metadata,
+      }))
+      .digest("hex");
+    const previous = previousState.files[sourcePath];
+    if (
+      previous &&
+      previous.deleted !== true &&
+      previous.sourceHash === sourceHash &&
+      previous.mtimeMs === info.mtimeMs &&
+      previous.syncConfigHash === syncConfigHash
+    ) {
+      nextFiles[sourcePath] = {
+        ...previous,
+        deleted: false,
+        deletedAt: undefined,
+      };
+      seen.add(sourcePath);
+      continue;
+    }
+
+    const chunks = buildCuratedIncludeChunks({
+      sourcePath,
+      body: parsed.body,
+      bodyStartLine: parsed.bodyStartLine,
+      maxChunkChars: options.config.maxChunkChars,
+      sourceHash,
+      mtimeMs: info.mtimeMs,
+      metadata,
+    });
+    nextFiles[sourcePath] = {
+      sourcePath,
+      sourceKind,
+      title,
+      namespace: metadata.namespace,
+      privacyClass: metadata.privacyClass,
+      derivedDate: metadata.derivedDate,
+      sourceHash,
+      syncConfigHash,
+      mtimeMs: info.mtimeMs,
+      deleted: false,
+      chunks,
+    };
+    touchedFiles += 1;
+    seen.add(sourcePath);
+  }
+
+  for (const [sourcePath, previous] of Object.entries(previousState.files)) {
+    if (seen.has(sourcePath) || skipped.has(sourcePath)) continue;
+    nextFiles[sourcePath] = {
+      ...previous,
+      deleted: true,
+      deletedAt: new Date().toISOString(),
+      chunks: [],
+    };
+    deletedFiles += 1;
+  }
+
+  const nextState: CuratedIncludeFilesSyncState = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    files: nextFiles,
+  };
+  const activeChunks = loadActiveCuratedIncludeChunks({
+    state: nextState,
+    recallNamespaces: options.recallNamespaces,
+    defaultNamespace: options.defaultNamespace,
+  });
+  const chunkCount = Object.values(nextFiles)
+    .filter((file) => !file.deleted)
+    .reduce((total, file) => total + file.chunks.length, 0);
+  try {
+    await mkdir(path.dirname(statePath), { recursive: true });
+    await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+  } catch (error) {
+    log.warn(`native knowledge: failed to persist curated include sync state (fail-open): ${String(error)}`);
+  }
+
+  return {
+    statePath,
+    touchedFiles,
+    deletedFiles,
+    chunkCount,
+    activeChunks,
+  };
+}
+
 export async function collectNativeKnowledgeChunks(options: {
   workspaceDir: string;
   memoryDir?: string;
@@ -1212,36 +1492,46 @@ export async function collectNativeKnowledgeChunks(options: {
     )
       .map((value) => value.replace(/\\/g, "/")),
   );
-  const candidatePaths = resolveCandidatePaths({
-    workspaceDir: options.workspaceDir,
-    includeFiles: options.config.includeFiles,
-    recallNamespaces: options.recallNamespaces,
-    defaultNamespace: options.defaultNamespace,
-  });
-  for (const filePath of candidatePaths) {
-    if (!(await readableFile(filePath))) continue;
-    const content = await readFile(filePath, "utf-8").catch(() => null);
-    if (!content) continue;
-    const sourcePath = path.relative(options.workspaceDir, filePath);
-    if (openclawBootstrapFiles.has(sourcePath.replace(/\\/g, "/"))) continue;
-    chunks.push(
-      ...chunkHeadingAware({
+  if (options.memoryDir) {
+    const syncResult = await syncCuratedIncludeFiles({
+      workspaceDir: options.workspaceDir,
+      memoryDir: options.memoryDir,
+      config: options.config,
+      recallNamespaces: options.recallNamespaces,
+      defaultNamespace: options.defaultNamespace,
+      skipSourcePaths: [...openclawBootstrapFiles],
+    });
+    chunks.push(...syncResult.activeChunks);
+  } else {
+    const candidatePaths = await resolveCandidatePaths({
+      workspaceDir: options.workspaceDir,
+      includeFiles: options.config.includeFiles,
+      recallNamespaces: options.recallNamespaces,
+      defaultNamespace: options.defaultNamespace,
+      identityVariantMode: "recall",
+    });
+    for (const filePath of candidatePaths) {
+      if (!(await readableFile(filePath))) continue;
+      const content = await readFile(filePath, "utf-8").catch(() => null);
+      if (!content) continue;
+      const sourcePath = path.relative(options.workspaceDir, filePath).replace(/\\/g, "/");
+      if (openclawBootstrapFiles.has(sourcePath)) continue;
+      const parsed = parseFrontmatter(content);
+      const metadata = deriveCuratedFileMetadata({
         sourcePath,
-        content,
+        parsed,
+      });
+      const directChunks = buildCuratedIncludeChunks({
+        sourcePath,
+        body: parsed.body,
+        bodyStartLine: parsed.bodyStartLine,
         maxChunkChars: options.config.maxChunkChars,
-        createChunk: ({ title, startLine, endLine, content }) => {
-          return {
-            chunkId: `${sourcePath}:${startLine}-${endLine}`,
-            sourcePath,
-            title,
-            sourceKind: detectSourceKind(sourcePath),
-            startLine,
-            endLine,
-            content,
-          };
-        },
-      }),
-    );
+        sourceHash: createHash("sha256").update(content).digest("hex"),
+        mtimeMs: 0,
+        metadata,
+      }).filter((chunk) => isChunkAllowedForRecall(chunk, options.recallNamespaces, options.defaultNamespace));
+      chunks.push(...directChunks);
+    }
   }
 
   if (options.memoryDir && options.config.openclawWorkspace?.enabled) {
@@ -1252,7 +1542,7 @@ export async function collectNativeKnowledgeChunks(options: {
     });
     chunks.push(
       ...syncResult.activeChunks.filter((chunk) =>
-        isChunkAllowedForRecallNamespace(chunk, options.recallNamespaces, options.defaultNamespace),
+        isChunkAllowedForRecall(chunk, options.recallNamespaces, options.defaultNamespace),
       ),
     );
   }
@@ -1264,7 +1554,7 @@ export async function collectNativeKnowledgeChunks(options: {
     });
     chunks.push(
       ...syncResult.activeChunks.filter((chunk) =>
-        isChunkAllowedForRecallNamespace(chunk, options.recallNamespaces, options.defaultNamespace),
+        isChunkAllowedForRecall(chunk, options.recallNamespaces, options.defaultNamespace),
       ),
     );
   }

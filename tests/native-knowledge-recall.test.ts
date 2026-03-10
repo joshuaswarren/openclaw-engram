@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
+import { collectNativeKnowledgeChunks } from "../src/native-knowledge.js";
 import { Orchestrator } from "../src/orchestrator.js";
 
 async function buildNativeKnowledgeRecallHarness(options: {
@@ -120,6 +121,64 @@ test("recall omits native knowledge section when the pipeline section is disable
   );
 
   assert.equal(context.includes("## Curated Workspace Knowledge"), false);
+});
+
+test("native knowledge collection omits private curated include chunks from shared recall scopes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-private-recall-"));
+  const memoryDir = path.join(root, "memory");
+  const workspaceDir = path.join(root, "workspace");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.md"),
+    [
+      "---",
+      "privacyClass: private",
+      "---",
+      "# Identity",
+      "",
+      "Secret preference: only visible to the default namespace.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  await writeFile(
+    path.join(workspaceDir, "MEMORY.md"),
+    "# Memory\n\nShared launch checklist stays visible.\n",
+    "utf-8",
+  );
+
+  const cfg = parseConfig({
+    openaiApiKey: "test-openai-key",
+    memoryDir,
+    workspaceDir,
+    qmdEnabled: false,
+    transcriptEnabled: false,
+    sharedContextEnabled: false,
+    conversationIndexEnabled: false,
+    hourlySummariesEnabled: false,
+    injectQuestions: false,
+    nativeKnowledge: {
+      enabled: true,
+      includeFiles: ["IDENTITY.md", "MEMORY.md"],
+      maxChunkChars: 400,
+      maxResults: 4,
+      maxChars: 1200,
+      stateDir: "state/native-knowledge",
+      obsidianVaults: [],
+    },
+  });
+
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config: cfg.nativeKnowledge,
+    recallNamespaces: ["shared"],
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.some((chunk) => /Secret preference/.test(chunk.content)), false);
+  assert.equal(chunks.some((chunk) => /Shared launch checklist stays visible/.test(chunk.content)), true);
 });
 
 test("recall blends obsidian native knowledge results into the shared section", async () => {

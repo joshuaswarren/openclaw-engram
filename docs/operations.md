@@ -44,7 +44,7 @@ openclaw engram search "query"      # Semantic search
 openclaw engram stats               # Memory counts and index state
 openclaw engram setup              # First-run setup validation + directory scaffolding
 openclaw engram doctor             # Aggregated runtime diagnostics + remediation hints
-openclaw engram inventory          # Memory/entity/storage footprint and review queue counts
+openclaw engram inventory          # Memory/entity/storage footprint, review queue, and native-knowledge sync counts
 openclaw engram topics              # View extracted topic list
 openclaw engram threads             # View conversation threads
 openclaw engram access              # Most-accessed memories
@@ -91,7 +91,7 @@ Compatibility diagnostics:
 Operator toolkit:
 - `openclaw engram setup` validates the loaded OpenClaw config, creates missing Engram-owned directories, checks QMD reachability/collection presence, and can scaffold `MEMORY.md` when explicit capture is enabled.
 - `openclaw engram doctor` aggregates config, directory, QMD, conversation-index, maintenance, HTTP bridge auth, and file-hygiene checks into one stable report.
-- `openclaw engram inventory` reports counts by category/status, namespace summaries, profile size, review queue size, conversation-index freshness, and storage footprint.
+- `openclaw engram inventory` reports counts by category/status, namespace summaries, profile size, review queue size, conversation-index freshness, native-knowledge sync counts, and storage footprint.
 - Use `--json` on each of these commands for script/CI-friendly output.
 
 Graph diagnostics:

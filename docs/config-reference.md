@@ -154,7 +154,7 @@ Supported keys:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `nativeKnowledge.enabled` | `false` | Enable curated-file and adapter-backed native knowledge recall. |
-| `nativeKnowledge.includeFiles` | `["IDENTITY.md","MEMORY.md"]` | Workspace-relative markdown files to chunk directly into the native knowledge recall section. |
+| `nativeKnowledge.includeFiles` | `["IDENTITY.md","MEMORY.md"]` | Workspace-relative markdown files to chunk into the native knowledge recall section and track incrementally in backend-agnostic sync state. |
 | `nativeKnowledge.maxChunkChars` | `900` | Maximum chunk size before heading/paragraph-aware splitting. |
 | `nativeKnowledge.maxResults` | `4` | Maximum native knowledge chunks injected into recall. |
 | `nativeKnowledge.maxChars` | `2400` | Maximum total characters injected by the native knowledge section. |
@@ -223,7 +223,7 @@ Example:
 }
 ```
 
-The OpenClaw workspace adapter persists incremental sync state and tombstones under `nativeKnowledge.stateDir`, preserves source kind plus date/session/workflow metadata on each chunk when derivable, and dedupes exact overlaps against `includeFiles` so enabling the adapter does not double-inject bootstrap docs.
+Direct `includeFiles` sync plus the OpenClaw workspace adapter both persist incremental sync state and tombstones under `nativeKnowledge.stateDir`, preserve source metadata on each chunk when derivable, and dedupe exact overlaps so enabling the adapter does not double-inject bootstrap docs.
 
 ## v8.0 Memory OS
 

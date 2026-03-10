@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
+import {
+  resolveCuratedIncludeFilesStatePath,
+  resolveNativeKnowledgeStatePath,
+  resolveOpenClawWorkspaceStatePath,
+} from "../src/native-knowledge.js";
 import { StorageManager } from "../src/storage.js";
 import {
   runBenchmarkRecall,
@@ -240,6 +245,76 @@ test("operator doctor omits qmd and auth remediation when those checks are healt
   assert.equal(authCheck?.remediation, undefined);
 });
 
+test("operator doctor surfaces native knowledge sync state counts", async () => {
+  const fixture = await makeFixture({
+    nativeKnowledge: {
+      enabled: true,
+      includeFiles: ["MEMORY.md"],
+      obsidianVaults: [{ vaultId: "ops", rootDir: "/vaults/ops" }],
+      openclawWorkspace: {
+        enabled: true,
+        bootstrapFiles: ["IDENTITY.md"],
+        handoffGlobs: ["handoffs/**/*.md"],
+        dailySummaryGlobs: ["summaries/**/*.md"],
+        automationNoteGlobs: ["automations/**/*.md"],
+        workspaceDocGlobs: ["docs/**/*.md"],
+        excludeGlobs: [],
+        sharedSafeGlobs: [],
+      },
+    },
+  });
+
+  const obsidianStatePath = resolveNativeKnowledgeStatePath(fixture.memoryDir, fixture.config.nativeKnowledge);
+  const curatedStatePath = resolveCuratedIncludeFilesStatePath(fixture.memoryDir, fixture.config.nativeKnowledge);
+  await mkdir(path.dirname(curatedStatePath), { recursive: true });
+  await writeFile(curatedStatePath, JSON.stringify({
+    version: 1,
+    updatedAt: "2026-03-10T09:55:00.000Z",
+    files: {
+      "MEMORY.md": { deleted: false, chunks: [{ id: 1 }] },
+    },
+  }, null, 2), "utf-8");
+  await mkdir(path.dirname(obsidianStatePath), { recursive: true });
+  await writeFile(obsidianStatePath, JSON.stringify({
+    version: 1,
+    updatedAt: "2026-03-10T10:00:00.000Z",
+    vaults: {
+      ops: {
+        vaultId: "ops",
+        rootDir: "/vaults/ops",
+        syncedAt: "2026-03-10T10:00:00.000Z",
+        notes: {
+          "Launch.md": { deleted: false, chunks: [{ id: 1 }, { id: 2 }] },
+          "Old.md": { deleted: true, chunks: [] },
+        },
+      },
+    },
+  }, null, 2), "utf-8");
+
+  const openclawStatePath = resolveOpenClawWorkspaceStatePath(fixture.memoryDir, fixture.config.nativeKnowledge);
+  await writeFile(openclawStatePath, JSON.stringify({
+    version: 1,
+    updatedAt: "2026-03-10T10:05:00.000Z",
+    files: {
+      "handoffs/api-rollout.md": { deleted: false, chunks: [{ id: 1 }] },
+      "handoffs/old.md": { deleted: true, chunks: [] },
+    },
+  }, null, 2), "utf-8");
+
+  const report = await runOperatorDoctor({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  const nativeKnowledgeCheck = report.checks.find((check) => check.key === "native_knowledge");
+  assert.ok(nativeKnowledgeCheck);
+  assert.equal(nativeKnowledgeCheck?.status, "ok");
+  assert.match(nativeKnowledgeCheck?.summary ?? "", /4 active chunks/);
+  assert.equal((nativeKnowledgeCheck?.details as any).curatedIncludeSync.fileCount, 1);
+  assert.equal((nativeKnowledgeCheck?.details as any).obsidianSync.vaultCount, 1);
+  assert.equal((nativeKnowledgeCheck?.details as any).openclawWorkspaceSync.deletedFileCount, 1);
+});
+
 test("operator inventory summarizes stored memories and profile footprint", async () => {
   const fixture = await makeFixture();
   const storage = new StorageManager(fixture.memoryDir);
@@ -265,6 +340,55 @@ test("operator inventory summarizes stored memories and profile footprint", asyn
   assert.equal(report.statuses.pending_review, 1);
   assert.equal(report.profile.exists, true);
   assert.ok(report.storageFootprint.bytes > 0);
+});
+
+test("operator inventory includes native knowledge sync counts", async () => {
+  const fixture = await makeFixture({
+    nativeKnowledge: {
+      enabled: true,
+      includeFiles: ["MEMORY.md"],
+      openclawWorkspace: {
+        enabled: true,
+        bootstrapFiles: ["IDENTITY.md"],
+        handoffGlobs: ["handoffs/**/*.md"],
+        dailySummaryGlobs: ["summaries/**/*.md"],
+        automationNoteGlobs: ["automations/**/*.md"],
+        workspaceDocGlobs: ["docs/**/*.md"],
+        excludeGlobs: [],
+        sharedSafeGlobs: [],
+      },
+    },
+  });
+
+  const openclawStatePath = resolveOpenClawWorkspaceStatePath(fixture.memoryDir, fixture.config.nativeKnowledge);
+  const curatedStatePath = resolveCuratedIncludeFilesStatePath(fixture.memoryDir, fixture.config.nativeKnowledge);
+  await mkdir(path.dirname(openclawStatePath), { recursive: true });
+  await writeFile(curatedStatePath, JSON.stringify({
+    version: 1,
+    updatedAt: "2026-03-10T10:55:00.000Z",
+    files: {
+      "MEMORY.md": { deleted: false, chunks: [{ id: 1 }] },
+      "IDENTITY.shared.md": { deleted: true, chunks: [] },
+    },
+  }, null, 2), "utf-8");
+  await writeFile(openclawStatePath, JSON.stringify({
+    version: 1,
+    updatedAt: "2026-03-10T11:00:00.000Z",
+    files: {
+      "handoffs/api-rollout.md": { deleted: false, chunks: [{ id: 1 }, { id: 2 }] },
+      "handoffs/old.md": { deleted: true, chunks: [] },
+    },
+  }, null, 2), "utf-8");
+
+  const report = await runOperatorInventory({ orchestrator: fixture.orchestrator });
+
+  assert.equal(report.nativeKnowledge.enabled, true);
+  assert.equal(report.nativeKnowledge.curatedIncludeSync.exists, true);
+  assert.equal(report.nativeKnowledge.curatedIncludeSync.activeChunkCount, 1);
+  assert.equal(report.nativeKnowledge.curatedIncludeSync.deletedFileCount, 1);
+  assert.equal(report.nativeKnowledge.openclawWorkspaceSync.exists, true);
+  assert.equal(report.nativeKnowledge.openclawWorkspaceSync.activeChunkCount, 2);
+  assert.equal(report.nativeKnowledge.openclawWorkspaceSync.deletedFileCount, 1);
 });
 
 test("operator inventory fail-opens when a top-level storage directory is unreadable", async () => {
