@@ -85,6 +85,7 @@ export interface OpikExporterConfig {
 function readOpikOpenclawConfig(): Partial<OpikExporterConfig> {
   try {
     const configPath =
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH ??
       process.env.OPENCLAW_CONFIG_PATH ??
       path.join(process.env.HOME ?? os.homedir(), ".openclaw", "openclaw.json");
     const raw = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -156,6 +157,8 @@ export class OpikExporter {
   private readonly cfg: OpikExporterConfig;
   private readonly log: LoggerBackend;
   private _handler: ((e: EngramTraceEvent) => void) | undefined;
+  /** The trace callback that was active before we subscribed, so _detach() can restore it. */
+  private _prevHandler: ((e: EngramTraceEvent) => void) | undefined;
   private readonly inFlight = new Map<string, InFlightLlm>();
   /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
   private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -188,6 +191,8 @@ export class OpikExporter {
     const existing = g.__openclawEngramTrace as
       | ((e: EngramTraceEvent) => void)
       | undefined;
+    // Remember what was there before so _detach() can restore it.
+    this._prevHandler = existing;
 
     const handler = (event: EngramTraceEvent) => {
       try {
@@ -216,10 +221,11 @@ export class OpikExporter {
   _detach(): void {
     const g = globalThis as Record<string, unknown>;
     if (g[OPIK_EXPORTER_SLOT] === this) delete g[OPIK_EXPORTER_SLOT];
-    // Reset the trace slot — remaining subscribers will re-chain on their next start().
-    // This is safe: Langfuse/other plugins subscribe fresh on each service start.
-    g.__openclawEngramTrace = undefined;
+    // Restore whatever was in the slot before we subscribed (e.g. Langfuse)
+    // rather than zeroing it out, so other subscribers keep working.
+    g.__openclawEngramTrace = this._prevHandler;
     this._handler = undefined;
+    this._prevHandler = undefined;
     this.log.debug?.("[opik-exporter] detached from trace chain");
   }
 
