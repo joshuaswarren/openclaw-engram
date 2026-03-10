@@ -447,13 +447,16 @@ function summarizeHygieneWarnings(
   warnings: Awaited<ReturnType<typeof lintWorkspaceFiles>>,
   hygiene: FileHygieneConfig | undefined,
 ): OperatorDoctorCheck {
-  if (!hygiene?.enabled) {
+  if (!hygiene?.enabled || hygiene.lintEnabled !== true) {
     return {
       key: "file_hygiene",
       status: "warn",
-      summary: "File hygiene is disabled; bootstrap file truncation warnings are not active.",
-      remediation: "Enable `fileHygiene.enabled` if large workspace bootstrap files are common.",
-      details: { enabled: false },
+      summary: "File hygiene linting is disabled; bootstrap file truncation warnings are not active.",
+      remediation: "Enable `fileHygiene.enabled` and `fileHygiene.lintEnabled` if large workspace bootstrap files are common.",
+      details: {
+        enabled: hygiene?.enabled === true,
+        lintEnabled: hygiene?.lintEnabled === true,
+      },
     };
   }
   if (warnings.length > 0) {

@@ -186,6 +186,25 @@ test("operator doctor treats unreachable qmd as an error even when collection st
   assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
 });
 
+test("operator doctor warns when file hygiene linting is disabled", async () => {
+  const fixture = await makeFixture({
+    fileHygiene: {
+      enabled: true,
+      lintEnabled: false,
+      lintPaths: ["MEMORY.md"],
+      lintBudgetBytes: 100,
+      lintWarnRatio: 0.5,
+    },
+  });
+
+  const report = await runOperatorDoctor({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
+});
+
 test("operator inventory summarizes stored memories and profile footprint", async () => {
   const fixture = await makeFixture();
   const storage = new StorageManager(fixture.memoryDir);
