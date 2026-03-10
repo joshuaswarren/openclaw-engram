@@ -281,6 +281,9 @@ Direct `includeFiles` sync plus the OpenClaw workspace adapter both persist incr
 | `contextCompressionActionsEnabled` | `false` | Enable context compression action tool paths and action telemetry wiring. |
 | `compressionGuidelineLearningEnabled` | `false` | Enable adaptive compression guideline learning loop. |
 | `maxProactiveQuestionsPerExtraction` | `2` | Hard cap on proactive self-questions per extraction (`0` disables). |
+| `proactiveExtractionTimeoutMs` | `2500` | Hard timeout for proactive question generation plus bounded answer synthesis (`0` disables the second pass). |
+| `proactiveExtractionMaxTokens` | `900` | Token budget applied to each proactive extraction sub-call (`0` disables the second pass). |
+| `proactiveExtractionCategoryAllowlist` | unset | Optional category allowlist for proactive second-pass writes; when set, lower-confidence or off-category proactive facts are dropped before persistence. |
 | `maxCompressionTokensPerHour` | `1500` | Hourly token budget for compression-learning workflows (`0` disables). |
 
 ### v8.3 Tool + State Artifacts
@@ -295,6 +298,12 @@ Direct `includeFiles` sync plus the OpenClaw workspace adapter both persist incr
   - consolidation synthesizes/updates `state/compression-guidelines.md`
   - optimizer metadata/version state persists to `state/compression-guideline-state.json`
   - synthesis is fail-open and never blocks consolidation
+- `proactiveExtractionTimeoutMs` / `proactiveExtractionMaxTokens`:
+  - bound both proactive self-question generation and the same-buffer answer-synthesis pass
+  - `0` remains a hard disable for the proactive second pass
+- `proactiveExtractionCategoryAllowlist`:
+  - filters proactive second-pass facts before persistence so only allowlisted categories are emitted
+  - does not affect the base extraction pass
 
 ### v8.13 Action-Policy Rollout Presets
 
@@ -308,6 +317,8 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
   "proactiveExtractionEnabled": false,
   "compressionGuidelineLearningEnabled": false,
   "compressionGuidelineSemanticRefinementEnabled": false,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 0
 }
 ```
@@ -320,6 +331,8 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
   "proactiveExtractionEnabled": true,
   "compressionGuidelineLearningEnabled": true,
   "compressionGuidelineSemanticRefinementEnabled": false,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 1500
 }
 ```
@@ -333,12 +346,15 @@ Use these as operator presets for progressive rollout. All are baseline-safe whe
   "compressionGuidelineLearningEnabled": true,
   "compressionGuidelineSemanticRefinementEnabled": true,
   "compressionGuidelineSemanticTimeoutMs": 2500,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 3000
 }
 ```
 
 Disabled-path compatibility guarantees:
 - `contextCompressionActionsEnabled=false` keeps action tooling and action-policy telemetry inactive.
+- `proactiveExtractionTimeoutMs=0` or `proactiveExtractionMaxTokens=0` keeps the proactive second pass fully disabled.
 - `maxCompressionTokensPerHour=0` remains a hard disable (no implicit non-zero coercion).
 - `compressionGuidelineLearningEnabled=false` keeps consolidation behavior baseline-equivalent.
 
@@ -354,6 +370,8 @@ The original v8 roadmap listed several operator knobs that are now split across 
 | `maxGraphTraversalSteps` | `maxGraphTraversalSteps` |
 | `maxArtifactsPerSession` | No dedicated per-session write cap. The nearest shipped controls are `verbatimArtifactsEnabled`, `verbatimArtifactsMaxRecall`, and `verbatimArtifactCategories`. |
 | `maxProactiveQuestionsPerExtraction` | `maxProactiveQuestionsPerExtraction` |
+| `maxProactiveExtractionMs` | `proactiveExtractionTimeoutMs` |
+| `maxProactiveExtractionTokens` | `proactiveExtractionMaxTokens` |
 | `indexRefreshBudgetMs` | Use refresh cadence + timeout controls such as `qmdUpdateMinIntervalMs`, `qmdUpdateTimeoutMs`, and `conversationIndexMinUpdateIntervalMs`. |
 
 ## v8.14 Hot/Cold Tier Parity + Migration

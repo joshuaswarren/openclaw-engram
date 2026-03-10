@@ -195,12 +195,15 @@ Start with all new policy-learning behavior disabled, then enable incrementally:
   "compressionGuidelineSemanticRefinementEnabled": false,
   "compressionGuidelineSemanticTimeoutMs": 2500,
   "maxProactiveQuestionsPerExtraction": 2,
+  "proactiveExtractionTimeoutMs": 2500,
+  "proactiveExtractionMaxTokens": 900,
   "maxCompressionTokensPerHour": 1500
 }
 ```
 
 Rollout suggestion:
 - Enable `proactiveExtractionEnabled` first and validate extraction quality/latency.
+- Keep `proactiveExtractionTimeoutMs` and `proactiveExtractionMaxTokens` conservative at first so the second pass stays bounded.
 - Enable `contextCompressionActionsEnabled` after tool-level validation.
 - Enable `compressionGuidelineLearningEnabled` last, once memory-action telemetry is stable.
 - Keep `compressionGuidelineSemanticRefinementEnabled=false` during initial rollout; enable only after deterministic outputs are stable.
@@ -209,6 +212,7 @@ Rollout suggestion:
 Operational checks after enabling guideline learning:
 - Confirm telemetry is append-only: `memory/state/memory-actions.jsonl`.
 - Confirm guideline synthesis output exists: `memory/state/compression-guidelines.md`.
+- If proactive extraction is enabled, confirm new second-pass memories write with `source: extraction-proactive` frontmatter.
 - Verify fail-open behavior by temporarily making state unwritable and confirming consolidation still completes.
 - If guidance quality regresses, keep telemetry enabled and disable only `compressionGuidelineLearningEnabled`.
 
@@ -219,6 +223,7 @@ v8.13 action-policy rollout presets:
 
 Operator hardening checklist before promotion:
 - Keep `contextCompressionActionsEnabled=true` only after tool traces stay stable and review-clean for one full daily cycle.
+- Treat `proactiveExtractionTimeoutMs=0` or `proactiveExtractionMaxTokens=0` as intentional hard disables for the proactive second pass.
 - Treat `maxCompressionTokensPerHour=0` as an intentional hard disable for policy defers.
 - If regressions appear, first disable `compressionGuidelineSemanticRefinementEnabled`, then disable `compressionGuidelineLearningEnabled`.
 - Confirm disabled-path behavior by toggling all action-policy features off and verifying recall outputs remain baseline-equivalent.

@@ -1182,6 +1182,20 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.maxProactiveQuestionsPerExtraction === "number"
         ? Math.max(0, Math.floor(cfg.maxProactiveQuestionsPerExtraction))
         : 2,
+    proactiveExtractionTimeoutMs:
+      typeof cfg.proactiveExtractionTimeoutMs === "number"
+        ? Math.max(0, Math.floor(cfg.proactiveExtractionTimeoutMs))
+        : 2500,
+    proactiveExtractionMaxTokens:
+      typeof cfg.proactiveExtractionMaxTokens === "number"
+        ? Math.max(0, Math.floor(cfg.proactiveExtractionMaxTokens))
+        : 900,
+    proactiveExtractionCategoryAllowlist: Array.isArray(cfg.proactiveExtractionCategoryAllowlist)
+      ? (cfg.proactiveExtractionCategoryAllowlist as unknown[]).filter(
+          (category): category is PluginConfig["lifecycleProtectedCategories"][number] =>
+            typeof category === "string" && VALID_MEMORY_CATEGORIES.has(category),
+        )
+      : undefined,
     maxCompressionTokensPerHour:
       typeof cfg.maxCompressionTokensPerHour === "number"
         ? Math.max(0, Math.floor(cfg.maxCompressionTokensPerHour))
