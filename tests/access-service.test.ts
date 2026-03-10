@@ -23,6 +23,11 @@ function createService() {
           readPrincipals: ["project-x"],
           writePrincipals: ["project-x"],
         },
+        {
+          name: "secret-team",
+          readPrincipals: ["secret-team"],
+          writePrincipals: ["secret-team"],
+        },
       ],
       defaultRecallNamespaces: ["self"],
       searchBackend: "qmd",
@@ -87,18 +92,117 @@ test("access service allows namespace-scoped recall when namespaces are enabled"
   assert.equal(response.namespace, "project-x");
 });
 
+test("access service allows readable namespace overrides outside default recall namespaces", async () => {
+  let capturedOptions: unknown;
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+        {
+          name: "project-y",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-y"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async (_query: string, _sessionKey?: string, options?: unknown) => {
+      capturedOptions = options;
+      return "ctx";
+    },
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  } as any);
+
+  const response = await service.recall({
+    query: "hello",
+    sessionKey: "agent:project-x:chat",
+    namespace: "project-y",
+  });
+
+  assert.equal(response.namespace, "project-y");
+  assert.deepEqual(capturedOptions, {
+    namespace: "project-y",
+    topK: undefined,
+    mode: undefined,
+  });
+});
+
 test("access service rejects unreadable namespace-scoped recall overrides", async () => {
   const service = createService();
   await assert.rejects(
     () => service.recall({
       query: "hello",
       sessionKey: "agent:project-x:chat",
-      namespace: "global",
+      namespace: "secret-team",
     }),
     (err: unknown) =>
       err instanceof EngramAccessInputError &&
-      err.message === "namespace override is not readable: global",
+      err.message === "namespace override is not readable: secret-team",
   );
+});
+
+test("access service allows readable explicit namespace overrides outside default recall routing", async () => {
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+        {
+          name: "audit-log",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["audit-bot"],
+          includeInRecallByDefault: false,
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  } as any);
+
+  const response = await service.recall({
+    query: "hello",
+    sessionKey: "agent:project-x:chat",
+    namespace: "audit-log",
+  });
+
+  assert.equal(response.namespace, "audit-log");
 });
 
 test("access service recall forwards overrides and returns explainable metadata", async () => {

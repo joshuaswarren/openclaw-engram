@@ -20,7 +20,7 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
-import { recallNamespacesForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
+import { canReadNamespace, resolvePrincipal } from "./namespaces/principal.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type {
   GraphRecallSnapshot,
@@ -262,8 +262,7 @@ export class EngramAccessService {
     if (!requested) return undefined;
     const resolved = this.resolveNamespace(requested);
     const principal = resolvePrincipal(sessionKey, this.orchestrator.config);
-    const readableNamespaces = recallNamespacesForPrincipal(principal, this.orchestrator.config);
-    if (!readableNamespaces.includes(resolved)) {
+    if (!canReadNamespace(principal, resolved, this.orchestrator.config)) {
       throw new EngramAccessInputError(`namespace override is not readable: ${resolved}`);
     }
     return resolved;
