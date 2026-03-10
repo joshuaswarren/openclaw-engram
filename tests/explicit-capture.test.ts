@@ -506,7 +506,7 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
     content: string;
     frontmatter: { id: string; created: string; tags: string[]; category: string; status?: string };
   }> = [];
-  let maintenanceRequests = 0;
+  const maintenanceReasons: string[] = [];
   let appendedEvents = 0;
   const orchestrator = {
     config: {
@@ -535,13 +535,20 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
         return id;
       },
       getMemoryById: async (id: string) => memories.find((memory) => memory.frontmatter.id === id) ?? null,
+      writeMemoryFrontmatter: async (
+        memory: { frontmatter: { status?: string } },
+        patch: { status: string },
+      ) => {
+        memory.frontmatter.status = patch.status;
+        return memory;
+      },
       appendMemoryLifecycleEvents: async (events: unknown[]) => {
         appendedEvents += events.length;
         return events.length;
       },
     }),
-    requestQmdMaintenanceForTool: (_reason: string) => {
-      maintenanceRequests += 1;
+    requestQmdMaintenanceForTool: (reason: string) => {
+      maintenanceReasons.push(reason);
     },
     qmd: {
       search: async () => [],
@@ -587,13 +594,14 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
   assert.match(duplicate.content[0]?.text ?? "", /Memory already exists: fact-1/);
   assert.equal(memories.length, 1);
   assert.equal(appendedEvents, 1);
-  assert.equal(maintenanceRequests, 2);
+  assert.deepEqual(maintenanceReasons, ["memory_store", "memory_capture"]);
 
-  await assert.rejects(
-    () =>
-      memoryCapture!.execute("tc-3", {
-        content: "sk-1234567890abcdef1234567890abcdef should never be stored",
-      }),
-    /secret or credential/,
-  );
+  const queued = await memoryCapture!.execute("tc-3", {
+    content: "sk-1234567890abcdef1234567890abcdef should never be stored",
+  });
+  assert.match(queued.content[0]?.text ?? "", /Memory queued for review: fact-2/);
+  assert.equal(memories.length, 2);
+  assert.equal(memories[1]?.frontmatter.status, "pending_review");
+  assert.equal(appendedEvents, 2);
+  assert.deepEqual(maintenanceReasons, ["memory_store", "memory_capture", "memory_capture.review"]);
 });
