@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import {
   hasInlineExplicitCaptureMarkup,
@@ -604,4 +607,97 @@ test("memory_store and memory_capture share explicit validation and duplicate ha
   assert.equal(memories[1]?.frontmatter.status, "pending_review");
   assert.equal(appendedEvents, 2);
   assert.deepEqual(maintenanceReasons, ["memory_store", "memory_capture", "memory_capture.review"]);
+});
+
+test("memory_capture fails gracefully when review queue fallback also errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-explicit-capture-tool-double-fail-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-explicit-capture-tool-double-fail-workspace-"));
+  const tools = new Map<
+    string,
+    {
+      execute: (
+        toolCallId: string,
+        params: Record<string, unknown>,
+      ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+    }
+  >();
+  const api = {
+    registerTool(spec: {
+      name: string;
+      execute: (
+        toolCallId: string,
+        params: Record<string, unknown>,
+      ) => Promise<{ content: Array<{ type: string; text: string }>; details: undefined }>;
+    }) {
+      tools.set(spec.name, { execute: spec.execute });
+    },
+  };
+
+  const orchestrator = {
+    config: {
+      defaultNamespace: "default",
+      namespacesEnabled: false,
+      namespacePolicy: [],
+      explicitCaptureEnabled: true,
+      captureMode: "explicit",
+      queryAwareIndexingEnabled: false,
+      memoryDir,
+      workspaceDir,
+      contextCompressionActionsEnabled: false,
+      contextCompressionMaxSummaryChars: 200,
+      contextCompressionMaxMemoryIds: 5,
+      contextCompressionMaxArtifactNames: 4,
+      graphRecallEnabled: false,
+      graphShadowEvaluationEnabled: false,
+      graphShadowEvalMaxCandidates: 0,
+      graphMaxExplainPaths: 0,
+      graphExpandedIntentEnabled: false,
+      enableTrustZones: false,
+      semanticRuleVerificationEnabled: false,
+      workArtifactRecallEnabled: false,
+      sharedContextEnabled: false,
+      localLlmEnabled: false,
+      localLlmProvider: "none",
+      localLlmTimeoutMs: 0,
+      qmdEnabled: false,
+    },
+    getStorage: async () => ({
+      writeMemory: async () => {
+        throw new Error("queue storage unavailable");
+      },
+      readAllMemories: async () => [],
+      appendMemoryLifecycleEvents: async () => 0,
+    }),
+    requestQmdMaintenanceForTool: () => {},
+    qmd: {
+      search: async () => [],
+      searchGlobal: async () => [],
+    },
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    recordMemoryFeedback: async () => {},
+    storage: {
+      readProfile: async () => "",
+      readIdentity: async () => "",
+      resolveQuestion: async () => false,
+      listQuestions: async () => [],
+      getMemoryById: async () => null,
+    },
+    summarizeNow: async () => undefined,
+    runConversationIndexUpdate: async () => ({ indexedSessions: 0, indexedChunks: 0, embeddedRuns: 0 }),
+    sharedContext: null,
+    compoundingEngine: null,
+  };
+
+  registerTools(api as never, orchestrator as never);
+  const memoryCapture = tools.get("memory_capture");
+  assert.ok(memoryCapture);
+
+  const result = await memoryCapture!.execute("tc-double-fail", {
+    content: "sk-1234567890abcdef1234567890abcdef should never be stored",
+  });
+
+  assert.match(result.content[0]?.text ?? "", /Memory capture failed: content appears to contain a secret or credential/);
 });

@@ -296,13 +296,18 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
           : `Memory stored: ${result.id}${candidate.namespace ? ` (namespace: ${candidate.namespace})` : ""}\n\nContent: ${candidate.content}`,
       );
     } catch (error) {
-      const queued = await queueExplicitCaptureForReview(orchestrator, rawInput, source, error);
-      orchestrator.requestQmdMaintenanceForTool(`${maintenanceReason}.review`);
-      return toolResult(
-        queued.duplicateOf
-          ? `Memory already queued for review: ${queued.duplicateOf}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`
-          : `Memory queued for review: ${queued.id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`,
-      );
+      try {
+        const queued = await queueExplicitCaptureForReview(orchestrator, rawInput, source, error);
+        orchestrator.requestQmdMaintenanceForTool(`${maintenanceReason}.review`);
+        return toolResult(
+          queued.duplicateOf
+            ? `Memory already queued for review: ${queued.duplicateOf}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`
+            : `Memory queued for review: ${queued.id}${namespace ? ` (namespace: ${namespace})` : ""}\n\nContent: ${content}`,
+        );
+      } catch (queueError) {
+        log.warn(`explicit tool capture rejected: ${error}; review queue fallback failed: ${queueError}`);
+        return toolResult(`Memory capture failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 
