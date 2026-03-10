@@ -205,6 +205,41 @@ test("operator doctor warns when file hygiene linting is disabled", async () => 
   assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
 });
 
+test("operator doctor omits qmd and auth remediation when those checks are healthy", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+    agentAccessHttp: { enabled: true, authToken: "token", port: 8765 },
+  });
+  fixture.orchestrator.qmd = {
+    async probe() {
+      return true;
+    },
+    isAvailable() {
+      return true;
+    },
+    async ensureCollection() {
+      return "present";
+    },
+    debugStatus() {
+      return "available";
+    },
+  };
+
+  const report = await runOperatorDoctor({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  const qmdCheck = report.checks.find((check) => check.key === "qmd");
+  const authCheck = report.checks.find((check) => check.key === "access_http_auth");
+  assert.ok(qmdCheck);
+  assert.ok(authCheck);
+  assert.equal(qmdCheck?.status, "ok");
+  assert.equal(qmdCheck?.remediation, undefined);
+  assert.equal(authCheck?.status, "ok");
+  assert.equal(authCheck?.remediation, undefined);
+});
+
 test("operator inventory summarizes stored memories and profile footprint", async () => {
   const fixture = await makeFixture();
   const storage = new StorageManager(fixture.memoryDir);

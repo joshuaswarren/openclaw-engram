@@ -270,7 +270,7 @@ function resolveConfigPath(explicitPath?: string): string {
   return path.join(process.env.HOME ?? os.homedir(), ".openclaw", "openclaw.json");
 }
 
-export async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigLoadResult> {
+async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigLoadResult> {
   const resolvedPath = resolveConfigPath(configPath);
   try {
     const raw = JSON.parse(await readFile(resolvedPath, "utf-8")) as Record<string, unknown>;
@@ -536,6 +536,8 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
       ? "Ensure the `qmd` binary is installed and on PATH, or set `qmdPath`."
       : collectionState === "missing"
       ? "Add the configured collection to `~/.config/qmd/index.yml`."
+      : collectionState === "present"
+      ? undefined
       : "Re-run `openclaw engram setup` after restoring QMD access.",
     details: {
       available: qmdAvailable,
@@ -589,6 +591,8 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
       : "Agent access HTTP bridge is enabled without an auth token.",
     remediation: !agentAccessEnabled
       ? "Ignore unless you plan to enable the HTTP bridge."
+      : config.agentAccessHttp?.authToken
+      ? undefined
       : "Set `agentAccessHttp.authToken` before exposing the bridge.",
   });
 
