@@ -5121,6 +5121,9 @@ export class Orchestrator {
           for (const chunk of chunkResult.chunks) {
             // Score each chunk's importance separately
             const chunkImportance = scoreImportance(chunk.content, writeCategory, fact.tags);
+            const chunkWriteSource = (fact as any).source === "proactive"
+              ? "chunking-proactive"
+              : undefined;
 
             await targetStorage.writeChunk(
               parentId,
@@ -5132,7 +5135,7 @@ export class Orchestrator {
                 confidence: fact.confidence,
                 tags: fact.tags,
                 entityRef: fact.entityRef,
-                source: extractionWriteSource,
+                source: chunkWriteSource,
                 importance: chunkImportance,
                 intentGoal: inferredIntent?.goal,
                 intentActionType: inferredIntent?.actionType,
