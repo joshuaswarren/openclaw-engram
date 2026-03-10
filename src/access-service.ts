@@ -251,6 +251,24 @@ export class EngramAccessService {
     const statusFilter = request.status?.trim().toLowerCase();
     const categoryFilter = request.category?.trim().toLowerCase();
 
+    const projected = await storage.browseProjectedMemories({
+      query,
+      status: statusFilter,
+      category: categoryFilter,
+      limit,
+      offset,
+    });
+    if (projected) {
+      return {
+        namespace: resolvedNamespace,
+        total: projected.total,
+        count: projected.memories.length,
+        limit,
+        offset,
+        memories: projected.memories.map((row) => ({ ...row })),
+      };
+    }
+
     let memories = await storage.readAllMemories();
     memories = memories.filter((memory) => {
       const status = (memory.frontmatter.status ?? "active").toLowerCase();
@@ -361,6 +379,32 @@ export class EngramAccessService {
   }
 
   async reviewQueue(runId?: string): Promise<EngramAccessReviewQueueResponse> {
+    const storage = await this.orchestrator.getStorage();
+    const projected = await storage.getProjectedGovernanceRecord();
+    if (projected && (!runId || projected.runId === runId.trim())) {
+      return {
+        found: true,
+        runId: projected.runId,
+        summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
+        metrics: projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"],
+        reviewQueue: projected.reviewQueueRows as Awaited<
+          ReturnType<typeof readMemoryGovernanceRunArtifact>
+        >["reviewQueue"],
+        appliedActions: projected.appliedActionRows.map((row) => ({
+          action: row.action,
+          memoryId: row.memoryId,
+          reasonCode: row.reasonCode,
+          beforeStatus: row.beforeStatus,
+          afterStatus: row.afterStatus,
+          originalPath: row.originalPath,
+          currentPath: row.currentPath,
+        })) as Awaited<
+          ReturnType<typeof readMemoryGovernanceRunArtifact>
+        >["appliedActions"],
+        report: projected.report,
+      };
+    }
+
     const resolvedRunId = runId?.trim() || (await listMemoryGovernanceRuns(this.orchestrator.config.memoryDir))[0];
     if (!resolvedRunId) return { found: false };
     const artifact = await readMemoryGovernanceRunArtifact(this.orchestrator.config.memoryDir, resolvedRunId);

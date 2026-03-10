@@ -10,17 +10,50 @@ import {
   repairMemoryProjection,
   verifyMemoryProjection,
 } from "../src/maintenance/rebuild-memory-projection.ts";
+import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import {
   getMemoryProjectionPath,
   initializeMemoryProjectionDb,
+  readProjectedEntityMentions,
+  readProjectedLatestReviewQueue,
   readProjectedMemoryState,
   readProjectedMemoryTimeline,
+  readProjectedNativeKnowledgeChunks,
 } from "../src/memory-projection-store.ts";
 
 async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
   const full = path.join(baseDir, relPath);
   await mkdir(path.dirname(full), { recursive: true });
   await writeFile(full, content, "utf-8");
+}
+
+function memoryDoc(options: {
+  id: string;
+  content: string;
+  category?: string;
+  created?: string;
+  updated?: string;
+  confidence?: number;
+  confidenceTier?: string;
+  entityRef?: string;
+  tags?: string[];
+}): string {
+  return [
+    "---",
+    `id: ${options.id}`,
+    `category: ${options.category ?? "fact"}`,
+    `created: ${options.created ?? "2026-03-01T00:00:00.000Z"}`,
+    `updated: ${options.updated ?? options.created ?? "2026-03-01T00:00:00.000Z"}`,
+    "source: test",
+    `confidence: ${options.confidence ?? 0.8}`,
+    `confidenceTier: ${options.confidenceTier ?? "implied"}`,
+    `tags: [${(options.tags ?? ["projection"]).map((tag) => `"${tag}"`).join(", ")}]`,
+    ...(options.entityRef ? [`entityRef: ${options.entityRef}`] : []),
+    "---",
+    "",
+    options.content,
+    "",
+  ].join("\n");
 }
 
 test("projection-store queries fail open when projection database is absent", async () => {
@@ -648,6 +681,254 @@ test("StorageManager falls back when projection database exists but has no timel
     assert.deepEqual(
       timeline.map((entry) => entry.eventType),
       ["created", "updated"],
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("rebuildMemoryProjection projects entity mentions, native knowledge chunks, and governance review queue", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-derived-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-duplicate-a.md",
+      memoryDoc({
+        id: "fact-duplicate-a",
+        content: "Projection parity requires complete lifecycle coverage.",
+        created: "2026-03-01T00:00:00.000Z",
+        updated: "2026-03-01T01:00:00.000Z",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+        entityRef: "person-alex",
+        tags: ["projection", "team:ops"],
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-02/fact-duplicate-b.md",
+      memoryDoc({
+        id: "fact-duplicate-b",
+        content: "Projection parity requires complete lifecycle coverage.",
+        created: "2026-03-02T00:00:00.000Z",
+        updated: "2026-03-02T01:00:00.000Z",
+        confidence: 0.45,
+        confidenceTier: "inferred",
+        tags: ["projection"],
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/native-knowledge/curated-include-sync.json",
+      JSON.stringify(
+        {
+          version: 1,
+          updatedAt: "2026-03-09T12:00:00.000Z",
+          files: {
+            "docs/identity.md": {
+              sourcePath: "docs/identity.md",
+              sourceKind: "identity",
+              title: "Identity",
+              namespace: "global",
+              privacyClass: "internal",
+              derivedDate: "2026-03-09",
+              sourceHash: "hash-identity",
+              syncConfigHash: "sync-identity",
+              mtimeMs: 1,
+              deleted: false,
+              chunks: [
+                {
+                  chunkId: "nk-identity-1",
+                  sourcePath: "docs/identity.md",
+                  title: "Identity",
+                  sourceKind: "identity",
+                  startLine: 1,
+                  endLine: 3,
+                  content: "Alex maintains the Engram memory system.",
+                  namespace: "global",
+                  privacyClass: "internal",
+                  sourceHash: "hash-identity",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const governance = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+    const result = await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-09T12:05:00.000Z"),
+    });
+
+    assert.equal(result.entityMentionRows, 2);
+    assert.equal(result.nativeKnowledgeRows, 1);
+    assert.equal(result.reviewQueueRows >= 1, true);
+
+    const entityMentions = readProjectedEntityMentions(memoryDir);
+    assert.ok(entityMentions);
+    assert.deepEqual(
+      entityMentions?.map((row) => `${row.memoryId}::${row.entityRef}::${row.mentionSource}`),
+      [
+        "fact-duplicate-a::person-alex::frontmatter.entityRef",
+        "fact-duplicate-a::team:ops::tag",
+      ],
+    );
+
+    const nativeKnowledge = readProjectedNativeKnowledgeChunks(memoryDir);
+    assert.ok(nativeKnowledge);
+    assert.equal(nativeKnowledge?.length, 1);
+    assert.deepEqual(nativeKnowledge?.[0], {
+      chunkId: "nk-identity-1",
+      sourcePath: "docs/identity.md",
+      title: "Identity",
+      sourceKind: "identity",
+      startLine: 1,
+      endLine: 3,
+      derivedDate: "2026-03-09",
+      sessionKey: undefined,
+      workflowKey: undefined,
+      author: undefined,
+      agent: undefined,
+      namespace: "global",
+      privacyClass: "internal",
+      sourceHash: "hash-identity",
+      preview: "Alex maintains the Engram memory system.",
+    });
+
+    const projectedReviewQueue = readProjectedLatestReviewQueue(memoryDir);
+    assert.ok(projectedReviewQueue?.found);
+    assert.equal(projectedReviewQueue?.runId, governance.runId);
+    assert.equal(projectedReviewQueue?.reviewQueue.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+
+    const verify = await verifyMemoryProjection({ memoryDir });
+    assert.equal(verify.ok, true);
+    assert.equal(verify.expectedEntityMentionRows, 2);
+    assert.equal(verify.actualEntityMentionRows, 2);
+    assert.equal(verify.expectedNativeKnowledgeRows, 1);
+    assert.equal(verify.actualNativeKnowledgeRows, 1);
+    assert.equal(verify.expectedReviewQueueRows >= 1, true);
+    assert.equal(verify.expectedReviewQueueRows, verify.actualReviewQueueRows);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("verifyMemoryProjection reports drift in projected entity mentions, native knowledge, and review queue rows", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-derived-drift-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-duplicate-a.md",
+      memoryDoc({
+        id: "fact-duplicate-a",
+        content: "Projection parity requires complete lifecycle coverage.",
+        created: "2026-03-01T00:00:00.000Z",
+        updated: "2026-03-01T01:00:00.000Z",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+        entityRef: "person-alex",
+        tags: ["projection", "team:ops"],
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-02/fact-duplicate-b.md",
+      memoryDoc({
+        id: "fact-duplicate-b",
+        content: "Projection parity requires complete lifecycle coverage.",
+        created: "2026-03-02T00:00:00.000Z",
+        updated: "2026-03-02T01:00:00.000Z",
+        confidence: 0.45,
+        confidenceTier: "inferred",
+        tags: ["projection"],
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/native-knowledge/curated-include-sync.json",
+      JSON.stringify(
+        {
+          version: 1,
+          updatedAt: "2026-03-09T12:00:00.000Z",
+          files: {
+            "docs/identity.md": {
+              sourcePath: "docs/identity.md",
+              sourceKind: "identity",
+              title: "Identity",
+              namespace: "global",
+              privacyClass: "internal",
+              derivedDate: "2026-03-09",
+              sourceHash: "hash-identity",
+              syncConfigHash: "sync-identity",
+              mtimeMs: 1,
+              deleted: false,
+              chunks: [
+                {
+                  chunkId: "nk-identity-1",
+                  sourcePath: "docs/identity.md",
+                  title: "Identity",
+                  sourceKind: "identity",
+                  startLine: 1,
+                  endLine: 3,
+                  content: "Alex maintains the Engram memory system.",
+                  namespace: "global",
+                  privacyClass: "internal",
+                  sourceHash: "hash-identity",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const governance = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-09T12:05:00.000Z"),
+    });
+
+    const db = new Database(getMemoryProjectionPath(memoryDir));
+    try {
+      db.prepare(`
+        DELETE FROM memory_entity_mentions
+        WHERE memory_id = ? AND entity_ref = ? AND mention_source = ?
+      `).run("fact-duplicate-a", "person-alex", "frontmatter.entityRef");
+      db.prepare("DELETE FROM native_knowledge_chunks WHERE chunk_id = ?").run("nk-identity-1");
+      db.prepare("DELETE FROM memory_review_queue WHERE run_id = ? AND entry_id = ?").run(
+        governance.runId,
+        "review:fact-duplicate-b:exact_duplicate",
+      );
+    } finally {
+      db.close();
+    }
+
+    const verify = await verifyMemoryProjection({ memoryDir });
+    assert.equal(verify.ok, false);
+    assert.deepEqual(
+      verify.missingEntityMentionKeys,
+      ["fact-duplicate-a::person-alex::frontmatter.entityRef"],
+    );
+    assert.deepEqual(verify.missingNativeKnowledgeChunkIds, ["nk-identity-1"]);
+    assert.deepEqual(
+      verify.missingReviewQueueEntryIds,
+      [`${governance.runId}::review:fact-duplicate-b:exact_duplicate`],
     );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });

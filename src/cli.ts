@@ -4735,6 +4735,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`Scanned memories: ${result.scannedMemories}`);
           console.log(`Current-state rows: ${result.currentRows}`);
           console.log(`Timeline rows: ${result.timelineRows}`);
+          console.log(`Entity-mention rows: ${result.entityMentionRows}`);
+          console.log(`Native-knowledge rows: ${result.nativeKnowledgeRows}`);
+          console.log(`Review-queue rows: ${result.reviewQueueRows}`);
           console.log(`Used lifecycle ledger: ${result.usedLifecycleLedger ? "yes" : "no"}`);
           console.log(`Updated-after scope: ${result.scope.updatedAfter ?? "none"}`);
           console.log(`Updated-before scope: ${result.scope.updatedBefore ?? "none"}`);
@@ -4771,11 +4774,26 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`Actual current rows: ${result.actualCurrentRows}`);
           console.log(`Expected timeline rows: ${result.expectedTimelineRows}`);
           console.log(`Actual timeline rows: ${result.actualTimelineRows}`);
+          console.log(`Expected entity-mention rows: ${result.expectedEntityMentionRows}`);
+          console.log(`Actual entity-mention rows: ${result.actualEntityMentionRows}`);
+          console.log(`Expected native-knowledge rows: ${result.expectedNativeKnowledgeRows}`);
+          console.log(`Actual native-knowledge rows: ${result.actualNativeKnowledgeRows}`);
+          console.log(`Expected review-queue rows: ${result.expectedReviewQueueRows}`);
+          console.log(`Actual review-queue rows: ${result.actualReviewQueueRows}`);
           console.log(`Missing current memories: ${result.missingCurrentMemoryIds.join(", ") || "none"}`);
           console.log(`Extra current memories: ${result.extraCurrentMemoryIds.join(", ") || "none"}`);
           console.log(`Mismatched current memories: ${result.mismatchedCurrentMemoryIds.join(", ") || "none"}`);
           console.log(`Missing timeline events: ${result.missingTimelineEventIds.join(", ") || "none"}`);
           console.log(`Extra timeline events: ${result.extraTimelineEventIds.join(", ") || "none"}`);
+          console.log(`Missing entity mentions: ${result.missingEntityMentionKeys.join(", ") || "none"}`);
+          console.log(`Extra entity mentions: ${result.extraEntityMentionKeys.join(", ") || "none"}`);
+          console.log(`Mismatched entity mentions: ${result.mismatchedEntityMentionKeys.join(", ") || "none"}`);
+          console.log(`Missing native-knowledge chunks: ${result.missingNativeKnowledgeChunkIds.join(", ") || "none"}`);
+          console.log(`Extra native-knowledge chunks: ${result.extraNativeKnowledgeChunkIds.join(", ") || "none"}`);
+          console.log(`Mismatched native-knowledge chunks: ${result.mismatchedNativeKnowledgeChunkIds.join(", ") || "none"}`);
+          console.log(`Missing review-queue entries: ${result.missingReviewQueueEntryIds.join(", ") || "none"}`);
+          console.log(`Extra review-queue entries: ${result.extraReviewQueueEntryIds.join(", ") || "none"}`);
+          console.log(`Mismatched review-queue entries: ${result.mismatchedReviewQueueEntryIds.join(", ") || "none"}`);
           console.log("OK");
         });
 

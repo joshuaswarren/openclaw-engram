@@ -137,6 +137,12 @@ export interface NativeKnowledgeSyncResult {
   activeChunks: NativeKnowledgeChunk[];
 }
 
+const PERSISTED_NATIVE_KNOWLEDGE_STATE_FILES = new Set([
+  "obsidian-sync.json",
+  "curated-include-sync.json",
+  "openclaw-workspace-sync.json",
+]);
+
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -1164,6 +1170,123 @@ function dedupeNativeKnowledgeChunks(chunks: NativeKnowledgeChunk[]): NativeKnow
       seen.add(key);
       return true;
     });
+}
+
+async function findPersistedNativeKnowledgeStateFiles(
+  rootDir: string,
+  maxDepth: number,
+  currentDepth: number = 0,
+): Promise<string[]> {
+  if (currentDepth > maxDepth) return [];
+  const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => []);
+  const out: string[] = [];
+  for (const entry of entries) {
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isFile() && PERSISTED_NATIVE_KNOWLEDGE_STATE_FILES.has(entry.name)) {
+      out.push(fullPath);
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    out.push(...await findPersistedNativeKnowledgeStateFiles(fullPath, maxDepth, currentDepth + 1));
+  }
+  return out;
+}
+
+export async function loadPersistedNativeKnowledgeChunks(options: {
+  memoryDir: string;
+  recallNamespaces?: string[];
+  defaultNamespace: string;
+}): Promise<NativeKnowledgeChunk[]> {
+  const stateFiles = await findPersistedNativeKnowledgeStateFiles(options.memoryDir, 4);
+  if (stateFiles.length === 0) return [];
+
+  const chunks: NativeKnowledgeChunk[] = [];
+  for (const statePath of stateFiles.sort()) {
+    const raw = await readFile(statePath, "utf-8").catch(() => "");
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as { vaults?: unknown; files?: unknown };
+      if (typeof parsed.vaults === "object" && parsed.vaults) {
+        const state: ObsidianSyncState = {
+          version: 1,
+          updatedAt: new Date(0).toISOString(),
+          vaults: parsed.vaults as Record<string, ObsidianVaultState>,
+        };
+        chunks.push(...loadActiveObsidianChunks({
+          state,
+          recallNamespaces: options.recallNamespaces,
+          defaultNamespace: options.defaultNamespace,
+        }).map((chunk) => {
+          const note = Object.values(state.vaults)
+            .flatMap((vault) => Object.values(vault.notes))
+            .find((entry) => entry.chunks.some((candidate) => candidate.chunkId === chunk.chunkId));
+          if (!note) return chunk;
+          return {
+            ...chunk,
+            derivedDate: chunk.derivedDate ?? note.derivedDate,
+            namespace: chunk.namespace ?? note.namespace,
+            privacyClass: chunk.privacyClass ?? note.privacyClass,
+            aliases: chunk.aliases ?? note.aliases,
+            tags: chunk.tags ?? note.tags,
+            wikilinks: chunk.wikilinks ?? note.wikilinks,
+            backlinks: chunk.backlinks ?? note.backlinks,
+          };
+        }));
+        continue;
+      }
+      if (typeof parsed.files === "object" && parsed.files) {
+        if (path.basename(statePath) === "openclaw-workspace-sync.json") {
+          const state: OpenClawWorkspaceSyncState = {
+            version: 1,
+            updatedAt: new Date(0).toISOString(),
+            files: parsed.files as Record<string, OpenClawWorkspaceFileState>,
+          };
+          chunks.push(...loadActiveOpenClawWorkspaceChunks({
+            state,
+            recallNamespaces: options.recallNamespaces,
+            defaultNamespace: options.defaultNamespace,
+          }).map((chunk) => {
+            const file = state.files[chunk.sourcePath];
+            if (!file) return chunk;
+            return {
+              ...chunk,
+              derivedDate: chunk.derivedDate ?? file.derivedDate,
+              namespace: chunk.namespace ?? file.namespace,
+              privacyClass: chunk.privacyClass ?? file.privacyClass,
+              sessionKey: chunk.sessionKey ?? file.sessionKey,
+              workflowKey: chunk.workflowKey ?? file.workflowKey,
+              author: chunk.author ?? file.author,
+              agent: chunk.agent ?? file.agent,
+            };
+          }));
+          continue;
+        }
+        const state: CuratedIncludeFilesSyncState = {
+          version: 1,
+          updatedAt: new Date(0).toISOString(),
+          files: parsed.files as Record<string, CuratedIncludeFileState>,
+        };
+        chunks.push(...loadActiveCuratedIncludeChunks({
+          state,
+          recallNamespaces: options.recallNamespaces,
+          defaultNamespace: options.defaultNamespace,
+        }).map((chunk) => {
+          const file = state.files[chunk.sourcePath];
+          if (!file) return chunk;
+          return {
+            ...chunk,
+            derivedDate: chunk.derivedDate ?? file.derivedDate,
+            namespace: chunk.namespace ?? file.namespace,
+            privacyClass: chunk.privacyClass ?? file.privacyClass,
+          };
+        }));
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return dedupeNativeKnowledgeChunks(chunks);
 }
 
 export async function syncOpenClawWorkspaceArtifacts(options: {

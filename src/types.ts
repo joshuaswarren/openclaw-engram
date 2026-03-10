@@ -1079,6 +1079,8 @@ export interface MemoryProjectionCurrentState {
   memoryKind?: MemoryFrontmatter["memoryKind"];
   accessCount?: number;
   lastAccessed?: string;
+  tags?: string[];
+  preview?: string;
 }
 
 export interface CompressionGuidelineOptimizerSourceWindow {

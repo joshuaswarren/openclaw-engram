@@ -2,6 +2,11 @@ import path from "node:path";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import Database from "better-sqlite3";
 import { StorageManager } from "../storage.js";
+import {
+  listMemoryGovernanceRuns,
+  readMemoryGovernanceRunArtifact,
+} from "./memory-governance.js";
+import { loadPersistedNativeKnowledgeChunks } from "../native-knowledge.js";
 import { toBackupStamp } from "./backup-stamp.js";
 import type {
   MemoryFile,
@@ -19,8 +24,15 @@ import {
 import {
   getMemoryProjectionPath,
   initializeMemoryProjectionDb,
+  type ProjectedEntityMentionRow,
+  type MemoryProjectionGovernanceAppliedActionRow,
+  type MemoryProjectionGovernanceReviewQueueRow,
+  type ProjectedNativeKnowledgeChunkRow,
   MEMORY_PROJECTION_SCHEMA_VERSION,
   parseCurrentRow,
+  readProjectedEntityMentions,
+  readProjectedGovernanceRecord,
+  readProjectedNativeKnowledgeChunks,
   parseTimelineRows,
 } from "../memory-projection-store.js";
 
@@ -37,6 +49,9 @@ export interface RebuildMemoryProjectionResult {
   scannedMemories: number;
   currentRows: number;
   timelineRows: number;
+  entityMentionRows: number;
+  nativeKnowledgeRows: number;
+  reviewQueueRows: number;
   outputPath: string;
   backupPath?: string;
   usedLifecycleLedger: boolean;
@@ -60,11 +75,26 @@ export interface VerifyMemoryProjectionResult {
   actualCurrentRows: number;
   expectedTimelineRows: number;
   actualTimelineRows: number;
+  expectedEntityMentionRows: number;
+  actualEntityMentionRows: number;
+  expectedNativeKnowledgeRows: number;
+  actualNativeKnowledgeRows: number;
+  expectedReviewQueueRows: number;
+  actualReviewQueueRows: number;
   missingCurrentMemoryIds: string[];
   extraCurrentMemoryIds: string[];
   mismatchedCurrentMemoryIds: string[];
   missingTimelineEventIds: string[];
   extraTimelineEventIds: string[];
+  missingEntityMentionKeys: string[];
+  extraEntityMentionKeys: string[];
+  mismatchedEntityMentionKeys: string[];
+  missingNativeKnowledgeChunkIds: string[];
+  extraNativeKnowledgeChunkIds: string[];
+  mismatchedNativeKnowledgeChunkIds: string[];
+  missingReviewQueueEntryIds: string[];
+  extraReviewQueueEntryIds: string[];
+  mismatchedReviewQueueEntryIds: string[];
   usedLifecycleLedger: boolean;
   scope: {
     updatedAfter: string | null;
@@ -109,6 +139,14 @@ function inferProjectedStatus(pathRel: string, memory: MemoryFile): MemoryStatus
   return inferMemoryStatus(memory.frontmatter, pathRel);
 }
 
+function normalizePreview(content: string, maxChars = 180): string {
+  return content.replace(/\s+/g, " ").trim().slice(0, maxChars);
+}
+
+function dedupeStrings(values: string[] | undefined): string[] {
+  return [...new Set((values ?? []).filter((value) => value.trim().length > 0))].sort();
+}
+
 function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProjectionCurrentState {
   const pathRel = toMemoryPathRel(memoryDir, memory.path);
   return {
@@ -129,7 +167,98 @@ function toCurrentStateRow(memoryDir: string, memory: MemoryFile): MemoryProject
     memoryKind: memory.frontmatter.memoryKind,
     accessCount: memory.frontmatter.accessCount,
     lastAccessed: memory.frontmatter.lastAccessed,
+    tags: [...(memory.frontmatter.tags ?? [])],
+    preview: normalizePreview(memory.content),
   };
+}
+
+function buildEntityMentionRows(
+  currentRows: MemoryProjectionCurrentState[],
+): ProjectedEntityMentionRow[] {
+  return currentRows.flatMap((row) => {
+    const mentions: ProjectedEntityMentionRow[] = [];
+    if (row.entityRef) {
+      mentions.push({
+        memoryId: row.memoryId,
+        entityRef: row.entityRef,
+        mentionSource: "frontmatter.entityRef",
+        created: row.created,
+        updated: row.updated,
+      });
+    }
+    for (const tag of row.tags ?? []) {
+      if (!tag.includes(":")) continue;
+      mentions.push({
+        memoryId: row.memoryId,
+        entityRef: tag,
+        mentionSource: "tag",
+        created: row.created,
+        updated: row.updated,
+      });
+    }
+    return mentions;
+  });
+}
+
+function buildGovernanceActionRowKey(action: {
+  action: string;
+  memoryId: string;
+  reasonCode: string;
+  originalPath: string;
+  currentPath: string;
+}): string {
+  return [
+    action.action,
+    action.memoryId,
+    action.reasonCode,
+    action.originalPath,
+    action.currentPath,
+  ].join("::");
+}
+
+async function loadLatestGovernanceProjection(memoryDir: string): Promise<{
+  runId: string;
+  summary: unknown;
+  metrics: unknown;
+  reviewQueueRows: MemoryProjectionGovernanceReviewQueueRow[];
+  appliedActionRows: MemoryProjectionGovernanceAppliedActionRow[];
+  report: string;
+} | null> {
+  const runId = (await listMemoryGovernanceRuns(memoryDir))[0];
+  if (!runId) return null;
+  try {
+    const artifact = await readMemoryGovernanceRunArtifact(memoryDir, runId);
+    return {
+      runId,
+      summary: artifact.summary,
+      metrics: artifact.metrics,
+      reviewQueueRows: artifact.reviewQueue.map((entry) => ({
+        runId,
+        entryId: entry.entryId,
+        memoryId: entry.memoryId,
+        path: entry.path,
+        reasonCode: entry.reasonCode,
+        severity: entry.severity,
+        suggestedAction: entry.suggestedAction,
+        suggestedStatus: entry.suggestedStatus,
+        relatedMemoryIds: [...entry.relatedMemoryIds],
+      })),
+      appliedActionRows: artifact.appliedActions.map((action) => ({
+        runId,
+        rowKey: buildGovernanceActionRowKey(action),
+        action: action.action,
+        memoryId: action.memoryId,
+        reasonCode: action.reasonCode,
+        beforeStatus: action.beforeStatus,
+        afterStatus: action.afterStatus,
+        originalPath: action.originalPath,
+        currentPath: action.currentPath,
+      })),
+      report: artifact.report,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function loadTimelineEvents(
@@ -240,6 +369,8 @@ function serializeCurrentStateRow(row: MemoryProjectionCurrentState): string {
     memoryKind: row.memoryKind ?? null,
     accessCount: row.accessCount ?? null,
     lastAccessed: row.lastAccessed ?? null,
+    tags: row.tags,
+    preview: row.preview,
   });
 }
 
@@ -259,6 +390,46 @@ function serializeTimelineEvent(event: MemoryLifecycleEvent): string {
   });
 }
 
+function serializeEntityMentionRow(row: ProjectedEntityMentionRow): string {
+  return JSON.stringify(row);
+}
+
+function serializeNativeKnowledgeRow(row: ProjectedNativeKnowledgeChunkRow): string {
+  return JSON.stringify({
+    chunkId: row.chunkId,
+    sourceKind: row.sourceKind,
+    sourcePath: row.sourcePath,
+    title: row.title,
+    startLine: row.startLine,
+    endLine: row.endLine,
+    namespace: row.namespace ?? null,
+    privacyClass: row.privacyClass ?? null,
+    derivedDate: row.derivedDate ?? null,
+    sessionKey: row.sessionKey ?? null,
+    workflowKey: row.workflowKey ?? null,
+    author: row.author ?? null,
+    agent: row.agent ?? null,
+    sourceHash: row.sourceHash ?? null,
+    preview: row.preview,
+  });
+}
+
+function serializeGovernanceReviewQueueRow(
+  row: MemoryProjectionGovernanceReviewQueueRow,
+): string {
+  return JSON.stringify({
+    runId: row.runId,
+    entryId: row.entryId,
+    memoryId: row.memoryId,
+    path: row.path,
+    reasonCode: row.reasonCode,
+    severity: row.severity,
+    suggestedAction: row.suggestedAction,
+    suggestedStatus: row.suggestedStatus ?? null,
+    relatedMemoryIds: row.relatedMemoryIds,
+  });
+}
+
 async function loadAuthoritativeProjectionSnapshot(options: {
   memoryDir: string;
   updatedAfter?: string;
@@ -269,6 +440,19 @@ async function loadAuthoritativeProjectionSnapshot(options: {
   timelineRows: MemoryLifecycleEvent[];
   scopedCurrentRows: MemoryProjectionCurrentState[];
   scopedTimelineRows: MemoryLifecycleEvent[];
+  entityMentionRows: ProjectedEntityMentionRow[];
+  scopedEntityMentionRows: ProjectedEntityMentionRow[];
+  nativeKnowledgeRows: ProjectedNativeKnowledgeChunkRow[];
+  governance:
+    | {
+      runId: string;
+      summary: unknown;
+      metrics: unknown;
+      reviewQueueRows: MemoryProjectionGovernanceReviewQueueRow[];
+      appliedActionRows: MemoryProjectionGovernanceAppliedActionRow[];
+      report: string;
+    }
+    | null;
   usedLifecycleLedger: boolean;
   scope: {
     updatedAfter: string | null;
@@ -284,6 +468,28 @@ async function loadAuthoritativeProjectionSnapshot(options: {
   const scope = normalizeProjectionScope(options);
   const scopedMemories = filterMemoriesForProjectionScope(allMemories, scope);
   const scopedMemoryIds = new Set(scopedMemories.map((memory) => memory.frontmatter.id));
+  const nativeKnowledgeRows = await loadPersistedNativeKnowledgeChunks({
+    memoryDir: options.memoryDir,
+    defaultNamespace: "default",
+  }).then((rows) => rows.map((row) => ({
+    chunkId: row.chunkId,
+    sourceKind: row.sourceKind,
+    sourcePath: row.sourcePath,
+    title: row.title,
+    startLine: row.startLine,
+    endLine: row.endLine,
+    namespace: row.namespace,
+    privacyClass: row.privacyClass,
+    derivedDate: row.derivedDate,
+    sessionKey: row.sessionKey,
+    workflowKey: row.workflowKey,
+    author: row.author,
+    agent: row.agent,
+    sourceHash: row.sourceHash,
+    preview: normalizePreview(row.content),
+  })));
+  const governance = await loadLatestGovernanceProjection(options.memoryDir);
+  const entityMentionRows = buildEntityMentionRows(currentRows);
 
   return {
     allMemories,
@@ -291,6 +497,10 @@ async function loadAuthoritativeProjectionSnapshot(options: {
     timelineRows: events,
     scopedCurrentRows: currentRows.filter((row) => scopedMemoryIds.has(row.memoryId)),
     scopedTimelineRows: events.filter((event) => scopedMemoryIds.has(event.memoryId)),
+    entityMentionRows,
+    scopedEntityMentionRows: entityMentionRows.filter((row) => scopedMemoryIds.has(row.memoryId)),
+    nativeKnowledgeRows,
+    governance,
     usedLifecycleLedger,
     scope,
   };
@@ -320,7 +530,9 @@ function readProjectedCurrentRows(
           confidence_tier,
           memory_kind,
           access_count,
-          last_accessed
+          last_accessed,
+          tags_json,
+          preview_text
         FROM memory_current
       `).all() as Array<Record<string, unknown>>;
 
@@ -373,11 +585,62 @@ function readProjectedTimelineRows(
   }
 }
 
+function readProjectedEntityMentionRows(
+  memoryDir: string,
+): { projectionExists: boolean; rows: ProjectedEntityMentionRow[] } {
+  const rows = readProjectedEntityMentions(memoryDir);
+  if (rows === null) return { projectionExists: false, rows: [] };
+  return { projectionExists: true, rows };
+}
+
+function readProjectedNativeKnowledgeRows(
+  memoryDir: string,
+): { projectionExists: boolean; rows: ProjectedNativeKnowledgeChunkRow[] } {
+  const rows = readProjectedNativeKnowledgeChunks(memoryDir);
+  if (rows === null) return { projectionExists: false, rows: [] };
+  return { projectionExists: true, rows };
+}
+
+function readProjectedGovernanceRows(memoryDir: string): {
+  projectionExists: boolean;
+  runId: string | null;
+  summary: unknown;
+  metrics: unknown;
+  reviewQueueRows: MemoryProjectionGovernanceReviewQueueRow[];
+  appliedActionRows: MemoryProjectionGovernanceAppliedActionRow[];
+  report: string;
+} {
+  const record = readProjectedGovernanceRecord(memoryDir);
+  if (record === null) {
+    return {
+      projectionExists: false,
+      runId: null,
+      summary: undefined,
+      metrics: undefined,
+      reviewQueueRows: [],
+      appliedActionRows: [],
+      report: "",
+    };
+  }
+  return {
+    projectionExists: true,
+    runId: record.runId,
+    summary: record.summary,
+    metrics: record.metrics,
+    reviewQueueRows: record.reviewQueueRows,
+    appliedActionRows: record.appliedActionRows,
+    report: record.report,
+  };
+}
+
 function writeProjectionDb(
   dbPath: string,
   nowIso: string,
   currentRows: MemoryProjectionCurrentState[],
   timelineRows: MemoryLifecycleEvent[],
+  entityMentionRows: ProjectedEntityMentionRow[],
+  nativeKnowledgeRows: ProjectedNativeKnowledgeChunkRow[],
+  governance: Awaited<ReturnType<typeof loadLatestGovernanceProjection>>,
   usedLifecycleLedger: boolean,
 ): void {
   const db = new Database(dbPath);
@@ -388,6 +651,7 @@ function writeProjectionDb(
     insertMeta.run("schemaVersion", String(MEMORY_PROJECTION_SCHEMA_VERSION));
     insertMeta.run("rebuiltAt", nowIso);
     insertMeta.run("usedLifecycleLedger", usedLifecycleLedger ? "true" : "false");
+    insertMeta.run("latestGovernanceRunId", governance?.runId ?? "");
 
     const insertCurrent = db.prepare(`
       INSERT INTO memory_current (
@@ -406,8 +670,10 @@ function writeProjectionDb(
         confidence_tier,
         memory_kind,
         access_count,
-        last_accessed
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        last_accessed,
+        tags_json,
+        preview_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertTimeline = db.prepare(`
@@ -425,6 +691,76 @@ function writeProjectionDb(
         after_json,
         correlation_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertEntityMention = db.prepare(`
+      INSERT INTO memory_entity_mentions (
+        memory_id,
+        entity_ref,
+        mention_source,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `);
+
+    const insertNativeKnowledge = db.prepare(`
+      INSERT INTO native_knowledge_chunks (
+        chunk_id,
+        source_kind,
+        source_path,
+        title,
+        start_line,
+        end_line,
+        namespace,
+        privacy_class,
+        derived_date,
+        session_key,
+        workflow_key,
+        author,
+        agent,
+        source_hash,
+        preview_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertGovernanceReviewQueue = db.prepare(`
+      INSERT INTO memory_review_queue (
+        entry_id,
+        run_id,
+        memory_id,
+        path,
+        reason_code,
+        severity,
+        suggested_action,
+        suggested_status,
+        related_memory_ids_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertGovernanceAppliedAction = db.prepare(`
+      INSERT INTO memory_review_actions (
+        row_key,
+        run_id,
+        action,
+        memory_id,
+        reason_code,
+        before_status,
+        after_status,
+        original_path,
+        current_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertGovernanceRun = db.prepare(`
+      INSERT INTO memory_review_runs (
+        run_id,
+        created_at,
+        mode,
+        summary_json,
+        metrics_json,
+        applied_actions_json,
+        report_markdown
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     const writeTx = db.transaction(() => {
@@ -446,6 +782,8 @@ function writeProjectionDb(
           row.memoryKind ?? null,
           row.accessCount ?? null,
           row.lastAccessed ?? null,
+          JSON.stringify(dedupeStrings(row.tags)),
+          row.preview,
         );
       }
 
@@ -463,6 +801,94 @@ function writeProjectionDb(
           event.before ? JSON.stringify(event.before) : null,
           event.after ? JSON.stringify(event.after) : null,
           event.correlationId ?? null,
+        );
+      }
+
+      for (const row of entityMentionRows) {
+        insertEntityMention.run(
+          row.memoryId,
+          row.entityRef,
+          row.mentionSource,
+          row.created,
+          row.updated,
+        );
+      }
+
+      for (const row of nativeKnowledgeRows) {
+        insertNativeKnowledge.run(
+          row.chunkId,
+          row.sourceKind,
+          row.sourcePath,
+          row.title,
+          row.startLine,
+          row.endLine,
+          row.namespace ?? null,
+          row.privacyClass ?? null,
+          row.derivedDate ?? null,
+          row.sessionKey ?? null,
+          row.workflowKey ?? null,
+          row.author ?? null,
+          row.agent ?? null,
+          row.sourceHash ?? null,
+          row.preview,
+        );
+      }
+
+      for (const row of governance?.reviewQueueRows ?? []) {
+        insertGovernanceReviewQueue.run(
+          row.entryId,
+          row.runId,
+          row.memoryId,
+          row.path,
+          row.reasonCode,
+          row.severity,
+          row.suggestedAction,
+          row.suggestedStatus ?? null,
+          JSON.stringify(row.relatedMemoryIds),
+        );
+      }
+
+      for (const row of governance?.appliedActionRows ?? []) {
+        insertGovernanceAppliedAction.run(
+          row.rowKey,
+          row.runId,
+          row.action,
+          row.memoryId,
+          row.reasonCode,
+          row.beforeStatus,
+          row.afterStatus ?? null,
+          row.originalPath,
+          row.currentPath,
+        );
+      }
+
+      if (governance) {
+        const createdAt =
+          typeof (governance.summary as { createdAt?: unknown } | undefined)?.createdAt === "string"
+            ? (governance.summary as { createdAt: string }).createdAt
+            : nowIso;
+        const mode =
+          typeof (governance.summary as { mode?: unknown } | undefined)?.mode === "string"
+            ? (governance.summary as { mode: string }).mode
+            : "shadow";
+        insertGovernanceRun.run(
+          governance.runId,
+          createdAt,
+          mode,
+          JSON.stringify(governance.summary ?? null),
+          JSON.stringify(governance.metrics ?? null),
+          JSON.stringify(
+            (governance.appliedActionRows ?? []).map((row) => ({
+              action: row.action,
+              memoryId: row.memoryId,
+              reasonCode: row.reasonCode,
+              beforeStatus: row.beforeStatus,
+              afterStatus: row.afterStatus,
+              originalPath: row.originalPath,
+              currentPath: row.currentPath,
+            })),
+          ),
+          governance.report,
         );
       }
     });
@@ -493,6 +919,21 @@ function mergeScopedTimelineRows(
   ]);
 }
 
+function mergeScopedEntityMentionRows(
+  existingRows: ProjectedEntityMentionRow[],
+  replacementRows: ProjectedEntityMentionRow[],
+  scopedMemoryIds: Set<string>,
+): ProjectedEntityMentionRow[] {
+  return [
+    ...existingRows.filter((row) => !scopedMemoryIds.has(row.memoryId)),
+    ...replacementRows,
+  ].sort((left, right) =>
+    [left.entityRef, left.memoryId, left.mentionSource].join("::").localeCompare(
+      [right.entityRef, right.memoryId, right.mentionSource].join("::"),
+    )
+  );
+}
+
 export async function rebuildMemoryProjection(
   options: RebuildMemoryProjectionOptions,
 ): Promise<RebuildMemoryProjectionResult> {
@@ -505,9 +946,15 @@ export async function rebuildMemoryProjection(
   if (!dryRun) {
     let nextCurrentRows = snapshot.currentRows;
     let nextTimelineRows = snapshot.timelineRows;
+    let nextEntityMentionRows = snapshot.entityMentionRows;
+    let nextNativeKnowledgeRows = snapshot.nativeKnowledgeRows;
+    let nextGovernance = snapshot.governance;
     if (hasScopedProjectionFilter(snapshot.scope)) {
       const projectedCurrent = readProjectedCurrentRows(options.memoryDir);
       const projectedTimeline = readProjectedTimelineRows(options.memoryDir);
+      const projectedEntityMentions = readProjectedEntityMentionRows(options.memoryDir);
+      const projectedNativeKnowledge = readProjectedNativeKnowledgeRows(options.memoryDir);
+      const projectedGovernance = readProjectedGovernanceRows(options.memoryDir);
       if (projectedCurrent.projectionExists && projectedTimeline.projectionExists) {
         const actualScopedCurrentRows = filterCurrentStateRowsForProjectionScope(
           projectedCurrent.rows,
@@ -528,6 +975,24 @@ export async function rebuildMemoryProjection(
           snapshot.scopedTimelineRows,
           scopedMemoryIds,
         );
+        nextEntityMentionRows = mergeScopedEntityMentionRows(
+          projectedEntityMentions.rows,
+          snapshot.scopedEntityMentionRows,
+          scopedMemoryIds,
+        );
+      }
+      if (projectedNativeKnowledge.projectionExists) {
+        nextNativeKnowledgeRows = projectedNativeKnowledge.rows;
+      }
+      if (projectedGovernance.projectionExists && projectedGovernance.runId) {
+        nextGovernance = {
+          runId: projectedGovernance.runId,
+          summary: projectedGovernance.summary,
+          metrics: projectedGovernance.metrics,
+          reviewQueueRows: projectedGovernance.reviewQueueRows,
+          appliedActionRows: projectedGovernance.appliedActionRows,
+          report: projectedGovernance.report,
+        };
       }
     }
 
@@ -539,6 +1004,9 @@ export async function rebuildMemoryProjection(
       now.toISOString(),
       nextCurrentRows,
       nextTimelineRows,
+      nextEntityMentionRows,
+      nextNativeKnowledgeRows,
+      nextGovernance,
       snapshot.usedLifecycleLedger,
     );
     backupPath = await backupExistingProjection(options.memoryDir, outputPath, now);
@@ -550,6 +1018,9 @@ export async function rebuildMemoryProjection(
     scannedMemories: snapshot.allMemories.length,
     currentRows: snapshot.scopedCurrentRows.length,
     timelineRows: snapshot.scopedTimelineRows.length,
+    entityMentionRows: snapshot.scopedEntityMentionRows.length,
+    nativeKnowledgeRows: snapshot.nativeKnowledgeRows.length,
+    reviewQueueRows: snapshot.governance?.reviewQueueRows.length ?? 0,
     outputPath,
     backupPath,
     usedLifecycleLedger: snapshot.usedLifecycleLedger,
@@ -564,7 +1035,14 @@ export async function verifyMemoryProjection(
   const snapshot = await loadAuthoritativeProjectionSnapshot(options);
   const projectedCurrent = readProjectedCurrentRows(options.memoryDir);
   const projectedTimeline = readProjectedTimelineRows(options.memoryDir);
-  const projectionExists = projectedCurrent.projectionExists || projectedTimeline.projectionExists;
+  const projectedEntityMentions = readProjectedEntityMentionRows(options.memoryDir);
+  const projectedNativeKnowledge = readProjectedNativeKnowledgeRows(options.memoryDir);
+  const projectedGovernance = readProjectedGovernanceRows(options.memoryDir);
+  const projectionExists = projectedCurrent.projectionExists
+    || projectedTimeline.projectionExists
+    || projectedEntityMentions.projectionExists
+    || projectedNativeKnowledge.projectionExists
+    || projectedGovernance.projectionExists;
 
   const actualScopedCurrentRows = filterCurrentStateRowsForProjectionScope(projectedCurrent.rows, snapshot.scope);
   const expectedCurrentById = new Map(
@@ -604,6 +1082,73 @@ export async function verifyMemoryProjection(
     .filter((eventId) => !expectedTimelineById.has(eventId))
     .sort();
 
+  const expectedEntityMentionsByKey = new Map(
+    snapshot.scopedEntityMentionRows.map((row) => [
+      `${row.memoryId}::${row.entityRef}::${row.mentionSource}`,
+      serializeEntityMentionRow(row),
+    ]),
+  );
+  const actualScopedEntityMentionRows = projectedEntityMentions.rows.filter((row) => selectedMemoryIds.has(row.memoryId));
+  const actualEntityMentionsByKey = new Map(
+    actualScopedEntityMentionRows.map((row) => [
+      `${row.memoryId}::${row.entityRef}::${row.mentionSource}`,
+      serializeEntityMentionRow(row),
+    ]),
+  );
+  const missingEntityMentionKeys = [...expectedEntityMentionsByKey.keys()]
+    .filter((key) => !actualEntityMentionsByKey.has(key))
+    .sort();
+  const extraEntityMentionKeys = [...actualEntityMentionsByKey.keys()]
+    .filter((key) => !expectedEntityMentionsByKey.has(key))
+    .sort();
+  const mismatchedEntityMentionKeys = [...expectedEntityMentionsByKey.keys()]
+    .filter((key) =>
+      actualEntityMentionsByKey.has(key) && actualEntityMentionsByKey.get(key) !== expectedEntityMentionsByKey.get(key)
+    )
+    .sort();
+
+  const expectedNativeKnowledgeById = new Map(
+    snapshot.nativeKnowledgeRows.map((row) => [row.chunkId, serializeNativeKnowledgeRow(row)]),
+  );
+  const actualNativeKnowledgeById = new Map(
+    projectedNativeKnowledge.rows.map((row) => [row.chunkId, serializeNativeKnowledgeRow(row)]),
+  );
+  const missingNativeKnowledgeChunkIds = [...expectedNativeKnowledgeById.keys()]
+    .filter((chunkId) => !actualNativeKnowledgeById.has(chunkId))
+    .sort();
+  const extraNativeKnowledgeChunkIds = [...actualNativeKnowledgeById.keys()]
+    .filter((chunkId) => !expectedNativeKnowledgeById.has(chunkId))
+    .sort();
+  const mismatchedNativeKnowledgeChunkIds = [...expectedNativeKnowledgeById.keys()]
+    .filter((chunkId) =>
+      actualNativeKnowledgeById.has(chunkId) && actualNativeKnowledgeById.get(chunkId) !== expectedNativeKnowledgeById.get(chunkId)
+    )
+    .sort();
+
+  const expectedReviewQueueById = new Map(
+    (snapshot.governance?.reviewQueueRows ?? []).map((row) => [
+      `${row.runId}::${row.entryId}`,
+      serializeGovernanceReviewQueueRow(row),
+    ]),
+  );
+  const actualReviewQueueById = new Map(
+    projectedGovernance.reviewQueueRows.map((row) => [
+      `${row.runId}::${row.entryId}`,
+      serializeGovernanceReviewQueueRow(row),
+    ]),
+  );
+  const missingReviewQueueEntryIds = [...expectedReviewQueueById.keys()]
+    .filter((entryId) => !actualReviewQueueById.has(entryId))
+    .sort();
+  const extraReviewQueueEntryIds = [...actualReviewQueueById.keys()]
+    .filter((entryId) => !expectedReviewQueueById.has(entryId))
+    .sort();
+  const mismatchedReviewQueueEntryIds = [...expectedReviewQueueById.keys()]
+    .filter((entryId) =>
+      actualReviewQueueById.has(entryId) && actualReviewQueueById.get(entryId) !== expectedReviewQueueById.get(entryId)
+    )
+    .sort();
+
   return {
     outputPath,
     projectionExists,
@@ -613,16 +1158,40 @@ export async function verifyMemoryProjection(
       extraCurrentMemoryIds.length === 0 &&
       mismatchedCurrentMemoryIds.length === 0 &&
       missingTimelineEventIds.length === 0 &&
-      extraTimelineEventIds.length === 0,
+      extraTimelineEventIds.length === 0 &&
+      missingEntityMentionKeys.length === 0 &&
+      extraEntityMentionKeys.length === 0 &&
+      mismatchedEntityMentionKeys.length === 0 &&
+      missingNativeKnowledgeChunkIds.length === 0 &&
+      extraNativeKnowledgeChunkIds.length === 0 &&
+      mismatchedNativeKnowledgeChunkIds.length === 0 &&
+      missingReviewQueueEntryIds.length === 0 &&
+      extraReviewQueueEntryIds.length === 0 &&
+      mismatchedReviewQueueEntryIds.length === 0,
     expectedCurrentRows: snapshot.scopedCurrentRows.length,
     actualCurrentRows: actualScopedCurrentRows.length,
     expectedTimelineRows: snapshot.scopedTimelineRows.length,
     actualTimelineRows: actualTimelineRows.length,
+    expectedEntityMentionRows: snapshot.scopedEntityMentionRows.length,
+    actualEntityMentionRows: actualScopedEntityMentionRows.length,
+    expectedNativeKnowledgeRows: snapshot.nativeKnowledgeRows.length,
+    actualNativeKnowledgeRows: projectedNativeKnowledge.rows.length,
+    expectedReviewQueueRows: snapshot.governance?.reviewQueueRows.length ?? 0,
+    actualReviewQueueRows: projectedGovernance.reviewQueueRows.length,
     missingCurrentMemoryIds,
     extraCurrentMemoryIds,
     mismatchedCurrentMemoryIds,
     missingTimelineEventIds,
     extraTimelineEventIds,
+    missingEntityMentionKeys,
+    extraEntityMentionKeys,
+    mismatchedEntityMentionKeys,
+    missingNativeKnowledgeChunkIds,
+    extraNativeKnowledgeChunkIds,
+    mismatchedNativeKnowledgeChunkIds,
+    missingReviewQueueEntryIds,
+    extraReviewQueueEntryIds,
+    mismatchedReviewQueueEntryIds,
     usedLifecycleLedger: snapshot.usedLifecycleLedger,
     scope: snapshot.scope,
   };
