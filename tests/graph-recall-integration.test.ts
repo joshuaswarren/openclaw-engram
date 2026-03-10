@@ -130,6 +130,81 @@ test("recallInternal writes graph recall snapshot in graph_mode", async (t) => {
   assert.equal(snapshot.expandedCount, 1);
 });
 
+test("recallInternal labels absolute entity graph results as reconstructed entities", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-graph-recall-entity-label-"));
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    qmdEnabled: true,
+    qmdCollection: "engram-test",
+    qmdMaxResults: 3,
+    recallPlannerEnabled: true,
+    graphRecallEnabled: true,
+    multiGraphMemoryEnabled: true,
+    verbatimArtifactsEnabled: false,
+  });
+  const orchestrator = new Orchestrator(cfg);
+
+  const seedId = await orchestrator.storage.writeMemory("fact", "seed memory");
+  const seedMemory = await orchestrator.storage.getMemoryById(seedId);
+  assert.ok(seedMemory);
+
+  const entitySlug = await orchestrator.storage.writeEntity("Alex", "person", ["Owns the roadmap."]);
+  assert.ok(entitySlug);
+  const entityPath = path.join(memoryDir, "entities", `${entitySlug}.md`);
+
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+    hybridSearch: async () => [
+      {
+        docid: seedMemory!.frontmatter.id,
+        path: seedMemory!.path,
+        snippet: "seed memory",
+        score: 0.9,
+      },
+    ],
+    search: async () => [],
+  };
+  (orchestrator as any).expandResultsViaGraph = async ({ memoryResults }: any) => ({
+    merged: [
+      ...memoryResults,
+      {
+        docid: entitySlug,
+        path: entityPath,
+        snippet: "Alex owns the roadmap.",
+        score: 0.8,
+      },
+    ],
+    seedPaths: [seedMemory!.path],
+    expandedPaths: [
+      {
+        path: entityPath,
+        score: 0.8,
+        namespace: "default",
+        seed: seedMemory!.path,
+        hopDepth: 1,
+        decayedWeight: 0.7,
+        graphType: "entity",
+      },
+    ],
+  });
+
+  await (orchestrator as any).recallInternal(
+    "what happened in the timeline last week",
+    "session-graph-entity",
+  );
+
+  const snapshot = JSON.parse(
+    await readFile(path.join(memoryDir, "state", "last_graph_recall.json"), "utf-8"),
+  ) as {
+    finalResults?: Array<{ path: string; sourceLabels: string[] }>;
+  };
+  const entityResult = snapshot.finalResults?.find((result) => result.path === entityPath);
+  assert.ok(entityResult);
+  assert.deepEqual(entityResult.sourceLabels, ["graph_expanded", "reconstructed_entity"]);
+});
+
 test("recallInternal runs bounded graph assist in full mode when enabled", async (t) => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-graph-assist-full-"));
   const cfg = parseConfig({

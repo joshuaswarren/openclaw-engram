@@ -2706,9 +2706,12 @@ export class Orchestrator {
     const graphExpandedResultPaths = new Set<string>();
     const graphSourceLabelsForPath = (resultPath: string): string[] => {
       const labels: string[] = [];
+      const normalizedPath = resultPath.split(path.sep).join("/");
+      const isEntityPath = normalizedPath.startsWith("entities/")
+        || normalizedPath.includes("/entities/");
       if (graphBaselinePaths.has(resultPath)) labels.push("baseline");
       if (graphExpandedResultPaths.has(resultPath)) labels.push("graph_expanded");
-      if (resultPath.startsWith("entities/")) labels.push("reconstructed_entity");
+      if (isEntityPath) labels.push("reconstructed_entity");
       return labels.length > 0 ? labels : ["baseline"];
     };
     const buildIntentDebugSnapshot = (): IntentDebugSnapshot => ({
