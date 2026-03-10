@@ -784,7 +784,7 @@ function writeProjectionDb(
           row.accessCount ?? null,
           row.lastAccessed ?? null,
           JSON.stringify(row.tags ?? []),
-          row.preview,
+          row.preview ?? "",
         );
       }
 
