@@ -288,6 +288,53 @@ test("include-file sync chunkCount reports synced chunks even when recall filter
   assert.equal(result.chunkCount, 1);
 });
 
+test("include-file sync preserves prior tombstones instead of recounting deleted files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-sync-tombstone-"));
+  const workspaceDir = path.join(root, "workspace");
+  const memoryDir = path.join(root, "memory");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+  const identityPath = path.join(workspaceDir, "IDENTITY.md");
+  await writeFile(identityPath, "# Identity\n\nTemporary note.\n", "utf-8");
+
+  const config = {
+    enabled: true,
+    includeFiles: ["IDENTITY.md"],
+    maxChunkChars: 200,
+    maxResults: 4,
+    maxChars: 2400,
+    stateDir: "state/native-knowledge",
+    obsidianVaults: [],
+  };
+
+  await syncCuratedIncludeFiles({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["default"],
+    defaultNamespace: "default",
+  });
+  await unlink(identityPath);
+
+  const firstDeletion = await syncCuratedIncludeFiles({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["default"],
+    defaultNamespace: "default",
+  });
+  const secondDeletion = await syncCuratedIncludeFiles({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["default"],
+    defaultNamespace: "default",
+  });
+
+  assert.equal(firstDeletion.deletedFiles, 1);
+  assert.equal(secondDeletion.deletedFiles, 0);
+});
+
 test("default private curated chunks remain visible when shared recall also includes default namespace", async () => {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-private-default-"));
   await mkdir(workspaceDir, { recursive: true });

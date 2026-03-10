@@ -149,7 +149,7 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0).map((value) => value.trim()))].sort();
 }
 
-function detectSourceKind(filePath: string): NativeKnowledgeChunk["sourceKind"] {
+function detectSourceKind(filePath: string): CuratedIncludeFileState["sourceKind"] {
   const base = path.basename(filePath).toLowerCase();
   if (base.startsWith("identity")) return "identity";
   if (base === "memory.md") return "memory";
@@ -1382,7 +1382,7 @@ export async function syncCuratedIncludeFiles(options: {
       sourcePath,
       parsed,
     });
-    const sourceKind = detectSourceKind(sourcePath) as CuratedIncludeFileState["sourceKind"];
+    const sourceKind = detectSourceKind(sourcePath);
     const sourceHash = createHash("sha256").update(content).digest("hex");
     const title = resolveNoteTitle(sourcePath, parsed);
     const syncConfigHash = createHash("sha256")
@@ -1437,6 +1437,10 @@ export async function syncCuratedIncludeFiles(options: {
 
   for (const [sourcePath, previous] of Object.entries(previousState.files)) {
     if (seen.has(sourcePath) || skipped.has(sourcePath)) continue;
+    if (previous.deleted) {
+      nextFiles[sourcePath] = previous;
+      continue;
+    }
     nextFiles[sourcePath] = {
       ...previous,
       deleted: true,
