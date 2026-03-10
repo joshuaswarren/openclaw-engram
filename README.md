@@ -90,8 +90,9 @@ That's it. Start a conversation — Engram begins learning immediately.
 ## Verify Installation
 
 ```bash
-openclaw engram compat --strict   # Should exit 0
-openclaw engram stats             # Shows memory counts and search status
+openclaw engram setup --json      # Validates config, scaffolds directories, prints next steps
+openclaw engram doctor --json     # Aggregated safe health diagnostics
+openclaw engram inventory --json  # Baseline memory/entity/storage footprint
 ```
 
 ## How It Works
@@ -176,8 +177,12 @@ If you want a supported starting point for the advanced surface, set `memoryOsPr
 
 ```bash
 openclaw engram stats                        # Memory counts, search status, health
+openclaw engram setup                       # Guided first-run setup + directory scaffolding
+openclaw engram doctor                      # Aggregated setup/runtime diagnostics with remediation hints
+openclaw engram inventory                   # Memory, namespace, review queue, and storage inventory
 openclaw engram search "your query"          # Search memories from CLI
 openclaw engram compat --strict              # Compatibility check
+openclaw engram benchmark recall             # Status/validate/compare/snapshot recall benchmark artifacts
 openclaw engram benchmark-status             # Benchmark/eval harness packs, runs, shadow recalls, latest summaries
 openclaw engram benchmark-validate <path>    # Validate a benchmark manifest or pack directory
 openclaw engram benchmark-import <path>      # Import a validated benchmark pack into the eval store
@@ -208,7 +213,9 @@ openclaw engram utility-record              # Record a typed utility-learning te
 openclaw engram utility-learning-status     # Latest offline utility-learning snapshot and learned weight counts
 openclaw engram utility-learn               # Learn bounded offline promotion/ranking weights from recorded utility events
 openclaw engram conversation-index-health    # Conversation index status
+openclaw engram rebuild-index                # Operator-friendly alias for conversation-index-rebuild
 openclaw engram graph-health                 # Entity graph status
+openclaw engram repair                       # Aggregate session repair planning + graph guidance
 openclaw engram tier-status                  # Hot/cold tier metrics
 openclaw engram policy-status                # Lifecycle policy snapshot
 ```

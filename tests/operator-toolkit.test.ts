@@ -1,0 +1,252 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { parseConfig } from "../src/config.js";
+import { StorageManager } from "../src/storage.js";
+import {
+  runBenchmarkRecall,
+  runOperatorDoctor,
+  runOperatorInventory,
+  runOperatorRepair,
+  runOperatorSetup,
+  type OperatorToolkitOrchestrator,
+} from "../src/operator-toolkit.js";
+
+function openclawConfigDocument(pluginConfig: Record<string, unknown>): string {
+  return JSON.stringify({
+    plugins: {
+      entries: {
+        "openclaw-engram": {
+          config: pluginConfig,
+        },
+      },
+    },
+  }, null, 2);
+}
+
+async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
+  root: string;
+  memoryDir: string;
+  workspaceDir: string;
+  configPath: string;
+  config: ReturnType<typeof parseConfig>;
+  orchestrator: OperatorToolkitOrchestrator;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-operator-toolkit-"));
+  const memoryDir = path.join(root, "memory");
+  const workspaceDir = path.join(root, "workspace");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+  const rawConfig = {
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir,
+    qmdEnabled: false,
+    transcriptEnabled: false,
+    hourlySummariesEnabled: false,
+    identityEnabled: false,
+    identityContinuityEnabled: false,
+    sharedContextEnabled: false,
+    captureMode: "implicit",
+    ...overrides,
+  };
+  const config = parseConfig(rawConfig);
+  const configPath = path.join(root, "openclaw.json");
+  await writeFile(configPath, openclawConfigDocument(rawConfig), "utf-8");
+  const orchestrator: OperatorToolkitOrchestrator = {
+    config,
+    qmd: {
+      async probe() {
+        return config.qmdEnabled;
+      },
+      isAvailable() {
+        return config.qmdEnabled;
+      },
+      async ensureCollection() {
+        return config.qmdEnabled ? "present" : "skipped";
+      },
+      debugStatus() {
+        return config.qmdEnabled ? "available" : "disabled";
+      },
+    },
+    async getConversationIndexHealth() {
+      return {
+        enabled: false,
+        backend: "qmd" as const,
+        status: "disabled" as const,
+        chunkDocCount: 0,
+        lastUpdateAt: null,
+      };
+    },
+    async rebuildConversationIndex() {
+      return {
+        chunks: 0,
+        skipped: true,
+        reason: "disabled",
+        embedded: false,
+        rebuilt: false,
+      };
+    },
+  };
+  return { root, memoryDir, workspaceDir, configPath, config, orchestrator };
+}
+
+test("operator setup scaffolds directories and optional capture instructions", async () => {
+  const fixture = await makeFixture({ captureMode: "explicit" });
+
+  const report = await runOperatorSetup({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+    installCaptureInstructions: true,
+  });
+
+  assert.equal(report.config.parsed, true);
+  assert.equal(report.explicitCapture.enabled, true);
+  assert.equal(report.explicitCapture.memoryDocInstalled, true);
+  assert.equal(report.directories.some((entry) => entry.path.endsWith("/entities") && entry.exists), true);
+  const memoryDoc = await readFile(path.join(fixture.workspaceDir, "MEMORY.md"), "utf-8");
+  assert.match(memoryDoc, /explicit memory capture/i);
+});
+
+test("operator doctor surfaces auth and qmd problems", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+    agentAccessHttp: { enabled: true, port: 8765 },
+    fileHygiene: {
+      enabled: true,
+      lintEnabled: true,
+      lintPaths: ["MEMORY.md"],
+      lintBudgetBytes: 100,
+      lintWarnRatio: 0.5,
+    },
+  });
+  await writeFile(path.join(fixture.workspaceDir, "MEMORY.md"), "x".repeat(80), "utf-8");
+  fixture.orchestrator.qmd = {
+    async probe() {
+      return false;
+    },
+    isAvailable() {
+      return false;
+    },
+    async ensureCollection() {
+      return "missing";
+    },
+    debugStatus() {
+      return "cli=false";
+    },
+  };
+
+  const report = await runOperatorDoctor({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(report.summary.error >= 1);
+  assert.equal(report.checks.some((check) => check.key === "access_http_auth" && check.status === "error"), true);
+  assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
+  assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
+});
+
+test("operator inventory summarizes stored memories and profile footprint", async () => {
+  const fixture = await makeFixture();
+  const storage = new StorageManager(fixture.memoryDir);
+  await storage.ensureDirectories();
+  await storage.writeProfile("# Profile\n\nPrefers concise responses.\n");
+  await storage.writeMemory("fact", "API limit is 1000 rpm.", { tags: ["api"] });
+  await storage.writeMemory("decision", "Use FAISS for local conversation index.", { tags: ["search"] });
+  const memories = await storage.readAllMemories();
+  const fact = memories.find((memory) => memory.frontmatter.category === "fact");
+  assert.ok(fact);
+  await storage.writeMemoryFrontmatter(fact!, {
+    status: "pending_review",
+    updated: "2026-03-10T00:00:00.000Z",
+  });
+  await storage.writeEntity("project openclaw", "project", ["Tracks roadmap progress."]);
+
+  const report = await runOperatorInventory({ orchestrator: fixture.orchestrator });
+
+  assert.equal(report.totals.memories, 2);
+  assert.equal(report.totals.entities, 1);
+  assert.equal(report.categories.fact, 1);
+  assert.equal(report.categories.decision, 1);
+  assert.equal(report.statuses.pending_review, 1);
+  assert.equal(report.profile.exists, true);
+  assert.ok(report.storageFootprint.bytes > 0);
+});
+
+test("benchmark recall validates benchmark packs through the grouped operator flow", async () => {
+  const fixture = await makeFixture({ evalHarnessEnabled: true });
+  const packDir = path.join(fixture.root, "benchmark-pack");
+  await mkdir(packDir, { recursive: true });
+  await writeFile(path.join(packDir, "manifest.json"), JSON.stringify({
+    schemaVersion: 1,
+    benchmarkId: "ama-memory",
+    title: "AMA memory pack",
+    cases: [
+      {
+        id: "case-1",
+        prompt: "Recover the last deployment decision.",
+      },
+    ],
+  }, null, 2), "utf-8");
+
+  const report = await runBenchmarkRecall({
+    config: {
+      memoryDir: fixture.config.memoryDir,
+      evalStoreDir: fixture.config.evalStoreDir,
+      evalHarnessEnabled: fixture.config.evalHarnessEnabled,
+      evalShadowModeEnabled: fixture.config.evalShadowModeEnabled,
+      benchmarkBaselineSnapshotsEnabled: fixture.config.benchmarkBaselineSnapshotsEnabled,
+      benchmarkDeltaReporterEnabled: fixture.config.benchmarkDeltaReporterEnabled,
+      memoryRedTeamBenchEnabled: fixture.config.memoryRedTeamBenchEnabled,
+    },
+    validatePath: packDir,
+  });
+
+  assert.equal(report.mode, "validate");
+  assert.equal(report.validate?.benchmarkId, "ama-memory");
+  assert.equal(report.validate?.totalCases, 1);
+});
+
+test("operator repair aggregates dry-run session repair and graph guidance", async () => {
+  const fixture = await makeFixture({
+    transcriptEnabled: true,
+    entityGraphEnabled: true,
+  });
+  const transcriptDir = path.join(fixture.memoryDir, "transcripts", "main", "default");
+  await mkdir(transcriptDir, { recursive: true });
+  const transcriptPath = path.join(transcriptDir, "2026-03-10.jsonl");
+  await writeFile(
+    transcriptPath,
+    [
+      JSON.stringify({
+        timestamp: "2026-03-10T00:00:00.000Z",
+        role: "user",
+        content: "hello",
+        sessionKey: "agent:main",
+        turnId: "turn-1",
+      }),
+      "not-json",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const report = await runOperatorRepair({
+    config: {
+      memoryDir: fixture.config.memoryDir,
+      entityGraphEnabled: fixture.config.entityGraphEnabled,
+      timeGraphEnabled: fixture.config.timeGraphEnabled,
+      causalGraphEnabled: fixture.config.causalGraphEnabled,
+    },
+    dryRun: true,
+  });
+
+  assert.equal(report.dryRun, true);
+  assert.equal(report.sessionRepairApply.applied, false);
+  assert.ok(report.sessionRepairPlan.actions.length > 0);
+  const after = await readFile(transcriptPath, "utf-8");
+  assert.match(after, /not-json/);
+});

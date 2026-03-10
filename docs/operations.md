@@ -42,6 +42,9 @@ openclaw engram export --namespace shared --format json --out /tmp/shared-export
 ```bash
 openclaw engram search "query"      # Semantic search
 openclaw engram stats               # Memory counts and index state
+openclaw engram setup              # First-run setup validation + directory scaffolding
+openclaw engram doctor             # Aggregated runtime diagnostics + remediation hints
+openclaw engram inventory          # Memory/entity/storage footprint and review queue counts
 openclaw engram topics              # View extracted topic list
 openclaw engram threads             # View conversation threads
 openclaw engram access              # Most-accessed memories
@@ -53,12 +56,15 @@ openclaw engram export              # Export memory store
 openclaw engram import              # Import memory store
 openclaw engram backup              # Create timestamped backup
 openclaw engram compat              # Run local compatibility diagnostics
+openclaw engram benchmark recall    # Status/validate/compare/snapshot recall benchmark artifacts
 openclaw engram conversation-index-health  # Backend health + index stats
 openclaw engram conversation-index-inspect # Backend metadata + artifact diagnostics
 openclaw engram conversation-index-rebuild # Rebuild backend from transcript history
+openclaw engram rebuild-index       # Alias for conversation-index-rebuild
 openclaw engram graph-health        # Graph edge-file integrity + coverage
 openclaw engram session-check       # Transcript/checkpoint continuity diagnostics
 openclaw engram session-repair      # Bounded repair plan/apply (dry-run default)
+openclaw engram repair              # Aggregate session repair planning + graph guidance
 openclaw engram dashboard start     # Start live graph dashboard service
 openclaw engram dashboard status    # Dashboard health/status
 openclaw engram dashboard stop      # Stop dashboard service
@@ -81,6 +87,12 @@ Compatibility diagnostics:
 - `openclaw engram compat` reports `ok|warn|error` checks for manifest wiring, startup hooks/service registration, CLI wiring, Node engine floor, and qmd availability.
 - Use `openclaw engram compat --json` for CI/automation consumers.
 - Use `openclaw engram compat --strict` to fail with non-zero exit code on warnings or errors.
+
+Operator toolkit:
+- `openclaw engram setup` validates the loaded OpenClaw config, creates missing Engram-owned directories, checks QMD reachability/collection presence, and can scaffold `MEMORY.md` when explicit capture is enabled.
+- `openclaw engram doctor` aggregates config, directory, QMD, conversation-index, maintenance, HTTP bridge auth, and file-hygiene checks into one stable report.
+- `openclaw engram inventory` reports counts by category/status, namespace summaries, profile size, review queue size, conversation-index freshness, and storage footprint.
+- Use `--json` on each of these commands for script/CI-friendly output.
 
 Graph diagnostics:
 - `openclaw engram graph-health` reports per-edge-file integrity (`entity/time/causal`), corruption counts, and unique node coverage.
@@ -181,6 +193,7 @@ openclaw engram conversation-index-inspect
 
 # Rebuild conversation-index backend from the last 24h of transcripts
 openclaw engram conversation-index-rebuild
+openclaw engram rebuild-index
 
 # Show graph health with optional repair guidance notes
 openclaw engram graph-health --repair-guidance
@@ -189,6 +202,7 @@ openclaw engram graph-health --repair-guidance
 openclaw engram session-check
 openclaw engram session-repair --dry-run
 openclaw engram session-repair --apply
+openclaw engram repair --dry-run
 
 # Live graph dashboard process
 openclaw engram dashboard start --host 127.0.0.1 --port 4319
