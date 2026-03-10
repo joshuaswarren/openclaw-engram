@@ -1474,7 +1474,9 @@ export async function syncCuratedIncludeFiles(options: {
     recallNamespaces: options.recallNamespaces,
     defaultNamespace: options.defaultNamespace,
   });
-  const chunkCount = activeChunks.length;
+  const chunkCount = Object.values(nextFiles)
+    .filter((file) => !file.deleted)
+    .reduce((total, file) => total + file.chunks.length, 0);
   try {
     await mkdir(path.dirname(statePath), { recursive: true });
     await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");

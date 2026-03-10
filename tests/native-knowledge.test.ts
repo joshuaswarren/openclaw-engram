@@ -8,6 +8,7 @@ import {
   formatNativeKnowledgeSection,
   resolveCuratedIncludeFilesStatePath,
   searchNativeKnowledge,
+  syncCuratedIncludeFiles,
 } from "../src/native-knowledge.js";
 
 test("collectNativeKnowledgeChunks reads configured workspace files and preserves heading ranges", async () => {
@@ -251,6 +252,40 @@ test("include-file sync keeps namespaced identity variants active across recall 
   };
   assert.equal(defaultScopeState.files["IDENTITY.shared.md"]?.deleted, false);
   assert.equal(defaultScopeState.files["IDENTITY.shared.md"]?.namespace, "shared");
+});
+
+test("include-file sync chunkCount reports synced chunks even when recall filtering hides them", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-sync-count-"));
+  const workspaceDir = path.join(root, "workspace");
+  const memoryDir = path.join(root, "memory");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.shared.md"),
+    "# Shared Identity\n\nShared operator guidance.\n",
+    "utf-8",
+  );
+
+  const config = {
+    enabled: true,
+    includeFiles: ["IDENTITY.md"],
+    maxChunkChars: 200,
+    maxResults: 4,
+    maxChars: 2400,
+    stateDir: "state/native-knowledge",
+    obsidianVaults: [],
+  };
+
+  const result = await syncCuratedIncludeFiles({
+    workspaceDir,
+    memoryDir,
+    config,
+    recallNamespaces: ["default"],
+    defaultNamespace: "default",
+  });
+
+  assert.equal(result.activeChunks.length, 0);
+  assert.equal(result.chunkCount, 1);
 });
 
 test("searchNativeKnowledge ranks identity and phrase matches highest", () => {
