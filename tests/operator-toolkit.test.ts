@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import { StorageManager } from "../src/storage.js";
 import {
@@ -211,6 +211,23 @@ test("operator inventory summarizes stored memories and profile footprint", asyn
   assert.equal(report.statuses.pending_review, 1);
   assert.equal(report.profile.exists, true);
   assert.ok(report.storageFootprint.bytes > 0);
+});
+
+test("operator inventory fail-opens when a top-level storage directory is unreadable", async () => {
+  const fixture = await makeFixture();
+  const storage = new StorageManager(fixture.memoryDir);
+  await storage.ensureDirectories();
+  const artifactDir = path.join(fixture.memoryDir, "artifacts");
+  await mkdir(artifactDir, { recursive: true });
+  await writeFile(path.join(artifactDir, "kept.txt"), "artifact", "utf-8");
+  await chmod(artifactDir, 0o000);
+
+  try {
+    const report = await runOperatorInventory({ orchestrator: fixture.orchestrator });
+    assert.equal(report.storageFootprint.byTopLevel.artifacts ?? 0, 0);
+  } finally {
+    await chmod(artifactDir, 0o755);
+  }
 });
 
 test("benchmark recall validates benchmark packs through the grouped operator flow", async () => {

@@ -2822,6 +2822,25 @@ function setupReportPassed(report: OperatorSetupReport): boolean {
     && report.directories.every((entry) => entry.exists && entry.writable);
 }
 
+function buildConversationIndexRebuildAction(orchestrator: Orchestrator) {
+  return async (...args: unknown[]) => {
+    const options = (args[0] ?? {}) as Record<string, unknown>;
+    const hours = typeof options.hours === "string"
+      ? Number.parseInt(options.hours, 10)
+      : 24;
+    const result = await runConversationIndexRebuildCliCommand(orchestrator, {
+      sessionKey:
+        typeof options.sessionKey === "string" && options.sessionKey.trim().length > 0
+          ? options.sessionKey.trim()
+          : undefined,
+      hours: Number.isFinite(hours) ? hours : 24,
+      embed: options.embed === true,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    console.log("OK");
+  };
+}
+
 export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
   api.registerCli(
     ({ program }) => {
@@ -4028,22 +4047,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--session-key <sessionKey>", "Optional session key to rebuild instead of all recent transcripts")
         .option("--hours <count>", "Hours of transcript history to scan", "24")
         .option("--embed", "Force embedding step for backends that support it")
-        .action(async (...args: unknown[]) => {
-          const options = (args[0] ?? {}) as Record<string, unknown>;
-          const hours = typeof options.hours === "string"
-            ? Number.parseInt(options.hours, 10)
-            : 24;
-          const result = await runConversationIndexRebuildCliCommand(orchestrator, {
-            sessionKey:
-              typeof options.sessionKey === "string" && options.sessionKey.trim().length > 0
-                ? options.sessionKey.trim()
-                : undefined,
-            hours: Number.isFinite(hours) ? hours : 24,
-            embed: options.embed === true,
-          });
-          console.log(JSON.stringify(result, null, 2));
-          console.log("OK");
-        });
+        .action(buildConversationIndexRebuildAction(orchestrator));
 
       cmd
         .command("rebuild-index")
@@ -4051,22 +4055,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--session-key <sessionKey>", "Optional session key to rebuild instead of all recent transcripts")
         .option("--hours <count>", "Hours of transcript history to scan", "24")
         .option("--embed", "Force embedding step for backends that support it")
-        .action(async (...args: unknown[]) => {
-          const options = (args[0] ?? {}) as Record<string, unknown>;
-          const hours = typeof options.hours === "string"
-            ? Number.parseInt(options.hours, 10)
-            : 24;
-          const result = await runConversationIndexRebuildCliCommand(orchestrator, {
-            sessionKey:
-              typeof options.sessionKey === "string" && options.sessionKey.trim().length > 0
-                ? options.sessionKey.trim()
-                : undefined,
-            hours: Number.isFinite(hours) ? hours : 24,
-            embed: options.embed === true,
-          });
-          console.log(JSON.stringify(result, null, 2));
-          console.log("OK");
-        });
+        .action(buildConversationIndexRebuildAction(orchestrator));
 
       cmd
         .command("graph-health")

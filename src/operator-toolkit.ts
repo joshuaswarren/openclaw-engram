@@ -633,7 +633,12 @@ async function dirSize(targetPath: string): Promise<number> {
   }
 
   let total = 0;
-  const entries = await readdir(targetPath, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(targetPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
   for (const entry of entries) {
     total += await dirSize(path.join(targetPath, entry.name));
   }
