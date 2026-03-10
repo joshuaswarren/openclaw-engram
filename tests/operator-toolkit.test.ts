@@ -249,6 +249,23 @@ test("operator inventory fail-opens when a top-level storage directory is unread
   }
 });
 
+test("operator inventory fail-opens when the latest governance run artifacts are incomplete", async () => {
+  const fixture = await makeFixture();
+  const brokenRunDir = path.join(
+    fixture.memoryDir,
+    "state",
+    "memory-governance",
+    "runs",
+    "gov-2026-03-10T00-00-00-000Z",
+  );
+  await mkdir(brokenRunDir, { recursive: true });
+  await writeFile(path.join(brokenRunDir, "summary.json"), "{\"schemaVersion\":1}", "utf-8");
+
+  const report = await runOperatorInventory({ orchestrator: fixture.orchestrator });
+
+  assert.equal(report.totals.reviewQueue, 0);
+});
+
 test("benchmark recall validates benchmark packs through the grouped operator flow", async () => {
   const fixture = await makeFixture({ evalHarnessEnabled: true });
   const packDir = path.join(fixture.root, "benchmark-pack");

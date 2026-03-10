@@ -2818,8 +2818,7 @@ function reportHasMachineReadableOutput(options: Record<string, unknown>): boole
 }
 
 function setupReportPassed(report: OperatorSetupReport): boolean {
-  return report.config.parsed
-    && report.directories.every((entry) => entry.exists && entry.writable);
+  return report.directories.every((entry) => entry.exists && entry.writable);
 }
 
 function buildConversationIndexRebuildAction(orchestrator: Orchestrator) {

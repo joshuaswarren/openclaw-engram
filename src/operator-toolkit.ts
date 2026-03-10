@@ -490,7 +490,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
 
   checks.push({
     key: "config",
-    status: configStatus.parsed ? "ok" : "error",
+    status: configStatus.parsed
+      ? "ok"
+      : options.configPath
+      ? "error"
+      : "warn",
     summary: configStatus.parsed ? "OpenClaw config loaded and Engram config parsed successfully." : "Config file could not be parsed.",
     remediation: configStatus.parsed ? undefined : "Fix the config file or set OPENCLAW_ENGRAM_CONFIG_PATH/OPENCLAW_CONFIG_PATH.",
     details: configStatus,
@@ -728,9 +732,14 @@ export async function runOperatorInventory(options: OperatorInventoryOptions): P
   const profile = await defaultStorage.readProfile();
   const footprint = await summarizeStorageFootprint(config.memoryDir);
   const reviewRunId = (await listMemoryGovernanceRuns(config.memoryDir))[0];
-  const reviewQueue = reviewRunId
-    ? (await readMemoryGovernanceRunArtifact(config.memoryDir, reviewRunId)).reviewQueue.length
-    : 0;
+  let reviewQueue = 0;
+  if (reviewRunId) {
+    try {
+      reviewQueue = (await readMemoryGovernanceRunArtifact(config.memoryDir, reviewRunId)).reviewQueue.length;
+    } catch {
+      reviewQueue = 0;
+    }
+  }
   const conversationIndex = await options.orchestrator.getConversationIndexHealth();
 
   return {

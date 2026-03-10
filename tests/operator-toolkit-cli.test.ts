@@ -188,7 +188,7 @@ test("operator toolkit JSON commands emit parseable JSON without trailing OK", a
   }
 });
 
-test("setup CLI exits non-zero without trailing OK when setup report is unhealthy", async () => {
+test("setup CLI stays healthy when config discovery misses but runtime orchestrator is valid", async () => {
   const fixture = await makeFixture();
   const action = getAction(fixture.root, ["engram", "setup"]);
   process.env.OPENCLAW_ENGRAM_CONFIG_PATH = path.join(os.tmpdir(), "missing-openclaw-config.json");
@@ -197,8 +197,27 @@ test("setup CLI exits non-zero without trailing OK when setup report is unhealth
     const result = await captureAction(action, { json: true });
     const report = JSON.parse(result.output) as { config: { parsed: boolean } };
     assert.equal(report.config.parsed, false);
-    assert.equal(result.exitCode, 1);
+    assert.equal(result.exitCode, undefined);
     assert.doesNotMatch(result.output, /\nOK$/);
+  } finally {
+    delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  }
+});
+
+test("doctor CLI warns instead of failing when config discovery misses but runtime orchestrator is valid", async () => {
+  const fixture = await makeFixture();
+  const action = getAction(fixture.root, ["engram", "doctor"]);
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = path.join(os.tmpdir(), "missing-openclaw-config.json");
+
+  try {
+    const result = await captureAction(action, { json: true });
+    const report = JSON.parse(result.output) as {
+      ok: boolean;
+      checks: Array<{ key: string; status: string }>;
+    };
+    assert.equal(report.ok, true);
+    assert.equal(report.checks.some((check) => check.key === "config" && check.status === "warn"), true);
+    assert.equal(result.exitCode, undefined);
   } finally {
     delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
   }
