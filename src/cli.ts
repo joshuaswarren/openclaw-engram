@@ -34,7 +34,11 @@ import {
   restoreMemoryGovernanceRun,
   runMemoryGovernance,
 } from "./maintenance/memory-governance.js";
-import { rebuildMemoryProjection } from "./maintenance/rebuild-memory-projection.js";
+import {
+  rebuildMemoryProjection,
+  repairMemoryProjection,
+  verifyMemoryProjection,
+} from "./maintenance/rebuild-memory-projection.js";
 import { rebuildObservations } from "./maintenance/rebuild-observations.js";
 import { migrateObservations } from "./maintenance/migrate-observations.js";
 import {
@@ -328,6 +332,22 @@ export interface RebuildMemoryProjectionCliCommandOptions {
   memoryDir: string;
   write?: boolean;
   now?: Date;
+  updatedAfter?: string;
+  updatedBefore?: string;
+}
+
+export interface VerifyMemoryProjectionCliCommandOptions {
+  memoryDir: string;
+  updatedAfter?: string;
+  updatedBefore?: string;
+}
+
+export interface RepairMemoryProjectionCliCommandOptions {
+  memoryDir: string;
+  write?: boolean;
+  now?: Date;
+  updatedAfter?: string;
+  updatedBefore?: string;
 }
 
 export interface MemoryTimelineCliCommandOptions {
@@ -787,6 +807,30 @@ export async function runRebuildMemoryProjectionCliCommand(
     memoryDir: options.memoryDir,
     dryRun: options.write !== true,
     now: options.now,
+    updatedAfter: options.updatedAfter,
+    updatedBefore: options.updatedBefore,
+  });
+}
+
+export async function runVerifyMemoryProjectionCliCommand(
+  options: VerifyMemoryProjectionCliCommandOptions,
+) {
+  return verifyMemoryProjection({
+    memoryDir: options.memoryDir,
+    updatedAfter: options.updatedAfter,
+    updatedBefore: options.updatedBefore,
+  });
+}
+
+export async function runRepairMemoryProjectionCliCommand(
+  options: RepairMemoryProjectionCliCommandOptions,
+) {
+  return repairMemoryProjection({
+    memoryDir: options.memoryDir,
+    dryRun: options.write !== true,
+    now: options.now,
+    updatedAfter: options.updatedAfter,
+    updatedBefore: options.updatedBefore,
   });
 }
 
@@ -4650,11 +4694,24 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("rebuild-memory-projection")
         .description("Rebuild the derived memory projection store from markdown memories and lifecycle events (dry-run by default)")
         .option("--write", "Write rebuilt projection (default: dry-run)")
+        .option("--namespace <ns>", "Namespace to rebuild (default: config defaultNamespace)", "")
+        .option("--updated-after <iso>", "Only report/rebuild memories updated on or after this ISO timestamp", "")
+        .option("--updated-before <iso>", "Only report/rebuild memories updated on or before this ISO timestamp", "")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runRebuildMemoryProjectionCliCommand({
-            memoryDir: orchestrator.config.memoryDir,
+            memoryDir,
             write: options.write === true,
+            updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
+              ? options.updatedAfter.trim()
+              : undefined,
+            updatedBefore: typeof options.updatedBefore === "string" && options.updatedBefore.trim().length > 0
+              ? options.updatedBefore.trim()
+              : undefined,
           });
 
           console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
@@ -4662,8 +4719,80 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`Current-state rows: ${result.currentRows}`);
           console.log(`Timeline rows: ${result.timelineRows}`);
           console.log(`Used lifecycle ledger: ${result.usedLifecycleLedger ? "yes" : "no"}`);
+          console.log(`Updated-after scope: ${result.scope.updatedAfter ?? "none"}`);
+          console.log(`Updated-before scope: ${result.scope.updatedBefore ?? "none"}`);
           console.log(`Output path: ${result.outputPath}`);
           if (result.backupPath) console.log(`Backup path: ${result.backupPath}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("verify-memory-projection")
+        .description("Verify the derived memory projection against markdown memories and lifecycle events")
+        .option("--namespace <ns>", "Namespace to verify (default: config defaultNamespace)", "")
+        .option("--updated-after <iso>", "Only verify memories updated on or after this ISO timestamp", "")
+        .option("--updated-before <iso>", "Only verify memories updated on or before this ISO timestamp", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const result = await runVerifyMemoryProjectionCliCommand({
+            memoryDir,
+            updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
+              ? options.updatedAfter.trim()
+              : undefined,
+            updatedBefore: typeof options.updatedBefore === "string" && options.updatedBefore.trim().length > 0
+              ? options.updatedBefore.trim()
+              : undefined,
+          });
+
+          console.log(`Projection exists: ${result.projectionExists ? "yes" : "no"}`);
+          console.log(`OK: ${result.ok ? "yes" : "no"}`);
+          console.log(`Expected current rows: ${result.expectedCurrentRows}`);
+          console.log(`Actual current rows: ${result.actualCurrentRows}`);
+          console.log(`Expected timeline rows: ${result.expectedTimelineRows}`);
+          console.log(`Actual timeline rows: ${result.actualTimelineRows}`);
+          console.log(`Missing current memories: ${result.missingCurrentMemoryIds.join(", ") || "none"}`);
+          console.log(`Extra current memories: ${result.extraCurrentMemoryIds.join(", ") || "none"}`);
+          console.log(`Mismatched current memories: ${result.mismatchedCurrentMemoryIds.join(", ") || "none"}`);
+          console.log(`Missing timeline events: ${result.missingTimelineEventIds.join(", ") || "none"}`);
+          console.log(`Extra timeline events: ${result.extraTimelineEventIds.join(", ") || "none"}`);
+          console.log("OK");
+        });
+
+      cmd
+        .command("repair-memory-projection")
+        .description("Repair projection drift by rebuilding the derived projection (dry-run by default)")
+        .option("--write", "Write repaired projection (default: dry-run)")
+        .option("--namespace <ns>", "Namespace to repair (default: config defaultNamespace)", "")
+        .option("--updated-after <iso>", "Only repair memories updated on or after this ISO timestamp", "")
+        .option("--updated-before <iso>", "Only repair memories updated on or before this ISO timestamp", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const result = await runRepairMemoryProjectionCliCommand({
+            memoryDir,
+            write: options.write === true,
+            updatedAfter: typeof options.updatedAfter === "string" && options.updatedAfter.trim().length > 0
+              ? options.updatedAfter.trim()
+              : undefined,
+            updatedBefore: typeof options.updatedBefore === "string" && options.updatedBefore.trim().length > 0
+              ? options.updatedBefore.trim()
+              : undefined,
+          });
+
+          console.log(`Dry run: ${result.dryRun ? "yes" : "no"}`);
+          console.log(`Repaired: ${result.repaired ? "yes" : "no"}`);
+          console.log(`Verification OK: ${result.verify.ok ? "yes" : "no"}`);
+          if (result.rebuild) {
+            console.log(`Output path: ${result.rebuild.outputPath}`);
+            if (result.rebuild.backupPath) console.log(`Backup path: ${result.rebuild.backupPath}`);
+          }
           console.log("OK");
         });
 

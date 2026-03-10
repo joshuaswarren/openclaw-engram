@@ -371,6 +371,16 @@ Engram can also rebuild a derived SQLite projection for current-state inspection
 # Rebuild the derived projection from markdown memory files plus lifecycle events
 openclaw engram rebuild-memory-projection
 
+# Scope the rebuild to one namespace root and one updated-at window
+openclaw engram rebuild-memory-projection --namespace shared --updated-after 2026-03-01T00:00:00Z --write
+
+# Verify projection drift against authoritative markdown + lifecycle data
+openclaw engram verify-memory-projection
+
+# Preview a projection repair, then apply it
+openclaw engram repair-memory-projection
+openclaw engram repair-memory-projection --write
+
 # Inspect one memory timeline from the derived projection (or fail-open fallback path)
 openclaw engram memory-timeline fact-123
 ```
@@ -384,6 +394,8 @@ openclaw engram rebuild-memory-projection --write
 Operational guarantees:
 - markdown memories remain authoritative
 - projection rebuilds are backup-first and safe to discard/regenerate
+- projection verify/repair can target a namespace root plus optional updated-at window
+- scoped projection rebuilds only replace rows inside the selected window; out-of-scope rows stay untouched
 - timeline reads fail open to the lifecycle ledger when projection data is unavailable
 - projection writes use a separate derived SQLite store under `state/memory-projection.sqlite`
 
