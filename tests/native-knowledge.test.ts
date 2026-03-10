@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import {
   collectNativeKnowledgeChunks,
   formatNativeKnowledgeSection,
+  resolveCuratedIncludeFilesStatePath,
   searchNativeKnowledge,
 } from "../src/native-knowledge.js";
 
@@ -138,6 +139,65 @@ test("collectNativeKnowledgeChunks preserves exact line ranges when long section
       { startLine: 6, endLine: 6, chunkId: "MEMORY.md:6-6" },
     ],
   );
+});
+
+test("collectNativeKnowledgeChunks persists incremental state for includeFiles when memoryDir is available", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-native-knowledge-sync-"));
+  const workspaceDir = path.join(root, "workspace");
+  const memoryDir = path.join(root, "memory");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, "MEMORY.md"),
+    "# Memory\n\nTrack rollout checkpoints here.\n",
+    "utf-8",
+  );
+
+  const config = {
+    enabled: true,
+    includeFiles: ["MEMORY.md"],
+    maxChunkChars: 200,
+    maxResults: 4,
+    maxChars: 2400,
+    stateDir: "state/native-knowledge",
+    obsidianVaults: [],
+  };
+
+  try {
+    const first = await collectNativeKnowledgeChunks({
+      workspaceDir,
+      memoryDir,
+      config,
+      defaultNamespace: "default",
+    });
+    assert.equal(first.length, 1);
+
+    const statePath = resolveCuratedIncludeFilesStatePath(memoryDir, config);
+    const firstState = JSON.parse(await readFile(statePath, "utf-8")) as {
+      version: number;
+      files: Record<string, { deleted: boolean; chunks: unknown[] }>;
+    };
+    assert.equal(firstState.version, 1);
+    assert.equal(firstState.files["MEMORY.md"]?.deleted, false);
+    assert.equal(firstState.files["MEMORY.md"]?.chunks.length, 1);
+
+    await unlink(path.join(workspaceDir, "MEMORY.md"));
+    const second = await collectNativeKnowledgeChunks({
+      workspaceDir,
+      memoryDir,
+      config,
+      defaultNamespace: "default",
+    });
+    assert.equal(second.length, 0);
+
+    const secondState = JSON.parse(await readFile(statePath, "utf-8")) as {
+      files: Record<string, { deleted: boolean; chunks: unknown[] }>;
+    };
+    assert.equal(secondState.files["MEMORY.md"]?.deleted, true);
+    assert.equal(secondState.files["MEMORY.md"]?.chunks.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("searchNativeKnowledge ranks identity and phrase matches highest", () => {

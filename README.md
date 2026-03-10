@@ -179,7 +179,7 @@ If you want a supported starting point for the advanced surface, set `memoryOsPr
 openclaw engram stats                        # Memory counts, search status, health
 openclaw engram setup                       # Guided first-run setup + directory scaffolding
 openclaw engram doctor                      # Aggregated setup/runtime diagnostics with remediation hints
-openclaw engram inventory                   # Memory, namespace, review queue, and storage inventory
+openclaw engram inventory                   # Memory, namespace, review queue, storage, and native-knowledge inventory
 openclaw engram search "your query"          # Search memories from CLI
 openclaw engram compat --strict              # Compatibility check
 openclaw engram benchmark recall             # Status/validate/compare/snapshot recall benchmark artifacts
@@ -321,7 +321,7 @@ Example:
 }
 ```
 
-When the OpenClaw workspace adapter is enabled, Engram incrementally syncs only the allowlisted workspace artifacts, preserves source kind plus date/session/workflow/author metadata, tombstones deleted files in backend-agnostic state under `{memoryDir}/state/native-knowledge`, and dedupes exact overlaps against generic `includeFiles` so bootstrap docs are not injected twice.
+Direct `includeFiles` plus the OpenClaw workspace adapter both sync into backend-agnostic state under `{memoryDir}/state/native-knowledge`, preserve source metadata and deletion tombstones, and dedupe exact overlaps so bootstrap docs are not injected twice.
 
 When an Obsidian vault adapter is enabled, Engram syncs active notes into backend-agnostic native-knowledge state under `{memoryDir}/state/native-knowledge`, preserves aliases, inline/frontmatter tags, wikilinks, optional backlinks, and daily-note dates, and then blends those chunks into the existing `Curated Workspace Knowledge` recall section with namespace filtering applied before injection.
 

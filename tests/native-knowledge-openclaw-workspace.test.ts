@@ -259,6 +259,45 @@ test("openclaw workspace adapter respects recall namespace filtering", async () 
   assert.equal(visibleChunks.some((chunk) => chunk.sourcePath === "handoffs/shared.md"), true);
 });
 
+test("openclaw workspace adapter excludes private chunks from shared recall scopes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-openclaw-workspace-private-"));
+  const workspaceDir = path.join(root, "workspace");
+  const memoryDir = path.join(root, "memory");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(path.join(workspaceDir, "automation", "shared"), { recursive: true });
+
+  await writeFile(
+    path.join(workspaceDir, "IDENTITY.md"),
+    [
+      "---",
+      "privacyClass: private",
+      "---",
+      "# Identity",
+      "",
+      "Private operator note.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  await writeFile(
+    path.join(workspaceDir, "automation", "shared", "status.md"),
+    "# Automation Status\n\nShared monitor note.\n",
+    "utf-8",
+  );
+
+  const chunks = await collectNativeKnowledgeChunks({
+    workspaceDir,
+    memoryDir,
+    config: baseConfig(),
+    recallNamespaces: ["shared"],
+    defaultNamespace: "default",
+  });
+
+  assert.equal(chunks.some((chunk) => chunk.sourcePath === "IDENTITY.md"), false);
+  assert.equal(chunks.some((chunk) => chunk.sourcePath === "automation/shared/status.md"), true);
+});
+
 test("collectNativeKnowledgeChunks keeps bootstrap files in includeFiles when the workspace adapter cannot run", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "engram-openclaw-workspace-bootstrap-fallback-"));
   const workspaceDir = path.join(root, "workspace");

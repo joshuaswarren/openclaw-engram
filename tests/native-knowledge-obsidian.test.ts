@@ -56,6 +56,7 @@ async function buildHarness(prefix: string): Promise<{
 
 test("obsidian vault sync preserves aliases tags wikilinks backlinks and daily-note dates", async () => {
   const { memoryDir, workspaceDir, vaultDir, config } = await buildHarness("engram-obsidian-native");
+  config.obsidianVaults[0]!.privacyClass = undefined;
   await mkdir(path.join(vaultDir, "Daily"), { recursive: true });
   await mkdir(path.join(vaultDir, "Projects"), { recursive: true });
 
@@ -153,6 +154,7 @@ test("obsidian vault sync keeps note aliases separate from aliased wikilinks", a
 
 test("obsidian vault sync parses CRLF frontmatter metadata", async () => {
   const { memoryDir, workspaceDir, vaultDir, config } = await buildHarness("engram-obsidian-crlf");
+  config.obsidianVaults[0]!.privacyClass = undefined;
   await mkdir(path.join(vaultDir, "Daily"), { recursive: true });
 
   await writeFile(
