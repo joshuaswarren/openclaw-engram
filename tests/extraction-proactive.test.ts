@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ExtractionEngine } from "../src/extraction.ts";
 import { parseConfig } from "../src/config.ts";
+import { ProactiveExtractionResultSchema } from "../src/schemas.ts";
 import type { ExtractionResult } from "../src/types.ts";
 
 test("generateProactiveQuestions does not call cloud fallback when localLlmFallback is false", async () => {
@@ -58,6 +59,7 @@ test("applyProactiveQuestionPass answers proactive questions into additive memor
         confidence: 0.91,
         tags: ["deadline"],
         source: "proactive",
+        promptedByQuestion: "What deadline did they commit to?",
       },
     ],
     profileUpdates: ["User prefers concise review status updates."],
@@ -67,6 +69,16 @@ test("applyProactiveQuestionPass answers proactive questions into additive memor
         type: "person",
         facts: ["Owns the review timeline."],
         source: "proactive",
+        promptedByQuestion: "What deadline did they commit to?",
+      },
+    ],
+    relationships: [
+      {
+        source: "Alex",
+        target: "review timeline",
+        label: "owns",
+        extractionSource: "proactive",
+        promptedByQuestion: "What deadline did they commit to?",
       },
     ],
     questions: [
@@ -94,10 +106,55 @@ test("applyProactiveQuestionPass answers proactive questions into additive memor
   const result = await (engine as any).applyProactiveQuestionPass("conversation", base);
   assert.equal(result.facts.length, 2);
   assert.equal(result.facts[1]?.source, "proactive");
+  assert.equal(result.facts[1]?.promptedByQuestion, "What deadline did they commit to?");
   assert.equal(result.entities.length, 1);
   assert.equal(result.entities[0]?.source, "proactive");
+  assert.equal(result.entities[0]?.promptedByQuestion, "What deadline did they commit to?");
   assert.deepEqual(result.questions, base.questions);
   assert.deepEqual(result.profileUpdates, []);
+});
+
+test("normalizeExtractionResultPayload preserves proactive promptedByQuestion provenance", () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+  });
+
+  const engine = new ExtractionEngine(config);
+  const parsed = ProactiveExtractionResultSchema.parse({
+    facts: [
+      {
+        category: "fact",
+        content: "Alex committed to ship the review on Friday.",
+        confidence: 0.93,
+        tags: ["deadline"],
+        promptedByQuestion: "What deadline did they commit to?",
+      },
+    ],
+    profileUpdates: [],
+    entities: [
+      {
+        name: "Alex",
+        type: "person",
+        facts: ["Owns the review timeline."],
+        promptedByQuestion: "Who owns the review timeline?",
+      },
+    ],
+    relationships: [
+      {
+        source: "Alex",
+        target: "review timeline",
+        label: "owns",
+        promptedByQuestion: "Who owns the review timeline?",
+      },
+    ],
+  });
+
+  const normalized = (engine as any).normalizeExtractionResultPayload(parsed) as ExtractionResult;
+  assert.equal(normalized.facts[0]?.promptedByQuestion, "What deadline did they commit to?");
+  assert.equal(normalized.entities[0]?.promptedByQuestion, "Who owns the review timeline?");
+  assert.equal(normalized.relationships?.[0]?.promptedByQuestion, "Who owns the review timeline?");
 });
 
 test("applyProactiveQuestionPass filters proactive facts by allowlist and confidence", async () => {

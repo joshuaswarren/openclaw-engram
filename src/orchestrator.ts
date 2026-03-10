@@ -5123,7 +5123,7 @@ export class Orchestrator {
             const chunkImportance = scoreImportance(chunk.content, writeCategory, fact.tags);
             const chunkWriteSource = (fact as any).source === "proactive"
               ? "chunking-proactive"
-              : undefined;
+              : "chunking";
 
             await targetStorage.writeChunk(
               parentId,

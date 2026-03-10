@@ -134,6 +134,8 @@ export class ExtractionEngine {
             facts: Array.isArray(e?.facts)
               ? e.facts.filter((f: any) => typeof f === "string")
               : [],
+            promptedByQuestion:
+              typeof e?.promptedByQuestion === "string" ? e.promptedByQuestion : undefined,
           }))
           .filter((e: any) => e.name.length > 0)
       : [];
@@ -146,6 +148,8 @@ export class ExtractionEngine {
             confidence: typeof f?.confidence === "number" ? f.confidence : 0.7,
             tags: Array.isArray(f?.tags) ? f.tags.filter((t: any) => typeof t === "string") : [],
             entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
+            promptedByQuestion:
+              typeof f?.promptedByQuestion === "string" ? f.promptedByQuestion : undefined,
           }))
           .filter((f: any) => f.content.length > 0)
       : [];
@@ -178,6 +182,13 @@ export class ExtractionEngine {
               typeof r?.target === "string" &&
               typeof r?.label === "string",
           )
+            .map((r: any) => ({
+              source: r.source,
+              target: r.target,
+              label: r.label,
+              promptedByQuestion:
+                typeof r?.promptedByQuestion === "string" ? r.promptedByQuestion : undefined,
+            }))
         : undefined,
     };
   }
@@ -1189,6 +1200,11 @@ Consolidate the new memories against existing ones.`,
     );
     if (fallbackResult) {
       log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
+      const normalizedEntityUpdates = fallbackResult.entityUpdates.map((entity) => ({
+        ...entity,
+        promptedByQuestion:
+          typeof entity.promptedByQuestion === "string" ? entity.promptedByQuestion : undefined,
+      }));
       return this.sanitizeConsolidationResult({
         items: fallbackResult.items.map((item) => ({
           ...item,
@@ -1196,7 +1212,7 @@ Consolidate the new memories against existing ones.`,
           updatedContent: item.updatedContent ?? undefined,
         })),
         profileUpdates: fallbackResult.profileUpdates,
-        entityUpdates: fallbackResult.entityUpdates,
+        entityUpdates: normalizedEntityUpdates,
       });
     }
 
