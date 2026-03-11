@@ -4,12 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+The notes below describe the current protected-branch-safe release flow on `main`.
+
 ### Added
 - **`traceRecallContent` config option**: When set to `true`, Engram populates `RecallTraceEvent.recalledContent` with the full memory context injected into each agent turn. Allows external trace collectors (Langfuse, LangSmith, etc.) to see exactly which memories were recalled per conversation turn. Disabled by default — opt in only when you want memory content flowing to external systems.
 - Generic memory lifecycle ledger foundation: Engram now records append-only `created`, `updated`, `archived`, and `superseded` events under the local `state/memory-lifecycle-ledger.jsonl`, plus a rebuild utility and CLI for regenerating that ledger from markdown memory state.
 
 ### Changed
-- Release automation now promotes `CHANGELOG.md` from `Unreleased` into a dated versioned section during the auto-release workflow, pushes that release commit back to `main`, and no longer relies on PR authors to keep the changelog release ledger in sync by hand.
+- Release automation now uses a protected-branch-safe flow: it validates the merged `main` commit, creates a local release commit with the package version bump, pushes only the annotated release tag, and publishes from that tagged source instead of trying to push release metadata back to protected `main`.
+- `CHANGELOG.md` on `main` now remains the contributor-facing `Unreleased` ledger, while GitHub Releases provide the published per-version notes for shipped tags.
 - Changelog guard now treats `CHANGELOG.md` as release-workflow owned by default and only validates format when a PR edits the changelog directly.
 - `THEORY.MD` is now ignored and removed from the repo so it does not keep reappearing in commits.
 
