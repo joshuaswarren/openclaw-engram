@@ -6114,7 +6114,16 @@ export class Orchestrator {
         ? Math.max(0, Math.floor(options.eventLimit))
         : 500;
 
-    const previousState = await this.storage.readCompressionGuidelineOptimizerState();
+    const [activeState, draftState] = await Promise.all([
+      this.storage.readCompressionGuidelineOptimizerState(),
+      this.storage.readCompressionGuidelineDraftState().catch(() => null),
+    ]);
+    const previousState =
+      draftState &&
+      ((activeState?.guidelineVersion ?? 0) < draftState.guidelineVersion ||
+        (activeState?.guidelineVersion ?? 0) === draftState.guidelineVersion)
+        ? draftState
+        : activeState;
 
     if (!this.config.compressionGuidelineLearningEnabled) {
       return {
@@ -6223,7 +6232,7 @@ export class Orchestrator {
       changedRules,
       semanticRefinementApplied,
       persisted: !dryRun,
-      draftContentHash: contentHash,
+      draftContentHash: dryRun ? null : contentHash,
     };
   }
 

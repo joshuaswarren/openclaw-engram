@@ -59,7 +59,8 @@ function buildHarness(resultOverride?: {
         eventCount: resultOverride?.eventCount ?? 22,
         previousGuidelineVersion: resultOverride?.previousGuidelineVersion ?? 3,
         nextGuidelineVersion: resultOverride?.nextGuidelineVersion ?? 4,
-        draftContentHash: resultOverride?.draftContentHash ?? "hash-123",
+        draftContentHash:
+          resultOverride?.draftContentHash ?? (resultOverride?.dryRun === true ? null : "hash-123"),
         changedRules: resultOverride?.changedRules ?? 2,
         semanticRefinementApplied: resultOverride?.semanticRefinementApplied ?? false,
         persisted: resultOverride?.persisted ?? true,
@@ -134,7 +135,7 @@ test("compression_guidelines_optimize passes dryRun/eventLimit and returns summa
   assert.match(text, /dryRun=true/);
   assert.match(text, /persisted=false/);
   assert.match(text, /guidelineVersion: 5 -> 6/);
-  assert.match(text, /draftContentHash=hash-123/);
+  assert.match(text, /draftContentHash=none/);
   assert.match(text, /changedRules=1/);
   assert.match(text, /semanticRefinementApplied=true/);
 });

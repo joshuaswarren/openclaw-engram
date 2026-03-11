@@ -104,6 +104,7 @@ test("optimizeCompressionGuidelines does not publish new state for dry-run-only 
         eventCounts: { total: 12, applied: 8, skipped: 2, failed: 2 },
         guidelineVersion: 9,
       }),
+      readCompressionGuidelineDraftState: async () => null,
       readMemoryActionEvents: async () => [
         { timestamp: "2026-02-27T00:00:00.000Z", action: "store_note", outcome: "applied", dryRun: true },
         { timestamp: "2026-02-27T00:01:00.000Z", action: "discard", outcome: "skipped", dryRun: true },
@@ -153,6 +154,7 @@ test("optimizeCompressionGuidelines over-fetches until it collects enough non-dr
     },
     storage: {
       readCompressionGuidelineOptimizerState: async () => null,
+      readCompressionGuidelineDraftState: async () => null,
       readMemoryActionEvents: async (limit: number) => {
         readLimits.push(limit);
         return ledger.slice(-limit);
@@ -240,6 +242,65 @@ test("optimizeCompressionGuidelines stages a draft revision without overwriting 
     assert.equal((draftState?.guidelineVersion ?? 0) > (activeState?.guidelineVersion ?? 0), true);
     assert.equal(Array.isArray(draftState?.ruleUpdates), true);
     assert.equal(result.draftContentHash, draftState?.contentHash ?? null);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("optimizeCompressionGuidelines increments staged guideline versions from the latest draft", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-guideline-restage-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      compressionGuidelineLearningEnabled: true,
+      compressionGuidelineSemanticRefinementEnabled: false,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    await orchestrator.storage.writeCompressionGuidelines("# Compression Guidelines\n\n## Suggested Guidelines\n- store_note: hold\n");
+    await orchestrator.storage.writeCompressionGuidelineOptimizerState({
+      version: 2,
+      updatedAt: "2026-03-10T00:00:00.000Z",
+      sourceWindow: {
+        from: "2026-03-09T00:00:00.000Z",
+        to: "2026-03-10T00:00:00.000Z",
+      },
+      eventCounts: {
+        total: 3,
+        applied: 2,
+        skipped: 1,
+        failed: 0,
+      },
+      guidelineVersion: 4,
+      activationState: "active",
+    });
+    await orchestrator.storage.appendMemoryActionEvents([
+      {
+        timestamp: "2026-03-11T00:00:00.000Z",
+        action: "summarize_node",
+        outcome: "failed",
+        reason: "quality=poor",
+      },
+      {
+        timestamp: "2026-03-11T00:05:00.000Z",
+        action: "summarize_node",
+        outcome: "applied",
+        reason: "quality=good",
+      },
+    ]);
+
+    const first = await orchestrator.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 50 });
+    const firstDraftState = await orchestrator.storage.readCompressionGuidelineDraftState();
+    assert.equal(first.nextGuidelineVersion, 5);
+    assert.equal(firstDraftState?.guidelineVersion, 5);
+
+    const second = await orchestrator.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 50 });
+    const secondDraftState = await orchestrator.storage.readCompressionGuidelineDraftState();
+    assert.equal(second.nextGuidelineVersion, 6);
+    assert.equal(secondDraftState?.guidelineVersion, 6);
+    assert.equal((secondDraftState?.version ?? 0) > (firstDraftState?.version ?? 0), true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
