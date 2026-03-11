@@ -1139,6 +1139,7 @@ export interface CompressionGuidelineOptimizerState {
   sourceWindow: CompressionGuidelineOptimizerSourceWindow;
   eventCounts: CompressionGuidelineOptimizerEventCounts;
   guidelineVersion: number;
+  contentHash?: string;
   activationState?: CompressionGuidelineActivationState;
   actionSummaries?: CompressionGuidelineOptimizerActionSummary[];
   ruleUpdates?: CompressionGuidelineOptimizerRuleUpdate[];

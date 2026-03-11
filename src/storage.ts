@@ -2122,6 +2122,10 @@ export class StorageManager {
       this.readCompressionGuidelineDraftState(),
     ]);
     if (!draftContent || !draftState) return false;
+    if (draftState.contentHash) {
+      const contentHash = createHash("sha256").update(draftContent).digest("hex");
+      if (contentHash !== draftState.contentHash) return false;
+    }
 
     await this.writeCompressionGuidelines(draftContent);
     await this.writeCompressionGuidelineOptimizerState({
@@ -2185,6 +2189,10 @@ export class StorageManager {
         parsed?.activationState === "draft" || parsed?.activationState === "active"
           ? parsed.activationState
           : undefined;
+      const contentHash =
+        typeof parsed?.contentHash === "string" && parsed.contentHash.length > 0
+          ? parsed.contentHash
+          : undefined;
       const actionSummaries = Array.isArray(parsed?.actionSummaries)
         ? parsed.actionSummaries.filter(isValidActionSummary)
         : undefined;
@@ -2224,6 +2232,7 @@ export class StorageManager {
           failed: eventCounts.failed,
         },
         guidelineVersion: parsed.guidelineVersion,
+        ...(contentHash ? { contentHash } : {}),
         ...(activationState ? { activationState } : {}),
         ...(actionSummaries ? { actionSummaries } : {}),
         ...(ruleUpdates ? { ruleUpdates } : {}),

@@ -6196,6 +6196,7 @@ export class Orchestrator {
     const changedRules = refinedCandidate.ruleUpdates.filter((rule) => rule.delta !== 0).length;
 
     if (!dryRun) {
+      const contentHash = createHash("sha256").update(content).digest("hex");
       await this.storage.writeCompressionGuidelineDraft(content);
       await this.storage.writeCompressionGuidelineDraftState({
         version: refinedCandidate.optimizerVersion,
@@ -6203,6 +6204,7 @@ export class Orchestrator {
         sourceWindow: refinedCandidate.sourceWindow,
         eventCounts: refinedCandidate.eventCounts,
         guidelineVersion: refinedCandidate.guidelineVersion,
+        contentHash,
         activationState: "draft",
         actionSummaries: refinedCandidate.actionSummaries,
         ruleUpdates: refinedCandidate.ruleUpdates,

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
@@ -173,6 +174,7 @@ test("StorageManager stages and activates compression guideline drafts", async (
         failed: 1,
       },
       guidelineVersion: 3,
+      contentHash: createHash("sha256").update(draftContent).digest("hex"),
       activationState: "draft" as const,
       ruleUpdates: [
         {
@@ -202,6 +204,45 @@ test("StorageManager stages and activates compression guideline drafts", async (
       ...draftState,
       activationState: "active",
     });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager refuses to activate mismatched compression guideline drafts", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-policy-opt-draft-mismatch-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const draftContent = "# Compression Guidelines\n\n## Suggested Guidelines\n- store_note: hold\n";
+    const draftState = {
+      version: 2,
+      updatedAt: "2026-03-11T00:00:00.000Z",
+      sourceWindow: {
+        from: "2026-03-10T00:00:00.000Z",
+        to: "2026-03-11T00:00:00.000Z",
+      },
+      eventCounts: {
+        total: 4,
+        applied: 2,
+        skipped: 1,
+        failed: 1,
+      },
+      guidelineVersion: 3,
+      contentHash: createHash("sha256").update("different content").digest("hex"),
+      activationState: "draft" as const,
+    };
+
+    await storage.writeCompressionGuidelineDraft(draftContent);
+    await storage.writeCompressionGuidelineDraftState(draftState);
+
+    const activated = await storage.activateCompressionGuidelineDraft();
+    assert.equal(activated, false);
+    assert.equal(await storage.readCompressionGuidelines(), null);
+    assert.equal(await storage.readCompressionGuidelineOptimizerState(), null);
+    assert.equal(await storage.readCompressionGuidelineDraft(), draftContent);
+    assert.deepEqual(await storage.readCompressionGuidelineDraftState(), draftState);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
