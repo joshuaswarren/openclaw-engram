@@ -142,3 +142,60 @@ test("shared-context cross-signals captures multi-source overlap and feedback co
     await rm(sharedDir, { recursive: true, force: true });
   }
 });
+
+test("shared-context cross-signals ranks risks and preserves detailed roundtable feedback", async () => {
+  const { manager, memoryDir, sharedDir } = await buildManager("engram-shared-feedback");
+  try {
+    const date = "2026-03-04";
+    await manager.writeAgentOutput({
+      agentId: "generalist",
+      title: "Checkout rollout watch",
+      content: "Observed checkout latency and approval notes.",
+      createdAt: isoForDate(date, "09:00:00"),
+    });
+    await manager.writeAgentOutput({
+      agentId: "oracle",
+      title: "Checkout latency review",
+      content: "Confirmed checkout latency overlap and approval notes.",
+      createdAt: isoForDate(date, "09:05:00"),
+    });
+
+    for (let i = 0; i < 8; i += 1) {
+      await manager.appendFeedback({
+        agent: `agent-${i}`,
+        decision: "approved_with_feedback",
+        reason: `medium follow-up ${i}`,
+        severity: "medium",
+        date: `${date}T10:0${i}:00Z`,
+      });
+    }
+    await manager.appendFeedback({
+      agent: "blocker-bot",
+      decision: "rejected",
+      reason: "critical checkout blocker",
+      severity: "high",
+      date: `${date}T11:00:00Z`,
+      refs: ["memory://blocker"],
+    });
+    await manager.appendFeedback({
+      agent: "approver",
+      decision: "approved",
+      reason: "ship it",
+      severity: "low",
+      date: `${date}T11:05:00Z`,
+    });
+
+    const result = await manager.curateDaily({ date });
+    const crossSignalsMarkdown = await readFile(result.crossSignalsMarkdownPath, "utf-8");
+    const roundtable = await readFile(result.roundtablePath, "utf-8");
+
+    assert.match(crossSignalsMarkdown, /\[blocker-bot\] rejected: critical checkout blocker/);
+    assert.doesNotMatch(crossSignalsMarkdown, /\[agent-7\] approved_with_feedback: medium follow-up 7/);
+    assert.match(roundtable, /\[approver\] approved: ship it/);
+    assert.equal((roundtable.match(/Decision totals:/g) ?? []).length, 1);
+    assert.match(roundtable, /\[blocker-bot\] rejected: critical checkout blocker/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
+  }
+});

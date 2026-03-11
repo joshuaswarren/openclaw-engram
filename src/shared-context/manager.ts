@@ -261,6 +261,7 @@ interface SharedCrossSignalReport {
   sourceCount: number;
   feedbackCount: number;
   feedbackByDecision: Record<"approved" | "approved_with_feedback" | "rejected", number>;
+  feedbackEntries: SharedFeedbackEntry[];
   sources: SharedCrossSignalSource[];
   overlaps: SharedCrossSignalOverlap[];
   semantic: {
@@ -287,6 +288,45 @@ export interface SharedDailyCurationResult {
   crossSignalsPath: string;
   crossSignalsMarkdownPath: string;
   overlapCount: number;
+}
+
+function feedbackDecisionPriority(decision: SharedFeedbackEntry["decision"]): number {
+  switch (decision) {
+    case "rejected":
+      return 3;
+    case "approved_with_feedback":
+      return 2;
+    case "approved":
+      return 1;
+  }
+}
+
+function feedbackSeverityPriority(severity: SharedFeedbackEntry["severity"]): number {
+  switch (severity) {
+    case "high":
+      return 3;
+    case "medium":
+      return 2;
+    case "low":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function compareFeedbackPriority(a: SharedFeedbackEntry, b: SharedFeedbackEntry): number {
+  return (
+    feedbackDecisionPriority(b.decision) - feedbackDecisionPriority(a.decision)
+    || feedbackSeverityPriority(b.severity) - feedbackSeverityPriority(a.severity)
+    || a.date.localeCompare(b.date)
+  );
+}
+
+function formatFeedbackLine(entry: SharedFeedbackEntry): string {
+  const extras: string[] = [`feedback: ${entry.date}`];
+  if (entry.severity) extras.push(`severity: ${entry.severity}`);
+  if (entry.refs?.length) extras.push(`refs: ${entry.refs.join(", ")}`);
+  return `- [${entry.agent}] ${entry.decision}: ${entry.reason} [${extras.join("; ")}]`;
 }
 
 export class SharedContextManager {
@@ -576,6 +616,7 @@ export class SharedContextManager {
       sourceCount: sources.length,
       feedbackCount: feedback.length,
       feedbackByDecision,
+      feedbackEntries: [...feedback].sort(compareFeedbackPriority),
       sources,
       overlaps: mergedOverlaps,
       semantic: {
@@ -596,14 +637,13 @@ export class SharedContextManager {
       : mergedOverlaps.slice(0, maxSummaryItems).map((entry) =>
           `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")}) [sources: ${entry.sourcePaths.join(", ")}]`
         );
-    const riskSignals = feedback
+    const riskSignals = [...feedback]
       .filter((entry) => entry.decision !== "approved" || entry.severity === "high" || entry.severity === "medium")
+      .sort(compareFeedbackPriority)
       .slice(0, maxSummaryItems);
     const riskLines = riskSignals.length === 0
       ? ["- No explicit blockers or elevated review risks recorded."]
-      : riskSignals.map((entry) =>
-          `- [${entry.agent}] ${entry.decision}: ${entry.reason} [feedback: ${entry.date}${entry.refs?.length ? `; refs: ${entry.refs.join(", ")}` : ""}]`
-        );
+      : riskSignals.map((entry) => formatFeedbackLine(entry));
     const promotionCandidates = mergedOverlaps
       .filter((entry) => entry.agentCount >= 3)
       .slice(0, maxSummaryItems);
@@ -655,6 +695,9 @@ export class SharedContextManager {
     const date = opts.date ?? ymd(new Date());
     const maxChars = Math.max(2_000, opts.maxChars ?? 20_000);
     const crossSignals = await this.synthesizeCrossSignals({ date });
+    const feedbackLines = crossSignals.report.feedbackEntries.length === 0
+      ? ["- (none)"]
+      : crossSignals.report.feedbackEntries.map((entry) => formatFeedbackLine(entry));
     const overlapBullets = crossSignals.report.overlaps.length === 0
       ? ["- No multi-agent topic overlap detected."]
       : crossSignals.report.overlaps.slice(0, 8).map((entry) =>
@@ -670,11 +713,7 @@ export class SharedContextManager {
         : crossSignals.report.sources.map((source) => `- ${source.title} (${source.path})`)),
       "",
       "## Feedback (Approve/Reject)",
-      ...(crossSignals.report.feedbackCount === 0
-        ? ["- (none)"]
-        : [
-            `- approved=${crossSignals.report.feedbackByDecision.approved}, approved_with_feedback=${crossSignals.report.feedbackByDecision.approved_with_feedback}, rejected=${crossSignals.report.feedbackByDecision.rejected}`,
-          ]),
+      ...feedbackLines,
       "",
       "## Cross-Signals",
       `- Source outputs analyzed: ${crossSignals.report.sourceCount}`,
