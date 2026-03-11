@@ -160,3 +160,52 @@ test("access idempotency store serializes concurrent writes on the same store in
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("access idempotency key locks stay live while the guarded callback is still running", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-key-heartbeat-"));
+  try {
+    const storeA = new AccessIdempotencyStore(memoryDir);
+    const storeB = new AccessIdempotencyStore(memoryDir);
+    let releaseFirstCallback: (() => void) | null = null;
+    const firstCallbackPaused = new Promise<void>((resolve) => {
+      releaseFirstCallback = resolve;
+    });
+    let firstCallbackEnteredResolve: (() => void) | null = null;
+    const firstCallbackEntered = new Promise<void>((resolve) => {
+      firstCallbackEnteredResolve = resolve;
+    });
+
+    setAccessIdempotencyTestHooks({
+      lockTimeoutMs: 500,
+      staleLockMs: 40,
+      lockHeartbeatMs: 10,
+    });
+
+    try {
+      const firstLock = storeA.withKeyLock("shared-key", async () => {
+        firstCallbackEnteredResolve?.();
+        await firstCallbackPaused;
+      });
+      await firstCallbackEntered;
+
+      let secondLockResolved = false;
+      const secondLock = storeB.withKeyLock("shared-key", async () => {
+        secondLockResolved = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      assert.equal(
+        secondLockResolved,
+        false,
+        "a live key lock should not be reclaimed as stale while its callback is still running",
+      );
+
+      releaseFirstCallback?.();
+      await Promise.all([firstLock, secondLock]);
+    } finally {
+      setAccessIdempotencyTestHooks(null);
+    }
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

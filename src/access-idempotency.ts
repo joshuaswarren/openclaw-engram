@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
@@ -10,6 +10,9 @@ type AccessIdempotencyEntry = {
 
 type AccessIdempotencyTestHooks = {
   beforeFlushWrite?: () => Promise<void> | void;
+  lockTimeoutMs?: number;
+  staleLockMs?: number;
+  lockHeartbeatMs?: number;
 };
 
 let testHooks: AccessIdempotencyTestHooks | null = null;
@@ -161,16 +164,27 @@ export class AccessIdempotencyStore {
 
   private async withExclusiveFileLock<T>(lockPath: string, callback: () => Promise<T>): Promise<T> {
     await mkdir(path.dirname(lockPath), { recursive: true });
-    const timeoutMs = 5_000;
-    const staleLockMs = 30_000;
+    const timeoutMs = testHooks?.lockTimeoutMs ?? 5_000;
+    const staleLockMs = testHooks?.staleLockMs ?? 30_000;
+    const lockHeartbeatMs = testHooks?.lockHeartbeatMs ?? Math.max(1_000, Math.floor(staleLockMs / 3));
     const startedAt = Date.now();
 
     while (true) {
       try {
         const handle = await open(lockPath, "wx");
+        let heartbeat: NodeJS.Timeout | null = null;
+        if (lockHeartbeatMs > 0) {
+          heartbeat = setInterval(() => {
+            void utimes(lockPath, new Date(), new Date()).catch(() => undefined);
+          }, lockHeartbeatMs);
+          heartbeat.unref?.();
+        }
         try {
           return await callback();
         } finally {
+          if (heartbeat) {
+            clearInterval(heartbeat);
+          }
           await handle.close().catch(() => undefined);
           await unlink(lockPath).catch(() => undefined);
         }
