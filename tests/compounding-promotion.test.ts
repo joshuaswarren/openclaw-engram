@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseConfig } from "../src/config.js";
 import { CompoundingEngine } from "../src/compounding/engine.js";
+import { sanitizeMemoryContent } from "../src/sanitize.js";
 import { runCompoundingPromoteCliCommand } from "../src/cli.js";
 import { StorageManager } from "../src/storage.js";
 import type { PluginConfig } from "../src/types.js";
@@ -196,8 +197,18 @@ test("compounding promotion dedupes against sanitized durable guidance", async (
   );
   assert.ok(candidate, "expected sanitized rubric candidate to promote");
 
+  const persistedContent = sanitizeMemoryContent(candidate!.content).text;
+  const dryRun = await engine.promoteCandidate({ weekId: "2026-W09", candidateId: candidate!.id, dryRun: true });
+  assert.equal(dryRun.promoted[0]?.content, persistedContent);
+
   const firstPromotion = await engine.promoteCandidate({ weekId: "2026-W09", candidateId: candidate!.id });
   assert.equal(firstPromotion.promoted.length, 1);
+  assert.equal(firstPromotion.promoted[0]?.content, persistedContent);
+
+  const storage = new StorageManager(memoryDir);
+  const memory = await storage.getMemoryById(firstPromotion.promoted[0]!.id);
+  assert.ok(memory);
+  assert.equal(memory!.content, persistedContent);
 
   const duplicate = await engine.promoteCandidate({ weekId: "2026-W09", candidateId: candidate!.id });
   assert.equal(duplicate.promoted.length, 0);

@@ -637,7 +637,7 @@ export class CompoundingEngine {
         id: `dry-run:${opts.weekId}:${opts.candidateId}`,
         candidateId: opts.candidateId,
         category: candidate.category,
-        content,
+        content: persistedContent,
         confidence,
         tags: uniqueTags,
         lineage,
@@ -645,7 +645,7 @@ export class CompoundingEngine {
       return report;
     }
 
-    const id = await storage.writeMemory(candidate.category, content, {
+    const id = await storage.writeMemory(candidate.category, persistedContent, {
       source: "compounding-promotion",
       tags: uniqueTags,
       confidence,
@@ -656,7 +656,7 @@ export class CompoundingEngine {
       id,
       candidateId: opts.candidateId,
       category: candidate.category,
-      content,
+      content: persistedContent,
       confidence,
       tags: uniqueTags,
       lineage,
@@ -1039,7 +1039,6 @@ export class CompoundingEngine {
         return;
       }
       existing.provenance = mergedProvenance;
-      existing.score = Math.max(existing.score, candidate.score);
     };
 
     for (const item of summary) {
