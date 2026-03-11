@@ -560,7 +560,9 @@ function buildMetrics(
   };
 }
 
-function buildQualityScore(reviewReasons: Record<MemoryGovernanceReasonCode, number>): MemoryGovernanceQualityScore {
+export function buildQualityScore(
+  reviewReasons: Record<MemoryGovernanceReasonCode, number>,
+): MemoryGovernanceQualityScore {
   const deductions = Object.entries(reviewReasons)
     .map(([reasonCode, count]) => ({
       reasonCode: reasonCode as MemoryGovernanceReasonCode,

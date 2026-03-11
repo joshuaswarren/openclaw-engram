@@ -2734,10 +2734,19 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function resolveMemoryDirForNamespace(orchestrator: Orchestrator, namespace?: string): Promise<string> {
+export async function resolveMemoryDirForNamespace(
+  orchestrator: Orchestrator,
+  namespace?: string,
+  options?: { rejectUnsupportedOverride?: boolean },
+): Promise<string> {
   const ns = (namespace ?? "").trim();
   if (!ns) return orchestrator.config.memoryDir;
-  if (!orchestrator.config.namespacesEnabled) return orchestrator.config.memoryDir;
+  if (!orchestrator.config.namespacesEnabled) {
+    if (options?.rejectUnsupportedOverride && ns !== orchestrator.config.defaultNamespace) {
+      throw new Error(`namespaces are disabled; cannot target namespace: ${ns}`);
+    }
+    return orchestrator.config.memoryDir;
+  }
 
   const candidate = path.join(orchestrator.config.memoryDir, "namespaces", ns);
   if (ns === orchestrator.config.defaultNamespace) {
@@ -3219,7 +3228,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
 
           const pluginVersion = await getPluginVersion();
-          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
           if (format === "json") {
             await exportJsonBundle({
               memoryDir,
@@ -3325,7 +3336,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
           const pluginVersion = await getPluginVersion();
-          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
           await backupMemoryDir({
             memoryDir,
             outDir,
@@ -4853,7 +4866,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
             ? options.namespace.trim()
             : undefined;
-          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
           const result = await runRebuildMemoryProjectionCliCommand({
             memoryDir,
             defaultNamespace: namespace ?? orchestrator.config.defaultNamespace,

@@ -9,6 +9,7 @@ import {
 } from "./explicit-capture.js";
 import { log } from "./logger.js";
 import {
+  buildQualityScore,
   groupActionsByStatus,
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
@@ -945,27 +946,35 @@ export class EngramAccessService {
         ReturnType<typeof readMemoryGovernanceRunArtifact>
       >["appliedActions"];
       const projectedProposedActions = await buildProjectedGovernanceProposedActions(storage, projected);
-      const transitionReport = await (async () => {
+      const projectedArtifact = await (async () => {
         try {
-          const artifact = await readMemoryGovernanceRunArtifact(storage.dir, projected.runId);
-          return artifact.transitionReport;
+          return await readMemoryGovernanceRunArtifact(storage.dir, projected.runId);
         } catch {
-          return {
-            proposed: groupActionsByStatus(projectedProposedActions),
-            applied: groupActionsByStatus(projectedAppliedActions),
-          };
+          return null;
         }
       })();
+      const metrics = projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"];
+      const transitionReport = projectedArtifact?.transitionReport ?? {
+        proposed: groupActionsByStatus(projectedProposedActions),
+        applied: groupActionsByStatus(projectedAppliedActions),
+      };
+      const qualityScore = projectedArtifact?.qualityScore ?? metrics?.qualityScore ?? buildQualityScore(metrics?.reviewReasons ?? {
+        exact_duplicate: 0,
+        semantic_duplicate_candidate: 0,
+        disputed_memory: 0,
+        speculative_low_confidence: 0,
+        archive_candidate: 0,
+        explicit_capture_review: 0,
+        malformed_import: 0,
+      });
 
       return {
         found: true,
         namespace: resolvedNamespace,
         runId: projected.runId,
         summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
-        metrics: projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"],
-        qualityScore:
-          (projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"] | undefined)
-            ?.qualityScore,
+        metrics,
+        qualityScore,
         reviewQueue: projected.reviewQueueRows.map((row) => ({
           entryId: row.entryId,
           memoryId: row.memoryId,

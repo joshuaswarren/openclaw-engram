@@ -1518,6 +1518,98 @@ test("access service serves reviewQueue and maintenance from projection when gov
   }
 });
 
+test("access service backfills projected governance quality scores from projected metrics when artifacts are gone", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-quality-"));
+  try {
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () =>
+        ({
+          dir: memoryDir,
+          async getProjectedGovernanceRecord() {
+            return {
+              runId: "gov-legacy",
+              summary: {
+                runId: "gov-legacy",
+                traceId: "trace-legacy",
+                mode: "shadow",
+                createdAt: "2026-03-09T12:00:00.000Z",
+                scannedMemories: 2,
+                reviewQueueCount: 1,
+                proposedActionCount: 1,
+                appliedActionCount: 0,
+                ruleVersion: "memory-governance.v2",
+                schemaVersion: 1,
+              },
+              metrics: {
+                reviewReasons: {
+                  exact_duplicate: 1,
+                  semantic_duplicate_candidate: 0,
+                  disputed_memory: 0,
+                  speculative_low_confidence: 0,
+                  archive_candidate: 0,
+                  explicit_capture_review: 0,
+                  malformed_import: 0,
+                },
+                proposedStatuses: {
+                  pending_review: 1,
+                },
+                keptMemoryCount: 1,
+              },
+              reviewQueueRows: [{
+                runId: "gov-legacy",
+                entryId: "review:fact-1:exact_duplicate",
+                memoryId: "fact-1",
+                path: path.join(memoryDir, "facts/2026-03-01/fact-1.md"),
+                reasonCode: "exact_duplicate",
+                severity: "medium",
+                suggestedAction: "set_status",
+                suggestedStatus: "pending_review",
+                relatedMemoryIds: ["fact-2"],
+              }],
+              appliedActionRows: [],
+              report: "legacy projected report",
+            };
+          },
+          async getMemoryById(memoryId: string) {
+            if (memoryId !== "fact-1") return null;
+            return {
+              path: path.join(memoryDir, "facts/2026-03-01/fact-1.md"),
+              frontmatter: {
+                id: "fact-1",
+                category: "fact",
+                created: "2026-03-01T00:00:00.000Z",
+                updated: "2026-03-01T00:00:00.000Z",
+                source: "test",
+                confidence: 0.9,
+                confidenceTier: "explicit",
+                tags: [],
+              },
+              content: "Exact duplicate for projected quality-score fallback coverage.",
+            };
+          },
+        }) as any,
+    } as any);
+
+    const queue = await service.reviewQueue("gov-legacy");
+    assert.equal(queue.found, true);
+    assert.equal(queue.qualityScore?.score, 94);
+    assert.equal(queue.qualityScore?.grade, "excellent");
+    assert.equal(Object.keys(queue.transitionReport?.proposed ?? {}).length > 0, true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service maintenance uses namespace-scoped health metadata", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-maintenance-namespace-"));
   try {
