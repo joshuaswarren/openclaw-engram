@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { log } from "../logger.js";
+import { sanitizeMemoryContent } from "../sanitize.js";
 import { StorageManager } from "../storage.js";
 import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
 import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
@@ -603,11 +604,12 @@ export class CompoundingEngine {
     }
 
     const content = normalizePromotedGuidanceContent(candidate.content);
+    const persistedContent = sanitizeMemoryContent(content).text;
     const storage = new StorageManager(this.config.memoryDir);
     const existing = (await storage.readAllMemories()).find((memory) =>
       memory.frontmatter.category === candidate.category &&
       memory.frontmatter.status !== "archived" &&
-      canonicalPromotionContentKey(memory.content) === canonicalPromotionContentKey(content)
+      canonicalPromotionContentKey(memory.content) === canonicalPromotionContentKey(persistedContent)
     );
     if (existing) {
       report.skipped.push({
