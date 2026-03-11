@@ -26,7 +26,7 @@ export type ValidExplicitCapture = {
   sourceReason?: string;
 };
 
-export type ExplicitCaptureSource = "memory_store" | "memory_capture" | "inline";
+export type ExplicitCaptureSource = "memory_store" | "memory_capture" | "suggestion_submit" | "inline";
 type ExplicitCaptureValidationMode = "legacy_tool" | "strict_explicit";
 
 const INLINE_NOTE_RE = /<memory_note>\s*([\s\S]*?)\s*<\/memory_note>/gi;
@@ -66,6 +66,19 @@ const SECRET_REDACTION_PATTERNS: Array<{ pattern: RegExp; replacement: string }>
   },
 ];
 const EXPLICIT_CAPTURE_REVIEW_TAGS = ["explicit-capture", "queued-review"];
+
+function explicitCaptureActor(source: ExplicitCaptureSource): string {
+  switch (source) {
+    case "inline":
+      return "inline.memory_note";
+    case "memory_store":
+      return "tool.memory_store";
+    case "suggestion_submit":
+      return "tool.suggestion_submit";
+    default:
+      return "tool.memory_capture";
+  }
+}
 
 function asTrimmed(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -357,12 +370,7 @@ export async function persistExplicitCapture(
     memoryId: id,
     eventType: "explicit_capture_accepted",
     timestamp: created,
-    actor:
-      source === "inline"
-        ? "inline.memory_note"
-        : source === "memory_store"
-          ? "tool.memory_store"
-          : "tool.memory_capture",
+    actor: explicitCaptureActor(source),
     reasonCode: candidate.sourceReason,
     ruleVersion: "explicit-capture.v1",
   };
@@ -449,12 +457,7 @@ export async function queueExplicitCaptureForReview(
       status: "pending_review",
       updated: new Date().toISOString(),
     }, {
-      actor:
-        source === "inline"
-          ? "inline.memory_note"
-          : source === "memory_store"
-            ? "tool.memory_store"
-            : "tool.memory_capture",
+      actor: explicitCaptureActor(source),
       reasonCode: reason,
       ruleVersion: "explicit-capture.v1",
     });
@@ -464,12 +467,7 @@ export async function queueExplicitCaptureForReview(
     memoryId: id,
     eventType: "explicit_capture_queued",
     timestamp: new Date().toISOString(),
-    actor:
-      source === "inline"
-        ? "inline.memory_note"
-        : source === "memory_store"
-          ? "tool.memory_store"
-          : "tool.memory_capture",
+    actor: explicitCaptureActor(source),
     reasonCode: reason,
     ruleVersion: "explicit-capture.v1",
   };

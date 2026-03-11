@@ -52,6 +52,14 @@ Backward compatibility note:
 
 When `agentAccessHttp.enabled` is on (or `openclaw engram access http-serve` is running), the same loopback server also serves the browser-based admin console shell at `/engram/ui/`. The shell is static; memory data and operator actions still require the configured bearer token over `/engram/v1/...`.
 
+Access-layer safety notes:
+
+- HTTP startup fails closed when no bearer token is configured.
+- Request bodies are capped by `agentAccessHttp.maxBodyBytes`.
+- Explicit write routes are rate-limited and support `schemaVersion`, `idempotencyKey`, and `dryRun` envelopes.
+- The stdio MCP server (`openclaw engram access mcp-serve`) uses the same internal access service as HTTP, so recall/read/write behavior stays aligned across both transports.
+- MCP is intentionally zero-config on the Engram side: launch `openclaw engram access mcp-serve` from the client and it will use the same local memory directory, namespace rules, and explicit-capture policy as the in-process plugin runtime.
+
 ## Buffer & Triggers
 
 | Setting | Default | Description |

@@ -24,6 +24,7 @@ import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
   LastRecallStore,
+  type LastRecallBudgetSummary,
   TierMigrationStatusStore,
   clampGraphRecallExpandedEntries,
   type GraphRecallExpandedEntry,
@@ -100,6 +101,7 @@ import {
 } from "./conversation-index/backend.js";
 import { NamespaceStorageRouter } from "./namespaces/storage.js";
 import {
+  canReadNamespace,
   defaultNamespaceForPrincipal,
   recallNamespacesForPrincipal,
   resolvePrincipal,
@@ -209,6 +211,12 @@ export interface RecallModeDecision {
   effectiveMode: RecallPlanMode;
   graphExpandedIntentDetected: boolean;
   graphReason?: string;
+}
+
+export interface RecallInvocationOptions {
+  namespace?: string;
+  topK?: number;
+  mode?: RecallPlanMode;
 }
 
 type QueryAwarePrefilter = {
@@ -1932,7 +1940,11 @@ export class Orchestrator {
     }
   }
 
-  async recall(prompt: string, sessionKey?: string): Promise<string> {
+  async recall(
+    prompt: string,
+    sessionKey?: string,
+    options: RecallInvocationOptions = {},
+  ): Promise<string> {
     // Wait for initialization to complete before attempting recall.
     // Timeout after 15s in case initialize() never fires (edge case).
     if (this.initPromise) {
@@ -1950,7 +1962,7 @@ export class Orchestrator {
     // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
     const RECALL_TIMEOUT_MS = 75_000;
     return Promise.race([
-      this.recallInternal(prompt, sessionKey),
+      this.recallInternal(prompt, sessionKey, options),
       new Promise<string>((_, reject) =>
         setTimeout(() => reject(new Error("recall timeout")), RECALL_TIMEOUT_MS)
       ),
@@ -2613,7 +2625,11 @@ export class Orchestrator {
     return ordered;
   }
 
-  private async recallInternal(prompt: string, sessionKey?: string): Promise<string> {
+  private async recallInternal(
+    prompt: string,
+    sessionKey?: string,
+    options: RecallInvocationOptions = {},
+  ): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
     const promptHash = createHash("sha256").update(prompt).digest("hex");
@@ -2647,7 +2663,9 @@ export class Orchestrator {
       graphExpandedIntentEnabled: this.config.graphExpandedIntentEnabled === true,
       prompt,
     });
-    const recallMode: RecallPlanMode = recallDecision.effectiveMode;
+    const requestedMode = options.mode;
+    const recallMode: RecallPlanMode = requestedMode
+      ?? recallDecision.effectiveMode;
     const queryIntent = inferIntentFromText(retrievalQuery);
     timings.recallPlan = recallMode;
     const plannerRecallResultLimit = recallMode === "no_recall"
@@ -2665,10 +2683,20 @@ export class Orchestrator {
         : plannerRecallResultLimit;
     const memoriesSectionEnabled = this.isRecallSectionEnabled("memories");
     const memorySectionMaxResults = this.getRecallSectionNumber("memories", "maxResults");
+    const requestedTopK = typeof options.topK === "number" && Number.isFinite(options.topK)
+      ? Math.max(0, Math.min(200, Math.floor(options.topK)))
+      : undefined;
     const recallResultLimit = memoriesSectionEnabled
-      ? memorySectionMaxResults !== undefined
-        ? Math.min(baseRecallResultLimit, memorySectionMaxResults)
-        : baseRecallResultLimit
+      ? (() => {
+        let limit = baseRecallResultLimit;
+        if (memorySectionMaxResults !== undefined) {
+          limit = Math.min(limit, memorySectionMaxResults);
+        }
+        if (requestedTopK !== undefined) {
+          limit = Math.min(limit, requestedTopK);
+        }
+        return limit;
+      })()
       : 0;
     const recallHeadroom = this.config.verbatimArtifactsEnabled
       ? Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)
@@ -2684,8 +2712,15 @@ export class Orchestrator {
     );
     const embeddingFetchLimit = computedFetchLimit;
     const principal = resolvePrincipal(sessionKey, this.config);
-    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
-    const recallNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    const namespaceOverride = options.namespace?.trim() || undefined;
+    const readableRecallNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    if (namespaceOverride && !canReadNamespace(principal, namespaceOverride, this.config)) {
+      throw new Error(`namespace override is not readable: ${namespaceOverride}`);
+    }
+    const selfNamespace = namespaceOverride ?? defaultNamespaceForPrincipal(principal, this.config);
+    const recallNamespaces = namespaceOverride
+      ? [namespaceOverride]
+      : readableRecallNamespaces;
     const qmdAvailable = this.qmd.isAvailable();
     let graphDecisionStatus: IntentDebugSnapshot["graphDecision"]["status"] = recallDecision.plannedMode === "graph_mode"
       ? "skipped"
@@ -2721,7 +2756,7 @@ export class Orchestrator {
       retrievalQueryHash,
       retrievalQueryLength: retrievalQuery.length,
       plannerEnabled: this.config.recallPlannerEnabled,
-      plannedMode: recallDecision.plannedMode,
+      plannedMode: requestedMode ?? recallDecision.plannedMode,
       effectiveMode: recallMode,
       recallResultLimit,
       queryIntent,
@@ -2737,14 +2772,46 @@ export class Orchestrator {
     });
 
     if (recallMode === "no_recall") {
+      const intentSnapshot = buildIntentDebugSnapshot();
       await this.recordLastIntentSnapshotForNamespace({
         namespace: selfNamespace,
-        snapshot: buildIntentDebugSnapshot(),
+        snapshot: intentSnapshot,
       });
       // Clean up workspace override before early return to prevent Map leaks.
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
+      if (sessionKey) {
+        this.lastRecall
+          .record({
+            sessionKey,
+            query: retrievalQuery,
+            memoryIds: [],
+            namespace: selfNamespace,
+            traceId,
+            plannerMode: recallMode,
+            requestedMode,
+            source: recallSource,
+            fallbackUsed: false,
+            sourcesUsed: [],
+            budgetsApplied: this.buildLastRecallBudgetSummary({
+              requestedTopK,
+              recallResultLimit,
+              qmdFetchLimit,
+              qmdHybridFetchLimit,
+            }),
+            latencyMs: Date.now() - recallStart,
+            resultPaths: [],
+            policyVersion,
+            appendImpression: this.config.recordEmptyRecallImpressions,
+            identityInjection: {
+              mode: identityInjectionModeUsed,
+              injectedChars: identityInjectedChars,
+              truncated: identityInjectionTruncated,
+            },
+          })
+          .catch((err) => log.debug(`last recall record failed: ${err}`));
+      }
       if (sessionKey) {
         this.queueEvalShadowRecall({
           traceId,
@@ -4225,13 +4292,36 @@ export class Orchestrator {
     const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
     log.debug(`recall: ${timingParts}`);
 
-    if (!impressionRecorded && sessionKey && this.config.recordEmptyRecallImpressions) {
+    const orderedSections = this.assembleRecallSections(sectionBuckets);
+    const context = orderedSections.length === 0 ? "" : orderedSections.join("\n\n---\n\n");
+    const sourcesUsed = this.collectLastRecallSources(sectionBuckets, recallSource);
+    const budgetsApplied = this.buildLastRecallBudgetSummary({
+      requestedTopK,
+      recallResultLimit,
+      qmdFetchLimit,
+      qmdHybridFetchLimit,
+    });
+    if (sessionKey) {
       this.lastRecall
         .record({
           sessionKey,
           query: retrievalQuery,
-          memoryIds: [],
+          memoryIds: recalledMemoryIds,
+          namespace: selfNamespace,
+          traceId,
+          plannerMode: recallMode,
+          requestedMode,
+          source: recallSource,
+          fallbackUsed: recallSource !== "none" && recallSource !== "hot_qmd",
+          sourcesUsed,
+          budgetsApplied,
+          latencyMs: Date.now() - recallStart,
+          resultPaths: recalledMemoryPaths,
           policyVersion,
+          appendImpression:
+            impressionRecorded ||
+            recalledMemoryIds.length > 0 ||
+            this.config.recordEmptyRecallImpressions,
           identityInjection: {
             mode: identityInjectionModeUsed,
             injectedChars: identityInjectedChars,
@@ -4240,9 +4330,6 @@ export class Orchestrator {
         })
         .catch((err) => log.debug(`last recall record failed: ${err}`));
     }
-
-    const orderedSections = this.assembleRecallSections(sectionBuckets);
-    const context = orderedSections.length === 0 ? "" : orderedSections.join("\n\n---\n\n");
     if (sessionKey) {
       this.queueEvalShadowRecall({
         traceId,
@@ -6802,24 +6889,43 @@ export class Orchestrator {
     const memoryIds = this.extractMemoryIdsFromResults(options.results);
     this.trackMemoryAccess(memoryIds);
 
-    if (options.sessionKey) {
-      const unique = Array.from(new Set(memoryIds)).slice(0, 40);
-      this.lastRecall
-        .record({
-          sessionKey: options.sessionKey,
-          query: options.retrievalQuery,
-          memoryIds: unique,
-          policyVersion: this.currentPolicyVersion(),
-          identityInjection: options.identityInjection,
-        })
-        .catch((err) => log.debug(`last recall record failed: ${err}`));
-    }
-
     this.appendRecallSection(
       options.sectionBuckets,
       "memories",
       this.formatQmdResults(options.title, options.results),
     );
+  }
+
+  private buildLastRecallBudgetSummary(options: {
+    requestedTopK?: number;
+    recallResultLimit: number;
+    qmdFetchLimit: number;
+    qmdHybridFetchLimit: number;
+  }): LastRecallBudgetSummary {
+    return {
+      requestedTopK: options.requestedTopK,
+      appliedTopK: options.recallResultLimit,
+      recallBudgetChars: this.config.recallBudgetChars,
+      maxMemoryTokens: this.config.maxMemoryTokens,
+      qmdFetchLimit: options.qmdFetchLimit,
+      qmdHybridFetchLimit: options.qmdHybridFetchLimit,
+    };
+  }
+
+  private collectLastRecallSources(
+    sectionBuckets: Map<string, string[]>,
+    recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan",
+  ): string[] {
+    const used = new Set<string>();
+    if (recallSource !== "none") {
+      used.add(recallSource);
+    }
+    for (const [sectionId, chunks] of sectionBuckets.entries()) {
+      if (chunks.length > 0) {
+        used.add(sectionId);
+      }
+    }
+    return [...used];
   }
 
   private async searchEmbeddingFallback(query: string, limit: number): Promise<QmdSearchResult[]> {

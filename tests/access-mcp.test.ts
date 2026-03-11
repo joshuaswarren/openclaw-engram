@@ -8,9 +8,13 @@ function createFakeService(): EngramAccessService {
   return {
     recall: async ({ query }) => ({
       query,
+      namespace: "global",
       context: "ctx",
       count: 1,
       memoryIds: ["fact-1"],
+      results: [],
+      fallbackUsed: false,
+      sourcesUsed: ["hot_qmd", "memories"],
     }),
     recallExplain: async () => ({
       found: true,
@@ -21,6 +25,8 @@ function createFakeService(): EngramAccessService {
         queryLen: 4,
         memoryIds: ["fact-1"],
       },
+      intent: null,
+      graph: null,
     }),
     memoryGet: async (memoryId) => ({
       found: true,
@@ -55,6 +61,45 @@ function createFakeService(): EngramAccessService {
         actor: "engram",
         ruleVersion: "1",
       }],
+    }),
+    memoryStore: async ({ dryRun }) => ({
+      schemaVersion: 1,
+      operation: "memory_store",
+      namespace: "global",
+      dryRun: dryRun === true,
+      accepted: true,
+      queued: false,
+      status: dryRun === true ? "validated" : "stored",
+      memoryId: "fact-new",
+    }),
+    suggestionSubmit: async ({ dryRun }) => ({
+      schemaVersion: 1,
+      operation: "suggestion_submit",
+      namespace: "global",
+      dryRun: dryRun === true,
+      accepted: true,
+      queued: true,
+      status: dryRun === true ? "validated" : "queued_for_review",
+      memoryId: "fact-review",
+    }),
+    entityGet: async (name) => ({
+      found: true,
+      namespace: "global",
+      entity: {
+        name,
+        type: "person",
+        updated: "2026-03-08T00:00:00.000Z",
+        summary: "Owns ops",
+        facts: ["Maintains Engram"],
+        relationships: [],
+        activity: [],
+        aliases: ["Alex Ops"],
+      },
+    }),
+    reviewQueue: async () => ({
+      found: true,
+      runId: "gov-1",
+      reviewQueue: [{ memoryId: "fact-1", reasonCode: "disputed_memory" }],
     }),
   } as unknown as EngramAccessService;
 }
@@ -101,6 +146,10 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.recall_explain",
     "engram.memory_get",
     "engram.memory_timeline",
+    "engram.memory_store",
+    "engram.suggestion_submit",
+    "engram.entity_get",
+    "engram.review_queue_list",
   ]);
 
   const recall = await server.handleRequest({
@@ -115,6 +164,111 @@ test("MCP server advertises tools and dispatches recall", async () => {
   const recallResult = recall?.result as { structuredContent: { context: string; memoryIds: string[] } };
   assert.equal(recallResult.structuredContent.context, "ctx");
   assert.deepEqual(recallResult.structuredContent.memoryIds, ["fact-1"]);
+
+  const store = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: {
+      name: "engram.memory_store",
+      arguments: { schemaVersion: 1, content: "A durable access-layer memory." },
+    },
+  });
+  const storeResult = store?.result as { structuredContent: { status: string } };
+  assert.equal(storeResult.structuredContent.status, "stored");
+
+  const entity = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: {
+      name: "engram.entity_get",
+      arguments: { name: "person-alex" },
+    },
+  });
+  const entityResult = entity?.result as { structuredContent: { entity: { name: string } } };
+  assert.equal(entityResult.structuredContent.entity.name, "person-alex");
+});
+
+test("MCP initialize re-reads the server version for each server instance", async () => {
+  const originalVersion = process.env.OPENCLAW_ENGRAM_VERSION;
+  try {
+    process.env.OPENCLAW_ENGRAM_VERSION = "9.9.1";
+    const firstServer = new EngramMcpServer(createFakeService());
+    const firstInit = await firstServer.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    assert.equal((firstInit?.result as { serverInfo: { version: string } }).serverInfo.version, "9.9.1");
+
+    process.env.OPENCLAW_ENGRAM_VERSION = "9.9.2";
+    const secondServer = new EngramMcpServer(createFakeService());
+    const secondInit = await secondServer.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "initialize",
+      params: {},
+    });
+    assert.equal((secondInit?.result as { serverInfo: { version: string } }).serverInfo.version, "9.9.2");
+  } finally {
+    if (originalVersion === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_VERSION;
+    } else {
+      process.env.OPENCLAW_ENGRAM_VERSION = originalVersion;
+    }
+  }
+});
+
+test("MCP server binds write authorization to its configured principal", async () => {
+  let capturedPrincipal: string | undefined;
+  let capturedSessionKey: string | undefined;
+  const server = new EngramMcpServer({
+    ...createFakeService(),
+    memoryStore: async ({
+      authenticatedPrincipal,
+      sessionKey,
+    }: {
+      authenticatedPrincipal?: string;
+      sessionKey?: string;
+    }) => {
+      capturedPrincipal = authenticatedPrincipal;
+      capturedSessionKey = sessionKey;
+      return {
+        schemaVersion: 1,
+        operation: "memory_store",
+        namespace: "secret-team",
+        dryRun: true,
+        accepted: true,
+        queued: false,
+        status: "validated",
+      };
+    },
+  } as unknown as EngramAccessService, {
+    principal: "secret-team",
+  });
+
+  const store = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: {
+      name: "engram.memory_store",
+      arguments: {
+        schemaVersion: 1,
+        dryRun: true,
+        sessionKey: "agent:project-x:chat",
+        namespace: "secret-team",
+        content: "Configured MCP principal should be authoritative.",
+      },
+    },
+  });
+
+  const storeResult = store?.result as { structuredContent: { status: string } };
+  assert.equal(storeResult.structuredContent.status, "validated");
+  assert.equal(capturedPrincipal, "secret-team");
+  assert.equal(capturedSessionKey, "agent:project-x:chat");
 });
 
 test("MCP server reports parse errors and keeps processing later messages", async () => {

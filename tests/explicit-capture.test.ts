@@ -352,12 +352,71 @@ test("persistExplicitCapture attributes lifecycle actors to the correct tool sou
     validateExplicitCaptureInput({ content: "Store this using the memory_capture tool path." }),
     "memory_capture",
   );
+  await persistExplicitCapture(
+    orchestrator as never,
+    validateExplicitCaptureInput({ content: "Store this using the suggestion_submit tool path." }),
+    "suggestion_submit",
+  );
 
   assert.deepEqual(
     lifecycleEvents.map((event) => event.actor),
-    ["tool.memory_store", "tool.memory_capture"],
+    ["tool.memory_store", "tool.memory_capture", "tool.suggestion_submit"],
   );
-  assert.deepEqual(sources, ["explicit", "explicit"]);
+  assert.deepEqual(sources, ["explicit", "explicit", "explicit"]);
+});
+
+test("queueExplicitCaptureForReview attributes queued suggestion submissions to suggestion_submit", async () => {
+  const lifecycleEvents: Array<{ actor: string; eventType: string }> = [];
+  const frontmatterActors: string[] = [];
+  const storage = {
+    readAllMemories: async () => [],
+    writeMemory: async () => "fact-1",
+    getMemoryById: async () => ({
+      frontmatter: { id: "fact-1", status: "active" },
+      content: "queued review item",
+      path: "/tmp/fact-1.md",
+    }),
+    writeMemoryFrontmatter: async (
+      _memory: { frontmatter: { status?: string } },
+      _patch: { status: string; updated: string },
+      options: { actor?: string },
+    ) => {
+      frontmatterActors.push(options.actor ?? "");
+      return undefined;
+    },
+    appendMemoryLifecycleEvents: async (events: Array<{ actor: string; eventType: string }>) => {
+      lifecycleEvents.push(...events);
+      return events.length;
+    },
+  };
+
+  await queueExplicitCaptureForReview(
+    {
+      config: {
+        defaultNamespace: "default",
+        sharedNamespace: "shared",
+        namespacesEnabled: false,
+        namespacePolicies: [],
+      },
+      getStorage: async () => storage,
+    } as never,
+    {
+      content: "Queue this suggestion submission for review with the correct actor attribution.",
+      category: "fact",
+    },
+    "suggestion_submit",
+    new Error("submitted via engram suggestion_submit"),
+  );
+
+  assert.deepEqual(frontmatterActors, ["tool.suggestion_submit"]);
+  assert.deepEqual(
+    lifecycleEvents.map((event) => event.actor),
+    ["tool.suggestion_submit"],
+  );
+  assert.deepEqual(
+    lifecycleEvents.map((event) => event.eventType),
+    ["explicit_capture_queued"],
+  );
 });
 
 test("fact duplicate checks short-circuit without a full corpus scan when authoritative hash index misses", async () => {

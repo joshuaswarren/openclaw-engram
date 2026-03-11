@@ -173,6 +173,33 @@ test("recallInternal short-circuits no_recall before preamble reads", async () =
   assert.equal(storageRouterTouched, false);
 });
 
+test("recallInternal no_recall records last recall without blocking the response", async () => {
+  const memoryDir = tmpDir("engram-no-recall-last-recall");
+  await mkdir(memoryDir, { recursive: true });
+  const cfg = baseConfig(memoryDir);
+  const orchestrator = new Orchestrator(cfg);
+
+  let settled = false;
+  (orchestrator.lastRecall as any).record = () =>
+    new Promise<void>((resolve) => {
+      setTimeout(() => {
+        settled = true;
+        resolve();
+      }, 50);
+    });
+
+  const startedAt = Date.now();
+  const out = await (orchestrator as any).recallInternal("ok", "user:test:no-recall-record");
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(out, "");
+  assert.equal(settled, false);
+  assert.ok(elapsedMs < 50);
+
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  assert.equal(settled, true);
+});
+
 test("artifact recall searches all readable namespaces", async () => {
   const memoryDir = tmpDir("engram-artifact-ns");
   await mkdir(memoryDir, { recursive: true });
@@ -623,7 +650,7 @@ test("cold fallback remains eligible when lifecycle stale filtering is enabled",
   assert.match(context, /shard migration edge cases/i);
 });
 
-test("recall does not record empty impression when no memories are injected by default", async () => {
+test("recall suppresses empty impression append when no memories are injected by default", async () => {
   const memoryDir = tmpDir("engram-empty-impression");
   await mkdir(memoryDir, { recursive: true });
 
@@ -632,35 +659,9 @@ test("recall does not record empty impression when no memories are injected by d
   cfg.qmdEnabled = false;
   const orchestrator = new Orchestrator(cfg);
 
-  let recorded: Array<{ sessionKey: string; memoryIds: string[] }> = [];
+  let recorded: Array<{ sessionKey: string; memoryIds: string[]; appendImpression?: boolean }> = [];
   (orchestrator as any).lastRecall = {
-    record: async (payload: { sessionKey: string; memoryIds: string[] }) => {
-      recorded.push(payload);
-    },
-  };
-
-  const context = await (orchestrator as any).recallInternal(
-    "Please remember our QMD diagnostics.",
-    "session-empty-impression",
-  );
-
-  assert.equal(context.includes("## Relevant Memories"), false);
-  assert.equal(recorded.length, 0);
-});
-
-test("recall records empty impression when explicitly enabled", async () => {
-  const memoryDir = tmpDir("engram-empty-impression-enabled");
-  await mkdir(memoryDir, { recursive: true });
-
-  const cfg = baseConfig(memoryDir);
-  cfg.recallPlannerEnabled = false;
-  cfg.qmdEnabled = false;
-  cfg.recordEmptyRecallImpressions = true;
-  const orchestrator = new Orchestrator(cfg);
-
-  let recorded: Array<{ sessionKey: string; memoryIds: string[] }> = [];
-  (orchestrator as any).lastRecall = {
-    record: async (payload: { sessionKey: string; memoryIds: string[] }) => {
+    record: async (payload: { sessionKey: string; memoryIds: string[]; appendImpression?: boolean }) => {
       recorded.push(payload);
     },
   };
@@ -674,6 +675,165 @@ test("recall records empty impression when explicitly enabled", async () => {
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0]?.sessionKey, "session-empty-impression");
   assert.deepEqual(recorded[0]?.memoryIds, []);
+  assert.equal(recorded[0]?.appendImpression, false);
+});
+
+test("recall records empty impression when explicitly enabled", async () => {
+  const memoryDir = tmpDir("engram-empty-impression-enabled");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = false;
+  cfg.recordEmptyRecallImpressions = true;
+  const orchestrator = new Orchestrator(cfg);
+
+  let recorded: Array<{ sessionKey: string; memoryIds: string[]; appendImpression?: boolean }> = [];
+  (orchestrator as any).lastRecall = {
+    record: async (payload: { sessionKey: string; memoryIds: string[]; appendImpression?: boolean }) => {
+      recorded.push(payload);
+    },
+  };
+
+  const context = await (orchestrator as any).recallInternal(
+    "Please remember our QMD diagnostics.",
+    "session-empty-impression",
+  );
+
+  assert.equal(context.includes("## Relevant Memories"), false);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0]?.sessionKey, "session-empty-impression");
+  assert.deepEqual(recorded[0]?.memoryIds, []);
+  assert.equal(recorded[0]?.appendImpression, true);
+});
+
+test("recall records impressions when memories are injected even if empty impressions are disabled", async () => {
+  const memoryDir = tmpDir("engram-non-empty-impression");
+  await mkdir(path.join(memoryDir, "facts/2026-02-01"), { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "facts/2026-02-01/fact-1.md"),
+    [
+      "---",
+      "id: fact-1",
+      "category: fact",
+      "created: 2026-02-01T00:00:00.000Z",
+      "updated: 2026-02-01T00:00:00.000Z",
+      "source: extraction",
+      "confidence: 0.9",
+      "confidenceTier: explicit",
+      "---",
+      "",
+      "QMD diagnostics require a fallback memory impression test.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const cfg = baseConfig(memoryDir);
+  cfg.recallPlannerEnabled = false;
+  cfg.qmdEnabled = false;
+  cfg.recordEmptyRecallImpressions = false;
+  const orchestrator = new Orchestrator(cfg);
+
+  let recorded: Array<{ sessionKey: string; memoryIds: string[]; appendImpression?: boolean }> = [];
+  (orchestrator as any).lastRecall = {
+    record: async (payload: { sessionKey: string; memoryIds: string[]; appendImpression?: boolean }) => {
+      recorded.push(payload);
+    },
+  };
+
+  const context = await (orchestrator as any).recallInternal(
+    "What do we know about QMD diagnostics?",
+    "session-non-empty-impression",
+  );
+
+  assert.match(context, /QMD diagnostics require a fallback memory impression test/);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0]?.sessionKey, "session-non-empty-impression");
+  assert.deepEqual(recorded[0]?.memoryIds, ["fact-1"]);
+  assert.equal(recorded[0]?.appendImpression, true);
+});
+
+test("recall rejects unreadable namespace overrides before fetching memories", async () => {
+  const memoryDir = tmpDir("engram-namespace-override-guard");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.namespacesEnabled = true;
+  cfg.defaultNamespace = "global";
+  cfg.defaultRecallNamespaces = ["self"];
+  cfg.namespacePolicies = [
+    {
+      name: "project-x",
+      readPrincipals: ["project-x"],
+      writePrincipals: ["project-x"],
+    },
+    {
+      name: "secret-team",
+      readPrincipals: ["secret-team"],
+      writePrincipals: ["secret-team"],
+    },
+  ];
+  const orchestrator = new Orchestrator(cfg);
+
+  let storageRouterTouched = false;
+  (orchestrator as any).storageRouter = {
+    storageFor: async () => {
+      storageRouterTouched = true;
+      throw new Error("storageFor should not run for unreadable namespace overrides");
+    },
+  };
+
+  await assert.rejects(
+    () => (orchestrator as any).recallInternal(
+      "Need namespace-guard coverage.",
+      "agent:project-x:chat",
+      { namespace: "secret-team" },
+    ),
+    /namespace override is not readable: secret-team/,
+  );
+  assert.equal(storageRouterTouched, false);
+});
+
+test("recall accepts readable namespace overrides even when they are excluded from default recall routing", async () => {
+  const memoryDir = tmpDir("engram-namespace-override-allowed");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.namespacesEnabled = true;
+  cfg.defaultNamespace = "global";
+  cfg.defaultRecallNamespaces = ["self"];
+  cfg.namespacePolicies = [
+    {
+      name: "project-x",
+      readPrincipals: ["project-x"],
+      writePrincipals: ["project-x"],
+    },
+    {
+      name: "audit-log",
+      readPrincipals: ["project-x"],
+      writePrincipals: ["audit-bot"],
+      includeInRecallByDefault: false,
+    },
+  ];
+  const orchestrator = new Orchestrator(cfg);
+
+  let storageRouterTouched = false;
+  (orchestrator as any).storageRouter = {
+    storageFor: async () => {
+      storageRouterTouched = true;
+      throw new Error("storageFor should not run for no_recall");
+    },
+  };
+
+  const out = await (orchestrator as any).recallInternal(
+    "ok",
+    "agent:project-x:chat",
+    { namespace: "audit-log" },
+  );
+
+  assert.equal(out, "");
+  assert.equal(storageRouterTouched, false);
 });
 
 test("cold fallback uses configured cold QMD collection before archive scan", async () => {

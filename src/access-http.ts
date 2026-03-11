@@ -5,12 +5,14 @@ import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
+import type { RecallPlanMode } from "./types.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
   host?: string;
   port?: number;
   authToken?: string;
+  principal?: string;
   maxBodyBytes?: number;
   adminConsoleEnabled?: boolean;
   adminConsolePublicDir?: string;
@@ -24,6 +26,8 @@ export interface EngramAccessHttpServerStatus {
 }
 
 const defaultAdminConsolePublicDir = fileURLToPath(new URL("../admin-console/public", import.meta.url));
+const WRITE_RATE_LIMIT_WINDOW_MS = 60_000;
+const WRITE_RATE_LIMIT_MAX_REQUESTS = 30;
 
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -43,9 +47,11 @@ export class EngramAccessHttpServer {
   private readonly host: string;
   private readonly requestedPort: number;
   private readonly authToken?: string;
+  private readonly authenticatedPrincipal?: string;
   private readonly maxBodyBytes: number;
   private readonly adminConsoleEnabled: boolean;
   private readonly adminConsolePublicDir: string;
+  private readonly writeRequestTimestamps: number[] = [];
   private server: Server | null = null;
   private boundPort = 0;
 
@@ -54,6 +60,7 @@ export class EngramAccessHttpServer {
     this.host = options.host?.trim() || "127.0.0.1";
     this.requestedPort = Number.isFinite(options.port) ? Math.max(0, Math.floor(options.port ?? 0)) : 0;
     this.authToken = options.authToken?.trim() || undefined;
+    this.authenticatedPrincipal = options.principal?.trim() || undefined;
     this.maxBodyBytes = Number.isFinite(options.maxBodyBytes)
       ? Math.max(1, Math.floor(options.maxBodyBytes ?? 131072))
       : 131072;
@@ -158,6 +165,9 @@ export class EngramAccessHttpServer {
         query: typeof body.query === "string" ? body.query : "",
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        topK: typeof body.topK === "number" ? body.topK : undefined,
+        mode: typeof body.mode === "string" ? body.mode as RecallPlanMode | "auto" : undefined,
+        includeDebug: body.includeDebug === true,
       });
       this.respondJson(res, 200, response);
       return;
@@ -167,8 +177,67 @@ export class EngramAccessHttpServer {
       const body = await this.readJsonBody(req);
       const response = await this.service.recallExplain({
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
       });
       this.respondJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/memories") {
+      const body = await this.readJsonBody(req);
+      const request = {
+        schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        dryRun: body.dryRun === true,
+        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        authenticatedPrincipal: this.authenticatedPrincipal,
+        content: typeof body.content === "string" ? body.content : "",
+        category: typeof body.category === "string" ? body.category : undefined,
+        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
+        entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
+        ttl: typeof body.ttl === "string" ? body.ttl : undefined,
+        sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
+      };
+      const idempotencyStatus = await this.service.peekMemoryStoreIdempotency(request);
+      if (idempotencyStatus === "miss" && request.dryRun !== true) {
+        this.ensureWriteRateLimitAvailable();
+      }
+      const response = await this.service.memoryStore(request);
+      if (this.shouldCountWriteRateLimit(response as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
+      this.respondJson(res, this.writeResponseStatus(response), response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/suggestions") {
+      const body = await this.readJsonBody(req);
+      const request = {
+        schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        dryRun: body.dryRun === true,
+        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        authenticatedPrincipal: this.authenticatedPrincipal,
+        content: typeof body.content === "string" ? body.content : "",
+        category: typeof body.category === "string" ? body.category : undefined,
+        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
+        entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
+        ttl: typeof body.ttl === "string" ? body.ttl : undefined,
+        sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
+      };
+      const idempotencyStatus = await this.service.peekSuggestionSubmitIdempotency(request);
+      if (idempotencyStatus === "miss" && request.dryRun !== true) {
+        this.ensureWriteRateLimitAvailable();
+      }
+      const response = await this.service.suggestionSubmit(request);
+      if (this.shouldCountWriteRateLimit(response as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
+      this.respondJson(res, this.writeResponseStatus(response), response);
       return;
     }
 
@@ -253,12 +322,17 @@ export class EngramAccessHttpServer {
       ) {
         throw new HttpError(400, "invalid_review_status");
       }
+      this.ensureWriteRateLimitAvailable();
       const response = await this.service.reviewDisposition({
         memoryId: typeof body.memoryId === "string" ? body.memoryId : "",
         status,
         reasonCode: typeof body.reasonCode === "string" ? body.reasonCode : "",
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.authenticatedPrincipal,
       });
+      if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
       this.respondJson(res, 200, response);
       return;
     }
@@ -355,5 +429,32 @@ export class EngramAccessHttpServer {
     out.writeUInt16BE(encoded.length, 0);
     encoded.copy(out, 2);
     return out;
+  }
+
+  private writeResponseStatus(response: { dryRun: boolean; status: string }): number {
+    if (response.dryRun === true) return 200;
+    if (response.status === "stored" || response.status === "queued_for_review") return 201;
+    return 200;
+  }
+
+  private ensureWriteRateLimitAvailable(): void {
+    const now = Date.now();
+    while (
+      this.writeRequestTimestamps.length > 0 &&
+      now - (this.writeRequestTimestamps[0] ?? 0) > WRITE_RATE_LIMIT_WINDOW_MS
+    ) {
+      this.writeRequestTimestamps.shift();
+    }
+    if (this.writeRequestTimestamps.length >= WRITE_RATE_LIMIT_MAX_REQUESTS) {
+      throw new HttpError(429, "write_rate_limited");
+    }
+  }
+
+  private recordWriteRateLimitHit(): void {
+    this.writeRequestTimestamps.push(Date.now());
+  }
+
+  private shouldCountWriteRateLimit(response: { dryRun?: boolean; idempotencyReplay?: boolean }): boolean {
+    return response.dryRun !== true && response.idempotencyReplay !== true;
   }
 }

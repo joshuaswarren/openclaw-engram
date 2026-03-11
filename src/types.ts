@@ -114,6 +114,7 @@ export interface AgentAccessHttpConfig {
   host: string;
   port: number;
   authToken?: string;
+  principal?: string;
   maxBodyBytes: number;
 }
 

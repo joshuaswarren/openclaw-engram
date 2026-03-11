@@ -97,6 +97,52 @@ openclaw engram doctor --json     # Aggregated safe health diagnostics
 openclaw engram inventory --json  # Baseline memory/entity/storage footprint
 ```
 
+## Universal Access Layer
+
+Engram exposes the same local service layer through:
+
+- an authenticated loopback HTTP API for scripts and local operator tooling
+- a stdio MCP server for Codex, Claude Code, and other MCP clients
+
+Start the HTTP server:
+
+```bash
+openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN"
+```
+
+Run the MCP server over stdio:
+
+```bash
+openclaw engram access mcp-serve
+```
+
+For MCP clients, point the command at `openclaw engram access mcp-serve`. The MCP side is intentionally stdio-first and reuses the same local storage plus service layer, so it does not need a separate host/port config surface.
+
+HTTP highlights:
+
+- `GET /engram/v1/health`
+- `POST /engram/v1/recall`
+- `POST /engram/v1/recall/explain`
+- `POST /engram/v1/memories`
+- `POST /engram/v1/suggestions`
+- `GET /engram/v1/memories/:id`
+- `GET /engram/v1/memories/:id/timeline`
+- `GET /engram/v1/entities/:name`
+- `GET /engram/v1/review-queue`
+
+MCP highlights:
+
+- `engram.recall`
+- `engram.recall_explain`
+- `engram.memory_get`
+- `engram.memory_timeline`
+- `engram.memory_store`
+- `engram.suggestion_submit`
+- `engram.entity_get`
+- `engram.review_queue_list`
+
+Recall requests support `query`, `sessionKey`, `namespace`, `topK`, `mode`, and `includeDebug`. Recall responses include `results`, `count`, `traceId`, `plannerMode`, `fallbackUsed`, `sourcesUsed`, `budgetsApplied`, and `latencyMs`.
+
 ## Explicit Capture
 
 Set `captureMode` to control how memories are created:
@@ -234,6 +280,7 @@ openclaw engram governance-report         # Read the latest or named governance 
 openclaw engram governance-restore --run-id <runId> # Restore one applied governance run
 openclaw engram review-disposition <memoryId> --status rejected # Record an explicit operator review outcome
 openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN" # Start the local access API + admin console shell
+openclaw engram access mcp-serve          # Run the stdio MCP server for Codex/Claude Code
 openclaw engram work-product-status         # Work-product ledger counts and latest recorded output
 openclaw engram work-product-record         # Record a typed work-product ledger entry
 openclaw engram work-product-recall-search <query> # Preview reusable work products from the creation-memory ledger

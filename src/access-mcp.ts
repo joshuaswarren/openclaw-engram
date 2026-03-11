@@ -1,5 +1,7 @@
 import type { Readable, Writable } from "node:stream";
+import { readFile } from "node:fs/promises";
 import type { EngramAccessService } from "./access-service.js";
+import type { RecallPlanMode } from "./types.js";
 
 type JsonRpcId = string | number | null;
 
@@ -18,12 +20,31 @@ type McpTool = {
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 
+async function getMcpServerVersion(): Promise<string> {
+  const envVersion = process.env.OPENCLAW_ENGRAM_VERSION?.trim() || process.env.npm_package_version?.trim();
+  if (envVersion) return envVersion;
+  try {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const raw = await readFile(pkgPath, "utf-8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version?.trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export class EngramMcpServer {
   private buffer = Buffer.alloc(0);
   private flushTask: Promise<void> | null = null;
   private readonly tools: McpTool[];
+  private readonly authenticatedPrincipal?: string;
 
-  constructor(private readonly service: EngramAccessService) {
+  constructor(
+    private readonly service: EngramAccessService,
+    options: { principal?: string } = {},
+  ) {
+    this.authenticatedPrincipal =
+      options.principal?.trim() || process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL?.trim() || undefined;
     this.tools = [
       {
         name: "engram.recall",
@@ -34,6 +55,9 @@ export class EngramMcpServer {
             query: { type: "string" },
             sessionKey: { type: "string" },
             namespace: { type: "string" },
+            topK: { type: "number" },
+            mode: { type: "string", enum: ["auto", "no_recall", "minimal", "full", "graph_mode"] },
+            includeDebug: { type: "boolean" },
           },
           required: ["query"],
           additionalProperties: false,
@@ -46,6 +70,7 @@ export class EngramMcpServer {
           type: "object",
           properties: {
             sessionKey: { type: "string" },
+            namespace: { type: "string" },
           },
           additionalProperties: false,
         },
@@ -77,6 +102,76 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "engram.memory_store",
+        description: "Store an explicit Engram memory through the access layer.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            schemaVersion: { type: "number" },
+            idempotencyKey: { type: "string" },
+            dryRun: { type: "boolean" },
+            sessionKey: { type: "string" },
+            content: { type: "string" },
+            category: { type: "string" },
+            confidence: { type: "number" },
+            namespace: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            entityRef: { type: "string" },
+            ttl: { type: "string" },
+            sourceReason: { type: "string" },
+          },
+          required: ["content"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.suggestion_submit",
+        description: "Queue a suggested Engram memory for review.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            schemaVersion: { type: "number" },
+            idempotencyKey: { type: "string" },
+            dryRun: { type: "boolean" },
+            sessionKey: { type: "string" },
+            content: { type: "string" },
+            category: { type: "string" },
+            confidence: { type: "number" },
+            namespace: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            entityRef: { type: "string" },
+            ttl: { type: "string" },
+            sourceReason: { type: "string" },
+          },
+          required: ["content"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.entity_get",
+        description: "Fetch one Engram entity by name.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            namespace: { type: "string" },
+          },
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.review_queue_list",
+        description: "Fetch the latest Engram review queue artifact bundle.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            runId: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
     ];
   }
 
@@ -89,6 +184,7 @@ export class EngramMcpServer {
       return { jsonrpc: "2.0", id, result: {} };
     }
     if (method === "initialize") {
+      const version = await getMcpServerVersion();
       return {
         jsonrpc: "2.0",
         id,
@@ -99,7 +195,7 @@ export class EngramMcpServer {
           },
           serverInfo: {
             name: "openclaw-engram",
-            version: "9.0.0",
+            version,
           },
         },
       };
@@ -249,10 +345,14 @@ export class EngramMcpServer {
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          topK: typeof args.topK === "number" && Number.isFinite(args.topK) ? args.topK : undefined,
+          mode: typeof args.mode === "string" ? args.mode as RecallPlanMode | "auto" : undefined,
+          includeDebug: args.includeDebug === true,
         });
       case "engram.recall_explain":
         return this.service.recallExplain({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
       case "engram.memory_get":
         return this.service.memoryGet(
@@ -267,6 +367,47 @@ export class EngramMcpServer {
           limit,
         );
       }
+      case "engram.memory_store":
+        return this.service.memoryStore({
+          schemaVersion: typeof args.schemaVersion === "number" ? args.schemaVersion : undefined,
+          idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
+          dryRun: args.dryRun === true,
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          authenticatedPrincipal: this.authenticatedPrincipal,
+          content: typeof args.content === "string" ? args.content : "",
+          category: typeof args.category === "string" ? args.category : undefined,
+          confidence: typeof args.confidence === "number" ? args.confidence : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
+          entityRef: typeof args.entityRef === "string" ? args.entityRef : undefined,
+          ttl: typeof args.ttl === "string" ? args.ttl : undefined,
+          sourceReason: typeof args.sourceReason === "string" ? args.sourceReason : undefined,
+        });
+      case "engram.suggestion_submit":
+        return this.service.suggestionSubmit({
+          schemaVersion: typeof args.schemaVersion === "number" ? args.schemaVersion : undefined,
+          idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
+          dryRun: args.dryRun === true,
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          authenticatedPrincipal: this.authenticatedPrincipal,
+          content: typeof args.content === "string" ? args.content : "",
+          category: typeof args.category === "string" ? args.category : undefined,
+          confidence: typeof args.confidence === "number" ? args.confidence : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
+          entityRef: typeof args.entityRef === "string" ? args.entityRef : undefined,
+          ttl: typeof args.ttl === "string" ? args.ttl : undefined,
+          sourceReason: typeof args.sourceReason === "string" ? args.sourceReason : undefined,
+        });
+      case "engram.entity_get":
+        return this.service.entityGet(
+          typeof args.name === "string" ? args.name : "",
+          typeof args.namespace === "string" ? args.namespace : undefined,
+        );
+      case "engram.review_queue_list":
+        return this.service.reviewQueue(
+          typeof args.runId === "string" ? args.runId : undefined,
+        );
       default:
         throw new Error(`unknown tool: ${name}`);
     }

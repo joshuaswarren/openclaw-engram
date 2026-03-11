@@ -2,7 +2,16 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "./logger.js";
-import type { IdentityInjectionMode } from "./types.js";
+import type { IdentityInjectionMode, RecallPlanMode } from "./types.js";
+
+export interface LastRecallBudgetSummary {
+  requestedTopK?: number;
+  appliedTopK: number;
+  recallBudgetChars: number;
+  maxMemoryTokens: number;
+  qmdFetchLimit?: number;
+  qmdHybridFetchLimit?: number;
+}
 
 export interface LastRecallSnapshot {
   sessionKey: string;
@@ -10,6 +19,16 @@ export interface LastRecallSnapshot {
   queryHash: string;
   queryLen: number;
   memoryIds: string[];
+  namespace?: string;
+  traceId?: string;
+  plannerMode?: RecallPlanMode;
+  requestedMode?: RecallPlanMode;
+  source?: string;
+  fallbackUsed?: boolean;
+  sourcesUsed?: string[];
+  budgetsApplied?: LastRecallBudgetSummary;
+  latencyMs?: number;
+  resultPaths?: string[];
   policyVersion?: string;
   identityInjectionMode?: IdentityInjectionMode | "none";
   identityInjectedChars?: number;
@@ -138,7 +157,18 @@ export class LastRecallStore {
     sessionKey: string;
     query: string;
     memoryIds: string[];
+    namespace?: string;
+    traceId?: string;
+    plannerMode?: RecallPlanMode;
+    requestedMode?: RecallPlanMode;
+    source?: string;
+    fallbackUsed?: boolean;
+    sourcesUsed?: string[];
+    budgetsApplied?: LastRecallBudgetSummary;
+    latencyMs?: number;
+    resultPaths?: string[];
     policyVersion?: string;
+    appendImpression?: boolean;
     identityInjection?: {
       mode: IdentityInjectionMode | "none";
       injectedChars: number;
@@ -154,6 +184,16 @@ export class LastRecallStore {
       queryHash,
       queryLen: opts.query.length,
       memoryIds: opts.memoryIds,
+      namespace: opts.namespace,
+      traceId: opts.traceId,
+      plannerMode: opts.plannerMode,
+      requestedMode: opts.requestedMode,
+      source: opts.source,
+      fallbackUsed: opts.fallbackUsed,
+      sourcesUsed: opts.sourcesUsed ? [...opts.sourcesUsed] : undefined,
+      budgetsApplied: opts.budgetsApplied ? { ...opts.budgetsApplied } : undefined,
+      latencyMs: opts.latencyMs,
+      resultPaths: opts.resultPaths ? [...opts.resultPaths] : undefined,
       policyVersion: opts.policyVersion,
       identityInjectionMode: opts.identityInjection?.mode,
       identityInjectedChars: opts.identityInjection?.injectedChars,
@@ -180,11 +220,13 @@ export class LastRecallStore {
       log.debug(`last recall store write failed: ${err}`);
     }
 
-    try {
-      await mkdir(path.dirname(this.impressionsPath), { recursive: true });
-      await appendFile(this.impressionsPath, JSON.stringify(snapshot) + "\n", "utf-8");
-    } catch (err) {
-      log.debug(`recall impressions append failed: ${err}`);
+    if (opts.appendImpression !== false) {
+      try {
+        await mkdir(path.dirname(this.impressionsPath), { recursive: true });
+        await appendFile(this.impressionsPath, JSON.stringify(snapshot) + "\n", "utf-8");
+      } catch (err) {
+        log.debug(`recall impressions append failed: ${err}`);
+      }
     }
   }
 }

@@ -1,5 +1,76 @@
 # API Reference
 
+## Universal Access Layer
+
+Engram exposes one shared local service layer through both HTTP and MCP adapters. The HTTP server is bearer-token protected by default and binds to loopback unless you override `agentAccessHttp.host`.
+
+### HTTP
+
+Core routes:
+
+- `GET /engram/v1/health` — service health plus projection/search availability
+- `POST /engram/v1/recall` — shared recall entrypoint
+- `POST /engram/v1/recall/explain` — last recall snapshot plus intent/graph debug state
+- `POST /engram/v1/memories` — explicit memory write path
+- `POST /engram/v1/suggestions` — queue review-first memory suggestions
+- `GET /engram/v1/memories` — browse memories with query/status/category filters
+- `GET /engram/v1/memories/:id` — fetch one memory
+- `GET /engram/v1/memories/:id/timeline` — fetch one memory lifecycle timeline
+- `GET /engram/v1/entities` — list entities
+- `GET /engram/v1/entities/:name` — fetch one entity
+- `GET /engram/v1/review-queue` — latest governance review bundle when present
+- `GET /engram/v1/maintenance` — health plus latest governance artifact summary
+- `POST /engram/v1/review-disposition` — operator review decision write path
+
+Recall request fields:
+
+- `query` (required)
+- `sessionKey`
+- `namespace`
+- `topK`
+- `mode` (`auto`, `no_recall`, `minimal`, `full`, `graph_mode`)
+- `includeDebug`
+
+Recall response fields:
+
+- `results`
+- `count`
+- `traceId`
+- `plannerMode`
+- `fallbackUsed`
+- `sourcesUsed`
+- `budgetsApplied`
+- `latencyMs`
+
+Write request envelope:
+
+- `schemaVersion`
+- `idempotencyKey`
+- `dryRun`
+
+Write endpoints share the same explicit-capture validation and duplicate suppression as the OpenClaw tooling, enforce request-size limits, and are rate-limited before mutation paths run.
+
+### MCP
+
+Run the server with:
+
+```bash
+openclaw engram access mcp-serve
+```
+
+Available MCP tools:
+
+- `engram.recall`
+- `engram.recall_explain`
+- `engram.memory_get`
+- `engram.memory_timeline`
+- `engram.memory_store`
+- `engram.suggestion_submit`
+- `engram.entity_get`
+- `engram.review_queue_list`
+
+The MCP adapter calls the same `EngramAccessService` methods used by HTTP, so equivalent request classes return the same structured payloads.
+
 ## Agent Tools
 
 These tools are registered with the OpenClaw gateway and are callable by agents.
