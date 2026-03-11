@@ -1570,7 +1570,9 @@ Best for:
             break;
           }
           case "update_note": {
-            const updated = await storage.updateMemory(memoryIdValue!, contentValue!);
+            const updated = await storage.updateMemory(memoryIdValue!, contentValue!, {
+              actor: "tool.memory_action_apply",
+            });
             if (!updated) {
               const wrote = await orchestrator.appendMemoryActionEvent({
                 ...baseEvent,

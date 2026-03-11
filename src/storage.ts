@@ -1667,7 +1667,7 @@ export class StorageManager {
   async updateMemory(
     id: string,
     newContent: string,
-    options?: { supersedes?: string; lineage?: string[] },
+    options?: { supersedes?: string; lineage?: string[]; actor?: string },
   ): Promise<boolean> {
     const memories = await this.readAllMemories();
     const memory = memories.find((m) => m.frontmatter.id === id);
@@ -1694,7 +1694,7 @@ export class StorageManager {
       memoryId: id,
       eventType: "updated",
       timestamp: updated.updated,
-      actor: "storage.updateMemory",
+      actor: options?.actor ?? "storage.updateMemory",
       before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
       after: this.summarizeLifecycleState(updated, memory.path),
       relatedMemoryIds: [

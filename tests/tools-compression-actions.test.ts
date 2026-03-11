@@ -17,6 +17,11 @@ function buildHarness(options?: {
   previewMemoryActionEvent?: (event: any) => any;
   writeMemory?: (category: string, content: string, options?: Record<string, unknown>) => Promise<string> | string;
   writeArtifact?: (content: string, options?: Record<string, unknown>) => Promise<string> | string;
+  updateMemory?: (
+    memoryId: string,
+    content: string,
+    options?: Record<string, unknown>,
+  ) => Promise<boolean> | boolean;
   readAllMemories?: () => Promise<any[]> | any[];
   writeMemoryFrontmatter?: (memory: any, patch: Record<string, unknown>, options?: Record<string, unknown>) => Promise<void> | void;
   addLinksToMemory?: (
@@ -30,6 +35,7 @@ function buildHarness(options?: {
   const tools = new Map<string, RegisteredTool>();
   const capturedEvents: any[] = [];
   const capturedWrites: Array<{ category: string; content: string; options?: Record<string, unknown> }> = [];
+  const capturedUpdateWrites: Array<{ memoryId: string; content: string; options?: Record<string, unknown> }> = [];
   const capturedFrontmatterWrites: Array<{ memory: any; patch: Record<string, unknown>; options?: Record<string, unknown> }> = [];
   const capturedLinkWrites: Array<{ memoryId: string; links: any[]; options?: Record<string, unknown> }> = [];
   const createdCheckpoints: Array<{ sessionKey: string; turns: any[]; ttlHours?: number }> = [];
@@ -57,7 +63,13 @@ function buildHarness(options?: {
       }
       return "artifact-stored";
     },
-    updateMemory: async () => true,
+    updateMemory: async (memoryId: string, content: string, updateOptions?: Record<string, unknown>) => {
+      capturedUpdateWrites.push({ memoryId, content, options: updateOptions });
+      if (options?.updateMemory) {
+        return await options.updateMemory(memoryId, content, updateOptions);
+      }
+      return true;
+    },
     readAllMemories: async () => {
       if (options?.readAllMemories) {
         return await options.readAllMemories();
@@ -148,6 +160,7 @@ function buildHarness(options?: {
     tools,
     capturedEvents,
     capturedWrites,
+    capturedUpdateWrites,
     capturedFrontmatterWrites,
     capturedLinkWrites,
     createdCheckpoints,
@@ -630,6 +643,33 @@ test("memory_action_apply records applied outcome after successful structured mu
   assert.equal(capturedEvents.length, 1);
   assert.equal(capturedEvents[0]?.status, "applied");
   assert.equal(capturedEvents[0]?.outcome, "applied");
+});
+
+test("memory_action_apply passes explicit actor metadata to update_note writes", async () => {
+  const { tools, capturedEvents, capturedUpdateWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10e-update", {
+    action: "update_note",
+    memoryId: "fact-existing",
+    content: "Update this note with structured action audit metadata.",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /Applied memory action/i);
+  assert.equal(capturedUpdateWrites.length, 1);
+  assert.deepEqual(capturedUpdateWrites[0], {
+    memoryId: "fact-existing",
+    content: "Update this note with structured action audit metadata.",
+    options: {
+      actor: "tool.memory_action_apply",
+    },
+  });
+  assert.equal(capturedEvents.length, 1);
+  assert.deepEqual(capturedEvents[0]?.outputMemoryIds, ["fact-existing"]);
 });
 
 test("memory_action_apply rejects unrecognized actions instead of reporting false success", async () => {
