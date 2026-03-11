@@ -6128,7 +6128,18 @@ export class Orchestrator {
       };
     }
 
-    const events = await this.storage.readMemoryActionEvents(eventLimit);
+    let events = await this.storage.readMemoryActionEvents(eventLimit);
+    if (eventLimit > 0) {
+      let effectiveEvents = events.filter((event) => event.dryRun !== true);
+      let fetchLimit = eventLimit;
+      while (effectiveEvents.length < eventLimit && events.length === fetchLimit) {
+        fetchLimit = Math.min(fetchLimit * 2, fetchLimit + 1000);
+        if (fetchLimit <= events.length) break;
+        events = await this.storage.readMemoryActionEvents(fetchLimit);
+        effectiveEvents = events.filter((event) => event.dryRun !== true);
+      }
+      events = effectiveEvents.slice(-eventLimit);
+    }
     const generatedAt = new Date().toISOString();
     const candidate = computeCompressionGuidelineCandidate(events, {
       generatedAtIso: generatedAt,

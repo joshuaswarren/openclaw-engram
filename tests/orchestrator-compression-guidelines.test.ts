@@ -128,3 +128,48 @@ test("optimizeCompressionGuidelines does not publish new state for dry-run-only 
   assert.equal(wroteGuidelines, 0);
   assert.equal(wroteState, 0);
 });
+
+test("optimizeCompressionGuidelines over-fetches until it collects enough non-dry-run events", async () => {
+  const readLimits: number[] = [];
+  const ledger: MemoryActionEvent[] = [
+    { timestamp: "2026-02-27T00:00:00.000Z", action: "store_note", outcome: "applied" },
+    { timestamp: "2026-02-27T00:01:00.000Z", action: "store_note", outcome: "failed" },
+    { timestamp: "2026-02-27T00:02:00.000Z", action: "store_note", outcome: "applied", dryRun: true },
+    { timestamp: "2026-02-27T00:03:00.000Z", action: "store_note", outcome: "skipped", dryRun: true },
+    { timestamp: "2026-02-27T00:04:00.000Z", action: "store_note", outcome: "applied", dryRun: true },
+  ];
+  let wroteGuidelines = 0;
+  let wroteState = 0;
+  const ctx: any = {
+    config: {
+      compressionGuidelineLearningEnabled: true,
+      compressionGuidelineSemanticRefinementEnabled: false,
+      compressionGuidelineSemanticTimeoutMs: 1000,
+    },
+    storage: {
+      readCompressionGuidelineOptimizerState: async () => null,
+      readMemoryActionEvents: async (limit: number) => {
+        readLimits.push(limit);
+        return ledger.slice(-limit);
+      },
+      writeCompressionGuidelines: async () => {
+        wroteGuidelines += 1;
+      },
+      writeCompressionGuidelineOptimizerState: async () => {
+        wroteState += 1;
+      },
+    },
+  };
+
+  const result = await (Orchestrator.prototype as any).optimizeCompressionGuidelines.call(ctx, {
+    dryRun: false,
+    eventLimit: 2,
+  });
+
+  assert.deepEqual(readLimits, [2, 4, 8]);
+  assert.equal(result.enabled, true);
+  assert.equal(result.eventCount, 2);
+  assert.equal(result.nextGuidelineVersion, 1);
+  assert.equal(wroteGuidelines, 1);
+  assert.equal(wroteState, 1);
+});
