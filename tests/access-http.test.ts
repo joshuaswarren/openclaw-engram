@@ -266,7 +266,7 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
         category: "fact",
       }),
     });
-    assert.equal(storeRes.status, 200);
+    assert.equal(storeRes.status, 201);
     const storePayload = await storeRes.json() as { operation: string; status: string; idempotencyKey: string };
     assert.equal(storePayload.operation, "memory_store");
     assert.equal(storePayload.status, "stored");
@@ -281,7 +281,7 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
         category: "fact",
       }),
     });
-    assert.equal(suggestionRes.status, 200);
+    assert.equal(suggestionRes.status, 201);
     const suggestionPayload = await suggestionRes.json() as { operation: string; status: string; queued: boolean };
     assert.equal(suggestionPayload.operation, "suggestion_submit");
     assert.equal(suggestionPayload.status, "queued_for_review");
@@ -459,7 +459,7 @@ test("access HTTP server rate-limits write endpoints", async () => {
           category: "fact",
         }),
       });
-      assert.equal(response.status, 200);
+      assert.equal(response.status, 201);
     }
     const limited = await fetch(`${base}/engram/v1/memories`, {
       method: "POST",
@@ -471,6 +471,67 @@ test("access HTTP server rate-limits write endpoints", async () => {
       }),
     });
     assert.equal(limited.status, 429);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP server does not consume the write rate limit for invalid requests", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      memoryStore: async ({ content }: { content: string }) => {
+        if (content.trim().length === 0) {
+          throw new EngramAccessInputError("content is required");
+        }
+        return {
+          schemaVersion: 1,
+          operation: "memory_store",
+          namespace: "global",
+          dryRun: false,
+          accepted: true,
+          queued: false,
+          status: "stored",
+          memoryId: "fact-new",
+        };
+      },
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+    for (let index = 0; index < 30; index += 1) {
+      const response = await fetch(`${base}/engram/v1/memories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          content: "   ",
+          category: "fact",
+        }),
+      });
+      assert.equal(response.status, 400);
+    }
+
+    const valid = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        content: "A durable explicit memory after invalid write attempts.",
+        category: "fact",
+      }),
+    });
+    assert.equal(valid.status, 201);
   } finally {
     await server.stop();
   }

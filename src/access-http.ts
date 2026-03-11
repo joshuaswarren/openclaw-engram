@@ -180,8 +180,8 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/memories") {
-      this.enforceWriteRateLimit();
       const body = await this.readJsonBody(req);
+      this.ensureWriteRateLimitAvailable();
       const response = await this.service.memoryStore({
         schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
@@ -196,13 +196,14 @@ export class EngramAccessHttpServer {
         ttl: typeof body.ttl === "string" ? body.ttl : undefined,
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       });
-      this.respondJson(res, 200, response);
+      this.recordWriteRateLimitHit();
+      this.respondJson(res, this.writeResponseStatus(response), response);
       return;
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/suggestions") {
-      this.enforceWriteRateLimit();
       const body = await this.readJsonBody(req);
+      this.ensureWriteRateLimitAvailable();
       const response = await this.service.suggestionSubmit({
         schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
@@ -217,7 +218,8 @@ export class EngramAccessHttpServer {
         ttl: typeof body.ttl === "string" ? body.ttl : undefined,
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       });
-      this.respondJson(res, 200, response);
+      this.recordWriteRateLimitHit();
+      this.respondJson(res, this.writeResponseStatus(response), response);
       return;
     }
 
@@ -290,7 +292,6 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/review-disposition") {
-      this.enforceWriteRateLimit();
       const body = await this.readJsonBody(req);
       const status = typeof body.status === "string" ? body.status : "";
       if (
@@ -303,12 +304,14 @@ export class EngramAccessHttpServer {
       ) {
         throw new HttpError(400, "invalid_review_status");
       }
+      this.ensureWriteRateLimitAvailable();
       const response = await this.service.reviewDisposition({
         memoryId: typeof body.memoryId === "string" ? body.memoryId : "",
         status,
         reasonCode: typeof body.reasonCode === "string" ? body.reasonCode : "",
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
       });
+      this.recordWriteRateLimitHit();
       this.respondJson(res, 200, response);
       return;
     }
@@ -407,7 +410,13 @@ export class EngramAccessHttpServer {
     return out;
   }
 
-  private enforceWriteRateLimit(): void {
+  private writeResponseStatus(response: { dryRun: boolean; status: string }): number {
+    if (response.dryRun === true) return 200;
+    if (response.status === "stored" || response.status === "queued_for_review") return 201;
+    return 200;
+  }
+
+  private ensureWriteRateLimitAvailable(): void {
     const now = Date.now();
     while (
       this.writeRequestTimestamps.length > 0 &&
@@ -418,6 +427,9 @@ export class EngramAccessHttpServer {
     if (this.writeRequestTimestamps.length >= WRITE_RATE_LIMIT_MAX_REQUESTS) {
       throw new HttpError(429, "write_rate_limited");
     }
-    this.writeRequestTimestamps.push(now);
+  }
+
+  private recordWriteRateLimitHit(): void {
+    this.writeRequestTimestamps.push(Date.now());
   }
 }

@@ -190,6 +190,37 @@ test("MCP server advertises tools and dispatches recall", async () => {
   assert.equal(entityResult.structuredContent.entity.name, "person-alex");
 });
 
+test("MCP initialize re-reads the server version for each server instance", async () => {
+  const originalVersion = process.env.OPENCLAW_ENGRAM_VERSION;
+  try {
+    process.env.OPENCLAW_ENGRAM_VERSION = "9.9.1";
+    const firstServer = new EngramMcpServer(createFakeService());
+    const firstInit = await firstServer.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    assert.equal((firstInit?.result as { serverInfo: { version: string } }).serverInfo.version, "9.9.1");
+
+    process.env.OPENCLAW_ENGRAM_VERSION = "9.9.2";
+    const secondServer = new EngramMcpServer(createFakeService());
+    const secondInit = await secondServer.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "initialize",
+      params: {},
+    });
+    assert.equal((secondInit?.result as { serverInfo: { version: string } }).serverInfo.version, "9.9.2");
+  } finally {
+    if (originalVersion === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_VERSION;
+    } else {
+      process.env.OPENCLAW_ENGRAM_VERSION = originalVersion;
+    }
+  }
+});
+
 test("MCP server reports parse errors and keeps processing later messages", async () => {
   const server = new EngramMcpServer(createFakeService());
   const input = new PassThrough();

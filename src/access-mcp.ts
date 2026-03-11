@@ -18,24 +18,18 @@ type McpTool = {
 };
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
-let cachedServerVersion: string | null = null;
 
 async function getMcpServerVersion(): Promise<string> {
-  if (cachedServerVersion) return cachedServerVersion;
   const envVersion = process.env.OPENCLAW_ENGRAM_VERSION?.trim() || process.env.npm_package_version?.trim();
-  if (envVersion) {
-    cachedServerVersion = envVersion;
-    return cachedServerVersion;
-  }
+  if (envVersion) return envVersion;
   try {
     const pkgPath = new URL("../package.json", import.meta.url);
     const raw = await readFile(pkgPath, "utf-8");
     const parsed = JSON.parse(raw) as { version?: string };
-    cachedServerVersion = parsed.version?.trim() || "unknown";
+    return parsed.version?.trim() || "unknown";
   } catch {
-    cachedServerVersion = "unknown";
+    return "unknown";
   }
-  return cachedServerVersion;
 }
 
 export class EngramMcpServer {
