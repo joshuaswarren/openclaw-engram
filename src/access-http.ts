@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
+import type { RecallPlanMode } from "./types.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -165,7 +166,7 @@ export class EngramAccessHttpServer {
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
         topK: typeof body.topK === "number" ? body.topK : undefined,
-        mode: typeof body.mode === "string" ? body.mode as never : undefined,
+        mode: typeof body.mode === "string" ? body.mode as RecallPlanMode | "auto" : undefined,
         includeDebug: body.includeDebug === true,
       });
       this.respondJson(res, 200, response);

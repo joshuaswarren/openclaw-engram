@@ -1,6 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import type { EngramAccessService } from "./access-service.js";
+import type { RecallPlanMode } from "./types.js";
 
 type JsonRpcId = string | number | null;
 
@@ -345,7 +346,7 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           topK: typeof args.topK === "number" && Number.isFinite(args.topK) ? args.topK : undefined,
-          mode: typeof args.mode === "string" ? args.mode as never : undefined,
+          mode: typeof args.mode === "string" ? args.mode as RecallPlanMode | "auto" : undefined,
           includeDebug: args.includeDebug === true,
         });
       case "engram.recall_explain":
