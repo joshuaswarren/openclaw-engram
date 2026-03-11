@@ -230,3 +230,63 @@ test("access idempotency key locks stay live while the guarded callback is still
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("access idempotency store get waits for same-instance writes instead of clobbering staged state", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-get-wait-"));
+  try {
+    const storeA = new AccessIdempotencyStore(memoryDir);
+    const storeB = new AccessIdempotencyStore(memoryDir);
+    const verifier = new AccessIdempotencyStore(memoryDir);
+    let releaseFirstWrite: (() => void) | null = null;
+    const firstWritePaused = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstWriteEnteredResolve: (() => void) | null = null;
+    const firstWriteEntered = new Promise<void>((resolve) => {
+      firstWriteEnteredResolve = resolve;
+    });
+    let flushWriteCalls = 0;
+
+    setAccessIdempotencyTestHooks({
+      beforeFlushWrite: async () => {
+        flushWriteCalls += 1;
+        if (flushWriteCalls === 1) {
+          firstWriteEnteredResolve?.();
+          await firstWritePaused;
+        }
+      },
+    });
+
+    try {
+      const lockHolder = storeB.put("key-lock", "hash-lock", { locked: true });
+      await firstWriteEntered;
+
+      const pendingPut = storeA.put("key-a", "hash-a", { accepted: true });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      let readResolved = false;
+      const blockedRead = storeA.get("key-lock", "hash-lock").then((result) => {
+        readResolved = true;
+        return result;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(
+        readResolved,
+        false,
+        "same-instance reads should wait for the staged write to finish instead of reloading over in-memory state",
+      );
+
+      releaseFirstWrite?.();
+      const [readResult] = await Promise.all([blockedRead, lockHolder, pendingPut]);
+      assert.deepEqual(readResult.response, { locked: true });
+    } finally {
+      setAccessIdempotencyTestHooks(null);
+    }
+
+    const stored = await verifier.get("key-a", "hash-a");
+    assert.deepEqual(stored.response, { accepted: true });
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

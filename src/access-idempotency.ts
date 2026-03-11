@@ -54,6 +54,7 @@ export class AccessIdempotencyStore {
   }
 
   async get(key: string, requestHash: string): Promise<{ response?: unknown; conflict: boolean }> {
+    await this.writeQueue.catch(() => {});
     await this.reload({ forceRefresh: true });
     const entry = this.state[key];
     if (!entry) return { conflict: false };

@@ -248,7 +248,11 @@ test("access service recall forwards overrides and returns explainable metadata"
         sharedNamespace: "shared",
         principalFromSessionKeyMode: "prefix",
         principalFromSessionKeyRules: [],
-        namespacePolicies: [],
+        namespacePolicies: [{
+          name: "project-x",
+          readPrincipals: ["*"],
+          writePrincipals: ["*"],
+        }],
         defaultRecallNamespaces: ["self"],
         searchBackend: "qmd",
         qmdEnabled: true,
@@ -324,7 +328,11 @@ test("access service recall reports the effective snapshot namespace in response
         sharedNamespace: "shared",
         principalFromSessionKeyMode: "prefix",
         principalFromSessionKeyRules: [],
-        namespacePolicies: [],
+        namespacePolicies: [{
+          name: "project-x",
+          readPrincipals: ["*"],
+          writePrincipals: ["*"],
+        }],
         defaultRecallNamespaces: ["self"],
         searchBackend: "qmd",
         qmdEnabled: true,
@@ -367,6 +375,77 @@ test("access service recall reports the effective snapshot namespace in response
     assert.equal(response.namespace, "team-alpha");
     assert.equal(intentNamespace, "team-alpha");
     assert.equal(graphNamespace, "team-alpha");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service serializes result paths from the snapshot namespace", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-recall-path-namespace-"));
+  try {
+    const globalStorage = new StorageManager(memoryDir);
+    const namespaceStorage = new StorageManager(path.join(memoryDir, "namespaces", "project-x"));
+    const namespacedPath = path.join(namespaceStorage.dir, "facts/2026-03-08/fact-project.md");
+    await writeText(
+      namespaceStorage.dir,
+      "facts/2026-03-08/fact-project.md",
+      memoryDoc("fact-project", "Namespace-scoped path recall serialization."),
+    );
+    const snapshot = {
+      sessionKey: "sess-1",
+      recordedAt: "2026-03-08T00:00:00.000Z",
+      queryHash: "hash",
+      queryLen: 12,
+      memoryIds: [],
+      namespace: "project-x",
+      traceId: "trace-1",
+      plannerMode: "full",
+      requestedMode: "full",
+      fallbackUsed: false,
+      sourcesUsed: ["hot_qmd"],
+      budgetsApplied: {
+        appliedTopK: 1,
+        recallBudgetChars: 8000,
+        maxMemoryTokens: 2000,
+      },
+      latencyMs: 12,
+      resultPaths: [namespacedPath],
+    };
+
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: true,
+        defaultNamespace: "global",
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [{
+          name: "project-x",
+          readPrincipals: ["*"],
+          writePrincipals: ["*"],
+        }],
+        defaultRecallNamespaces: ["self"],
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => snapshot, getMostRecent: () => snapshot },
+      getStorage: async (namespace?: string) => (namespace === "project-x" ? namespaceStorage : globalStorage),
+      getLastIntentSnapshot: async () => null,
+      getLastGraphRecallSnapshot: async () => null,
+    } as any);
+
+    const response = await service.recall({
+      query: "namespace path recall",
+      sessionKey: "sess-1",
+      namespace: "project-x",
+    });
+
+    assert.equal(response.namespace, "project-x");
+    assert.equal(response.results.length, 1);
+    assert.equal(response.results[0]?.id, "fact-project");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

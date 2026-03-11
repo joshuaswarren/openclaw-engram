@@ -148,6 +148,8 @@ function createFakeService(): EngramAccessService {
       appliedActions: [],
       report: "# report",
     }),
+    peekMemoryStoreIdempotency: async () => "miss",
+    peekSuggestionSubmitIdempotency: async () => "miss",
     memoryStore: async ({ dryRun, idempotencyKey }) => ({
       schemaVersion: 1,
       operation: "memory_store",
@@ -542,6 +544,8 @@ test("access HTTP server does not consume the write rate limit for idempotency r
   const server = new EngramAccessHttpServer({
     service: {
       ...createFakeService(),
+      peekMemoryStoreIdempotency: async ({ idempotencyKey }: { idempotencyKey?: string }) =>
+        idempotencyKey === "replay-key" ? "replay" : "miss",
       memoryStore: async ({ dryRun, idempotencyKey }: { dryRun?: boolean; idempotencyKey?: string }) => {
         const replay = Boolean(idempotencyKey && seenKeys.has(idempotencyKey));
         if (idempotencyKey) {
@@ -599,6 +603,80 @@ test("access HTTP server does not consume the write rate limit for idempotency r
       }),
     });
     assert.equal(freshWrite.status, 201);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP server allows idempotent replay writes even after the write limit is full", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      peekMemoryStoreIdempotency: async ({ idempotencyKey }: { idempotencyKey?: string }) =>
+        idempotencyKey === "replay-key" ? "replay" : "miss",
+      memoryStore: async ({ idempotencyKey }: { idempotencyKey?: string }) => ({
+        schemaVersion: 1,
+        operation: "memory_store",
+        namespace: "global",
+        dryRun: false,
+        accepted: true,
+        queued: false,
+        status: "stored",
+        memoryId: idempotencyKey === "replay-key" ? "fact-replay" : "fact-new",
+        idempotencyKey,
+        idempotencyReplay: idempotencyKey === "replay-key",
+      }),
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+    for (let index = 0; index < 30; index += 1) {
+      const response = await fetch(`${base}/engram/v1/memories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          idempotencyKey: `fresh-${index}`,
+          content: `A new write ${index}`,
+          category: "fact",
+        }),
+      });
+      assert.equal(response.status, 201);
+    }
+
+    const replay = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        idempotencyKey: "replay-key",
+        content: "This should bypass the pre-limit gate as a safe replay.",
+        category: "fact",
+      }),
+    });
+    assert.equal(replay.status, 201);
+
+    const fresh = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        idempotencyKey: "fresh-overflow",
+        content: "This should still be rate-limited.",
+        category: "fact",
+      }),
+    });
+    assert.equal(fresh.status, 429);
   } finally {
     await server.stop();
   }

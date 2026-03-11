@@ -185,8 +185,7 @@ export class EngramAccessHttpServer {
 
     if (req.method === "POST" && pathname === "/engram/v1/memories") {
       const body = await this.readJsonBody(req);
-      this.ensureWriteRateLimitAvailable();
-      const response = await this.service.memoryStore({
+      const request = {
         schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
         dryRun: body.dryRun === true,
@@ -200,7 +199,12 @@ export class EngramAccessHttpServer {
         entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
         ttl: typeof body.ttl === "string" ? body.ttl : undefined,
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
-      });
+      };
+      const idempotencyStatus = await this.service.peekMemoryStoreIdempotency(request);
+      if (idempotencyStatus === "miss") {
+        this.ensureWriteRateLimitAvailable();
+      }
+      const response = await this.service.memoryStore(request);
       if (this.shouldCountWriteRateLimit(response)) {
         this.recordWriteRateLimitHit();
       }
@@ -210,8 +214,7 @@ export class EngramAccessHttpServer {
 
     if (req.method === "POST" && pathname === "/engram/v1/suggestions") {
       const body = await this.readJsonBody(req);
-      this.ensureWriteRateLimitAvailable();
-      const response = await this.service.suggestionSubmit({
+      const request = {
         schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
         dryRun: body.dryRun === true,
@@ -225,7 +228,12 @@ export class EngramAccessHttpServer {
         entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
         ttl: typeof body.ttl === "string" ? body.ttl : undefined,
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
-      });
+      };
+      const idempotencyStatus = await this.service.peekSuggestionSubmitIdempotency(request);
+      if (idempotencyStatus === "miss") {
+        this.ensureWriteRateLimitAvailable();
+      }
+      const response = await this.service.suggestionSubmit(request);
       if (this.shouldCountWriteRateLimit(response)) {
         this.recordWriteRateLimitHit();
       }
