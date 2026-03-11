@@ -994,6 +994,8 @@ export type MemoryActionOutcome = "applied" | "skipped" | "failed";
 
 export type MemoryActionPolicyDecision = "allow" | "defer" | "deny";
 
+export type MemoryActionStatus = "validated" | "applied" | "rejected";
+
 export type MemoryActionEligibilitySource =
   | "extraction"
   | "consolidation"
@@ -1016,12 +1018,26 @@ export interface MemoryActionPolicyResult {
 }
 
 export interface MemoryActionEvent {
+  schemaVersion?: number;
+  actionId?: string;
   timestamp: string;
   action: MemoryActionType;
   outcome: MemoryActionOutcome;
+  status?: MemoryActionStatus;
+  actor?: string;
+  subsystem?: string;
   reason?: string;
   memoryId?: string;
   namespace?: string;
+  sessionKey?: string;
+  sourceSessionKey?: string;
+  checkpointCapturedAt?: string;
+  checkpointTtl?: string;
+  checkpointTurnCount?: number;
+  inputSummary?: string;
+  outputMemoryIds?: string[];
+  dryRun?: boolean;
+  policyVersion?: string;
   promptHash?: string;
   policyDecision?: MemoryActionPolicyDecision;
   policyRationale?: string;

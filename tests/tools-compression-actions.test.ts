@@ -13,13 +13,53 @@ type RegisteredTool = {
 function buildHarness(options?: {
   contextCompressionActionsEnabled?: boolean;
   appendMemoryActionEventResult?: boolean;
+  appendMemoryActionEvent?: (event: any) => Promise<boolean> | boolean;
   previewMemoryActionEvent?: (event: any) => any;
+  writeMemory?: (category: string, content: string, options?: Record<string, unknown>) => Promise<string> | string;
+  createCheckpoint?: (sessionKey: string, turns: any[], ttlHours?: number) => any;
+  saveCheckpoint?: (checkpoint: any) => Promise<void> | void;
 }) {
   const tools = new Map<string, RegisteredTool>();
   const capturedEvents: any[] = [];
+  const capturedWrites: Array<{ category: string; content: string; options?: Record<string, unknown> }> = [];
+  const createdCheckpoints: Array<{ sessionKey: string; turns: any[]; ttlHours?: number }> = [];
+  const savedCheckpoints: any[] = [];
   const api = {
     registerTool(spec: RegisteredTool) {
       tools.set(spec.name, spec);
+    },
+  };
+
+  const storage = {
+    readIdentity: async () => null,
+    readProfile: async () => null,
+    readAllEntities: async () => [],
+    writeMemory: async (category: string, content: string, writeOptions?: Record<string, unknown>) => {
+      capturedWrites.push({ category, content, options: writeOptions });
+      if (options?.writeMemory) {
+        return await options.writeMemory(category, content, writeOptions);
+      }
+      return "fact-stored";
+    },
+  };
+
+  const transcript = {
+    listSessionKeys: async () => [],
+    createCheckpoint: (sessionKey: string, turns: any[], ttlHours?: number) => {
+      createdCheckpoints.push({ sessionKey, turns, ttlHours });
+      if (options?.createCheckpoint) {
+        return options.createCheckpoint(sessionKey, turns, ttlHours);
+      }
+      return {
+        sessionKey,
+        capturedAt: "2026-03-11T00:00:00.000Z",
+        ttl: "2026-03-12T00:00:00.000Z",
+        turns,
+      };
+    },
+    saveCheckpoint: async (checkpoint: any) => {
+      savedCheckpoints.push(checkpoint);
+      await options?.saveCheckpoint?.(checkpoint);
     },
   };
 
@@ -43,6 +83,9 @@ function buildHarness(options?: {
       })),
     appendMemoryActionEvent: async (event: unknown) => {
       capturedEvents.push(event);
+      if (options?.appendMemoryActionEvent) {
+        return await options.appendMemoryActionEvent(event);
+      }
       return options?.appendMemoryActionEventResult ?? true;
     },
     qmd: {
@@ -53,17 +96,12 @@ function buildHarness(options?: {
       get: () => null,
       getMostRecent: () => null,
     },
-    storage: {
-      readIdentity: async () => null,
-      readProfile: async () => null,
-      readAllEntities: async () => [],
-    },
+    getStorage: async () => storage,
+    storage,
     summarizer: {
       runHourly: async () => {},
     },
-    transcript: {
-      listSessionKeys: async () => [],
-    },
+    transcript,
     sharedContext: null,
     compounding: null,
     recordMemoryFeedback: async () => {},
@@ -72,7 +110,7 @@ function buildHarness(options?: {
   };
 
   registerTools(api as any, orchestrator as any);
-  return { tools, capturedEvents };
+  return { tools, capturedEvents, capturedWrites, createdCheckpoints, savedCheckpoints };
 }
 
 function toolText(result: { content: Array<{ type: string; text: string }> }): string {
@@ -185,4 +223,118 @@ test("memory_action_apply reports normalized outcome for persisted telemetry", a
 
   assert.match(toolText(result), /outcome=skipped/i);
   assert.equal(capturedEvents.length, 1);
+});
+
+test("context_checkpoint reuses the transcript checkpoint model and logs checkpoint metadata", async () => {
+  const { tools, capturedEvents, createdCheckpoints, savedCheckpoints } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("context_checkpoint");
+  assert.ok(tool);
+
+  const turns = [
+    {
+      timestamp: "2026-03-11T10:00:00.000Z",
+      role: "user",
+      content: "Please compress the noisy setup discussion.",
+      sessionKey: "agent:engram:main",
+      turnId: "turn-1",
+    },
+  ];
+
+  const result = await tool.execute("tc7", {
+    summary: "checkpoint before compaction",
+    sessionKey: "agent:engram:main",
+    turns,
+    ttlHours: 12,
+    dryRun: false,
+  });
+
+  assert.match(toolText(result), /checkpoint/i);
+  assert.equal(createdCheckpoints.length, 1);
+  assert.deepEqual(createdCheckpoints[0], {
+    sessionKey: "agent:engram:main",
+    turns,
+    ttlHours: 12,
+  });
+  assert.equal(savedCheckpoints.length, 1);
+  assert.equal(savedCheckpoints[0]?.sessionKey, "agent:engram:main");
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.sourceSessionKey, "agent:engram:main");
+  assert.equal(capturedEvents[0]?.inputSummary, "checkpoint before compaction");
+  assert.equal(capturedEvents[0]?.dryRun, false);
+});
+
+test("memory_action_apply executes store_note through storage paths and records output ids", async () => {
+  const { tools, capturedEvents, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc8", {
+    action: "store_note",
+    category: "fact",
+    content: "Persist the compaction decision through the normal storage path.",
+    namespace: "team-alpha",
+    sessionKey: "agent:team-alpha:main",
+  });
+
+  assert.match(toolText(result), /memoryId=/i);
+  assert.equal(capturedWrites.length, 1);
+  assert.deepEqual(capturedWrites[0], {
+    category: "fact",
+    content: "Persist the compaction decision through the normal storage path.",
+    options: {
+      actor: "tool.memory_action_apply",
+      source: "memory_action_apply",
+    },
+  });
+  assert.equal(capturedEvents.length, 1);
+  assert.deepEqual(capturedEvents[0]?.outputMemoryIds, ["fact-stored"]);
+  assert.equal(capturedEvents[0]?.status, "applied");
+  assert.equal(capturedEvents[0]?.actor, "tool.memory_action_apply");
+});
+
+test("memory_action_apply dryRun logs the validated action without mutating storage", async () => {
+  const { tools, capturedEvents, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc9", {
+    action: "store_note",
+    category: "fact",
+    content: "Validate without writing this memory.",
+    dryRun: true,
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /validated/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.dryRun, true);
+  assert.equal(capturedEvents[0]?.status, "validated");
+});
+
+test("memory_action_apply logs validation rejections for missing required action inputs", async () => {
+  const { tools, capturedEvents, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10", {
+    action: "store_note",
+    category: "fact",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /validation/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.status, "rejected");
+  assert.equal(capturedEvents[0]?.outcome, "failed");
+  assert.match(capturedEvents[0]?.reason ?? "", /validation/i);
 });

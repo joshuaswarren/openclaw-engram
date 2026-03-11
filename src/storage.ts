@@ -934,6 +934,7 @@ export class StorageManager {
     category: MemoryCategory,
     content: string,
     options: {
+      actor?: string;
       confidence?: number;
       tags?: string[];
       entityRef?: string;
@@ -3362,7 +3363,11 @@ export class StorageManager {
   /**
    * Add links to an existing memory.
    */
-  async addLinksToMemory(memoryId: string, links: MemoryLink[]): Promise<boolean> {
+  async addLinksToMemory(
+    memoryId: string,
+    links: MemoryLink[],
+    lifecycle?: MemoryLifecycleEventWriteOptions,
+  ): Promise<boolean> {
     const memories = await this.readAllMemories();
     const memory = memories.find((m) => m.frontmatter.id === memoryId);
     if (!memory) return false;
@@ -3377,16 +3382,15 @@ export class StorageManager {
       }
     }
 
-    const updatedFm: MemoryFrontmatter = {
-      ...memory.frontmatter,
-      links: mergedLinks,
-      updated: new Date().toISOString(),
-    };
-
-    const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${memory.content}\n`;
-
     try {
-      await writeFile(memory.path, fileContent, "utf-8");
+      await this.writeMemoryFrontmatter(
+        memory,
+        {
+          links: mergedLinks,
+          updated: new Date().toISOString(),
+        },
+        lifecycle,
+      );
       log.debug(`added ${links.length} links to memory ${memoryId}`);
       return true;
     } catch (err) {

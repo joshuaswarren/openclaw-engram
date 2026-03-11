@@ -1421,6 +1421,22 @@ export class Orchestrator {
         : event.outcome === "failed"
           ? "failed"
           : "skipped";
+    const sourceSessionKey =
+      typeof event.sourceSessionKey === "string" && event.sourceSessionKey.length > 0
+        ? event.sourceSessionKey
+        : typeof event.sessionKey === "string" && event.sessionKey.length > 0
+          ? event.sessionKey
+          : undefined;
+    const outputMemoryIds = Array.isArray(event.outputMemoryIds)
+      ? Array.from(
+          new Set(
+            event.outputMemoryIds.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            ),
+          ),
+        )
+      : [];
+    const dryRun = event.dryRun === true;
 
     const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
       (part): part is string => typeof part === "string" && part.length > 0,
@@ -1428,9 +1444,39 @@ export class Orchestrator {
 
     return {
       ...event,
+      schemaVersion: event.schemaVersion ?? 1,
+      actionId:
+        typeof event.actionId === "string" && event.actionId.length > 0
+          ? event.actionId
+          : `memact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       outcome: normalizedOutcome,
+      status:
+        event.status ??
+        (dryRun
+          ? "validated"
+          : normalizedOutcome === "failed" || policy.decision !== "allow"
+            ? "rejected"
+            : "applied"),
+      actor:
+        typeof event.actor === "string" && event.actor.length > 0 ? event.actor : "engram",
+      subsystem:
+        typeof event.subsystem === "string" && event.subsystem.length > 0
+          ? event.subsystem
+          : "memory_action",
       reason: reasonParts.join(" | "),
       namespace,
+      sessionKey: sourceSessionKey ?? event.sessionKey,
+      sourceSessionKey,
+      inputSummary:
+        typeof event.inputSummary === "string" && event.inputSummary.length > 0
+          ? event.inputSummary
+          : undefined,
+      outputMemoryIds,
+      dryRun,
+      policyVersion:
+        typeof event.policyVersion === "string" && event.policyVersion.length > 0
+          ? event.policyVersion
+          : "memory-action-policy.v1",
       timestamp:
         typeof event.timestamp === "string" && event.timestamp.length > 0
           ? event.timestamp

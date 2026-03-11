@@ -195,3 +195,47 @@ test("appendMemoryActionEvent enforces zero-limit defer semantics for summarize_
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("appendMemoryActionEvent persists rich rejection records for policy-denied actions", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-rich-rejection-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      contextCompressionActionsEnabled: false,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    const wrote = await orchestrator.appendMemoryActionEvent({
+      action: "store_note",
+      outcome: "applied",
+      reason: "manual-test",
+      memoryId: "fact-target",
+      dryRun: false,
+      actor: "tool.memory_action_apply",
+      sourceSessionKey: "agent:engram:main",
+      inputSummary: "store_note => fact-target",
+    } as any);
+    assert.equal(wrote, true);
+
+    const storage = await orchestrator.getStorage();
+    const events = await storage.readMemoryActionEvents(1);
+    assert.equal(events.length, 1);
+
+    const record = events[0] as Record<string, unknown>;
+    assert.equal(typeof record.actionId, "string");
+    assert.notEqual((record.actionId as string).length, 0);
+    assert.equal(record.actor, "tool.memory_action_apply");
+    assert.equal(record.sourceSessionKey, "agent:engram:main");
+    assert.equal(record.inputSummary, "store_note => fact-target");
+    assert.deepEqual(record.outputMemoryIds, []);
+    assert.equal(record.dryRun, false);
+    assert.equal(record.status, "rejected");
+    assert.equal(record.policyDecision, "deny");
+    assert.equal(typeof record.policyVersion, "string");
+    assert.notEqual((record.policyVersion as string).length, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
