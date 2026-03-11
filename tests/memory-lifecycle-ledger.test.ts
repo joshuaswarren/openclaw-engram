@@ -99,6 +99,24 @@ test("StorageManager emits created updated and archived lifecycle events for mem
   }
 });
 
+test("StorageManager writeMemory preserves explicit lifecycle actor overrides", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-lifecycle-actor-"));
+  try {
+    const storage = new StorageManager(dir);
+    const id = await storage.writeMemory("fact", "Tool-authored memory content", {
+      source: "test",
+      actor: "tool.memory_action_apply",
+    });
+
+    const events = await storage.readMemoryLifecycleEvents(10);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.memoryId, id);
+    assert.equal(events[0]?.actor, "tool.memory_action_apply");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("archiveMemory fails open when lifecycle ledger append throws after archive move", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-lifecycle-archive-fail-open-"));
   try {

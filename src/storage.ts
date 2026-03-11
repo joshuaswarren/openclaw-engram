@@ -1011,7 +1011,7 @@ export class StorageManager {
       memoryId: id,
       eventType: "created",
       timestamp: fm.created,
-      actor: "storage.writeMemory",
+      actor: options.actor ?? "storage.writeMemory",
       after: this.summarizeLifecycleState(fm, filePath),
       relatedMemoryIds: [
         ...(options.supersedes ? [options.supersedes] : []),
