@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { AccessIdempotencyStore, setAccessIdempotencyTestHooks } from "../src/access-idempotency.js";
 
 test("access idempotency store refreshes when another process writes a key", async () => {
@@ -20,6 +20,27 @@ test("access idempotency store refreshes when another process writes a key", asy
 
     const conflictRead = await storeA.get("shared-key", "hash-b");
     assert.equal(conflictRead.conflict, true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access idempotency store reloads forced refreshes when another writer preserves the same mtime", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-equal-mtime-"));
+  try {
+    const storeA = new AccessIdempotencyStore(memoryDir);
+    const storeB = new AccessIdempotencyStore(memoryDir);
+    const statePath = path.join(memoryDir, "state", "access-idempotency.json");
+
+    await storeB.put("seed-key", "hash-seed", { seeded: true });
+    await storeA.get("seed-key", "hash-seed");
+
+    await storeB.put("shared-key", "hash-a", { accepted: true, memoryId: "fact-1" });
+    (storeA as AccessIdempotencyStore & { loadedMtimeMs: number }).loadedMtimeMs = (await stat(statePath)).mtimeMs;
+
+    const cachedRead = await storeA.get("shared-key", "hash-a");
+    assert.equal(cachedRead.conflict, false);
+    assert.deepEqual(cachedRead.response, { accepted: true, memoryId: "fact-1" });
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

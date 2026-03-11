@@ -89,7 +89,7 @@ export class AccessIdempotencyStore {
     if (options.forceRefresh === true) {
       try {
         const fileStat = await stat(this.statePath);
-        if (fileStat.mtimeMs <= this.loadedMtimeMs) {
+        if (fileStat.mtimeMs < this.loadedMtimeMs) {
           return;
         }
       } catch {
