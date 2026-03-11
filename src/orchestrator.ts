@@ -6106,6 +6106,7 @@ export class Orchestrator {
     changedRules: number;
     semanticRefinementApplied: boolean;
     persisted: boolean;
+    draftContentHash: string | null;
   }> {
     const dryRun = options?.dryRun === true;
     const eventLimit =
@@ -6125,6 +6126,7 @@ export class Orchestrator {
         changedRules: 0,
         semanticRefinementApplied: false,
         persisted: false,
+        draftContentHash: null,
       };
     }
 
@@ -6155,6 +6157,7 @@ export class Orchestrator {
         changedRules: 0,
         semanticRefinementApplied: false,
         persisted: false,
+        draftContentHash: null,
       };
     }
     const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
@@ -6191,12 +6194,12 @@ export class Orchestrator {
     });
 
     const content = renderCompressionGuidelinesMarkdown(refinedCandidate);
+    const contentHash = createHash("sha256").update(content).digest("hex");
     const semanticRefinementApplied =
       JSON.stringify(refinedCandidate.ruleUpdates) !== JSON.stringify(candidate.ruleUpdates);
     const changedRules = refinedCandidate.ruleUpdates.filter((rule) => rule.delta !== 0).length;
 
     if (!dryRun) {
-      const contentHash = createHash("sha256").update(content).digest("hex");
       await this.storage.writeCompressionGuidelineDraft(content);
       await this.storage.writeCompressionGuidelineDraftState({
         version: refinedCandidate.optimizerVersion,
@@ -6220,19 +6223,30 @@ export class Orchestrator {
       changedRules,
       semanticRefinementApplied,
       persisted: !dryRun,
+      draftContentHash: contentHash,
     };
   }
 
-  async activateCompressionGuidelineDraft(): Promise<{
+  async activateCompressionGuidelineDraft(options?: {
+    expectedContentHash?: string;
+    expectedGuidelineVersion?: number;
+  }): Promise<{
     enabled: boolean;
     activated: boolean;
     guidelineVersion: number | null;
+    reason?:
+      | "missing_draft"
+      | "expected_revision_required"
+      | "content_hash_mismatch"
+      | "guideline_version_mismatch"
+      | "draft_changed";
   }> {
     if (!this.config.compressionGuidelineLearningEnabled) {
       return {
         enabled: false,
         activated: false,
         guidelineVersion: null,
+        reason: "missing_draft",
       };
     }
 
@@ -6242,14 +6256,55 @@ export class Orchestrator {
         enabled: true,
         activated: false,
         guidelineVersion: null,
+        reason: "missing_draft",
       };
     }
 
-    const activated = await this.storage.activateCompressionGuidelineDraft();
+    const expectedContentHash = options?.expectedContentHash?.trim();
+    const expectedGuidelineVersion = options?.expectedGuidelineVersion;
+
+    if (
+      (!expectedContentHash || expectedContentHash.length === 0) &&
+      typeof expectedGuidelineVersion !== "number"
+    ) {
+      return {
+        enabled: true,
+        activated: false,
+        guidelineVersion: null,
+        reason: "expected_revision_required",
+      };
+    }
+
+    if (expectedContentHash && draftState.contentHash !== expectedContentHash) {
+      return {
+        enabled: true,
+        activated: false,
+        guidelineVersion: null,
+        reason: "content_hash_mismatch",
+      };
+    }
+
+    if (
+      typeof expectedGuidelineVersion === "number" &&
+      draftState.guidelineVersion !== expectedGuidelineVersion
+    ) {
+      return {
+        enabled: true,
+        activated: false,
+        guidelineVersion: null,
+        reason: "guideline_version_mismatch",
+      };
+    }
+
+    const activated = await this.storage.activateCompressionGuidelineDraft({
+      ...(expectedContentHash ? { expectedContentHash } : {}),
+      ...(typeof expectedGuidelineVersion === "number" ? { expectedGuidelineVersion } : {}),
+    });
     return {
       enabled: true,
       activated,
       guidelineVersion: activated ? draftState.guidelineVersion : null,
+      ...(activated ? {} : { reason: "draft_changed" as const }),
     };
   }
 

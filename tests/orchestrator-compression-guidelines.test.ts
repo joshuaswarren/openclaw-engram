@@ -129,6 +129,7 @@ test("optimizeCompressionGuidelines does not publish new state for dry-run-only 
   assert.equal(result.changedRules, 0);
   assert.equal(result.semanticRefinementApplied, false);
   assert.equal(result.persisted, false);
+  assert.equal(result.draftContentHash, null);
   assert.equal(wroteGuidelines, 0);
   assert.equal(wroteState, 0);
 });
@@ -174,6 +175,7 @@ test("optimizeCompressionGuidelines over-fetches until it collects enough non-dr
   assert.equal(result.enabled, true);
   assert.equal(result.eventCount, 2);
   assert.equal(result.nextGuidelineVersion, 1);
+  assert.equal(typeof result.draftContentHash, "string");
   assert.equal(wroteDraftGuidelines, 1);
   assert.equal(wroteDraftState, 1);
 });
@@ -224,6 +226,7 @@ test("optimizeCompressionGuidelines stages a draft revision without overwriting 
 
     const result = await orchestrator.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 50 });
     assert.equal(result.persisted, true);
+    assert.equal(typeof result.draftContentHash, "string");
 
     const activeGuidelines = await orchestrator.storage.readCompressionGuidelines();
     const draftGuidelines = await orchestrator.storage.readCompressionGuidelineDraft();
@@ -236,6 +239,57 @@ test("optimizeCompressionGuidelines stages a draft revision without overwriting 
     assert.equal(draftState?.activationState, "draft");
     assert.equal((draftState?.guidelineVersion ?? 0) > (activeState?.guidelineVersion ?? 0), true);
     assert.equal(Array.isArray(draftState?.ruleUpdates), true);
+    assert.equal(result.draftContentHash, draftState?.contentHash ?? null);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("activateCompressionGuidelineDraft requires reviewed draft identity and rejects stale hashes", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-guideline-activate-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      compressionGuidelineLearningEnabled: true,
+      compressionGuidelineSemanticRefinementEnabled: false,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    await orchestrator.storage.appendMemoryActionEvents([
+      {
+        timestamp: "2026-03-11T00:00:00.000Z",
+        action: "summarize_node",
+        outcome: "failed",
+        reason: "quality=poor",
+      },
+      {
+        timestamp: "2026-03-11T00:05:00.000Z",
+        action: "summarize_node",
+        outcome: "applied",
+        reason: "quality=good",
+      },
+    ]);
+
+    const optimizeResult = await orchestrator.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 10 });
+    assert.equal(typeof optimizeResult.draftContentHash, "string");
+
+    const missingIdentity = await orchestrator.activateCompressionGuidelineDraft();
+    assert.equal(missingIdentity.activated, false);
+    assert.equal(missingIdentity.reason, "expected_revision_required");
+
+    const staleIdentity = await orchestrator.activateCompressionGuidelineDraft({
+      expectedContentHash: "stale-hash",
+    });
+    assert.equal(staleIdentity.activated, false);
+    assert.equal(staleIdentity.reason, "content_hash_mismatch");
+
+    const activated = await orchestrator.activateCompressionGuidelineDraft({
+      expectedContentHash: optimizeResult.draftContentHash ?? undefined,
+    });
+    assert.equal(activated.activated, true);
+    assert.equal(activated.guidelineVersion, optimizeResult.nextGuidelineVersion);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

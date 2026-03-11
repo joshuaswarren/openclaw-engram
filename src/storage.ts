@@ -2116,12 +2116,29 @@ export class StorageManager {
     return this.readCompressionGuidelineStateFile(this.compressionGuidelineDraftStatePath);
   }
 
-  async activateCompressionGuidelineDraft(): Promise<boolean> {
+  async activateCompressionGuidelineDraft(options?: {
+    expectedContentHash?: string;
+    expectedGuidelineVersion?: number;
+  }): Promise<boolean> {
     const [draftContent, draftState] = await Promise.all([
       this.readCompressionGuidelineDraft(),
       this.readCompressionGuidelineDraftState(),
     ]);
     if (!draftContent || !draftState) return false;
+    if (
+      typeof options?.expectedContentHash === "string" &&
+      options.expectedContentHash.length > 0 &&
+      draftState.contentHash !== options.expectedContentHash
+    ) {
+      return false;
+    }
+    if (
+      typeof options?.expectedGuidelineVersion === "number" &&
+      Number.isFinite(options.expectedGuidelineVersion) &&
+      draftState.guidelineVersion !== options.expectedGuidelineVersion
+    ) {
+      return false;
+    }
     if (draftState.contentHash) {
       const contentHash = createHash("sha256").update(draftContent).digest("hex");
       if (contentHash !== draftState.contentHash) return false;

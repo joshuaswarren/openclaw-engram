@@ -1823,6 +1823,7 @@ Best for:
             `persisted=${result.persisted}`,
             `eventCount=${result.eventCount}`,
             `guidelineVersion: ${result.previousGuidelineVersion ?? "none"} -> ${result.nextGuidelineVersion}`,
+            `draftContentHash=${result.draftContentHash ?? "none"}`,
             `changedRules=${result.changedRules}`,
             `semanticRefinementApplied=${result.semanticRefinementApplied}`,
           ].join("\n"),
@@ -1838,9 +1839,22 @@ Best for:
       label: "Activate Compression Guideline Draft",
       description:
         "Promote the staged compression guideline draft to the active guideline/state after review (v8.11).",
-      parameters: Type.Object({}),
-      async execute() {
-        const result = await orchestrator.activateCompressionGuidelineDraft();
+      parameters: Type.Object({
+        expectedContentHash: Type.Optional(Type.String()),
+        expectedGuidelineVersion: Type.Optional(Type.Number()),
+      }),
+      async execute(_toolCallId, params) {
+        const expectedContentHash =
+          typeof params.expectedContentHash === "string" ? params.expectedContentHash.trim() : "";
+        const expectedGuidelineVersion =
+          typeof params.expectedGuidelineVersion === "number" &&
+          Number.isFinite(params.expectedGuidelineVersion)
+            ? Math.floor(params.expectedGuidelineVersion)
+            : undefined;
+        const result = await orchestrator.activateCompressionGuidelineDraft({
+          ...(expectedContentHash ? { expectedContentHash } : {}),
+          ...(typeof expectedGuidelineVersion === "number" ? { expectedGuidelineVersion } : {}),
+        });
 
         if (!result.enabled) {
           return toolResult(
@@ -1849,7 +1863,26 @@ Best for:
         }
 
         if (!result.activated) {
-          return toolResult("No staged compression guideline draft is available to activate.");
+          if (result.reason === "missing_draft") {
+            return toolResult("No staged compression guideline draft is available to activate.");
+          }
+          if (result.reason === "expected_revision_required") {
+            return toolResult(
+              "Activation requires `expectedContentHash` or `expectedGuidelineVersion` so the reviewed draft identity is pinned.",
+            );
+          }
+          if (result.reason === "content_hash_mismatch" || result.reason === "draft_changed") {
+            return toolResult(
+              "The staged compression guideline draft changed after review. Re-read the current draft and retry activation with its latest identity.",
+            );
+          }
+          if (result.reason === "guideline_version_mismatch") {
+            return toolResult(
+              "The staged draft guidelineVersion no longer matches the reviewed revision. Re-read the current draft and retry activation with its latest identity.",
+            );
+          }
+
+          return toolResult("Compression guideline draft activation was rejected.");
         }
 
         return toolResult(
