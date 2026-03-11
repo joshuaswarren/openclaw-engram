@@ -35,6 +35,7 @@ function buildHarness(options?: {
   const tools = new Map<string, RegisteredTool>();
   const capturedEvents: any[] = [];
   const capturedWrites: Array<{ category: string; content: string; options?: Record<string, unknown> }> = [];
+  const capturedArtifactWrites: Array<{ content: string; options?: Record<string, unknown> }> = [];
   const capturedUpdateWrites: Array<{ memoryId: string; content: string; options?: Record<string, unknown> }> = [];
   const capturedFrontmatterWrites: Array<{ memory: any; patch: Record<string, unknown>; options?: Record<string, unknown> }> = [];
   const capturedLinkWrites: Array<{ memoryId: string; links: any[]; options?: Record<string, unknown> }> = [];
@@ -58,6 +59,7 @@ function buildHarness(options?: {
       return "fact-stored";
     },
     writeArtifact: async (content: string, writeOptions?: Record<string, unknown>) => {
+      capturedArtifactWrites.push({ content, options: writeOptions });
       if (options?.writeArtifact) {
         return await options.writeArtifact(content, writeOptions);
       }
@@ -160,6 +162,7 @@ function buildHarness(options?: {
     tools,
     capturedEvents,
     capturedWrites,
+    capturedArtifactWrites,
     capturedUpdateWrites,
     capturedFrontmatterWrites,
     capturedLinkWrites,
@@ -816,6 +819,35 @@ test("memory_action_apply passes explicit actor metadata to update_note writes",
   });
   assert.equal(capturedEvents.length, 1);
   assert.deepEqual(capturedEvents[0]?.outputMemoryIds, ["fact-existing"]);
+});
+
+test("memory_action_apply passes explicit actor metadata to create_artifact writes", async () => {
+  const { tools, capturedArtifactWrites, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10e-artifact", {
+    action: "create_artifact",
+    memoryId: "fact-existing",
+    content: "Artifact body",
+    artifactType: "checkpoint",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /Applied memory action/i);
+  assert.equal(capturedArtifactWrites.length, 1);
+  assert.deepEqual(capturedArtifactWrites[0], {
+    content: "Artifact body",
+    options: {
+      actor: "tool.memory_action_apply",
+      artifactType: "checkpoint",
+      sourceMemoryId: "fact-existing",
+    },
+  });
+  assert.equal(capturedEvents.length, 1);
+  assert.deepEqual(capturedEvents[0]?.outputMemoryIds, ["artifact-stored"]);
 });
 
 test("memory_action_apply rejects unrecognized actions instead of reporting false success", async () => {

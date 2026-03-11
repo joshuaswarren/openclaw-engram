@@ -1046,6 +1046,7 @@ export class StorageManager {
   async writeArtifact(
     quote: string,
     options: {
+      actor?: string;
       tags?: string[];
       confidence?: number;
       artifactType?: MemoryFrontmatter["artifactType"];
@@ -1087,11 +1088,15 @@ export class StorageManager {
     }
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    const actor =
+      typeof options.actor === "string" && options.actor.length > 0
+        ? options.actor
+        : "storage.writeArtifact";
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeArtifact", {
       memoryId: id,
       eventType: "created",
       timestamp: fm.created,
-      actor: "storage.writeArtifact",
+      actor,
       after: this.summarizeLifecycleState(fm, filePath),
       relatedMemoryIds: options.sourceMemoryId ? [options.sourceMemoryId] : [],
     });

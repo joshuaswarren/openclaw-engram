@@ -1645,6 +1645,7 @@ Best for:
           }
           case "create_artifact": {
             const createdId = await storage.writeArtifact(contentValue!, {
+              actor: "tool.memory_action_apply",
               artifactType: artifactType as any,
               sourceMemoryId: memoryIdValue,
             });
