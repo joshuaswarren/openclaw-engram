@@ -2,7 +2,14 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
-import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
+import type {
+  ContinuityImprovementLoop,
+  MemoryActionEligibilityContext,
+  MemoryActionEligibilitySource,
+  MemoryActionType,
+  MemoryCategory,
+  MemoryFile,
+} from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
 import {
   persistExplicitCapture,
@@ -13,6 +20,7 @@ import { log } from "./logger.js";
 import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
 import { wrapWorkLayerContext } from "./work/boundary.js";
+import { VALID_MEMORY_CATEGORIES } from "./config.js";
 
 interface ToolApi {
   registerTool(
@@ -57,10 +65,70 @@ function normalizeToolNamespace(value: unknown): string | undefined {
   return asNonEmptyString(value);
 }
 
+function clampUnitInterval(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function normalizeMemoryActionEligibilitySource(value: unknown): MemoryActionEligibilitySource {
+  switch (value) {
+    case "extraction":
+    case "consolidation":
+    case "replay":
+    case "manual":
+      return value;
+    default:
+      return "unknown";
+  }
+}
+
+function deriveMemoryActionPolicyEligibility(
+  memory: Pick<MemoryFile, "frontmatter"> | null | undefined,
+): MemoryActionEligibilityContext | undefined {
+  if (!memory) return undefined;
+  const frontmatter = memory.frontmatter;
+  return {
+    confidence: clampUnitInterval(frontmatter.confidence, 0),
+    lifecycleState:
+      frontmatter.status === "archived" ? "archived" : frontmatter.lifecycleState ?? "candidate",
+    importance: clampUnitInterval(frontmatter.importance?.score, 0),
+    source: normalizeMemoryActionEligibilitySource(frontmatter.source),
+  };
+}
+
+async function readReferencedMemoryForPolicyEligibility(
+  storage: {
+    getMemoryById?: (id: string) => Promise<MemoryFile | null>;
+    readAllMemories?: () => Promise<MemoryFile[]>;
+    readArchivedMemories?: () => Promise<MemoryFile[]>;
+  },
+  memoryId: string | undefined,
+): Promise<MemoryFile | null | undefined> {
+  if (!memoryId) return undefined;
+
+  if (typeof storage.getMemoryById === "function") {
+    const direct = await storage.getMemoryById(memoryId);
+    if (direct) return direct;
+  }
+
+  if (typeof storage.readAllMemories === "function") {
+    const active = (await storage.readAllMemories()).find((memory) => memory.frontmatter.id === memoryId);
+    if (active) return active;
+  }
+
+  if (typeof storage.readArchivedMemories === "function") {
+    const archived = (await storage.readArchivedMemories()).find((memory) => memory.frontmatter.id === memoryId);
+    if (archived) return archived;
+  }
+
+  return undefined;
+}
+
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
 const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
 const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
-
 function asTaskStatus(value: unknown): "todo" | "in_progress" | "blocked" | "done" | "cancelled" | undefined {
   const normalized = asNonEmptyString(value);
   if (!normalized || !WORK_TASK_STATUSES.has(normalized)) return undefined;
@@ -232,10 +300,35 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
     "discard",
     "link_graph",
   ];
+  const actionTypeSet = new Set<string>(actionTypes);
 
   function promptHashForTelemetry(input?: string): string | undefined {
     if (typeof input !== "string" || input.trim().length === 0) return undefined;
     return createHash("sha256").update(input).digest("hex").slice(0, 16);
+  }
+
+  function normalizeMemoryCategory(value: unknown, fallback?: MemoryCategory): MemoryCategory | undefined {
+    const normalized = asNonEmptyString(value);
+    if (!normalized) return fallback;
+    if (!VALID_MEMORY_CATEGORIES.has(normalized as MemoryCategory)) return undefined;
+    return normalized as MemoryCategory;
+  }
+
+  function isKnownMemoryActionType(value: unknown): value is MemoryActionType {
+    return typeof value === "string" && actionTypeSet.has(value);
+  }
+
+  function buildActionInputSummary(action: MemoryActionType, params: Record<string, unknown>): string {
+    const primary =
+      asNonEmptyString(params.memoryId) ??
+      asNonEmptyString(params.category) ??
+      asNonEmptyString(params.linkTargetId);
+    const content = asNonEmptyString(params.content);
+    let summary = primary ? `${action} => ${primary}` : action;
+    if (content) {
+      summary += ` | ${content.slice(0, 120)}`;
+    }
+    return summary;
   }
 
   async function executeExplicitCapture(
@@ -1115,11 +1208,32 @@ Best for:
       name: "context_checkpoint",
       label: "Context Checkpoint",
       description:
-        "Record a context-compression checkpoint event for policy-learning telemetry (v8.3).",
+        "Create or validate a transcript checkpoint and record the corresponding context-compression action event (v8.3).",
       parameters: Type.Object({
         summary: Type.String({
           description: "Short summary of what was checkpointed.",
         }),
+        sessionKey: Type.Optional(
+          Type.String({
+            description: "Session key for the checkpoint source transcript.",
+          }),
+        ),
+        turns: Type.Optional(
+          Type.Array(
+            Type.Object({
+              timestamp: Type.String(),
+              role: Type.String({ enum: ["user", "assistant"] }),
+              content: Type.String(),
+              sessionKey: Type.String(),
+              turnId: Type.String(),
+            }),
+          ),
+        ),
+        ttlHours: Type.Optional(
+          Type.Number({
+            description: "Optional checkpoint TTL in hours.",
+          }),
+        ),
         sourcePrompt: Type.Optional(
           Type.String({
             description: "Optional source prompt text used for hashing in telemetry.",
@@ -1130,6 +1244,11 @@ Best for:
             description: "Optional namespace. Defaults to defaultNamespace.",
           }),
         ),
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description: "When true, validate and log without persisting the checkpoint file.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
         if (!orchestrator.config.contextCompressionActionsEnabled) {
@@ -1137,26 +1256,106 @@ Best for:
             "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
           );
         }
-        const { summary, sourcePrompt, namespace } = params as {
+        const { summary, sourcePrompt, namespace, sessionKey, turns, ttlHours, dryRun } = params as {
           summary: string;
           sourcePrompt?: string;
           namespace?: string;
+          sessionKey?: string;
+          turns?: Array<{
+            timestamp: string;
+            role: "user" | "assistant";
+            content: string;
+            sessionKey: string;
+            turnId: string;
+          }>;
+          ttlHours?: number;
+          dryRun?: boolean;
         };
         const ns =
           typeof namespace === "string" && namespace.length > 0
             ? namespace
             : orchestrator.config.defaultNamespace;
-        const wrote = await orchestrator.appendMemoryActionEvent({
-          action: "summarize_node",
-          outcome: "applied",
-          namespace: ns,
-          reason: `context_checkpoint:${summary.slice(0, 200)}`,
-          promptHash: promptHashForTelemetry(sourcePrompt),
-        });
-        if (!wrote) {
-          return toolResult("Checkpoint recorded best-effort failed (fail-open).");
+        const structuredCheckpointRequest =
+          Object.prototype.hasOwnProperty.call(params, "sessionKey") ||
+          Object.prototype.hasOwnProperty.call(params, "turns") ||
+          Object.prototype.hasOwnProperty.call(params, "ttlHours") ||
+          dryRun === true;
+        if (!structuredCheckpointRequest) {
+          const wrote = await orchestrator.appendMemoryActionEvent({
+            action: "summarize_node",
+            outcome: "applied",
+            namespace: ns,
+            reason: `context_checkpoint:${summary.slice(0, 200)}`,
+            promptHash: promptHashForTelemetry(sourcePrompt),
+          });
+          if (!wrote) {
+            return toolResult("Checkpoint recorded best-effort failed (fail-open).");
+          }
+          return toolResult(`Recorded context checkpoint telemetry in namespace=${ns}.`);
         }
-        return toolResult(`Recorded context checkpoint telemetry in namespace=${ns}.`);
+        const validationErrors: string[] = [];
+        if (!asNonEmptyString(sessionKey)) validationErrors.push("sessionKey is required");
+        if (!Array.isArray(turns) || turns.length === 0) validationErrors.push("turns must be a non-empty array");
+
+        const baseEvent = {
+          action: "summarize_node" as const,
+          namespace: ns,
+          actor: "tool.context_checkpoint",
+          subsystem: "tools.context_checkpoint",
+          sourceSessionKey: asNonEmptyString(sessionKey),
+          inputSummary: summary,
+          checkpointTurnCount: Array.isArray(turns) ? turns.length : undefined,
+          dryRun: dryRun === true,
+          promptHash: promptHashForTelemetry(sourcePrompt),
+        };
+
+        if (validationErrors.length > 0) {
+          await orchestrator.appendMemoryActionEvent({
+            ...baseEvent,
+            outcome: "failed",
+            status: "rejected",
+            reason: `validation: ${validationErrors.join("; ")}`,
+          });
+          return toolResult(`Validation failed: ${validationErrors.join("; ")}.`);
+        }
+
+        const structuredEvent = {
+          ...baseEvent,
+          outcome: "applied" as const,
+        };
+        const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
+        if (preview.policyDecision !== "allow") {
+          const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          return toolResult(
+            `Context checkpoint blocked by policy: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}, rationale=${preview.policyRationale}.${suffix}`,
+          );
+        }
+
+        const checkpoint = orchestrator.transcript.createCheckpoint(
+          sessionKey!,
+          turns!,
+          typeof ttlHours === "number" ? ttlHours : undefined,
+        );
+
+        if (dryRun !== true) {
+          await orchestrator.transcript.saveCheckpoint(checkpoint);
+        }
+
+        const wrote = await orchestrator.appendMemoryActionEvent({
+          ...baseEvent,
+          outcome: "applied",
+          status: dryRun === true ? "validated" : "applied",
+          reason: `context_checkpoint:${summary.slice(0, 200)}`,
+          checkpointCapturedAt: checkpoint.capturedAt,
+          checkpointTtl: checkpoint.ttl,
+        });
+
+        const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+        if (dryRun === true) {
+          return toolResult(`Validated context checkpoint for session=${sessionKey} without saving it.${suffix}`);
+        }
+        return toolResult(`Saved context checkpoint for session=${sessionKey} in namespace=${ns}.${suffix}`);
       },
     },
     { name: "context_checkpoint" },
@@ -1173,6 +1372,16 @@ Best for:
           enum: actionTypes,
           description: "Memory action type.",
         }),
+        category: Type.Optional(
+          Type.String({
+            description: "Optional memory category for write-style actions.",
+          }),
+        ),
+        content: Type.Optional(
+          Type.String({
+            description: "Content payload for store, update, artifact, or summarize actions.",
+          }),
+        ),
         outcome: Type.Optional(
           Type.String({
             enum: ["applied", "skipped", "failed"],
@@ -1187,6 +1396,36 @@ Best for:
         memoryId: Type.Optional(
           Type.String({
             description: "Optional memory ID targeted by this action.",
+          }),
+        ),
+        sessionKey: Type.Optional(
+          Type.String({
+            description: "Optional source session key for audit logging.",
+          }),
+        ),
+        linkTargetId: Type.Optional(
+          Type.String({
+            description: "Target memory ID for link_graph actions.",
+          }),
+        ),
+        linkType: Type.Optional(
+          Type.String({
+            description: "Link type for link_graph actions.",
+          }),
+        ),
+        linkStrength: Type.Optional(
+          Type.Number({
+            description: "Optional edge strength for link_graph actions.",
+          }),
+        ),
+        artifactType: Type.Optional(
+          Type.String({
+            description: "Optional artifact type for create_artifact.",
+          }),
+        ),
+        execute: Type.Optional(
+          Type.Boolean({
+            description: "When true, force structured execution mode even for target-only actions like discard.",
           }),
         ),
         sourcePrompt: Type.Optional(
@@ -1211,7 +1450,23 @@ Best for:
             "Context compression actions are disabled. Enable `contextCompressionActionsEnabled: true` to use this tool.",
           );
         }
-        const { action, outcome, reason, memoryId, sourcePrompt, namespace, dryRun } = params as {
+        const {
+          action,
+          outcome,
+          reason,
+          memoryId,
+          sourcePrompt,
+          namespace,
+          dryRun,
+          category,
+          content,
+          sessionKey,
+          linkTargetId,
+          linkType,
+          linkStrength,
+          artifactType,
+          execute,
+        } = params as {
           action: MemoryActionType;
           outcome?: "applied" | "skipped" | "failed";
           reason?: string;
@@ -1219,35 +1474,308 @@ Best for:
           sourcePrompt?: string;
           namespace?: string;
           dryRun?: boolean;
+          category?: string;
+          content?: string;
+          sessionKey?: string;
+          linkTargetId?: string;
+          linkType?: string;
+          linkStrength?: number;
+          artifactType?: string;
+          execute?: boolean;
         };
         const ns =
           typeof namespace === "string" && namespace.length > 0
             ? namespace
             : orchestrator.config.defaultNamespace;
-        const event = {
+        if (!isKnownMemoryActionType(action)) {
+          return toolResult(`Validation failed: invalid action ${String(action)}.`);
+        }
+        const validationErrors: string[] = [];
+        const contentValue = asNonEmptyString(content);
+        const memoryIdValue = asNonEmptyString(memoryId);
+        const linkTargetIdValue = asNonEmptyString(linkTargetId);
+        const linkTypeValue = asNonEmptyString(linkType);
+        const structuredActionRequest =
+          execute === true ||
+          Object.prototype.hasOwnProperty.call(params, "content") ||
+          Object.prototype.hasOwnProperty.call(params, "category") ||
+          Object.prototype.hasOwnProperty.call(params, "linkTargetId") ||
+          Object.prototype.hasOwnProperty.call(params, "linkType") ||
+          Object.prototype.hasOwnProperty.call(params, "linkStrength") ||
+          Object.prototype.hasOwnProperty.call(params, "artifactType");
+
+        const baseEvent = {
           action,
-          outcome: outcome ?? "applied",
           namespace: ns,
+          actor: "tool.memory_action_apply",
+          subsystem: "tools.memory_action_apply",
           reason,
-          memoryId,
+          memoryId: memoryIdValue,
+          sourceSessionKey: asNonEmptyString(sessionKey),
+          inputSummary: buildActionInputSummary(action, params),
           promptHash: promptHashForTelemetry(sourcePrompt),
         };
 
-        const preview = orchestrator.previewMemoryActionEvent(event);
+        if (!structuredActionRequest) {
+          const event = {
+            ...baseEvent,
+            outcome: outcome ?? "applied",
+          };
+          const preview = orchestrator.previewMemoryActionEvent(event);
 
-        if (dryRun === true) {
+          if (dryRun === true) {
+            return toolResult(
+              `Dry run: memory action would be recorded with action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}, policy=${preview.policyDecision}.`,
+            );
+          }
+
+          const wrote = await orchestrator.appendMemoryActionEvent(event);
+          if (!wrote) {
+            return toolResult("Memory action telemetry write failed (fail-open).");
+          }
           return toolResult(
-            `Dry run: memory action would be recorded with action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}, policy=${preview.policyDecision}.`,
+            `Recorded memory action telemetry: action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}.`,
           );
         }
 
-        const wrote = await orchestrator.appendMemoryActionEvent(event);
-        if (!wrote) {
-          return toolResult("Memory action telemetry write failed (fail-open).");
+        switch (action) {
+          case "store_episode":
+          case "store_note":
+          case "summarize_node":
+          case "create_artifact":
+            if (!contentValue) validationErrors.push("content is required");
+            break;
+          case "update_note":
+            if (!memoryIdValue) validationErrors.push("memoryId is required");
+            if (!contentValue) validationErrors.push("content is required");
+            break;
+          case "discard":
+            if (!memoryIdValue) validationErrors.push("memoryId is required");
+            break;
+          case "link_graph":
+            if (!memoryIdValue) validationErrors.push("memoryId is required");
+            if (!linkTargetIdValue) validationErrors.push("linkTargetId is required");
+            if (!linkTypeValue) validationErrors.push("linkType is required");
+            if (
+              typeof linkStrength === "number" &&
+              (!Number.isFinite(linkStrength) || linkStrength < 0 || linkStrength > 1)
+            ) {
+              validationErrors.push("linkStrength must be between 0 and 1");
+            }
+            break;
         }
-        return toolResult(
-          `Recorded memory action telemetry: action=${preview.action}, outcome=${preview.outcome}, namespace=${preview.namespace}.`,
-        );
+
+        if (validationErrors.length > 0) {
+          await orchestrator.appendMemoryActionEvent({
+            ...baseEvent,
+            outcome: "failed",
+            status: "rejected",
+            dryRun: dryRun === true,
+            outputMemoryIds: [],
+            reason: `validation: ${validationErrors.join("; ")}`,
+          });
+          return toolResult(
+            `Validation failed: ${validationErrors.join("; ")}.`,
+          );
+        }
+
+        const normalizedCategory = normalizeMemoryCategory(category, "fact");
+        if (category !== undefined && normalizedCategory === undefined) {
+          const wrote = await orchestrator.appendMemoryActionEvent({
+            ...baseEvent,
+            outcome: "failed",
+            status: "rejected",
+            dryRun: dryRun === true,
+            outputMemoryIds: [],
+            reason: `validation: invalid category ${String(category)}`,
+          });
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          return toolResult(`Validation failed: invalid category ${String(category)}.${suffix}`);
+        }
+
+        const storage =
+          typeof orchestrator.getStorage === "function"
+            ? await orchestrator.getStorage(ns)
+            : orchestrator.storage;
+        const referencedMemory = await readReferencedMemoryForPolicyEligibility(storage, memoryIdValue);
+        const structuredEvent = {
+          ...baseEvent,
+          outcome: outcome ?? "applied",
+          dryRun: dryRun === true,
+          outputMemoryIds: [],
+          policyEligibility: deriveMemoryActionPolicyEligibility(referencedMemory),
+        };
+
+        if (dryRun === true) {
+          const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
+          const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          if (preview.policyDecision !== "allow") {
+            return toolResult(
+              `Memory action blocked by policy during validation: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}, rationale=${preview.policyRationale}.${suffix}`,
+            );
+          }
+          return toolResult(
+            `Validated memory action without applying it: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}.${suffix}`,
+          );
+        }
+
+        const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
+        if (preview.policyDecision !== "allow") {
+          const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          return toolResult(
+            `Memory action execution blocked by policy: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}, rationale=${preview.policyRationale}.${suffix}`,
+          );
+        }
+
+        const outputMemoryIds: string[] = [];
+        let appliedMessage = "";
+
+        switch (action) {
+          case "store_episode": {
+            const createdId = await storage.writeMemory(normalizedCategory ?? "fact", contentValue!, {
+              actor: "tool.memory_action_apply",
+              source: "memory_action_apply",
+              memoryKind: "episode",
+            });
+            outputMemoryIds.push(createdId);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${createdId}, namespace=${ns}.`;
+            break;
+          }
+          case "store_note": {
+            const createdId = await storage.writeMemory(normalizedCategory ?? "fact", contentValue!, {
+              actor: "tool.memory_action_apply",
+              source: "memory_action_apply",
+            });
+            outputMemoryIds.push(createdId);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${createdId}, namespace=${ns}.`;
+            break;
+          }
+          case "update_note": {
+            const updated = await storage.updateMemory(memoryIdValue!, contentValue!, {
+              actor: "tool.memory_action_apply",
+            });
+            if (!updated) {
+              const wrote = await orchestrator.appendMemoryActionEvent({
+                ...baseEvent,
+                outcome: "failed",
+                status: "rejected",
+                outputMemoryIds: [],
+                reason: `execution: unable to update memory ${memoryIdValue}`,
+              });
+              const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+              return toolResult(`Validation failed: unable to update memory ${memoryIdValue}.${suffix}`);
+            }
+            outputMemoryIds.push(memoryIdValue!);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${memoryIdValue}, namespace=${ns}.`;
+            break;
+          }
+          case "create_artifact": {
+            const createdId = await storage.writeArtifact(contentValue!, {
+              actor: "tool.memory_action_apply",
+              artifactType: artifactType as any,
+              sourceMemoryId: memoryIdValue,
+            });
+            if (!createdId || createdId.trim().length === 0) {
+              const wrote = await orchestrator.appendMemoryActionEvent({
+                ...baseEvent,
+                outcome: "failed",
+                status: "rejected",
+                outputMemoryIds: [],
+                reason: "execution: unable to create artifact",
+              });
+              const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+              return toolResult(`Validation failed: unable to create artifact.${suffix}`);
+            }
+            outputMemoryIds.push(createdId);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${createdId}, namespace=${ns}.`;
+            break;
+          }
+          case "summarize_node": {
+            const createdId = await storage.writeMemory(normalizedCategory ?? "fact", contentValue!, {
+              actor: "tool.memory_action_apply",
+              source: "memory_action_apply",
+              sourceMemoryId: memoryIdValue,
+            });
+            outputMemoryIds.push(createdId);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${createdId}, namespace=${ns}.`;
+            break;
+          }
+          case "discard": {
+            const target = referencedMemory;
+            if (!target) {
+              const wrote = await orchestrator.appendMemoryActionEvent({
+                ...baseEvent,
+                outcome: "failed",
+                status: "rejected",
+                outputMemoryIds: [],
+                reason: `execution: unable to find memory ${memoryIdValue}`,
+              });
+              const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+              return toolResult(`Validation failed: unable to find memory ${memoryIdValue}.${suffix}`);
+            }
+            await storage.writeMemoryFrontmatter(
+              target,
+              {
+                status: "rejected",
+                updated: new Date().toISOString(),
+              },
+              {
+                actor: "tool.memory_action_apply",
+                reasonCode: "memory_action_apply.discard",
+              },
+            );
+            outputMemoryIds.push(memoryIdValue!);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${memoryIdValue}, namespace=${ns}.`;
+            break;
+          }
+          case "link_graph": {
+            const linked = await storage.addLinksToMemory(
+              memoryIdValue!,
+              [
+                {
+                  targetId: linkTargetIdValue!,
+                  linkType: linkTypeValue as any,
+                  strength: typeof linkStrength === "number" ? linkStrength : 1,
+                  reason,
+                },
+              ],
+              {
+                actor: "tool.memory_action_apply",
+                reasonCode: "memory_action_apply.link_graph",
+                relatedMemoryIds: [linkTargetIdValue!],
+              },
+            );
+            if (!linked) {
+              const wrote = await orchestrator.appendMemoryActionEvent({
+                ...baseEvent,
+                outcome: "failed",
+                status: "rejected",
+                outputMemoryIds: [],
+                reason: `execution: unable to link memory ${memoryIdValue}`,
+              });
+              const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+              return toolResult(`Validation failed: unable to link memory ${memoryIdValue}.${suffix}`);
+            }
+            outputMemoryIds.push(memoryIdValue!);
+            appliedMessage = `Applied memory action: action=${action}, memoryId=${memoryIdValue}, namespace=${ns}.`;
+            break;
+          }
+        }
+
+        orchestrator.requestQmdMaintenanceForTool(`memory_action_apply.${action}`);
+        const wrote = await orchestrator.appendMemoryActionEvent({
+          ...structuredEvent,
+          outcome: "applied",
+          status: "applied",
+          dryRun: false,
+          outputMemoryIds,
+        });
+        if (!wrote) {
+          return toolResult(`${appliedMessage} Telemetry write failed (fail-open).`);
+        }
+        return toolResult(appliedMessage);
       },
     },
     { name: "memory_action_apply" },

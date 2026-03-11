@@ -87,7 +87,7 @@ const VALID_MEMORY_OS_PRESETS: MemoryOsPresetName[] = [
   "research-max",
   "local-llm-heavy",
 ];
-const VALID_MEMORY_CATEGORIES = new Set([
+export const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
   "correction",

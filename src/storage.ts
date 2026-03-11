@@ -934,6 +934,7 @@ export class StorageManager {
     category: MemoryCategory,
     content: string,
     options: {
+      actor?: string;
       confidence?: number;
       tags?: string[];
       entityRef?: string;
@@ -1010,7 +1011,7 @@ export class StorageManager {
       memoryId: id,
       eventType: "created",
       timestamp: fm.created,
-      actor: "storage.writeMemory",
+      actor: options.actor ?? "storage.writeMemory",
       after: this.summarizeLifecycleState(fm, filePath),
       relatedMemoryIds: [
         ...(options.supersedes ? [options.supersedes] : []),
@@ -1045,6 +1046,7 @@ export class StorageManager {
   async writeArtifact(
     quote: string,
     options: {
+      actor?: string;
       tags?: string[];
       confidence?: number;
       artifactType?: MemoryFrontmatter["artifactType"];
@@ -1086,11 +1088,15 @@ export class StorageManager {
     }
     const filePath = path.join(dir, `${id}.md`);
     await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    const actor =
+      typeof options.actor === "string" && options.actor.length > 0
+        ? options.actor
+        : "storage.writeArtifact";
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeArtifact", {
       memoryId: id,
       eventType: "created",
       timestamp: fm.created,
-      actor: "storage.writeArtifact",
+      actor,
       after: this.summarizeLifecycleState(fm, filePath),
       relatedMemoryIds: options.sourceMemoryId ? [options.sourceMemoryId] : [],
     });
@@ -1666,7 +1672,7 @@ export class StorageManager {
   async updateMemory(
     id: string,
     newContent: string,
-    options?: { supersedes?: string; lineage?: string[] },
+    options?: { supersedes?: string; lineage?: string[]; actor?: string },
   ): Promise<boolean> {
     const memories = await this.readAllMemories();
     const memory = memories.find((m) => m.frontmatter.id === id);
@@ -1693,7 +1699,7 @@ export class StorageManager {
       memoryId: id,
       eventType: "updated",
       timestamp: updated.updated,
-      actor: "storage.updateMemory",
+      actor: options?.actor ?? "storage.updateMemory",
       before: this.summarizeLifecycleState(memory.frontmatter, memory.path),
       after: this.summarizeLifecycleState(updated, memory.path),
       relatedMemoryIds: [
@@ -3362,7 +3368,11 @@ export class StorageManager {
   /**
    * Add links to an existing memory.
    */
-  async addLinksToMemory(memoryId: string, links: MemoryLink[]): Promise<boolean> {
+  async addLinksToMemory(
+    memoryId: string,
+    links: MemoryLink[],
+    lifecycle?: MemoryLifecycleEventWriteOptions,
+  ): Promise<boolean> {
     const memories = await this.readAllMemories();
     const memory = memories.find((m) => m.frontmatter.id === memoryId);
     if (!memory) return false;
@@ -3377,16 +3387,15 @@ export class StorageManager {
       }
     }
 
-    const updatedFm: MemoryFrontmatter = {
-      ...memory.frontmatter,
-      links: mergedLinks,
-      updated: new Date().toISOString(),
-    };
-
-    const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${memory.content}\n`;
-
     try {
-      await writeFile(memory.path, fileContent, "utf-8");
+      await this.writeMemoryFrontmatter(
+        memory,
+        {
+          links: mergedLinks,
+          updated: new Date().toISOString(),
+        },
+        lifecycle,
+      );
       log.debug(`added ${links.length} links to memory ${memoryId}`);
       return true;
     } catch (err) {

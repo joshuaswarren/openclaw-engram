@@ -1414,13 +1414,33 @@ export class Orchestrator {
         maxCompressionTokensPerHour: this.config.maxCompressionTokensPerHour,
       },
     });
+    const dryRun = event.dryRun === true;
 
     const normalizedOutcome =
-      policy.decision === "allow"
+      dryRun
+        ? event.outcome === "failed"
+          ? "failed"
+          : "skipped"
+        : policy.decision === "allow"
         ? event.outcome
         : event.outcome === "failed"
           ? "failed"
           : "skipped";
+    const sourceSessionKey =
+      typeof event.sourceSessionKey === "string" && event.sourceSessionKey.length > 0
+        ? event.sourceSessionKey
+        : typeof event.sessionKey === "string" && event.sessionKey.length > 0
+          ? event.sessionKey
+          : undefined;
+    const outputMemoryIds = Array.isArray(event.outputMemoryIds)
+      ? Array.from(
+          new Set(
+            event.outputMemoryIds.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            ),
+          ),
+        )
+      : [];
 
     const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
       (part): part is string => typeof part === "string" && part.length > 0,
@@ -1428,9 +1448,39 @@ export class Orchestrator {
 
     return {
       ...event,
+      schemaVersion: event.schemaVersion ?? 1,
+      actionId:
+        typeof event.actionId === "string" && event.actionId.length > 0
+          ? event.actionId
+          : `memact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       outcome: normalizedOutcome,
+      status:
+        event.status ??
+        (dryRun && policy.decision === "allow" && event.outcome !== "failed"
+          ? "validated"
+          : normalizedOutcome === "applied"
+            ? "applied"
+            : "rejected"),
+      actor:
+        typeof event.actor === "string" && event.actor.length > 0 ? event.actor : "engram",
+      subsystem:
+        typeof event.subsystem === "string" && event.subsystem.length > 0
+          ? event.subsystem
+          : "memory_action",
       reason: reasonParts.join(" | "),
       namespace,
+      sessionKey: sourceSessionKey ?? event.sessionKey,
+      sourceSessionKey,
+      inputSummary:
+        typeof event.inputSummary === "string" && event.inputSummary.length > 0
+          ? event.inputSummary
+          : undefined,
+      outputMemoryIds,
+      dryRun,
+      policyVersion:
+        typeof event.policyVersion === "string" && event.policyVersion.length > 0
+          ? event.policyVersion
+          : "memory-action-policy.v1",
       timestamp:
         typeof event.timestamp === "string" && event.timestamp.length > 0
           ? event.timestamp
@@ -6078,12 +6128,35 @@ export class Orchestrator {
       };
     }
 
-    const events = await this.storage.readMemoryActionEvents(eventLimit);
+    let events = await this.storage.readMemoryActionEvents(eventLimit);
+    if (eventLimit > 0) {
+      let effectiveEvents = events.filter((event) => event.dryRun !== true);
+      let fetchLimit = eventLimit;
+      while (effectiveEvents.length < eventLimit && events.length === fetchLimit) {
+        fetchLimit = Math.min(fetchLimit * 2, fetchLimit + 1000);
+        if (fetchLimit <= events.length) break;
+        events = await this.storage.readMemoryActionEvents(fetchLimit);
+        effectiveEvents = events.filter((event) => event.dryRun !== true);
+      }
+      events = effectiveEvents.slice(-eventLimit);
+    }
     const generatedAt = new Date().toISOString();
     const candidate = computeCompressionGuidelineCandidate(events, {
       generatedAtIso: generatedAt,
       previousState,
     });
+    if (candidate.eventCounts.total === 0) {
+      return {
+        enabled: true,
+        dryRun,
+        eventCount: 0,
+        previousGuidelineVersion: previousState?.guidelineVersion ?? null,
+        nextGuidelineVersion: previousState?.guidelineVersion ?? 0,
+        changedRules: 0,
+        semanticRefinementApplied: false,
+        persisted: false,
+      };
+    }
     const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
       enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
       timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
@@ -6136,7 +6209,7 @@ export class Orchestrator {
     return {
       enabled: true,
       dryRun,
-      eventCount: events.length,
+      eventCount: candidate.eventCounts.total,
       previousGuidelineVersion: previousState?.guidelineVersion ?? null,
       nextGuidelineVersion: refinedCandidate.guidelineVersion,
       changedRules,

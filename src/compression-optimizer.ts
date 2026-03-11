@@ -108,18 +108,19 @@ export function computeCompressionGuidelineCandidate(
 ): CompressionGuidelineCandidate {
   const generatedAt = options.generatedAtIso ?? new Date().toISOString();
   const previousState = options.previousState ?? null;
+  const effectiveEvents = events.filter((event) => event.dryRun !== true);
   const totalCounts: CompressionGuidelineOptimizerEventCounts = {
-    total: events.length,
+    total: effectiveEvents.length,
     applied: 0,
     skipped: 0,
     failed: 0,
   };
 
   const actionMap = new Map<MemoryActionType, CompressionOptimizerActionSummary>();
-  let windowFrom = events[0]?.timestamp ?? generatedAt;
-  let windowTo = events[0]?.timestamp ?? generatedAt;
+  let windowFrom = effectiveEvents[0]?.timestamp ?? generatedAt;
+  let windowTo = effectiveEvents[0]?.timestamp ?? generatedAt;
 
-  for (const event of events) {
+  for (const event of effectiveEvents) {
     if (event.timestamp < windowFrom) windowFrom = event.timestamp;
     if (event.timestamp > windowTo) windowTo = event.timestamp;
     totalCounts[event.outcome] += 1;
@@ -192,8 +193,8 @@ export function computeCompressionGuidelineCandidate(
   return {
     generatedAt,
     sourceWindow: {
-      from: events.length > 0 ? windowFrom : generatedAt,
-      to: events.length > 0 ? windowTo : generatedAt,
+      from: effectiveEvents.length > 0 ? windowFrom : generatedAt,
+      to: effectiveEvents.length > 0 ? windowTo : generatedAt,
     },
     eventCounts: totalCounts,
     actionSummaries,

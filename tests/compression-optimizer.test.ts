@@ -115,6 +115,24 @@ test("computeCompressionGuidelineCandidate notes never contradict direction", ()
   );
 });
 
+test("computeCompressionGuidelineCandidate ignores dry-run validation events", () => {
+  const events: MemoryActionEvent[] = [
+    { timestamp: "2026-02-27T00:00:00.000Z", action: "store_note", outcome: "applied", dryRun: true },
+    { timestamp: "2026-02-27T00:01:00.000Z", action: "store_note", outcome: "failed" },
+  ];
+
+  const candidate = computeCompressionGuidelineCandidate(events, {
+    generatedAtIso: "2026-02-27T01:00:00.000Z",
+  });
+
+  assert.equal(candidate.eventCounts.total, 1);
+  assert.equal(candidate.eventCounts.applied, 0);
+  assert.equal(candidate.eventCounts.failed, 1);
+  assert.equal(candidate.actionSummaries.length, 1);
+  assert.equal(candidate.actionSummaries[0]?.outcomes.applied, 0);
+  assert.equal(candidate.actionSummaries[0]?.outcomes.failed, 1);
+});
+
 test("buildCompressionGuidelinesMarkdown includes optimizer metadata", () => {
   const events: MemoryActionEvent[] = [
     { timestamp: "2026-02-27T00:00:00.000Z", action: "summarize_node", outcome: "applied", reason: "recall_good" },
