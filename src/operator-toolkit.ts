@@ -827,7 +827,19 @@ export async function runOperatorConfigReview(
 ): Promise<OperatorConfigReviewReport> {
   const now = options.now ?? new Date();
   const configStatus = await loadCliPluginConfig(options.configPath);
-  const config = options.orchestrator.config;
+  return buildOperatorConfigReviewReport({
+    now,
+    configStatus,
+    config: options.orchestrator.config,
+  });
+}
+
+async function buildOperatorConfigReviewReport(input: {
+  now: Date;
+  configStatus: OperatorConfigLoadResult;
+  config: PluginConfig;
+}): Promise<OperatorConfigReviewReport> {
+  const { now, configStatus, config } = input;
   const findings: OperatorConfigReviewFinding[] = [];
   const searchBackend = config.searchBackend ?? "qmd";
   const workspaceBootstrapFiles = [
@@ -989,7 +1001,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   const configStatus = await loadCliPluginConfig(options.configPath);
   const checks: OperatorDoctorCheck[] = [];
   const config = options.orchestrator.config;
-  const configReview = await runOperatorConfigReview(options);
+  const configReview = await buildOperatorConfigReviewReport({
+    now,
+    configStatus,
+    config,
+  });
   const nativeKnowledgeStatus = await summarizeNativeKnowledgeStatus(config);
   const setupPaths = await gatherDirectoryStatus(getSetupPaths(config));
   const missingPaths = setupPaths.filter((entry) => !entry.exists).map((entry) => entry.path);
