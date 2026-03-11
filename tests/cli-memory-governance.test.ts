@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import {
+  resolveMemoryDirForNamespace,
   runMemoryGovernanceCliCommand,
   runMemoryGovernanceReportCliCommand,
   runMemoryGovernanceRestoreCliCommand,
@@ -117,4 +118,24 @@ test("review disposition helper sets rejected status for operator action", async
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
+});
+
+test("resolveMemoryDirForNamespace rejects unsupported namespace overrides when namespaces are disabled", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+    },
+  } as any;
+
+  await assert.rejects(
+    () => resolveMemoryDirForNamespace(orchestrator, "team-alpha", { rejectUnsupportedOverride: true }),
+    /namespaces are disabled; cannot target namespace: team-alpha/,
+  );
+
+  assert.equal(
+    await resolveMemoryDirForNamespace(orchestrator, "global", { rejectUnsupportedOverride: true }),
+    "/tmp/engram",
+  );
 });

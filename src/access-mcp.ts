@@ -168,6 +168,7 @@ export class EngramMcpServer {
           type: "object",
           properties: {
             runId: { type: "string" },
+            namespace: { type: "string" },
           },
           additionalProperties: false,
         },
@@ -407,6 +408,7 @@ export class EngramMcpServer {
       case "engram.review_queue_list":
         return this.service.reviewQueue(
           typeof args.runId === "string" ? args.runId : undefined,
+          typeof args.namespace === "string" ? args.namespace : undefined,
         );
       default:
         throw new Error(`unknown tool: ${name}`);

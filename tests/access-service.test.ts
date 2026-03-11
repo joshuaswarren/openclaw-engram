@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { EngramAccessInputError, EngramAccessService } from "../src/access-service.js";
 import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
+import { getMemoryProjectionPath } from "../src/memory-projection-store.js";
 import { StorageManager } from "../src/storage.js";
 
 function createService() {
@@ -1425,13 +1426,17 @@ test("access service reviewQueue and maintenance fall back to governance artifac
       getStorage: async () => storage,
     } as any);
 
-    const queue = await service.reviewQueue();
+    const queue = await service.reviewQueue(undefined, "global");
     assert.equal(queue.found, true);
+    assert.equal(queue.namespace, "global");
     assert.equal(queue.runId, governance.runId);
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+    assert.equal((queue.qualityScore?.score ?? 0) < 100, true);
+    assert.equal(Object.keys(queue.transitionReport?.proposed ?? {}).length > 0, true);
 
-    const maintenance = await service.maintenance();
+    const maintenance = await service.maintenance("global");
     assert.equal(maintenance.health.projectionAvailable, false);
+    assert.equal(maintenance.namespace, "global");
     assert.equal(maintenance.latestGovernanceRun.found, true);
     assert.equal(maintenance.latestGovernanceRun.runId, governance.runId);
     assert.equal(
@@ -1486,12 +1491,18 @@ test("access service serves reviewQueue and maintenance from projection when gov
 
     const queue = await service.reviewQueue(governance.runId);
     assert.equal(queue.found, true);
+    assert.equal(queue.namespace, "global");
     assert.equal(queue.runId, governance.runId);
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
     assert.equal("runId" in (queue.reviewQueue?.[0] ?? {}), false);
+    assert.equal((queue.qualityScore?.score ?? 0) < 100, true);
+    assert.ok(queue.transitionReport);
+    assert.equal(Object.keys(queue.transitionReport?.proposed ?? {}).length > 0, true);
+    assert.equal(Object.keys(queue.transitionReport?.applied ?? {}).length, 0);
 
-    const maintenance = await service.maintenance();
+    const maintenance = await service.maintenance("global");
     assert.equal(maintenance.health.projectionAvailable, true);
+    assert.equal(maintenance.namespace, "global");
     assert.equal(maintenance.latestGovernanceRun.found, true);
     assert.equal(maintenance.latestGovernanceRun.runId, governance.runId);
     assert.equal(
@@ -1499,6 +1510,428 @@ test("access service serves reviewQueue and maintenance from projection when gov
       true,
     );
     assert.equal("runId" in (maintenance.latestGovernanceRun.reviewQueue?.[0] ?? {}), false);
+    assert.ok(maintenance.latestGovernanceRun.transitionReport);
+    assert.equal(Object.keys(maintenance.latestGovernanceRun.transitionReport?.proposed ?? {}).length > 0, true);
+    assert.equal(Object.keys(maintenance.latestGovernanceRun.transitionReport?.applied ?? {}).length, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service backfills projected governance quality scores from projected metrics when artifacts are gone", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-quality-"));
+  try {
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () =>
+        ({
+          dir: memoryDir,
+          async getProjectedGovernanceRecord() {
+            return {
+              runId: "gov-legacy",
+              summary: {
+                runId: "gov-legacy",
+                traceId: "trace-legacy",
+                mode: "shadow",
+                createdAt: "2026-03-09T12:00:00.000Z",
+                scannedMemories: 2,
+                reviewQueueCount: 1,
+                proposedActionCount: 1,
+                appliedActionCount: 0,
+                ruleVersion: "memory-governance.v2",
+                schemaVersion: 1,
+              },
+              metrics: {
+                reviewReasons: {
+                  exact_duplicate: 1,
+                  semantic_duplicate_candidate: 0,
+                  disputed_memory: 0,
+                  speculative_low_confidence: 0,
+                  archive_candidate: 0,
+                  explicit_capture_review: 0,
+                  malformed_import: 0,
+                },
+                proposedStatuses: {
+                  pending_review: 1,
+                },
+                keptMemoryCount: 1,
+              },
+              reviewQueueRows: [{
+                runId: "gov-legacy",
+                entryId: "review:fact-1:exact_duplicate",
+                memoryId: "fact-1",
+                path: path.join(memoryDir, "facts/2026-03-01/fact-1.md"),
+                reasonCode: "exact_duplicate",
+                severity: "medium",
+                suggestedAction: "set_status",
+                suggestedStatus: "pending_review",
+                relatedMemoryIds: ["fact-2"],
+              }],
+              appliedActionRows: [],
+              report: "legacy projected report",
+            };
+          },
+          async getMemoryById(memoryId: string) {
+            if (memoryId !== "fact-1") return null;
+            return {
+              path: path.join(memoryDir, "facts/2026-03-01/fact-1.md"),
+              frontmatter: {
+                id: "fact-1",
+                category: "fact",
+                created: "2026-03-01T00:00:00.000Z",
+                updated: "2026-03-01T00:00:00.000Z",
+                source: "test",
+                confidence: 0.9,
+                confidenceTier: "explicit",
+                tags: [],
+              },
+              content: "Exact duplicate for projected quality-score fallback coverage.",
+            };
+          },
+        }) as any,
+    } as any);
+
+    const queue = await service.reviewQueue("gov-legacy");
+    assert.equal(queue.found, true);
+    assert.equal(queue.qualityScore?.score, 94);
+    assert.equal(queue.qualityScore?.grade, "excellent");
+    assert.equal(queue.metrics?.qualityScore?.score, 94);
+    assert.equal(queue.metrics?.qualityScore?.grade, "excellent");
+    assert.equal(Object.keys(queue.transitionReport?.proposed ?? {}).length > 0, true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service projected governance fallback mirrors same-status filtering and per-memory action priority", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-proposed-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-01/fact-1.md");
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () =>
+        ({
+          dir: memoryDir,
+          async getProjectedGovernanceRecord() {
+            return {
+              runId: "gov-proposed",
+              summary: {
+                runId: "gov-proposed",
+                traceId: "trace-proposed",
+                mode: "shadow",
+                createdAt: "2026-03-09T12:00:00.000Z",
+                scannedMemories: 1,
+                reviewQueueCount: 2,
+                proposedActionCount: 1,
+                appliedActionCount: 0,
+                ruleVersion: "memory-governance.v2",
+                schemaVersion: 1,
+              },
+              metrics: {
+                reviewReasons: {
+                  exact_duplicate: 0,
+                  semantic_duplicate_candidate: 0,
+                  disputed_memory: 0,
+                  speculative_low_confidence: 0,
+                  archive_candidate: 1,
+                  explicit_capture_review: 1,
+                  malformed_import: 0,
+                },
+                proposedStatuses: {
+                  archived: 1,
+                },
+                keptMemoryCount: 0,
+              },
+              reviewQueueRows: [
+                {
+                  runId: "gov-proposed",
+                  entryId: "review:fact-1:explicit_capture_review",
+                  memoryId: "fact-1",
+                  path: memoryPath,
+                  reasonCode: "explicit_capture_review",
+                  severity: "low",
+                  suggestedAction: "set_status",
+                  suggestedStatus: "pending_review",
+                  relatedMemoryIds: [],
+                },
+                {
+                  runId: "gov-proposed",
+                  entryId: "review:fact-1:archive_candidate",
+                  memoryId: "fact-1",
+                  path: memoryPath,
+                  reasonCode: "archive_candidate",
+                  severity: "medium",
+                  suggestedAction: "archive",
+                  suggestedStatus: undefined,
+                  relatedMemoryIds: [],
+                },
+              ],
+              appliedActionRows: [],
+              report: "projected proposed report",
+            };
+          },
+          async getMemoryById(memoryId: string) {
+            if (memoryId !== "fact-1") return null;
+            return {
+              path: memoryPath,
+              frontmatter: {
+                id: "fact-1",
+                category: "fact",
+                created: "2026-03-01T00:00:00.000Z",
+                updated: "2026-03-01T00:00:00.000Z",
+                source: "test",
+                confidence: 0.9,
+                confidenceTier: "explicit",
+                status: "pending_review",
+                tags: [],
+              },
+              content: "Projected review queue dedupe coverage.",
+            };
+          },
+        }) as any,
+    } as any);
+
+    const queue = await service.reviewQueue("gov-proposed");
+    assert.equal(queue.found, true);
+    assert.deepEqual(Object.keys(queue.transitionReport?.proposed ?? {}), ["archived"]);
+    assert.equal(queue.transitionReport?.proposed.archived?.length, 1);
+    assert.equal(queue.transitionReport?.proposed.archived?.[0]?.reasonCode, "archive_candidate");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service projected governance response reconstructs proposed transitions when legacy artifacts leave them empty", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-legacy-transitions-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-01/fact-1.md");
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/summary.json",
+      JSON.stringify({
+        runId: "gov-legacy-artifact",
+        traceId: "trace-legacy-artifact",
+        mode: "shadow",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        scannedMemories: 1,
+        reviewQueueCount: 1,
+        proposedActionCount: 1,
+        appliedActionCount: 0,
+        ruleVersion: "memory-governance.v2",
+        schemaVersion: 1,
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/metrics.json",
+      JSON.stringify({
+        reviewReasons: {
+          exact_duplicate: 0,
+          semantic_duplicate_candidate: 0,
+          disputed_memory: 0,
+          speculative_low_confidence: 0,
+          archive_candidate: 1,
+          explicit_capture_review: 0,
+          malformed_import: 0,
+        },
+        proposedStatuses: {
+          archived: 1,
+        },
+        keptMemoryCount: 0,
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/kept-memories.json",
+      JSON.stringify([]),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/review-queue.json",
+      JSON.stringify([]),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/applied-actions.json",
+      JSON.stringify([]),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/status-transitions.json",
+      JSON.stringify({
+        proposed: {},
+        applied: {},
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/manifest.json",
+      JSON.stringify({
+        schemaVersion: 1,
+        runId: "gov-legacy-artifact",
+        traceId: "trace-legacy-artifact",
+        mode: "shadow",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        ruleVersion: "memory-governance.v2",
+        artifacts: {},
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/report.md",
+      "legacy artifact report\n",
+    );
+
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () =>
+        ({
+          dir: memoryDir,
+          async getProjectedGovernanceRecord() {
+            return {
+              runId: "gov-legacy-artifact",
+              summary: {
+                runId: "gov-legacy-artifact",
+                traceId: "trace-legacy-artifact",
+                mode: "shadow",
+                createdAt: "2026-03-09T12:00:00.000Z",
+                scannedMemories: 1,
+                reviewQueueCount: 1,
+                proposedActionCount: 1,
+                appliedActionCount: 0,
+                ruleVersion: "memory-governance.v2",
+                schemaVersion: 1,
+              },
+              metrics: {
+                reviewReasons: {
+                  exact_duplicate: 0,
+                  semantic_duplicate_candidate: 0,
+                  disputed_memory: 0,
+                  speculative_low_confidence: 0,
+                  archive_candidate: 1,
+                  explicit_capture_review: 0,
+                  malformed_import: 0,
+                },
+                proposedStatuses: {
+                  archived: 1,
+                },
+                keptMemoryCount: 0,
+              },
+              reviewQueueRows: [{
+                runId: "gov-legacy-artifact",
+                entryId: "review:fact-1:archive_candidate",
+                memoryId: "fact-1",
+                path: memoryPath,
+                reasonCode: "archive_candidate",
+                severity: "medium",
+                suggestedAction: "archive",
+                suggestedStatus: undefined,
+                relatedMemoryIds: [],
+              }],
+              appliedActionRows: [],
+              report: "legacy artifact report",
+            };
+          },
+          async getMemoryById(memoryId: string) {
+            if (memoryId !== "fact-1") return null;
+            return {
+              path: memoryPath,
+              frontmatter: {
+                id: "fact-1",
+                category: "fact",
+                created: "2026-03-01T00:00:00.000Z",
+                updated: "2026-03-01T00:00:00.000Z",
+                source: "test",
+                confidence: 0.9,
+                confidenceTier: "explicit",
+                status: "active",
+                tags: [],
+              },
+              content: "Legacy artifact projected transition fallback coverage.",
+            };
+          },
+        }) as any,
+    } as any);
+
+    const queue = await service.reviewQueue("gov-legacy-artifact");
+    assert.equal(queue.found, true);
+    assert.deepEqual(Object.keys(queue.transitionReport?.proposed ?? {}), ["archived"]);
+    assert.equal(queue.transitionReport?.proposed.archived?.length, 1);
+    assert.equal(queue.transitionReport?.proposed.archived?.[0]?.memoryId, "fact-1");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service maintenance uses namespace-scoped health metadata", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-maintenance-namespace-"));
+  try {
+    const globalDir = memoryDir;
+    const projectDir = path.join(memoryDir, "namespaces", "project-x");
+    await mkdir(path.dirname(getMemoryProjectionPath(projectDir)), { recursive: true });
+    await writeFile(getMemoryProjectionPath(projectDir), "");
+
+    const globalStorage = new StorageManager(globalDir);
+    const projectStorage = new StorageManager(projectDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir: globalDir,
+        namespacesEnabled: true,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [
+          {
+            name: "project-x",
+            readPrincipals: ["project-x"],
+            writePrincipals: ["project-x"],
+          },
+        ],
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async (namespace?: string) => (namespace === "project-x" ? projectStorage : globalStorage),
+    } as any);
+
+    const maintenance = await service.maintenance("project-x");
+    assert.equal(maintenance.namespace, "project-x");
+    assert.equal(maintenance.health.memoryDir, projectDir);
+    assert.equal(maintenance.health.projectionAvailable, true);
+
+    const globalMaintenance = await service.maintenance("global");
+    assert.equal(globalMaintenance.health.memoryDir, globalDir);
+    assert.equal(globalMaintenance.health.projectionAvailable, false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

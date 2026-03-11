@@ -18,6 +18,7 @@ function memoryDoc(options: {
   category?: string;
   created?: string;
   updated?: string;
+  source?: string;
   confidence?: number;
   confidenceTier?: string;
   status?: string;
@@ -33,7 +34,7 @@ function memoryDoc(options: {
     `category: ${options.category ?? "fact"}`,
     `created: ${options.created ?? "2026-03-01T00:00:00.000Z"}`,
     `updated: ${options.updated ?? options.created ?? "2026-03-01T00:00:00.000Z"}`,
-    "source: test",
+    `source: ${options.source ?? "test"}`,
     `confidence: ${options.confidence ?? 0.8}`,
     `confidenceTier: ${options.confidenceTier ?? "implied"}`,
     `tags: [${(options.tags ?? ["governance"]).map((tag) => `"${tag}"`).join(", ")}]`,
@@ -135,6 +136,8 @@ test("shadow governance run writes review artifacts without mutating memory file
     assert.match(result.traceId, /^gov-/);
     await stat(result.summaryPath);
     await stat(result.reviewQueuePath);
+    await stat(result.qualityScorePath);
+    await stat(result.transitionReportPath);
     await stat(result.reportPath);
     await stat(result.keptMemoriesPath);
     await stat(result.appliedActionsPath);
@@ -150,10 +153,14 @@ test("shadow governance run writes review artifacts without mutating memory file
     ) as { traceId: string; artifacts: Record<string, string> };
     assert.equal(manifest.traceId, result.traceId);
     assert.equal(manifest.artifacts.metrics, result.metricsPath);
+    assert.equal(manifest.artifacts.qualityScore, result.qualityScorePath);
+    assert.equal(manifest.artifacts.transitionReport, result.transitionReportPath);
     const metrics = JSON.parse(await readFile(result.metricsPath, "utf-8")) as {
       proposedStatuses: Record<string, number>;
+      qualityScore: { score: number };
     };
     assert.equal(metrics.proposedStatuses.archived, 1);
+    assert.equal(metrics.qualityScore.score < 100, true);
 
     const duplicate = await new StorageManager(memoryDir).getMemoryById("fact-duplicate-b");
     assert.equal(duplicate?.frontmatter.status ?? "active", "active");
@@ -284,7 +291,7 @@ test("apply governance run writes restore metadata and restore reverts archive/q
       event.actor === "memory-governance.apply" && event.reasonCode === "exact_duplicate"
     );
     assert.ok(governanceEvent);
-    assert.equal(governanceEvent.ruleVersion, "memory-governance.v1");
+    assert.equal(governanceEvent.ruleVersion, "memory-governance.v2");
     assert.equal(governanceEvent.correlationId, applyResult.traceId);
     assert.deepEqual(governanceEvent.relatedMemoryIds, ["fact-duplicate-a"]);
   } finally {
@@ -406,6 +413,95 @@ test("disputed stale memories stay quarantined instead of being archived", async
     const memory = await new StorageManager(memoryDir).getMemoryById("fact-1");
     assert.equal(memory?.frontmatter.status, "quarantined");
     await assert.rejects(() => stat(path.join(memoryDir, "archive", "2026-03-09", "fact-1.md")));
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("governance surfaces semantic duplicates, queued explicit captures, malformed imports, and quality artifacts", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-extended-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-semantic-a.md",
+      memoryDoc({
+        id: "fact-semantic-a",
+        content: "The release checklist requires smoke tests before every production cutover, deploy, and handoff.",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-02/fact-semantic-b.md",
+      memoryDoc({
+        id: "fact-semantic-b",
+        content: "The release checklist requires smoke tests before every production deploy and cutover handoff.",
+        confidence: 0.55,
+        confidenceTier: "inferred",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-03/fact-explicit-queued.md",
+      memoryDoc({
+        id: "fact-explicit-queued",
+        content: "Explicit capture queued for review.\n\nReason: content failed memory sanitization\n\nSubmitted content:\nOperator should verify this suggestion.",
+        source: "explicit-review",
+        status: "pending_review",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        tags: ["explicit-capture", "queued-review", "operator-review"],
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-03/fact-malformed.md",
+      "---\nid: fact-malformed\ncategory: fact\ncreated: not-a-date\n",
+    );
+
+    const storage = new StorageManager(memoryDir);
+    await storage.appendMemoryLifecycleEvents([
+      {
+        eventId: "mle-explicit-queued",
+        memoryId: "fact-explicit-queued",
+        eventType: "explicit_capture_queued",
+        timestamp: "2026-03-03T00:00:00.000Z",
+        actor: "tool.suggestion_submit",
+        reasonCode: "policy queued for operator review",
+        ruleVersion: "explicit-capture.v1",
+      },
+    ]);
+
+    const result = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "semantic_duplicate_candidate"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "explicit_capture_review"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "malformed_import"), true);
+    const summary = JSON.parse(await readFile(result.summaryPath, "utf-8")) as { proposedActionCount: number };
+    assert.equal(summary.proposedActionCount, 1);
+
+    const keptMemoryIds = JSON.parse(await readFile(result.keptMemoriesPath, "utf-8")) as string[];
+    assert.equal(keptMemoryIds.includes("fact-explicit-queued"), true);
+
+    const qualityScore = JSON.parse(await readFile(result.qualityScorePath, "utf-8")) as {
+      score: number;
+      deductions: Array<{ reasonCode: string }>;
+    };
+    assert.equal(qualityScore.score < 100, true);
+    assert.equal(qualityScore.deductions.some((entry) => entry.reasonCode === "malformed_import"), true);
+
+    const transitionReport = JSON.parse(await readFile(result.transitionReportPath, "utf-8")) as {
+      proposed: Record<string, Array<{ memoryId: string }>>;
+    };
+    assert.equal(
+      transitionReport.proposed.pending_review?.some((action) => action.memoryId === "fact-semantic-b"),
+      true,
+    );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

@@ -409,6 +409,47 @@ test("access HTTP server returns an empty review queue payload with 200", async 
   }
 });
 
+test("access HTTP server forwards namespace query params to governance endpoints", async () => {
+  const calls: Array<{ method: "reviewQueue" | "maintenance"; namespace?: string; runId?: string }> = [];
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      reviewQueue: async (runId?: string, namespace?: string) => {
+        calls.push({ method: "reviewQueue", runId, namespace });
+        return { found: true, namespace, runId: runId ?? "gov-1" };
+      },
+      maintenance: async (namespace?: string) => {
+        calls.push({ method: "maintenance", namespace });
+        return {
+          namespace: namespace ?? "global",
+          health: await createFakeService().health(),
+          latestGovernanceRun: { found: true, namespace, runId: "gov-1" },
+        };
+      },
+    } as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = { Authorization: "Bearer secret-token" };
+    const queueResponse = await fetch(`${base}/engram/v1/review-queue?runId=gov-9&namespace=project-alpha`, { headers });
+    assert.equal(queueResponse.status, 200);
+    const maintenanceResponse = await fetch(`${base}/engram/v1/maintenance?namespace=project-alpha`, { headers });
+    assert.equal(maintenanceResponse.status, 200);
+    assert.deepEqual(calls, [
+      { method: "reviewQueue", runId: "gov-9", namespace: "project-alpha" },
+      { method: "maintenance", namespace: "project-alpha" },
+    ]);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server rejects oversized JSON bodies", async () => {
   const server = new EngramAccessHttpServer({
     service: createFakeService(),

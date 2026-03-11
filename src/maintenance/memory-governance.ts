@@ -5,12 +5,20 @@ import { decideLifecycleTransition } from "../lifecycle.js";
 import type { MemoryFile, MemoryStatus } from "../types.js";
 
 export type MemoryGovernanceMode = "shadow" | "apply";
+export type MemoryGovernanceReasonCode =
+  | "exact_duplicate"
+  | "semantic_duplicate_candidate"
+  | "disputed_memory"
+  | "speculative_low_confidence"
+  | "archive_candidate"
+  | "explicit_capture_review"
+  | "malformed_import";
 
 export interface MemoryGovernanceReviewQueueEntry {
   entryId: string;
   memoryId: string;
   path: string;
-  reasonCode: "exact_duplicate" | "disputed_memory" | "speculative_low_confidence" | "archive_candidate";
+  reasonCode: MemoryGovernanceReasonCode;
   severity: "low" | "medium" | "high";
   suggestedAction: "set_status" | "archive";
   suggestedStatus?: Extract<MemoryStatus, "pending_review" | "quarantined" | "rejected">;
@@ -58,9 +66,26 @@ export interface MemoryGovernanceSummary {
 }
 
 export interface MemoryGovernanceMetrics {
-  reviewReasons: Record<MemoryGovernanceReviewQueueEntry["reasonCode"], number>;
+  reviewReasons: Record<MemoryGovernanceReasonCode, number>;
   proposedStatuses: Record<string, number>;
   keptMemoryCount: number;
+  qualityScore: MemoryGovernanceQualityScore;
+}
+
+export interface MemoryGovernanceQualityScore {
+  score: number;
+  maxScore: 100;
+  grade: "excellent" | "good" | "fair" | "poor";
+  deductions: Array<{
+    reasonCode: MemoryGovernanceReasonCode;
+    count: number;
+    pointsLost: number;
+  }>;
+}
+
+export interface MemoryGovernanceTransitionReport {
+  proposed: Record<string, MemoryGovernanceAppliedAction[]>;
+  applied: Record<string, MemoryGovernanceAppliedAction[]>;
 }
 
 export interface MemoryGovernanceManifest {
@@ -79,6 +104,8 @@ export interface MemoryGovernanceRunResult {
   mode: MemoryGovernanceMode;
   summaryPath: string;
   reviewQueuePath: string;
+  qualityScorePath: string;
+  transitionReportPath: string;
   reportPath: string;
   keptMemoriesPath: string;
   appliedActionsPath: string;
@@ -108,7 +135,18 @@ export interface RestoreMemoryGovernanceRunOptions {
   now?: Date;
 }
 
-const RULE_VERSION = "memory-governance.v1";
+const RULE_VERSION = "memory-governance.v2";
+const SEMANTIC_DUPLICATE_MIN_TOKENS = 6;
+const SEMANTIC_DUPLICATE_MIN_JACCARD = 0.66;
+const QUALITY_SCORE_WEIGHTS: Record<MemoryGovernanceReasonCode, number> = {
+  exact_duplicate: 6,
+  semantic_duplicate_candidate: 4,
+  disputed_memory: 15,
+  speculative_low_confidence: 8,
+  archive_candidate: 2,
+  explicit_capture_review: 5,
+  malformed_import: 12,
+};
 
 function governanceRunsDir(memoryDir: string): string {
   return path.join(memoryDir, "state", "memory-governance", "runs");
@@ -184,7 +222,182 @@ function proposedActionPriority(action: MemoryGovernanceAppliedAction): number {
   return proposedStatusPriority(action.afterStatus ?? "active");
 }
 
-function buildReviewQueue(memories: MemoryFile[], now: Date): MemoryGovernanceReviewQueueEntry[] {
+function tokenizeSemanticContent(content: string): string[] {
+  return Array.from(
+    new Set(
+      normalizeContent(content)
+        .replaceAll(/[^\p{L}\p{N}]+/gu, " ")
+        .split(" ")
+        .filter((token) => token.length >= 4),
+    ),
+  );
+}
+
+function jaccardSimilarity(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  let intersection = 0;
+  for (const token of leftSet) {
+    if (rightSet.has(token)) intersection += 1;
+  }
+  const union = new Set([...leftSet, ...rightSet]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
+function sameSemanticDuplicateScope(left: MemoryFile, right: MemoryFile): boolean {
+  if (left.frontmatter.category !== right.frontmatter.category) return false;
+  const leftEntityRef = left.frontmatter.entityRef?.trim();
+  const rightEntityRef = right.frontmatter.entityRef?.trim();
+  if (leftEntityRef && rightEntityRef && leftEntityRef !== rightEntityRef) return false;
+  return true;
+}
+
+function buildSemanticDuplicateEntries(activeMemories: MemoryFile[]): MemoryGovernanceReviewQueueEntry[] {
+  const reviewQueue: MemoryGovernanceReviewQueueEntry[] = [];
+  const ordered = [...activeMemories].sort(compareCanonicalPreference);
+  const tokensByMemoryId = new Map(
+    ordered.map((memory) => [memory.frontmatter.id, tokenizeSemanticContent(memory.content)] as const),
+  );
+  const claimed = new Set<string>();
+
+  for (let candidateIndex = 1; candidateIndex < ordered.length; candidateIndex += 1) {
+    const candidate = ordered[candidateIndex];
+    if (claimed.has(candidate.frontmatter.id)) continue;
+    const candidateTokens = tokensByMemoryId.get(candidate.frontmatter.id) ?? [];
+    if (candidateTokens.length < SEMANTIC_DUPLICATE_MIN_TOKENS) continue;
+    const candidateNormalized = normalizeContent(candidate.content);
+
+    for (let canonicalIndex = 0; canonicalIndex < candidateIndex; canonicalIndex += 1) {
+      const canonical = ordered[canonicalIndex];
+      if (!sameSemanticDuplicateScope(canonical, candidate)) continue;
+      const canonicalNormalized = normalizeContent(canonical.content);
+      if (canonicalNormalized === candidateNormalized) continue;
+      const canonicalTokens = tokensByMemoryId.get(canonical.frontmatter.id) ?? [];
+      if (canonicalTokens.length < SEMANTIC_DUPLICATE_MIN_TOKENS) continue;
+
+      const shorter = Math.min(candidateTokens.length, canonicalTokens.length);
+      const longer = Math.max(candidateTokens.length, canonicalTokens.length);
+      if (shorter / longer < 0.6) continue;
+      if (jaccardSimilarity(candidateTokens, canonicalTokens) < SEMANTIC_DUPLICATE_MIN_JACCARD) continue;
+
+      reviewQueue.push({
+        entryId: `review:${candidate.frontmatter.id}:semantic_duplicate_candidate`,
+        memoryId: candidate.frontmatter.id,
+        path: candidate.path,
+        reasonCode: "semantic_duplicate_candidate",
+        severity: "medium",
+        suggestedAction: "set_status",
+        suggestedStatus: "pending_review",
+        relatedMemoryIds: [canonical.frontmatter.id],
+      });
+      claimed.add(candidate.frontmatter.id);
+      break;
+    }
+  }
+
+  return reviewQueue;
+}
+
+function buildExplicitCaptureReviewEntries(
+  memories: MemoryFile[],
+  lifecycleEvents: Array<{
+    memoryId: string;
+    eventType: string;
+    reasonCode?: string;
+  }>,
+): MemoryGovernanceReviewQueueEntry[] {
+  const explicitQueuedIds = new Set(
+    lifecycleEvents
+      .filter((event) => event.eventType === "explicit_capture_queued")
+      .map((event) => event.memoryId),
+  );
+
+  return memories
+    .filter((memory) => {
+      if (statusOf(memory) !== "pending_review") return false;
+      const tags = memory.frontmatter.tags ?? [];
+      if (tags.includes("queued-review")) return true;
+      if (explicitQueuedIds.has(memory.frontmatter.id)) return true;
+      return memory.frontmatter.source === "explicit-review" || memory.frontmatter.source === "explicit-inline-review";
+    })
+    .map((memory) => ({
+      entryId: `review:${memory.frontmatter.id}:explicit_capture_review`,
+      memoryId: memory.frontmatter.id,
+      path: memory.path,
+      reasonCode: "explicit_capture_review" as const,
+      severity: "medium" as const,
+      suggestedAction: "set_status" as const,
+      suggestedStatus: "pending_review" as const,
+      relatedMemoryIds: [],
+    }));
+}
+
+async function listMarkdownFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const walk = async (dir: string) => {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+          continue;
+        }
+        if (entry.isFile() && entry.name.endsWith(".md")) {
+          files.push(fullPath);
+        }
+      }
+    } catch {
+      // Directory may not exist yet.
+    }
+  };
+
+  await walk(root);
+  return files;
+}
+
+function malformedMemoryId(memoryDir: string, filePath: string): string {
+  return `malformed:${path.relative(memoryDir, filePath).replaceAll(path.sep, "/")}`;
+}
+
+async function buildMalformedImportEntries(
+  memoryDir: string,
+  storage: StorageManager,
+  parsedMemories: MemoryFile[],
+): Promise<MemoryGovernanceReviewQueueEntry[]> {
+  const parsedPaths = new Set(parsedMemories.map((memory) => memory.path));
+  const candidateFiles = [
+    ...await listMarkdownFiles(path.join(memoryDir, "facts")),
+    ...await listMarkdownFiles(path.join(memoryDir, "corrections")),
+  ];
+  const entries: MemoryGovernanceReviewQueueEntry[] = [];
+
+  for (const filePath of candidateFiles) {
+    if (parsedPaths.has(filePath)) continue;
+    const parsed = await storage.readMemoryByPath(filePath);
+    if (parsed) continue;
+    entries.push({
+      entryId: `review:${malformedMemoryId(memoryDir, filePath)}:malformed_import`,
+      memoryId: malformedMemoryId(memoryDir, filePath),
+      path: filePath,
+      reasonCode: "malformed_import",
+      severity: "high",
+      suggestedAction: "set_status",
+      suggestedStatus: "quarantined",
+      relatedMemoryIds: [],
+    });
+  }
+
+  return entries;
+}
+
+async function buildReviewQueue(
+  memoryDir: string,
+  storage: StorageManager,
+  memories: MemoryFile[],
+  now: Date,
+): Promise<MemoryGovernanceReviewQueueEntry[]> {
   const reviewQueue: MemoryGovernanceReviewQueueEntry[] = [];
   const activeMemories = memories.filter((memory) => statusOf(memory) === "active");
   const duplicateBuckets = new Map<string, MemoryFile[]>();
@@ -213,6 +426,8 @@ function buildReviewQueue(memories: MemoryFile[], now: Date): MemoryGovernanceRe
       });
     }
   }
+
+  reviewQueue.push(...buildSemanticDuplicateEntries(activeMemories));
 
   for (const memory of activeMemories) {
     if (memory.frontmatter.verificationState === "disputed") {
@@ -260,10 +475,14 @@ function buildReviewQueue(memories: MemoryFile[], now: Date): MemoryGovernanceRe
     }
   }
 
+  const lifecycleEvents = await storage.readMemoryLifecycleEvents(Number.MAX_SAFE_INTEGER);
+  reviewQueue.push(...buildExplicitCaptureReviewEntries(memories, lifecycleEvents));
+  reviewQueue.push(...await buildMalformedImportEntries(memoryDir, storage, memories));
+
   return reviewQueue;
 }
 
-function buildProposedActions(
+export function buildProposedActions(
   reviewQueue: MemoryGovernanceReviewQueueEntry[],
   memories: MemoryFile[],
 ): MemoryGovernanceAppliedAction[] {
@@ -274,6 +493,13 @@ function buildProposedActions(
     const memory = byMemory.get(entry.memoryId);
     if (!memory) continue;
     const currentStatus = statusOf(memory);
+    if (
+      entry.suggestedAction === "set_status"
+      && entry.suggestedStatus
+      && entry.suggestedStatus === currentStatus
+    ) {
+      continue;
+    }
     const candidate: MemoryGovernanceAppliedAction = {
       action: entry.suggestedAction,
       memoryId: entry.memoryId,
@@ -307,9 +533,12 @@ function buildMetrics(
 ): MemoryGovernanceMetrics {
   const reviewReasons: MemoryGovernanceMetrics["reviewReasons"] = {
     exact_duplicate: 0,
+    semantic_duplicate_candidate: 0,
     disputed_memory: 0,
     speculative_low_confidence: 0,
     archive_candidate: 0,
+    explicit_capture_review: 0,
+    malformed_import: 0,
   };
   const proposedStatuses: Record<string, number> = {};
 
@@ -327,7 +556,46 @@ function buildMetrics(
     reviewReasons,
     proposedStatuses,
     keptMemoryCount: Math.max(0, scannedMemories - proposedActions.length),
+    qualityScore: buildQualityScore(reviewReasons),
   };
+}
+
+export function buildQualityScore(
+  reviewReasons: Record<MemoryGovernanceReasonCode, number>,
+): MemoryGovernanceQualityScore {
+  const deductions = Object.entries(reviewReasons)
+    .map(([reasonCode, count]) => ({
+      reasonCode: reasonCode as MemoryGovernanceReasonCode,
+      count,
+      pointsLost: count * QUALITY_SCORE_WEIGHTS[reasonCode as MemoryGovernanceReasonCode],
+    }))
+    .filter((entry) => entry.count > 0)
+    .sort((left, right) => right.pointsLost - left.pointsLost);
+  const totalPointsLost = deductions.reduce((sum, entry) => sum + entry.pointsLost, 0);
+  const score = Math.max(0, 100 - totalPointsLost);
+  const grade = score >= 90 ? "excellent"
+    : score >= 75 ? "good"
+      : score >= 50 ? "fair"
+        : "poor";
+  return {
+    score,
+    maxScore: 100,
+    grade,
+    deductions,
+  };
+}
+
+export function groupActionsByStatus(
+  actions: MemoryGovernanceAppliedAction[],
+): Record<string, MemoryGovernanceAppliedAction[]> {
+  const grouped: Record<string, MemoryGovernanceAppliedAction[]> = {};
+  for (const action of actions) {
+    const status = action.afterStatus ?? (action.action === "archive" ? "archived" : "unchanged");
+    const bucket = grouped[status] ?? [];
+    bucket.push(action);
+    grouped[status] = bucket;
+  }
+  return grouped;
 }
 
 async function safeRead(filePath: string): Promise<string | null> {
@@ -354,6 +622,8 @@ async function writeGovernanceArtifacts(options: {
   traceId: string;
   summary: MemoryGovernanceSummary;
   metrics: MemoryGovernanceMetrics;
+  qualityScore: MemoryGovernanceQualityScore;
+  transitionReport: MemoryGovernanceTransitionReport;
   keptMemoryIds: string[];
   reviewQueue: MemoryGovernanceReviewQueueEntry[];
   proposedActions: MemoryGovernanceAppliedAction[];
@@ -364,6 +634,8 @@ async function writeGovernanceArtifacts(options: {
     MemoryGovernanceRunResult,
     | "summaryPath"
     | "reviewQueuePath"
+    | "qualityScorePath"
+    | "transitionReportPath"
     | "reportPath"
     | "keptMemoriesPath"
     | "appliedActionsPath"
@@ -377,6 +649,8 @@ async function writeGovernanceArtifacts(options: {
 
   const summaryPath = path.join(runDir, "summary.json");
   const reviewQueuePath = path.join(runDir, "review-queue.json");
+  const qualityScorePath = path.join(runDir, "quality-score.json");
+  const transitionReportPath = path.join(runDir, "status-transitions.json");
   const reportPath = path.join(runDir, "report.md");
   const keptMemoriesPath = path.join(runDir, "kept-memories.json");
   const appliedActionsPath = path.join(runDir, "applied-actions.json");
@@ -386,6 +660,8 @@ async function writeGovernanceArtifacts(options: {
 
   await writeFile(summaryPath, JSON.stringify(options.summary, null, 2), "utf-8");
   await writeFile(reviewQueuePath, JSON.stringify(options.reviewQueue, null, 2), "utf-8");
+  await writeFile(qualityScorePath, JSON.stringify(options.qualityScore, null, 2), "utf-8");
+  await writeFile(transitionReportPath, JSON.stringify(options.transitionReport, null, 2), "utf-8");
   await writeFile(keptMemoriesPath, JSON.stringify(options.keptMemoryIds, null, 2), "utf-8");
   await writeFile(appliedActionsPath, JSON.stringify(options.appliedActions, null, 2), "utf-8");
   await writeFile(metricsPath, JSON.stringify(options.metrics, null, 2), "utf-8");
@@ -401,12 +677,18 @@ async function writeGovernanceArtifacts(options: {
       `- Review queue entries: ${options.summary.reviewQueueCount}`,
       `- Proposed actions: ${options.summary.proposedActionCount}`,
       `- Applied actions: ${options.summary.appliedActionCount}`,
+      `- Quality score: ${options.qualityScore.score}/${options.qualityScore.maxScore} (${options.qualityScore.grade})`,
       "",
       "## Metrics",
       ...Object.entries(options.metrics.reviewReasons).map(([reason, count]) => `- ${reason}: ${count}`),
       ...(Object.entries(options.metrics.proposedStatuses).length > 0
         ? Object.entries(options.metrics.proposedStatuses).map(([status, count]) => `- proposed ${status}: ${count}`)
         : ["- proposed statuses: (none)"]),
+      "",
+      "## Quality Score",
+      ...(options.qualityScore.deductions.length > 0
+        ? options.qualityScore.deductions.map((entry) => `- ${entry.reasonCode}: ${entry.count} -> -${entry.pointsLost}`)
+        : ["- no deductions"]),
       "",
       "## Proposed Actions",
       ...(options.proposedActions.length > 0
@@ -441,6 +723,8 @@ async function writeGovernanceArtifacts(options: {
     artifacts: {
       summary: summaryPath,
       reviewQueue: reviewQueuePath,
+      qualityScore: qualityScorePath,
+      transitionReport: transitionReportPath,
       report: reportPath,
       keptMemories: keptMemoriesPath,
       appliedActions: appliedActionsPath,
@@ -456,6 +740,8 @@ async function writeGovernanceArtifacts(options: {
   return {
     summaryPath,
     reviewQueuePath,
+    qualityScorePath,
+    transitionReportPath,
     reportPath,
     keptMemoriesPath,
     appliedActionsPath,
@@ -473,12 +759,16 @@ export async function runMemoryGovernance(
   const traceId = runId;
   const storage = new StorageManager(options.memoryDir);
   const memories = await storage.readAllMemories();
-  const reviewQueue = buildReviewQueue(memories, now);
+  const reviewQueue = await buildReviewQueue(options.memoryDir, storage, memories, now);
   const proposedActions = buildProposedActions(reviewQueue, memories);
   const reviewEntryByActionKey = new Map(
     reviewQueue.map((entry) => [`${entry.memoryId}:${entry.reasonCode}`, entry] as const),
   );
   const metrics = buildMetrics(reviewQueue, proposedActions, memories.length);
+  const transitionReport: MemoryGovernanceTransitionReport = {
+    proposed: groupActionsByStatus(proposedActions),
+    applied: {},
+  };
   const targetedMemoryIds = new Set(proposedActions.map((action) => action.memoryId));
   const keptMemoryIds = memories
     .map((memory) => memory.frontmatter.id)
@@ -586,12 +876,15 @@ export async function runMemoryGovernance(
         entries: restoreEntries,
       }
     : undefined;
+  transitionReport.applied = groupActionsByStatus(appliedActions);
   const paths = await writeGovernanceArtifacts({
     memoryDir: options.memoryDir,
     runId,
     traceId,
     summary,
     metrics,
+    qualityScore: metrics.qualityScore,
+    transitionReport,
     keptMemoryIds,
     reviewQueue,
     proposedActions,
@@ -655,9 +948,11 @@ export async function readMemoryGovernanceRunArtifact(
 ): Promise<{
   summary: MemoryGovernanceSummary;
   metrics: MemoryGovernanceMetrics;
+  qualityScore: MemoryGovernanceQualityScore;
   keptMemoryIds: string[];
   reviewQueue: MemoryGovernanceReviewQueueEntry[];
   appliedActions: MemoryGovernanceAppliedAction[];
+  transitionReport: MemoryGovernanceTransitionReport;
   report: string;
   manifest: MemoryGovernanceManifest;
   restore?: MemoryGovernanceRestoreManifest;
@@ -665,6 +960,7 @@ export async function readMemoryGovernanceRunArtifact(
   const runDir = governanceRunDir(memoryDir, runId);
   const summary = JSON.parse(await readFile(path.join(runDir, "summary.json"), "utf-8")) as MemoryGovernanceSummary;
   const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf-8")) as MemoryGovernanceMetrics;
+  metrics.qualityScore ??= buildQualityScore(metrics.reviewReasons);
   const keptMemoryIds = JSON.parse(await readFile(path.join(runDir, "kept-memories.json"), "utf-8")) as string[];
   const reviewQueue = JSON.parse(
     await readFile(path.join(runDir, "review-queue.json"), "utf-8"),
@@ -672,17 +968,30 @@ export async function readMemoryGovernanceRunArtifact(
   const appliedActions = JSON.parse(
     await readFile(path.join(runDir, "applied-actions.json"), "utf-8"),
   ) as MemoryGovernanceAppliedAction[];
+  const qualityScoreRaw = await safeRead(path.join(runDir, "quality-score.json"));
+  const transitionReportRaw = await safeRead(path.join(runDir, "status-transitions.json"));
   const manifest = JSON.parse(
     await readFile(path.join(runDir, "manifest.json"), "utf-8"),
   ) as MemoryGovernanceManifest;
   const report = await readFile(path.join(runDir, "report.md"), "utf-8");
   const restoreRaw = await safeRead(path.join(runDir, "restore.json"));
+  const qualityScore = qualityScoreRaw
+    ? JSON.parse(qualityScoreRaw) as MemoryGovernanceQualityScore
+    : metrics.qualityScore ?? buildQualityScore(metrics.reviewReasons);
+  const transitionReport = transitionReportRaw
+    ? JSON.parse(transitionReportRaw) as MemoryGovernanceTransitionReport
+    : {
+        proposed: {},
+        applied: groupActionsByStatus(appliedActions),
+      };
   return {
     summary,
     metrics,
+    qualityScore,
     keptMemoryIds,
     reviewQueue,
     appliedActions,
+    transitionReport,
     report,
     manifest,
     restore: restoreRaw ? JSON.parse(restoreRaw) as MemoryGovernanceRestoreManifest : undefined,

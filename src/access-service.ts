@@ -9,6 +9,9 @@ import {
 } from "./explicit-capture.js";
 import { log } from "./logger.js";
 import {
+  buildQualityScore,
+  buildProposedActions,
+  groupActionsByStatus,
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
@@ -175,17 +178,47 @@ export interface EngramAccessEntityResponse {
 
 export interface EngramAccessReviewQueueResponse {
   found: boolean;
+  namespace?: string;
   runId?: string;
   summary?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"];
   metrics?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"];
+  qualityScore?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["qualityScore"];
   reviewQueue?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["reviewQueue"];
   appliedActions?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"];
+  transitionReport?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["transitionReport"];
   report?: string;
 }
 
 export interface EngramAccessMaintenanceResponse {
+  namespace: string;
   health: EngramAccessHealthResponse;
   latestGovernanceRun: EngramAccessReviewQueueResponse;
+}
+
+async function buildProjectedGovernanceProposedActions(
+  storage: Awaited<ReturnType<Orchestrator["getStorage"]>>,
+  projected: NonNullable<Awaited<ReturnType<Awaited<ReturnType<Orchestrator["getStorage"]>>["getProjectedGovernanceRecord"]>>>,
+): Promise<Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> {
+  const reviewQueue = projected.reviewQueueRows.map((row) => ({
+    entryId: row.entryId,
+    memoryId: row.memoryId,
+    path: row.path,
+    reasonCode: row.reasonCode,
+    severity: row.severity,
+    suggestedAction: row.suggestedAction,
+    suggestedStatus: row.suggestedStatus,
+    relatedMemoryIds: row.relatedMemoryIds,
+  })) as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["reviewQueue"];
+  const memories = (await Promise.all(projected.reviewQueueRows.map((row) => storage.getMemoryById(row.memoryId))))
+    .filter((memory): memory is MemoryFile => Boolean(memory));
+  return buildProposedActions(reviewQueue, memories);
+}
+
+function hasGroupedGovernanceActions(
+  grouped?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["transitionReport"]["proposed"],
+): boolean {
+  if (!grouped) return false;
+  return Object.values(grouped).some((actions) => Array.isArray(actions) && actions.length > 0);
 }
 
 export interface EngramAccessReviewDispositionRequest {
@@ -435,10 +468,12 @@ export class EngramAccessService {
     }
   }
 
-  async health(): Promise<EngramAccessHealthResponse> {
+  async health(namespace?: string): Promise<EngramAccessHealthResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     let projectionAvailable = false;
     try {
-      await stat(getMemoryProjectionPath(this.orchestrator.config.memoryDir));
+      await stat(getMemoryProjectionPath(storage.dir));
       projectionAvailable = true;
     } catch {
       projectionAvailable = false;
@@ -446,7 +481,7 @@ export class EngramAccessService {
 
     return {
       ok: true,
-      memoryDir: this.orchestrator.config.memoryDir,
+      memoryDir: storage.dir,
       namespacesEnabled: this.orchestrator.config.namespacesEnabled === true,
       defaultNamespace: this.orchestrator.config.defaultNamespace,
       searchBackend: this.orchestrator.config.searchBackend ?? "qmd",
@@ -895,15 +930,65 @@ export class EngramAccessService {
     };
   }
 
-  async reviewQueue(runId?: string): Promise<EngramAccessReviewQueueResponse> {
-    const storage = await this.orchestrator.getStorage();
+  async reviewQueue(runId?: string, namespace?: string): Promise<EngramAccessReviewQueueResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const projected = await storage.getProjectedGovernanceRecord();
     if (projected && (!runId || projected.runId === runId.trim())) {
+      const projectedAppliedActions = projected.appliedActionRows.map((row) => ({
+        action: row.action,
+        memoryId: row.memoryId,
+        reasonCode: row.reasonCode,
+        beforeStatus: row.beforeStatus,
+        afterStatus: row.afterStatus,
+        originalPath: row.originalPath,
+        currentPath: row.currentPath,
+      })) as Awaited<
+        ReturnType<typeof readMemoryGovernanceRunArtifact>
+      >["appliedActions"];
+      const projectedProposedActions = await buildProjectedGovernanceProposedActions(storage, projected);
+      const projectedArtifact = await (async () => {
+        try {
+          return await readMemoryGovernanceRunArtifact(storage.dir, projected.runId);
+        } catch {
+          return null;
+        }
+      })();
+      const metrics = projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"];
+      const fallbackTransitionReport = {
+        proposed: groupActionsByStatus(projectedProposedActions),
+        applied: groupActionsByStatus(projectedAppliedActions),
+      };
+      const transitionReport = projectedArtifact?.transitionReport
+        ? {
+            proposed:
+              hasGroupedGovernanceActions(projectedArtifact.transitionReport.proposed) || projectedProposedActions.length === 0
+                ? projectedArtifact.transitionReport.proposed
+                : fallbackTransitionReport.proposed,
+            applied:
+              hasGroupedGovernanceActions(projectedArtifact.transitionReport.applied) || projectedAppliedActions.length === 0
+                ? projectedArtifact.transitionReport.applied
+                : fallbackTransitionReport.applied,
+          }
+        : fallbackTransitionReport;
+      const qualityScore = projectedArtifact?.qualityScore ?? metrics?.qualityScore ?? buildQualityScore(metrics?.reviewReasons ?? {
+        exact_duplicate: 0,
+        semantic_duplicate_candidate: 0,
+        disputed_memory: 0,
+        speculative_low_confidence: 0,
+        archive_candidate: 0,
+        explicit_capture_review: 0,
+        malformed_import: 0,
+      });
+      const effectiveMetrics = metrics ? { ...metrics, qualityScore: metrics.qualityScore ?? qualityScore } : metrics;
+
       return {
         found: true,
+        namespace: resolvedNamespace,
         runId: projected.runId,
         summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
-        metrics: projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"],
+        metrics: effectiveMetrics,
+        qualityScore,
         reviewQueue: projected.reviewQueueRows.map((row) => ({
           entryId: row.entryId,
           memoryId: row.memoryId,
@@ -916,39 +1001,35 @@ export class EngramAccessService {
         })) as Awaited<
           ReturnType<typeof readMemoryGovernanceRunArtifact>
         >["reviewQueue"],
-        appliedActions: projected.appliedActionRows.map((row) => ({
-          action: row.action,
-          memoryId: row.memoryId,
-          reasonCode: row.reasonCode,
-          beforeStatus: row.beforeStatus,
-          afterStatus: row.afterStatus,
-          originalPath: row.originalPath,
-          currentPath: row.currentPath,
-        })) as Awaited<
-          ReturnType<typeof readMemoryGovernanceRunArtifact>
-        >["appliedActions"],
+        appliedActions: projectedAppliedActions,
+        transitionReport,
         report: projected.report,
       };
     }
 
-    const resolvedRunId = runId?.trim() || (await listMemoryGovernanceRuns(this.orchestrator.config.memoryDir))[0];
-    if (!resolvedRunId) return { found: false };
-    const artifact = await readMemoryGovernanceRunArtifact(this.orchestrator.config.memoryDir, resolvedRunId);
+    const resolvedRunId = runId?.trim() || (await listMemoryGovernanceRuns(storage.dir))[0];
+    if (!resolvedRunId) return { found: false, namespace: resolvedNamespace };
+    const artifact = await readMemoryGovernanceRunArtifact(storage.dir, resolvedRunId);
     return {
       found: true,
+      namespace: resolvedNamespace,
       runId: resolvedRunId,
       summary: artifact.summary,
       metrics: artifact.metrics,
+      qualityScore: artifact.qualityScore,
       reviewQueue: artifact.reviewQueue,
       appliedActions: artifact.appliedActions,
+      transitionReport: artifact.transitionReport,
       report: artifact.report,
     };
   }
 
-  async maintenance(): Promise<EngramAccessMaintenanceResponse> {
+  async maintenance(namespace?: string): Promise<EngramAccessMaintenanceResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
     return {
-      health: await this.health(),
-      latestGovernanceRun: await this.reviewQueue(),
+      namespace: resolvedNamespace,
+      health: await this.health(resolvedNamespace),
+      latestGovernanceRun: await this.reviewQueue(undefined, resolvedNamespace),
     };
   }
 
