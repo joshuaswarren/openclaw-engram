@@ -2198,6 +2198,37 @@ Best for:
 
   api.registerTool(
     {
+      name: "shared_context_cross_signals_run",
+      label: "Run Cross-Signal Synthesis",
+      description:
+        "Generate today's shared-context cross-signal markdown + JSON artifacts on demand, without requiring a full roundtable curation pass.",
+      parameters: Type.Object({
+        date: Type.Optional(Type.String({ description: "YYYY-MM-DD. Defaults to today." })),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.sharedContext) {
+          return toolResult(
+            "Shared context is disabled. Enable `sharedContextEnabled: true` to synthesize cross-signals.",
+          );
+        }
+        const { date } = params as { date?: string };
+        const result = await orchestrator.sharedContext.synthesizeCrossSignals({ date });
+        return toolResult(
+          [
+            `Cross-signals markdown: ${result.crossSignalsMarkdownPath}`,
+            `Cross-signals JSON: ${result.crossSignalsPath}`,
+            `Source outputs analyzed: ${result.report.sourceCount}`,
+            `Feedback entries analyzed: ${result.report.feedbackCount}`,
+            `Overlap count: ${result.overlapCount}`,
+          ].join("\n"),
+        );
+      },
+    },
+    { name: "shared_context_cross_signals_run" },
+  );
+
+  api.registerTool(
+    {
       name: "shared_context_curate_daily",
       label: "Curate Daily Roundtable",
       description:
@@ -2216,7 +2247,8 @@ Best for:
         return toolResult(
           [
             `Roundtable: ${result.roundtablePath}`,
-            `Cross-signals: ${result.crossSignalsPath}`,
+            `Cross-signals markdown: ${result.crossSignalsMarkdownPath}`,
+            `Cross-signals JSON: ${result.crossSignalsPath}`,
             `Overlap count: ${result.overlapCount}`,
           ].join("\n"),
         );

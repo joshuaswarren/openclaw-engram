@@ -32,12 +32,15 @@ test("shared-context cross-signals handles empty day", async () => {
     const date = "2026-02-28";
     const result = await manager.curateDaily({ date });
     const raw = JSON.parse(await readFile(result.crossSignalsPath, "utf-8"));
+    const crossSignalsMarkdown = await readFile(result.crossSignalsMarkdownPath, "utf-8");
     const roundtable = await readFile(result.roundtablePath, "utf-8");
 
     assert.equal(raw.date, date);
     assert.equal(raw.sourceCount, 0);
     assert.equal(raw.feedbackCount, 0);
     assert.deepEqual(raw.overlaps, []);
+    assert.match(crossSignalsMarkdown, /# Cross-Signals/);
+    assert.match(crossSignalsMarkdown, /No multi-agent topic overlap detected/);
     assert.match(roundtable, /No multi-agent topic overlap detected/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
@@ -121,6 +124,7 @@ test("shared-context cross-signals captures multi-source overlap and feedback co
 
     const result = await manager.curateDaily({ date });
     const raw = JSON.parse(await readFile(result.crossSignalsPath, "utf-8"));
+    const crossSignalsMarkdown = await readFile(result.crossSignalsMarkdownPath, "utf-8");
     const roundtable = await readFile(result.roundtablePath, "utf-8");
 
     assert.equal(raw.sourceCount, 2);
@@ -128,7 +132,10 @@ test("shared-context cross-signals captures multi-source overlap and feedback co
     assert.equal(raw.overlaps.length >= 1, true);
     assert.equal(raw.overlaps.some((entry: { agentCount: number }) => entry.agentCount >= 2), true);
     assert.equal(result.overlapCount >= 1, true);
-    assert.match(roundtable, /Cross-signals file:/);
+    assert.match(crossSignalsMarkdown, /## Recurring Themes/);
+    assert.match(crossSignalsMarkdown, /\[sources:/);
+    assert.match(roundtable, /Cross-signals JSON:/);
+    assert.match(roundtable, /Cross-signals markdown:/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(sharedDir, { recursive: true, force: true });
