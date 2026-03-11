@@ -600,7 +600,9 @@ export class QmdClient implements SearchBackend {
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
       if (lines.length === 0) return null;
-      return lines.find((line) => parseQmdVersion(line) !== null) ?? lines[0] ?? null;
+      const semanticLines = lines.filter((line) => parseQmdVersion(line) !== null);
+      if (semanticLines.length === 0) return lines[0] ?? null;
+      return semanticLines.find((line) => /\bqmd\b/i.test(line)) ?? semanticLines[0] ?? null;
     };
     const markProbeFailure = (err: unknown): void => {
       this.lastCliProbeError = err instanceof Error ? err.message : String(err);
