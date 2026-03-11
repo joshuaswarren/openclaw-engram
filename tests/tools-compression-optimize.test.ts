@@ -20,9 +20,18 @@ function buildHarness(resultOverride?: {
   eventCount?: number;
   previousGuidelineVersion?: number | null;
   nextGuidelineVersion?: number;
+  draftContentHash?: string | null;
   changedRules?: number;
   semanticRefinementApplied?: boolean;
   persisted?: boolean;
+  activated?: boolean;
+  reason?:
+    | "disabled"
+    | "missing_draft"
+    | "expected_revision_required"
+    | "content_hash_mismatch"
+    | "guideline_version_mismatch"
+    | "draft_changed";
 }) {
   const tools = new Map<string, RegisteredTool>();
   const capturedCalls: Array<Record<string, unknown>> = [];
@@ -50,11 +59,19 @@ function buildHarness(resultOverride?: {
         eventCount: resultOverride?.eventCount ?? 22,
         previousGuidelineVersion: resultOverride?.previousGuidelineVersion ?? 3,
         nextGuidelineVersion: resultOverride?.nextGuidelineVersion ?? 4,
+        draftContentHash:
+          resultOverride?.draftContentHash ?? (resultOverride?.dryRun === true ? null : "hash-123"),
         changedRules: resultOverride?.changedRules ?? 2,
         semanticRefinementApplied: resultOverride?.semanticRefinementApplied ?? false,
         persisted: resultOverride?.persisted ?? true,
       };
     },
+    activateCompressionGuidelineDraft: async () => ({
+      enabled: resultOverride?.enabled ?? true,
+      activated: resultOverride?.activated ?? true,
+      guidelineVersion: resultOverride?.nextGuidelineVersion ?? 4,
+      reason: resultOverride?.reason,
+    }),
     qmd: {
       search: async () => [],
       searchGlobal: async () => [],
@@ -118,6 +135,35 @@ test("compression_guidelines_optimize passes dryRun/eventLimit and returns summa
   assert.match(text, /dryRun=true/);
   assert.match(text, /persisted=false/);
   assert.match(text, /guidelineVersion: 5 -> 6/);
+  assert.match(text, /draftContentHash=none/);
   assert.match(text, /changedRules=1/);
   assert.match(text, /semanticRefinementApplied=true/);
+});
+
+test("compression_guidelines_activate reports draft activation result", async () => {
+  const { tools } = buildHarness({
+    enabled: true,
+    activated: true,
+    nextGuidelineVersion: 7,
+  });
+  const tool = tools.get("compression_guidelines_activate");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc-opt-3", {});
+  const text = toolText(result);
+  assert.match(text, /draft activated/i);
+  assert.match(text, /guidelineVersion=7/);
+});
+
+test("compression_guidelines_activate requires a reviewed draft identity", async () => {
+  const { tools } = buildHarness({
+    enabled: true,
+    activated: false,
+    reason: "expected_revision_required",
+  });
+  const tool = tools.get("compression_guidelines_activate");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc-opt-4", {});
+  assert.match(toolText(result), /requires `expectedContentHash` or `expectedGuidelineVersion`/i);
 });

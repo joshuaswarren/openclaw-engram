@@ -1112,12 +1112,37 @@ export interface CompressionGuidelineOptimizerEventCounts {
   failed: number;
 }
 
+export type CompressionGuidelineActivationState = "draft" | "active";
+
+export interface CompressionGuidelineOptimizerActionSummary {
+  action: MemoryActionType;
+  total: number;
+  outcomes: Record<MemoryActionOutcome, number>;
+  quality: {
+    good: number;
+    poor: number;
+    unknown: number;
+  };
+}
+
+export interface CompressionGuidelineOptimizerRuleUpdate {
+  action: MemoryActionType;
+  delta: number;
+  direction: "increase" | "decrease" | "hold";
+  confidence: "low" | "medium" | "high";
+  notes: string[];
+}
+
 export interface CompressionGuidelineOptimizerState {
   version: number;
   updatedAt: string;
   sourceWindow: CompressionGuidelineOptimizerSourceWindow;
   eventCounts: CompressionGuidelineOptimizerEventCounts;
   guidelineVersion: number;
+  contentHash?: string;
+  activationState?: CompressionGuidelineActivationState;
+  actionSummaries?: CompressionGuidelineOptimizerActionSummary[];
+  ruleUpdates?: CompressionGuidelineOptimizerRuleUpdate[];
 }
 
 export type ContinuityIncidentState = "open" | "closed";

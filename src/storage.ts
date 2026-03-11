@@ -888,8 +888,14 @@ export class StorageManager {
   private get compressionGuidelinesPath(): string {
     return path.join(this.stateDir, "compression-guidelines.md");
   }
+  private get compressionGuidelineDraftPath(): string {
+    return path.join(this.stateDir, "compression-guidelines.draft.md");
+  }
   private get compressionGuidelineStatePath(): string {
     return path.join(this.stateDir, "compression-guideline-state.json");
+  }
+  private get compressionGuidelineDraftStatePath(): string {
+    return path.join(this.stateDir, "compression-guideline-draft-state.json");
   }
   private get behaviorSignalsPath(): string {
     return path.join(this.stateDir, "behavior-signals.jsonl");
@@ -2075,6 +2081,19 @@ export class StorageManager {
     }
   }
 
+  async writeCompressionGuidelineDraft(content: string): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.compressionGuidelineDraftPath, content, "utf-8");
+  }
+
+  async readCompressionGuidelineDraft(): Promise<string | null> {
+    try {
+      return await readFile(this.compressionGuidelineDraftPath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
   async writeCompressionGuidelineOptimizerState(
     state: CompressionGuidelineOptimizerState,
   ): Promise<void> {
@@ -2082,15 +2101,121 @@ export class StorageManager {
     await writeFile(this.compressionGuidelineStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
   }
 
+  async writeCompressionGuidelineDraftState(
+    state: CompressionGuidelineOptimizerState,
+  ): Promise<void> {
+    await this.ensureDirectories();
+    await writeFile(this.compressionGuidelineDraftStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+  }
+
   async readCompressionGuidelineOptimizerState(): Promise<CompressionGuidelineOptimizerState | null> {
+    return this.readCompressionGuidelineStateFile(this.compressionGuidelineStatePath);
+  }
+
+  async readCompressionGuidelineDraftState(): Promise<CompressionGuidelineOptimizerState | null> {
+    return this.readCompressionGuidelineStateFile(this.compressionGuidelineDraftStatePath);
+  }
+
+  async activateCompressionGuidelineDraft(options?: {
+    expectedContentHash?: string;
+    expectedGuidelineVersion?: number;
+  }): Promise<boolean> {
+    const [draftContent, draftState] = await Promise.all([
+      this.readCompressionGuidelineDraft(),
+      this.readCompressionGuidelineDraftState(),
+    ]);
+    if (!draftContent || !draftState) return false;
+    if (
+      typeof options?.expectedContentHash === "string" &&
+      options.expectedContentHash.length > 0 &&
+      draftState.contentHash !== options.expectedContentHash
+    ) {
+      return false;
+    }
+    if (
+      typeof options?.expectedGuidelineVersion === "number" &&
+      Number.isFinite(options.expectedGuidelineVersion) &&
+      draftState.guidelineVersion !== options.expectedGuidelineVersion
+    ) {
+      return false;
+    }
+    if (draftState.contentHash) {
+      const contentHash = createHash("sha256").update(draftContent).digest("hex");
+      if (contentHash !== draftState.contentHash) return false;
+    }
+
+    await this.writeCompressionGuidelines(draftContent);
+    await this.writeCompressionGuidelineOptimizerState({
+      ...draftState,
+      activationState: "active",
+    });
+    await Promise.all([
+      unlink(this.compressionGuidelineDraftPath).catch(() => undefined),
+      unlink(this.compressionGuidelineDraftStatePath).catch(() => undefined),
+    ]);
+    return true;
+  }
+
+  private async readCompressionGuidelineStateFile(
+    filePath: string,
+  ): Promise<CompressionGuidelineOptimizerState | null> {
     const isFiniteNonNegativeInteger = (value: unknown): value is number =>
       typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+    const isValidActionSummary = (
+      value: unknown,
+    ): value is NonNullable<CompressionGuidelineOptimizerState["actionSummaries"]>[number] => {
+      if (!value || typeof value !== "object") return false;
+      const summary = value as NonNullable<CompressionGuidelineOptimizerState["actionSummaries"]>[number];
+      return (
+        typeof summary.action === "string" &&
+        isFiniteNonNegativeInteger(summary.total) &&
+        summary.outcomes !== null &&
+        typeof summary.outcomes === "object" &&
+        isFiniteNonNegativeInteger(summary.outcomes.applied) &&
+        isFiniteNonNegativeInteger(summary.outcomes.skipped) &&
+        isFiniteNonNegativeInteger(summary.outcomes.failed) &&
+        summary.quality !== null &&
+        typeof summary.quality === "object" &&
+        isFiniteNonNegativeInteger(summary.quality.good) &&
+        isFiniteNonNegativeInteger(summary.quality.poor) &&
+        isFiniteNonNegativeInteger(summary.quality.unknown)
+      );
+    };
+    const isValidRuleUpdate = (
+      value: unknown,
+    ): value is NonNullable<CompressionGuidelineOptimizerState["ruleUpdates"]>[number] => {
+      if (!value || typeof value !== "object") return false;
+      const rule = value as NonNullable<CompressionGuidelineOptimizerState["ruleUpdates"]>[number];
+      return (
+        typeof rule.action === "string" &&
+        typeof rule.delta === "number" &&
+        Number.isFinite(rule.delta) &&
+        (rule.direction === "increase" || rule.direction === "decrease" || rule.direction === "hold") &&
+        (rule.confidence === "low" || rule.confidence === "medium" || rule.confidence === "high") &&
+        Array.isArray(rule.notes) &&
+        rule.notes.every((note) => typeof note === "string")
+      );
+    };
 
     try {
-      const raw = await readFile(this.compressionGuidelineStatePath, "utf-8");
+      const raw = await readFile(filePath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<CompressionGuidelineOptimizerState>;
       const sourceWindow = parsed?.sourceWindow as Partial<CompressionGuidelineOptimizerState["sourceWindow"]>;
       const eventCounts = parsed?.eventCounts as Partial<CompressionGuidelineOptimizerState["eventCounts"]>;
+      const activationState =
+        parsed?.activationState === "draft" || parsed?.activationState === "active"
+          ? parsed.activationState
+          : undefined;
+      const contentHash =
+        typeof parsed?.contentHash === "string" && parsed.contentHash.length > 0
+          ? parsed.contentHash
+          : undefined;
+      const actionSummaries = Array.isArray(parsed?.actionSummaries)
+        ? parsed.actionSummaries.filter(isValidActionSummary)
+        : undefined;
+      const ruleUpdates = Array.isArray(parsed?.ruleUpdates)
+        ? parsed.ruleUpdates.filter(isValidRuleUpdate)
+        : undefined;
       if (
         !isFiniteNonNegativeInteger(parsed?.version) ||
         typeof parsed?.updatedAt !== "string" ||
@@ -2124,6 +2249,10 @@ export class StorageManager {
           failed: eventCounts.failed,
         },
         guidelineVersion: parsed.guidelineVersion,
+        ...(contentHash ? { contentHash } : {}),
+        ...(activationState ? { activationState } : {}),
+        ...(actionSummaries ? { actionSummaries } : {}),
+        ...(ruleUpdates ? { ruleUpdates } : {}),
       };
     } catch {
       return null;
