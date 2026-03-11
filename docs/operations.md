@@ -147,6 +147,7 @@ Routing behavior notes:
 Admin console notes:
 - Start the local access server, then open `http://127.0.0.1:4318/engram/ui/` in a browser.
 - Paste the same bearer token used for `/engram/v1/...` requests into the console login field.
+- The console exposes memory paging/sort controls, a dedicated quality dashboard, recall inspection, governance review, entity exploration, and maintenance status.
 - The console is read-only by default, but governance review actions still write auditable lifecycle events through the same local access layer.
 
 Access layer notes:
@@ -154,7 +155,7 @@ Access layer notes:
 - HTTP recall accepts `query`, `sessionKey`, `namespace`, `topK`, `mode`, and `includeDebug`.
 - HTTP write endpoints (`/engram/v1/memories`, `/engram/v1/suggestions`, `/engram/v1/review-disposition`) enforce body-size limits, rate limiting, and idempotent retry support for explicit write flows.
 - `openclaw engram access mcp-serve` exposes the same recall/read/write service layer over stdio for MCP clients such as Codex and Claude Code.
-- Use `GET /engram/v1/health` or `GET /engram/v1/maintenance` as startup probes when local scripts need projection/governance readiness signals before issuing recall or review requests.
+- Use `GET /engram/v1/health`, `GET /engram/v1/quality`, or `GET /engram/v1/maintenance` as startup probes when local scripts need projection/governance readiness signals before issuing recall or review requests.
 
 ## Compression Guideline Optimizer Tool (v8.11)
 

@@ -19,6 +19,7 @@ export interface ProjectedMemoryBrowseOptions {
   query?: string;
   status?: string;
   category?: string;
+  sort?: "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
   limit: number;
   offset: number;
 }
@@ -528,6 +529,20 @@ export function readProjectedMemoryBrowse(
       whereClauses.push("category = ?");
       params.push(options.category);
     }
+    const sort = options.sort ?? "updated_desc";
+    const orderBySql = (() => {
+      switch (sort) {
+        case "updated_asc":
+          return "updated_at ASC, created_at ASC, memory_id ASC";
+        case "created_desc":
+          return "created_at DESC, updated_at DESC, memory_id ASC";
+        case "created_asc":
+          return "created_at ASC, updated_at ASC, memory_id ASC";
+        case "updated_desc":
+        default:
+          return "updated_at DESC, created_at DESC, memory_id ASC";
+      }
+    })();
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
     const totalRow = db
       .prepare(`SELECT COUNT(*) AS total FROM memory_current ${whereSql}`)
@@ -546,7 +561,7 @@ export function readProjectedMemoryBrowse(
           ${currentSelect.previewText}
         FROM memory_current
         ${whereSql}
-        ORDER BY updated_at DESC, created_at DESC, memory_id ASC
+        ORDER BY ${orderBySql}
         LIMIT ? OFFSET ?
       `)
       .all(...params, options.limit, options.offset) as Array<Record<string, unknown>>;

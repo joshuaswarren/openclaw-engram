@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
@@ -25,7 +26,15 @@ export interface EngramAccessHttpServerStatus {
   maxBodyBytes: number;
 }
 
-const defaultAdminConsolePublicDir = fileURLToPath(new URL("../admin-console/public", import.meta.url));
+function resolveDefaultAdminConsolePublicDir(): string {
+  const candidates = [
+    fileURLToPath(new URL("../admin-console/public", import.meta.url)),
+    fileURLToPath(new URL("./admin-console/public", import.meta.url)),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
+}
+
+const defaultAdminConsolePublicDir = resolveDefaultAdminConsolePublicDir();
 const WRITE_RATE_LIMIT_WINDOW_MS = 60_000;
 const WRITE_RATE_LIMIT_MAX_REQUESTS = 30;
 
@@ -249,6 +258,7 @@ export class EngramAccessHttpServer {
         status: parsed.searchParams.get("status") ?? undefined,
         category: parsed.searchParams.get("category") ?? undefined,
         namespace: parsed.searchParams.get("namespace") ?? undefined,
+        sort: parsed.searchParams.get("sort") as "updated_desc" | "updated_asc" | "created_desc" | "created_asc" | null ?? undefined,
         limit: Number.isFinite(limitRaw) ? limitRaw : 50,
         offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,
       });
@@ -309,6 +319,11 @@ export class EngramAccessHttpServer {
 
     if (req.method === "GET" && pathname === "/engram/v1/maintenance") {
       this.respondJson(res, 200, await this.service.maintenance(parsed.searchParams.get("namespace") ?? undefined));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/engram/v1/quality") {
+      this.respondJson(res, 200, await this.service.quality(parsed.searchParams.get("namespace") ?? undefined));
       return;
     }
 

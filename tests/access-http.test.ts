@@ -96,6 +96,7 @@ function createFakeService(): EngramAccessService {
     }),
     memoryBrowse: async () => ({
       namespace: "global",
+      sort: "updated_desc",
       total: 1,
       count: 1,
       limit: 50,
@@ -188,6 +189,32 @@ function createFakeService(): EngramAccessService {
         runId: "gov-1",
       },
     }),
+    quality: async () => ({
+      namespace: "global",
+      totalMemories: 1,
+      statusCounts: { pending_review: 1 },
+      categoryCounts: { fact: 1 },
+      confidenceTierCounts: { implied: 1 },
+      ageBucketCounts: { "0_7_days": 1 },
+      archivePressure: {
+        pendingReview: 1,
+        quarantined: 0,
+        archived: 0,
+        staleActive: 0,
+        lowConfidenceActive: 0,
+      },
+      latestGovernanceRun: {
+        found: true,
+        runId: "gov-1",
+        qualityScore: {
+          score: 92,
+          maxScore: 100,
+          grade: "excellent",
+          deductions: [],
+        },
+        reviewQueueCount: 1,
+      },
+    }),
     reviewDisposition: async ({ memoryId, status }) => ({
       ok: true,
       namespace: "global",
@@ -255,8 +282,9 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
 
     const browseRes = await fetch(`${base}/engram/v1/memories?q=hello`, { headers });
     assert.equal(browseRes.status, 200);
-    const browse = await browseRes.json() as { total: number };
+    const browse = await browseRes.json() as { total: number; sort: string };
     assert.equal(browse.total, 1);
+    assert.equal(browse.sort, "updated_desc");
 
     const storeRes = await fetch(`${base}/engram/v1/memories`, {
       method: "POST",
@@ -311,6 +339,15 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     const maintenance = await maintenanceRes.json() as { latestGovernanceRun: { runId: string } };
     assert.equal(maintenance.latestGovernanceRun.runId, "gov-1");
 
+    const qualityRes = await fetch(`${base}/engram/v1/quality`, { headers });
+    assert.equal(qualityRes.status, 200);
+    const quality = await qualityRes.json() as {
+      totalMemories: number;
+      latestGovernanceRun: { qualityScore: { score: number } };
+    };
+    assert.equal(quality.totalMemories, 1);
+    assert.equal(quality.latestGovernanceRun.qualityScore.score, 92);
+
     const dispositionRes = await fetch(`${base}/engram/v1/review-disposition`, {
       method: "POST",
       headers,
@@ -341,6 +378,7 @@ test("access HTTP server serves admin console shell without auth and rejects inv
     assert.equal(uiRes.status, 200);
     const html = await uiRes.text();
     assert.match(html, /Engram Admin Console/);
+    assert.match(html, /Quality Dashboard/);
 
     const badDispositionRes = await fetch(`${base}/engram/v1/review-disposition`, {
       method: "POST",

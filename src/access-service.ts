@@ -127,12 +127,14 @@ export interface EngramAccessMemoryBrowseRequest {
   status?: string;
   category?: string;
   namespace?: string;
+  sort?: "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
   limit?: number;
   offset?: number;
 }
 
 export interface EngramAccessMemoryBrowseResponse {
   namespace: string;
+  sort: "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
   total: number;
   count: number;
   limit: number;
@@ -193,6 +195,28 @@ export interface EngramAccessMaintenanceResponse {
   namespace: string;
   health: EngramAccessHealthResponse;
   latestGovernanceRun: EngramAccessReviewQueueResponse;
+}
+
+export interface EngramAccessQualityResponse {
+  namespace: string;
+  totalMemories: number;
+  statusCounts: Record<string, number>;
+  categoryCounts: Record<string, number>;
+  confidenceTierCounts: Record<string, number>;
+  ageBucketCounts: Record<string, number>;
+  archivePressure: {
+    pendingReview: number;
+    quarantined: number;
+    archived: number;
+    staleActive: number;
+    lowConfidenceActive: number;
+  };
+  latestGovernanceRun: {
+    found: boolean;
+    runId?: string;
+    qualityScore?: EngramAccessReviewQueueResponse["qualityScore"];
+    reviewQueueCount: number;
+  };
 }
 
 async function buildProjectedGovernanceProposedActions(
@@ -278,6 +302,57 @@ function normalizePagination(limit?: number, offset?: number): { limit: number; 
   const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit ?? 50))) : 50;
   const normalizedOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset ?? 0)) : 0;
   return { limit: normalizedLimit, offset: normalizedOffset };
+}
+
+function normalizeBrowseSort(
+  sort?: EngramAccessMemoryBrowseRequest["sort"],
+): NonNullable<EngramAccessMemoryBrowseRequest["sort"]> {
+  switch (sort) {
+    case "updated_asc":
+    case "created_desc":
+    case "created_asc":
+      return sort;
+    case "updated_desc":
+    default:
+      return "updated_desc";
+  }
+}
+
+function bucketMemoryAge(referenceIso: string | undefined, nowMs: number): string {
+  const referenceMs = referenceIso ? Date.parse(referenceIso) : Number.NaN;
+  if (!Number.isFinite(referenceMs)) return "unknown";
+  const ageDays = Math.floor((nowMs - referenceMs) / 86_400_000);
+  if (ageDays <= 7) return "0_7_days";
+  if (ageDays <= 30) return "8_30_days";
+  if (ageDays <= 90) return "31_90_days";
+  return "91_plus_days";
+}
+
+function incrementCount(counts: Record<string, number>, key: string): void {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function compareBrowseMemory(
+  sort: NonNullable<EngramAccessMemoryBrowseRequest["sort"]>,
+  left: MemoryFile,
+  right: MemoryFile,
+): number {
+  const leftUpdated = left.frontmatter.updated ?? left.frontmatter.created ?? "";
+  const rightUpdated = right.frontmatter.updated ?? right.frontmatter.created ?? "";
+  const leftCreated = left.frontmatter.created ?? "";
+  const rightCreated = right.frontmatter.created ?? "";
+
+  switch (sort) {
+    case "updated_asc":
+      return leftUpdated.localeCompare(rightUpdated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+    case "created_desc":
+      return rightCreated.localeCompare(leftCreated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+    case "created_asc":
+      return leftCreated.localeCompare(rightCreated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+    case "updated_desc":
+    default:
+      return rightUpdated.localeCompare(leftUpdated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+  }
 }
 
 export class EngramAccessService {
@@ -797,6 +872,7 @@ export class EngramAccessService {
     const storage = await this.orchestrator.getStorage(request.namespace);
     const resolvedNamespace = request.namespace?.trim() || this.orchestrator.config.defaultNamespace;
     const { limit, offset } = normalizePagination(request.limit, request.offset);
+    const sort = normalizeBrowseSort(request.sort);
     const query = request.query?.trim().toLowerCase() ?? "";
     const statusFilter = request.status?.trim().toLowerCase();
     const categoryFilter = request.category?.trim().toLowerCase();
@@ -805,12 +881,14 @@ export class EngramAccessService {
       query,
       status: statusFilter,
       category: categoryFilter,
+      sort,
       limit,
       offset,
     });
     if (projected) {
       return {
         namespace: resolvedNamespace,
+        sort,
         total: projected.total,
         count: projected.memories.length,
         limit,
@@ -835,17 +913,14 @@ export class EngramAccessService {
       return haystack.includes(query);
     });
 
-    memories.sort((left, right) => {
-      const leftAt = left.frontmatter.updated ?? left.frontmatter.created ?? "";
-      const rightAt = right.frontmatter.updated ?? right.frontmatter.created ?? "";
-      return rightAt.localeCompare(leftAt);
-    });
+    memories.sort((left, right) => compareBrowseMemory(sort, left, right));
 
     const page = memories
       .slice(offset, offset + limit)
       .map((memory) => this.serializeMemorySummary(memory, storage.dir));
     return {
       namespace: resolvedNamespace,
+      sort,
       total: memories.length,
       count: page.length,
       limit,
@@ -1030,6 +1105,58 @@ export class EngramAccessService {
       namespace: resolvedNamespace,
       health: await this.health(resolvedNamespace),
       latestGovernanceRun: await this.reviewQueue(undefined, resolvedNamespace),
+    };
+  }
+
+  async quality(namespace?: string): Promise<EngramAccessQualityResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const governance = await this.reviewQueue(undefined, resolvedNamespace);
+    const nowMs = Date.now();
+    const statusCounts: Record<string, number> = {};
+    const categoryCounts: Record<string, number> = {};
+    const confidenceTierCounts: Record<string, number> = {};
+    const ageBucketCounts: Record<string, number> = {};
+    let staleActive = 0;
+    let lowConfidenceActive = 0;
+
+    const memories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()];
+    for (const memory of memories) {
+      const status = inferMemoryStatus(memory.frontmatter, toMemoryPathRel(storage.dir, memory.path));
+      const confidenceTier = memory.frontmatter.confidenceTier ?? "unknown";
+      const ageBucket = bucketMemoryAge(memory.frontmatter.updated ?? memory.frontmatter.created, nowMs);
+
+      incrementCount(statusCounts, status);
+      incrementCount(categoryCounts, memory.frontmatter.category);
+      incrementCount(confidenceTierCounts, confidenceTier);
+      incrementCount(ageBucketCounts, ageBucket);
+
+      if (status === "active") {
+        if (ageBucket === "91_plus_days") staleActive += 1;
+        if ((memory.frontmatter.confidence ?? 0) < 0.6) lowConfidenceActive += 1;
+      }
+    }
+
+    return {
+      namespace: resolvedNamespace,
+      totalMemories: memories.length,
+      statusCounts,
+      categoryCounts,
+      confidenceTierCounts,
+      ageBucketCounts,
+      archivePressure: {
+        pendingReview: statusCounts.pending_review ?? 0,
+        quarantined: statusCounts.quarantined ?? 0,
+        archived: statusCounts.archived ?? 0,
+        staleActive,
+        lowConfidenceActive,
+      },
+      latestGovernanceRun: {
+        found: governance.found,
+        runId: governance.runId,
+        qualityScore: governance.qualityScore ?? governance.metrics?.qualityScore,
+        reviewQueueCount: governance.reviewQueue?.length ?? 0,
+      },
     };
   }
 

@@ -1301,6 +1301,62 @@ test("access service uses projection-backed browse filters, including archived m
   }
 });
 
+test("access service supports explicit browse sorting for projection-backed and fallback memory pages", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-browse-sort-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-02-01/fact-older.md",
+      memoryDoc("fact-older", "Older memory for browse sorting.", ['created: 2026-02-01T00:00:00.000Z', 'updated: 2026-02-02T00:00:00.000Z']),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-newer.md",
+      memoryDoc("fact-newer", "Newer memory for browse sorting.", ['created: 2026-03-01T00:00:00.000Z', 'updated: 2026-03-05T00:00:00.000Z']),
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    const projectedPage = await service.memoryBrowse({
+      sort: "created_asc",
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(projectedPage.sort, "created_asc");
+    assert.deepEqual(projectedPage.memories.map((memory) => memory.id), ["fact-older", "fact-newer"]);
+
+    const fallbackPage = await service.memoryBrowse({
+      query: "browse sorting",
+      sort: "created_desc",
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(fallbackPage.sort, "created_desc");
+    assert.deepEqual(fallbackPage.memories.map((memory) => memory.id), ["fact-newer", "fact-older"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service fallback browse infers archived status from archive paths without a projection", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-fallback-archived-"));
   try {
@@ -1513,6 +1569,91 @@ test("access service serves reviewQueue and maintenance from projection when gov
     assert.ok(maintenance.latestGovernanceRun.transitionReport);
     assert.equal(Object.keys(maintenance.latestGovernanceRun.transitionReport?.proposed ?? {}).length > 0, true);
     assert.equal(Object.keys(maintenance.latestGovernanceRun.transitionReport?.applied ?? {}).length, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service builds a quality dashboard summary from memory state and governance artifacts", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-quality-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2025-11-01/fact-stale-low.md",
+      memoryDoc(
+        "fact-stale-low",
+        "Potential archive candidate with stale low-confidence memory content.",
+        [
+          'created: 2025-11-01T00:00:00.000Z',
+          'updated: 2025-11-02T00:00:00.000Z',
+          'confidence: 0.45',
+          'confidenceTier: tentative',
+          'status: pending_review',
+        ],
+      ),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-fresh.md",
+      memoryDoc(
+        "fact-fresh",
+        "Fresh active memory for quality dashboard coverage.",
+        [
+          'created: 2026-03-08T00:00:00.000Z',
+          'updated: 2026-03-08T00:00:00.000Z',
+          'confidence: 0.92',
+          'confidenceTier: explicit',
+        ],
+      ),
+    );
+    await writeText(
+      memoryDir,
+      "archive/2026-03-08/fact-archived.md",
+      memoryDoc(
+        "fact-archived",
+        "Archived memory for quality dashboard coverage.",
+        [
+          'created: 2026-02-15T00:00:00.000Z',
+          'updated: 2026-02-16T00:00:00.000Z',
+          'archivedAt: 2026-03-08T00:00:00.000Z',
+          'confidence: 0.7',
+          'confidenceTier: implied',
+        ],
+      ),
+    );
+
+    await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-09T12:00:00.000Z"),
+    });
+
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    const quality = await service.quality();
+    assert.equal(quality.totalMemories, 3);
+    assert.equal(quality.statusCounts.pending_review, 1);
+    assert.equal(quality.statusCounts.active, 1);
+    assert.equal(quality.statusCounts.archived, 1);
+    assert.equal(quality.confidenceTierCounts.tentative, 1);
+    assert.equal(quality.archivePressure.pendingReview, 1);
+    assert.equal(quality.archivePressure.archived, 1);
+    assert.equal(quality.archivePressure.lowConfidenceActive, 0);
+    assert.equal(quality.latestGovernanceRun.found, true);
+    assert.equal(typeof quality.latestGovernanceRun.qualityScore?.score, "number");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

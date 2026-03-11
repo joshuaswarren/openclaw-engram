@@ -50,7 +50,7 @@ Backward compatibility note:
 | `agentAccessHttp.authToken` | `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API; supports `${ENV_VAR}` references |
 | `agentAccessHttp.maxBodyBytes` | `131072` | Maximum accepted JSON request body size |
 
-When `agentAccessHttp.enabled` is on (or `openclaw engram access http-serve` is running), the same loopback server also serves the browser-based admin console shell at `/engram/ui/`. The shell is static; memory data and operator actions still require the configured bearer token over `/engram/v1/...`.
+When `agentAccessHttp.enabled` is on (or `openclaw engram access http-serve` is running), the same loopback server also serves the browser-based admin console shell at `/engram/ui/`. The shell is static, ships with packaged plugin builds, and still requires the configured bearer token over `/engram/v1/...` for memory data and operator actions.
 
 Access-layer safety notes:
 

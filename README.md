@@ -298,7 +298,7 @@ openclaw engram policy-status                # Lifecycle policy snapshot
 
 Governance runs write durable artifacts under `{memoryDir}/state/memory-governance/runs/<runId>/`, including `summary.json`, `review-queue.json`, `kept-memories.json`, `applied-actions.json`, `metrics.json`, `manifest.json`, `report.md`, and `restore.json` for apply runs.
 
-When the local HTTP access server is running, Engram also serves a lightweight operator UI shell at `http://127.0.0.1:4318/engram/ui/`. Paste the same bearer token into the console UI and it will use the authenticated `/engram/v1/...` endpoints for memory browsing, recall inspection, governance review, entity exploration, and maintenance status.
+When the local HTTP access server is running, Engram also serves a lightweight operator UI shell at `http://127.0.0.1:4318/engram/ui/`. Paste the same bearer token into the console UI and it will use the authenticated `/engram/v1/...` endpoints for memory browsing, recall inspection, quality review, governance review, entity exploration, and maintenance status. The packaged build now ships the admin console assets with `dist/`, so the UI is available from installed plugin bundles as well as a source checkout.
 
 ## Configuration
 
