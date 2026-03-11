@@ -6235,6 +6235,7 @@ export class Orchestrator {
     activated: boolean;
     guidelineVersion: number | null;
     reason?:
+      | "disabled"
       | "missing_draft"
       | "expected_revision_required"
       | "content_hash_mismatch"
@@ -6246,7 +6247,7 @@ export class Orchestrator {
         enabled: false,
         activated: false,
         guidelineVersion: null,
-        reason: "missing_draft",
+        reason: "disabled",
       };
     }
 

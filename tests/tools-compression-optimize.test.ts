@@ -26,6 +26,7 @@ function buildHarness(resultOverride?: {
   persisted?: boolean;
   activated?: boolean;
   reason?:
+    | "disabled"
     | "missing_draft"
     | "expected_revision_required"
     | "content_hash_mismatch"
