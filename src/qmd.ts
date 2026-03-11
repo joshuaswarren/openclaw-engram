@@ -595,9 +595,12 @@ export class QmdClient implements SearchBackend {
 
   private async probeCli(): Promise<boolean> {
     const parseVersion = (stdout: string, stderr: string): string | null => {
-      const text = `${stdout}\n${stderr}`.trim();
-      if (!text) return null;
-      return text.split("\n").map((s) => s.trim()).find((s) => s.length > 0) ?? null;
+      const lines = `${stdout}\n${stderr}`
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (lines.length === 0) return null;
+      return lines.find((line) => parseQmdVersion(line) !== null) ?? lines[0] ?? null;
     };
     const markProbeFailure = (err: unknown): void => {
       this.lastCliProbeError = err instanceof Error ? err.message : String(err);

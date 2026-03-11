@@ -54,6 +54,22 @@ describe("search backend factory", () => {
     const backend = createSearchBackend(config);
     assert.equal(backend.debugStatus(), "backend=noop");
   });
+
+  it("QMD capability gating tolerates banner-prefixed semantic versions", async () => {
+    const { QmdClient } = await import("../src/qmd.js");
+    const client = new QmdClient("test-collection", 10);
+    (client as any).cliVersion = "warning: experimental build\nqmd 1.1.5";
+    assert.deepEqual(
+      client.resolveSupportedSearchOptions({
+        intent: "goal:review",
+        explain: true,
+      }),
+      {
+        intent: "goal:review",
+        explain: true,
+      },
+    );
+  });
 });
 
 describe("document scanner", () => {
