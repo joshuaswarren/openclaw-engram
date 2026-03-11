@@ -489,6 +489,103 @@ test("memory_action_apply respects policy gates before mutating storage", async 
   assert.equal(capturedEvents[0]?.dryRun, false);
 });
 
+test("memory_action_apply derives discard policy eligibility from the target memory before gating", async () => {
+  const { tools, capturedEvents, capturedFrontmatterWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    readAllMemories: async () => [
+      {
+        path: "/tmp/fact-important.md",
+        frontmatter: {
+          id: "fact-important",
+          confidence: 0.92,
+          lifecycleState: "active",
+          importance: { score: 0.96, level: "critical", reasons: [], keywords: [] },
+          source: "manual",
+        },
+        content: "Keep this important note unless policy explicitly allows removal.",
+      },
+    ],
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: event.policyEligibility?.importance >= 0.8 ? "skipped" : "applied",
+      status: event.policyEligibility?.importance >= 0.8 ? "rejected" : "applied",
+      policyDecision: event.policyEligibility?.importance >= 0.8 ? "deny" : "allow",
+      policyRationale:
+        event.policyEligibility?.importance >= 0.8 ? "importance_too_high_for_discard" : "eligible",
+    }),
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10b-discard-eligibility", {
+    action: "discard",
+    memoryId: "fact-important",
+    namespace: "team-alpha",
+    execute: true,
+  });
+
+  assert.match(toolText(result), /blocked by policy/i);
+  assert.equal(capturedFrontmatterWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.deepEqual(capturedEvents[0]?.policyEligibility, {
+    confidence: 0.92,
+    lifecycleState: "active",
+    importance: 0.96,
+    source: "manual",
+  });
+});
+
+test("memory_action_apply derives source-memory eligibility for create_artifact policy gates", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    readAllMemories: async () => [
+      {
+        path: "/tmp/fact-archived.md",
+        frontmatter: {
+          id: "fact-archived",
+          confidence: 0.61,
+          lifecycleState: "candidate",
+          importance: { score: 0.33, level: "low", reasons: [], keywords: [] },
+          source: "manual",
+          status: "archived",
+        },
+        content: "Archived note that should not produce new artifacts.",
+      },
+    ],
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: event.policyEligibility?.lifecycleState === "archived" ? "skipped" : "applied",
+      status: event.policyEligibility?.lifecycleState === "archived" ? "rejected" : "applied",
+      policyDecision: event.policyEligibility?.lifecycleState === "archived" ? "deny" : "allow",
+      policyRationale:
+        event.policyEligibility?.lifecycleState === "archived"
+          ? "lifecycle_state_archived_restricted"
+          : "eligible",
+    }),
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10b-artifact-eligibility", {
+    action: "create_artifact",
+    memoryId: "fact-archived",
+    content: "Artifact body",
+    artifactType: "checkpoint",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /blocked by policy/i);
+  assert.equal(capturedEvents.length, 1);
+  assert.deepEqual(capturedEvents[0]?.policyEligibility, {
+    confidence: 0.61,
+    lifecycleState: "archived",
+    importance: 0.33,
+    source: "manual",
+  });
+});
+
 test("memory_action_apply rejects invalid structured categories before writing memory", async () => {
   const { tools, capturedEvents, capturedWrites } = buildHarness({
     contextCompressionActionsEnabled: true,

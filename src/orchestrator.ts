@@ -1414,9 +1414,14 @@ export class Orchestrator {
         maxCompressionTokensPerHour: this.config.maxCompressionTokensPerHour,
       },
     });
+    const dryRun = event.dryRun === true;
 
     const normalizedOutcome =
-      policy.decision === "allow"
+      dryRun
+        ? event.outcome === "failed"
+          ? "failed"
+          : "skipped"
+        : policy.decision === "allow"
         ? event.outcome
         : event.outcome === "failed"
           ? "failed"
@@ -1436,7 +1441,6 @@ export class Orchestrator {
           ),
         )
       : [];
-    const dryRun = event.dryRun === true;
 
     const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
       (part): part is string => typeof part === "string" && part.length > 0,

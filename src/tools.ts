@@ -2,7 +2,14 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { Orchestrator } from "./orchestrator.js";
-import type { ContinuityImprovementLoop, MemoryActionType, MemoryCategory } from "./types.js";
+import type {
+  ContinuityImprovementLoop,
+  MemoryActionEligibilityContext,
+  MemoryActionEligibilitySource,
+  MemoryActionType,
+  MemoryCategory,
+  MemoryFile,
+} from "./types.js";
 import { indexMemory, indexesExist } from "./temporal-index.js";
 import {
   persistExplicitCapture,
@@ -56,6 +63,39 @@ function asNonEmptyString(value: unknown): string | undefined {
 
 function normalizeToolNamespace(value: unknown): string | undefined {
   return asNonEmptyString(value);
+}
+
+function clampUnitInterval(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function normalizeMemoryActionEligibilitySource(value: unknown): MemoryActionEligibilitySource {
+  switch (value) {
+    case "extraction":
+    case "consolidation":
+    case "replay":
+    case "manual":
+      return value;
+    default:
+      return "unknown";
+  }
+}
+
+function deriveMemoryActionPolicyEligibility(
+  memory: Pick<MemoryFile, "frontmatter"> | null | undefined,
+): MemoryActionEligibilityContext | undefined {
+  if (!memory) return undefined;
+  const frontmatter = memory.frontmatter;
+  return {
+    confidence: clampUnitInterval(frontmatter.confidence, 0),
+    lifecycleState:
+      frontmatter.status === "archived" ? "archived" : frontmatter.lifecycleState ?? "candidate",
+    importance: clampUnitInterval(frontmatter.importance?.score, 0),
+    source: normalizeMemoryActionEligibilitySource(frontmatter.source),
+  };
 }
 
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
@@ -1356,6 +1396,11 @@ Best for:
             description: "Optional artifact type for create_artifact.",
           }),
         ),
+        execute: Type.Optional(
+          Type.Boolean({
+            description: "When true, force structured execution mode even for target-only actions like discard.",
+          }),
+        ),
         sourcePrompt: Type.Optional(
           Type.String({
             description: "Optional source prompt text used for hashing in telemetry.",
@@ -1393,6 +1438,7 @@ Best for:
           linkType,
           linkStrength,
           artifactType,
+          execute,
         } = params as {
           action: MemoryActionType;
           outcome?: "applied" | "skipped" | "failed";
@@ -1408,6 +1454,7 @@ Best for:
           linkType?: string;
           linkStrength?: number;
           artifactType?: string;
+          execute?: boolean;
         };
         const ns =
           typeof namespace === "string" && namespace.length > 0
@@ -1422,6 +1469,7 @@ Best for:
         const linkTargetIdValue = asNonEmptyString(linkTargetId);
         const linkTypeValue = asNonEmptyString(linkType);
         const structuredActionRequest =
+          execute === true ||
           Object.prototype.hasOwnProperty.call(params, "content") ||
           Object.prototype.hasOwnProperty.call(params, "category") ||
           Object.prototype.hasOwnProperty.call(params, "linkTargetId") ||
@@ -1504,12 +1552,6 @@ Best for:
           );
         }
 
-        const structuredEvent = {
-          ...baseEvent,
-          outcome: outcome ?? "applied",
-          dryRun: dryRun === true,
-          outputMemoryIds: [],
-        };
         const normalizedCategory = normalizeMemoryCategory(category, "fact");
         if (category !== undefined && normalizedCategory === undefined) {
           const wrote = await orchestrator.appendMemoryActionEvent({
@@ -1523,6 +1565,24 @@ Best for:
           const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
           return toolResult(`Validation failed: invalid category ${String(category)}.${suffix}`);
         }
+
+        const storage =
+          typeof orchestrator.getStorage === "function"
+            ? await orchestrator.getStorage(ns)
+            : orchestrator.storage;
+        const referencedMemory =
+          memoryIdValue && typeof storage.readAllMemories === "function"
+            ? (await storage.readAllMemories()).find(
+                (memory: { frontmatter: { id: string } }) => memory.frontmatter.id === memoryIdValue,
+              )
+            : undefined;
+        const structuredEvent = {
+          ...baseEvent,
+          outcome: outcome ?? "applied",
+          dryRun: dryRun === true,
+          outputMemoryIds: [],
+          policyEligibility: deriveMemoryActionPolicyEligibility(referencedMemory),
+        };
 
         if (dryRun === true) {
           const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
@@ -1542,10 +1602,6 @@ Best for:
           );
         }
 
-        const storage =
-          typeof orchestrator.getStorage === "function"
-            ? await orchestrator.getStorage(ns)
-            : orchestrator.storage;
         const outputMemoryIds: string[] = [];
         let appliedMessage = "";
 
@@ -1619,8 +1675,7 @@ Best for:
             break;
           }
           case "discard": {
-            const memories = await storage.readAllMemories();
-            const target = memories.find((memory: { frontmatter: { id: string } }) => memory.frontmatter.id === memoryIdValue);
+            const target = referencedMemory;
             if (!target) {
               const wrote = await orchestrator.appendMemoryActionEvent({
                 ...baseEvent,

@@ -161,6 +161,31 @@ test("previewMemoryActionEvent applies policy normalization for dry-run parity",
   }
 });
 
+test("previewMemoryActionEvent downgrades successful dry-run outcomes to skipped", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-dryrun-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      contextCompressionActionsEnabled: true,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    const preview = orchestrator.previewMemoryActionEvent({
+      action: "store_note",
+      outcome: "applied",
+      dryRun: true,
+    });
+
+    assert.equal(preview.policyDecision, "allow");
+    assert.equal(preview.status, "validated");
+    assert.equal(preview.outcome, "skipped");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("appendMemoryActionEvent enforces zero-limit defer semantics for summarize_node", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-zero-limit-"));
   try {
