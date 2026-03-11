@@ -583,7 +583,9 @@ function buildQualityScore(reviewReasons: Record<MemoryGovernanceReasonCode, num
   };
 }
 
-function groupActionsByStatus(actions: MemoryGovernanceAppliedAction[]): Record<string, MemoryGovernanceAppliedAction[]> {
+export function groupActionsByStatus(
+  actions: MemoryGovernanceAppliedAction[],
+): Record<string, MemoryGovernanceAppliedAction[]> {
   const grouped: Record<string, MemoryGovernanceAppliedAction[]> = {};
   for (const action of actions) {
     const status = action.afterStatus ?? (action.action === "archive" ? "archived" : "unchanged");

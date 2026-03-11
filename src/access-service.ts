@@ -9,6 +9,7 @@ import {
 } from "./explicit-capture.js";
 import { log } from "./logger.js";
 import {
+  groupActionsByStatus,
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
@@ -192,17 +193,30 @@ export interface EngramAccessMaintenanceResponse {
   latestGovernanceRun: EngramAccessReviewQueueResponse;
 }
 
-function groupProjectedGovernanceActionsByStatus(
-  actions: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"],
-): Record<string, Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> {
-  const grouped: Record<string, Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> = {};
-  for (const action of actions) {
-    const status = action.afterStatus ?? (action.action === "archive" ? "archived" : "unchanged");
-    const bucket = grouped[status] ?? [];
-    bucket.push(action);
-    grouped[status] = bucket;
-  }
-  return grouped;
+async function buildProjectedGovernanceProposedActions(
+  storage: Awaited<ReturnType<Orchestrator["getStorage"]>>,
+  projected: NonNullable<Awaited<ReturnType<Awaited<ReturnType<Orchestrator["getStorage"]>>["getProjectedGovernanceRecord"]>>>,
+): Promise<Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> {
+  return Promise.all(projected.reviewQueueRows.map(async (row) => {
+    const memory = await storage.getMemoryById(row.memoryId);
+    const currentPath = memory?.path ?? row.path;
+    const pathRel = toMemoryPathRel(storage.dir, currentPath);
+    const beforeStatus = memory
+      ? inferMemoryStatus(memory.frontmatter, pathRel)
+      : pathRel === "archive" || pathRel.startsWith("archive/")
+      ? "archived"
+      : "active";
+
+    return {
+      action: row.suggestedAction,
+      memoryId: row.memoryId,
+      reasonCode: row.reasonCode,
+      beforeStatus,
+      afterStatus: row.suggestedStatus,
+      originalPath: currentPath,
+      currentPath,
+    };
+  }));
 }
 
 export interface EngramAccessReviewDispositionRequest {
@@ -930,14 +944,15 @@ export class EngramAccessService {
       })) as Awaited<
         ReturnType<typeof readMemoryGovernanceRunArtifact>
       >["appliedActions"];
+      const projectedProposedActions = await buildProjectedGovernanceProposedActions(storage, projected);
       const transitionReport = await (async () => {
         try {
           const artifact = await readMemoryGovernanceRunArtifact(storage.dir, projected.runId);
           return artifact.transitionReport;
         } catch {
           return {
-            proposed: groupProjectedGovernanceActionsByStatus(projectedAppliedActions),
-            applied: groupProjectedGovernanceActionsByStatus(projectedAppliedActions),
+            proposed: groupActionsByStatus(projectedProposedActions),
+            applied: groupActionsByStatus(projectedAppliedActions),
           };
         }
       })();
