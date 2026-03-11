@@ -17,12 +17,21 @@ function buildHarness(options?: {
   previewMemoryActionEvent?: (event: any) => any;
   writeMemory?: (category: string, content: string, options?: Record<string, unknown>) => Promise<string> | string;
   writeArtifact?: (content: string, options?: Record<string, unknown>) => Promise<string> | string;
+  readAllMemories?: () => Promise<any[]> | any[];
+  writeMemoryFrontmatter?: (memory: any, patch: Record<string, unknown>, options?: Record<string, unknown>) => Promise<void> | void;
+  addLinksToMemory?: (
+    memoryId: string,
+    links: any[],
+    options?: Record<string, unknown>,
+  ) => Promise<boolean> | boolean;
   createCheckpoint?: (sessionKey: string, turns: any[], ttlHours?: number) => any;
   saveCheckpoint?: (checkpoint: any) => Promise<void> | void;
 }) {
   const tools = new Map<string, RegisteredTool>();
   const capturedEvents: any[] = [];
   const capturedWrites: Array<{ category: string; content: string; options?: Record<string, unknown> }> = [];
+  const capturedFrontmatterWrites: Array<{ memory: any; patch: Record<string, unknown>; options?: Record<string, unknown> }> = [];
+  const capturedLinkWrites: Array<{ memoryId: string; links: any[]; options?: Record<string, unknown> }> = [];
   const createdCheckpoints: Array<{ sessionKey: string; turns: any[]; ttlHours?: number }> = [];
   const savedCheckpoints: any[] = [];
   const api = {
@@ -49,8 +58,23 @@ function buildHarness(options?: {
       return "artifact-stored";
     },
     updateMemory: async () => true,
-    readAllMemories: async () => [],
-    addLinksToMemory: async () => true,
+    readAllMemories: async () => {
+      if (options?.readAllMemories) {
+        return await options.readAllMemories();
+      }
+      return [];
+    },
+    writeMemoryFrontmatter: async (memory: any, patch: Record<string, unknown>, writeOptions?: Record<string, unknown>) => {
+      capturedFrontmatterWrites.push({ memory, patch, options: writeOptions });
+      await options?.writeMemoryFrontmatter?.(memory, patch, writeOptions);
+    },
+    addLinksToMemory: async (memoryId: string, links: any[], writeOptions?: Record<string, unknown>) => {
+      capturedLinkWrites.push({ memoryId, links, options: writeOptions });
+      if (options?.addLinksToMemory) {
+        return await options.addLinksToMemory(memoryId, links, writeOptions);
+      }
+      return true;
+    },
   };
 
   const transcript = {
@@ -120,7 +144,15 @@ function buildHarness(options?: {
   };
 
   registerTools(api as any, orchestrator as any);
-  return { tools, capturedEvents, capturedWrites, createdCheckpoints, savedCheckpoints };
+  return {
+    tools,
+    capturedEvents,
+    capturedWrites,
+    capturedFrontmatterWrites,
+    capturedLinkWrites,
+    createdCheckpoints,
+    savedCheckpoints,
+  };
 }
 
 function toolText(result: { content: Array<{ type: string; text: string }> }): string {
@@ -273,6 +305,43 @@ test("context_checkpoint reuses the transcript checkpoint model and logs checkpo
   assert.equal(capturedEvents[0]?.sourceSessionKey, "agent:engram:main");
   assert.equal(capturedEvents[0]?.inputSummary, "checkpoint before compaction");
   assert.equal(capturedEvents[0]?.dryRun, false);
+});
+
+test("context_checkpoint respects policy gates before saving checkpoints", async () => {
+  const { tools, capturedEvents, createdCheckpoints, savedCheckpoints } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: "skipped",
+      status: "rejected",
+      policyDecision: "defer",
+      policyRationale: "maxCompressionTokensPerHour=0",
+    }),
+  });
+  const tool = tools.get("context_checkpoint");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc7b", {
+    summary: "checkpoint before compaction",
+    sessionKey: "agent:engram:main",
+    turns: [
+      {
+        timestamp: "2026-03-11T10:00:00.000Z",
+        role: "user",
+        content: "Please compress the noisy setup discussion.",
+        sessionKey: "agent:engram:main",
+        turnId: "turn-1",
+      },
+    ],
+    dryRun: false,
+  });
+
+  assert.match(toolText(result), /blocked by policy/i);
+  assert.equal(createdCheckpoints.length, 0);
+  assert.equal(savedCheckpoints.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.action, "summarize_node");
 });
 
 test("memory_action_apply executes store_note through storage paths and records output ids", async () => {
@@ -469,6 +538,58 @@ test("memory_action_apply keeps legacy telemetry calls with memoryId in compatib
   assert.equal(capturedEvents[0]?.outcome, "applied");
 });
 
+test("memory_action_apply keeps legacy telemetry calls with sessionKey in compatibility mode", async () => {
+  const { tools, capturedEvents, capturedFrontmatterWrites, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    readAllMemories: async () => [
+      {
+        path: "/tmp/fact-legacy.md",
+        frontmatter: { id: "fact-legacy" },
+        content: "legacy",
+      },
+    ],
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10c-session", {
+    action: "discard",
+    memoryId: "fact-legacy",
+    namespace: "team-alpha",
+    sessionKey: "agent:team-alpha:main",
+  });
+
+  assert.match(toolText(result), /Recorded memory action telemetry/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedFrontmatterWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.memoryId, "fact-legacy");
+  assert.equal(capturedEvents[0]?.sourceSessionKey, "agent:team-alpha:main");
+});
+
+test("memory_action_apply rejects out-of-range link strengths before writing links", async () => {
+  const { tools, capturedEvents, capturedLinkWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10d-link", {
+    action: "link_graph",
+    memoryId: "fact-source",
+    linkTargetId: "fact-target",
+    linkType: "supports",
+    linkStrength: -0.5,
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /linkStrength/i);
+  assert.equal(capturedLinkWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.status, "rejected");
+  assert.equal(capturedEvents[0]?.outcome, "failed");
+});
+
 test("memory_action_apply rejects empty artifact ids from storage", async () => {
   const { tools, capturedEvents } = buildHarness({
     contextCompressionActionsEnabled: true,
@@ -509,4 +630,23 @@ test("memory_action_apply records applied outcome after successful structured mu
   assert.equal(capturedEvents.length, 1);
   assert.equal(capturedEvents[0]?.status, "applied");
   assert.equal(capturedEvents[0]?.outcome, "applied");
+});
+
+test("memory_action_apply rejects unrecognized actions instead of reporting false success", async () => {
+  const { tools, capturedEvents, capturedLinkWrites, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10f", {
+    action: "made_up_action",
+    content: "Do not silently accept unknown actions.",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /invalid action/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedLinkWrites.length, 0);
+  assert.equal(capturedEvents.length, 0);
 });

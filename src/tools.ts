@@ -232,6 +232,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
     "discard",
     "link_graph",
   ];
+  const actionTypeSet = new Set<string>(actionTypes);
 
   function promptHashForTelemetry(input?: string): string | undefined {
     if (typeof input !== "string" || input.trim().length === 0) return undefined;
@@ -243,6 +244,10 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
     if (!normalized) return fallback;
     if (!VALID_MEMORY_CATEGORIES.has(normalized as MemoryCategory)) return undefined;
     return normalized as MemoryCategory;
+  }
+
+  function isKnownMemoryActionType(value: unknown): value is MemoryActionType {
+    return typeof value === "string" && actionTypeSet.has(value);
   }
 
   function buildActionInputSummary(action: MemoryActionType, params: Record<string, unknown>): string {
@@ -1246,6 +1251,20 @@ Best for:
           return toolResult(`Validation failed: ${validationErrors.join("; ")}.`);
         }
 
+        const structuredEvent = {
+          ...baseEvent,
+          outcome: "applied" as const,
+          status: dryRun === true ? "validated" as const : undefined,
+        };
+        const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
+        if (preview.policyDecision !== "allow") {
+          const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          return toolResult(
+            `Context checkpoint blocked by policy: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}, rationale=${preview.policyRationale}.${suffix}`,
+          );
+        }
+
         const checkpoint = orchestrator.transcript.createCheckpoint(
           sessionKey!,
           turns!,
@@ -1394,6 +1413,9 @@ Best for:
           typeof namespace === "string" && namespace.length > 0
             ? namespace
             : orchestrator.config.defaultNamespace;
+        if (!isKnownMemoryActionType(action)) {
+          return toolResult(`Validation failed: invalid action ${String(action)}.`);
+        }
         const validationErrors: string[] = [];
         const contentValue = asNonEmptyString(content);
         const memoryIdValue = asNonEmptyString(memoryId);
@@ -1402,7 +1424,6 @@ Best for:
         const structuredActionRequest =
           Object.prototype.hasOwnProperty.call(params, "content") ||
           Object.prototype.hasOwnProperty.call(params, "category") ||
-          Object.prototype.hasOwnProperty.call(params, "sessionKey") ||
           Object.prototype.hasOwnProperty.call(params, "linkTargetId") ||
           Object.prototype.hasOwnProperty.call(params, "linkType") ||
           Object.prototype.hasOwnProperty.call(params, "linkStrength") ||
@@ -1460,6 +1481,12 @@ Best for:
             if (!memoryIdValue) validationErrors.push("memoryId is required");
             if (!linkTargetIdValue) validationErrors.push("linkTargetId is required");
             if (!linkTypeValue) validationErrors.push("linkType is required");
+            if (
+              typeof linkStrength === "number" &&
+              (!Number.isFinite(linkStrength) || linkStrength < 0 || linkStrength > 1)
+            ) {
+              validationErrors.push("linkStrength must be between 0 and 1");
+            }
             break;
         }
 
