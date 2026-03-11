@@ -31,6 +31,7 @@ test("fetchQmdMemoryResultsWithArtifactTopUp forwards QMD search options and ski
   let hybridCalls = 0;
   let snapshot: Record<string, unknown> | null = null;
   orchestrator.qmd = {
+    resolveSupportedSearchOptions: (options: Record<string, unknown>) => options,
     search: async (...args: unknown[]) => {
       searchArgs = args;
       return [
@@ -113,6 +114,7 @@ test("fetchQmdMemoryResultsWithArtifactTopUp still uses hybrid top-up when no QM
         transport: "subprocess",
       },
     ],
+    resolveSupportedSearchOptions: () => undefined,
     hybridSearch: async () => {
       hybridCalls += 1;
       return [
@@ -141,6 +143,129 @@ test("fetchQmdMemoryResultsWithArtifactTopUp still uses hybrid top-up when no QM
 
   assert.equal(hybridCalls, 1);
   assert.equal(results.length, 2);
+});
+
+test("fetchQmdMemoryResultsWithArtifactTopUp keeps hybrid top-up active when QMD strips unsupported intent hints", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-review-unsupported-intent-"));
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    qmdIntentHintsEnabled: true,
+    qmdExplainEnabled: true,
+  });
+  const orchestrator = new Orchestrator(cfg) as any;
+
+  let searchArgs: unknown[] | null = null;
+  let hybridCalls = 0;
+  let snapshot: Record<string, unknown> | null = null;
+  orchestrator.qmd = {
+    resolveSupportedSearchOptions: () => ({ explain: true }),
+    search: async (...args: unknown[]) => {
+      searchArgs = args;
+      return [
+        {
+          docid: "fact-1",
+          path: "facts/2026-03-11/fact-1.md",
+          snippet: "fact one",
+          score: 0.7,
+          transport: "subprocess",
+        },
+      ];
+    },
+    hybridSearch: async () => {
+      hybridCalls += 1;
+      return [
+        {
+          docid: "fact-2",
+          path: "facts/2026-03-11/fact-2.md",
+          snippet: "fact two",
+          score: 0.8,
+        },
+      ];
+    },
+  };
+
+  const results = await orchestrator.fetchQmdMemoryResultsWithArtifactTopUp(
+    "review the last recall",
+    2,
+    4,
+    {
+      namespacesEnabled: false,
+      recallNamespaces: ["default"],
+      resolveNamespace: () => "default",
+      collection: "openclaw-engram",
+      queryAwarePrefilter: EMPTY_PREFILTER,
+      searchOptions: {
+        intent: "goal:review action:review",
+        explain: true,
+      },
+      onDebugSnapshot: async (payload: Record<string, unknown>) => {
+        snapshot = payload;
+      },
+    },
+  );
+
+  assert.deepEqual(searchArgs, [
+    "review the last recall",
+    "openclaw-engram",
+    4,
+    {
+      explain: true,
+    },
+  ]);
+  assert.equal(hybridCalls, 1);
+  assert.equal(results.length, 2);
+  assert.ok(snapshot);
+  assert.equal(snapshot?.intentHint, undefined);
+  assert.equal(snapshot?.explainEnabled, true);
+  assert.equal(snapshot?.hybridTopUpSkippedReason, undefined);
+});
+
+test("cold-tier recall forwards explain traces even when intent hints are disabled", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-review-cold-explain-"));
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    qmdColdTierEnabled: true,
+    qmdColdCollection: "openclaw-engram-cold",
+    qmdExplainEnabled: true,
+    qmdIntentHintsEnabled: false,
+  });
+  const orchestrator = new Orchestrator(cfg) as any;
+
+  let capturedOptions: Record<string, unknown> | undefined;
+  orchestrator.qmd = {
+    isAvailable: () => true,
+  };
+  orchestrator.fetchQmdMemoryResultsWithArtifactTopUp = async (
+    _prompt: string,
+    _qmdFetchLimit: number,
+    _qmdHybridFetchLimit: number,
+    options: { searchOptions?: Record<string, unknown> },
+  ) => {
+    capturedOptions = options.searchOptions;
+    return [
+      {
+        docid: "fact-1",
+        path: "facts/2026-03-11/fact-1.md",
+        snippet: "fact one",
+        score: 0.9,
+      },
+    ];
+  };
+
+  const results = await orchestrator.applyColdFallbackPipeline({
+    prompt: "review the archive",
+    recallNamespaces: ["default"],
+    recallResultLimit: 2,
+    recallMode: "full",
+    queryAwarePrefilter: EMPTY_PREFILTER,
+  });
+
+  assert.equal(results.length, 1);
+  assert.deepEqual(capturedOptions, { explain: true });
 });
 
 test("QMD recall snapshot helpers read persisted snapshots and memory_qmd_debug is registered", async () => {

@@ -938,6 +938,21 @@ export class Orchestrator {
     );
   }
 
+  private buildConfiguredQmdSearchOptions(queryText: string): SearchQueryOptions | undefined {
+    const intentHint = this.config.qmdIntentHintsEnabled
+      ? buildQmdIntentHint(inferIntentFromText(queryText))
+      : undefined;
+    const explain = this.config.qmdExplainEnabled === true;
+    const searchOptions: SearchQueryOptions = {};
+    if (intentHint) {
+      searchOptions.intent = intentHint;
+    }
+    if (explain) {
+      searchOptions.explain = true;
+    }
+    return Object.keys(searchOptions).length > 0 ? searchOptions : undefined;
+  }
+
   async searchAcrossNamespaces(options: {
     query: string;
     namespaces?: string[];
@@ -2471,6 +2486,15 @@ export class Orchestrator {
     let lastHybridResultCount = 0;
     let lastHybridTopUpUsed = false;
     let lastHybridTopUpSkippedReason: string | undefined;
+    const effectiveSearchOptions = (() => {
+      const resolver = (this.qmd as {
+        resolveSupportedSearchOptions?: (options?: SearchQueryOptions) => SearchQueryOptions | undefined;
+      }).resolveSupportedSearchOptions;
+      if (typeof resolver === "function") {
+        return resolver.call(this.qmd, options.searchOptions);
+      }
+      return options.searchOptions;
+    })();
     let bestFiltered = filterRecallCandidates(scopedSeedResults, {
       namespacesEnabled: options.namespacesEnabled,
       recallNamespaces: options.recallNamespaces,
@@ -2490,8 +2514,8 @@ export class Orchestrator {
         hybridResultCount: lastHybridResultCount,
         queryAwareSeedCount: scopedSeedResults.length,
         resultCount: results.length,
-        intentHint: options.searchOptions?.intent,
-        explainEnabled: options.searchOptions?.explain === true,
+        intentHint: effectiveSearchOptions?.intent,
+        explainEnabled: effectiveSearchOptions?.explain === true,
         hybridTopUpUsed: lastHybridTopUpUsed,
         hybridTopUpSkippedReason: lastHybridTopUpSkippedReason,
         results: results.slice(0, 32).map((result) => ({
@@ -2507,13 +2531,13 @@ export class Orchestrator {
       }
 
       const primaryResults = options.collection
-        ? await this.qmd.search(prompt, options.collection, fetchLimit, options.searchOptions)
+        ? await this.qmd.search(prompt, options.collection, fetchLimit, effectiveSearchOptions)
         : await this.searchAcrossNamespaces({
           query: prompt,
           namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
           maxResults: fetchLimit,
           mode: "search",
-          searchOptions: options.searchOptions,
+          searchOptions: effectiveSearchOptions,
         });
       lastPrimaryResultCount = primaryResults.length;
       lastHybridResultCount = 0;
@@ -2526,7 +2550,7 @@ export class Orchestrator {
         primaryResults.length < qmdFetchLimit &&
         Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
       ) {
-        if (options.searchOptions?.intent) {
+        if (effectiveSearchOptions?.intent) {
           lastHybridTopUpSkippedReason = "intent_hint_active";
         } else {
           const hybridResults = options.collection
@@ -2938,17 +2962,7 @@ export class Orchestrator {
     const recallMode: RecallPlanMode = requestedMode
       ?? recallDecision.effectiveMode;
     const queryIntent = inferIntentFromText(retrievalQuery);
-    const qmdSearchOptions: SearchQueryOptions | undefined = (() => {
-      const intentHint = this.config.qmdIntentHintsEnabled
-        ? buildQmdIntentHint(queryIntent)
-        : undefined;
-      const explain = this.config.qmdExplainEnabled === true;
-      if (!intentHint && !explain) return undefined;
-      return {
-        intent: intentHint,
-        explain,
-      };
-    })();
+    const qmdSearchOptions = this.buildConfiguredQmdSearchOptions(retrievalQuery);
     timings.recallPlan = recallMode;
     const plannerRecallResultLimit = recallMode === "no_recall"
       ? 0
@@ -7485,9 +7499,7 @@ export class Orchestrator {
             resolveNamespace: (p) => this.namespaceFromPath(p),
             collection: coldCollection,
             queryAwarePrefilter: options.queryAwarePrefilter,
-            searchOptions: this.config.qmdIntentHintsEnabled
-              ? { intent: buildQmdIntentHint(inferIntentFromText(options.prompt)) }
-              : undefined,
+            searchOptions: this.buildConfiguredQmdSearchOptions(options.prompt),
           },
         );
         if (longTerm.length > 0) {

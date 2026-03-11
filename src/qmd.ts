@@ -723,6 +723,10 @@ export class QmdClient implements SearchBackend {
     return Object.keys(resolved).length > 0 ? resolved : undefined;
   }
 
+  resolveSupportedSearchOptions(options?: SearchQueryOptions): SearchQueryOptions | undefined {
+    return this.resolveSearchOptions(options);
+  }
+
   async search(
     query: string,
     collection?: string,
