@@ -1610,6 +1610,113 @@ test("access service backfills projected governance quality scores from projecte
   }
 });
 
+test("access service projected governance fallback mirrors same-status filtering and per-memory action priority", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-proposed-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-01/fact-1.md");
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () =>
+        ({
+          dir: memoryDir,
+          async getProjectedGovernanceRecord() {
+            return {
+              runId: "gov-proposed",
+              summary: {
+                runId: "gov-proposed",
+                traceId: "trace-proposed",
+                mode: "shadow",
+                createdAt: "2026-03-09T12:00:00.000Z",
+                scannedMemories: 1,
+                reviewQueueCount: 2,
+                proposedActionCount: 1,
+                appliedActionCount: 0,
+                ruleVersion: "memory-governance.v2",
+                schemaVersion: 1,
+              },
+              metrics: {
+                reviewReasons: {
+                  exact_duplicate: 0,
+                  semantic_duplicate_candidate: 0,
+                  disputed_memory: 0,
+                  speculative_low_confidence: 0,
+                  archive_candidate: 1,
+                  explicit_capture_review: 1,
+                  malformed_import: 0,
+                },
+                proposedStatuses: {
+                  archived: 1,
+                },
+                keptMemoryCount: 0,
+              },
+              reviewQueueRows: [
+                {
+                  runId: "gov-proposed",
+                  entryId: "review:fact-1:explicit_capture_review",
+                  memoryId: "fact-1",
+                  path: memoryPath,
+                  reasonCode: "explicit_capture_review",
+                  severity: "low",
+                  suggestedAction: "set_status",
+                  suggestedStatus: "pending_review",
+                  relatedMemoryIds: [],
+                },
+                {
+                  runId: "gov-proposed",
+                  entryId: "review:fact-1:archive_candidate",
+                  memoryId: "fact-1",
+                  path: memoryPath,
+                  reasonCode: "archive_candidate",
+                  severity: "medium",
+                  suggestedAction: "archive",
+                  suggestedStatus: undefined,
+                  relatedMemoryIds: [],
+                },
+              ],
+              appliedActionRows: [],
+              report: "projected proposed report",
+            };
+          },
+          async getMemoryById(memoryId: string) {
+            if (memoryId !== "fact-1") return null;
+            return {
+              path: memoryPath,
+              frontmatter: {
+                id: "fact-1",
+                category: "fact",
+                created: "2026-03-01T00:00:00.000Z",
+                updated: "2026-03-01T00:00:00.000Z",
+                source: "test",
+                confidence: 0.9,
+                confidenceTier: "explicit",
+                status: "pending_review",
+                tags: [],
+              },
+              content: "Projected review queue dedupe coverage.",
+            };
+          },
+        }) as any,
+    } as any);
+
+    const queue = await service.reviewQueue("gov-proposed");
+    assert.equal(queue.found, true);
+    assert.deepEqual(Object.keys(queue.transitionReport?.proposed ?? {}), ["archived"]);
+    assert.equal(queue.transitionReport?.proposed.archived?.length, 1);
+    assert.equal(queue.transitionReport?.proposed.archived?.[0]?.reasonCode, "archive_candidate");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service maintenance uses namespace-scoped health metadata", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-maintenance-namespace-"));
   try {

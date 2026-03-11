@@ -10,6 +10,7 @@ import {
 import { log } from "./logger.js";
 import {
   buildQualityScore,
+  buildProposedActions,
   groupActionsByStatus,
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
@@ -198,26 +199,19 @@ async function buildProjectedGovernanceProposedActions(
   storage: Awaited<ReturnType<Orchestrator["getStorage"]>>,
   projected: NonNullable<Awaited<ReturnType<Awaited<ReturnType<Orchestrator["getStorage"]>>["getProjectedGovernanceRecord"]>>>,
 ): Promise<Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> {
-  return Promise.all(projected.reviewQueueRows.map(async (row) => {
-    const memory = await storage.getMemoryById(row.memoryId);
-    const currentPath = memory?.path ?? row.path;
-    const pathRel = toMemoryPathRel(storage.dir, currentPath);
-    const beforeStatus = memory
-      ? inferMemoryStatus(memory.frontmatter, pathRel)
-      : pathRel === "archive" || pathRel.startsWith("archive/")
-      ? "archived"
-      : "active";
-
-    return {
-      action: row.suggestedAction,
-      memoryId: row.memoryId,
-      reasonCode: row.reasonCode,
-      beforeStatus,
-      afterStatus: row.suggestedStatus,
-      originalPath: currentPath,
-      currentPath,
-    };
-  }));
+  const reviewQueue = projected.reviewQueueRows.map((row) => ({
+    entryId: row.entryId,
+    memoryId: row.memoryId,
+    path: row.path,
+    reasonCode: row.reasonCode,
+    severity: row.severity,
+    suggestedAction: row.suggestedAction,
+    suggestedStatus: row.suggestedStatus,
+    relatedMemoryIds: row.relatedMemoryIds,
+  })) as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["reviewQueue"];
+  const memories = (await Promise.all(projected.reviewQueueRows.map((row) => storage.getMemoryById(row.memoryId))))
+    .filter((memory): memory is MemoryFile => Boolean(memory));
+  return buildProposedActions(reviewQueue, memories);
 }
 
 export interface EngramAccessReviewDispositionRequest {

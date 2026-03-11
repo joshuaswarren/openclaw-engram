@@ -482,7 +482,7 @@ async function buildReviewQueue(
   return reviewQueue;
 }
 
-function buildProposedActions(
+export function buildProposedActions(
   reviewQueue: MemoryGovernanceReviewQueueEntry[],
   memories: MemoryFile[],
 ): MemoryGovernanceAppliedAction[] {
