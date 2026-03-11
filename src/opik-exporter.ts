@@ -111,7 +111,8 @@ function readOpikOpenclawConfig(log?: LoggerBackend): Partial<OpikExporterConfig
 function buildHeaders(cfg: OpikExporterConfig): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cfg.workspaceName) headers["Comet-Workspace"] = cfg.workspaceName;
-  if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
+  // Opik expects the raw API key in the authorization header without a Bearer prefix.
+  if (cfg.apiKey) headers["authorization"] = cfg.apiKey;
   return headers;
 }
 
@@ -201,6 +202,13 @@ export class OpikExporter {
     // Store handler ref so _detach() can remove it from the chain.
     this._handler = handler;
 
+    // Chain: call existing subscribers first, then ours.
+    // NOTE: when _detach() is later called, it marks this.cfg.enabled = false
+    // rather than restoring the chain, so that any subscriber that chained
+    // *after* us is not dropped. The cost is one disabled no-op wrapper
+    // remaining in the chain per stop/start cycle. In practice, Engram
+    // restarts Opik only a handful of times per process lifetime, so the
+    // overhead is negligible (one boolean check per leftover closure).
     g.__openclawEngramTrace =
       typeof existing === "function"
         ? (event: EngramTraceEvent) => {
