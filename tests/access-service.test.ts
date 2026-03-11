@@ -635,6 +635,59 @@ test("access service recallExplain without a namespace preserves the most recent
   assert.equal(response.snapshot?.namespace, "shared");
 });
 
+test("access service recallExplain filters session snapshots by the requested namespace", async () => {
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [
+        {
+          match: "project-x:",
+          principal: "project-x",
+        },
+      ],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => ({
+        sessionKey: "project-x:session",
+        namespace: "global",
+        memoryIds: ["fact-1"],
+        resultPaths: [],
+      }),
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+    getLastIntentSnapshot: async () => null,
+    getLastGraphRecallSnapshot: async () => null,
+  } as any);
+
+  const response = await service.recallExplain({
+    sessionKey: "project-x:session",
+    namespace: "project-x",
+  });
+
+  assert.equal(response.found, false);
+  assert.equal(response.snapshot, undefined);
+});
+
 test("access service memoryStore persists and enforces idempotency conflicts", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
   try {

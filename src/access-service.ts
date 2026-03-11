@@ -457,7 +457,12 @@ export class EngramAccessService {
       }
     }
     const snapshot = request.sessionKey
-      ? this.orchestrator.lastRecall.get(request.sessionKey)
+      ? (() => {
+        const candidate = this.orchestrator.lastRecall.get(request.sessionKey);
+        if (!candidate) return null;
+        if (!requestedNamespace) return candidate;
+        return candidate.namespace === requestedNamespace ? candidate : null;
+      })()
       : (() => {
         const candidate = this.orchestrator.lastRecall.getMostRecent();
         if (!candidate) return null;
