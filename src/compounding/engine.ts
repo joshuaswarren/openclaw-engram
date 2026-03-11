@@ -1085,6 +1085,7 @@ export class CompoundingEngine {
 
     for (const rubric of [...rubrics.workflows, ...rubrics.agents]) {
       for (const observation of this.getRubricObservationEntries(rubric)) {
+        if (this.isSyntheticOutcomeRubricObservation(observation.note)) continue;
         const evidenceCount = Math.max(1, observation.provenance.length);
         if (evidenceCount < 2) continue;
         const content = normalizePromotedGuidanceContent(observation.note);
@@ -1575,6 +1576,10 @@ export class CompoundingEngine {
       note,
       provenance: entry.provenance[index] ? [entry.provenance[index]] : (entry.provenance[0] ? [entry.provenance[0]] : []),
     }));
+  }
+
+  private isSyntheticOutcomeRubricObservation(note: string): boolean {
+    return note.trimStart().startsWith("Outcome weight=");
   }
 
   private addRubricObservation(entry: RubricSnapshotEntry, note: string, ...provenance: string[]): void {

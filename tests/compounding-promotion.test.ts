@@ -81,6 +81,39 @@ test("compounding weekly synthesis emits stable rubric-derived promotion candida
   assert.ok(secondCandidate, "expected stable candidate id across repeated weekly synthesis");
 });
 
+test("compounding promotion candidates ignore telemetry-only rubric observations", async () => {
+  const memoryDir = tmpDir("engram-compound-promote-telemetry-mem");
+  const sharedDir = tmpDir("engram-compound-promote-telemetry-shared");
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "state", "memory-actions.jsonl"),
+    [
+      JSON.stringify({ timestamp: "2026-02-25T11:00:00.000Z", action: "store_note", outcome: "applied" }),
+      JSON.stringify({ timestamp: "2026-02-25T11:01:00.000Z", action: "store_note", outcome: "applied" }),
+      JSON.stringify({ timestamp: "2026-02-25T11:02:00.000Z", action: "store_note", outcome: "applied" }),
+      JSON.stringify({ timestamp: "2026-02-25T11:03:00.000Z", action: "store_note", outcome: "skipped" }),
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const engine = new CompoundingEngine(buildConfig(memoryDir, sharedDir));
+  const weekly = await engine.synthesizeWeekly({ weekId: "2026-W09" });
+  const artifact = JSON.parse(await readFile(weekly.reportJsonPath, "utf-8")) as {
+    promotionCandidates: Array<{ sourceType: string; content: string; subject: string }>;
+  };
+
+  assert.ok(
+    artifact.promotionCandidates.some((entry) => entry.sourceType === "action-outcome" && entry.subject === "store_note"),
+    "expected direct action-outcome promotion candidate",
+  );
+  assert.equal(
+    artifact.promotionCandidates.some((entry) => entry.sourceType === "rubric" && entry.content.startsWith("Outcome weight=")),
+    false,
+  );
+});
+
 test("compounding promotion persists durable guidance and dedupes repeated promotions", async () => {
   const memoryDir = tmpDir("engram-compound-promote-write-mem");
   const sharedDir = tmpDir("engram-compound-promote-write-shared");
