@@ -1088,7 +1088,7 @@ export class CompoundingEngine {
     for (const rubric of [...rubrics.workflows, ...rubrics.agents]) {
       for (const observation of this.getRubricObservationEntries(rubric)) {
         if (this.isSyntheticOutcomeRubricObservation(observation.note)) continue;
-        const evidenceCount = Math.max(1, observation.provenance.length);
+        const evidenceCount = observation.provenance.length;
         if (evidenceCount < 2) continue;
         const content = normalizePromotedGuidanceContent(observation.note);
         if (content.length === 0) continue;
