@@ -6134,6 +6134,18 @@ export class Orchestrator {
       generatedAtIso: generatedAt,
       previousState,
     });
+    if (candidate.eventCounts.total === 0) {
+      return {
+        enabled: true,
+        dryRun,
+        eventCount: 0,
+        previousGuidelineVersion: previousState?.guidelineVersion ?? null,
+        nextGuidelineVersion: previousState?.guidelineVersion ?? 0,
+        changedRules: 0,
+        semanticRefinementApplied: false,
+        persisted: false,
+      };
+    }
     const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
       enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
       timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
@@ -6186,7 +6198,7 @@ export class Orchestrator {
     return {
       enabled: true,
       dryRun,
-      eventCount: events.length,
+      eventCount: candidate.eventCounts.total,
       previousGuidelineVersion: previousState?.guidelineVersion ?? null,
       nextGuidelineVersion: refinedCandidate.guidelineVersion,
       changedRules,

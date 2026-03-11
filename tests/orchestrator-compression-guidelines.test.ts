@@ -82,3 +82,49 @@ test("runCompressionGuidelineLearningPass is a no-op when disabled", async () =>
   assert.equal(readCalled, 0);
   assert.equal(writeCalled, 0);
 });
+
+test("optimizeCompressionGuidelines does not publish new state for dry-run-only evidence", async () => {
+  let wroteGuidelines = 0;
+  let wroteState = 0;
+  const ctx: any = {
+    config: {
+      compressionGuidelineLearningEnabled: true,
+      compressionGuidelineSemanticRefinementEnabled: false,
+      compressionGuidelineSemanticTimeoutMs: 1000,
+    },
+    storage: {
+      readCompressionGuidelineOptimizerState: async () => ({
+        version: 5,
+        updatedAt: "2026-02-26T00:00:00.000Z",
+        sourceWindow: { from: "2026-02-25T00:00:00.000Z", to: "2026-02-25T23:59:59.000Z" },
+        eventCounts: { total: 12, applied: 8, skipped: 2, failed: 2 },
+        guidelineVersion: 9,
+      }),
+      readMemoryActionEvents: async () => [
+        { timestamp: "2026-02-27T00:00:00.000Z", action: "store_note", outcome: "applied", dryRun: true },
+        { timestamp: "2026-02-27T00:01:00.000Z", action: "discard", outcome: "skipped", dryRun: true },
+      ],
+      writeCompressionGuidelines: async () => {
+        wroteGuidelines += 1;
+      },
+      writeCompressionGuidelineOptimizerState: async () => {
+        wroteState += 1;
+      },
+    },
+  };
+
+  const result = await (Orchestrator.prototype as any).optimizeCompressionGuidelines.call(ctx, {
+    dryRun: false,
+    eventLimit: 500,
+  });
+
+  assert.equal(result.enabled, true);
+  assert.equal(result.eventCount, 0);
+  assert.equal(result.previousGuidelineVersion, 9);
+  assert.equal(result.nextGuidelineVersion, 9);
+  assert.equal(result.changedRules, 0);
+  assert.equal(result.semanticRefinementApplied, false);
+  assert.equal(result.persisted, false);
+  assert.equal(wroteGuidelines, 0);
+  assert.equal(wroteState, 0);
+});
