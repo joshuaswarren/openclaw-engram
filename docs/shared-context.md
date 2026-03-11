@@ -18,6 +18,7 @@ Enable:
 - `agent-outputs/<agent>/<YYYY-MM-DD>/*.md`: work products written by agents
 - `feedback/inbox.jsonl`: append-only approvals/rejections with optional learning/outcome
 - `roundtable/<YYYY-MM-DD>.md`: daily synthesis written by the curator tool
+- `cross-signals/<YYYY-MM-DD>.md`: human-readable recurring themes, risks, and promotion candidates with provenance
 - `cross-signals/<YYYY-MM-DD>.json`: deterministic overlap report (topics/entities) across daily outputs + feedback totals
 
 ## Tools
@@ -25,11 +26,17 @@ Enable:
 - `shared_context_write_output`
 - `shared_priorities_append`
 - `shared_feedback_record`
+- `shared_context_cross_signals_run`
 - `shared_context_curate_daily`
+
+`shared_context_cross_signals_run` writes:
+- cross-signal markdown (`cross-signals/<YYYY-MM-DD>.md`)
+- cross-signal JSON (`cross-signals/<YYYY-MM-DD>.json`)
 
 `shared_context_curate_daily` now writes:
 - roundtable markdown (`roundtable/<YYYY-MM-DD>.md`)
-- deterministic cross-signal JSON (`cross-signals/<YYYY-MM-DD>.json`)
+- cross-signal markdown (`cross-signals/<YYYY-MM-DD>.md`)
+- cross-signal JSON (`cross-signals/<YYYY-MM-DD>.json`)
 
 Cross-signal report includes:
 - per-source topic token extraction (from title/body)
@@ -42,7 +49,7 @@ Roundtable output includes a `Cross-Signals` section summarizing:
 - number of feedback entries analyzed
 - decision totals
 - semantic enhancer status (disabled/applied/no-additional-overlap/timeout fail-open)
-- path to the generated cross-signal JSON
+- paths to the generated cross-signal markdown + JSON
 - top overlap bullets when available
 
 Semantic enhancer settings (all optional):
@@ -55,7 +62,7 @@ Compatibility aliases remain supported:
 - `crossSignalsSemanticTimeoutMs`
 
 Injection:
-- When enabled, Engram injects `priorities.md` and the latest `roundtable/*.md` into the system prompt (timeboxed and capped by `sharedContextMaxInjectChars`).
+- When enabled, Engram injects `priorities.md`, the latest `roundtable/*.md`, and the latest `cross-signals/*.md` into the system prompt (timeboxed and capped by `sharedContextMaxInjectChars`).
 
 ## Scheduling
 

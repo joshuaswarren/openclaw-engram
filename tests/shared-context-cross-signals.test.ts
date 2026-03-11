@@ -32,12 +32,15 @@ test("shared-context cross-signals handles empty day", async () => {
     const date = "2026-02-28";
     const result = await manager.curateDaily({ date });
     const raw = JSON.parse(await readFile(result.crossSignalsPath, "utf-8"));
+    const crossSignalsMarkdown = await readFile(result.crossSignalsMarkdownPath, "utf-8");
     const roundtable = await readFile(result.roundtablePath, "utf-8");
 
     assert.equal(raw.date, date);
     assert.equal(raw.sourceCount, 0);
     assert.equal(raw.feedbackCount, 0);
     assert.deepEqual(raw.overlaps, []);
+    assert.match(crossSignalsMarkdown, /# Cross-Signals/);
+    assert.match(crossSignalsMarkdown, /No multi-agent topic overlap detected/);
     assert.match(roundtable, /No multi-agent topic overlap detected/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
@@ -121,6 +124,7 @@ test("shared-context cross-signals captures multi-source overlap and feedback co
 
     const result = await manager.curateDaily({ date });
     const raw = JSON.parse(await readFile(result.crossSignalsPath, "utf-8"));
+    const crossSignalsMarkdown = await readFile(result.crossSignalsMarkdownPath, "utf-8");
     const roundtable = await readFile(result.roundtablePath, "utf-8");
 
     assert.equal(raw.sourceCount, 2);
@@ -128,7 +132,68 @@ test("shared-context cross-signals captures multi-source overlap and feedback co
     assert.equal(raw.overlaps.length >= 1, true);
     assert.equal(raw.overlaps.some((entry: { agentCount: number }) => entry.agentCount >= 2), true);
     assert.equal(result.overlapCount >= 1, true);
-    assert.match(roundtable, /Cross-signals file:/);
+    assert.match(crossSignalsMarkdown, /## Recurring Themes/);
+    assert.match(crossSignalsMarkdown, /\[sources:/);
+    assert.match(crossSignalsMarkdown, /No promotion candidates yet/);
+    assert.match(roundtable, /Cross-signals JSON:/);
+    assert.match(roundtable, /Cross-signals markdown:/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
+  }
+});
+
+test("shared-context cross-signals ranks risks and preserves detailed roundtable feedback", async () => {
+  const { manager, memoryDir, sharedDir } = await buildManager("engram-shared-feedback");
+  try {
+    const date = "2026-03-04";
+    await manager.writeAgentOutput({
+      agentId: "generalist",
+      title: "Checkout rollout watch",
+      content: "Observed checkout latency and approval notes.",
+      createdAt: isoForDate(date, "09:00:00"),
+    });
+    await manager.writeAgentOutput({
+      agentId: "oracle",
+      title: "Checkout latency review",
+      content: "Confirmed checkout latency overlap and approval notes.",
+      createdAt: isoForDate(date, "09:05:00"),
+    });
+
+    for (let i = 0; i < 8; i += 1) {
+      await manager.appendFeedback({
+        agent: `agent-${i}`,
+        decision: "approved_with_feedback",
+        reason: `medium follow-up ${i}`,
+        severity: "medium",
+        date: `${date}T10:0${i}:00Z`,
+      });
+    }
+    await manager.appendFeedback({
+      agent: "blocker-bot",
+      decision: "rejected",
+      reason: "critical checkout blocker",
+      severity: "high",
+      date: `${date}T11:00:00Z`,
+      refs: ["memory://blocker"],
+    });
+    await manager.appendFeedback({
+      agent: "approver",
+      decision: "approved",
+      reason: "ship it",
+      severity: "low",
+      date: `${date}T11:05:00Z`,
+    });
+
+    const result = await manager.curateDaily({ date });
+    const crossSignalsMarkdown = await readFile(result.crossSignalsMarkdownPath, "utf-8");
+    const roundtable = await readFile(result.roundtablePath, "utf-8");
+
+    assert.match(crossSignalsMarkdown, /\[blocker-bot\] rejected: critical checkout blocker/);
+    assert.doesNotMatch(crossSignalsMarkdown, /\[agent-7\] approved_with_feedback: medium follow-up 7/);
+    assert.match(roundtable, /\[approver\] approved: ship it/);
+    assert.equal((roundtable.match(/Decision totals:/g) ?? []).length, 1);
+    assert.match(roundtable, /\[blocker-bot\] rejected: critical checkout blocker/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(sharedDir, { recursive: true, force: true });

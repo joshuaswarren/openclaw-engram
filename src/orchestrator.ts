@@ -2873,23 +2873,40 @@ export class Orchestrator {
       if (!this.isRecallSectionEnabled("shared-context", this.config.sharedContextEnabled === true)) return null;
       if (!this.sharedContext) return null;
       const t0 = Date.now();
-      const [priorities, roundtable] = await Promise.all([
+      const [priorities, roundtable, crossSignals] = await Promise.all([
         this.sharedContext.readPriorities(),
         this.sharedContext.readLatestRoundtable(),
+        this.sharedContext.readLatestCrossSignals(),
       ]);
-      const combined =
-        [
-          "## Shared Context",
-          "",
-          priorities ? "### Priorities\n\n" + priorities.trim() : "",
-          roundtable ? "\n\n### Latest Roundtable\n\n" + roundtable.trim() : "",
-        ]
-          .filter((s) => s.trim().length > 0)
-          .join("\n");
-
       const max = Math.max(500, this.config.sharedContextMaxInjectChars);
-      const trimmed =
-        combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
+      const capSection = (label: string, body: string | null, limit: number): string => {
+        const trimmedBody = body?.trim();
+        if (!trimmedBody) return "";
+        const safeLimit = Math.max(120, limit);
+        const section = `${label}\n\n${trimmedBody}`;
+        return section.length > safeLimit ? `${section.slice(0, safeLimit)}\n\n...(trimmed)\n` : section;
+      };
+
+      const prioritiesSection = capSection("### Priorities", priorities, Math.floor(max * 0.35));
+      const crossSignalsSection = capSection(
+        "### Latest Cross-Signals",
+        crossSignals,
+        Math.floor(max * 0.35),
+      );
+      const fixedSections = [prioritiesSection, crossSignalsSection].filter((section) => section.trim().length > 0);
+      const fixedPrefix = ["## Shared Context", ...fixedSections].join("\n\n");
+      const reserved = fixedPrefix.length + "\n\n".length;
+      const roundtableBudget = Math.max(160, max - reserved);
+      const roundtableSection = capSection("### Latest Roundtable", roundtable, roundtableBudget);
+      const combined = [
+        "## Shared Context",
+        ...fixedSections,
+        roundtableSection,
+      ]
+        .filter((s) => s.trim().length > 0)
+        .join("\n\n");
+
+      const trimmed = combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
       timings.sharedCtx = `${Date.now() - t0}ms`;
       return trimmed.trim().length > 0 ? trimmed : null;
     })();

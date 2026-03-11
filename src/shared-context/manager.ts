@@ -261,6 +261,7 @@ interface SharedCrossSignalReport {
   sourceCount: number;
   feedbackCount: number;
   feedbackByDecision: Record<"approved" | "approved_with_feedback" | "rejected", number>;
+  feedbackEntries: SharedFeedbackEntry[];
   sources: SharedCrossSignalSource[];
   overlaps: SharedCrossSignalOverlap[];
   semantic: {
@@ -273,11 +274,63 @@ interface SharedCrossSignalReport {
   };
 }
 
+export interface SharedCrossSignalSynthesisResult {
+  date: string;
+  crossSignalsPath: string;
+  crossSignalsMarkdownPath: string;
+  overlapCount: number;
+  report: SharedCrossSignalReport;
+}
+
 export interface SharedDailyCurationResult {
   date: string;
   roundtablePath: string;
   crossSignalsPath: string;
+  crossSignalsMarkdownPath: string;
   overlapCount: number;
+}
+
+function feedbackDecisionPriority(decision: SharedFeedbackEntry["decision"]): number {
+  switch (decision) {
+    case "rejected":
+      return 3;
+    case "approved_with_feedback":
+      return 2;
+    case "approved":
+      return 1;
+  }
+}
+
+function feedbackSeverityPriority(severity: SharedFeedbackEntry["severity"]): number {
+  switch (severity) {
+    case "high":
+      return 3;
+    case "medium":
+      return 2;
+    case "low":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function compareFeedbackPriority(a: SharedFeedbackEntry, b: SharedFeedbackEntry): number {
+  return (
+    feedbackDecisionPriority(b.decision) - feedbackDecisionPriority(a.decision)
+    || feedbackSeverityPriority(b.severity) - feedbackSeverityPriority(a.severity)
+    || a.date.localeCompare(b.date)
+  );
+}
+
+function formatFeedbackLine(entry: SharedFeedbackEntry): string {
+  const extras: string[] = [`feedback: ${entry.date}`];
+  if (entry.severity) extras.push(`severity: ${entry.severity}`);
+  if (entry.refs?.length) extras.push(`refs: ${entry.refs.join(", ")}`);
+  return `- [${entry.agent}] ${entry.decision}: ${entry.reason} [${extras.join("; ")}]`;
+}
+
+function formatOverlapLine(entry: SharedCrossSignalOverlap): string {
+  return `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")}) [sources: ${entry.sourcePaths.join(", ")}]`;
 }
 
 export class SharedContextManager {
@@ -375,6 +428,20 @@ export class SharedContextManager {
     }
   }
 
+  async readLatestCrossSignals(): Promise<string> {
+    try {
+      const files = (await readdir(this.crossSignalsDir))
+        .filter((f) => f.endsWith(".md"))
+        .sort()
+        .reverse();
+      const fp = files[0] ? path.join(this.crossSignalsDir, files[0]) : null;
+      if (!fp) return "";
+      return await readFile(fp, "utf-8");
+    } catch {
+      return "";
+    }
+  }
+
   async writeAgentOutput(opts: {
     agentId: string;
     title: string;
@@ -421,9 +488,12 @@ export class SharedContextManager {
     await appendFile(this.prioritiesInboxPath, lines, "utf-8");
   }
 
-  async curateDaily(opts: { date?: string; maxChars?: number }): Promise<SharedDailyCurationResult> {
+  async synthesizeCrossSignals(opts: {
+    date?: string;
+    maxSummaryItems?: number;
+  }): Promise<SharedCrossSignalSynthesisResult> {
     const date = opts.date ?? ymd(new Date());
-    const maxChars = Math.max(2_000, opts.maxChars ?? 20_000);
+    const maxSummaryItems = Math.max(1, opts.maxSummaryItems ?? 8);
 
     // Collect outputs for the day (best-effort).
     const outputs: Array<{ agent: string; path: string; title: string; raw: string }> = [];
@@ -544,12 +614,13 @@ export class SharedContextManager {
       feedbackByDecision[entry.decision] += 1;
     }
 
-    const crossSignalReport: SharedCrossSignalReport = {
+    const report: SharedCrossSignalReport = {
       date,
       generatedAt: new Date().toISOString(),
       sourceCount: sources.length,
       feedbackCount: feedback.length,
       feedbackByDecision,
+      feedbackEntries: [...feedback].sort(compareFeedbackPriority),
       sources,
       overlaps: mergedOverlaps,
       semantic: {
@@ -561,30 +632,96 @@ export class SharedContextManager {
         addedOverlapCount: semanticAddedOverlapCount,
       },
     };
-    const crossSignalsPath = path.join(this.crossSignalsDir, `${date}.json`);
-    await writeFile(crossSignalsPath, `${JSON.stringify(crossSignalReport, null, 2)}\n`, "utf-8");
 
-    const overlapBullets = mergedOverlaps.length === 0
+    const crossSignalsPath = path.join(this.crossSignalsDir, `${date}.json`);
+    await writeFile(crossSignalsPath, `${JSON.stringify(report, null, 2)}\n`, "utf-8");
+
+    const recurringThemeLines = mergedOverlaps.length === 0
       ? ["- No multi-agent topic overlap detected."]
-      : mergedOverlaps.slice(0, 8).map((entry) => `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")})`);
+      : mergedOverlaps.slice(0, maxSummaryItems).map((entry) => formatOverlapLine(entry));
+    const riskSignals = [...feedback]
+      .filter((entry) => entry.decision !== "approved" || entry.severity === "high" || entry.severity === "medium")
+      .sort(compareFeedbackPriority)
+      .slice(0, maxSummaryItems);
+    const riskLines = riskSignals.length === 0
+      ? ["- No explicit blockers or elevated review risks recorded."]
+      : riskSignals.map((entry) => formatFeedbackLine(entry));
+    const promotionCandidates = mergedOverlaps
+      .filter((entry) => entry.agentCount >= 3)
+      .slice(0, maxSummaryItems);
+    const promotionLines = promotionCandidates.length === 0
+      ? ["- No promotion candidates yet."]
+      : promotionCandidates.map((entry) =>
+          `- Consider promoting \`${entry.token}\` into priorities or operating rules [sources: ${entry.sourcePaths.join(", ")}]`
+        );
+
+    const crossSignalsMarkdown = [
+      `# Cross-Signals — ${date}`,
+      "",
+      "## Overview",
+      `- Source outputs analyzed: ${sources.length}`,
+      `- Feedback entries analyzed: ${feedback.length}`,
+      `- Decision totals: approved=${feedbackByDecision.approved}, approved_with_feedback=${feedbackByDecision.approved_with_feedback}, rejected=${feedbackByDecision.rejected}`,
+      `- Semantic enhancer: ${semanticEnabled ? (semanticTimedOut ? "enabled (timed out, fail-open)" : semanticApplied ? "enabled (applied)" : "enabled (no additional overlaps)") : "disabled"}`,
+      `- JSON report: ${crossSignalsPath}`,
+      "",
+      "## Recurring Themes",
+      ...recurringThemeLines,
+      "",
+      "## Risks And Blockers",
+      ...riskLines,
+      "",
+      "## Potential Promotions",
+      ...promotionLines,
+      "",
+      "## Sources",
+      ...(sources.length === 0 ? ["- (none)"] : sources.map((source) =>
+        `- [${source.agent}] ${source.title} (${source.path})`
+      )),
+      "",
+    ].join("\n");
+
+    const crossSignalsMarkdownPath = path.join(this.crossSignalsDir, `${date}.md`);
+    await writeFile(crossSignalsMarkdownPath, crossSignalsMarkdown, "utf-8");
+
+    return {
+      date,
+      crossSignalsPath,
+      crossSignalsMarkdownPath,
+      overlapCount: mergedOverlaps.length,
+      report,
+    };
+  }
+
+  async curateDaily(opts: { date?: string; maxChars?: number }): Promise<SharedDailyCurationResult> {
+    const date = opts.date ?? ymd(new Date());
+    const maxChars = Math.max(2_000, opts.maxChars ?? 20_000);
+    const crossSignals = await this.synthesizeCrossSignals({ date });
+    const feedbackLines = crossSignals.report.feedbackEntries.length === 0
+      ? ["- (none)"]
+      : crossSignals.report.feedbackEntries.map((entry) => formatFeedbackLine(entry));
+    const overlapBullets = crossSignals.report.overlaps.length === 0
+      ? ["- No multi-agent topic overlap detected."]
+      : crossSignals.report.overlaps.slice(0, 8).map((entry) => formatOverlapLine(entry));
 
     const md: string[] = [
       `# Roundtable — ${date}`,
       "",
       "## Notable Agent Outputs",
-      ...(sources.length === 0 ? ["- (none)"] : sources.map((o) => `- ${o.title} (${o.path})`)),
+      ...(crossSignals.report.sources.length === 0
+        ? ["- (none)"]
+        : crossSignals.report.sources.map((source) => `- ${source.title} (${source.path})`)),
       "",
       "## Feedback (Approve/Reject)",
-      ...(feedback.length === 0
-        ? ["- (none)"]
-        : feedback.map((f) => `- [${f.agent}] ${f.decision}: ${f.reason}`)),
+      ...feedbackLines,
       "",
       "## Cross-Signals",
-      `- Source outputs analyzed: ${sources.length}`,
-      `- Feedback entries analyzed: ${feedback.length}`,
-      `- Decision totals: approved=${feedbackByDecision.approved}, approved_with_feedback=${feedbackByDecision.approved_with_feedback}, rejected=${feedbackByDecision.rejected}`,
-      `- Semantic enhancer: ${semanticEnabled ? (semanticTimedOut ? "enabled (timed out, fail-open)" : semanticApplied ? "enabled (applied)" : "enabled (no additional overlaps)") : "disabled"}`,
-      `- Cross-signals file: ${crossSignalsPath}`,
+      `- Source outputs analyzed: ${crossSignals.report.sourceCount}`,
+      `- Feedback entries analyzed: ${crossSignals.report.feedbackCount}`,
+      `- Decision totals: approved=${crossSignals.report.feedbackByDecision.approved}, approved_with_feedback=${crossSignals.report.feedbackByDecision.approved_with_feedback}, rejected=${crossSignals.report.feedbackByDecision.rejected}`,
+      `- Semantic enhancer: ${crossSignals.report.semantic.enabled ? (crossSignals.report.semantic.timedOut ? "enabled (timed out, fail-open)" : crossSignals.report.semantic.applied ? "enabled (applied)" : "enabled (no additional overlaps)") : "disabled"}`,
+      `- Cross-signals JSON: ${crossSignals.crossSignalsPath}`,
+      `- Cross-signals markdown: ${crossSignals.crossSignalsMarkdownPath}`,
       ...overlapBullets,
       "",
     ];
@@ -599,8 +736,9 @@ export class SharedContextManager {
     return {
       date,
       roundtablePath,
-      crossSignalsPath,
-      overlapCount: mergedOverlaps.length,
+      crossSignalsPath: crossSignals.crossSignalsPath,
+      crossSignalsMarkdownPath: crossSignals.crossSignalsMarkdownPath,
+      overlapCount: crossSignals.overlapCount,
     };
   }
 }
