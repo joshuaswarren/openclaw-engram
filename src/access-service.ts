@@ -20,7 +20,7 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
-import { canReadNamespace, resolvePrincipal } from "./namespaces/principal.js";
+import { canReadNamespace, canWriteNamespace, resolvePrincipal } from "./namespaces/principal.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type {
   GraphRecallSnapshot,
@@ -207,6 +207,7 @@ export interface EngramAccessWriteEnvelope {
   schemaVersion?: number;
   idempotencyKey?: string;
   dryRun?: boolean;
+  sessionKey?: string;
 }
 
 export interface EngramAccessMemoryStoreRequest extends EngramAccessWriteEnvelope, ExplicitCaptureInput {}
@@ -266,6 +267,30 @@ export class EngramAccessService {
       throw new EngramAccessInputError(`namespace override is not readable: ${resolved}`);
     }
     return resolved;
+  }
+
+  private resolveWritableNamespace(namespace: string | undefined, sessionKey: string | undefined): string {
+    const resolved = this.resolveNamespace(namespace);
+    const principal = resolvePrincipal(sessionKey, this.orchestrator.config);
+    if (!canWriteNamespace(principal, resolved, this.orchestrator.config)) {
+      throw new EngramAccessInputError(`namespace is not writable: ${resolved}`);
+    }
+    return resolved;
+  }
+
+  private normalizeRecallFailure(error: unknown, namespaceOverride: string | undefined): never {
+    if (error instanceof EngramAccessInputError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      namespaceOverride &&
+      (
+        message.includes("namespace override is not readable:")
+        || message.includes("unsupported namespace:")
+      )
+    ) {
+      throw new EngramAccessInputError(message);
+    }
+    throw error instanceof Error ? error : new Error(message);
   }
 
   private async buildRecallDebug(
@@ -402,7 +427,12 @@ export class EngramAccessService {
       mode,
     };
     const startedAt = Date.now();
-    const context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
+    let context: string;
+    try {
+      context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
+    } catch (error) {
+      this.normalizeRecallFailure(error, namespaceOverride);
+    }
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : null;
@@ -437,7 +467,11 @@ export class EngramAccessService {
     const requestedNamespace = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
-      : this.orchestrator.lastRecall.getMostRecent();
+      : (() => {
+        const candidate = this.orchestrator.lastRecall.getMostRecent();
+        if (!requestedNamespace || !candidate?.namespace) return candidate;
+        return candidate.namespace === requestedNamespace ? candidate : null;
+      })();
     const namespace = requestedNamespace ?? snapshot?.namespace ?? this.orchestrator.config.defaultNamespace;
     const [intent, graph] = await Promise.all([
       this.orchestrator.getLastIntentSnapshot(namespace),
@@ -448,7 +482,7 @@ export class EngramAccessService {
   }
 
   async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
-    const namespace = this.resolveNamespace(request.namespace);
+    const namespace = this.resolveWritableNamespace(request.namespace, request.sessionKey);
     const schemaVersion = request.schemaVersion ?? ENGRAM_ACCESS_WRITE_SCHEMA_VERSION;
     if (schemaVersion !== ENGRAM_ACCESS_WRITE_SCHEMA_VERSION) {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
@@ -511,7 +545,7 @@ export class EngramAccessService {
   }
 
   async suggestionSubmit(request: EngramAccessSuggestionSubmitRequest): Promise<EngramAccessWriteResponse> {
-    const namespace = this.resolveNamespace(request.namespace);
+    const namespace = this.resolveWritableNamespace(request.namespace, request.sessionKey);
     const schemaVersion = request.schemaVersion ?? ENGRAM_ACCESS_WRITE_SCHEMA_VERSION;
     if (schemaVersion !== ENGRAM_ACCESS_WRITE_SCHEMA_VERSION) {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);

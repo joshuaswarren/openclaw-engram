@@ -101,6 +101,7 @@ import {
 } from "./conversation-index/backend.js";
 import { NamespaceStorageRouter } from "./namespaces/storage.js";
 import {
+  canReadNamespace,
   defaultNamespaceForPrincipal,
   recallNamespacesForPrincipal,
   resolvePrincipal,
@@ -2713,7 +2714,7 @@ export class Orchestrator {
     const principal = resolvePrincipal(sessionKey, this.config);
     const namespaceOverride = options.namespace?.trim() || undefined;
     const readableRecallNamespaces = recallNamespacesForPrincipal(principal, this.config);
-    if (namespaceOverride && !readableRecallNamespaces.includes(namespaceOverride)) {
+    if (namespaceOverride && !canReadNamespace(principal, namespaceOverride, this.config)) {
       throw new Error(`namespace override is not readable: ${namespaceOverride}`);
     }
     const selfNamespace = namespaceOverride ?? defaultNamespaceForPrincipal(principal, this.config);

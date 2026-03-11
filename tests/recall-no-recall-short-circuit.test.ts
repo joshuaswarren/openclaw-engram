@@ -721,6 +721,11 @@ test("recall rejects unreadable namespace overrides before fetching memories", a
       readPrincipals: ["project-x"],
       writePrincipals: ["project-x"],
     },
+    {
+      name: "secret-team",
+      readPrincipals: ["secret-team"],
+      writePrincipals: ["secret-team"],
+    },
   ];
   const orchestrator = new Orchestrator(cfg);
 
@@ -736,10 +741,51 @@ test("recall rejects unreadable namespace overrides before fetching memories", a
     () => (orchestrator as any).recallInternal(
       "Need namespace-guard coverage.",
       "agent:project-x:chat",
-      { namespace: "global" },
+      { namespace: "secret-team" },
     ),
-    /namespace override is not readable: global/,
+    /namespace override is not readable: secret-team/,
   );
+  assert.equal(storageRouterTouched, false);
+});
+
+test("recall accepts readable namespace overrides even when they are excluded from default recall routing", async () => {
+  const memoryDir = tmpDir("engram-namespace-override-allowed");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.namespacesEnabled = true;
+  cfg.defaultNamespace = "global";
+  cfg.defaultRecallNamespaces = ["self"];
+  cfg.namespacePolicies = [
+    {
+      name: "project-x",
+      readPrincipals: ["project-x"],
+      writePrincipals: ["project-x"],
+    },
+    {
+      name: "audit-log",
+      readPrincipals: ["project-x"],
+      writePrincipals: ["audit-bot"],
+      includeInRecallByDefault: false,
+    },
+  ];
+  const orchestrator = new Orchestrator(cfg);
+
+  let storageRouterTouched = false;
+  (orchestrator as any).storageRouter = {
+    storageFor: async () => {
+      storageRouterTouched = true;
+      throw new Error("storageFor should not run for no_recall");
+    },
+  };
+
+  const out = await (orchestrator as any).recallInternal(
+    "ok",
+    "agent:project-x:chat",
+    { namespace: "audit-log" },
+  );
+
+  assert.equal(out, "");
   assert.equal(storageRouterTouched, false);
 });
 

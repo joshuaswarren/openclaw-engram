@@ -497,6 +497,102 @@ test("access service recall without a session key does not reuse another session
   }
 });
 
+test("access service recall normalizes namespace override routing failures into input errors", async () => {
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+        {
+          name: "audit-log",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["audit-bot"],
+          includeInRecallByDefault: false,
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => {
+      throw new Error("namespace override is not readable: audit-log");
+    },
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  } as any);
+
+  await assert.rejects(
+    () => service.recall({
+      query: "hello",
+      sessionKey: "agent:project-x:chat",
+      namespace: "audit-log",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message === "namespace override is not readable: audit-log",
+  );
+});
+
+test("access service recallExplain omits mismatched most-recent snapshot when namespace is requested", async () => {
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => ({
+        sessionKey: "other-session",
+        namespace: "global",
+        memoryIds: ["fact-1"],
+        resultPaths: [],
+      }),
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+    getLastIntentSnapshot: async () => null,
+    getLastGraphRecallSnapshot: async () => null,
+  } as any);
+
+  const response = await service.recallExplain({
+    namespace: "shared",
+  });
+
+  assert.equal(response.snapshot, undefined);
+  assert.equal(response.found, false);
+});
+
 test("access service memoryStore persists and enforces idempotency conflicts", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
   try {
@@ -611,6 +707,38 @@ test("access service memoryStore persists and enforces idempotency conflicts", a
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
+});
+
+test("access service write operations reject namespaces the caller cannot write", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.memoryStore({
+      schemaVersion: 1,
+      dryRun: false,
+      sessionKey: "agent:project-x:chat",
+      content: "Attempt to write into another team's namespace.",
+      category: "fact",
+      namespace: "secret-team",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message === "namespace is not writable: secret-team",
+  );
+
+  await assert.rejects(
+    () => service.suggestionSubmit({
+      schemaVersion: 1,
+      dryRun: false,
+      sessionKey: "agent:project-x:chat",
+      content: "Attempt to queue another team's namespace for review.",
+      category: "fact",
+      namespace: "secret-team",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message === "namespace is not writable: secret-team",
+  );
 });
 
 test("access service suggestionSubmit queues pending review memories", async () => {

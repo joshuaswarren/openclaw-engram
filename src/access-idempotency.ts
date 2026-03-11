@@ -8,6 +8,12 @@ type AccessIdempotencyEntry = {
   response: unknown;
 };
 
+type AccessIdempotencyTestHooks = {
+  beforeFlushWrite?: () => Promise<void> | void;
+};
+
+let testHooks: AccessIdempotencyTestHooks | null = null;
+
 function stableStringify(value: unknown): string {
   return JSON.stringify(value, (_key, candidate) => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
@@ -24,6 +30,10 @@ function stableStringify(value: unknown): string {
 
 export function hashAccessIdempotencyPayload(payload: unknown): string {
   return createHash("sha256").update(stableStringify(payload)).digest("hex");
+}
+
+export function setAccessIdempotencyTestHooks(hooks: AccessIdempotencyTestHooks | null): void {
+  testHooks = hooks;
 }
 
 export class AccessIdempotencyStore {
@@ -117,7 +127,9 @@ export class AccessIdempotencyStore {
         // Fail open when there is no pre-existing shared state to merge.
       }
 
-      const tempPath = `${this.statePath}.${process.pid}.${Date.now()}.tmp`;
+      await testHooks?.beforeFlushWrite?.();
+
+      const tempPath = `${this.statePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
       try {
         await writeFile(tempPath, JSON.stringify(this.state, null, 2), "utf-8");
         await rename(tempPath, this.statePath);
