@@ -159,6 +159,38 @@ export interface OperatorDoctorCheck {
   details?: unknown;
 }
 
+export interface OperatorConfigReviewFinding {
+  key: string;
+  status: "recommend" | "problem";
+  setting: string;
+  currentValue: string;
+  defaultValue: string;
+  recommendedValue: string;
+  summary: string;
+  rationale: string;
+}
+
+export interface OperatorConfigReviewReport {
+  schemaVersion: 1;
+  generatedAt: string;
+  ok: boolean;
+  config: OperatorConfigLoadResult;
+  profile: {
+    memoryOsPreset?: string;
+    searchBackend: string;
+    qmdEnabled: boolean;
+    qmdDaemonEnabled: boolean;
+    nativeKnowledgeEnabled: boolean;
+    fileHygieneEnabled: boolean;
+    conversationIndexEnabled: boolean;
+  };
+  summary: {
+    recommend: number;
+    problem: number;
+  };
+  findings: OperatorConfigReviewFinding[];
+}
+
 export interface OperatorDoctorReport {
   schemaVersion: 1;
   generatedAt: string;
@@ -279,6 +311,12 @@ export interface OperatorDoctorOptions {
   now?: Date;
 }
 
+export interface OperatorConfigReviewOptions {
+  orchestrator: OperatorToolkitOrchestrator;
+  configPath?: string;
+  now?: Date;
+}
+
 export interface OperatorInventoryOptions {
   orchestrator: OperatorToolkitOrchestrator;
   now?: Date;
@@ -368,6 +406,22 @@ async function isWritable(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath, fsConstants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatConfigValue(value: unknown): string {
+  if (value === undefined || value === null) return "(unset)";
+  if (typeof value === "string") return value.length > 0 ? value : "(unset)";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }
 
 async function gatherDirectoryStatus(
@@ -746,11 +800,200 @@ function summarizeHygieneWarnings(
   };
 }
 
+function buildConfigReviewFinding(input: {
+  key: string;
+  status: "recommend" | "problem";
+  setting: string;
+  currentValue: unknown;
+  defaultValue: unknown;
+  recommendedValue: unknown;
+  summary: string;
+  rationale: string;
+}): OperatorConfigReviewFinding {
+  return {
+    key: input.key,
+    status: input.status,
+    setting: input.setting,
+    currentValue: formatConfigValue(input.currentValue),
+    defaultValue: formatConfigValue(input.defaultValue),
+    recommendedValue: formatConfigValue(input.recommendedValue),
+    summary: input.summary,
+    rationale: input.rationale,
+  };
+}
+
+export async function runOperatorConfigReview(
+  options: OperatorConfigReviewOptions,
+): Promise<OperatorConfigReviewReport> {
+  const now = options.now ?? new Date();
+  const configStatus = await loadCliPluginConfig(options.configPath);
+  const config = options.orchestrator.config;
+  const findings: OperatorConfigReviewFinding[] = [];
+  const searchBackend = config.searchBackend ?? "qmd";
+  const workspaceBootstrapFiles = [
+    path.join(config.workspaceDir, "IDENTITY.md"),
+    path.join(config.workspaceDir, "MEMORY.md"),
+    path.join(config.workspaceDir, "USER.md"),
+  ];
+  const workspaceBootstrapExists = (await Promise.all(workspaceBootstrapFiles.map(pathExists))).some(Boolean);
+
+  if (
+    config.memoryOsPreset !== "balanced" &&
+    config.memoryOsPreset !== "research-max" &&
+    config.memoryOsPreset !== "local-llm-heavy" &&
+    config.queryAwareIndexingEnabled === false &&
+    config.verbatimArtifactsEnabled === false &&
+    config.rerankEnabled === false
+  ) {
+    findings.push(buildConfigReviewFinding({
+      key: "balanced_preset",
+      status: "recommend",
+      setting: "memoryOsPreset",
+      currentValue: config.memoryOsPreset,
+      defaultValue: "(unset)",
+      recommendedValue: "balanced",
+      summary: "Adopt the balanced preset as the baseline configuration profile.",
+      rationale:
+        "The balanced preset enables the recommended indexing, reranking, and artifact defaults without turning on the higher-churn graph and learning loops.",
+    }));
+  }
+
+  if (config.qmdEnabled && config.qmdDaemonEnabled === false) {
+    findings.push(buildConfigReviewFinding({
+      key: "qmd_daemon",
+      status: "recommend",
+      setting: "qmdDaemonEnabled",
+      currentValue: config.qmdDaemonEnabled,
+      defaultValue: true,
+      recommendedValue: true,
+      summary: "Enable the QMD daemon path when QMD powers recall.",
+      rationale:
+        "The daemon path reduces recall/search contention by preferring the MCP transport instead of repeated subprocess calls when QMD is available.",
+    }));
+  }
+
+  if (workspaceBootstrapExists && config.nativeKnowledge?.enabled !== true) {
+    findings.push(buildConfigReviewFinding({
+      key: "native_knowledge_enabled",
+      status: "recommend",
+      setting: "nativeKnowledge.enabled",
+      currentValue: config.nativeKnowledge?.enabled,
+      defaultValue: false,
+      recommendedValue: true,
+      summary: "Enable native knowledge recall for workspace bootstrap documents.",
+      rationale:
+        "When files like IDENTITY.md or MEMORY.md already exist, native knowledge recall can chunk and inject them directly instead of relying only on extracted memories.",
+    }));
+  }
+
+  if (workspaceBootstrapExists && config.fileHygiene?.enabled !== true) {
+    findings.push(buildConfigReviewFinding({
+      key: "file_hygiene_enabled",
+      status: "recommend",
+      setting: "fileHygiene.enabled",
+      currentValue: config.fileHygiene?.enabled,
+      defaultValue: false,
+      recommendedValue: true,
+      summary: "Enable file hygiene to avoid silent workspace-file truncation.",
+      rationale:
+        "OpenClaw bootstrap files can grow quietly; file hygiene warns before oversized files are truncated during prompt bootstrap.",
+    }));
+  }
+
+  const qmdDependentFeatureEnabled =
+    config.qmdColdTierEnabled === true ||
+    config.qmdTierMigrationEnabled === true ||
+    (config.conversationIndexEnabled && config.conversationIndexBackend === "qmd");
+
+  if (searchBackend === "qmd" && config.qmdEnabled === false && qmdDependentFeatureEnabled) {
+    findings.push(buildConfigReviewFinding({
+      key: "qmd_search_backend_disabled",
+      status: "problem",
+      setting: "qmdEnabled",
+      currentValue: config.qmdEnabled,
+      defaultValue: true,
+      recommendedValue: true,
+      summary: "QMD search is selected but QMD is disabled.",
+      rationale:
+        "When searchBackend resolves to qmd while qmdEnabled is false, Engram falls back to the noop backend and disables the primary search path.",
+    }));
+  }
+
+  if (config.qmdColdTierEnabled === true && config.qmdEnabled === false) {
+    findings.push(buildConfigReviewFinding({
+      key: "qmd_cold_tier_requires_qmd",
+      status: "problem",
+      setting: "qmdEnabled",
+      currentValue: config.qmdEnabled,
+      defaultValue: true,
+      recommendedValue: true,
+      summary: "Cold-tier QMD recall is enabled while QMD itself is disabled.",
+      rationale:
+        "The cold tier depends on the same QMD runtime as the hot tier, so turning QMD off leaves the extra tiering path unusable.",
+    }));
+  }
+
+  if (config.qmdTierMigrationEnabled && config.qmdColdTierEnabled !== true) {
+    findings.push(buildConfigReviewFinding({
+      key: "qmd_tier_migration_requires_cold_tier",
+      status: "problem",
+      setting: "qmdColdTierEnabled",
+      currentValue: config.qmdColdTierEnabled,
+      defaultValue: false,
+      recommendedValue: true,
+      summary: "Hot/cold tier migration is enabled without the cold tier itself.",
+      rationale:
+        "Tier migration depends on the cold-tier collection and recall path, so enabling migration while the cold tier is off leaves the feature in a contradictory state.",
+    }));
+  }
+
+  if (config.conversationIndexEnabled && config.conversationIndexBackend === "qmd" && config.qmdEnabled === false) {
+    findings.push(buildConfigReviewFinding({
+      key: "conversation_index_qmd_requires_qmd",
+      status: "problem",
+      setting: "qmdEnabled",
+      currentValue: config.qmdEnabled,
+      defaultValue: true,
+      recommendedValue: true,
+      summary: "The conversation index is configured for QMD while QMD is disabled.",
+      rationale:
+        "A QMD-backed conversation index cannot rebuild or serve queries when the underlying QMD runtime is disabled.",
+    }));
+  }
+
+  const summary = findings.reduce(
+    (acc, finding) => {
+      acc[finding.status] += 1;
+      return acc;
+    },
+    { recommend: 0, problem: 0 },
+  );
+
+  return {
+    schemaVersion: 1,
+    generatedAt: now.toISOString(),
+    ok: summary.problem === 0,
+    config: configStatus,
+    profile: {
+      memoryOsPreset: config.memoryOsPreset,
+      searchBackend,
+      qmdEnabled: config.qmdEnabled,
+      qmdDaemonEnabled: config.qmdDaemonEnabled,
+      nativeKnowledgeEnabled: config.nativeKnowledge?.enabled === true,
+      fileHygieneEnabled: config.fileHygiene?.enabled === true,
+      conversationIndexEnabled: config.conversationIndexEnabled,
+    },
+    summary,
+    findings,
+  };
+}
+
 export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise<OperatorDoctorReport> {
   const now = options.now ?? new Date();
   const configStatus = await loadCliPluginConfig(options.configPath);
   const checks: OperatorDoctorCheck[] = [];
   const config = options.orchestrator.config;
+  const configReview = await runOperatorConfigReview(options);
   const nativeKnowledgeStatus = await summarizeNativeKnowledgeStatus(config);
   const setupPaths = await gatherDirectoryStatus(getSetupPaths(config));
   const missingPaths = setupPaths.filter((entry) => !entry.exists).map((entry) => entry.path);
@@ -775,6 +1018,20 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
       : `${missingPaths.length} expected directory path(s) are missing.`,
     remediation: missingPaths.length === 0 ? undefined : "Run `openclaw engram setup` to create missing directories.",
     details: { directories: setupPaths },
+  });
+
+  checks.push({
+    key: "config_review",
+    status: configReview.summary.problem > 0 ? "error" : configReview.summary.recommend > 0 ? "warn" : "ok",
+    summary: configReview.summary.problem > 0
+      ? `${configReview.summary.problem} configuration problem(s) detected.`
+      : configReview.summary.recommend > 0
+      ? `No configuration problems detected; ${configReview.summary.recommend} optional recommendation(s) are available.`
+      : "No configuration problems detected.",
+    remediation: configReview.summary.problem > 0 || configReview.summary.recommend > 0
+      ? "Run `openclaw engram config-review` to inspect and fix the flagged configuration combinations."
+      : undefined,
+    details: configReview,
   });
 
   const qmdAvailable = await options.orchestrator.qmd.probe();

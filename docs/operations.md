@@ -43,6 +43,7 @@ openclaw engram export --namespace shared --format json --out /tmp/shared-export
 openclaw engram search "query"      # Semantic search
 openclaw engram stats               # Memory counts and index state
 openclaw engram setup              # First-run setup validation + directory scaffolding
+openclaw engram config-review      # Config tuning recommendations + contradictory-setting checks
 openclaw engram doctor             # Aggregated runtime diagnostics + remediation hints
 openclaw engram inventory          # Memory/entity/storage footprint, review queue, and native-knowledge sync counts
 openclaw engram topics              # View extracted topic list
@@ -93,7 +94,8 @@ Operator toolkit:
 - `openclaw engram setup --preview-capture-instructions` prints the managed explicit-capture snippet without writing files.
 - `openclaw engram setup --install-capture-instructions` writes or updates only the managed explicit-capture block inside `MEMORY.md`.
 - `openclaw engram setup --remove-capture-instructions` removes the managed explicit-capture block and deletes `MEMORY.md` if that block was the file's only content.
-- `openclaw engram doctor` aggregates config, directory, QMD, conversation-index, maintenance, HTTP bridge auth, and file-hygiene checks into one stable report.
+- `openclaw engram config-review` compares the active config against shipped defaults plus opinionated recommendations and also flags contradictory settings that degrade recall.
+- `openclaw engram doctor` aggregates config, directory, QMD, conversation-index, maintenance, HTTP bridge auth, file-hygiene, and config-review checks into one stable report.
 - `openclaw engram inventory` reports counts by category/status, namespace summaries, profile size, review queue size, conversation-index freshness, native-knowledge sync counts, and storage footprint.
 - Use `--json` on each of these commands for script/CI-friendly output.
 

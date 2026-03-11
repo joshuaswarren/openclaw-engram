@@ -114,6 +114,7 @@ Start a conversation with OpenClaw. After a few turns, check:
 
 ```bash
 openclaw engram setup --json
+openclaw engram config-review --json
 openclaw engram doctor --json
 openclaw engram inventory --json
 
@@ -152,7 +153,7 @@ See [Search Backends](search-backends.md) for a full comparison and configuratio
 
 - [Search Backends](search-backends.md) — choose and configure your search engine
 - [Enable All Features](enable-all-v8.md) — explicit full-profile config for all feature families
-- [Config Reference](config-reference.md) — full settings list
+- [Config Reference](config-reference.md) — full settings list with defaults and recommended values
 - [Operations](operations.md) — backups, exports, hourly summaries
 - [Architecture Overview](architecture/overview.md) — how it all fits together
 - [Writing a Search Backend](writing-a-search-backend.md) — implement your own adapter

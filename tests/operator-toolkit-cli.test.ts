@@ -164,12 +164,13 @@ async function captureAction(
 }
 
 test("operator toolkit JSON commands emit parseable JSON without trailing OK", async () => {
-  const fixture = await makeFixture({ evalHarnessEnabled: true });
+  const fixture = await makeFixture({ evalHarnessEnabled: true, qmdEnabled: true });
   process.env.OPENCLAW_ENGRAM_CONFIG_PATH = fixture.configPath;
 
   const commands = [
     ["engram", "setup"],
     ["engram", "doctor"],
+    ["engram", "config-review"],
     ["engram", "inventory"],
     ["engram", "benchmark", "recall"],
     ["engram", "repair"],
@@ -218,6 +219,28 @@ test("doctor CLI warns instead of failing when config discovery misses but runti
     assert.equal(report.ok, true);
     assert.equal(report.checks.some((check) => check.key === "config" && check.status === "warn"), true);
     assert.equal(result.exitCode, undefined);
+  } finally {
+    delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  }
+});
+
+test("config-review CLI exits non-zero when config problems are detected", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: false,
+    qmdTierMigrationEnabled: true,
+    conversationIndexEnabled: true,
+    conversationIndexBackend: "qmd",
+  });
+  const action = getAction(fixture.root, ["engram", "config-review"]);
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = fixture.configPath;
+
+  try {
+    const result = await captureAction(action, { json: true });
+    const report = JSON.parse(result.output) as {
+      summary: { problem: number };
+    };
+    assert.equal(report.summary.problem > 0, true);
+    assert.equal(result.exitCode, 1);
   } finally {
     delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
   }
