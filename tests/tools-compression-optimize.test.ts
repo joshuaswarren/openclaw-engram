@@ -23,6 +23,7 @@ function buildHarness(resultOverride?: {
   changedRules?: number;
   semanticRefinementApplied?: boolean;
   persisted?: boolean;
+  activated?: boolean;
 }) {
   const tools = new Map<string, RegisteredTool>();
   const capturedCalls: Array<Record<string, unknown>> = [];
@@ -55,6 +56,11 @@ function buildHarness(resultOverride?: {
         persisted: resultOverride?.persisted ?? true,
       };
     },
+    activateCompressionGuidelineDraft: async () => ({
+      enabled: resultOverride?.enabled ?? true,
+      activated: resultOverride?.activated ?? true,
+      guidelineVersion: resultOverride?.nextGuidelineVersion ?? 4,
+    }),
     qmd: {
       search: async () => [],
       searchGlobal: async () => [],
@@ -120,4 +126,19 @@ test("compression_guidelines_optimize passes dryRun/eventLimit and returns summa
   assert.match(text, /guidelineVersion: 5 -> 6/);
   assert.match(text, /changedRules=1/);
   assert.match(text, /semanticRefinementApplied=true/);
+});
+
+test("compression_guidelines_activate reports draft activation result", async () => {
+  const { tools } = buildHarness({
+    enabled: true,
+    activated: true,
+    nextGuidelineVersion: 7,
+  });
+  const tool = tools.get("compression_guidelines_activate");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc-opt-3", {});
+  const text = toolText(result);
+  assert.match(text, /draft activated/i);
+  assert.match(text, /guidelineVersion=7/);
 });

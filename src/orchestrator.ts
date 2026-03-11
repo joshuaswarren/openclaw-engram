@@ -6196,13 +6196,16 @@ export class Orchestrator {
     const changedRules = refinedCandidate.ruleUpdates.filter((rule) => rule.delta !== 0).length;
 
     if (!dryRun) {
-      await this.storage.writeCompressionGuidelines(content);
-      await this.storage.writeCompressionGuidelineOptimizerState({
+      await this.storage.writeCompressionGuidelineDraft(content);
+      await this.storage.writeCompressionGuidelineDraftState({
         version: refinedCandidate.optimizerVersion,
         updatedAt: refinedCandidate.generatedAt,
         sourceWindow: refinedCandidate.sourceWindow,
         eventCounts: refinedCandidate.eventCounts,
         guidelineVersion: refinedCandidate.guidelineVersion,
+        activationState: "draft",
+        actionSummaries: refinedCandidate.actionSummaries,
+        ruleUpdates: refinedCandidate.ruleUpdates,
       });
     }
 
@@ -6215,6 +6218,36 @@ export class Orchestrator {
       changedRules,
       semanticRefinementApplied,
       persisted: !dryRun,
+    };
+  }
+
+  async activateCompressionGuidelineDraft(): Promise<{
+    enabled: boolean;
+    activated: boolean;
+    guidelineVersion: number | null;
+  }> {
+    if (!this.config.compressionGuidelineLearningEnabled) {
+      return {
+        enabled: false,
+        activated: false,
+        guidelineVersion: null,
+      };
+    }
+
+    const draftState = await this.storage.readCompressionGuidelineDraftState();
+    if (!draftState) {
+      return {
+        enabled: true,
+        activated: false,
+        guidelineVersion: null,
+      };
+    }
+
+    const activated = await this.storage.activateCompressionGuidelineDraft();
+    return {
+      enabled: true,
+      activated,
+      guidelineVersion: activated ? draftState.guidelineVersion : null,
     };
   }
 
@@ -6233,6 +6266,7 @@ export class Orchestrator {
     if (!this.config.compressionGuidelineLearningEnabled) return null;
 
     const state = await this.storage.readCompressionGuidelineOptimizerState().catch(() => null);
+    if (state?.activationState === "draft") return null;
     if (!state || state.guidelineVersion <= 0) return null;
 
     const raw = await this.storage.readCompressionGuidelines().catch(() => null);

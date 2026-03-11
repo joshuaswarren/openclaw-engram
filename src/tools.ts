@@ -1834,6 +1834,37 @@ Best for:
 
   api.registerTool(
     {
+      name: "compression_guidelines_activate",
+      label: "Activate Compression Guideline Draft",
+      description:
+        "Promote the staged compression guideline draft to the active guideline/state after review (v8.11).",
+      parameters: Type.Object({}),
+      async execute() {
+        const result = await orchestrator.activateCompressionGuidelineDraft();
+
+        if (!result.enabled) {
+          return toolResult(
+            "Compression guideline learning is disabled. Enable `compressionGuidelineLearningEnabled: true` before activating drafts.",
+          );
+        }
+
+        if (!result.activated) {
+          return toolResult("No staged compression guideline draft is available to activate.");
+        }
+
+        return toolResult(
+          [
+            "Compression guideline draft activated.",
+            `guidelineVersion=${result.guidelineVersion ?? "unknown"}`,
+          ].join("\n"),
+        );
+      },
+    },
+    { name: "compression_guidelines_activate" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_store",
       label: "Store Memory",
       description: `Explicitly store a memory. Use this when the user directly asks you to remember something, or when you identify critical information that the automatic extraction might miss.
