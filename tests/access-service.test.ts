@@ -660,6 +660,103 @@ test("access service memoryStore persists and enforces idempotency conflicts", a
   }
 });
 
+test("access service acquires a shared idempotency key lock before executing writes across service instances", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-shared-idempotency-"));
+  try {
+    const config = {
+      memoryDir,
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    };
+    const orchestrator = {
+      config,
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => ({
+        getMemoryById: async () => null,
+        getMemoryTimeline: async () => [],
+      }),
+      getLastIntentSnapshot: async () => null,
+      getLastGraphRecallSnapshot: async () => null,
+    };
+    const serviceA = new EngramAccessService(orchestrator as any);
+    const serviceB = new EngramAccessService(orchestrator as any);
+    let releaseFirstExecute: (() => void) | null = null;
+    const firstExecutePaused = new Promise<void>((resolve) => {
+      releaseFirstExecute = resolve;
+    });
+    let firstExecuteEnteredResolve: (() => void) | null = null;
+    const firstExecuteEntered = new Promise<void>((resolve) => {
+      firstExecuteEnteredResolve = resolve;
+    });
+    let executeCalls = 0;
+
+    const first = (serviceA as any).handleIdempotentWrite({
+      operation: "memory_store",
+      idempotencyKey: "shared-write",
+      requestFingerprint: { content: "same write" },
+      execute: async () => {
+        executeCalls += 1;
+        firstExecuteEnteredResolve?.();
+        await firstExecutePaused;
+        return {
+          schemaVersion: 1,
+          operation: "memory_store",
+          namespace: "global",
+          dryRun: false,
+          accepted: true,
+          queued: false,
+          status: "stored",
+          memoryId: "fact-shared",
+          idempotencyKey: "shared-write",
+        };
+      },
+    });
+    await firstExecuteEntered;
+
+    let secondExecuteStarted = false;
+    const second = (serviceB as any).handleIdempotentWrite({
+      operation: "memory_store",
+      idempotencyKey: "shared-write",
+      requestFingerprint: { content: "same write" },
+      execute: async () => {
+        secondExecuteStarted = true;
+        executeCalls += 1;
+        return {
+          schemaVersion: 1,
+          operation: "memory_store",
+          namespace: "global",
+          dryRun: false,
+          accepted: true,
+          queued: false,
+          status: "stored",
+          memoryId: "fact-shared",
+          idempotencyKey: "shared-write",
+        };
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(secondExecuteStarted, false);
+
+    releaseFirstExecute?.();
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+    assert.equal(executeCalls, 1);
+    assert.deepEqual(secondResponse, firstResponse);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service write operations reject namespaces the caller cannot write", async () => {
   const service = createService();
 
@@ -740,7 +837,7 @@ test("access service suggestionSubmit queues pending review memories", async () 
         namespace: "global",
       }),
       (err: unknown) =>
-        err instanceof Error &&
+        err instanceof EngramAccessInputError &&
         err.message === "confidence must be between 0 and 1",
     );
 

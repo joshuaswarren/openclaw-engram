@@ -39,6 +39,7 @@ export function setAccessIdempotencyTestHooks(hooks: AccessIdempotencyTestHooks 
 export class AccessIdempotencyStore {
   private readonly statePath: string;
   private readonly lockPath: string;
+  private readonly keyLockDir: string;
   private loadedMtimeMs = 0;
   private state: Record<string, AccessIdempotencyEntry> = {};
   private writeQueue: Promise<void> = Promise.resolve();
@@ -46,6 +47,7 @@ export class AccessIdempotencyStore {
   constructor(memoryDir: string) {
     this.statePath = path.join(memoryDir, "state", "access-idempotency.json");
     this.lockPath = `${this.statePath}.lock`;
+    this.keyLockDir = path.join(memoryDir, "state", "access-idempotency-locks");
   }
 
   async get(key: string, requestHash: string): Promise<{ response?: unknown; conflict: boolean }> {
@@ -72,6 +74,12 @@ export class AccessIdempotencyStore {
       await this.prune();
       await this.flush();
     });
+  }
+
+  async withKeyLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
+    const keyHash = createHash("sha256").update(key).digest("hex");
+    const keyLockPath = path.join(this.keyLockDir, `${keyHash}.lock`);
+    return this.withExclusiveFileLock(keyLockPath, callback);
   }
 
   private async reload(options: { forceRefresh?: boolean } = {}): Promise<void> {
@@ -115,7 +123,7 @@ export class AccessIdempotencyStore {
 
   private async flush(): Promise<void> {
     await mkdir(path.dirname(this.statePath), { recursive: true });
-    await this.withFlushLock(async () => {
+    await this.withExclusiveFileLock(this.lockPath, async () => {
       try {
         const raw = await readFile(this.statePath, "utf-8");
         const parsed = JSON.parse(raw) as Record<string, AccessIdempotencyEntry>;
@@ -151,34 +159,34 @@ export class AccessIdempotencyStore {
     }
   }
 
-  private async withFlushLock<T>(callback: () => Promise<T>): Promise<T> {
-    await mkdir(path.dirname(this.lockPath), { recursive: true });
+  private async withExclusiveFileLock<T>(lockPath: string, callback: () => Promise<T>): Promise<T> {
+    await mkdir(path.dirname(lockPath), { recursive: true });
     const timeoutMs = 5_000;
     const staleLockMs = 30_000;
     const startedAt = Date.now();
 
     while (true) {
       try {
-        const handle = await open(this.lockPath, "wx");
+        const handle = await open(lockPath, "wx");
         try {
           return await callback();
         } finally {
           await handle.close().catch(() => undefined);
-          await unlink(this.lockPath).catch(() => undefined);
+          await unlink(lockPath).catch(() => undefined);
         }
       } catch (error) {
         if (!isAlreadyExistsError(error)) throw error;
         try {
-          const lockStat = await stat(this.lockPath);
+          const lockStat = await stat(lockPath);
           if (Date.now() - lockStat.mtimeMs > staleLockMs) {
-            await unlink(this.lockPath).catch(() => undefined);
+            await unlink(lockPath).catch(() => undefined);
             continue;
           }
         } catch {
           continue;
         }
         if (Date.now() - startedAt > timeoutMs) {
-          throw new Error("timed out acquiring access idempotency flush lock");
+          throw new Error("timed out acquiring access idempotency lock");
         }
         await sleep(10);
       }

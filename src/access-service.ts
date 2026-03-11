@@ -5,6 +5,7 @@ import {
   queueExplicitCaptureForReview,
   validateExplicitCaptureInput,
   type ExplicitCaptureInput,
+  type ValidExplicitCapture,
 } from "./explicit-capture.js";
 import { log } from "./logger.js";
 import {
@@ -339,20 +340,22 @@ export class EngramAccessService {
       return options.execute();
     }
     return this.withIdempotencyLock(key, async () => {
-      const requestHash = hashAccessIdempotencyPayload({
-        operation: options.operation,
-        request: options.requestFingerprint,
+      return this.idempotency.withKeyLock(key, async () => {
+        const requestHash = hashAccessIdempotencyPayload({
+          operation: options.operation,
+          request: options.requestFingerprint,
+        });
+        const existing = await this.idempotency.get(key, requestHash);
+        if (existing.conflict) {
+          throw new EngramAccessInputError(`idempotencyKey reuse conflict: ${key}`);
+        }
+        if (existing.response) {
+          return existing.response as T;
+        }
+        const response = await options.execute();
+        await this.idempotency.put(key, requestHash, response);
+        return response;
       });
-      const existing = await this.idempotency.get(key, requestHash);
-      if (existing.conflict) {
-        throw new EngramAccessInputError(`idempotencyKey reuse conflict: ${key}`);
-      }
-      if (existing.response) {
-        return existing.response as T;
-      }
-      const response = await options.execute();
-      await this.idempotency.put(key, requestHash, response);
-      return response;
     });
   }
 
@@ -468,13 +471,7 @@ export class EngramAccessService {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
     }
     const execute = async (): Promise<EngramAccessWriteResponse> => {
-      const candidate = validateExplicitCaptureInput(
-        {
-          ...request,
-          namespace,
-        },
-        "legacy_tool",
-      );
+      const candidate = this.validateWriteCandidate(request, namespace);
       if (request.dryRun === true) {
         return {
           schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
@@ -531,10 +528,7 @@ export class EngramAccessService {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
     }
     const execute = async (): Promise<EngramAccessWriteResponse> => {
-      const candidate = validateExplicitCaptureInput({
-        ...request,
-        namespace,
-      }, "legacy_tool");
+      const candidate = this.validateWriteCandidate(request, namespace);
       if (request.dryRun === true) {
         return {
           schemaVersion: ENGRAM_ACCESS_WRITE_SCHEMA_VERSION,
@@ -587,6 +581,24 @@ export class EngramAccessService {
       skip: request.dryRun === true,
       execute,
     });
+  }
+
+  private validateWriteCandidate(
+    request: EngramAccessMemoryStoreRequest | EngramAccessSuggestionSubmitRequest,
+    namespace: string,
+  ): ValidExplicitCapture {
+    try {
+      return validateExplicitCaptureInput(
+        {
+          ...request,
+          namespace,
+        },
+        "legacy_tool",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new EngramAccessInputError(message);
+    }
   }
 
   async memoryGet(memoryId: string, namespace?: string): Promise<EngramAccessMemoryResponse> {

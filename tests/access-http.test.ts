@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { EngramAccessHttpServer } from "../src/access-http.js";
-import { EngramAccessInputError, type EngramAccessService } from "../src/access-service.js";
+import { EngramAccessInputError, EngramAccessService, type EngramAccessService } from "../src/access-service.js";
+import { StorageManager } from "../src/storage.js";
 
 function createFakeService(): EngramAccessService {
   return {
@@ -509,5 +510,74 @@ test("access HTTP server returns 400 for empty recall query", async () => {
     assert.equal(body.error, "query is required");
   } finally {
     await server.stop();
+  }
+});
+
+test("access HTTP server returns 400 for explicit-capture validation errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-http-validation-"));
+  const storage = new StorageManager(memoryDir);
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => storage,
+    getLastIntentSnapshot: async () => null,
+    getLastGraphRecallSnapshot: async () => null,
+  } as any);
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+  const headers = {
+    Authorization: "Bearer secret-token",
+    "Content-Type": "application/json",
+  };
+
+  try {
+    const memoryResponse = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        content: "Validation should fail on invalid confidence.",
+        category: "fact",
+        confidence: 2,
+      }),
+    });
+    assert.equal(memoryResponse.status, 400);
+    const memoryPayload = await memoryResponse.json() as { error: string };
+    assert.equal(memoryPayload.error, "confidence must be between 0 and 1");
+
+    const suggestionResponse = await fetch(`${base}/engram/v1/suggestions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        content: "Suggestion validation should also fail on invalid confidence.",
+        category: "fact",
+        confidence: 2,
+      }),
+    });
+    assert.equal(suggestionResponse.status, 400);
+    const suggestionPayload = await suggestionResponse.json() as { error: string };
+    assert.equal(suggestionPayload.error, "confidence must be between 0 and 1");
+  } finally {
+    await server.stop();
+    await rm(memoryDir, { recursive: true, force: true });
   }
 });
