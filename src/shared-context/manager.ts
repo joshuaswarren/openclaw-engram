@@ -605,7 +605,7 @@ export class SharedContextManager {
           `- [${entry.agent}] ${entry.decision}: ${entry.reason} [feedback: ${entry.date}${entry.refs?.length ? `; refs: ${entry.refs.join(", ")}` : ""}]`
         );
     const promotionCandidates = mergedOverlaps
-      .filter((entry) => entry.agentCount >= 2)
+      .filter((entry) => entry.agentCount >= 3)
       .slice(0, maxSummaryItems);
     const promotionLines = promotionCandidates.length === 0
       ? ["- No promotion candidates yet."]

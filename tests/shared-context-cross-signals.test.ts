@@ -134,6 +134,7 @@ test("shared-context cross-signals captures multi-source overlap and feedback co
     assert.equal(result.overlapCount >= 1, true);
     assert.match(crossSignalsMarkdown, /## Recurring Themes/);
     assert.match(crossSignalsMarkdown, /\[sources:/);
+    assert.match(crossSignalsMarkdown, /No promotion candidates yet/);
     assert.match(roundtable, /Cross-signals JSON:/);
     assert.match(roundtable, /Cross-signals markdown:/);
   } finally {
