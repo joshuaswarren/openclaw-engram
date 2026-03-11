@@ -226,6 +226,7 @@ function tokenizeSemanticContent(content: string): string[] {
   return Array.from(
     new Set(
       normalizeContent(content)
+        .replaceAll(/[^\p{L}\p{N}]+/gu, " ")
         .split(" ")
         .filter((token) => token.length >= 4),
     ),
@@ -492,6 +493,13 @@ function buildProposedActions(
     const memory = byMemory.get(entry.memoryId);
     if (!memory) continue;
     const currentStatus = statusOf(memory);
+    if (
+      entry.suggestedAction === "set_status"
+      && entry.suggestedStatus
+      && entry.suggestedStatus === currentStatus
+    ) {
+      continue;
+    }
     const candidate: MemoryGovernanceAppliedAction = {
       action: entry.suggestedAction,
       memoryId: entry.memoryId,

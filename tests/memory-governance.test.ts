@@ -426,7 +426,7 @@ test("governance surfaces semantic duplicates, queued explicit captures, malform
       "facts/2026-03-01/fact-semantic-a.md",
       memoryDoc({
         id: "fact-semantic-a",
-        content: "The release checklist requires smoke tests before every production cutover and deploy.",
+        content: "The release checklist requires smoke tests before every production cutover, deploy, and handoff.",
         confidence: 0.95,
         confidenceTier: "explicit",
       }),
@@ -436,7 +436,7 @@ test("governance surfaces semantic duplicates, queued explicit captures, malform
       "facts/2026-03-02/fact-semantic-b.md",
       memoryDoc({
         id: "fact-semantic-b",
-        content: "The release checklist requires smoke tests before every production deploy and cutover.",
+        content: "The release checklist requires smoke tests before every production deploy and cutover handoff.",
         confidence: 0.55,
         confidenceTier: "inferred",
       }),
@@ -482,6 +482,11 @@ test("governance surfaces semantic duplicates, queued explicit captures, malform
     assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "semantic_duplicate_candidate"), true);
     assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "explicit_capture_review"), true);
     assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "malformed_import"), true);
+    const summary = JSON.parse(await readFile(result.summaryPath, "utf-8")) as { proposedActionCount: number };
+    assert.equal(summary.proposedActionCount, 1);
+
+    const keptMemoryIds = JSON.parse(await readFile(result.keptMemoriesPath, "utf-8")) as string[];
+    assert.equal(keptMemoryIds.includes("fact-explicit-queued"), true);
 
     const qualityScore = JSON.parse(await readFile(result.qualityScorePath, "utf-8")) as {
       score: number;
