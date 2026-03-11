@@ -205,7 +205,7 @@ export class EngramAccessHttpServer {
         this.ensureWriteRateLimitAvailable();
       }
       const response = await this.service.memoryStore(request);
-      if (this.shouldCountWriteRateLimit(response)) {
+      if (this.shouldCountWriteRateLimit(response as { dryRun?: boolean; idempotencyReplay?: boolean })) {
         this.recordWriteRateLimitHit();
       }
       this.respondJson(res, this.writeResponseStatus(response), response);
@@ -234,7 +234,7 @@ export class EngramAccessHttpServer {
         this.ensureWriteRateLimitAvailable();
       }
       const response = await this.service.suggestionSubmit(request);
-      if (this.shouldCountWriteRateLimit(response)) {
+      if (this.shouldCountWriteRateLimit(response as { dryRun?: boolean; idempotencyReplay?: boolean })) {
         this.recordWriteRateLimitHit();
       }
       this.respondJson(res, this.writeResponseStatus(response), response);
@@ -330,7 +330,9 @@ export class EngramAccessHttpServer {
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
         authenticatedPrincipal: this.authenticatedPrincipal,
       });
-      this.recordWriteRateLimitHit();
+      if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
       this.respondJson(res, 200, response);
       return;
     }

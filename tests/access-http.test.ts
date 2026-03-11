@@ -789,6 +789,60 @@ test("access HTTP server allows dry-run writes even after the write limit is ful
   }
 });
 
+test("access HTTP server does not consume the write rate limit for replayed review dispositions", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      reviewDisposition: async ({ memoryId, status }: { memoryId: string; status: string }) => ({
+        ok: true,
+        namespace: "global",
+        memoryId,
+        status,
+        previousStatus: "pending_review",
+        idempotencyReplay: true,
+      }),
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+    for (let index = 0; index < 40; index += 1) {
+      const response = await fetch(`${base}/engram/v1/review-disposition`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          memoryId: "fact-1",
+          status: "active",
+          reasonCode: `replay-${index}`,
+        }),
+      });
+      assert.equal(response.status, 200);
+    }
+
+    const write = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        content: "A real write should still fit after replayed review dispositions.",
+        category: "fact",
+      }),
+    });
+    assert.equal(write.status, 201);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server binds namespace write authorization to its configured principal", async () => {
   const service = new EngramAccessService({
     config: {

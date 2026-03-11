@@ -37,6 +37,7 @@ test("parseConfig supports explicit local HTTP access config and env fallback", 
   process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = "env-token";
   process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL = "env-principal";
   process.env.ENGRAM_ACCESS_TEST_TOKEN = "config-token";
+  process.env.ENGRAM_ACCESS_TEST_PRINCIPAL = "config-principal";
   try {
     const cfg = parseConfig({
       openaiApiKey: "sk-test",
@@ -45,7 +46,7 @@ test("parseConfig supports explicit local HTTP access config and env fallback", 
         host: "localhost",
         port: 0,
         authToken: "${ENGRAM_ACCESS_TEST_TOKEN}",
-        principal: "config-principal",
+        principal: "${ENGRAM_ACCESS_TEST_PRINCIPAL}",
         maxBodyBytes: 2048,
       },
     });
@@ -68,6 +69,7 @@ test("parseConfig supports explicit local HTTP access config and env fallback", 
     assert.equal(envCfg.agentAccessHttp.principal, "env-principal");
   } finally {
     delete process.env.ENGRAM_ACCESS_TEST_TOKEN;
+    delete process.env.ENGRAM_ACCESS_TEST_PRINCIPAL;
     if (original === undefined) {
       delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
     } else {

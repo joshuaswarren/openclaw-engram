@@ -516,7 +516,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN,
     principal:
       typeof rawAgentAccessHttp?.principal === "string" && rawAgentAccessHttp.principal.trim().length > 0
-        ? rawAgentAccessHttp.principal.trim()
+        ? resolveEnvVars(rawAgentAccessHttp.principal)
         : process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL?.trim() || undefined,
     maxBodyBytes:
       typeof rawAgentAccessHttp?.maxBodyBytes === "number"
