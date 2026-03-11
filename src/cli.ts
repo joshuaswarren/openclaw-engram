@@ -1,6 +1,7 @@
 import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import type { Readable, Writable } from "node:stream";
 import type { Orchestrator } from "./orchestrator.js";
 import { ThreadingManager } from "./threading.js";
 import type {
@@ -197,6 +198,10 @@ interface CliCommand {
   argument(name: string, desc: string): CliCommand;
   action(fn: (...args: unknown[]) => Promise<void> | void): CliCommand;
   command(name: string): CliCommand;
+}
+
+interface EngramMcpServerLike {
+  runStdio(input: Readable, output: Writable): Promise<void>;
 }
 
 export interface DedupeCandidate {
@@ -671,6 +676,16 @@ export interface AccessHttpServeCliCommandOptions {
     principal?: string;
     maxBodyBytes?: number;
   }) => AccessHttpServerLike;
+}
+
+export function resolveAccessPrincipalOverride(
+  explicitPrincipal: unknown,
+  configuredPrincipal?: string,
+): string | undefined {
+  if (typeof explicitPrincipal === "string" && explicitPrincipal.trim().length > 0) {
+    return explicitPrincipal.trim();
+  }
+  return configuredPrincipal?.trim() || undefined;
 }
 
 let activeWebDavServer: WebDavServerLike | null = null;
@@ -2360,11 +2375,19 @@ export async function runAccessHttpStatusCliCommand(): Promise<
   });
 }
 
-export async function runAccessMcpServeCliCommand(service: EngramAccessService): Promise<{ ok: true }> {
-  const server = new EngramMcpServer(service, {
-    principal: process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL,
+export async function runAccessMcpServeCliCommand(
+  service: EngramAccessService,
+  options: {
+    principal?: string;
+    createServer?: (service: EngramAccessService, options: { principal?: string }) => EngramMcpServerLike;
+    stdin?: Readable;
+    stdout?: Writable;
+  } = {},
+): Promise<{ ok: true }> {
+  const server = options.createServer?.(service, { principal: options.principal }) ?? new EngramMcpServer(service, {
+    principal: options.principal,
   });
-  await server.runStdio(process.stdin, process.stdout);
+  await server.runStdio(options.stdin ?? process.stdin, options.stdout ?? process.stdout);
   return { ok: true };
 }
 
@@ -4499,6 +4522,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--host <host>", "Bind host", "127.0.0.1")
         .option("--port <n>", "Bind port", "4318")
         .option("--token <token>", "Bearer token (defaults to config/env)")
+        .option("--principal <principal>", "Trusted principal (defaults to config/env)")
         .option("--max-body-bytes <n>", "Maximum request body size", "131072")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
@@ -4513,6 +4537,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               typeof options.token === "string" && options.token.trim().length > 0
                 ? options.token
                 : orchestrator.config.agentAccessHttp.authToken,
+            principal: resolveAccessPrincipalOverride(options.principal, orchestrator.config.agentAccessHttp.principal),
             maxBodyBytes: Number.isFinite(maxBodyBytesRaw) ? maxBodyBytesRaw : 131072,
           });
           console.log(JSON.stringify(status, null, 2));
@@ -4540,8 +4565,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
       accessCmd
         .command("mcp-serve")
         .description("Run the Engram MCP server over stdio")
-        .action(async () => {
-          await runAccessMcpServeCliCommand(accessService);
+        .option("--principal <principal>", "Trusted principal (defaults to config/env)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          await runAccessMcpServeCliCommand(accessService, {
+            principal: resolveAccessPrincipalOverride(options.principal, orchestrator.config.agentAccessHttp.principal),
+          });
         });
 
       const routeCmd = cmd
