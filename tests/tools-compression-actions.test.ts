@@ -16,6 +16,7 @@ function buildHarness(options?: {
   appendMemoryActionEvent?: (event: any) => Promise<boolean> | boolean;
   previewMemoryActionEvent?: (event: any) => any;
   writeMemory?: (category: string, content: string, options?: Record<string, unknown>) => Promise<string> | string;
+  writeArtifact?: (content: string, options?: Record<string, unknown>) => Promise<string> | string;
   createCheckpoint?: (sessionKey: string, turns: any[], ttlHours?: number) => any;
   saveCheckpoint?: (checkpoint: any) => Promise<void> | void;
 }) {
@@ -41,6 +42,15 @@ function buildHarness(options?: {
       }
       return "fact-stored";
     },
+    writeArtifact: async (content: string, writeOptions?: Record<string, unknown>) => {
+      if (options?.writeArtifact) {
+        return await options.writeArtifact(content, writeOptions);
+      }
+      return "artifact-stored";
+    },
+    updateMemory: async () => true,
+    readAllMemories: async () => [],
+    addLinksToMemory: async () => true,
   };
 
   const transcript = {
@@ -397,6 +407,27 @@ test("memory_action_apply respects policy gates before mutating storage", async 
   assert.equal(capturedEvents[0]?.dryRun, false);
 });
 
+test("memory_action_apply rejects invalid structured categories before writing memory", async () => {
+  const { tools, capturedEvents, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10c", {
+    action: "store_note",
+    category: "../secrets",
+    content: "Reject unsafe categories before they reach storage.",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /invalid category/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.status, "rejected");
+  assert.equal(capturedEvents[0]?.outcome, "failed");
+});
+
 test("memory_action_apply keeps legacy telemetry calls with memoryId in compatibility mode", async () => {
   const { tools, capturedEvents, capturedWrites } = buildHarness({
     contextCompressionActionsEnabled: true,
@@ -414,5 +445,47 @@ test("memory_action_apply keeps legacy telemetry calls with memoryId in compatib
   assert.equal(capturedWrites.length, 0);
   assert.equal(capturedEvents.length, 1);
   assert.equal(capturedEvents[0]?.memoryId, "fact-legacy");
+  assert.equal(capturedEvents[0]?.outcome, "applied");
+});
+
+test("memory_action_apply rejects empty artifact ids from storage", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    writeArtifact: async () => "",
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10d", {
+    action: "create_artifact",
+    content: "Artifact content",
+    artifactType: "checkpoint",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /unable to create artifact/i);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.status, "rejected");
+  assert.equal(capturedEvents[0]?.outcome, "failed");
+});
+
+test("memory_action_apply records applied outcome after successful structured mutations", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10e", {
+    action: "store_note",
+    category: "fact",
+    content: "Persist this note and normalize telemetry outcome.",
+    outcome: "failed",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /Applied memory action/i);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.status, "applied");
   assert.equal(capturedEvents[0]?.outcome, "applied");
 });

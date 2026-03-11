@@ -60,6 +60,19 @@ function normalizeToolNamespace(value: unknown): string | undefined {
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
 const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
 const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
+const MEMORY_CATEGORIES = new Set<MemoryCategory>([
+  "fact",
+  "preference",
+  "correction",
+  "entity",
+  "decision",
+  "relationship",
+  "principle",
+  "commitment",
+  "moment",
+  "skill",
+  "rule",
+]);
 
 function asTaskStatus(value: unknown): "todo" | "in_progress" | "blocked" | "done" | "cancelled" | undefined {
   const normalized = asNonEmptyString(value);
@@ -238,9 +251,11 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
     return createHash("sha256").update(input).digest("hex").slice(0, 16);
   }
 
-  function normalizeMemoryCategory(value: unknown, fallback: MemoryCategory = "fact"): MemoryCategory {
+  function normalizeMemoryCategory(value: unknown, fallback?: MemoryCategory): MemoryCategory | undefined {
     const normalized = asNonEmptyString(value);
-    return (normalized ?? fallback) as MemoryCategory;
+    if (!normalized) return fallback;
+    if (!MEMORY_CATEGORIES.has(normalized as MemoryCategory)) return undefined;
+    return normalized as MemoryCategory;
   }
 
   function buildActionInputSummary(action: MemoryActionType, params: Record<string, unknown>): string {
@@ -1481,6 +1496,18 @@ Best for:
           dryRun: dryRun === true,
           outputMemoryIds: [],
         };
+        const normalizedCategory = normalizeMemoryCategory(category, "fact");
+        if (category !== undefined && normalizedCategory === undefined) {
+          const wrote = await orchestrator.appendMemoryActionEvent({
+            ...baseEvent,
+            outcome: "failed",
+            status: "rejected",
+            outputMemoryIds: [],
+            reason: `validation: invalid category ${String(category)}`,
+          });
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          return toolResult(`Validation failed: invalid category ${String(category)}.${suffix}`);
+        }
 
         if (dryRun === true) {
           const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
@@ -1509,7 +1536,7 @@ Best for:
 
         switch (action) {
           case "store_episode": {
-            const createdId = await storage.writeMemory(normalizeMemoryCategory(category), contentValue!, {
+            const createdId = await storage.writeMemory(normalizedCategory ?? "fact", contentValue!, {
               actor: "tool.memory_action_apply",
               source: "memory_action_apply",
               memoryKind: "episode",
@@ -1519,7 +1546,7 @@ Best for:
             break;
           }
           case "store_note": {
-            const createdId = await storage.writeMemory(normalizeMemoryCategory(category), contentValue!, {
+            const createdId = await storage.writeMemory(normalizedCategory ?? "fact", contentValue!, {
               actor: "tool.memory_action_apply",
               source: "memory_action_apply",
             });
@@ -1549,12 +1576,23 @@ Best for:
               artifactType: artifactType as any,
               sourceMemoryId: memoryIdValue,
             });
+            if (!createdId || createdId.trim().length === 0) {
+              const wrote = await orchestrator.appendMemoryActionEvent({
+                ...baseEvent,
+                outcome: "failed",
+                status: "rejected",
+                outputMemoryIds: [],
+                reason: "execution: unable to create artifact",
+              });
+              const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+              return toolResult(`Validation failed: unable to create artifact.${suffix}`);
+            }
             outputMemoryIds.push(createdId);
             appliedMessage = `Applied memory action: action=${action}, memoryId=${createdId}, namespace=${ns}.`;
             break;
           }
           case "summarize_node": {
-            const createdId = await storage.writeMemory(normalizeMemoryCategory(category), contentValue!, {
+            const createdId = await storage.writeMemory(normalizedCategory ?? "fact", contentValue!, {
               actor: "tool.memory_action_apply",
               source: "memory_action_apply",
               sourceMemoryId: memoryIdValue,
@@ -1629,7 +1667,7 @@ Best for:
         orchestrator.requestQmdMaintenanceForTool(`memory_action_apply.${action}`);
         const wrote = await orchestrator.appendMemoryActionEvent({
           ...baseEvent,
-          outcome: outcome ?? "applied",
+          outcome: "applied",
           status: "applied",
           dryRun: false,
           outputMemoryIds,
