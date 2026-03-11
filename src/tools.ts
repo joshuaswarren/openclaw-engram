@@ -1610,6 +1610,11 @@ Best for:
           const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
           const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
           const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          if (preview.policyDecision !== "allow") {
+            return toolResult(
+              `Memory action blocked by policy during validation: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}, rationale=${preview.policyRationale}.${suffix}`,
+            );
+          }
           return toolResult(
             `Validated memory action without applying it: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}.${suffix}`,
           );

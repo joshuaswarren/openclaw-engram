@@ -469,6 +469,49 @@ test("memory_action_apply dryRun logs the validated action without mutating stor
   assert.deepEqual(capturedEvents[0]?.outputMemoryIds, []);
 });
 
+test("memory_action_apply dryRun reports policy blocks instead of validated success", async () => {
+  const persistedEvents: any[] = [];
+  const { tools, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: "skipped",
+      status: "rejected",
+      policyDecision: "deny",
+      policyRationale: "lifecycle_state_archived_restricted",
+    }),
+    appendMemoryActionEvent: async (event: any) => {
+      persistedEvents.push({
+        ...event,
+        namespace: event.namespace ?? "default",
+        outcome: "skipped",
+        status: "rejected",
+        policyDecision: "deny",
+        policyRationale: "lifecycle_state_archived_restricted",
+      });
+      return true;
+    },
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc9a", {
+    action: "create_artifact",
+    memoryId: "fact-archived",
+    content: "Artifact body",
+    artifactType: "checkpoint",
+    dryRun: true,
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /blocked by policy/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(persistedEvents.length, 1);
+  assert.equal(persistedEvents[0]?.status, "rejected");
+  assert.equal(persistedEvents[0]?.dryRun, true);
+});
+
 test("memory_action_apply dryRun appends the raw structured event instead of a pre-previewed event", async () => {
   const { tools, capturedEvents } = buildHarness({
     contextCompressionActionsEnabled: true,
