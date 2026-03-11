@@ -1,5 +1,5 @@
 import type { PluginConfig, QmdSearchResult } from "../types.js";
-import type { SearchBackend } from "../search/port.js";
+import type { SearchBackend, SearchQueryOptions } from "../search/port.js";
 import { createSearchBackend } from "../search/factory.js";
 
 export function namespaceCollectionName(
@@ -60,6 +60,7 @@ export class NamespaceSearchRouter {
     namespaces: string[];
     maxResults?: number;
     mode?: "search" | "hybrid" | "bm25" | "vector";
+    searchOptions?: SearchQueryOptions;
   }): Promise<QmdSearchResult[]> {
     const query = options.query.trim();
     if (!query) return [];
@@ -82,7 +83,12 @@ export class NamespaceSearchRouter {
           case "vector":
             return await record.backend.vectorSearch(query, undefined, maxResults);
           default:
-            return await record.backend.search(query, undefined, maxResults);
+            return await record.backend.search(
+              query,
+              undefined,
+              maxResults,
+              options.searchOptions,
+            );
         }
       }),
     );

@@ -47,25 +47,25 @@ qmd update && qmd embed
   "qmdEnabled": true,
   "qmdCollection": "openclaw-engram",
   "qmdMaxResults": 8,
-  "qmdDaemonEnabled": true       // Keep models warm for fast queries
+  "qmdDaemonEnabled": true,      // Keep the shared MCP session warm for fast queries
+  "qmdIntentHintsEnabled": false,
+  "qmdExplainEnabled": false
 }
 ```
 
 ### QMD Daemon Mode
 
-For lower latency, enable the QMD HTTP daemon which keeps models loaded in memory:
+For lower latency, Engram prefers a shared stdio `qmd mcp` session when QMD is healthy. It does not currently talk to the HTTP daemon endpoint directly, even though the legacy `qmdDaemonUrl` setting is still retained for compatibility.
 
-```bash
-qmd mcp --http --daemon
-```
-
-With the daemon running, queries drop from ~13 seconds to ~30 milliseconds. Engram automatically detects and uses the daemon when available, falling back to subprocess calls.
+Engram automatically prefers the shared MCP session when available and falls back to subprocess calls on empty results, timeouts, or transport failure.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `qmdDaemonEnabled` | `true` | Prefer daemon for search when available |
-| `qmdDaemonUrl` | `http://localhost:8181/mcp` | Daemon endpoint |
+| `qmdDaemonEnabled` | `true` | Prefer the shared MCP/daemon path for search when available |
+| `qmdDaemonUrl` | `http://localhost:8181/mcp` | Legacy compatibility knob retained in config; current runtime uses shared stdio MCP |
 | `qmdDaemonRecheckIntervalMs` | `60000` | Re-probe interval after failure |
+| `qmdIntentHintsEnabled` | `false` | Forward inferred recall intent into QMD unified search when supported |
+| `qmdExplainEnabled` | `false` | Capture QMD explain traces into `memory_qmd_debug` snapshots |
 
 ## Orama
 

@@ -116,8 +116,10 @@ See [Search Backends](search-backends.md) for detailed configuration and compari
 | `qmdColdMaxResults` | `8` | Final result cap for cold-tier recall before merging into the normal ranking pipeline |
 | `qmdPath` | `(auto)` | Absolute path to `qmd` binary (bypasses PATH) |
 | `qmdDaemonEnabled` | `true` | Prefer QMD MCP daemon for recall/search when available (lower contention); fail-open to subprocess search/hybrid paths |
-| `qmdDaemonUrl` | `http://localhost:8181/mcp` | QMD daemon MCP endpoint URL |
+| `qmdDaemonUrl` | `http://localhost:8181/mcp` | Legacy compatibility setting; current runtime uses shared stdio `qmd mcp` rather than the HTTP endpoint directly |
 | `qmdDaemonRecheckIntervalMs` | `60000` | Interval to re-probe daemon availability after failure |
+| `qmdIntentHintsEnabled` | `false` | Forward inferred recall intent into QMD unified search when supported |
+| `qmdExplainEnabled` | `false` | Capture QMD explain traces in `state/last_qmd_recall.json` and `memory_qmd_debug` |
 | `embeddingFallbackEnabled` | `true` | Use embedding search when QMD is unavailable |
 | `embeddingFallbackProvider` | `auto` | `auto`, `openai`, or `local` — selects embedding API for fallback |
 | `recordEmptyRecallImpressions` | `false` | If `true`, write recall impression rows with empty `memoryIds` when no memory context is injected |
@@ -1172,6 +1174,8 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `qmdDaemonEnabled` | `true` | `true` |
 | `qmdDaemonUrl` | `http://localhost:8181/mcp` | `http://localhost:8181/mcp` |
 | `qmdDaemonRecheckIntervalMs` | `60000` | `60000` |
+| `qmdIntentHintsEnabled` | `false` | `false` |
+| `qmdExplainEnabled` | `false` | `false` |
 | `knowledgeIndexEnabled` | `true` | `true` |
 | `knowledgeIndexMaxEntities` | `40` | `40` |
 | `knowledgeIndexMaxChars` | `4000` | `4000` |

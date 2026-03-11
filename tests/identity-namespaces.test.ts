@@ -145,6 +145,8 @@ function baseConfig(memoryDir: string): PluginConfig {
     qmdDaemonEnabled: false,
     qmdDaemonUrl: undefined,
     qmdDaemonRecheckIntervalMs: 30_000,
+    qmdIntentHintsEnabled: false,
+    qmdExplainEnabled: false,
     qmdUpdateTimeoutMs: 120_000,
     qmdUpdateMinIntervalMs: 60_000,
     factDeduplicationEnabled: false,

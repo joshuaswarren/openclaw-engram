@@ -1,4 +1,4 @@
-import type { SearchBackend, SearchResult } from "./port.js";
+import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
 
 /**
  * No-op search backend for graceful degradation.
@@ -17,7 +17,12 @@ export class NoopSearchBackend implements SearchBackend {
     return "backend=noop";
   }
 
-  async search(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
+  async search(
+    _query: string,
+    _collection?: string,
+    _maxResults?: number,
+    _options?: SearchQueryOptions,
+  ): Promise<SearchResult[]> {
     return [];
   }
 

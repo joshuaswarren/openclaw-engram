@@ -90,6 +90,8 @@ function fakeConfig(overrides: Record<string, unknown> = {}): any {
     qmdDaemonEnabled: false,
     qmdDaemonUrl: "",
     qmdDaemonRecheckIntervalMs: 60_000,
+    qmdIntentHintsEnabled: false,
+    qmdExplainEnabled: false,
     slowLogEnabled: false,
     slowLogThresholdMs: 5000,
     qmdUpdateTimeoutMs: 30_000,

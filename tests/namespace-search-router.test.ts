@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { PluginConfig } from "../src/types.js";
 import { NamespaceSearchRouter, namespaceCollectionName } from "../src/namespaces/search.js";
-import type { SearchBackend } from "../src/search/port.js";
+import type { SearchBackend, SearchQueryOptions } from "../src/search/port.js";
 
 function tmpDir(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -144,6 +144,8 @@ function baseConfig(memoryDir: string): PluginConfig {
     qmdDaemonEnabled: false,
     qmdDaemonUrl: undefined,
     qmdDaemonRecheckIntervalMs: 30_000,
+    qmdIntentHintsEnabled: false,
+    qmdExplainEnabled: false,
     qmdUpdateTimeoutMs: 120_000,
     qmdUpdateMinIntervalMs: 60_000,
     factDeduplicationEnabled: false,
@@ -236,18 +238,20 @@ function baseConfig(memoryDir: string): PluginConfig {
 
 type FakeSearchBackend = SearchBackend & {
   calls: string[];
+  lastSearchOptions?: SearchQueryOptions;
 };
 
 function backendForResultSet(resultSet: Array<{ docid: string; path: string; score: number; snippet: string }>): FakeSearchBackend {
   const calls: string[] = [];
-  return {
+  const backend: FakeSearchBackend = {
     calls,
     isAvailable: () => true,
     debugStatus: () => "ok",
     isDaemonMode: () => false,
     probe: async () => true,
-    search: async () => {
+    search: async (_query, _collection, _maxResults, options) => {
       calls.push("search");
+      backend.lastSearchOptions = options;
       return resultSet;
     },
     searchGlobal: async () => [],
@@ -277,6 +281,7 @@ function backendForResultSet(resultSet: Array<{ docid: string; path: string; sco
     },
     ensureCollection: async () => "present",
   };
+  return backend;
 }
 
 test("namespaceCollectionName keeps legacy default collection and derives namespaced collections", () => {
@@ -395,6 +400,36 @@ test("NamespaceSearchRouter derives a namespaced collection for migrated default
   });
 
   assert.equal(seenCollection, "openclaw-engram--ns--default");
+});
+
+test("NamespaceSearchRouter forwards search options to backend search mode", async () => {
+  const memoryDir = tmpDir("engram-ns-search-options");
+  const cfg = baseConfig(memoryDir);
+  const backend = backendForResultSet([
+    { docid: "default-1", path: "/tmp/default.md", score: 0.9, snippet: "default" },
+  ]);
+  const router = new NamespaceSearchRouter(
+    cfg,
+    {
+      async storageFor() {
+        return { dir: memoryDir };
+      },
+    } as any,
+    () => backend,
+  );
+
+  await router.searchAcrossNamespaces({
+    query: "memory",
+    namespaces: ["default"],
+    maxResults: 3,
+    mode: "search",
+    searchOptions: { intent: "goal:review action:review", explain: true },
+  });
+
+  assert.deepEqual(backend.lastSearchOptions, {
+    intent: "goal:review action:review",
+    explain: true,
+  });
 });
 
 test("NamespaceSearchRouter skips namespaces whose collection is missing", async () => {

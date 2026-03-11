@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { SearchBackend, SearchResult } from "./port.js";
+import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
 
 export interface RemoteSearchBackendOptions {
   baseUrl: string;
@@ -51,7 +51,12 @@ export class RemoteSearchBackend implements SearchBackend {
     return `backend=remote available=${this.available} baseUrl=${this.baseUrl}`;
   }
 
-  async search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+    _options?: SearchQueryOptions,
+  ): Promise<SearchResult[]> {
     return this.post("/search/deep", { query, collection, maxResults });
   }
 

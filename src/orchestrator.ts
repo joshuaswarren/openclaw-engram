@@ -8,7 +8,7 @@ import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
-import type { SearchBackend } from "./search/port.js";
+import type { SearchBackend, SearchQueryOptions } from "./search/port.js";
 import { createSearchBackend, createConversationIndexRuntime } from "./search/factory.js";
 import { NoopSearchBackend } from "./search/noop-backend.js";
 import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
@@ -204,6 +204,24 @@ export interface IntentDebugSnapshot {
     graphRecallEnabled: boolean;
     multiGraphMemoryEnabled: boolean;
   };
+}
+
+export interface QmdRecallSnapshot {
+  recordedAt: string;
+  queryHash: string;
+  queryLength: number;
+  collection?: string;
+  namespaces: string[];
+  fetchLimit: number;
+  primaryResultCount: number;
+  hybridResultCount: number;
+  queryAwareSeedCount: number;
+  resultCount: number;
+  intentHint?: string;
+  explainEnabled: boolean;
+  hybridTopUpUsed: boolean;
+  hybridTopUpSkippedReason?: string;
+  results: QmdSearchResult[];
 }
 
 export interface RecallModeDecision {
@@ -617,6 +635,64 @@ function parseMemoryIntentSnapshot(value: unknown): MemoryIntent {
   };
 }
 
+function buildQmdIntentHint(intent: MemoryIntent): string | undefined {
+  const parts: string[] = [];
+  if (intent.goal !== "unknown") {
+    parts.push(`goal:${intent.goal.replace(/_/g, " ")}`);
+  }
+  if (intent.actionType !== "unknown") {
+    parts.push(`action:${intent.actionType.replace(/_/g, " ")}`);
+  }
+  if (intent.entityTypes.length > 0) {
+    parts.push(`entities:${intent.entityTypes.join(",")}`);
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function parseQmdRecallResults(value: unknown): QmdSearchResult[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: QmdSearchResult[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const candidate = entry as Partial<QmdSearchResult>;
+    if (typeof candidate.path !== "string" || typeof candidate.score !== "number") continue;
+    parsed.push({
+      docid: typeof candidate.docid === "string" ? candidate.docid : "",
+      path: candidate.path,
+      snippet: typeof candidate.snippet === "string" ? candidate.snippet : "",
+      score: candidate.score,
+      explain:
+        candidate.explain && typeof candidate.explain === "object"
+          ? {
+            ftsScores: Array.isArray(candidate.explain.ftsScores)
+              ? candidate.explain.ftsScores.filter((item): item is number => typeof item === "number")
+              : undefined,
+            vectorScores: Array.isArray(candidate.explain.vectorScores)
+              ? candidate.explain.vectorScores.filter((item): item is number => typeof item === "number")
+              : undefined,
+            rrf: typeof candidate.explain.rrf === "number" ? candidate.explain.rrf : undefined,
+            rerankScore:
+              typeof candidate.explain.rerankScore === "number"
+                ? candidate.explain.rerankScore
+                : undefined,
+            blendedScore:
+              typeof candidate.explain.blendedScore === "number"
+                ? candidate.explain.blendedScore
+                : undefined,
+          }
+          : undefined,
+      transport:
+        candidate.transport === "daemon" ||
+          candidate.transport === "subprocess" ||
+          candidate.transport === "hybrid" ||
+          candidate.transport === "scoped_prefilter"
+          ? candidate.transport
+          : undefined,
+    });
+  }
+  return parsed.slice(0, 32);
+}
+
 export function mergeArtifactRecallCandidates(
   candidatesByNamespace: MemoryFile[][],
   limit: number,
@@ -867,6 +943,7 @@ export class Orchestrator {
     namespaces?: string[];
     maxResults?: number;
     mode?: "search" | "hybrid" | "bm25" | "vector";
+    searchOptions?: SearchQueryOptions;
   }): Promise<QmdSearchResult[]> {
     const namespaces = this.config.namespacesEnabled
       ? Array.from(
@@ -887,7 +964,12 @@ export class Orchestrator {
         case "vector":
           return await this.qmd.vectorSearch(options.query, undefined, options.maxResults);
         default:
-          return await this.qmd.search(options.query, undefined, options.maxResults);
+          return await this.qmd.search(
+            options.query,
+            undefined,
+            options.maxResults,
+            options.searchOptions,
+          );
       }
     }
 
@@ -896,6 +978,7 @@ export class Orchestrator {
       namespaces,
       maxResults: options.maxResults,
       mode: options.mode,
+      searchOptions: options.searchOptions,
     });
   }
 
@@ -1622,6 +1705,43 @@ export class Orchestrator {
     }
   }
 
+  async getLastQmdRecallSnapshot(namespace?: string): Promise<QmdRecallSnapshot | null> {
+    const storage = await this.getStorage(namespace);
+    const snapshotPath = path.join(storage.dir, "state", "last_qmd_recall.json");
+    try {
+      const raw = await readFile(snapshotPath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<QmdRecallSnapshot>;
+      if (!parsed || typeof parsed !== "object") return null;
+      return {
+        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        queryHash: typeof parsed.queryHash === "string" ? parsed.queryHash : "",
+        queryLength: typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
+        collection: typeof parsed.collection === "string" ? parsed.collection : undefined,
+        namespaces: Array.isArray(parsed.namespaces)
+          ? parsed.namespaces.filter((value): value is string => typeof value === "string")
+          : [],
+        fetchLimit: typeof parsed.fetchLimit === "number" ? parsed.fetchLimit : 0,
+        primaryResultCount:
+          typeof parsed.primaryResultCount === "number" ? parsed.primaryResultCount : 0,
+        hybridResultCount:
+          typeof parsed.hybridResultCount === "number" ? parsed.hybridResultCount : 0,
+        queryAwareSeedCount:
+          typeof parsed.queryAwareSeedCount === "number" ? parsed.queryAwareSeedCount : 0,
+        resultCount: typeof parsed.resultCount === "number" ? parsed.resultCount : 0,
+        intentHint: typeof parsed.intentHint === "string" ? parsed.intentHint : undefined,
+        explainEnabled: parsed.explainEnabled === true,
+        hybridTopUpUsed: parsed.hybridTopUpUsed === true,
+        hybridTopUpSkippedReason:
+          typeof parsed.hybridTopUpSkippedReason === "string"
+            ? parsed.hybridTopUpSkippedReason
+            : undefined,
+        results: parseQmdRecallResults(parsed.results),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async explainLastGraphRecall(options?: {
     namespace?: string;
     maxExpanded?: number;
@@ -1688,6 +1808,46 @@ export class Orchestrator {
       `Query intent: goal=${snapshot.queryIntent.goal}, action=${snapshot.queryIntent.actionType}, entityTypes=${snapshot.queryIntent.entityTypes.length > 0 ? snapshot.queryIntent.entityTypes.join(", ") : "none"}`,
       `Broad graph intent: ${snapshot.graphExpandedIntentDetected ? "yes" : "no"}`,
       `Graph decision: status=${snapshot.graphDecision.status}, reason=${snapshot.graphDecision.reason ?? "n/a"}, shadow=${snapshot.graphDecision.shadowMode ? "yes" : "no"}, qmdAvailable=${snapshot.graphDecision.qmdAvailable ? "yes" : "no"}, graphRecallEnabled=${snapshot.graphDecision.graphRecallEnabled ? "yes" : "no"}, multiGraphMemoryEnabled=${snapshot.graphDecision.multiGraphMemoryEnabled ? "yes" : "no"}`,
+    ].join("\n");
+  }
+
+  async explainLastQmdRecall(options?: { namespace?: string; maxResults?: number }): Promise<string> {
+    const snapshot = await this.getLastQmdRecallSnapshot(options?.namespace);
+    if (!snapshot) return "No QMD recall snapshot found yet.";
+    const maxResults = Math.max(1, Math.min(25, options?.maxResults ?? 10));
+    const shown = snapshot.results.slice(0, maxResults);
+    return [
+      "## Last QMD Recall",
+      "",
+      `Recorded at: ${snapshot.recordedAt || "unknown"}`,
+      `Query hash: ${snapshot.queryHash || "unknown"} (len=${snapshot.queryLength})`,
+      `Collection: ${snapshot.collection ?? "default"}`,
+      `Namespaces: ${snapshot.namespaces.length > 0 ? snapshot.namespaces.join(", ") : "none"}`,
+      `Fetch limit: ${snapshot.fetchLimit}`,
+      `Primary results: ${snapshot.primaryResultCount}`,
+      `Hybrid top-up results: ${snapshot.hybridResultCount}`,
+      `Query-aware seeds: ${snapshot.queryAwareSeedCount}`,
+      `Final results: ${snapshot.resultCount}`,
+      `Intent hint: ${snapshot.intentHint ?? "none"}`,
+      `Explain enabled: ${snapshot.explainEnabled ? "yes" : "no"}`,
+      `Hybrid top-up used: ${snapshot.hybridTopUpUsed ? "yes" : "no"}`,
+      `Hybrid top-up skipped reason: ${snapshot.hybridTopUpSkippedReason ?? "n/a"}`,
+      `Top results (${shown.length}):`,
+      ...shown.map((result) => {
+        const explainParts = [
+          typeof result.explain?.blendedScore === "number"
+            ? `blended=${result.explain.blendedScore.toFixed(3)}`
+            : null,
+          typeof result.explain?.rerankScore === "number"
+            ? `rerank=${result.explain.rerankScore.toFixed(3)}`
+            : null,
+          typeof result.explain?.rrf === "number"
+            ? `rrf=${result.explain.rrf.toFixed(3)}`
+            : null,
+        ].filter((entry): entry is string => Boolean(entry));
+        const explainText = explainParts.length > 0 ? `, explain=${explainParts.join("/")}` : "";
+        return `- ${result.path} (score=${result.score.toFixed(3)}, transport=${result.transport ?? "unknown"}${explainText})`;
+      }),
     ].join("\n");
   }
 
@@ -2268,6 +2428,7 @@ export class Orchestrator {
         path: memory.path,
         score,
         snippet: memory.content.slice(0, 400).replace(/\n/g, " "),
+        transport: "scoped_prefilter",
       });
     }
 
@@ -2286,6 +2447,8 @@ export class Orchestrator {
       resolveNamespace: (path: string) => string;
       collection?: string;
       queryAwarePrefilter?: QueryAwarePrefilter;
+      searchOptions?: SearchQueryOptions;
+      onDebugSnapshot?: (snapshot: QmdRecallSnapshot) => Promise<void>;
     },
   ): Promise<QmdSearchResult[]> {
     const queryAwarePrefilter = options.queryAwarePrefilter
@@ -2304,12 +2467,39 @@ export class Orchestrator {
     const MAX_ATTEMPTS = 2;
     const QMD_RECALL_BUDGET_MS = 25_000;
     const startedAtMs = Date.now();
+    let lastPrimaryResultCount = 0;
+    let lastHybridResultCount = 0;
+    let lastHybridTopUpUsed = false;
+    let lastHybridTopUpSkippedReason: string | undefined;
     let bestFiltered = filterRecallCandidates(scopedSeedResults, {
       namespacesEnabled: options.namespacesEnabled,
       recallNamespaces: options.recallNamespaces,
       resolveNamespace: options.resolveNamespace,
       limit: qmdFetchLimit,
     });
+    const emitDebugSnapshot = async (results: QmdSearchResult[], currentFetchLimit: number) => {
+      if (!options.onDebugSnapshot) return;
+      await options.onDebugSnapshot({
+        recordedAt: new Date().toISOString(),
+        queryHash: createHash("sha256").update(prompt).digest("hex"),
+        queryLength: prompt.length,
+        collection: options.collection,
+        namespaces: options.recallNamespaces,
+        fetchLimit: currentFetchLimit,
+        primaryResultCount: lastPrimaryResultCount,
+        hybridResultCount: lastHybridResultCount,
+        queryAwareSeedCount: scopedSeedResults.length,
+        resultCount: results.length,
+        intentHint: options.searchOptions?.intent,
+        explainEnabled: options.searchOptions?.explain === true,
+        hybridTopUpUsed: lastHybridTopUpUsed,
+        hybridTopUpSkippedReason: lastHybridTopUpSkippedReason,
+        results: results.slice(0, 32).map((result) => ({
+          ...result,
+          snippet: result.snippet.slice(0, 280),
+        })),
+      });
+    };
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       if (Date.now() - startedAtMs >= QMD_RECALL_BUDGET_MS) {
@@ -2317,13 +2507,18 @@ export class Orchestrator {
       }
 
       const primaryResults = options.collection
-        ? await this.qmd.search(prompt, options.collection, fetchLimit)
+        ? await this.qmd.search(prompt, options.collection, fetchLimit, options.searchOptions)
         : await this.searchAcrossNamespaces({
           query: prompt,
           namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
           maxResults: fetchLimit,
           mode: "search",
+          searchOptions: options.searchOptions,
         });
+      lastPrimaryResultCount = primaryResults.length;
+      lastHybridResultCount = 0;
+      lastHybridTopUpUsed = false;
+      lastHybridTopUpSkippedReason = undefined;
       let mergedResults = primaryResults;
 
       // Backfill with hybrid results only when primary retrieval underfills.
@@ -2331,29 +2526,36 @@ export class Orchestrator {
         primaryResults.length < qmdFetchLimit &&
         Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
       ) {
-        const hybridResults = options.collection
-          ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit)
-          : await this.searchAcrossNamespaces({
-            query: prompt,
-            namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
-            maxResults: fetchLimit,
-            mode: "hybrid",
-          });
-        if (hybridResults.length > 0) {
-          const mergedByPath = new Map<string, QmdSearchResult>();
-          for (const result of [...primaryResults, ...hybridResults]) {
-            const key = result.path || result.docid;
-            const existing = mergedByPath.get(key);
-            if (!existing || result.score > existing.score) {
-              mergedByPath.set(key, {
-                ...result,
-                snippet: result.snippet || existing?.snippet || "",
-              });
+        if (options.searchOptions?.intent) {
+          lastHybridTopUpSkippedReason = "intent_hint_active";
+        } else {
+          const hybridResults = options.collection
+            ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit)
+            : await this.searchAcrossNamespaces({
+              query: prompt,
+              namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
+              maxResults: fetchLimit,
+              mode: "hybrid",
+            });
+          lastHybridResultCount = hybridResults.length;
+          lastHybridTopUpUsed = hybridResults.length > 0;
+          if (hybridResults.length > 0) {
+            const mergedByPath = new Map<string, QmdSearchResult>();
+            for (const result of [...primaryResults, ...hybridResults]) {
+              const key = result.path || result.docid;
+              const existing = mergedByPath.get(key);
+              if (!existing || result.score > existing.score) {
+                mergedByPath.set(key, {
+                  ...result,
+                  transport: result.transport ?? "hybrid",
+                  snippet: result.snippet || existing?.snippet || "",
+                });
+              }
             }
+            mergedResults = [...mergedByPath.values()]
+              .sort((a, b) => b.score - a.score)
+              .slice(0, fetchLimit);
           }
-          mergedResults = [...mergedByPath.values()]
-            .sort((a, b) => b.score - a.score)
-            .slice(0, fetchLimit);
         }
       }
 
@@ -2382,15 +2584,19 @@ export class Orchestrator {
       });
 
       if (filteredResults.length >= qmdFetchLimit) {
-        return filteredResults.slice(0, qmdFetchLimit);
+        const capped = filteredResults.slice(0, qmdFetchLimit);
+        await emitDebugSnapshot(capped, fetchLimit);
+        return capped;
       }
       if (filteredResults.length > bestFiltered.length) {
         bestFiltered = filteredResults;
       }
       if (mergedResults.length === 0) {
+        await emitDebugSnapshot(filteredResults, fetchLimit);
         return filteredResults;
       }
       if (mergedResults.length < fetchLimit && filteredResults.length > 0) {
+        await emitDebugSnapshot(filteredResults, fetchLimit);
         return filteredResults;
       }
       if (fetchLimit >= maxFetchLimit) {
@@ -2401,7 +2607,9 @@ export class Orchestrator {
       fetchLimit = Math.min(maxFetchLimit, fetchLimit + growth);
     }
 
-    return bestFiltered.slice(0, qmdFetchLimit);
+    const capped = bestFiltered.slice(0, qmdFetchLimit);
+    await emitDebugSnapshot(capped, fetchLimit);
+    return capped;
   }
 
   private async expandResultsViaGraph(options: {
@@ -2550,6 +2758,19 @@ export class Orchestrator {
       await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
     } catch (err) {
       log.debug(`last intent write failed: ${err}`);
+    }
+  }
+
+  private async recordLastQmdRecallSnapshot(options: {
+    storage: StorageManager;
+    snapshot: QmdRecallSnapshot;
+  }): Promise<void> {
+    try {
+      const snapshotPath = path.join(options.storage.dir, "state", "last_qmd_recall.json");
+      await mkdir(path.dirname(snapshotPath), { recursive: true });
+      await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`last qmd recall write failed: ${err}`);
     }
   }
 
@@ -2717,6 +2938,17 @@ export class Orchestrator {
     const recallMode: RecallPlanMode = requestedMode
       ?? recallDecision.effectiveMode;
     const queryIntent = inferIntentFromText(retrievalQuery);
+    const qmdSearchOptions: SearchQueryOptions | undefined = (() => {
+      const intentHint = this.config.qmdIntentHintsEnabled
+        ? buildQmdIntentHint(queryIntent)
+        : undefined;
+      const explain = this.config.qmdExplainEnabled === true;
+      if (!intentHint && !explain) return undefined;
+      return {
+        intent: intentHint,
+        explain,
+      };
+    })();
     timings.recallPlan = recallMode;
     const plannerRecallResultLimit = recallMode === "no_recall"
       ? 0
@@ -3312,6 +3544,13 @@ export class Orchestrator {
           recallNamespaces,
           resolveNamespace: (p) => this.namespaceFromPath(p),
           queryAwarePrefilter,
+          searchOptions: qmdSearchOptions,
+          onDebugSnapshot: async (snapshot) => {
+            await this.recordLastQmdRecallSnapshot({
+              storage: profileStorage,
+              snapshot,
+            });
+          },
         },
       );
 
@@ -7246,6 +7485,9 @@ export class Orchestrator {
             resolveNamespace: (p) => this.namespaceFromPath(p),
             collection: coldCollection,
             queryAwarePrefilter: options.queryAwarePrefilter,
+            searchOptions: this.config.qmdIntentHintsEnabled
+              ? { intent: buildQmdIntentHint(inferIntentFromText(options.prompt)) }
+              : undefined,
           },
         );
         if (longTerm.length > 0) {
