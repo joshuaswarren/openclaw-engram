@@ -22,6 +22,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createOpikExporter } from "./opik-exporter.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -641,11 +642,17 @@ export default {
     // ========================================================================
     // Register service
     // ========================================================================
+    // Holds the active Opik exporter so stop() can unsubscribe it.
+    let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
     if (isFirstRegistration) api.registerService({
       id: "openclaw-engram",
       start: async () => {
         log.info("initializing engram memory system...");
         await orchestrator.initialize();
+
+        // Initialize Opik exporter if configured
+        activeOpikExporter = createOpikExporter({}, log);
+        if (activeOpikExporter) activeOpikExporter.subscribe();
 
         // Cleanup old transcripts
         if (orchestrator.config.transcriptEnabled) {
@@ -676,6 +683,8 @@ export default {
         log.info("engram memory system ready");
       },
       stop: async () => {
+        activeOpikExporter?.unsubscribe();
+        activeOpikExporter = null;
         try {
           await accessHttpServer.stop();
         } catch (err) {
