@@ -1432,6 +1432,7 @@ test("access service reviewQueue and maintenance fall back to governance artifac
     assert.equal(queue.runId, governance.runId);
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
     assert.equal((queue.qualityScore?.score ?? 0) < 100, true);
+    assert.equal(Object.keys(queue.transitionReport?.proposed ?? {}).length > 0, true);
 
     const maintenance = await service.maintenance("global");
     assert.equal(maintenance.health.projectionAvailable, false);
@@ -1495,6 +1496,7 @@ test("access service serves reviewQueue and maintenance from projection when gov
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
     assert.equal("runId" in (queue.reviewQueue?.[0] ?? {}), false);
     assert.equal((queue.qualityScore?.score ?? 0) < 100, true);
+    assert.ok(queue.transitionReport);
 
     const maintenance = await service.maintenance("global");
     assert.equal(maintenance.health.projectionAvailable, true);
@@ -1506,6 +1508,7 @@ test("access service serves reviewQueue and maintenance from projection when gov
       true,
     );
     assert.equal("runId" in (maintenance.latestGovernanceRun.reviewQueue?.[0] ?? {}), false);
+    assert.ok(maintenance.latestGovernanceRun.transitionReport);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

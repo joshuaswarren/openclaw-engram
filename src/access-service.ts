@@ -192,6 +192,19 @@ export interface EngramAccessMaintenanceResponse {
   latestGovernanceRun: EngramAccessReviewQueueResponse;
 }
 
+function groupProjectedGovernanceActionsByStatus(
+  actions: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"],
+): Record<string, Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> {
+  const grouped: Record<string, Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"]> = {};
+  for (const action of actions) {
+    const status = action.afterStatus ?? (action.action === "archive" ? "archived" : "unchanged");
+    const bucket = grouped[status] ?? [];
+    bucket.push(action);
+    grouped[status] = bucket;
+  }
+  return grouped;
+}
+
 export interface EngramAccessReviewDispositionRequest {
   memoryId: string;
   status: MemoryStatus | "archived";
@@ -906,6 +919,29 @@ export class EngramAccessService {
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const projected = await storage.getProjectedGovernanceRecord();
     if (projected && (!runId || projected.runId === runId.trim())) {
+      const projectedAppliedActions = projected.appliedActionRows.map((row) => ({
+        action: row.action,
+        memoryId: row.memoryId,
+        reasonCode: row.reasonCode,
+        beforeStatus: row.beforeStatus,
+        afterStatus: row.afterStatus,
+        originalPath: row.originalPath,
+        currentPath: row.currentPath,
+      })) as Awaited<
+        ReturnType<typeof readMemoryGovernanceRunArtifact>
+      >["appliedActions"];
+      const transitionReport = await (async () => {
+        try {
+          const artifact = await readMemoryGovernanceRunArtifact(storage.dir, projected.runId);
+          return artifact.transitionReport;
+        } catch {
+          return {
+            proposed: groupProjectedGovernanceActionsByStatus(projectedAppliedActions),
+            applied: groupProjectedGovernanceActionsByStatus(projectedAppliedActions),
+          };
+        }
+      })();
+
       return {
         found: true,
         namespace: resolvedNamespace,
@@ -927,18 +963,8 @@ export class EngramAccessService {
         })) as Awaited<
           ReturnType<typeof readMemoryGovernanceRunArtifact>
         >["reviewQueue"],
-        appliedActions: projected.appliedActionRows.map((row) => ({
-          action: row.action,
-          memoryId: row.memoryId,
-          reasonCode: row.reasonCode,
-          beforeStatus: row.beforeStatus,
-          afterStatus: row.afterStatus,
-          originalPath: row.originalPath,
-          currentPath: row.currentPath,
-        })) as Awaited<
-          ReturnType<typeof readMemoryGovernanceRunArtifact>
-        >["appliedActions"],
-        transitionReport: undefined,
+        appliedActions: projectedAppliedActions,
+        transitionReport,
         report: projected.report,
       };
     }
