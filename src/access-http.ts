@@ -201,7 +201,7 @@ export class EngramAccessHttpServer {
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       };
       const idempotencyStatus = await this.service.peekMemoryStoreIdempotency(request);
-      if (idempotencyStatus === "miss") {
+      if (idempotencyStatus === "miss" && request.dryRun !== true) {
         this.ensureWriteRateLimitAvailable();
       }
       const response = await this.service.memoryStore(request);
@@ -230,7 +230,7 @@ export class EngramAccessHttpServer {
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       };
       const idempotencyStatus = await this.service.peekSuggestionSubmitIdempotency(request);
-      if (idempotencyStatus === "miss") {
+      if (idempotencyStatus === "miss" && request.dryRun !== true) {
         this.ensureWriteRateLimitAvailable();
       }
       const response = await this.service.suggestionSubmit(request);
@@ -452,7 +452,7 @@ export class EngramAccessHttpServer {
     this.writeRequestTimestamps.push(Date.now());
   }
 
-  private shouldCountWriteRateLimit(response: { idempotencyReplay?: boolean }): boolean {
-    return response.idempotencyReplay !== true;
+  private shouldCountWriteRateLimit(response: { dryRun?: boolean; idempotencyReplay?: boolean }): boolean {
+    return response.dryRun !== true && response.idempotencyReplay !== true;
   }
 }

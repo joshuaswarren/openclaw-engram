@@ -385,11 +385,15 @@ test("access service serializes result paths from the snapshot namespace", async
   try {
     const globalStorage = new StorageManager(memoryDir);
     const namespaceStorage = new StorageManager(path.join(memoryDir, "namespaces", "project-x"));
-    const namespacedPath = path.join(namespaceStorage.dir, "facts/2026-03-08/fact-project.md");
+    const namespacedPath = path.join(namespaceStorage.dir, "archive/2026-03-08/fact-project.md");
     await writeText(
       namespaceStorage.dir,
-      "facts/2026-03-08/fact-project.md",
-      memoryDoc("fact-project", "Namespace-scoped path recall serialization."),
+      "archive/2026-03-08/fact-project.md",
+      memoryDoc(
+        "fact-project",
+        "Namespace-scoped path recall serialization.",
+        ['archivedAt: 2026-03-08T01:00:00.000Z'],
+      ),
     );
     const snapshot = {
       sessionKey: "sess-1",
@@ -446,6 +450,8 @@ test("access service serializes result paths from the snapshot namespace", async
     assert.equal(response.namespace, "project-x");
     assert.equal(response.results.length, 1);
     assert.equal(response.results[0]?.id, "fact-project");
+    assert.equal(response.results[0]?.status, "archived");
+    assert.match(response.results[0]?.path ?? "", /archive\/2026-03-08\/fact-project\.md$/);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

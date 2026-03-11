@@ -327,6 +327,7 @@ export class EngramAccessService {
     if (!snapshot) return [];
     const namespace = snapshot.namespace ? this.resolveNamespace(snapshot.namespace) : this.orchestrator.config.defaultNamespace;
     const storage = await this.orchestrator.getStorage(namespace);
+    const storageDir = storage.dir;
     const results: EngramAccessMemorySummary[] = [];
     const seen = new Set<string>();
 
@@ -335,7 +336,7 @@ export class EngramAccessService {
       const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
       seen.add(memoryPath);
-      results.push(this.serializeMemorySummary(memory, this.orchestrator.config.memoryDir));
+      results.push(this.serializeMemorySummary(memory, storageDir));
     }
 
     if (results.length > 0) return results;
@@ -344,7 +345,7 @@ export class EngramAccessService {
       const memory = await storage.getMemoryById(memoryId);
       if (!memory || seen.has(memory.path)) continue;
       seen.add(memory.path);
-      results.push(this.serializeMemorySummary(memory, this.orchestrator.config.memoryDir));
+      results.push(this.serializeMemorySummary(memory, storageDir));
     }
     return results;
   }

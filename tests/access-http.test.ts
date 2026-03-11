@@ -682,6 +682,113 @@ test("access HTTP server allows idempotent replay writes even after the write li
   }
 });
 
+test("access HTTP server does not consume the write rate limit for dry-run writes", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      peekMemoryStoreIdempotency: async () => "miss",
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+    for (let index = 0; index < 40; index += 1) {
+      const preview = await fetch(`${base}/engram/v1/memories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          dryRun: true,
+          content: `Preview ${index}`,
+          category: "fact",
+        }),
+      });
+      assert.equal(preview.status, 200);
+    }
+
+    const write = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        content: "A real write should still fit after repeated previews.",
+        category: "fact",
+      }),
+    });
+    assert.equal(write.status, 201);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP server allows dry-run writes even after the write limit is full", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      peekMemoryStoreIdempotency: async () => "miss",
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+    for (let index = 0; index < 30; index += 1) {
+      const response = await fetch(`${base}/engram/v1/memories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          content: `A new write ${index}`,
+          category: "fact",
+        }),
+      });
+      assert.equal(response.status, 201);
+    }
+
+    const preview = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        dryRun: true,
+        content: "This preview should bypass the full limiter window.",
+        category: "fact",
+      }),
+    });
+    assert.equal(preview.status, 200);
+
+    const overflow = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        content: "This real write should still be rate-limited.",
+        category: "fact",
+      }),
+    });
+    assert.equal(overflow.status, 429);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server binds namespace write authorization to its configured principal", async () => {
   const service = new EngramAccessService({
     config: {
