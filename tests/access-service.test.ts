@@ -1604,6 +1604,8 @@ test("access service backfills projected governance quality scores from projecte
     assert.equal(queue.found, true);
     assert.equal(queue.qualityScore?.score, 94);
     assert.equal(queue.qualityScore?.grade, "excellent");
+    assert.equal(queue.metrics?.qualityScore?.score, 94);
+    assert.equal(queue.metrics?.qualityScore?.grade, "excellent");
     assert.equal(Object.keys(queue.transitionReport?.proposed ?? {}).length > 0, true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
@@ -1712,6 +1714,177 @@ test("access service projected governance fallback mirrors same-status filtering
     assert.deepEqual(Object.keys(queue.transitionReport?.proposed ?? {}), ["archived"]);
     assert.equal(queue.transitionReport?.proposed.archived?.length, 1);
     assert.equal(queue.transitionReport?.proposed.archived?.[0]?.reasonCode, "archive_candidate");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service projected governance response reconstructs proposed transitions when legacy artifacts leave them empty", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-legacy-transitions-"));
+  try {
+    const memoryPath = path.join(memoryDir, "facts/2026-03-01/fact-1.md");
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/summary.json",
+      JSON.stringify({
+        runId: "gov-legacy-artifact",
+        traceId: "trace-legacy-artifact",
+        mode: "shadow",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        scannedMemories: 1,
+        reviewQueueCount: 1,
+        proposedActionCount: 1,
+        appliedActionCount: 0,
+        ruleVersion: "memory-governance.v2",
+        schemaVersion: 1,
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/metrics.json",
+      JSON.stringify({
+        reviewReasons: {
+          exact_duplicate: 0,
+          semantic_duplicate_candidate: 0,
+          disputed_memory: 0,
+          speculative_low_confidence: 0,
+          archive_candidate: 1,
+          explicit_capture_review: 0,
+          malformed_import: 0,
+        },
+        proposedStatuses: {
+          archived: 1,
+        },
+        keptMemoryCount: 0,
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/kept-memories.json",
+      JSON.stringify([]),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/review-queue.json",
+      JSON.stringify([]),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/applied-actions.json",
+      JSON.stringify([]),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/status-transitions.json",
+      JSON.stringify({
+        proposed: {},
+        applied: {},
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/manifest.json",
+      JSON.stringify({
+        schemaVersion: 1,
+        runId: "gov-legacy-artifact",
+        traceId: "trace-legacy-artifact",
+        mode: "shadow",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        ruleVersion: "memory-governance.v2",
+        artifacts: {},
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "state/memory-governance/runs/gov-legacy-artifact/report.md",
+      "legacy artifact report\n",
+    );
+
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () =>
+        ({
+          dir: memoryDir,
+          async getProjectedGovernanceRecord() {
+            return {
+              runId: "gov-legacy-artifact",
+              summary: {
+                runId: "gov-legacy-artifact",
+                traceId: "trace-legacy-artifact",
+                mode: "shadow",
+                createdAt: "2026-03-09T12:00:00.000Z",
+                scannedMemories: 1,
+                reviewQueueCount: 1,
+                proposedActionCount: 1,
+                appliedActionCount: 0,
+                ruleVersion: "memory-governance.v2",
+                schemaVersion: 1,
+              },
+              metrics: {
+                reviewReasons: {
+                  exact_duplicate: 0,
+                  semantic_duplicate_candidate: 0,
+                  disputed_memory: 0,
+                  speculative_low_confidence: 0,
+                  archive_candidate: 1,
+                  explicit_capture_review: 0,
+                  malformed_import: 0,
+                },
+                proposedStatuses: {
+                  archived: 1,
+                },
+                keptMemoryCount: 0,
+              },
+              reviewQueueRows: [{
+                runId: "gov-legacy-artifact",
+                entryId: "review:fact-1:archive_candidate",
+                memoryId: "fact-1",
+                path: memoryPath,
+                reasonCode: "archive_candidate",
+                severity: "medium",
+                suggestedAction: "archive",
+                suggestedStatus: undefined,
+                relatedMemoryIds: [],
+              }],
+              appliedActionRows: [],
+              report: "legacy artifact report",
+            };
+          },
+          async getMemoryById(memoryId: string) {
+            if (memoryId !== "fact-1") return null;
+            return {
+              path: memoryPath,
+              frontmatter: {
+                id: "fact-1",
+                category: "fact",
+                created: "2026-03-01T00:00:00.000Z",
+                updated: "2026-03-01T00:00:00.000Z",
+                source: "test",
+                confidence: 0.9,
+                confidenceTier: "explicit",
+                status: "active",
+                tags: [],
+              },
+              content: "Legacy artifact projected transition fallback coverage.",
+            };
+          },
+        }) as any,
+    } as any);
+
+    const queue = await service.reviewQueue("gov-legacy-artifact");
+    assert.equal(queue.found, true);
+    assert.deepEqual(Object.keys(queue.transitionReport?.proposed ?? {}), ["archived"]);
+    assert.equal(queue.transitionReport?.proposed.archived?.length, 1);
+    assert.equal(queue.transitionReport?.proposed.archived?.[0]?.memoryId, "fact-1");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

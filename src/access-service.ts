@@ -214,6 +214,13 @@ async function buildProjectedGovernanceProposedActions(
   return buildProposedActions(reviewQueue, memories);
 }
 
+function hasGroupedGovernanceActions(
+  grouped?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["transitionReport"]["proposed"],
+): boolean {
+  if (!grouped) return false;
+  return Object.values(grouped).some((actions) => Array.isArray(actions) && actions.length > 0);
+}
+
 export interface EngramAccessReviewDispositionRequest {
   memoryId: string;
   status: MemoryStatus | "archived";
@@ -948,10 +955,22 @@ export class EngramAccessService {
         }
       })();
       const metrics = projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"];
-      const transitionReport = projectedArtifact?.transitionReport ?? {
+      const fallbackTransitionReport = {
         proposed: groupActionsByStatus(projectedProposedActions),
         applied: groupActionsByStatus(projectedAppliedActions),
       };
+      const transitionReport = projectedArtifact?.transitionReport
+        ? {
+            proposed:
+              hasGroupedGovernanceActions(projectedArtifact.transitionReport.proposed) || projectedProposedActions.length === 0
+                ? projectedArtifact.transitionReport.proposed
+                : fallbackTransitionReport.proposed,
+            applied:
+              hasGroupedGovernanceActions(projectedArtifact.transitionReport.applied) || projectedAppliedActions.length === 0
+                ? projectedArtifact.transitionReport.applied
+                : fallbackTransitionReport.applied,
+          }
+        : fallbackTransitionReport;
       const qualityScore = projectedArtifact?.qualityScore ?? metrics?.qualityScore ?? buildQualityScore(metrics?.reviewReasons ?? {
         exact_duplicate: 0,
         semantic_duplicate_candidate: 0,
@@ -961,13 +980,14 @@ export class EngramAccessService {
         explicit_capture_review: 0,
         malformed_import: 0,
       });
+      const effectiveMetrics = metrics ? { ...metrics, qualityScore: metrics.qualityScore ?? qualityScore } : metrics;
 
       return {
         found: true,
         namespace: resolvedNamespace,
         runId: projected.runId,
         summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
-        metrics,
+        metrics: effectiveMetrics,
         qualityScore,
         reviewQueue: projected.reviewQueueRows.map((row) => ({
           entryId: row.entryId,

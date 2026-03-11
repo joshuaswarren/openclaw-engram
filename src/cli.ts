@@ -5020,7 +5020,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
             ? options.namespace.trim()
             : undefined;
-          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
           const result = await runMemoryGovernanceCliCommand({
             memoryDir,
             mode,
@@ -5039,7 +5041,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
             ? options.namespace.trim()
             : undefined;
-          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
           const report = await runMemoryGovernanceReportCliCommand({
             memoryDir,
             runId: typeof options.runId === "string" && options.runId.trim().length > 0
@@ -5063,7 +5067,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
             ? options.namespace.trim()
             : undefined;
-          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
           const result = await runMemoryGovernanceRestoreCliCommand({
             memoryDir,
             runId: options.runId.trim(),
