@@ -3,6 +3,8 @@ import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { log } from "../logger.js";
+import { sanitizeMemoryContent } from "../sanitize.js";
+import { StorageManager } from "../storage.js";
 import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
 import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
 import { parseContinuityIncident, parseContinuityImprovementLoops } from "../identity-continuity.js";
@@ -42,11 +44,17 @@ type ActionOutcomeSummary = {
 };
 
 type PromotionCandidate = {
-  action: string;
+  id: string;
+  sourceType: "action-outcome" | "mistake-pattern" | "rubric";
+  subject: string;
+  category: "principle" | "rule";
+  content: string;
   score: number;
   rationale: string;
-  outcome: ActionOutcomeCounts;
+  outcome: ActionOutcomeCounts | null;
   provenance: string[];
+  agent: string | null;
+  workflow: string | null;
 };
 
 type CompoundingEntrySeverity = "low" | "medium" | "high";
@@ -128,6 +136,27 @@ type WeeklyCompoundingArtifact = {
   promotionCandidates: PromotionCandidate[];
   continuity: { monthId: string; weeklyPath: string | null; monthlyPath: string | null };
 };
+
+export interface CompoundingPromotionReport {
+  enabled: boolean;
+  dryRun: boolean;
+  weekId: string;
+  promoted: Array<{
+    id: string;
+    candidateId: string;
+    category: "principle" | "rule";
+    content: string;
+    confidence: number;
+    tags: string[];
+    lineage: string[];
+  }>;
+  skipped: Array<{
+    weekId: string;
+    candidateId?: string;
+    reason: "disabled" | "weekly-artifact-missing" | "candidate-not-found" | "duplicate-guidance";
+    existingMemoryId?: string;
+  }>;
+}
 
 type WeeklyActionEvent = {
   line: number;
@@ -224,6 +253,18 @@ function stableRubricId(kind: "agent" | "workflow", subject: string): string {
   return `${kind}:${stableSlug(subject)}`;
 }
 
+function stablePromotionCandidateId(
+  sourceType: PromotionCandidate["sourceType"],
+  subject: string,
+  content: string,
+): string {
+  const digest = createHash("sha256")
+    .update(`${sourceType}\u0000${subject}\u0000${content}`)
+    .digest("hex")
+    .slice(0, 12);
+  return `${sourceType}:${digest}`;
+}
+
 function rubricArtifactFileName(
   entry: Pick<RubricSnapshotEntry, "kind" | "subject">,
   slugCollisions: ReadonlyMap<string, number>,
@@ -262,6 +303,53 @@ function inferLegacyMistakeMetadata(pattern: string): {
     agent: scope.agent,
     workflow: scope.workflow,
   };
+}
+
+function normalizePromotionWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function stripTrailingPromotionPunctuation(value: string): string {
+  return value.replace(/[,:;]+$/g, "").trim();
+}
+
+function extractExplicitIfThenRule(value: string): string | null {
+  const normalized = normalizePromotionWhitespace(value);
+  const match = normalized.match(/^if\b([\s\S]+?)\bthen\b([\s\S]+?)(?:[.!?])?$/i);
+  if (!match) return null;
+  const condition = stripTrailingPromotionPunctuation(normalizePromotionWhitespace(match[1] ?? ""));
+  const outcome = stripTrailingPromotionPunctuation(normalizePromotionWhitespace(match[2] ?? ""));
+  if (condition.length === 0 || outcome.length === 0) return null;
+  return `IF ${condition} THEN ${outcome}.`;
+}
+
+function normalizePromotedGuidanceContent(value: string): string {
+  const explicitRule = extractExplicitIfThenRule(value);
+  if (explicitRule) return explicitRule;
+  const normalized = normalizePromotionWhitespace(value);
+  if (normalized.length === 0) return normalized;
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function canonicalPromotionContentKey(value: string): string {
+  return normalizePromotedGuidanceContent(value).toLowerCase();
+}
+
+function lessonContentFromPattern(pattern: string, agent: string | null): string {
+  if (!agent) return normalizePromotionWhitespace(pattern);
+  const prefix = `${agent}:`;
+  if (!pattern.startsWith(prefix)) return normalizePromotionWhitespace(pattern);
+  const withoutPrefix = pattern.slice(prefix.length).trim();
+  return withoutPrefix.length > 0 ? normalizePromotionWhitespace(withoutPrefix) : normalizePromotionWhitespace(pattern);
+}
+
+function promotionCategoryForContent(content: string): "principle" | "rule" {
+  return extractExplicitIfThenRule(content) ? "rule" : "principle";
+}
+
+function clampPromotionScore(value: number): number {
+  if (!Number.isFinite(value)) return 0.65;
+  return Number(Math.max(0.65, Math.min(0.98, value)).toFixed(3));
 }
 
 export type TierMigrationCycleTrigger = "extraction" | "maintenance";
@@ -402,12 +490,12 @@ export class CompoundingEngine {
     const actionEvents = await this.readActionEventsForWeek(weekId);
     const actionPatterns = this.buildActionFailurePatterns(actionEvents);
     const outcomeSummary = this.buildActionOutcomeSummary(actionEvents);
-    const promotionCandidates = this.config.compoundingSemanticEnabled
-      ? this.derivePromotionCandidates(outcomeSummary)
-      : [];
     const previousMistakes = await this.readMistakes();
     const mistakes = this.buildMistakes(entries, actionPatterns, weekId, previousMistakes?.registry ?? []);
     const rubrics = this.buildRubricSnapshot(entries, outcomeSummary);
+    const promotionCandidates = this.config.compoundingSemanticEnabled
+      ? this.derivePromotionCandidates(outcomeSummary, mistakes.registry, rubrics)
+      : [];
     const continuity = this.config.continuityAuditEnabled
       ? await this.readContinuityAuditReferences(weekId)
       : { monthId: monthIdFromIsoWeek(weekId), weeklyPath: null, monthlyPath: null };
@@ -485,6 +573,96 @@ export class CompoundingEngine {
       mistakesCount: mistakes.patterns.length,
       promotionCandidateCount: promotionCandidates.length,
     };
+  }
+
+  async promoteCandidate(opts: {
+    weekId: string;
+    candidateId: string;
+    dryRun?: boolean;
+  }): Promise<CompoundingPromotionReport> {
+    const report: CompoundingPromotionReport = {
+      enabled: this.config.compoundingEnabled === true && this.config.compoundingSemanticEnabled === true,
+      dryRun: opts.dryRun === true,
+      weekId: opts.weekId,
+      promoted: [],
+      skipped: [],
+    };
+    if (!report.enabled) {
+      report.skipped.push({ weekId: opts.weekId, candidateId: opts.candidateId, reason: "disabled" });
+      return report;
+    }
+
+    const artifact = await this.readWeeklyArtifact(opts.weekId);
+    if (!artifact) {
+      report.skipped.push({ weekId: opts.weekId, candidateId: opts.candidateId, reason: "weekly-artifact-missing" });
+      return report;
+    }
+
+    const candidate = artifact.promotionCandidates.find((entry) => entry.id === opts.candidateId);
+    if (!candidate) {
+      report.skipped.push({ weekId: opts.weekId, candidateId: opts.candidateId, reason: "candidate-not-found" });
+      return report;
+    }
+
+    const content = normalizePromotedGuidanceContent(candidate.content);
+    const persistedContent = sanitizeMemoryContent(content).text;
+    const storage = new StorageManager(this.config.memoryDir);
+    const existing = (await storage.readAllMemories()).find((memory) =>
+      memory.frontmatter.category === candidate.category &&
+      memory.frontmatter.status !== "archived" &&
+      canonicalPromotionContentKey(memory.content) === canonicalPromotionContentKey(persistedContent)
+    );
+    if (existing) {
+      report.skipped.push({
+        weekId: opts.weekId,
+        candidateId: opts.candidateId,
+        reason: "duplicate-guidance",
+        existingMemoryId: existing.frontmatter.id,
+      });
+      return report;
+    }
+
+    const tags = [
+      "compounding",
+      "compounding-promotion",
+      `compounding-source-${candidate.sourceType}`,
+      ...(candidate.agent ? [`agent:${stableSlug(candidate.agent)}`] : []),
+      ...(candidate.workflow ? [`workflow:${stableSlug(candidate.workflow)}`] : []),
+    ];
+    const uniqueTags = [...new Set(tags)];
+    const lineage = [`compounding:${opts.weekId}:${opts.candidateId}`];
+    const confidence = clampPromotionScore(candidate.score);
+
+    if (opts.dryRun === true) {
+      report.promoted.push({
+        id: `dry-run:${opts.weekId}:${opts.candidateId}`,
+        candidateId: opts.candidateId,
+        category: candidate.category,
+        content: persistedContent,
+        confidence,
+        tags: uniqueTags,
+        lineage,
+      });
+      return report;
+    }
+
+    const id = await storage.writeMemory(candidate.category, persistedContent, {
+      source: "compounding-promotion",
+      tags: uniqueTags,
+      confidence,
+      lineage,
+      memoryKind: "note",
+    });
+    report.promoted.push({
+      id,
+      candidateId: opts.candidateId,
+      category: candidate.category,
+      content: persistedContent,
+      confidence,
+      tags: uniqueTags,
+      lineage,
+    });
+    return report;
   }
 
   async synthesizeContinuityAudit(opts?: {
@@ -619,6 +797,23 @@ export class CompoundingEngine {
       if (!parsed || !Array.isArray(parsed.agents) || !Array.isArray(parsed.workflows)) return null;
       parsed.agents = parsed.agents.map((entry) => this.normalizeRubricEntry(entry));
       parsed.workflows = parsed.workflows.map((entry) => this.normalizeRubricEntry(entry));
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async readWeeklyArtifact(weekId: string): Promise<WeeklyCompoundingArtifact | null> {
+    try {
+      const raw = await readFile(path.join(this.weeklyDir, `${weekId}.json`), "utf-8");
+      const parsed = JSON.parse(raw) as WeeklyCompoundingArtifact;
+      if (
+        !parsed ||
+        parsed.weekId !== weekId ||
+        !Array.isArray(parsed.promotionCandidates)
+      ) {
+        return null;
+      }
       return parsed;
     } catch {
       return null;
@@ -823,21 +1018,99 @@ export class CompoundingEngine {
     return out;
   }
 
-  private derivePromotionCandidates(summary: ActionOutcomeSummary[]): PromotionCandidate[] {
-    const out: PromotionCandidate[] = [];
+  private derivePromotionCandidates(
+    summary: ActionOutcomeSummary[],
+    mistakes: MistakeRegistryEntry[],
+    rubrics: RubricSnapshot,
+  ): PromotionCandidate[] {
+    const deduped = new Map<string, PromotionCandidate>();
+    const upsert = (candidate: PromotionCandidate) => {
+      const key = `${candidate.category}:${canonicalPromotionContentKey(candidate.content)}`;
+      const existing = deduped.get(key);
+      if (!existing) {
+        deduped.set(key, candidate);
+        return;
+      }
+      const mergedProvenance = [...new Set([...existing.provenance, ...candidate.provenance])];
+      if (candidate.score > existing.score) {
+        deduped.set(key, {
+          ...candidate,
+          provenance: mergedProvenance,
+        });
+        return;
+      }
+      existing.provenance = mergedProvenance;
+    };
+
     for (const item of summary) {
       if (item.total < 3) continue;
       if (item.weightedScore < 0.3) continue;
-      out.push({
-        action: item.action,
+      const content = normalizePromotedGuidanceContent(
+        `Prefer ${item.action} when the same workflow recurs; this week's outcomes were applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown}.`,
+      );
+      upsert({
+        id: stablePromotionCandidateId("action-outcome", item.action, content),
+        sourceType: "action-outcome",
+        subject: item.action,
+        category: promotionCategoryForContent(content),
+        content,
         score: item.weightedScore,
         rationale: "High applied ratio with low failure/skips in weekly outcome telemetry.",
         outcome: item.counts,
         provenance: item.provenance,
+        agent: null,
+        workflow: "memory-actions",
       });
     }
-    return out
-      .sort((a, b) => b.score - a.score || a.action.localeCompare(b.action))
+
+    for (const entry of mistakes) {
+      if (entry.status !== "active") continue;
+      if (entry.recurrenceCount < 2) continue;
+      const content = normalizePromotedGuidanceContent(lessonContentFromPattern(entry.pattern, entry.agent));
+      if (content.length === 0) continue;
+      const confidence = entry.confidence ?? 0.75;
+      const score = Number(Math.min(0.97, 0.45 + Math.min(entry.recurrenceCount, 6) * 0.08 + confidence * 0.15).toFixed(3));
+      upsert({
+        id: stablePromotionCandidateId("mistake-pattern", entry.id, content),
+        sourceType: "mistake-pattern",
+        subject: entry.pattern,
+        category: promotionCategoryForContent(content),
+        content,
+        score,
+        rationale: `Recurring lesson still active after ${entry.recurrenceCount} confirmations in the mistake registry.`,
+        outcome: null,
+        provenance: entry.provenance.length > 0 ? entry.provenance : [`mistakes.json#${entry.id}`],
+        agent: entry.agent,
+        workflow: entry.workflow,
+      });
+    }
+
+    for (const rubric of [...rubrics.workflows, ...rubrics.agents]) {
+      for (const observation of this.getRubricObservationEntries(rubric)) {
+        if (this.isSyntheticOutcomeRubricObservation(observation.note)) continue;
+        const evidenceCount = observation.provenance.length;
+        if (evidenceCount < 2) continue;
+        const content = normalizePromotedGuidanceContent(observation.note);
+        if (content.length === 0) continue;
+        const score = Number(Math.min(0.95, 0.5 + Math.min(evidenceCount, 5) * 0.08).toFixed(3));
+        upsert({
+          id: stablePromotionCandidateId("rubric", `${rubric.id}:${observation.note}`, content),
+          sourceType: "rubric",
+          subject: `${rubric.kind}:${rubric.subject}`,
+          category: promotionCategoryForContent(content),
+          content,
+          score,
+          rationale: `Rubric guidance repeated across ${evidenceCount} supporting observations.`,
+          outcome: null,
+          provenance: observation.provenance,
+          agent: rubric.kind === "agent" ? rubric.subject : null,
+          workflow: rubric.kind === "workflow" ? rubric.subject : null,
+        });
+      }
+    }
+
+    return [...deduped.values()]
+      .sort((a, b) => b.score - a.score || a.subject.localeCompare(b.subject))
       .slice(0, 10);
   }
 
@@ -1067,13 +1340,16 @@ export class CompoundingEngine {
         lines.push("- (no advisory promotion candidates this week)");
       } else {
         for (const candidate of promotionCandidates) {
+          const outcomeSummaryText = candidate.outcome
+            ? ` outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}, u=${candidate.outcome.unknown}]`
+            : "";
           lines.push(
-            `- ${candidate.action} (score=${candidate.score}): ${candidate.rationale} outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}, u=${candidate.outcome.unknown}] _(source: ${candidate.provenance.join(", ")})_`,
+            `- [${candidate.sourceType}] ${candidate.subject} -> ${candidate.content} (category=${candidate.category}, score=${candidate.score}, id=${candidate.id}): ${candidate.rationale}${outcomeSummaryText} _(source: ${candidate.provenance.join(", ")})_`,
           );
         }
       }
       lines.push("");
-      lines.push("_Advisory only: no automatic promotion write is performed by this report._");
+      lines.push("_Advisory only: no automatic promotion write is performed by this report. Use `compounding_promote_candidate` or `openclaw engram compounding-promote` to persist one manually._");
       lines.push("");
     }
 
@@ -1302,6 +1578,10 @@ export class CompoundingEngine {
       note,
       provenance: entry.provenance[index] ? [entry.provenance[index]] : (entry.provenance[0] ? [entry.provenance[0]] : []),
     }));
+  }
+
+  private isSyntheticOutcomeRubricObservation(note: string): boolean {
+    return note.trimStart().startsWith("Outcome weight=");
   }
 
   private addRubricObservation(entry: RubricSnapshotEntry, note: string, ...provenance: string[]): void {

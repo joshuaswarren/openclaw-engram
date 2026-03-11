@@ -78,6 +78,7 @@ import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import { runCompatChecks } from "./compat/checks.js";
+import { parseConfig } from "./config.js";
 import type { CompatReport, CompatRunner } from "./compat/types.js";
 import {
   createEvalBaselineSnapshot,
@@ -1205,6 +1206,30 @@ export async function runSemanticRulePromoteCliCommand(options: {
     memoryDir: options.memoryDir,
     enabled: options.semanticRulePromotionEnabled,
     sourceMemoryId: options.sourceMemoryId,
+    dryRun: options.dryRun,
+  });
+}
+
+export async function runCompoundingPromoteCliCommand(options: {
+  memoryDir: string;
+  compoundingEnabled: boolean;
+  compoundingSemanticEnabled: boolean;
+  weekId: string;
+  candidateId: string;
+  dryRun?: boolean;
+}) {
+  const { CompoundingEngine } = await import("./compounding/engine.js");
+  const config = parseConfig({
+    memoryDir: options.memoryDir,
+    qmdEnabled: false,
+    sharedContextEnabled: false,
+    compoundingEnabled: options.compoundingEnabled,
+    compoundingSemanticEnabled: options.compoundingSemanticEnabled,
+  });
+  const engine = new CompoundingEngine(config);
+  return engine.promoteCandidate({
+    weekId: options.weekId,
+    candidateId: options.candidateId,
     dryRun: options.dryRun,
   });
 }
@@ -4139,6 +4164,26 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             memoryDir: orchestrator.config.memoryDir,
             semanticRulePromotionEnabled: orchestrator.config.semanticRulePromotionEnabled,
             sourceMemoryId: String(options.memoryId ?? ""),
+            dryRun: options.dryRun === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("compounding-promote")
+        .description("Promote an advisory compounding candidate into a durable rule/principle memory")
+        .requiredOption("--week-id <weekId>", "Weekly compounding artifact id (YYYY-Www)")
+        .requiredOption("--candidate-id <candidateId>", "Promotion candidate id from weekly compounding JSON/report")
+        .option("--dry-run", "Preview the promoted guidance without writing it")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runCompoundingPromoteCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            compoundingEnabled: orchestrator.config.compoundingEnabled,
+            compoundingSemanticEnabled: orchestrator.config.compoundingSemanticEnabled,
+            weekId: String(options.weekId ?? ""),
+            candidateId: String(options.candidateId ?? ""),
             dryRun: options.dryRun === true,
           });
           console.log(JSON.stringify(result, null, 2));

@@ -2878,4 +2878,39 @@ Best for:
     },
     { name: "compounding_weekly_synthesize" },
   );
+
+  api.registerTool(
+    {
+      name: "compounding_promote_candidate",
+      label: "Promote Compounding Candidate",
+      description:
+        "Persist one advisory compounding promotion candidate into durable rule/principle memory. Never auto-promotes; this is an explicit operator action.",
+      parameters: Type.Object({
+        weekId: Type.String({
+          description: "ISO week ID like YYYY-Www matching the synthesized weekly artifact.",
+        }),
+        candidateId: Type.String({
+          description: "Promotion candidate id from the weekly compounding report or JSON artifact.",
+        }),
+        dryRun: Type.Optional(Type.Boolean({
+          description: "If true, preview the promoted guidance without writing memory.",
+        })),
+      }),
+      async execute(_toolCallId, params) {
+        if (!orchestrator.compounding) {
+          return toolResult(
+            "Compounding engine is disabled. Enable `compoundingEnabled: true` to use this tool.",
+          );
+        }
+        const { weekId, candidateId, dryRun } = params as {
+          weekId: string;
+          candidateId: string;
+          dryRun?: boolean;
+        };
+        const result = await orchestrator.compounding.promoteCandidate({ weekId, candidateId, dryRun });
+        return toolResult(JSON.stringify(result, null, 2));
+      },
+    },
+    { name: "compounding_promote_candidate" },
+  );
 }
