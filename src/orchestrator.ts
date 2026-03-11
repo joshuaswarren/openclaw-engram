@@ -4318,7 +4318,10 @@ export class Orchestrator {
           latencyMs: Date.now() - recallStart,
           resultPaths: recalledMemoryPaths,
           policyVersion,
-          appendImpression: impressionRecorded || this.config.recordEmptyRecallImpressions,
+          appendImpression:
+            impressionRecorded ||
+            recalledMemoryIds.length > 0 ||
+            this.config.recordEmptyRecallImpressions,
           identityInjection: {
             mode: identityInjectionModeUsed,
             injectedChars: identityInjectedChars,

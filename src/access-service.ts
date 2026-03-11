@@ -447,12 +447,15 @@ export class EngramAccessService {
   async recallExplain(
     request: EngramAccessRecallExplainRequest = {},
   ): Promise<EngramAccessRecallExplainResponse> {
-    const requestedNamespace = this.resolveRecallNamespace(request.namespace, request.sessionKey);
+    const requestedNamespace = request.sessionKey
+      ? this.resolveRecallNamespace(request.namespace, request.sessionKey)
+      : this.resolveNamespace(request.namespace);
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : (() => {
         const candidate = this.orchestrator.lastRecall.getMostRecent();
-        if (!requestedNamespace || !candidate?.namespace) return candidate;
+        if (!candidate) return null;
+        if (!requestedNamespace) return candidate;
         return candidate.namespace === requestedNamespace ? candidate : null;
       })();
     const namespace = requestedNamespace ?? snapshot?.namespace ?? this.orchestrator.config.defaultNamespace;
