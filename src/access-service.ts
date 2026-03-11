@@ -439,10 +439,12 @@ export class EngramAccessService {
     }
   }
 
-  async health(): Promise<EngramAccessHealthResponse> {
+  async health(namespace?: string): Promise<EngramAccessHealthResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     let projectionAvailable = false;
     try {
-      await stat(getMemoryProjectionPath(this.orchestrator.config.memoryDir));
+      await stat(getMemoryProjectionPath(storage.dir));
       projectionAvailable = true;
     } catch {
       projectionAvailable = false;
@@ -450,7 +452,7 @@ export class EngramAccessService {
 
     return {
       ok: true,
-      memoryDir: this.orchestrator.config.memoryDir,
+      memoryDir: storage.dir,
       namespacesEnabled: this.orchestrator.config.namespacesEnabled === true,
       defaultNamespace: this.orchestrator.config.defaultNamespace,
       searchBackend: this.orchestrator.config.searchBackend ?? "qmd",
@@ -962,7 +964,7 @@ export class EngramAccessService {
     const resolvedNamespace = this.resolveNamespace(namespace);
     return {
       namespace: resolvedNamespace,
-      health: await this.health(),
+      health: await this.health(resolvedNamespace),
       latestGovernanceRun: await this.reviewQueue(undefined, resolvedNamespace),
     };
   }

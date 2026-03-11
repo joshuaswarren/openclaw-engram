@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { EngramAccessInputError, EngramAccessService } from "../src/access-service.js";
 import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
+import { getMemoryProjectionPath } from "../src/memory-projection-store.js";
 import { StorageManager } from "../src/storage.js";
 
 function createService() {
@@ -1505,6 +1506,53 @@ test("access service serves reviewQueue and maintenance from projection when gov
       true,
     );
     assert.equal("runId" in (maintenance.latestGovernanceRun.reviewQueue?.[0] ?? {}), false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service maintenance uses namespace-scoped health metadata", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-maintenance-namespace-"));
+  try {
+    const globalDir = memoryDir;
+    const projectDir = path.join(memoryDir, "namespaces", "project-x");
+    await mkdir(path.dirname(getMemoryProjectionPath(projectDir)), { recursive: true });
+    await writeFile(getMemoryProjectionPath(projectDir), "");
+
+    const globalStorage = new StorageManager(globalDir);
+    const projectStorage = new StorageManager(projectDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir: globalDir,
+        namespacesEnabled: true,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [
+          {
+            name: "project-x",
+            readPrincipals: ["project-x"],
+            writePrincipals: ["project-x"],
+          },
+        ],
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async (namespace?: string) => (namespace === "project-x" ? projectStorage : globalStorage),
+    } as any);
+
+    const maintenance = await service.maintenance("project-x");
+    assert.equal(maintenance.namespace, "project-x");
+    assert.equal(maintenance.health.memoryDir, projectDir);
+    assert.equal(maintenance.health.projectionAvailable, true);
+
+    const globalMaintenance = await service.maintenance("global");
+    assert.equal(globalMaintenance.health.memoryDir, globalDir);
+    assert.equal(globalMaintenance.health.projectionAvailable, false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
