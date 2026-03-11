@@ -901,12 +901,7 @@ export async function runOperatorConfigReview(
     }));
   }
 
-  const qmdDependentFeatureEnabled =
-    config.qmdColdTierEnabled === true ||
-    config.qmdTierMigrationEnabled === true ||
-    (config.conversationIndexEnabled && config.conversationIndexBackend === "qmd");
-
-  if (searchBackend === "qmd" && config.qmdEnabled === false && qmdDependentFeatureEnabled) {
+  if (searchBackend === "qmd" && config.qmdEnabled === false) {
     findings.push(buildConfigReviewFinding({
       key: "qmd_search_backend_disabled",
       status: "problem",
@@ -973,7 +968,7 @@ export async function runOperatorConfigReview(
   return {
     schemaVersion: 1,
     generatedAt: now.toISOString(),
-    ok: summary.problem === 0,
+    ok: configStatus.parsed && summary.problem === 0,
     config: configStatus,
     profile: {
       memoryOsPreset: config.memoryOsPreset,

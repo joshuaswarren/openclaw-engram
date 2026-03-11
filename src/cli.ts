@@ -2812,6 +2812,8 @@ function formatOperatorConfigReviewCli(report: OperatorConfigReviewReport): stri
   const lines = [
     "=== Engram Config Review ===",
     "",
+    `Config parsed: ${report.config.parsed ? "yes" : "no"}`,
+    `Config path: ${report.config.path}`,
     `Preset: ${report.profile.memoryOsPreset ?? "(unset)"}`,
     `Search backend: ${report.profile.searchBackend}`,
     `QMD enabled: ${report.profile.qmdEnabled ? "yes" : "no"}`,
@@ -2822,6 +2824,9 @@ function formatOperatorConfigReviewCli(report: OperatorConfigReviewReport): stri
     "",
     `Summary: recommend=${report.summary.recommend} problem=${report.summary.problem}`,
   ];
+  if (!report.config.parsed && report.config.error) {
+    lines.push(`Config error: ${report.config.error}`);
+  }
   for (const finding of report.findings) {
     lines.push(`- [${finding.status.toUpperCase()}] ${finding.key}: ${finding.summary}`);
     lines.push(`  setting: ${finding.setting}`);

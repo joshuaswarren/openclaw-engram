@@ -206,7 +206,7 @@ test("setup CLI stays healthy when config discovery misses but runtime orchestra
 });
 
 test("doctor CLI warns instead of failing when config discovery misses but runtime orchestrator is valid", async () => {
-  const fixture = await makeFixture();
+  const fixture = await makeFixture({ qmdEnabled: true });
   const action = getAction(fixture.root, ["engram", "doctor"]);
   process.env.OPENCLAW_ENGRAM_CONFIG_PATH = path.join(os.tmpdir(), "missing-openclaw-config.json");
 
@@ -219,6 +219,25 @@ test("doctor CLI warns instead of failing when config discovery misses but runti
     assert.equal(report.ok, true);
     assert.equal(report.checks.some((check) => check.key === "config" && check.status === "warn"), true);
     assert.equal(result.exitCode, undefined);
+  } finally {
+    delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  }
+});
+
+test("config-review CLI fails when config discovery misses even if the runtime orchestrator is valid", async () => {
+  const fixture = await makeFixture({ qmdEnabled: true });
+  const action = getAction(fixture.root, ["engram", "config-review"]);
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = path.join(os.tmpdir(), "missing-openclaw-config.json");
+
+  try {
+    const result = await captureAction(action, { json: true });
+    const report = JSON.parse(result.output) as {
+      ok: boolean;
+      config: { parsed: boolean };
+    };
+    assert.equal(report.config.parsed, false);
+    assert.equal(report.ok, false);
+    assert.equal(result.exitCode, 1);
   } finally {
     delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
   }

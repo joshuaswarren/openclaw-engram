@@ -311,6 +311,19 @@ test("operator config review flags search and tier mismatches as problems", asyn
   assert.equal(report.findings.some((finding) => finding.key === "conversation_index_qmd_requires_qmd" && finding.status === "problem"), true);
 });
 
+test("operator config review flags qmd search backend disabled even without extra feature toggles", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: false,
+  });
+
+  const report = await runOperatorConfigReview({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.findings.some((finding) => finding.key === "qmd_search_backend_disabled" && finding.status === "problem"), true);
+});
+
 test("operator doctor includes config review problems in health output", async () => {
   const fixture = await makeFixture({
     qmdEnabled: false,
@@ -328,6 +341,34 @@ test("operator doctor includes config review problems in health output", async (
   assert.equal(report.ok, false);
   assert.ok(configReviewCheck);
   assert.equal(configReviewCheck?.status, "error");
+});
+
+test("operator doctor warns on config discovery misses when the runtime config is otherwise healthy", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+  });
+  const originalConfigPath = process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = path.join(os.tmpdir(), "missing-openclaw-config.json");
+
+  try {
+    const report = await runOperatorDoctor({
+      orchestrator: fixture.orchestrator,
+    });
+
+    const configCheck = report.checks.find((check) => check.key === "config");
+    const configReviewCheck = report.checks.find((check) => check.key === "config_review");
+    assert.equal(report.ok, true);
+    assert.ok(configCheck);
+    assert.ok(configReviewCheck);
+    assert.equal(configCheck?.status, "warn");
+    assert.equal(configReviewCheck?.status, "warn");
+  } finally {
+    if (originalConfigPath === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+    } else {
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH = originalConfigPath;
+    }
+  }
 });
 
 test("operator doctor omits qmd and auth remediation when those checks are healthy", async () => {
