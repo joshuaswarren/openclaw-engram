@@ -103,3 +103,60 @@ test("access idempotency store serializes concurrent flushes so neither key is d
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("access idempotency store serializes concurrent writes on the same store instance", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-idempotency-instance-"));
+  try {
+    const store = new AccessIdempotencyStore(memoryDir);
+    const verifier = new AccessIdempotencyStore(memoryDir);
+    let releaseFirstWrite: (() => void) | null = null;
+    const firstWritePaused = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstWriteEnteredResolve: (() => void) | null = null;
+    const firstWriteEntered = new Promise<void>((resolve) => {
+      firstWriteEnteredResolve = resolve;
+    });
+    let flushWriteCalls = 0;
+
+    setAccessIdempotencyTestHooks({
+      beforeFlushWrite: async () => {
+        flushWriteCalls += 1;
+        if (flushWriteCalls === 1) {
+          firstWriteEnteredResolve?.();
+          await firstWritePaused;
+        }
+      },
+    });
+
+    try {
+      const putA = store.put("key-a", "hash-a", { accepted: true });
+      await firstWriteEntered;
+
+      let putBResolved = false;
+      const putB = store.put("key-b", "hash-b", { queued: true }).then(() => {
+        putBResolved = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(
+        putBResolved,
+        false,
+        "second write on the same store should wait until the first write has finished mutating local state",
+      );
+
+      releaseFirstWrite?.();
+      await Promise.all([putA, putB]);
+    } finally {
+      setAccessIdempotencyTestHooks(null);
+    }
+
+    const readA = await verifier.get("key-a", "hash-a");
+    const readB = await verifier.get("key-b", "hash-b");
+
+    assert.deepEqual(readA.response, { accepted: true });
+    assert.deepEqual(readB.response, { queued: true });
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

@@ -41,6 +41,7 @@ export class AccessIdempotencyStore {
   private readonly lockPath: string;
   private loadedMtimeMs = 0;
   private state: Record<string, AccessIdempotencyEntry> = {};
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(memoryDir: string) {
     this.statePath = path.join(memoryDir, "state", "access-idempotency.json");
@@ -61,14 +62,16 @@ export class AccessIdempotencyStore {
   }
 
   async put(key: string, requestHash: string, response: unknown): Promise<void> {
-    await this.reload({ forceRefresh: true });
-    this.state[key] = {
-      recordedAt: new Date().toISOString(),
-      requestHash,
-      response: JSON.parse(JSON.stringify(response)),
-    };
-    await this.prune();
-    await this.flush();
+    await this.withWriteQueue(async () => {
+      await this.reload({ forceRefresh: true });
+      this.state[key] = {
+        recordedAt: new Date().toISOString(),
+        requestHash,
+        response: JSON.parse(JSON.stringify(response)),
+      };
+      await this.prune();
+      await this.flush();
+    });
   }
 
   private async reload(options: { forceRefresh?: boolean } = {}): Promise<void> {
@@ -179,6 +182,20 @@ export class AccessIdempotencyStore {
         }
         await sleep(10);
       }
+    }
+  }
+
+  private async withWriteQueue<T>(callback: () => Promise<T>): Promise<T> {
+    const previous = this.writeQueue;
+    let release!: () => void;
+    this.writeQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+    try {
+      return await callback();
+    } finally {
+      release();
     }
   }
 }
