@@ -92,6 +92,7 @@ That's it. Start a conversation — Engram begins learning immediately.
 
 ```bash
 openclaw engram setup --json      # Validates config, scaffolds directories, prints next steps
+openclaw engram config-review --json  # Opinionated config tuning recommendations + mismatches
 openclaw engram doctor --json     # Aggregated safe health diagnostics
 openclaw engram inventory --json  # Baseline memory/entity/storage footprint
 ```
@@ -241,6 +242,8 @@ Start with defaults, then enable features as needed. See [Enable All Features](d
 
 If you want a supported starting point for the advanced surface, set `memoryOsPreset` to one of `conservative`, `balanced`, `research-max`, or `local-llm-heavy`, then override only the few knobs you actually need.
 
+For the full config surface, including the shipped default and a recommended value for every option, see [docs/config-reference.md](docs/config-reference.md).
+
 ## Agent & Operator Commands
 
 ```bash
@@ -249,6 +252,7 @@ openclaw engram setup                       # Guided first-run setup + directory
 openclaw engram setup --preview-capture-instructions  # Preview the managed explicit-capture snippet
 openclaw engram setup --install-capture-instructions  # Install or update the managed explicit-capture snippet
 openclaw engram setup --remove-capture-instructions   # Remove the managed explicit-capture snippet
+openclaw engram config-review               # Review current config and recommend higher-leverage settings
 openclaw engram doctor                      # Aggregated setup/runtime diagnostics with remediation hints
 openclaw engram inventory                   # Memory, namespace, review queue, storage, and native-knowledge inventory
 openclaw engram search "your query"          # Search memories from CLI

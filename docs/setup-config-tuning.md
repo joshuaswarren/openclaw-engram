@@ -1,6 +1,11 @@
-# Setup, Configuration, and Tuning (v2.3-v5)
+# Setup, Configuration, and Tuning
 
-This guide is the operational runbook for enabling and tuning Engram features from v2.3 through v5.
+This guide is the operational runbook for enabling and tuning Engram features across the current Engram config surface.
+
+Operator loop:
+- Run `openclaw engram setup --json` after first install or after moving memory/workspace paths.
+- Run `openclaw engram config-review --json` to compare your active config with shipped defaults and recommended settings.
+- Run `openclaw engram doctor --json` to catch misconfigurations, missing dependencies, and runtime health problems before blaming recall quality on the model.
 
 ## 1) Enable Plugin + Core Config
 

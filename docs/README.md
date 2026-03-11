@@ -5,7 +5,7 @@
 - [Getting Started](getting-started.md) — Install, setup, first-run verification
 - [Search Backends](search-backends.md) — Choosing and configuring search engines (v9.0)
 - [Enable All Features](enable-all-v8.md) — Full-feature config profile
-- [Config Reference](config-reference.md) — Every setting, default, and description
+- [Config Reference](config-reference.md) — Every setting with defaults, recommended values, and operator guidance
 
 ## Architecture
 

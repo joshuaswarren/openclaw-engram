@@ -12,6 +12,7 @@ import {
 import { StorageManager } from "../src/storage.js";
 import {
   runBenchmarkRecall,
+  runOperatorConfigReview,
   runOperatorDoctor,
   runOperatorInventory,
   runOperatorRepair,
@@ -257,6 +258,117 @@ test("operator doctor warns when file hygiene linting is disabled", async () => 
   });
 
   assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
+});
+
+test("operator config review recommends balanced baseline improvements and workspace recall helpers", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+  });
+  await writeFile(path.join(fixture.workspaceDir, "IDENTITY.md"), "# Identity\n", "utf-8");
+
+  const report = await runOperatorConfigReview({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.summary.problem, 0);
+  assert.equal(report.summary.recommend > 0, true);
+  assert.equal(report.findings.some((finding) => finding.key === "balanced_preset" && finding.status === "recommend"), true);
+  assert.equal(report.findings.some((finding) => finding.key === "file_hygiene_enabled" && finding.status === "recommend"), true);
+  assert.equal(report.findings.some((finding) => finding.key === "native_knowledge_enabled" && finding.status === "recommend"), true);
+});
+
+test("operator config review does not second-guess the conservative preset", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+    memoryOsPreset: "conservative",
+  });
+
+  const report = await runOperatorConfigReview({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.findings.some((finding) => finding.key === "balanced_preset"), false);
+});
+
+test("operator config review flags search and tier mismatches as problems", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: false,
+    qmdTierMigrationEnabled: true,
+    conversationIndexEnabled: true,
+    conversationIndexBackend: "qmd",
+  });
+
+  const report = await runOperatorConfigReview({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.summary.problem >= 3, true);
+  assert.equal(report.findings.some((finding) => finding.key === "qmd_search_backend_disabled" && finding.status === "problem"), true);
+  assert.equal(report.findings.some((finding) => finding.key === "qmd_tier_migration_requires_cold_tier" && finding.status === "problem"), true);
+  assert.equal(report.findings.some((finding) => finding.key === "conversation_index_qmd_requires_qmd" && finding.status === "problem"), true);
+});
+
+test("operator config review flags qmd search backend disabled even without extra feature toggles", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: false,
+  });
+
+  const report = await runOperatorConfigReview({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.findings.some((finding) => finding.key === "qmd_search_backend_disabled" && finding.status === "problem"), true);
+});
+
+test("operator doctor includes config review problems in health output", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: false,
+    qmdTierMigrationEnabled: true,
+    conversationIndexEnabled: true,
+    conversationIndexBackend: "qmd",
+  });
+
+  const report = await runOperatorDoctor({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  const configReviewCheck = report.checks.find((check) => check.key === "config_review");
+  assert.equal(report.ok, false);
+  assert.ok(configReviewCheck);
+  assert.equal(configReviewCheck?.status, "error");
+});
+
+test("operator doctor warns on config discovery misses when the runtime config is otherwise healthy", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+  });
+  const originalConfigPath = process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = path.join(os.tmpdir(), "missing-openclaw-config.json");
+
+  try {
+    const report = await runOperatorDoctor({
+      orchestrator: fixture.orchestrator,
+    });
+
+    const configCheck = report.checks.find((check) => check.key === "config");
+    const configReviewCheck = report.checks.find((check) => check.key === "config_review");
+    assert.equal(report.ok, true);
+    assert.ok(configCheck);
+    assert.ok(configReviewCheck);
+    assert.equal(configCheck?.status, "warn");
+    assert.equal(configReviewCheck?.status, "warn");
+  } finally {
+    if (originalConfigPath === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+    } else {
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH = originalConfigPath;
+    }
+  }
 });
 
 test("operator doctor omits qmd and auth remediation when those checks are healthy", async () => {

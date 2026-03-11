@@ -72,13 +72,14 @@ For retrieval/planner/cache/config changes, run the mandatory hardening gate:
 
 ## Changelog policy
 
-This repository uses `CHANGELOG.md` as the public source of release notes.
+This repository uses `CHANGELOG.md` on `main` as the contributor-facing ledger for upcoming release notes.
+Published per-version notes ship through GitHub Releases from the tagged release workflow.
 
 - Add a concise entry in `## [Unreleased]` for user-facing changes.
 - Use one of the standard sections when possible: `Added`, `Changed`, `Fixed`, `Security`.
 - Keep entries short and outcome-focused.
 
-A CI check enforces changelog updates when source/config files change.
+A CI check enforces `Unreleased` changelog updates when source/config files change.
 Maintainers can bypass for exceptional cases by applying label `skip-changelog`.
 
 ## AI-assisted contributions

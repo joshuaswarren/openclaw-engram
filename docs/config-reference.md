@@ -2,6 +2,8 @@
 
 All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`.
 
+Use `openclaw engram config-review` for opinionated tuning recommendations and `openclaw engram doctor` for runtime or configuration problems. The narrative sections below explain the major feature groups; the schema-complete appendix at the bottom is the authoritative default-and-recommended matrix for every shipped config key.
+
 ## Core
 
 | Setting | Default | Description |
@@ -109,6 +111,9 @@ See [Search Backends](search-backends.md) for detailed configuration and compari
 | `qmdEnabled` | `true` | Use QMD for hybrid search |
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
 | `qmdMaxResults` | `8` | Final result cap after over-scanning and ranking (fetch size may be larger) |
+| `qmdColdTierEnabled` | `false` | Query a secondary cold QMD collection before archive fallback when hot recall misses |
+| `qmdColdCollection` | `openclaw-engram-cold` | QMD collection name used for cold-tier recall |
+| `qmdColdMaxResults` | `8` | Final result cap for cold-tier recall before merging into the normal ranking pipeline |
 | `qmdPath` | `(auto)` | Absolute path to `qmd` binary (bypasses PATH) |
 | `qmdDaemonEnabled` | `true` | Prefer QMD MCP daemon for recall/search when available (lower contention); fail-open to subprocess search/hybrid paths |
 | `qmdDaemonUrl` | `http://localhost:8181/mcp` | QMD daemon MCP endpoint URL |
@@ -125,6 +130,11 @@ See [Search Backends](search-backends.md) for detailed configuration and compari
 | `entityRetrievalMaxSupportingFacts` | `6` | Max direct-answer supporting facts/timeline snippets considered per target |
 | `entityRetrievalMaxRelatedEntities` | `3` | Max related entities listed per target when confidence is high |
 | `entityRetrievalRecentTurns` | `6` | Number of recent transcript turns scanned for pronoun carry-forward and short follow-up resolution |
+| `entityRelationshipsEnabled` | `true` | Persist entity-relationship edges that power direct-answer recall summaries |
+| `entityActivityLogEnabled` | `true` | Keep per-entity recent-activity snippets for answer synthesis |
+| `entityActivityLogMaxEntries` | `20` | Max recent activity entries retained per entity |
+| `entityAliasesEnabled` | `true` | Track normalized aliases for entity resolution and merge safety |
+| `entitySummaryEnabled` | `true` | Maintain synthesized entity summaries used by retrieval and tooling |
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Hard cap for total assembled recall context (final safety trim before system prompt injection) |
 | `recallPipeline` | `(built-in ordered defaults)` | Ordered section controls for recall assembly, including per-section caps and knobs |
 
@@ -405,7 +415,17 @@ The original v8 roadmap listed several operator knobs that are now split across 
 | `localLlmHeaders` | `(unset)` | Extra HTTP headers |
 | `localLlmAuthHeader` | `true` | Send `Authorization: Bearer` header when key set |
 | `localLlmFallback` | `true` | Fall back to gateway model chain on failure |
+| `localLlmTimeoutMs` | `180000` | Total timeout for primary local extraction/consolidation calls |
+| `localLlmRetry5xxCount` | `1` | Retry count for transient 5xx responses from the local endpoint |
+| `localLlmRetryBackoffMs` | `400` | Base backoff in milliseconds for local endpoint retries |
+| `localLlm400TripThreshold` | `5` | Consecutive 4xx responses before the local endpoint is temporarily tripped |
+| `localLlm400CooldownMs` | `120000` | Cooldown window before retrying a tripped local endpoint |
 | `localLlmMaxContext` | `(unset)` | Override context window size |
+| `localLlmFastEnabled` | `false` | Enable a separate fast local tier for short planner/rerank/helper calls |
+| `localLlmFastModel` | `""` | Optional model id for the fast local tier |
+| `localLlmFastUrl` | `http://localhost:1234/v1` | Optional dedicated base URL for the fast local tier |
+| `localLlmFastTimeoutMs` | `15000` | Timeout for the fast local tier |
+| `localLlmHomeDir` | `(unset)` | Optional home-dir override used when resolving local helper binaries |
 | `localLmsCliPath` | `(auto)` | Path to `lms` CLI (LM Studio) |
 | `localLmsBinDir` | `(auto)` | LM Studio binary directory |
 
@@ -433,7 +453,7 @@ The original v8 roadmap listed several operator knobs that are now split across 
 |---------|---------|-------------|
 | `sessionObserverEnabled` | `false` | Enable heartbeat observer checks for session growth-triggered extraction |
 | `sessionObserverDebounceMs` | `120000` | Minimum milliseconds between observer-triggered extractions per session |
-| `sessionObserverBands` | `[{maxBytes:50000,triggerDeltaBytes:6000,triggerDeltaTokens:1200}, ...]` | Size-band thresholds used to trigger observer extraction when growth exceeds configured byte/token deltas |
+| `sessionObserverBands` | `[{maxBytes:50000,triggerDeltaBytes:4800,triggerDeltaTokens:1200}, {maxBytes:200000,triggerDeltaBytes:9600,triggerDeltaTokens:2400}, {maxBytes:1000000000,triggerDeltaBytes:19200,triggerDeltaTokens:4800}]` | Size-band thresholds used to trigger observer extraction when growth exceeds configured byte/token deltas |
 
 ### v8.5 Session Integrity + Recovery Ops
 
@@ -507,6 +527,8 @@ See [advanced-retrieval.md](advanced-retrieval.md) for guidance.
 | `conversationIndexEnabled` | `false` | Index transcript chunks for semantic recall |
 | `conversationIndexBackend` | `qmd` | Conversation index backend (`qmd` for QMD collections, `faiss` for the bundled local sidecar) |
 | `conversationIndexQmdCollection` | `openclaw-engram-conversations` | QMD collection for conversation index |
+| `conversationIndexRetentionDays` | `30` | Days of transcript chunks retained in the semantic conversation index |
+| `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each conversation-index update instead of batching embed runs separately |
 | `conversationIndexFaissScriptPath` | `(unset)` | Optional absolute path to FAISS sidecar script |
 | `conversationIndexFaissPythonBin` | `(unset)` | Optional Python executable for FAISS sidecar |
 | `conversationIndexFaissModelId` | `text-embedding-3-small` | Embedding model id passed to the FAISS sidecar |
@@ -605,8 +627,6 @@ Current foundation slice:
 - Use `openclaw engram semantic-rule-verify <query>` to preview verified semantic-rule matches, including verification status, effective confidence, and the cited source memory id.
 - Future slices will add automated benchmark runners on top of this store and gate format.
 
-| `conversationIndexEmbedOnUpdate` | `false` | Run `qmd embed` on each update |
-
 ## v3.0 Namespaces
 
 See [namespaces.md](namespaces.md).
@@ -686,6 +706,10 @@ See [compounding.md](compounding.md).
 | `fileHygiene.rotateKeepTailChars` | `2000` | Chars to keep as tail excerpt after rotation |
 | `fileHygiene.archiveDir` | `.engram-archive` | Archive directory name |
 | `fileHygiene.runMinIntervalMs` | `300000` | Min interval between hygiene runs |
+| `fileHygiene.warningsLogEnabled` | `false` | Write human-readable hygiene warnings into the workspace instead of logging only to the gateway log |
+| `fileHygiene.warningsLogPath` | `hygiene/warnings.md` | Workspace-relative warnings log path used when warning logging is enabled |
+| `fileHygiene.indexEnabled` | `false` | Maintain an optional operator-facing workspace index file during hygiene passes |
+| `fileHygiene.indexPath` | `ENGRAM_INDEX.md` | Workspace-relative path for the optional generated index file |
 
 ## Access Tracking
 
@@ -706,3 +730,475 @@ See [compounding.md](compounding.md).
 |---------|---------|-------------|
 | `summarizationEnabled` | `false` | Summarize old memories when count exceeds threshold |
 | `summarizationTriggerCount` | `1000` | Memory count that triggers summarization |
+
+
+## Schema-Complete Default and Recommended Settings
+
+This appendix is flattened from the runtime config schema and the live `parseConfig({})` defaults so the page stays complete even when newer or advanced settings have not yet been expanded in the narrative sections above. Unless noted otherwise, the recommended value matches the shipped default.
+
+| Setting | Default | Recommended |
+|---------|---------|-------------|
+| `openaiApiKey` | `(env fallback)` | `(env fallback)` |
+| `openaiBaseUrl` | (unset) | (unset) |
+| `model` | `gpt-5.2` | `gpt-5.2` |
+| `reasoningEffort` | `low` | `low` |
+| `triggerMode` | `smart` | `smart` |
+| `bufferMaxTurns` | `5` | `5` |
+| `bufferMaxMinutes` | `15` | `15` |
+| `consolidateEveryN` | `3` | `3` |
+| `highSignalPatterns` | `[]` | `[]` |
+| `maxMemoryTokens` | `2000` | `2000` |
+| `memoryOsPreset` | (unset) | `balanced` |
+| `qmdEnabled` | `true` | `true` |
+| `qmdCollection` | `openclaw-engram` | `openclaw-engram` |
+| `qmdMaxResults` | `8` | `8` |
+| `qmdColdTierEnabled` | `false` | `false` unless you are actively tiering hot/cold QMD collections |
+| `qmdColdCollection` | `openclaw-engram-cold` | `openclaw-engram-cold` |
+| `qmdColdMaxResults` | `8` | `8` |
+| `qmdTierMigrationEnabled` | `false` | `false` unless hot/cold QMD tiering is enabled |
+| `qmdTierDemotionMinAgeDays` | `14` | `14` |
+| `qmdTierDemotionValueThreshold` | `0.35` | `0.35` |
+| `qmdTierPromotionValueThreshold` | `0.7` | `0.7` |
+| `qmdTierParityGraphEnabled` | `true` | `true` |
+| `qmdTierParityHiMemEnabled` | `true` | `true` |
+| `qmdTierAutoBackfillEnabled` | `false` | `false` |
+| `embeddingFallbackEnabled` | `true` | `true` |
+| `embeddingFallbackProvider` | `auto` | `auto` |
+| `qmdPath` | (unset) | (unset) |
+| `memoryDir` | `~/.openclaw/workspace/memory/local` | `~/.openclaw/workspace/memory/local` |
+| `debug` | `false` | `false` |
+| `identityEnabled` | `true` | `true` |
+| `identityContinuityEnabled` | `false` | `false` |
+| `identityInjectionMode` | `recovery_only` | `recovery_only` |
+| `identityMaxInjectChars` | `1200` | `1200` |
+| `continuityIncidentLoggingEnabled` | `false` | `false` |
+| `continuityAuditEnabled` | `false` | `false` |
+| `sessionObserverEnabled` | `false` | `false` until you are ready for heartbeat-triggered extraction |
+| `sessionObserverDebounceMs` | `120000` | `120000` |
+| `sessionObserverBands` | `[{"maxBytes":50000,"triggerDeltaBytes":4800,"triggerDeltaTokens":1200},{"maxBytes":200000,"triggerDeltaBytes":9600,"triggerDeltaTokens":2400},{"maxBytes":1000000000,"triggerDeltaBytes":19200,"triggerDeltaTokens":4800}]` | `[{"maxBytes":50000,"triggerDeltaBytes":4800,"triggerDeltaTokens":1200},{"maxBytes":200000,"triggerDeltaBytes":9600,"triggerDeltaTokens":2400},{"maxBytes":1000000000,"triggerDeltaBytes":19200,"triggerDeltaTokens":4800}]` |
+| `sessionObserverBands[].maxBytes` | `50000` | `50000` |
+| `sessionObserverBands[].triggerDeltaBytes` | `4800` | `4800` |
+| `sessionObserverBands[].triggerDeltaTokens` | `1200` | `1200` |
+| `injectQuestions` | `false` | `false` |
+| `commitmentDecayDays` | `90` | `90` |
+| `workspaceDir` | `~/.openclaw/workspace` | `~/.openclaw/workspace` |
+| `fileHygiene` | (unset) | (unset) |
+| `fileHygiene.enabled` | `false` | `true` |
+| `fileHygiene.lintEnabled` | `true` | `true` |
+| `fileHygiene.lintBudgetBytes` | `20000` | `20000` |
+| `fileHygiene.lintWarnRatio` | `0.8` | `0.8` |
+| `fileHygiene.lintPaths` | `["IDENTITY.md","MEMORY.md"]` | `["IDENTITY.md","MEMORY.md"]` |
+| `fileHygiene.rotateEnabled` | `false` | `false` |
+| `fileHygiene.rotateMaxBytes` | `18000` | `18000` |
+| `fileHygiene.rotateKeepTailChars` | `2000` | `2000` |
+| `fileHygiene.rotatePaths` | `["IDENTITY.md"]` | `["IDENTITY.md"]` |
+| `fileHygiene.archiveDir` | `.engram-archive` | `.engram-archive` |
+| `fileHygiene.runMinIntervalMs` | `300000` | `300000` |
+| `fileHygiene.warningsLogEnabled` | `false` | `false` |
+| `fileHygiene.warningsLogPath` | `hygiene/warnings.md` | `hygiene/warnings.md` |
+| `fileHygiene.indexEnabled` | `false` | `false` |
+| `fileHygiene.indexPath` | `ENGRAM_INDEX.md` | `ENGRAM_INDEX.md` |
+| `nativeKnowledge` | (unset) | (unset) |
+| `nativeKnowledge.enabled` | `false` | `true` when workspace bootstrap docs exist |
+| `nativeKnowledge.includeFiles` | `["IDENTITY.md","MEMORY.md"]` | `["IDENTITY.md","MEMORY.md"]` |
+| `nativeKnowledge.maxChunkChars` | `900` | `900` |
+| `nativeKnowledge.maxResults` | `4` | `4` |
+| `nativeKnowledge.maxChars` | `2400` | `2400` |
+| `nativeKnowledge.stateDir` | `state/native-knowledge` | `state/native-knowledge` |
+| `nativeKnowledge.openclawWorkspace` | (unset) | (unset) |
+| `nativeKnowledge.openclawWorkspace.enabled` | `false` | `true` when you want handoffs/daily summaries in recall |
+| `nativeKnowledge.openclawWorkspace.bootstrapFiles` | `["IDENTITY.md","MEMORY.md","USER.md"]` | `["IDENTITY.md","MEMORY.md","USER.md"]` |
+| `nativeKnowledge.openclawWorkspace.handoffGlobs` | `["**/*handoff*.md","handoffs/**/*.md"]` | `["**/*handoff*.md","handoffs/**/*.md"]` |
+| `nativeKnowledge.openclawWorkspace.dailySummaryGlobs` | `["**/*daily*summary*.md","summaries/**/*.md"]` | `["**/*daily*summary*.md","summaries/**/*.md"]` |
+| `nativeKnowledge.openclawWorkspace.automationNoteGlobs` | `[]` | `[]` |
+| `nativeKnowledge.openclawWorkspace.workspaceDocGlobs` | `[]` | `[]` |
+| `nativeKnowledge.openclawWorkspace.excludeGlobs` | `[]` | `[]` |
+| `nativeKnowledge.openclawWorkspace.sharedSafeGlobs` | `[]` | `[]` |
+| `nativeKnowledge.obsidianVaults` | `[]` | `[]` |
+| `nativeKnowledge.obsidianVaults[].id` | (unset) | set explicitly for every configured vault |
+| `nativeKnowledge.obsidianVaults[].rootDir` | (unset) | (unset) |
+| `nativeKnowledge.obsidianVaults[].includeGlobs` | `["**/*.md"]` | `["**/*.md"]` |
+| `nativeKnowledge.obsidianVaults[].excludeGlobs` | `[".obsidian/**","**/*.canvas","**/*.png","**/*.jpg","**/*.jpeg","**/*.gif","**/*.pdf"]` | `[".obsidian/**","**/*.canvas","**/*.png","**/*.jpg","**/*.jpeg","**/*.gif","**/*.pdf"]` |
+| `nativeKnowledge.obsidianVaults[].namespace` | (unset) | (unset) |
+| `nativeKnowledge.obsidianVaults[].privacyClass` | (unset) | (unset) |
+| `nativeKnowledge.obsidianVaults[].folderRules` | `[]` | `[]` |
+| `nativeKnowledge.obsidianVaults[].folderRules[].pathPrefix` | (unset) | (unset) |
+| `nativeKnowledge.obsidianVaults[].folderRules[].namespace` | (unset) | (unset) |
+| `nativeKnowledge.obsidianVaults[].folderRules[].privacyClass` | (unset) | (unset) |
+| `nativeKnowledge.obsidianVaults[].dailyNotePatterns` | `["YYYY-MM-DD"]` | `["YYYY-MM-DD"]` |
+| `nativeKnowledge.obsidianVaults[].materializeBacklinks` | `false` | `false` |
+| `agentAccessHttp` | `{"enabled":false,"host":"127.0.0.1","port":4318,"maxBodyBytes":131072}` | `{"enabled":false,"host":"127.0.0.1","port":4318,"maxBodyBytes":131072}` |
+| `agentAccessHttp.enabled` | `false` | `false` unless you need the local HTTP bridge |
+| `agentAccessHttp.host` | `127.0.0.1` | `127.0.0.1` |
+| `agentAccessHttp.port` | `4318` | `4318` |
+| `agentAccessHttp.authToken` | (unset) | set explicitly whenever `agentAccessHttp.enabled=true` |
+| `agentAccessHttp.maxBodyBytes` | `131072` | `131072` |
+| `accessTrackingEnabled` | `true` | `true` |
+| `accessTrackingBufferMaxSize` | `100` | `100` |
+| `recencyWeight` | `0.2` | `0.2` |
+| `boostAccessCount` | `true` | `true` |
+| `recordEmptyRecallImpressions` | `false` | `false` |
+| `recallPlannerEnabled` | `true` | `true` |
+| `recallPlannerModel` | `gpt-5.2-mini` | `gpt-5.2-mini` |
+| `recallPlannerTimeoutMs` | `1500` | `1500` |
+| `recallPlannerUseResponsesApi` | `true` | `true` |
+| `recallPlannerMaxPromptChars` | `4000` | `4000` |
+| `recallPlannerMaxMemoryHints` | `24` | `24` |
+| `recallPlannerShadowMode` | `false` | `false` |
+| `recallPlannerTelemetryEnabled` | `true` | `true` |
+| `recallPlannerMaxQmdResultsMinimal` | `4` | `4` |
+| `recallPlannerMaxQmdResultsFull` | `8` | `8` |
+| `intentRoutingEnabled` | `false` | `false` |
+| `intentRoutingBoost` | `0.12` | `0.12` |
+| `verbatimArtifactsEnabled` | `false` | `true` |
+| `verbatimArtifactsMinConfidence` | `0.8` | `0.8` |
+| `verbatimArtifactsMaxRecall` | `5` | `5` |
+| `verbatimArtifactCategories` | `["decision","correction","principle","commitment"]` | `["decision","correction","principle","commitment"]` |
+| `memoryBoxesEnabled` | `false` | `false` |
+| `boxTopicShiftThreshold` | `0.35` | `0.35` |
+| `boxTimeGapMs` | `1800000` | `1800000` |
+| `boxMaxMemories` | `50` | `50` |
+| `traceWeaverEnabled` | `false` | `false` |
+| `traceWeaverLookbackDays` | `7` | `7` |
+| `traceWeaverOverlapThreshold` | `0.4` | `0.4` |
+| `boxRecallDays` | `3` | `3` |
+| `episodeNoteModeEnabled` | `false` | `false` |
+| `queryAwareIndexingEnabled` | `false` | `true` |
+| `queryAwareIndexingMaxCandidates` | `200` | `200` |
+| `temporalIndexWindowDays` | `30` | `30` |
+| `temporalIndexMaxEntries` | `5000` | `5000` |
+| `temporalBoostRecentDays` | `7` | `7` |
+| `temporalBoostScore` | `0.15` | `0.15` |
+| `temporalDecayEnabled` | `true` | `true` |
+| `tagMemoryEnabled` | `false` | `false` |
+| `tagMaxPerMemory` | `5` | `5` |
+| `tagIndexMaxEntries` | `10000` | `10000` |
+| `tagRecallBoost` | `0.15` | `0.15` |
+| `tagRecallMaxMatches` | `10` | `10` |
+| `multiGraphMemoryEnabled` | `false` | `false` |
+| `graphRecallEnabled` | `false` | `false` |
+| `graphRecallMaxExpansions` | `3` | `3` |
+| `graphRecallMaxPerSeed` | `5` | `5` |
+| `graphRecallMinEdgeWeight` | `0.1` | `0.1` |
+| `graphRecallShadowEnabled` | `false` | `false` |
+| `graphRecallSnapshotEnabled` | `false` | `false` |
+| `graphRecallShadowSampleRate` | `0.1` | `0.1` |
+| `graphRecallExplainToolEnabled` | `false` | `false` |
+| `graphRecallStoreColdMirror` | `false` | `false` |
+| `graphRecallColdMirrorCollection` | (unset) | (unset) |
+| `graphRecallColdMirrorMinAgeDays` | `7` | `7` |
+| `graphRecallUseEntityPriors` | `false` | `false` |
+| `graphRecallEntityPriorBoost` | `0.2` | `0.2` |
+| `graphRecallPreferHubSeeds` | `false` | `false` |
+| `graphRecallHubBias` | `0.3` | `0.3` |
+| `graphRecallRecencyHalfLifeDays` | `30` | `30` |
+| `graphRecallDampingFactor` | `0.85` | `0.85` |
+| `graphRecallMaxSeedNodes` | `10` | `10` |
+| `graphRecallMaxExpandedNodes` | `30` | `30` |
+| `graphRecallMaxTrailPerNode` | `5` | `5` |
+| `graphRecallMinSeedScore` | `0.3` | `0.3` |
+| `graphRecallExpansionScoreThreshold` | `0.2` | `0.2` |
+| `graphRecallExplainMaxPaths` | `3` | `3` |
+| `graphRecallExplainMaxChars` | `500` | `500` |
+| `graphRecallExplainEdgeLimit` | `5` | `5` |
+| `graphRecallExplainEnabled` | `false` | `false` |
+| `graphRecallEntityHintsEnabled` | `false` | `false` |
+| `graphRecallEntityHintMax` | `3` | `3` |
+| `graphRecallEntityHintMaxChars` | `200` | `200` |
+| `graphRecallSnapshotDir` | `~/.openclaw/workspace/memory/local/state/graph` | `~/.openclaw/workspace/memory/local/state/graph` |
+| `graphRecallEnableTrace` | `false` | `false` |
+| `graphRecallEnableDebug` | `false` | `false` |
+| `graphExpandedIntentEnabled` | `true` | `true` |
+| `graphAssistInFullModeEnabled` | `true` | `true` |
+| `graphAssistShadowEvalEnabled` | `false` | `false` |
+| `graphAssistMinSeedResults` | `3` | `3` |
+| `entityGraphEnabled` | `true` | `true` |
+| `timeGraphEnabled` | `true` | `true` |
+| `graphWriteSessionAdjacencyEnabled` | `true` | `true` |
+| `causalGraphEnabled` | `true` | `true` |
+| `maxGraphTraversalSteps` | `3` | `3` |
+| `graphActivationDecay` | `0.7` | `0.7` |
+| `graphExpansionActivationWeight` | `0.65` | `0.65` |
+| `graphExpansionBlendMin` | `0.05` | `0.05` |
+| `graphExpansionBlendMax` | `0.95` | `0.95` |
+| `maxEntityGraphEdgesPerMemory` | `10` | `10` |
+| `delinearizeEnabled` | `true` | `true` |
+| `recallConfidenceGateEnabled` | `false` | `false` |
+| `recallConfidenceGateThreshold` | `0.12` | `0.12` |
+| `causalRuleExtractionEnabled` | `false` | `false` |
+| `memoryReconstructionEnabled` | `false` | `false` |
+| `memoryReconstructionMaxExpansions` | `3` | `3` |
+| `graphLateralInhibitionEnabled` | `true` | `true` |
+| `graphLateralInhibitionBeta` | `0.15` | `0.15` |
+| `graphLateralInhibitionTopM` | `7` | `7` |
+| `temporalMemoryTreeEnabled` | `false` | `false` |
+| `tmtHourlyMinMemories` | `3` | `3` |
+| `tmtSummaryMaxTokens` | `300` | `300` |
+| `queryExpansionEnabled` | `false` | `false` |
+| `queryExpansionMaxQueries` | `4` | `4` |
+| `queryExpansionMinTokenLen` | `3` | `3` |
+| `rerankEnabled` | `false` | `true` |
+| `rerankProvider` | `local` | `local` |
+| `rerankMaxCandidates` | `20` | `20` |
+| `rerankTimeoutMs` | `8000` | `8000` |
+| `rerankCacheEnabled` | `true` | `true` |
+| `rerankCacheTtlMs` | `3600000` | `3600000` |
+| `feedbackEnabled` | `false` | `false` until operators are actively curating recall quality |
+| `negativeExamplesEnabled` | `false` | `false` until operators are actively curating negative examples |
+| `negativeExamplesPenaltyPerHit` | `0.05` | `0.05` |
+| `negativeExamplesPenaltyCap` | `0.25` | `0.25` |
+| `chunkingEnabled` | `false` | `false` |
+| `chunkingTargetTokens` | `200` | `200` |
+| `chunkingMinTokens` | `150` | `150` |
+| `chunkingOverlapSentences` | `2` | `2` |
+| `contradictionDetectionEnabled` | `false` | `false` |
+| `contradictionSimilarityThreshold` | `0.7` | `0.7` |
+| `contradictionMinConfidence` | `0.9` | `0.9` |
+| `contradictionAutoResolve` | `true` | `true` |
+| `memoryLinkingEnabled` | `false` | `false` |
+| `threadingEnabled` | `false` | `false` |
+| `threadingGapMinutes` | `30` | `30` |
+| `summarizationEnabled` | `false` | `false` |
+| `summarizationTriggerCount` | `1000` | `1000` |
+| `summarizationRecentToKeep` | `300` | `300` |
+| `summarizationImportanceThreshold` | `0.3` | `0.3` |
+| `summarizationProtectedTags` | `["commitment","preference","decision","principle"]` | `["commitment","preference","decision","principle"]` |
+| `topicExtractionEnabled` | `true` | `true` |
+| `topicExtractionTopN` | `50` | `50` |
+| `transcriptEnabled` | `true` | `true` |
+| `captureMode` | `implicit` | `implicit` |
+| `transcriptRetentionDays` | `7` | `7` |
+| `transcriptSkipChannelTypes` | `["cron"]` | `["cron"]` |
+| `transcriptRecallHours` | `12` | `12` |
+| `maxTranscriptTurns` | `50` | `50` |
+| `maxTranscriptTokens` | `1000` | `1000` |
+| `checkpointEnabled` | `true` | `true` |
+| `checkpointTurns` | `15` | `15` |
+| `compactionResetEnabled` | `false` | `false` |
+| `hourlySummariesEnabled` | `true` | `true` |
+| `summaryRecallHours` | `24` | `24` |
+| `maxSummaryCount` | `6` | `6` |
+| `summaryModel` | `gpt-5.2` | `gpt-5.2` |
+| `localLlmEnabled` | `false` | `false` unless you have a healthy compatible endpoint |
+| `localLlmUrl` | `http://localhost:1234/v1` | `http://localhost:1234/v1` |
+| `localLlmModel` | `local-model` | `local-model` |
+| `localLlmApiKey` | (unset) | (unset) |
+| `localLlmHeaders` | (unset) | (unset) |
+| `localLlmAuthHeader` | `true` | `true` |
+| `localLlmFallback` | `true` | `true` |
+| `localLlmHomeDir` | (unset) | (unset) |
+| `localLmsCliPath` | (unset) | (unset) |
+| `localLmsBinDir` | (unset) | (unset) |
+| `localLlmTimeoutMs` | `180000` | `180000` |
+| `slowLogEnabled` | `false` | `false` |
+| `slowLogThresholdMs` | `30000` | `30000` |
+| `traceRecallContent` | `false` | `false` |
+| `extractionDedupeEnabled` | `true` | `true` |
+| `extractionDedupeWindowMs` | `300000` | `300000` |
+| `extractionMinChars` | `40` | `40` |
+| `extractionMinUserTurns` | `1` | `1` |
+| `extractionMaxTurnChars` | `4000` | `4000` |
+| `extractionMaxFactsPerRun` | `12` | `12` |
+| `extractionMaxEntitiesPerRun` | `6` | `6` |
+| `extractionMaxQuestionsPerRun` | `3` | `3` |
+| `extractionMaxProfileUpdatesPerRun` | `4` | `4` |
+| `consolidationRequireNonZeroExtraction` | `true` | `true` |
+| `consolidationMinIntervalMs` | `600000` | `600000` |
+| `qmdMaintenanceEnabled` | `true` | `true` |
+| `qmdMaintenanceDebounceMs` | `30000` | `30000` |
+| `qmdAutoEmbedEnabled` | `false` | `false` |
+| `qmdEmbedMinIntervalMs` | `3600000` | `3600000` |
+| `qmdUpdateTimeoutMs` | `90000` | `90000` |
+| `qmdUpdateMinIntervalMs` | `900000` | `900000` |
+| `localLlmRetry5xxCount` | `1` | `1` |
+| `localLlmRetryBackoffMs` | `400` | `400` |
+| `localLlm400TripThreshold` | `5` | `5` |
+| `localLlm400CooldownMs` | `120000` | `120000` |
+| `localLlmMaxContext` | (unset) | (unset) |
+| `localLlmFastEnabled` | `false` | `false` unless you have a separate fast local tier |
+| `localLlmFastModel` | `""` | `""` |
+| `localLlmFastUrl` | `http://localhost:1234/v1` | `http://localhost:1234/v1` |
+| `localLlmFastTimeoutMs` | `15000` | `15000` |
+| `hourlySummaryCronAutoRegister` | `false` | `false` |
+| `hourlySummariesExtendedEnabled` | `false` | `false` unless structured hourly summaries are useful |
+| `hourlySummariesIncludeToolStats` | `false` | `false` |
+| `hourlySummariesIncludeSystemMessages` | `false` | `false` |
+| `hourlySummariesMaxTurnsPerRun` | `200` | `200` |
+| `conversationIndexEnabled` | `false` | `false` unless you want transcript semantic recall |
+| `conversationIndexBackend` | `qmd` | `qmd` |
+| `conversationIndexQmdCollection` | `openclaw-engram-conversations` | `openclaw-engram-conversations` |
+| `conversationIndexRetentionDays` | `30` | `30` |
+| `conversationIndexMinUpdateIntervalMs` | `900000` | `900000` |
+| `conversationIndexEmbedOnUpdate` | `false` | `false` |
+| `conversationIndexFaissScriptPath` | `""` | `""` |
+| `conversationIndexFaissPythonBin` | `""` | `""` |
+| `conversationIndexFaissModelId` | `text-embedding-3-small` | `text-embedding-3-small` |
+| `conversationIndexFaissIndexDir` | `state/conversation-index/faiss` | `state/conversation-index/faiss` |
+| `conversationIndexFaissUpsertTimeoutMs` | `30000` | `30000` |
+| `conversationIndexFaissSearchTimeoutMs` | `5000` | `5000` |
+| `conversationIndexFaissHealthTimeoutMs` | `2000` | `2000` |
+| `conversationIndexFaissMaxBatchSize` | `512` | `512` |
+| `conversationIndexFaissMaxSearchK` | `50` | `50` |
+| `conversationRecallTopK` | `3` | `4` |
+| `conversationRecallMaxChars` | `2500` | `2000` |
+| `conversationRecallTimeoutMs` | `800` | `800` |
+| `evalHarnessEnabled` | `false` | `false` |
+| `evalShadowModeEnabled` | `false` | `false` |
+| `benchmarkBaselineSnapshotsEnabled` | `false` | `false` |
+| `benchmarkStoredBaselineEnabled` | `false` | `false` |
+| `benchmarkDeltaReporterEnabled` | `false` | `false` |
+| `evalStoreDir` | `~/.openclaw/workspace/memory/local/state/evals` | `~/.openclaw/workspace/memory/local/state/evals` |
+| `objectiveStateMemoryEnabled` | `false` | `false` |
+| `objectiveStateSnapshotWritesEnabled` | `false` | `false` |
+| `objectiveStateRecallEnabled` | `false` | `false` |
+| `objectiveStateStoreDir` | `~/.openclaw/workspace/memory/local/state/objective-state` | `~/.openclaw/workspace/memory/local/state/objective-state` |
+| `causalTrajectoryMemoryEnabled` | `false` | `false` |
+| `causalTrajectoryStoreDir` | `~/.openclaw/workspace/memory/local/state/causal-trajectories` | `~/.openclaw/workspace/memory/local/state/causal-trajectories` |
+| `causalTrajectoryRecallEnabled` | `false` | `false` |
+| `trustZonesEnabled` | `false` | `false` |
+| `quarantinePromotionEnabled` | `false` | `false` |
+| `trustZoneStoreDir` | `~/.openclaw/workspace/memory/local/state/trust-zones` | `~/.openclaw/workspace/memory/local/state/trust-zones` |
+| `trustZoneRecallEnabled` | `false` | `false` |
+| `memoryPoisoningDefenseEnabled` | `false` | `false` |
+| `memoryRedTeamBenchEnabled` | `false` | `false` |
+| `harmonicRetrievalEnabled` | `false` | `false` |
+| `abstractionAnchorsEnabled` | `false` | `false` |
+| `abstractionNodeStoreDir` | `~/.openclaw/workspace/memory/local/state/abstraction-nodes` | `~/.openclaw/workspace/memory/local/state/abstraction-nodes` |
+| `verifiedRecallEnabled` | `false` | `false` |
+| `semanticRulePromotionEnabled` | `false` | `false` |
+| `semanticRuleVerificationEnabled` | `false` | `false` |
+| `creationMemoryEnabled` | `false` | `false` |
+| `memoryUtilityLearningEnabled` | `false` | `false` |
+| `promotionByOutcomeEnabled` | `false` | `false` |
+| `commitmentLedgerEnabled` | `false` | `false` |
+| `commitmentLifecycleEnabled` | `false` | `false` |
+| `commitmentStaleDays` | `14` | `14` |
+| `commitmentLedgerDir` | `~/.openclaw/workspace/memory/local/state/commitment-ledger` | `~/.openclaw/workspace/memory/local/state/commitment-ledger` |
+| `resumeBundlesEnabled` | `false` | `false` |
+| `resumeBundleDir` | `~/.openclaw/workspace/memory/local/state/resume-bundles` | `~/.openclaw/workspace/memory/local/state/resume-bundles` |
+| `workProductRecallEnabled` | `false` | `false` |
+| `workProductLedgerDir` | `~/.openclaw/workspace/memory/local/state/work-product-ledger` | `~/.openclaw/workspace/memory/local/state/work-product-ledger` |
+| `workTasksEnabled` | `false` | `false` |
+| `workProjectsEnabled` | `false` | `false` |
+| `workTasksDir` | `~/.openclaw/workspace/memory/local/work/tasks` | `~/.openclaw/workspace/memory/local/work/tasks` |
+| `workProjectsDir` | `~/.openclaw/workspace/memory/local/work/projects` | `~/.openclaw/workspace/memory/local/work/projects` |
+| `workIndexEnabled` | `false` | `false` |
+| `workIndexDir` | `~/.openclaw/workspace/memory/local/work/index` | `~/.openclaw/workspace/memory/local/work/index` |
+| `workTaskIndexEnabled` | `false` | `false` |
+| `workProjectIndexEnabled` | `false` | `false` |
+| `workIndexAutoRebuildEnabled` | `false` | `false` |
+| `workIndexAutoRebuildDebounceMs` | `1000` | `1000` |
+| `actionGraphRecallEnabled` | `false` | `false` |
+| `namespacesEnabled` | `false` | `false` |
+| `defaultNamespace` | `default` | `default` |
+| `sharedNamespace` | `shared` | `shared` |
+| `principalFromSessionKeyMode` | `map` | `map` |
+| `principalFromSessionKeyRules` | `[]` | `[]` |
+| `principalFromSessionKeyRules[].match` | (unset) | (unset) |
+| `principalFromSessionKeyRules[].principal` | (unset) | (unset) |
+| `namespacePolicies` | `[]` | `[]` |
+| `namespacePolicies[].name` | (unset) | (unset) |
+| `namespacePolicies[].readPrincipals` | (unset) | (unset) |
+| `namespacePolicies[].writePrincipals` | (unset) | (unset) |
+| `namespacePolicies[].includeInRecallByDefault` | (unset) | (unset) |
+| `defaultRecallNamespaces` | `["self","shared"]` | `["self","shared"]` |
+| `cronRecallMode` | `all` | `all` |
+| `cronRecallAllowlist` | `[]` | `[]` |
+| `cronRecallPolicyEnabled` | `true` | `true` |
+| `cronRecallNormalizedQueryMaxChars` | `480` | `480` |
+| `cronRecallInstructionHeavyTokenCap` | `36` | `36` |
+| `cronConversationRecallMode` | `auto` | `auto` |
+| `autoPromoteToSharedEnabled` | `false` | `false` |
+| `autoPromoteToSharedCategories` | `["correction","decision","preference"]` | `["correction","decision","preference"]` |
+| `autoPromoteMinConfidenceTier` | `explicit` | `explicit` |
+| `routingRulesEnabled` | `false` | `false` |
+| `routingRulesStateFile` | `state/routing-rules.json` | `state/routing-rules.json` |
+| `sharedContextEnabled` | `false` | `false` unless you are actively using cross-agent memory sharing |
+| `sharedContextDir` | (unset) | (unset) |
+| `sharedContextMaxInjectChars` | `4000` | `4000` |
+| `crossSignalsSemanticEnabled` | `false` | `false` |
+| `crossSignalsSemanticTimeoutMs` | `4000` | `4000` |
+| `sharedCrossSignalSemanticEnabled` | `false` | `false` |
+| `sharedCrossSignalSemanticTimeoutMs` | `4000` | `4000` |
+| `sharedCrossSignalSemanticMaxCandidates` | `120` | `120` |
+| `compoundingEnabled` | `false` | `false` unless you are ready to curate weekly syntheses |
+| `compoundingWeeklyCronEnabled` | `false` | `false` |
+| `compoundingSemanticEnabled` | `false` | `false` |
+| `compoundingSynthesisTimeoutMs` | `15000` | `15000` |
+| `compoundingInjectEnabled` | `true` | `true` |
+| `factDeduplicationEnabled` | `true` | `true` |
+| `factArchivalEnabled` | `false` | `false` unless you have validated archive policy on your corpus |
+| `factArchivalAgeDays` | `90` | `90` |
+| `factArchivalMaxImportance` | `0.3` | `0.3` |
+| `factArchivalMaxAccessCount` | `2` | `2` |
+| `factArchivalProtectedCategories` | `["commitment","preference","decision","principle"]` | `["commitment","preference","decision","principle"]` |
+| `lifecyclePolicyEnabled` | `false` | `false` until you are ready to measure lifecycle outcomes |
+| `lifecycleFilterStaleEnabled` | `false` | `false` for the initial lifecycle rollout |
+| `lifecyclePromoteHeatThreshold` | `0.55` | `0.55` |
+| `lifecycleStaleDecayThreshold` | `0.65` | `0.65` |
+| `lifecycleArchiveDecayThreshold` | `0.85` | `0.85` |
+| `lifecycleProtectedCategories` | `["decision","principle","commitment","preference"]` | `["decision","principle","commitment","preference"]` |
+| `lifecycleMetricsEnabled` | `false` | `true` when `lifecyclePolicyEnabled=true` |
+| `proactiveExtractionEnabled` | `false` | `false` until you validate the second pass in your environment |
+| `contextCompressionActionsEnabled` | `false` | `false` unless you are validating action-policy flows |
+| `compressionGuidelineLearningEnabled` | `false` | `false` unless action-policy telemetry is already stable |
+| `compressionGuidelineSemanticRefinementEnabled` | `false` | `false` unless deterministic guideline learning is already stable |
+| `compressionGuidelineSemanticTimeoutMs` | `2500` | `2500` |
+| `maxProactiveQuestionsPerExtraction` | `2` | `2` |
+| `proactiveExtractionTimeoutMs` | `2500` | `2500` |
+| `proactiveExtractionMaxTokens` | `900` | `900` |
+| `proactiveExtractionCategoryAllowlist` | (unset) | (unset) |
+| `maxCompressionTokensPerHour` | `1500` | `1500` |
+| `behaviorLoopAutoTuneEnabled` | `false` | `false` until you are ready for canary tuning |
+| `behaviorLoopLearningWindowDays` | `14` | `14` |
+| `behaviorLoopMinSignalCount` | `10` | `10` |
+| `behaviorLoopMaxDeltaPerCycle` | `0.1` | `0.1` |
+| `behaviorLoopProtectedParams` | `["maxMemoryTokens","qmdMaxResults","qmdColdMaxResults","recallPlannerMaxQmdResultsMinimal","verbatimArtifactsMaxRecall"]` | `["maxMemoryTokens","qmdMaxResults","qmdColdMaxResults","recallPlannerMaxQmdResultsMinimal","verbatimArtifactsMaxRecall"]` |
+| `searchBackend` | `qmd` | `qmd` |
+| `remoteSearchBaseUrl` | (unset) | (unset) |
+| `remoteSearchApiKey` | (unset) | (unset) |
+| `remoteSearchTimeoutMs` | `30000` | `30000` |
+| `lancedbEnabled` | `false` | `false` |
+| `lanceDbPath` | `~/.openclaw/workspace/memory/local/lancedb` | `~/.openclaw/workspace/memory/local/lancedb` |
+| `lanceEmbeddingDimension` | `1536` | `1536` |
+| `meilisearchEnabled` | `false` | `false` |
+| `meilisearchHost` | `http://localhost:7700` | `http://localhost:7700` |
+| `meilisearchApiKey` | (unset) | (unset) |
+| `meilisearchTimeoutMs` | `30000` | `30000` |
+| `meilisearchAutoIndex` | `false` | `false` |
+| `oramaEnabled` | `false` | `false` |
+| `oramaDbPath` | `~/.openclaw/workspace/memory/local/orama` | `~/.openclaw/workspace/memory/local/orama` |
+| `oramaEmbeddingDimension` | `1536` | `1536` |
+| `qmdDaemonEnabled` | `true` | `true` |
+| `qmdDaemonUrl` | `http://localhost:8181/mcp` | `http://localhost:8181/mcp` |
+| `qmdDaemonRecheckIntervalMs` | `60000` | `60000` |
+| `knowledgeIndexEnabled` | `true` | `true` |
+| `knowledgeIndexMaxEntities` | `40` | `40` |
+| `knowledgeIndexMaxChars` | `4000` | `4000` |
+| `entityRetrievalEnabled` | `true` | `true` |
+| `entityRetrievalMaxChars` | `2400` | `2400` |
+| `entityRetrievalMaxHints` | `2` | `2` |
+| `entityRetrievalMaxSupportingFacts` | `6` | `6` |
+| `entityRetrievalMaxRelatedEntities` | `3` | `3` |
+| `entityRetrievalRecentTurns` | `6` | `6` |
+| `entityRelationshipsEnabled` | `true` | `true` |
+| `entityActivityLogEnabled` | `true` | `true` |
+| `entityActivityLogMaxEntries` | `20` | `20` |
+| `entityAliasesEnabled` | `true` | `true` |
+| `entitySummaryEnabled` | `true` | `true` |
+| `recallBudgetChars` | `8000` | `8000` |
+| `recallPipeline` | `[{"id":"shared-context","enabled":false,"maxChars":4000},{"id":"profile","enabled":true,"consolidateTriggerLines":100,"consolidateTargetLines":50},{"id":"identity-continuity","enabled":false},{"id":"entity-retrieval","enabled":true,"maxChars":2400,"maxHints":2,"maxSupportingFacts":6,"maxRelatedEntities":3,"recentTurns":6},{"id":"knowledge-index","enabled":true,"maxChars":4000,"maxEntities":40},{"id":"verbatim-artifacts","enabled":false},{"id":"memory-boxes","enabled":false},{"id":"temporal-memory-tree","enabled":false},{"id":"objective-state","enabled":false,"maxResults":4,"maxChars":1800},{"id":"causal-trajectories","enabled":false,"maxResults":3,"maxChars":2200},{"id":"trust-zones","enabled":false,"maxResults":3,"maxChars":1800},{"id":"harmonic-retrieval","enabled":false,"maxResults":3,"maxChars":2200},{"id":"verified-episodes","enabled":false,"maxResults":3,"maxChars":1800},{"id":"verified-rules","enabled":false,"maxResults":3,"maxChars":1800},{"id":"work-products","enabled":false,"maxResults":3,"maxChars":1800},{"id":"memories","enabled":true,"maxResults":8},{"id":"compression-guidelines","enabled":false},{"id":"native-knowledge","enabled":false,"maxResults":4,"maxChars":2400},{"id":"transcript","enabled":true,"maxTurns":50,"maxTokens":1000,"lookbackHours":12},{"id":"summaries","enabled":true,"maxCount":6,"lookbackHours":24},{"id":"conversation-recall","enabled":false,"topK":3,"maxChars":2500,"timeoutMs":800},{"id":"compounding","enabled":false,"maxPatterns":40,"maxRubrics":4},{"id":"questions","enabled":false}]` | `[{"id":"shared-context","enabled":false,"maxChars":4000},{"id":"profile","enabled":true,"consolidateTriggerLines":100,"consolidateTargetLines":50},{"id":"identity-continuity","enabled":false},{"id":"entity-retrieval","enabled":true,"maxChars":2400,"maxHints":2,"maxSupportingFacts":6,"maxRelatedEntities":3,"recentTurns":6},{"id":"knowledge-index","enabled":true,"maxChars":4000,"maxEntities":40},{"id":"verbatim-artifacts","enabled":false},{"id":"memory-boxes","enabled":false},{"id":"temporal-memory-tree","enabled":false},{"id":"objective-state","enabled":false,"maxResults":4,"maxChars":1800},{"id":"causal-trajectories","enabled":false,"maxResults":3,"maxChars":2200},{"id":"trust-zones","enabled":false,"maxResults":3,"maxChars":1800},{"id":"harmonic-retrieval","enabled":false,"maxResults":3,"maxChars":2200},{"id":"verified-episodes","enabled":false,"maxResults":3,"maxChars":1800},{"id":"verified-rules","enabled":false,"maxResults":3,"maxChars":1800},{"id":"work-products","enabled":false,"maxResults":3,"maxChars":1800},{"id":"memories","enabled":true,"maxResults":8},{"id":"compression-guidelines","enabled":false},{"id":"native-knowledge","enabled":false,"maxResults":4,"maxChars":2400},{"id":"transcript","enabled":true,"maxTurns":50,"maxTokens":1000,"lookbackHours":12},{"id":"summaries","enabled":true,"maxCount":6,"lookbackHours":24},{"id":"conversation-recall","enabled":false,"topK":3,"maxChars":2500,"timeoutMs":800},{"id":"compounding","enabled":false,"maxPatterns":40,"maxRubrics":4},{"id":"questions","enabled":false}]` |
+| `recallPipeline[].id` | `shared-context` | `shared-context` |
+| `recallPipeline[].enabled` | `false` | `false` |
+| `recallPipeline[].maxChars` | `4000` | `4000` |
+| `recallPipeline[].consolidateTriggerLines` | (unset) | (unset) |
+| `recallPipeline[].consolidateTargetLines` | (unset) | (unset) |
+| `recallPipeline[].maxEntities` | (unset) | (unset) |
+| `recallPipeline[].maxResults` | (unset) | (unset) |
+| `recallPipeline[].maxTurns` | (unset) | (unset) |
+| `recallPipeline[].maxTokens` | (unset) | (unset) |
+| `recallPipeline[].lookbackHours` | (unset) | (unset) |
+| `recallPipeline[].maxCount` | (unset) | (unset) |
+| `recallPipeline[].topK` | (unset) | (unset) |
+| `recallPipeline[].timeoutMs` | (unset) | (unset) |
+| `recallPipeline[].maxPatterns` | (unset) | (unset) |
