@@ -38,6 +38,7 @@ import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
+import { parseQmdExplain } from "./qmd.js";
 import {
   buildEntityRecallSection,
   entityRecentTranscriptLookbackHours,
@@ -661,26 +662,7 @@ function parseQmdRecallResults(value: unknown): QmdSearchResult[] {
       path: candidate.path,
       snippet: typeof candidate.snippet === "string" ? candidate.snippet : "",
       score: candidate.score,
-      explain:
-        candidate.explain && typeof candidate.explain === "object"
-          ? {
-            ftsScores: Array.isArray(candidate.explain.ftsScores)
-              ? candidate.explain.ftsScores.filter((item): item is number => typeof item === "number")
-              : undefined,
-            vectorScores: Array.isArray(candidate.explain.vectorScores)
-              ? candidate.explain.vectorScores.filter((item): item is number => typeof item === "number")
-              : undefined,
-            rrf: typeof candidate.explain.rrf === "number" ? candidate.explain.rrf : undefined,
-            rerankScore:
-              typeof candidate.explain.rerankScore === "number"
-                ? candidate.explain.rerankScore
-                : undefined,
-            blendedScore:
-              typeof candidate.explain.blendedScore === "number"
-                ? candidate.explain.blendedScore
-                : undefined,
-          }
-          : undefined,
+      explain: parseQmdExplain(candidate.explain),
       transport:
         candidate.transport === "daemon" ||
           candidate.transport === "subprocess" ||
@@ -2486,7 +2468,8 @@ export class Orchestrator {
     let lastHybridResultCount = 0;
     let lastHybridTopUpUsed = false;
     let lastHybridTopUpSkippedReason: string | undefined;
-    const effectiveSearchOptions = (() => {
+    const backendHonorsQmdSearchSignals = (this.config.searchBackend ?? "qmd") === "qmd";
+    const resolvedSearchOptions = (() => {
       const resolver = (this.qmd as {
         resolveSupportedSearchOptions?: (options?: SearchQueryOptions) => SearchQueryOptions | undefined;
       }).resolveSupportedSearchOptions;
@@ -2495,6 +2478,12 @@ export class Orchestrator {
       }
       return options.searchOptions;
     })();
+    const primarySearchOptions = backendHonorsQmdSearchSignals
+      ? resolvedSearchOptions
+      : options.searchOptions;
+    const debugSearchOptions = backendHonorsQmdSearchSignals
+      ? resolvedSearchOptions
+      : undefined;
     let bestFiltered = filterRecallCandidates(scopedSeedResults, {
       namespacesEnabled: options.namespacesEnabled,
       recallNamespaces: options.recallNamespaces,
@@ -2514,8 +2503,8 @@ export class Orchestrator {
         hybridResultCount: lastHybridResultCount,
         queryAwareSeedCount: scopedSeedResults.length,
         resultCount: results.length,
-        intentHint: effectiveSearchOptions?.intent,
-        explainEnabled: effectiveSearchOptions?.explain === true,
+        intentHint: debugSearchOptions?.intent,
+        explainEnabled: debugSearchOptions?.explain === true,
         hybridTopUpUsed: lastHybridTopUpUsed,
         hybridTopUpSkippedReason: lastHybridTopUpSkippedReason,
         results: results.slice(0, 32).map((result) => ({
@@ -2531,13 +2520,13 @@ export class Orchestrator {
       }
 
       const primaryResults = options.collection
-        ? await this.qmd.search(prompt, options.collection, fetchLimit, effectiveSearchOptions)
+        ? await this.qmd.search(prompt, options.collection, fetchLimit, primarySearchOptions)
         : await this.searchAcrossNamespaces({
           query: prompt,
           namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
           maxResults: fetchLimit,
           mode: "search",
-          searchOptions: effectiveSearchOptions,
+          searchOptions: primarySearchOptions,
         });
       lastPrimaryResultCount = primaryResults.length;
       lastHybridResultCount = 0;
@@ -2550,7 +2539,7 @@ export class Orchestrator {
         primaryResults.length < qmdFetchLimit &&
         Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
       ) {
-        if (effectiveSearchOptions?.intent) {
+        if (debugSearchOptions?.intent) {
           lastHybridTopUpSkippedReason = "intent_hint_active";
         } else {
           const hybridResults = options.collection

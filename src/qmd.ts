@@ -125,7 +125,7 @@ function parseExplainScores(value: unknown): number[] | undefined {
   return scores.length > 0 ? scores : undefined;
 }
 
-function parseQmdExplain(value: unknown): QmdSearchExplain | undefined {
+export function parseQmdExplain(value: unknown): QmdSearchExplain | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
   const parsed: QmdSearchExplain = {
