@@ -278,21 +278,6 @@ export class EngramAccessService {
     return resolved;
   }
 
-  private normalizeRecallFailure(error: unknown, namespaceOverride: string | undefined): never {
-    if (error instanceof EngramAccessInputError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      namespaceOverride &&
-      (
-        message.includes("namespace override is not readable:")
-        || message.includes("unsupported namespace:")
-      )
-    ) {
-      throw new EngramAccessInputError(message);
-    }
-    throw error instanceof Error ? error : new Error(message);
-  }
-
   private async buildRecallDebug(
     snapshot: LastRecallSnapshot | null,
     namespace: string,
@@ -427,12 +412,7 @@ export class EngramAccessService {
       mode,
     };
     const startedAt = Date.now();
-    let context: string;
-    try {
-      context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
-    } catch (error) {
-      this.normalizeRecallFailure(error, namespaceOverride);
-    }
+    const context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
     const snapshot = request.sessionKey
       ? this.orchestrator.lastRecall.get(request.sessionKey)
       : null;

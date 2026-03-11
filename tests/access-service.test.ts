@@ -497,55 +497,6 @@ test("access service recall without a session key does not reuse another session
   }
 });
 
-test("access service recall normalizes namespace override routing failures into input errors", async () => {
-  const service = new EngramAccessService({
-    config: {
-      memoryDir: "/tmp/engram",
-      namespacesEnabled: true,
-      defaultNamespace: "global",
-      sharedNamespace: "shared",
-      principalFromSessionKeyMode: "prefix",
-      principalFromSessionKeyRules: [],
-      namespacePolicies: [
-        {
-          name: "project-x",
-          readPrincipals: ["project-x"],
-          writePrincipals: ["project-x"],
-        },
-        {
-          name: "audit-log",
-          readPrincipals: ["project-x"],
-          writePrincipals: ["audit-bot"],
-          includeInRecallByDefault: false,
-        },
-      ],
-      defaultRecallNamespaces: ["self"],
-      searchBackend: "qmd",
-      qmdEnabled: true,
-      nativeKnowledge: undefined,
-    },
-    recall: async () => {
-      throw new Error("namespace override is not readable: audit-log");
-    },
-    lastRecall: { get: () => null, getMostRecent: () => null },
-    getStorage: async () => ({
-      getMemoryById: async () => null,
-      getMemoryTimeline: async () => [],
-    }),
-  } as any);
-
-  await assert.rejects(
-    () => service.recall({
-      query: "hello",
-      sessionKey: "agent:project-x:chat",
-      namespace: "audit-log",
-    }),
-    (err: unknown) =>
-      err instanceof EngramAccessInputError &&
-      err.message === "namespace override is not readable: audit-log",
-  );
-});
-
 test("access service recallExplain omits mismatched most-recent snapshot when namespace is requested", async () => {
   const service = new EngramAccessService({
     config: {
