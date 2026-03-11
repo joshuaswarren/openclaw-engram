@@ -2893,14 +2893,14 @@ export class Orchestrator {
         crossSignals,
         Math.floor(max * 0.35),
       );
-      const reserved = prioritiesSection.length + crossSignalsSection.length + "## Shared Context\n".length + 4;
+      const fixedSections = [prioritiesSection, crossSignalsSection].filter((section) => section.trim().length > 0);
+      const fixedPrefix = ["## Shared Context", ...fixedSections].join("\n\n");
+      const reserved = fixedPrefix.length + "\n\n".length;
       const roundtableBudget = Math.max(160, max - reserved);
       const roundtableSection = capSection("### Latest Roundtable", roundtable, roundtableBudget);
       const combined = [
         "## Shared Context",
-        "",
-        prioritiesSection,
-        crossSignalsSection,
+        ...fixedSections,
         roundtableSection,
       ]
         .filter((s) => s.trim().length > 0)
