@@ -6266,7 +6266,6 @@ export class Orchestrator {
     if (!this.config.compressionGuidelineLearningEnabled) return null;
 
     const state = await this.storage.readCompressionGuidelineOptimizerState().catch(() => null);
-    if (state?.activationState === "draft") return null;
     if (!state || state.guidelineVersion <= 0) return null;
 
     const raw = await this.storage.readCompressionGuidelines().catch(() => null);

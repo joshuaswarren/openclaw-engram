@@ -89,6 +89,53 @@ test("buildCompressionGuidelineRecallSection emits active guideline section when
   assert.match(section ?? "", /summarize_node: increase/);
 });
 
+test("buildCompressionGuidelineRecallSection keeps the active guideline visible while a draft is pending", async () => {
+  const ctx: any = {
+    config: {
+      contextCompressionActionsEnabled: true,
+      compressionGuidelineLearningEnabled: true,
+    },
+    storage: {
+      readCompressionGuidelineOptimizerState: async () => ({
+        version: 2,
+        updatedAt: "2026-02-27T20:10:00.000Z",
+        sourceWindow: {
+          from: "2026-02-27T19:00:00.000Z",
+          to: "2026-02-27T20:00:00.000Z",
+        },
+        eventCounts: { total: 2, applied: 2, skipped: 0, failed: 0 },
+        guidelineVersion: 3,
+        activationState: "active",
+      }),
+      readCompressionGuidelines: async () =>
+        [
+          "# Compression Guidelines",
+          "",
+          "Generated: 2026-02-27T20:10:00.000Z",
+          "## Suggested Guidelines",
+          "- summarize_node: increase (+0.020, confidence=medium) — keep recaps concise.",
+          "",
+        ].join("\n"),
+      readCompressionGuidelineDraftState: async () => ({
+        version: 3,
+        updatedAt: "2026-02-27T20:15:00.000Z",
+        sourceWindow: {
+          from: "2026-02-27T19:30:00.000Z",
+          to: "2026-02-27T20:15:00.000Z",
+        },
+        eventCounts: { total: 3, applied: 2, skipped: 0, failed: 1 },
+        guidelineVersion: 4,
+        activationState: "draft",
+      }),
+    },
+  };
+
+  const section = await (Orchestrator.prototype as any).buildCompressionGuidelineRecallSection.call(ctx);
+  assert.ok(section);
+  assert.match(section ?? "", /Guideline version: 3/);
+  assert.doesNotMatch(section ?? "", /Guideline version: 4/);
+});
+
 test("buildCompressionGuidelineRecallSection fail-opens on malformed guideline state/guidelines", async () => {
   const ctx: any = {
     config: {
