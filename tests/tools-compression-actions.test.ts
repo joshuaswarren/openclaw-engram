@@ -315,7 +315,35 @@ test("memory_action_apply dryRun logs the validated action without mutating stor
   assert.equal(capturedWrites.length, 0);
   assert.equal(capturedEvents.length, 1);
   assert.equal(capturedEvents[0]?.dryRun, true);
-  assert.equal(capturedEvents[0]?.status, "validated");
+  assert.deepEqual(capturedEvents[0]?.outputMemoryIds, []);
+});
+
+test("memory_action_apply dryRun appends the raw structured event instead of a pre-previewed event", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      reason: event.reason ? `${event.reason}|previewed` : "previewed",
+      namespace: event.namespace ?? "default",
+      outcome: event.outcome ?? "applied",
+      status: "validated",
+      policyDecision: "allow",
+    }),
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  await tool.execute("tc9b", {
+    action: "store_note",
+    category: "fact",
+    content: "Validate without writing this memory.",
+    dryRun: true,
+    reason: "seed",
+    namespace: "team-alpha",
+  });
+
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.reason, "seed");
 });
 
 test("memory_action_apply logs validation rejections for missing required action inputs", async () => {
@@ -337,4 +365,54 @@ test("memory_action_apply logs validation rejections for missing required action
   assert.equal(capturedEvents[0]?.status, "rejected");
   assert.equal(capturedEvents[0]?.outcome, "failed");
   assert.match(capturedEvents[0]?.reason ?? "", /validation/i);
+});
+
+test("memory_action_apply respects policy gates before mutating storage", async () => {
+  const { tools, capturedEvents, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: "skipped",
+      status: "rejected",
+      policyDecision: "defer",
+      policyRationale: "maxCompressionTokensPerHour=0",
+    }),
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10b", {
+    action: "summarize_node",
+    category: "fact",
+    content: "Summarize this node even though compression is disabled.",
+    namespace: "team-alpha",
+    sessionKey: "agent:team-alpha:main",
+  });
+
+  assert.match(toolText(result), /blocked by policy/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.action, "summarize_node");
+  assert.equal(capturedEvents[0]?.dryRun, false);
+});
+
+test("memory_action_apply keeps legacy telemetry calls with memoryId in compatibility mode", async () => {
+  const { tools, capturedEvents, capturedWrites } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10c", {
+    action: "discard",
+    memoryId: "fact-legacy",
+    namespace: "team-alpha",
+  });
+
+  assert.match(toolText(result), /Recorded memory action telemetry/i);
+  assert.equal(capturedWrites.length, 0);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.memoryId, "fact-legacy");
+  assert.equal(capturedEvents[0]?.outcome, "applied");
 });

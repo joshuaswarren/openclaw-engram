@@ -1400,7 +1400,7 @@ Best for:
         const structuredActionRequest =
           Object.prototype.hasOwnProperty.call(params, "content") ||
           Object.prototype.hasOwnProperty.call(params, "category") ||
-          Object.prototype.hasOwnProperty.call(params, "memoryId") ||
+          Object.prototype.hasOwnProperty.call(params, "sessionKey") ||
           Object.prototype.hasOwnProperty.call(params, "linkTargetId") ||
           Object.prototype.hasOwnProperty.call(params, "linkType") ||
           Object.prototype.hasOwnProperty.call(params, "linkStrength") ||
@@ -1475,18 +1475,28 @@ Best for:
           );
         }
 
+        const structuredEvent = {
+          ...baseEvent,
+          outcome: outcome ?? "applied",
+          dryRun: dryRun === true,
+          outputMemoryIds: [],
+        };
+
         if (dryRun === true) {
-          const preview = orchestrator.previewMemoryActionEvent({
-            ...baseEvent,
-            outcome: outcome ?? "applied",
-            status: "validated",
-            dryRun: true,
-            outputMemoryIds: [],
-          });
-          const wrote = await orchestrator.appendMemoryActionEvent(preview);
+          const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
+          const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
           const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
           return toolResult(
             `Validated memory action without applying it: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}.${suffix}`,
+          );
+        }
+
+        const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
+        if (preview.policyDecision !== "allow") {
+          const wrote = await orchestrator.appendMemoryActionEvent(structuredEvent);
+          const suffix = wrote ? "" : " Telemetry write failed (fail-open).";
+          return toolResult(
+            `Memory action execution blocked by policy: action=${preview.action}, namespace=${preview.namespace}, policy=${preview.policyDecision}, rationale=${preview.policyRationale}.${suffix}`,
           );
         }
 
