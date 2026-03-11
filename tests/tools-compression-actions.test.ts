@@ -861,6 +861,19 @@ test("memory_action_apply records applied outcome after successful structured mu
 test("memory_action_apply passes explicit actor metadata to update_note writes", async () => {
   const { tools, capturedEvents, capturedUpdateWrites } = buildHarness({
     contextCompressionActionsEnabled: true,
+    readAllMemories: async () => [
+      {
+        path: "/tmp/fact-existing.md",
+        frontmatter: {
+          id: "fact-existing",
+          confidence: 0.58,
+          lifecycleState: "active",
+          importance: { score: 0.27, level: "low", reasons: [], keywords: [] },
+          source: "manual",
+        },
+        content: "Existing note for update coverage.",
+      },
+    ],
   });
   const tool = tools.get("memory_action_apply");
   assert.ok(tool);
@@ -883,6 +896,12 @@ test("memory_action_apply passes explicit actor metadata to update_note writes",
   });
   assert.equal(capturedEvents.length, 1);
   assert.deepEqual(capturedEvents[0]?.outputMemoryIds, ["fact-existing"]);
+  assert.deepEqual(capturedEvents[0]?.policyEligibility, {
+    confidence: 0.58,
+    lifecycleState: "active",
+    importance: 0.27,
+    source: "manual",
+  });
 });
 
 test("memory_action_apply passes explicit actor metadata to create_artifact writes", async () => {

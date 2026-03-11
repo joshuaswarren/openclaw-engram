@@ -1766,7 +1766,7 @@ Best for:
 
         orchestrator.requestQmdMaintenanceForTool(`memory_action_apply.${action}`);
         const wrote = await orchestrator.appendMemoryActionEvent({
-          ...baseEvent,
+          ...structuredEvent,
           outcome: "applied",
           status: "applied",
           dryRun: false,
