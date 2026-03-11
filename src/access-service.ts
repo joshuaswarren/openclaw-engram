@@ -236,6 +236,7 @@ export interface EngramAccessWriteResponse {
   memoryId?: string;
   duplicateOf?: string;
   idempotencyKey?: string;
+  idempotencyReplay?: boolean;
 }
 
 function normalizePagination(limit?: number, offset?: number): { limit: number; offset: number } {
@@ -370,7 +371,10 @@ export class EngramAccessService {
           throw new EngramAccessInputError(`idempotencyKey reuse conflict: ${key}`);
         }
         if (existing.response) {
-          return existing.response as T;
+          return {
+            ...(existing.response as T),
+            idempotencyReplay: true,
+          };
         }
         const response = await options.execute();
         await this.idempotency.put(key, requestHash, response);

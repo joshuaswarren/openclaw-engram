@@ -201,7 +201,9 @@ export class EngramAccessHttpServer {
         ttl: typeof body.ttl === "string" ? body.ttl : undefined,
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       });
-      this.recordWriteRateLimitHit();
+      if (this.shouldCountWriteRateLimit(response)) {
+        this.recordWriteRateLimitHit();
+      }
       this.respondJson(res, this.writeResponseStatus(response), response);
       return;
     }
@@ -224,7 +226,9 @@ export class EngramAccessHttpServer {
         ttl: typeof body.ttl === "string" ? body.ttl : undefined,
         sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
       });
-      this.recordWriteRateLimitHit();
+      if (this.shouldCountWriteRateLimit(response)) {
+        this.recordWriteRateLimitHit();
+      }
       this.respondJson(res, this.writeResponseStatus(response), response);
       return;
     }
@@ -438,5 +442,9 @@ export class EngramAccessHttpServer {
 
   private recordWriteRateLimitHit(): void {
     this.writeRequestTimestamps.push(Date.now());
+  }
+
+  private shouldCountWriteRateLimit(response: { idempotencyReplay?: boolean }): boolean {
+    return response.idempotencyReplay !== true;
   }
 }

@@ -537,6 +537,73 @@ test("access HTTP server does not consume the write rate limit for invalid reque
   }
 });
 
+test("access HTTP server does not consume the write rate limit for idempotency replays", async () => {
+  const seenKeys = new Set<string>();
+  const server = new EngramAccessHttpServer({
+    service: {
+      ...createFakeService(),
+      memoryStore: async ({ dryRun, idempotencyKey }: { dryRun?: boolean; idempotencyKey?: string }) => {
+        const replay = Boolean(idempotencyKey && seenKeys.has(idempotencyKey));
+        if (idempotencyKey) {
+          seenKeys.add(idempotencyKey);
+        }
+        return {
+          schemaVersion: 1,
+          operation: "memory_store",
+          namespace: "global",
+          dryRun: dryRun === true,
+          accepted: true,
+          queued: false,
+          status: dryRun === true ? "validated" : "stored",
+          memoryId: dryRun === true ? undefined : "fact-new",
+          idempotencyKey,
+          idempotencyReplay: replay,
+        };
+      },
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+    for (let index = 0; index < 30; index += 1) {
+      const response = await fetch(`${base}/engram/v1/memories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          idempotencyKey: "replay-key",
+          content: "A durable explicit memory retried with the same idempotency key.",
+          category: "fact",
+        }),
+      });
+      assert.equal(response.status, 201);
+    }
+
+    const freshWrite = await fetch(`${base}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        idempotencyKey: "fresh-key",
+        content: "A fresh write should still fit inside the limiter budget after pure replays.",
+        category: "fact",
+      }),
+    });
+    assert.equal(freshWrite.status, 201);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server binds namespace write authorization to its configured principal", async () => {
   const service = new EngramAccessService({
     config: {

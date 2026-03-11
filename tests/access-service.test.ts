@@ -740,7 +740,9 @@ test("access service memoryStore persists and enforces idempotency conflicts", a
     });
 
     assert.equal(first.status, "stored");
+    assert.equal(first.idempotencyReplay, undefined);
     assert.equal(second.memoryId, first.memoryId);
+    assert.equal(second.idempotencyReplay, true);
     assert.equal((await storage.readAllMemories()).length, 1);
 
     await assert.rejects(
@@ -895,7 +897,21 @@ test("access service acquires a shared idempotency key lock before executing wri
     const [firstResponse, secondResponse] = await Promise.all([first, second]);
 
     assert.equal(executeCalls, 1);
-    assert.deepEqual(secondResponse, firstResponse);
+    assert.deepEqual(firstResponse, {
+      schemaVersion: 1,
+      operation: "memory_store",
+      namespace: "global",
+      dryRun: false,
+      accepted: true,
+      queued: false,
+      status: "stored",
+      memoryId: "fact-shared",
+      idempotencyKey: "shared-write",
+    });
+    assert.deepEqual(secondResponse, {
+      ...firstResponse,
+      idempotencyReplay: true,
+    });
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
