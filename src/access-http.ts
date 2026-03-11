@@ -299,13 +299,16 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "GET" && pathname === "/engram/v1/review-queue") {
-      const response = await this.service.reviewQueue(parsed.searchParams.get("runId") ?? undefined);
+      const response = await this.service.reviewQueue(
+        parsed.searchParams.get("runId") ?? undefined,
+        parsed.searchParams.get("namespace") ?? undefined,
+      );
       this.respondJson(res, 200, response);
       return;
     }
 
     if (req.method === "GET" && pathname === "/engram/v1/maintenance") {
-      this.respondJson(res, 200, await this.service.maintenance());
+      this.respondJson(res, 200, await this.service.maintenance(parsed.searchParams.get("namespace") ?? undefined));
       return;
     }
 

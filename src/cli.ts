@@ -4998,11 +4998,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("governance-run")
         .description("Run memory governance in shadow/apply mode and write audit artifacts")
         .option("--mode <mode>", "Governance mode (shadow|apply)", "shadow")
+        .option("--namespace <ns>", "Namespace to govern (default: current default namespace)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const mode = options.mode === "apply" ? "apply" : "shadow";
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runMemoryGovernanceCliCommand({
-            memoryDir: orchestrator.config.memoryDir,
+            memoryDir,
             mode,
           });
           console.log(JSON.stringify(result, null, 2));
@@ -5013,10 +5018,15 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("governance-report")
         .description("Read the latest or a named governance run artifact bundle")
         .option("--run-id <id>", "Governance run id (default: latest)")
+        .option("--namespace <ns>", "Namespace to inspect (default: current default namespace)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const report = await runMemoryGovernanceReportCliCommand({
-            memoryDir: orchestrator.config.memoryDir,
+            memoryDir,
             runId: typeof options.runId === "string" && options.runId.trim().length > 0
               ? options.runId.trim()
               : undefined,
@@ -5029,13 +5039,18 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("governance-restore")
         .description("Restore memory files from a previous governance apply run")
         .requiredOption("--run-id <id>", "Governance run id to restore")
+        .option("--namespace <ns>", "Namespace to restore (default: current default namespace)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           if (typeof options.runId !== "string" || options.runId.trim().length === 0) {
             throw new Error("missing --run-id");
           }
+          const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
+            ? options.namespace.trim()
+            : undefined;
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace);
           const result = await runMemoryGovernanceRestoreCliCommand({
-            memoryDir: orchestrator.config.memoryDir,
+            memoryDir,
             runId: options.runId.trim(),
           });
           console.log(JSON.stringify(result, null, 2));

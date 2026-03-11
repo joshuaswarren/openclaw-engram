@@ -1425,13 +1425,16 @@ test("access service reviewQueue and maintenance fall back to governance artifac
       getStorage: async () => storage,
     } as any);
 
-    const queue = await service.reviewQueue();
+    const queue = await service.reviewQueue(undefined, "global");
     assert.equal(queue.found, true);
+    assert.equal(queue.namespace, "global");
     assert.equal(queue.runId, governance.runId);
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+    assert.equal((queue.qualityScore?.score ?? 0) < 100, true);
 
-    const maintenance = await service.maintenance();
+    const maintenance = await service.maintenance("global");
     assert.equal(maintenance.health.projectionAvailable, false);
+    assert.equal(maintenance.namespace, "global");
     assert.equal(maintenance.latestGovernanceRun.found, true);
     assert.equal(maintenance.latestGovernanceRun.runId, governance.runId);
     assert.equal(
@@ -1486,12 +1489,15 @@ test("access service serves reviewQueue and maintenance from projection when gov
 
     const queue = await service.reviewQueue(governance.runId);
     assert.equal(queue.found, true);
+    assert.equal(queue.namespace, "global");
     assert.equal(queue.runId, governance.runId);
     assert.equal(queue.reviewQueue?.some((entry) => entry.reasonCode === "exact_duplicate"), true);
     assert.equal("runId" in (queue.reviewQueue?.[0] ?? {}), false);
+    assert.equal((queue.qualityScore?.score ?? 0) < 100, true);
 
-    const maintenance = await service.maintenance();
+    const maintenance = await service.maintenance("global");
     assert.equal(maintenance.health.projectionAvailable, true);
+    assert.equal(maintenance.namespace, "global");
     assert.equal(maintenance.latestGovernanceRun.found, true);
     assert.equal(maintenance.latestGovernanceRun.runId, governance.runId);
     assert.equal(

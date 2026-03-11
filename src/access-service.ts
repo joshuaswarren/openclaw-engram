@@ -175,15 +175,19 @@ export interface EngramAccessEntityResponse {
 
 export interface EngramAccessReviewQueueResponse {
   found: boolean;
+  namespace?: string;
   runId?: string;
   summary?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"];
   metrics?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"];
+  qualityScore?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["qualityScore"];
   reviewQueue?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["reviewQueue"];
   appliedActions?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["appliedActions"];
+  transitionReport?: Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["transitionReport"];
   report?: string;
 }
 
 export interface EngramAccessMaintenanceResponse {
+  namespace: string;
   health: EngramAccessHealthResponse;
   latestGovernanceRun: EngramAccessReviewQueueResponse;
 }
@@ -895,15 +899,20 @@ export class EngramAccessService {
     };
   }
 
-  async reviewQueue(runId?: string): Promise<EngramAccessReviewQueueResponse> {
-    const storage = await this.orchestrator.getStorage();
+  async reviewQueue(runId?: string, namespace?: string): Promise<EngramAccessReviewQueueResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const projected = await storage.getProjectedGovernanceRecord();
     if (projected && (!runId || projected.runId === runId.trim())) {
       return {
         found: true,
+        namespace: resolvedNamespace,
         runId: projected.runId,
         summary: projected.summary as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["summary"],
         metrics: projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"],
+        qualityScore:
+          (projected.metrics as Awaited<ReturnType<typeof readMemoryGovernanceRunArtifact>>["metrics"] | undefined)
+            ?.qualityScore,
         reviewQueue: projected.reviewQueueRows.map((row) => ({
           entryId: row.entryId,
           memoryId: row.memoryId,
@@ -927,28 +936,34 @@ export class EngramAccessService {
         })) as Awaited<
           ReturnType<typeof readMemoryGovernanceRunArtifact>
         >["appliedActions"],
+        transitionReport: undefined,
         report: projected.report,
       };
     }
 
-    const resolvedRunId = runId?.trim() || (await listMemoryGovernanceRuns(this.orchestrator.config.memoryDir))[0];
-    if (!resolvedRunId) return { found: false };
-    const artifact = await readMemoryGovernanceRunArtifact(this.orchestrator.config.memoryDir, resolvedRunId);
+    const resolvedRunId = runId?.trim() || (await listMemoryGovernanceRuns(storage.dir))[0];
+    if (!resolvedRunId) return { found: false, namespace: resolvedNamespace };
+    const artifact = await readMemoryGovernanceRunArtifact(storage.dir, resolvedRunId);
     return {
       found: true,
+      namespace: resolvedNamespace,
       runId: resolvedRunId,
       summary: artifact.summary,
       metrics: artifact.metrics,
+      qualityScore: artifact.qualityScore,
       reviewQueue: artifact.reviewQueue,
       appliedActions: artifact.appliedActions,
+      transitionReport: artifact.transitionReport,
       report: artifact.report,
     };
   }
 
-  async maintenance(): Promise<EngramAccessMaintenanceResponse> {
+  async maintenance(namespace?: string): Promise<EngramAccessMaintenanceResponse> {
+    const resolvedNamespace = this.resolveNamespace(namespace);
     return {
+      namespace: resolvedNamespace,
       health: await this.health(),
-      latestGovernanceRun: await this.reviewQueue(),
+      latestGovernanceRun: await this.reviewQueue(undefined, resolvedNamespace),
     };
   }
 
