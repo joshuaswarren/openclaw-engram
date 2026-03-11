@@ -357,6 +357,55 @@ test("context_checkpoint respects policy gates before saving checkpoints", async
   assert.equal(capturedEvents[0]?.action, "summarize_node");
 });
 
+test("context_checkpoint dryRun policy denials persist rejected status instead of validated", async () => {
+  const persistedEvents: any[] = [];
+  const { tools, createdCheckpoints, savedCheckpoints } = buildHarness({
+    contextCompressionActionsEnabled: true,
+    previewMemoryActionEvent: (event: any) => ({
+      ...event,
+      namespace: event.namespace ?? "default",
+      outcome: "skipped",
+      status: event.status ?? "rejected",
+      policyDecision: "deny",
+      policyRationale: "contextCompressionActionsEnabled=false",
+    }),
+    appendMemoryActionEvent: async (event: any) => {
+      persistedEvents.push({
+        ...event,
+        namespace: event.namespace ?? "default",
+        outcome: "skipped",
+        status: event.status ?? "rejected",
+        policyDecision: "deny",
+      });
+      return true;
+    },
+  });
+  const tool = tools.get("context_checkpoint");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc7c", {
+    summary: "checkpoint before compaction",
+    sessionKey: "agent:engram:main",
+    turns: [
+      {
+        timestamp: "2026-03-11T10:00:00.000Z",
+        role: "user",
+        content: "Please compress the noisy setup discussion.",
+        sessionKey: "agent:engram:main",
+        turnId: "turn-1",
+      },
+    ],
+    dryRun: true,
+  });
+
+  assert.match(toolText(result), /blocked by policy/i);
+  assert.equal(createdCheckpoints.length, 0);
+  assert.equal(savedCheckpoints.length, 0);
+  assert.equal(persistedEvents.length, 1);
+  assert.equal(persistedEvents[0]?.status, "rejected");
+  assert.equal(persistedEvents[0]?.dryRun, true);
+});
+
 test("memory_action_apply executes store_note through storage paths and records output ids", async () => {
   const { tools, capturedEvents, capturedWrites } = buildHarness({
     contextCompressionActionsEnabled: true,

@@ -1294,7 +1294,6 @@ Best for:
         const structuredEvent = {
           ...baseEvent,
           outcome: "applied" as const,
-          status: dryRun === true ? "validated" as const : undefined,
         };
         const preview = orchestrator.previewMemoryActionEvent(structuredEvent);
         if (preview.policyDecision !== "allow") {

@@ -1456,11 +1456,11 @@ export class Orchestrator {
       outcome: normalizedOutcome,
       status:
         event.status ??
-        (dryRun
+        (dryRun && policy.decision === "allow" && event.outcome !== "failed"
           ? "validated"
-          : normalizedOutcome === "failed" || policy.decision !== "allow"
-            ? "rejected"
-            : "applied"),
+          : normalizedOutcome === "applied"
+            ? "applied"
+            : "rejected"),
       actor:
         typeof event.actor === "string" && event.actor.length > 0 ? event.actor : "engram",
       subsystem:

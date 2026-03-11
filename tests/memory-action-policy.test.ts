@@ -186,6 +186,30 @@ test("previewMemoryActionEvent downgrades successful dry-run outcomes to skipped
   }
 });
 
+test("previewMemoryActionEvent marks skipped outcomes as rejected status", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-skipped-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      contextCompressionActionsEnabled: true,
+    });
+    const orchestrator = new Orchestrator(cfg);
+
+    const preview = orchestrator.previewMemoryActionEvent({
+      action: "store_note",
+      outcome: "skipped",
+    });
+
+    assert.equal(preview.policyDecision, "allow");
+    assert.equal(preview.status, "rejected");
+    assert.equal(preview.outcome, "skipped");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("appendMemoryActionEvent enforces zero-limit defer semantics for summarize_node", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-memory-action-policy-zero-limit-"));
   try {
