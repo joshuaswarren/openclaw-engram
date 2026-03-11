@@ -33,6 +33,7 @@ Weekly reports now include:
 - Provenance annotations for feedback-derived patterns (`inbox.jsonl` line + entry key)
 - Outcome-aware weighting summaries (`applied/skipped/failed` by action type)
 - Optional `Promotion Candidates (Advisory)` section when `compoundingSemanticEnabled=true`
+- Stable promotion candidate ids so operators can explicitly promote one lesson into durable memory later
 
 `mistakes.json` is now a backward-compatible stable registry:
 - legacy `patterns[]` is preserved for existing readers
@@ -47,6 +48,11 @@ Weekly reports now include:
 - `evidenceWindowEnd`
 
 Promotion candidates are advisory only and do not auto-write into shared memory.
+Promotion now happens through an explicit operator path:
+- tool: `compounding_promote_candidate`
+- CLI: `openclaw engram compounding-promote --week-id <YYYY-Www> --candidate-id <id>`
+
+Promoted lessons are written as durable `principle` or `rule` memories with `source=compounding-promotion`.
 
 When `compoundingInjectEnabled=true`, recall injection can include both recurring mistake patterns and rubric snippets that match the current query/workflow.
 
