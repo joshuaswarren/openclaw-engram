@@ -552,8 +552,23 @@ test("access service recall without a session key does not reuse another session
         },
       },
       getStorage: async () => storage,
-      getLastIntentSnapshot: async () => null,
-      getLastGraphRecallSnapshot: async () => null,
+      getLastIntentSnapshot: async () => ({
+        recordedAt: "2026-03-10T00:00:00.000Z",
+        promptHash: "prompt",
+        promptLength: 12,
+        retrievalQueryHash: "query",
+        retrievalQueryLength: 12,
+        plannerEnabled: true,
+        plannedMode: "minimal",
+        reasoning: "debug state from another session",
+      }),
+      getLastGraphRecallSnapshot: async () => ({
+        recordedAt: "2026-03-10T00:00:00.000Z",
+        queryHash: "graph",
+        graphMode: "off",
+        nodes: [],
+        edges: [],
+      }),
     } as any);
 
     const response = await service.recall({

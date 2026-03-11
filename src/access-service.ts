@@ -306,8 +306,10 @@ export class EngramAccessService {
     snapshot: LastRecallSnapshot | null,
     namespace: string,
     includeDebug: boolean,
+    sessionKey?: string,
   ): Promise<EngramAccessRecallResponse["debug"] | undefined> {
     if (!includeDebug) return undefined;
+    if (!sessionKey?.trim()) return undefined;
     const [intent, graph] = await Promise.all([
       this.orchestrator.getLastIntentSnapshot(namespace),
       this.orchestrator.getLastGraphRecallSnapshot(namespace),
@@ -338,9 +340,8 @@ export class EngramAccessService {
 
     if (results.length > 0) return results;
 
-    const namespaceStorage = await this.orchestrator.getStorage(namespace);
     for (const memoryId of snapshot.memoryIds) {
-      const memory = await namespaceStorage.getMemoryById(memoryId);
+      const memory = await storage.getMemoryById(memoryId);
       if (!memory || seen.has(memory.path)) continue;
       seen.add(memory.path);
       results.push(this.serializeMemorySummary(memory, this.orchestrator.config.memoryDir));
@@ -477,7 +478,12 @@ export class EngramAccessService {
       ? this.resolveNamespace(snapshot.namespace)
       : namespace;
     const results = await this.serializeRecallResults(snapshot);
-    const debug = await this.buildRecallDebug(snapshot, effectiveNamespace, request.includeDebug === true);
+    const debug = await this.buildRecallDebug(
+      snapshot,
+      effectiveNamespace,
+      request.includeDebug === true,
+      request.sessionKey,
+    );
 
     return {
       query,
