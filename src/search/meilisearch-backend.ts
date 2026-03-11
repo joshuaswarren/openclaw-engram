@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { SearchBackend, SearchResult } from "./port.js";
+import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
 import { scanMemoryDir } from "./document-scanner.js";
 
 export interface MeilisearchBackendOptions {
@@ -58,7 +58,12 @@ export class MeilisearchBackend implements SearchBackend {
     return `backend=meilisearch available=${this.available} host=${this.host}`;
   }
 
-  async search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+    _options?: SearchQueryOptions,
+  ): Promise<SearchResult[]> {
     // Try hybrid first; fall back to plain FTS only if hybrid throws (e.g. no embedder configured)
     try {
       return await this.doSearch(query, maxResults ?? 10, { hybrid: { semanticRatio: 0.5, embedder: "default" } }, collection, true);

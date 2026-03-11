@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { log } from "../logger.js";
-import type { SearchBackend, SearchResult } from "./port.js";
+import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
 import type { EmbedHelper } from "./embed-helper.js";
 import { scanMemoryDir } from "./document-scanner.js";
 
@@ -59,7 +59,12 @@ export class OramaBackend implements SearchBackend {
     return `backend=orama available=${this.available} dbPath=${this.dbPath}`;
   }
 
-  async search(query: string, _collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    _collection?: string,
+    maxResults?: number,
+    _options?: SearchQueryOptions,
+  ): Promise<SearchResult[]> {
     return this.hybridSearch(query, _collection, maxResults);
   }
 

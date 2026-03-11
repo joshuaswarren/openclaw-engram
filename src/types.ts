@@ -457,6 +457,8 @@ export interface PluginConfig {
   qmdDaemonEnabled: boolean;
   qmdDaemonUrl: string;
   qmdDaemonRecheckIntervalMs: number;
+  qmdIntentHintsEnabled: boolean;
+  qmdExplainEnabled: boolean;
 
   // v7.0 Knowledge Graph Enhancement
   knowledgeIndexEnabled: boolean;
@@ -971,6 +973,16 @@ export interface QmdSearchResult {
   path: string;
   snippet: string;
   score: number;
+  explain?: QmdSearchExplain;
+  transport?: "daemon" | "subprocess" | "hybrid" | "scoped_prefilter";
+}
+
+export interface QmdSearchExplain {
+  ftsScores?: number[];
+  vectorScores?: number[];
+  rrf?: number;
+  rerankScore?: number;
+  blendedScore?: number;
 }
 
 export interface MetaState {

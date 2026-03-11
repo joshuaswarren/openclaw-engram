@@ -2,8 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
-import type { QmdSearchResult } from "./types.js";
-import type { SearchBackend } from "./search/port.js";
+import type { QmdSearchExplain, QmdSearchResult } from "./types.js";
+import type { SearchBackend, SearchQueryOptions } from "./search/port.js";
 
 export interface QmdClientOptions {
   slowLog?: { enabled: boolean; thresholdMs: number };
@@ -81,6 +81,61 @@ function stripControlChars(s: string): string {
 function truncateForLog(s: string, max = 2000): string {
   const cleaned = stripControlChars(s);
   return cleaned.length > max ? cleaned.slice(0, max) + "…(truncated)" : cleaned;
+}
+
+function parseQmdVersion(version: string | null): [number, number, number] | null {
+  if (!version) return null;
+  const match = version.match(/v?(\d+)\.(\d+)\.(\d+)/i);
+  if (!match) return null;
+  return [
+    Number.parseInt(match[1] ?? "0", 10),
+    Number.parseInt(match[2] ?? "0", 10),
+    Number.parseInt(match[3] ?? "0", 10),
+  ];
+}
+
+function versionAtLeast(
+  current: [number, number, number] | null,
+  target: [number, number, number],
+): boolean {
+  if (!current) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if ((current[i] ?? 0) > target[i]) return true;
+    if ((current[i] ?? 0) < target[i]) return false;
+  }
+  return true;
+}
+
+function normalizeSearchOptions(options?: SearchQueryOptions): SearchQueryOptions | undefined {
+  if (!options) return undefined;
+  const intent = typeof options.intent === "string" ? options.intent.trim() : "";
+  const normalized: SearchQueryOptions = {};
+  if (intent.length > 0) {
+    normalized.intent = intent;
+  }
+  if (options.explain === true) {
+    normalized.explain = true;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function parseExplainScores(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const scores = value.filter((entry): entry is number => typeof entry === "number");
+  return scores.length > 0 ? scores : undefined;
+}
+
+export function parseQmdExplain(value: unknown): QmdSearchExplain | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const parsed: QmdSearchExplain = {
+    ftsScores: parseExplainScores(candidate.ftsScores),
+    vectorScores: parseExplainScores(candidate.vectorScores),
+    rrf: typeof candidate.rrf === "number" ? candidate.rrf : undefined,
+    rerankScore: typeof candidate.rerankScore === "number" ? candidate.rerankScore : undefined,
+    blendedScore: typeof candidate.blendedScore === "number" ? candidate.blendedScore : undefined,
+  };
+  return Object.values(parsed).some((entry) => entry !== undefined) ? parsed : undefined;
 }
 
 class AsyncMutex {
@@ -383,7 +438,10 @@ class QmdDaemonSession {
   }
 }
 
-function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
+function parseMcpSearchResult(
+  result: unknown,
+  transport: QmdSearchResult["transport"] = "daemon",
+): QmdSearchResult[] {
   const resultObj = result as Record<string, unknown> | null;
   if (!resultObj) return [];
   const results: QmdSearchResult[] = [];
@@ -399,6 +457,8 @@ function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
           : (typeof d.docid === "string" ? d.docid.replace(/^#/, "") : "unknown"),
         snippet: typeof d.snippet === "string" ? d.snippet : "",
         score: typeof d.score === "number" ? d.score : 0,
+        explain: parseQmdExplain(d.explain),
+        transport,
       });
     }
   };
@@ -425,7 +485,10 @@ function parseMcpSearchResult(result: unknown): QmdSearchResult[] {
   return results;
 }
 
-function parseQmdSearchStdout(stdout: string): QmdSearchResult[] {
+function parseQmdSearchStdout(
+  stdout: string,
+  transport: QmdSearchResult["transport"] = "subprocess",
+): QmdSearchResult[] {
   const trimmedOut = stdout.trim();
   if (!trimmedOut || trimmedOut === "No results found.") return [];
   const parsed = JSON.parse(trimmedOut);
@@ -440,6 +503,8 @@ function parseQmdSearchStdout(stdout: string): QmdSearchResult[] {
         "unknown",
       snippet: (entry.snippet as string) ?? "",
       score: typeof entry.score === "number" ? entry.score : 0,
+      explain: parseQmdExplain(entry.explain),
+      transport,
     }),
   );
 }
@@ -530,9 +595,14 @@ export class QmdClient implements SearchBackend {
 
   private async probeCli(): Promise<boolean> {
     const parseVersion = (stdout: string, stderr: string): string | null => {
-      const text = `${stdout}\n${stderr}`.trim();
-      if (!text) return null;
-      return text.split("\n").map((s) => s.trim()).find((s) => s.length > 0) ?? null;
+      const lines = `${stdout}\n${stderr}`
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (lines.length === 0) return null;
+      const semanticLines = lines.filter((line) => parseQmdVersion(line) !== null);
+      if (semanticLines.length === 0) return lines[0] ?? null;
+      return semanticLines.find((line) => /\bqmd\b/i.test(line)) ?? semanticLines[0] ?? null;
     };
     const markProbeFailure = (err: unknown): void => {
       this.lastCliProbeError = err instanceof Error ? err.message : String(err);
@@ -637,10 +707,36 @@ export class QmdClient implements SearchBackend {
     return this.daemonAvailable;
   }
 
+  private supportsIntentHints(): boolean {
+    return versionAtLeast(parseQmdVersion(this.cliVersion), [1, 1, 5]);
+  }
+
+  private supportsExplainTraces(): boolean {
+    return versionAtLeast(parseQmdVersion(this.cliVersion), [1, 1, 2]);
+  }
+
+  private resolveSearchOptions(options?: SearchQueryOptions): SearchQueryOptions | undefined {
+    const normalized = normalizeSearchOptions(options);
+    if (!normalized) return undefined;
+    const resolved: SearchQueryOptions = {};
+    if (normalized.intent && this.supportsIntentHints()) {
+      resolved.intent = normalized.intent;
+    }
+    if (normalized.explain === true && this.supportsExplainTraces()) {
+      resolved.explain = true;
+    }
+    return Object.keys(resolved).length > 0 ? resolved : undefined;
+  }
+
+  resolveSupportedSearchOptions(options?: SearchQueryOptions): SearchQueryOptions | undefined {
+    return this.resolveSearchOptions(options);
+  }
+
   async search(
     query: string,
     collection?: string,
     maxResults?: number,
+    options?: SearchQueryOptions,
   ): Promise<QmdSearchResult[]> {
     if (!this.isAvailable()) return [];
     const trimmed = query.trim();
@@ -648,11 +744,12 @@ export class QmdClient implements SearchBackend {
 
     const col = collection ?? this.collection;
     const n = maxResults ?? this.maxResults;
+    const searchOptions = this.resolveSearchOptions(options);
 
     // Try daemon first (bypasses QMD_MUTEX — daemon handles its own concurrency)
     await this.maybeProbeDaemon();
     if (this.daemonAvailable) {
-      const results = await this.searchViaDaemon(trimmed, col, n);
+      const results = await this.searchViaDaemon(trimmed, col, n, searchOptions);
       if (results !== null) {
         if (results.length > 0) return results;
         // Fail-open: daemon sometimes returns zero hits while subprocess
@@ -662,7 +759,7 @@ export class QmdClient implements SearchBackend {
     }
 
     // Subprocess fallback
-    return this.searchViaSubprocess(trimmed, col, n);
+    return this.searchViaSubprocess(trimmed, col, n, searchOptions);
   }
 
   async searchGlobal(
@@ -783,6 +880,7 @@ export class QmdClient implements SearchBackend {
     query: string,
     collection: string | undefined,
     maxResults: number,
+    options?: SearchQueryOptions,
   ): Promise<QmdSearchResult[] | null> {
     if (!this.daemonSession || !this.daemonAvailable) return null;
 
@@ -795,6 +893,12 @@ export class QmdClient implements SearchBackend {
       if (collection) {
         args.collection = collection;
       }
+      if (options?.intent) {
+        args.intent = options.intent;
+      }
+      if (options?.explain === true) {
+        args.explain = true;
+      }
 
       const result = await this.daemonSession.callTool("query", args, QMD_DAEMON_TIMEOUT_MS);
       const durationMs = Date.now() - startedAtMs;
@@ -805,7 +909,7 @@ export class QmdClient implements SearchBackend {
         );
       }
 
-      const results = parseMcpSearchResult(result);
+      const results = parseMcpSearchResult(result, "daemon");
 
       log.debug(`QMD daemon search: ${results.length} results in ${durationMs}ms`);
       return results;
@@ -894,13 +998,21 @@ export class QmdClient implements SearchBackend {
     query: string,
     collection: string,
     maxResults: number,
+    options?: SearchQueryOptions,
   ): Promise<QmdSearchResult[]> {
     if (this.available === false) return [];
 
     const startedAtMs = Date.now();
     try {
+      const args = ["query", query, "-c", collection, "--json", "-n", String(maxResults)];
+      if (options?.intent) {
+        args.push("--intent", options.intent);
+      }
+      if (options?.explain === true) {
+        args.push("--explain");
+      }
       const { stdout } = await runQmd(
-        ["query", query, "-c", collection, "--json", "-n", String(maxResults)],
+        args,
         QMD_TIMEOUT_MS,
         this.qmdPath,
       );
@@ -911,7 +1023,7 @@ export class QmdClient implements SearchBackend {
         );
       }
 
-      return parseQmdSearchStdout(stdout);
+      return parseQmdSearchStdout(stdout, "subprocess");
     } catch (err) {
       log.debug(`QMD search failed: ${err}`);
       return [];

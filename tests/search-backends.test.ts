@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 // Test factory routing and adapter construction — no live services needed.
 
@@ -54,6 +57,49 @@ describe("search backend factory", () => {
     const backend = createSearchBackend(config);
     assert.equal(backend.debugStatus(), "backend=noop");
   });
+
+  it("QMD capability gating tolerates banner-prefixed semantic versions", async () => {
+    const { QmdClient } = await import("../src/qmd.js");
+    const client = new QmdClient("test-collection", 10);
+    (client as any).cliVersion = "warning: experimental build\nqmd 1.1.5";
+    assert.deepEqual(
+      client.resolveSupportedSearchOptions({
+        intent: "goal:review",
+        explain: true,
+      }),
+      {
+        intent: "goal:review",
+        explain: true,
+      },
+    );
+  });
+
+  it("QMD probe prefers qmd-labelled version lines over banner versions", async () => {
+    const { QmdClient } = await import("../src/qmd.js");
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-version-"));
+    const fakeQmdPath = path.join(tempDir, "qmd");
+    await writeFile(
+      fakeQmdPath,
+      "#!/bin/sh\nprintf 'bun 1.2.0\\nqmd 1.1.1\\n'\n",
+      "utf8",
+    );
+    await chmod(fakeQmdPath, 0o755);
+
+    try {
+      const client = new QmdClient("test-collection", 10, { qmdPath: fakeQmdPath });
+      assert.equal(await client.probe(), true);
+      assert.equal((client as any).cliVersion, "qmd 1.1.1");
+      assert.deepEqual(
+        client.resolveSupportedSearchOptions({
+          intent: "goal:review",
+          explain: true,
+        }),
+        undefined,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("document scanner", () => {
@@ -90,6 +136,8 @@ function fakeConfig(overrides: Record<string, unknown> = {}): any {
     qmdDaemonEnabled: false,
     qmdDaemonUrl: "",
     qmdDaemonRecheckIntervalMs: 60_000,
+    qmdIntentHintsEnabled: false,
+    qmdExplainEnabled: false,
     slowLogEnabled: false,
     slowLogThresholdMs: 5000,
     qmdUpdateTimeoutMs: 30_000,

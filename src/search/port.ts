@@ -3,6 +3,11 @@ import type { QmdSearchResult } from "../types.js";
 /** Alias so consumers don't need to reference "Qmd" in a backend-agnostic context. */
 export type SearchResult = QmdSearchResult;
 
+export interface SearchQueryOptions {
+  intent?: string;
+  explain?: boolean;
+}
+
 /**
  * Abstract search backend interface.
  *
@@ -23,7 +28,12 @@ export interface SearchBackend {
   debugStatus(): string;
 
   // ── Search ──
-  search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]>;
+  search(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+    options?: SearchQueryOptions,
+  ): Promise<SearchResult[]>;
   searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]>;
   bm25Search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]>;
   vectorSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]>;

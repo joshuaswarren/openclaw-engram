@@ -1134,6 +1134,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "http://localhost:8181/mcp",
     qmdDaemonRecheckIntervalMs:
       typeof cfg.qmdDaemonRecheckIntervalMs === "number" ? cfg.qmdDaemonRecheckIntervalMs : 60_000,
+    qmdIntentHintsEnabled: cfg.qmdIntentHintsEnabled === true,
+    qmdExplainEnabled: cfg.qmdExplainEnabled === true,
 
     // v6.0 Fact deduplication & archival
     factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,

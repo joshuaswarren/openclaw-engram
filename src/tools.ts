@@ -1068,6 +1068,42 @@ Best for:
 
   api.registerTool(
     {
+      name: "memory_qmd_debug",
+      label: "Inspect QMD Recall",
+      description:
+        "Inspect the last persisted QMD recall snapshot, including any intent hint, explain trace capture, and whether hybrid top-up was skipped or used.",
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description:
+              "Optional namespace to inspect. Defaults to defaultNamespace.",
+          }),
+        ),
+        maxResults: Type.Optional(
+          Type.Number({
+            description: "Maximum results to show (default: 10, max: 25).",
+            minimum: 1,
+            maximum: 25,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const { namespace, maxResults } = params as {
+          namespace?: string;
+          maxResults?: number;
+        };
+        const text = await orchestrator.explainLastQmdRecall({
+          namespace,
+          maxResults,
+        });
+        return toolResult(text);
+      },
+    },
+    { name: "memory_qmd_debug" },
+  );
+
+  api.registerTool(
+    {
       name: "memory_graph_explain_last_recall",
       label: "Explain Graph Recall",
       description:

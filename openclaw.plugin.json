@@ -2185,17 +2185,27 @@
       "qmdDaemonEnabled": {
         "type": "boolean",
         "default": true,
-        "description": "Auto-detect and use QMD HTTP daemon for faster searches"
+        "description": "Prefer the shared QMD MCP session for faster searches when available."
       },
       "qmdDaemonUrl": {
         "type": "string",
         "default": "http://localhost:8181/mcp",
-        "description": "QMD HTTP daemon MCP endpoint URL"
+        "description": "Legacy compatibility setting retained for QMD daemon configuration."
       },
       "qmdDaemonRecheckIntervalMs": {
         "type": "number",
         "default": 60000,
         "description": "Re-probe interval when daemon is down (ms)"
+      },
+      "qmdIntentHintsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Pass Engram's inferred recall intent into QMD unified search when supported."
+      },
+      "qmdExplainEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Request QMD explain traces for recall debugging when supported."
       },
       "knowledgeIndexEnabled": {
         "type": "boolean",
