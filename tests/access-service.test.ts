@@ -933,6 +933,55 @@ test("access service write operations reject namespaces the caller cannot write"
   );
 });
 
+test("access service write authorization uses the trusted transport principal instead of client sessionKey", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.memoryStore({
+      schemaVersion: 1,
+      dryRun: true,
+      sessionKey: "agent:secret-team:chat",
+      authenticatedPrincipal: "project-x",
+      content: "Spoofed sessionKey should not unlock another namespace.",
+      category: "fact",
+      namespace: "secret-team",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message === "namespace is not writable: secret-team",
+  );
+
+  const validated = await service.suggestionSubmit({
+    schemaVersion: 1,
+    dryRun: true,
+    sessionKey: "agent:project-x:chat",
+    authenticatedPrincipal: "secret-team",
+    content: "Trusted transport principal should authorize the namespace.",
+    category: "fact",
+    namespace: "secret-team",
+  });
+
+  assert.equal(validated.status, "validated");
+  assert.equal(validated.namespace, "secret-team");
+});
+
+test("access service review dispositions reject namespaces outside the trusted transport principal", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.reviewDisposition({
+      memoryId: "fact-1",
+      status: "active",
+      reasonCode: "operator_confirmed",
+      namespace: "secret-team",
+      authenticatedPrincipal: "project-x",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message === "namespace is not writable: secret-team",
+  );
+});
+
 test("access service suggestionSubmit queues pending review memories", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-suggestion-"));
   try {

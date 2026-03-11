@@ -11,6 +11,7 @@ export interface EngramAccessHttpServerOptions {
   host?: string;
   port?: number;
   authToken?: string;
+  principal?: string;
   maxBodyBytes?: number;
   adminConsoleEnabled?: boolean;
   adminConsolePublicDir?: string;
@@ -45,6 +46,7 @@ export class EngramAccessHttpServer {
   private readonly host: string;
   private readonly requestedPort: number;
   private readonly authToken?: string;
+  private readonly authenticatedPrincipal?: string;
   private readonly maxBodyBytes: number;
   private readonly adminConsoleEnabled: boolean;
   private readonly adminConsolePublicDir: string;
@@ -57,6 +59,7 @@ export class EngramAccessHttpServer {
     this.host = options.host?.trim() || "127.0.0.1";
     this.requestedPort = Number.isFinite(options.port) ? Math.max(0, Math.floor(options.port ?? 0)) : 0;
     this.authToken = options.authToken?.trim() || undefined;
+    this.authenticatedPrincipal = options.principal?.trim() || undefined;
     this.maxBodyBytes = Number.isFinite(options.maxBodyBytes)
       ? Math.max(1, Math.floor(options.maxBodyBytes ?? 131072))
       : 131072;
@@ -187,6 +190,7 @@ export class EngramAccessHttpServer {
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
         dryRun: body.dryRun === true,
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        authenticatedPrincipal: this.authenticatedPrincipal,
         content: typeof body.content === "string" ? body.content : "",
         category: typeof body.category === "string" ? body.category : undefined,
         confidence: typeof body.confidence === "number" ? body.confidence : undefined,
@@ -209,6 +213,7 @@ export class EngramAccessHttpServer {
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
         dryRun: body.dryRun === true,
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        authenticatedPrincipal: this.authenticatedPrincipal,
         content: typeof body.content === "string" ? body.content : "",
         category: typeof body.category === "string" ? body.category : undefined,
         confidence: typeof body.confidence === "number" ? body.confidence : undefined,
@@ -310,6 +315,7 @@ export class EngramAccessHttpServer {
         status,
         reasonCode: typeof body.reasonCode === "string" ? body.reasonCode : "",
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.authenticatedPrincipal,
       });
       this.recordWriteRateLimitHit();
       this.respondJson(res, 200, response);

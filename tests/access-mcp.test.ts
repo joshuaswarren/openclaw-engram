@@ -221,6 +221,56 @@ test("MCP initialize re-reads the server version for each server instance", asyn
   }
 });
 
+test("MCP server binds write authorization to its configured principal", async () => {
+  let capturedPrincipal: string | undefined;
+  let capturedSessionKey: string | undefined;
+  const server = new EngramMcpServer({
+    ...createFakeService(),
+    memoryStore: async ({
+      authenticatedPrincipal,
+      sessionKey,
+    }: {
+      authenticatedPrincipal?: string;
+      sessionKey?: string;
+    }) => {
+      capturedPrincipal = authenticatedPrincipal;
+      capturedSessionKey = sessionKey;
+      return {
+        schemaVersion: 1,
+        operation: "memory_store",
+        namespace: "secret-team",
+        dryRun: true,
+        accepted: true,
+        queued: false,
+        status: "validated",
+      };
+    },
+  } as unknown as EngramAccessService, {
+    principal: "secret-team",
+  });
+
+  const store = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: {
+      name: "engram.memory_store",
+      arguments: {
+        schemaVersion: 1,
+        dryRun: true,
+        sessionKey: "agent:project-x:chat",
+        namespace: "secret-team",
+        content: "Configured MCP principal should be authoritative.",
+      },
+    },
+  });
+
+  const storeResult = store?.result as { structuredContent: { status: string } };
+  assert.equal(storeResult.structuredContent.status, "validated");
+  assert.equal(capturedPrincipal, "secret-team");
+  assert.equal(capturedSessionKey, "agent:project-x:chat");
+});
+
 test("MCP server reports parse errors and keeps processing later messages", async () => {
   const server = new EngramMcpServer(createFakeService());
   const input = new PassThrough();

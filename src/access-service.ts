@@ -193,6 +193,11 @@ export interface EngramAccessReviewDispositionRequest {
   status: MemoryStatus | "archived";
   reasonCode: string;
   namespace?: string;
+  /**
+   * Trusted transport-bound principal. This must never come from untrusted client payloads.
+   * When present, write authorization is evaluated against this principal instead of sessionKey.
+   */
+  authenticatedPrincipal?: string;
 }
 
 export interface EngramAccessReviewDispositionResponse {
@@ -209,6 +214,11 @@ export interface EngramAccessWriteEnvelope {
   idempotencyKey?: string;
   dryRun?: boolean;
   sessionKey?: string;
+  /**
+   * Trusted transport-bound principal. This must never come from untrusted client payloads.
+   * When present, write authorization is evaluated against this principal instead of sessionKey.
+   */
+  authenticatedPrincipal?: string;
 }
 
 export interface EngramAccessMemoryStoreRequest extends EngramAccessWriteEnvelope, ExplicitCaptureInput {}
@@ -270,9 +280,19 @@ export class EngramAccessService {
     return resolved;
   }
 
-  private resolveWritableNamespace(namespace: string | undefined, sessionKey: string | undefined): string {
+  private resolveWritePrincipal(sessionKey: string | undefined, authenticatedPrincipal?: string): string {
+    const trusted = authenticatedPrincipal?.trim();
+    if (trusted) return trusted;
+    return resolvePrincipal(sessionKey, this.orchestrator.config);
+  }
+
+  private resolveWritableNamespace(
+    namespace: string | undefined,
+    sessionKey: string | undefined,
+    authenticatedPrincipal?: string,
+  ): string {
     const resolved = this.resolveNamespace(namespace);
-    const principal = resolvePrincipal(sessionKey, this.orchestrator.config);
+    const principal = this.resolveWritePrincipal(sessionKey, authenticatedPrincipal);
     if (!canWriteNamespace(principal, resolved, this.orchestrator.config)) {
       throw new EngramAccessInputError(`namespace is not writable: ${resolved}`);
     }
@@ -479,7 +499,11 @@ export class EngramAccessService {
   }
 
   async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
-    const namespace = this.resolveWritableNamespace(request.namespace, request.sessionKey);
+    const namespace = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.authenticatedPrincipal,
+    );
     const schemaVersion = request.schemaVersion ?? ENGRAM_ACCESS_WRITE_SCHEMA_VERSION;
     if (schemaVersion !== ENGRAM_ACCESS_WRITE_SCHEMA_VERSION) {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
@@ -536,7 +560,11 @@ export class EngramAccessService {
   }
 
   async suggestionSubmit(request: EngramAccessSuggestionSubmitRequest): Promise<EngramAccessWriteResponse> {
-    const namespace = this.resolveWritableNamespace(request.namespace, request.sessionKey);
+    const namespace = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.authenticatedPrincipal,
+    );
     const schemaVersion = request.schemaVersion ?? ENGRAM_ACCESS_WRITE_SCHEMA_VERSION;
     if (schemaVersion !== ENGRAM_ACCESS_WRITE_SCHEMA_VERSION) {
       throw new EngramAccessInputError(`unsupported schemaVersion: ${schemaVersion}`);
@@ -837,8 +865,12 @@ export class EngramAccessService {
       throw new EngramAccessInputError("reasonCode is required");
     }
 
-    const storage = await this.orchestrator.getStorage(request.namespace);
-    const resolvedNamespace = request.namespace?.trim() || this.orchestrator.config.defaultNamespace;
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      undefined,
+      request.authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) {
       throw new EngramAccessInputError(`memory not found: ${memoryId}`);

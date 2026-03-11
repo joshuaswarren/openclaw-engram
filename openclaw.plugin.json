@@ -500,6 +500,10 @@
             "type": "string",
             "description": "Bearer token for the local Engram HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
           },
+          "principal": {
+            "type": "string",
+            "description": "Optional trusted principal bound to the local Engram access bridge. When set, namespace write authorization is evaluated against this principal instead of any client-supplied sessionKey. If omitted, OPENCLAW_ENGRAM_ACCESS_PRINCIPAL is used when present."
+          },
           "maxBodyBytes": {
             "type": "number",
             "default": 131072,

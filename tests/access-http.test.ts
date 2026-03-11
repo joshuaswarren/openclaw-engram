@@ -537,6 +537,111 @@ test("access HTTP server does not consume the write rate limit for invalid reque
   }
 });
 
+test("access HTTP server binds namespace write authorization to its configured principal", async () => {
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+        {
+          name: "secret-team",
+          readPrincipals: ["secret-team"],
+          writePrincipals: ["secret-team"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+    getLastIntentSnapshot: async () => null,
+    getLastGraphRecallSnapshot: async () => null,
+  } as any);
+
+  const headers = {
+    Authorization: "Bearer secret-token",
+    "Content-Type": "application/json",
+  };
+
+  const rejectServer = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    principal: "project-x",
+    maxBodyBytes: 1024,
+  });
+  const rejectStarted = await rejectServer.start();
+  const rejectBase = `http://${rejectStarted.host}:${rejectStarted.port}`;
+
+  try {
+    const rejected = await fetch(`${rejectBase}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        dryRun: true,
+        sessionKey: "agent:secret-team:chat",
+        namespace: "secret-team",
+        content: "Body sessionKey should not grant secret-team writes.",
+        category: "fact",
+      }),
+    });
+    assert.equal(rejected.status, 400);
+    const payload = await rejected.json() as { error: string };
+    assert.equal(payload.error, "namespace is not writable: secret-team");
+  } finally {
+    await rejectServer.stop();
+  }
+
+  const allowServer = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    principal: "secret-team",
+    maxBodyBytes: 1024,
+  });
+  const allowStarted = await allowServer.start();
+  const allowBase = `http://${allowStarted.host}:${allowStarted.port}`;
+
+  try {
+    const allowed = await fetch(`${allowBase}/engram/v1/memories`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        schemaVersion: 1,
+        dryRun: true,
+        sessionKey: "agent:project-x:chat",
+        namespace: "secret-team",
+        content: "Configured transport principal should authorize this dry run.",
+        category: "fact",
+      }),
+    });
+    assert.equal(allowed.status, 200);
+    const payload = await allowed.json() as { status: string; namespace: string };
+    assert.equal(payload.status, "validated");
+    assert.equal(payload.namespace, "secret-team");
+  } finally {
+    await allowServer.stop();
+  }
+});
+
 test("access HTTP server returns 400 for empty recall query", async () => {
   const server = new EngramAccessHttpServer({
     service: {

@@ -36,8 +36,14 @@ export class EngramMcpServer {
   private buffer = Buffer.alloc(0);
   private flushTask: Promise<void> | null = null;
   private readonly tools: McpTool[];
+  private readonly authenticatedPrincipal?: string;
 
-  constructor(private readonly service: EngramAccessService) {
+  constructor(
+    private readonly service: EngramAccessService,
+    options: { principal?: string } = {},
+  ) {
+    this.authenticatedPrincipal =
+      options.principal?.trim() || process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL?.trim() || undefined;
     this.tools = [
       {
         name: "engram.recall",
@@ -366,6 +372,7 @@ export class EngramMcpServer {
           idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
           dryRun: args.dryRun === true,
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          authenticatedPrincipal: this.authenticatedPrincipal,
           content: typeof args.content === "string" ? args.content : "",
           category: typeof args.category === "string" ? args.category : undefined,
           confidence: typeof args.confidence === "number" ? args.confidence : undefined,
@@ -381,6 +388,7 @@ export class EngramMcpServer {
           idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
           dryRun: args.dryRun === true,
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          authenticatedPrincipal: this.authenticatedPrincipal,
           content: typeof args.content === "string" ? args.content : "",
           category: typeof args.category === "string" ? args.category : undefined,
           confidence: typeof args.confidence === "number" ? args.confidence : undefined,

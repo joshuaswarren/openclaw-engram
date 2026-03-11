@@ -179,6 +179,7 @@ export default {
             host: cfg.agentAccessHttp.host,
             port: cfg.agentAccessHttp.port,
             authToken: cfg.agentAccessHttp.authToken,
+            principal: cfg.agentAccessHttp.principal,
             maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
           });
     (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;

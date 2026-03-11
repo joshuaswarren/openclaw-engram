@@ -661,12 +661,14 @@ export interface AccessHttpServeCliCommandOptions {
   host?: string;
   port?: number;
   authToken?: string;
+  principal?: string;
   maxBodyBytes?: number;
   createServer?: (options: {
     service: EngramAccessService;
     host?: string;
     port?: number;
     authToken?: string;
+    principal?: string;
     maxBodyBytes?: number;
   }) => AccessHttpServerLike;
 }
@@ -2320,6 +2322,7 @@ export async function runAccessHttpServeCliCommand(
         host: input.host,
         port: input.port,
         authToken: input.authToken,
+        principal: input.principal,
         maxBodyBytes: input.maxBodyBytes,
       }));
 
@@ -2358,7 +2361,9 @@ export async function runAccessHttpStatusCliCommand(): Promise<
 }
 
 export async function runAccessMcpServeCliCommand(service: EngramAccessService): Promise<{ ok: true }> {
-  const server = new EngramMcpServer(service);
+  const server = new EngramMcpServer(service, {
+    principal: process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL,
+  });
   await server.runStdio(process.stdin, process.stdout);
   return { ok: true };
 }
