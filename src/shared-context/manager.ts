@@ -329,6 +329,10 @@ function formatFeedbackLine(entry: SharedFeedbackEntry): string {
   return `- [${entry.agent}] ${entry.decision}: ${entry.reason} [${extras.join("; ")}]`;
 }
 
+function formatOverlapLine(entry: SharedCrossSignalOverlap): string {
+  return `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")}) [sources: ${entry.sourcePaths.join(", ")}]`;
+}
+
 export class SharedContextManager {
   readonly dir: string;
   private readonly prioritiesPath: string;
@@ -634,9 +638,7 @@ export class SharedContextManager {
 
     const recurringThemeLines = mergedOverlaps.length === 0
       ? ["- No multi-agent topic overlap detected."]
-      : mergedOverlaps.slice(0, maxSummaryItems).map((entry) =>
-          `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")}) [sources: ${entry.sourcePaths.join(", ")}]`
-        );
+      : mergedOverlaps.slice(0, maxSummaryItems).map((entry) => formatOverlapLine(entry));
     const riskSignals = [...feedback]
       .filter((entry) => entry.decision !== "approved" || entry.severity === "high" || entry.severity === "medium")
       .sort(compareFeedbackPriority)
@@ -700,9 +702,7 @@ export class SharedContextManager {
       : crossSignals.report.feedbackEntries.map((entry) => formatFeedbackLine(entry));
     const overlapBullets = crossSignals.report.overlaps.length === 0
       ? ["- No multi-agent topic overlap detected."]
-      : crossSignals.report.overlaps.slice(0, 8).map((entry) =>
-          `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")}) [sources: ${entry.sourcePaths.join(", ")}]`
-        );
+      : crossSignals.report.overlaps.slice(0, 8).map((entry) => formatOverlapLine(entry));
 
     const md: string[] = [
       `# Roundtable — ${date}`,
