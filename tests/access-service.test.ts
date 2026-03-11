@@ -1588,7 +1588,7 @@ test("access service builds a quality dashboard summary from memory state and go
           'updated: 2025-11-02T00:00:00.000Z',
           'confidence: 0.45',
           'confidenceTier: tentative',
-          'status: pending_review',
+          'status: PENDING_REVIEW',
         ],
       ),
     );

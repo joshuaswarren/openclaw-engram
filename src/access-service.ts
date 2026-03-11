@@ -1122,7 +1122,7 @@ export class EngramAccessService {
 
     const memories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()];
     for (const memory of memories) {
-      const status = inferMemoryStatus(memory.frontmatter, toMemoryPathRel(storage.dir, memory.path));
+      const status = inferMemoryStatus(memory.frontmatter, toMemoryPathRel(storage.dir, memory.path)).toLowerCase();
       const confidenceTier = memory.frontmatter.confidenceTier ?? "unknown";
       const ageBucket = bucketMemoryAge(memory.frontmatter.updated ?? memory.frontmatter.created, nowMs);
 
