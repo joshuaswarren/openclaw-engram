@@ -115,6 +115,43 @@ test("compounding promotion candidates ignore telemetry-only rubric observations
   );
 });
 
+test("compounding promotion keeps incidental if-then phrasing as principle guidance", async () => {
+  const memoryDir = tmpDir("engram-compound-promote-incidental-if-then-mem");
+  const sharedDir = tmpDir("engram-compound-promote-incidental-if-then-shared");
+  await mkdir(memoryDir, { recursive: true });
+  await seedFeedbackInbox(sharedDir, [
+    {
+      agent: "review-bot",
+      workflow: "pr-loop",
+      decision: "approved_with_feedback",
+      reason: "missing follow-through",
+      learning: "Always simplify if possible, then document the exception.",
+      date: "2026-02-25T10:00:00.000Z",
+    },
+    {
+      agent: "review-bot",
+      workflow: "pr-loop",
+      decision: "approved_with_feedback",
+      reason: "missing follow-through",
+      learning: "Always simplify if possible, then document the exception.",
+      date: "2026-02-26T10:00:00.000Z",
+    },
+  ]);
+
+  const engine = new CompoundingEngine(buildConfig(memoryDir, sharedDir));
+  const weekly = await engine.synthesizeWeekly({ weekId: "2026-W09" });
+  const artifact = JSON.parse(await readFile(weekly.reportJsonPath, "utf-8")) as {
+    promotionCandidates: Array<{ sourceType: string; content: string; category: "principle" | "rule" }>;
+  };
+  const candidate = artifact.promotionCandidates.find((entry) =>
+    entry.sourceType === "rubric" && entry.content.includes("Always simplify if possible, then document the exception")
+  );
+
+  assert.ok(candidate, "expected incidental if-then guidance candidate");
+  assert.equal(candidate?.category, "principle");
+  assert.equal(candidate?.content, "Always simplify if possible, then document the exception.");
+});
+
 test("compounding promotion persists durable guidance and dedupes repeated promotions", async () => {
   const memoryDir = tmpDir("engram-compound-promote-write-mem");
   const sharedDir = tmpDir("engram-compound-promote-write-shared");

@@ -314,7 +314,8 @@ function stripTrailingPromotionPunctuation(value: string): string {
 }
 
 function extractExplicitIfThenRule(value: string): string | null {
-  const match = value.match(/\bif\b([\s\S]+?)\bthen\b([\s\S]+?)(?:[.!?](?:\s|$)|$)/i);
+  const normalized = normalizePromotionWhitespace(value);
+  const match = normalized.match(/^if\b([\s\S]+?)\bthen\b([\s\S]+?)(?:[.!?])?$/i);
   if (!match) return null;
   const condition = stripTrailingPromotionPunctuation(normalizePromotionWhitespace(match[1] ?? ""));
   const outcome = stripTrailingPromotionPunctuation(normalizePromotionWhitespace(match[2] ?? ""));
