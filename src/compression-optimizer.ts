@@ -1,29 +1,12 @@
 import type {
+  CompressionGuidelineOptimizerActionSummary,
   CompressionGuidelineOptimizerEventCounts,
+  CompressionGuidelineOptimizerRuleUpdate,
   CompressionGuidelineOptimizerState,
   MemoryActionEvent,
   MemoryActionOutcome,
   MemoryActionType,
 } from "./types.js";
-
-export interface CompressionOptimizerActionSummary {
-  action: MemoryActionType;
-  total: number;
-  outcomes: Record<MemoryActionOutcome, number>;
-  quality: {
-    good: number;
-    poor: number;
-    unknown: number;
-  };
-}
-
-export interface CompressionOptimizerRuleUpdate {
-  action: MemoryActionType;
-  delta: number;
-  direction: "increase" | "decrease" | "hold";
-  confidence: "low" | "medium" | "high";
-  notes: string[];
-}
 
 export interface CompressionGuidelineCandidate {
   generatedAt: string;
@@ -32,8 +15,8 @@ export interface CompressionGuidelineCandidate {
     to: string;
   };
   eventCounts: CompressionGuidelineOptimizerEventCounts;
-  actionSummaries: CompressionOptimizerActionSummary[];
-  ruleUpdates: CompressionOptimizerRuleUpdate[];
+  actionSummaries: CompressionGuidelineOptimizerActionSummary[];
+  ruleUpdates: CompressionGuidelineOptimizerRuleUpdate[];
   guidelineVersion: number;
   optimizerVersion: number;
 }
@@ -116,7 +99,7 @@ export function computeCompressionGuidelineCandidate(
     failed: 0,
   };
 
-  const actionMap = new Map<MemoryActionType, CompressionOptimizerActionSummary>();
+  const actionMap = new Map<MemoryActionType, CompressionGuidelineOptimizerActionSummary>();
   let windowFrom = effectiveEvents[0]?.timestamp ?? generatedAt;
   let windowTo = effectiveEvents[0]?.timestamp ?? generatedAt;
 
@@ -147,7 +130,7 @@ export function computeCompressionGuidelineCandidate(
     return a.action.localeCompare(b.action);
   });
 
-  const ruleUpdates = actionSummaries.map((summary): CompressionOptimizerRuleUpdate => {
+  const ruleUpdates = actionSummaries.map((summary): CompressionGuidelineOptimizerRuleUpdate => {
     const notes: string[] = [];
     if (summary.total < SPARSE_SAMPLE) {
       notes.push("Sparse sample size; holding baseline policy.");
