@@ -142,8 +142,8 @@ test("optimizeCompressionGuidelines over-fetches until it collects enough non-dr
     { timestamp: "2026-02-27T00:03:00.000Z", action: "store_note", outcome: "skipped", dryRun: true },
     { timestamp: "2026-02-27T00:04:00.000Z", action: "store_note", outcome: "applied", dryRun: true },
   ];
-  let wroteGuidelines = 0;
-  let wroteState = 0;
+  let wroteDraftGuidelines = 0;
+  let wroteDraftState = 0;
   const ctx: any = {
     config: {
       compressionGuidelineLearningEnabled: true,
@@ -156,11 +156,11 @@ test("optimizeCompressionGuidelines over-fetches until it collects enough non-dr
         readLimits.push(limit);
         return ledger.slice(-limit);
       },
-      writeCompressionGuidelines: async () => {
-        wroteGuidelines += 1;
+      writeCompressionGuidelineDraft: async () => {
+        wroteDraftGuidelines += 1;
       },
-      writeCompressionGuidelineOptimizerState: async () => {
-        wroteState += 1;
+      writeCompressionGuidelineDraftState: async () => {
+        wroteDraftState += 1;
       },
     },
   };
@@ -174,8 +174,8 @@ test("optimizeCompressionGuidelines over-fetches until it collects enough non-dr
   assert.equal(result.enabled, true);
   assert.equal(result.eventCount, 2);
   assert.equal(result.nextGuidelineVersion, 1);
-  assert.equal(wroteGuidelines, 1);
-  assert.equal(wroteState, 1);
+  assert.equal(wroteDraftGuidelines, 1);
+  assert.equal(wroteDraftState, 1);
 });
 
 test("optimizeCompressionGuidelines stages a draft revision without overwriting the active guideline", async () => {
