@@ -278,6 +278,20 @@ test("operator config review recommends balanced baseline improvements and works
   assert.equal(report.findings.some((finding) => finding.key === "native_knowledge_enabled" && finding.status === "recommend"), true);
 });
 
+test("operator config review does not second-guess the conservative preset", async () => {
+  const fixture = await makeFixture({
+    qmdEnabled: true,
+    memoryOsPreset: "conservative",
+  });
+
+  const report = await runOperatorConfigReview({
+    orchestrator: fixture.orchestrator,
+    configPath: fixture.configPath,
+  });
+
+  assert.equal(report.findings.some((finding) => finding.key === "balanced_preset"), false);
+});
+
 test("operator config review flags search and tier mismatches as problems", async () => {
   const fixture = await makeFixture({
     qmdEnabled: false,

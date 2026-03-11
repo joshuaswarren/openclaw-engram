@@ -838,6 +838,7 @@ export async function runOperatorConfigReview(
   const workspaceBootstrapExists = (await Promise.all(workspaceBootstrapFiles.map(pathExists))).some(Boolean);
 
   if (
+    config.memoryOsPreset !== "conservative" &&
     config.memoryOsPreset !== "balanced" &&
     config.memoryOsPreset !== "research-max" &&
     config.memoryOsPreset !== "local-llm-heavy" &&
