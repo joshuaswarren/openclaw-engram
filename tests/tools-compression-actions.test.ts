@@ -428,6 +428,27 @@ test("memory_action_apply rejects invalid structured categories before writing m
   assert.equal(capturedEvents[0]?.outcome, "failed");
 });
 
+test("memory_action_apply preserves dryRun on invalid category rejections", async () => {
+  const { tools, capturedEvents } = buildHarness({
+    contextCompressionActionsEnabled: true,
+  });
+  const tool = tools.get("memory_action_apply");
+  assert.ok(tool);
+
+  const result = await tool.execute("tc10c-dryrun", {
+    action: "store_note",
+    category: "../secrets",
+    content: "Reject unsafe categories before they reach storage.",
+    namespace: "team-alpha",
+    dryRun: true,
+  });
+
+  assert.match(toolText(result), /invalid category/i);
+  assert.equal(capturedEvents.length, 1);
+  assert.equal(capturedEvents[0]?.dryRun, true);
+  assert.equal(capturedEvents[0]?.status, "rejected");
+});
+
 test("memory_action_apply keeps legacy telemetry calls with memoryId in compatibility mode", async () => {
   const { tools, capturedEvents, capturedWrites } = buildHarness({
     contextCompressionActionsEnabled: true,

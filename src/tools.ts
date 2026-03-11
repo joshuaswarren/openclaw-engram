@@ -13,6 +13,7 @@ import { log } from "./logger.js";
 import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
 import { wrapWorkLayerContext } from "./work/boundary.js";
+import { VALID_MEMORY_CATEGORIES } from "./config.js";
 
 interface ToolApi {
   registerTool(
@@ -60,20 +61,6 @@ function normalizeToolNamespace(value: unknown): string | undefined {
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
 const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
 const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
-const MEMORY_CATEGORIES = new Set<MemoryCategory>([
-  "fact",
-  "preference",
-  "correction",
-  "entity",
-  "decision",
-  "relationship",
-  "principle",
-  "commitment",
-  "moment",
-  "skill",
-  "rule",
-]);
-
 function asTaskStatus(value: unknown): "todo" | "in_progress" | "blocked" | "done" | "cancelled" | undefined {
   const normalized = asNonEmptyString(value);
   if (!normalized || !WORK_TASK_STATUSES.has(normalized)) return undefined;
@@ -254,7 +241,7 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
   function normalizeMemoryCategory(value: unknown, fallback?: MemoryCategory): MemoryCategory | undefined {
     const normalized = asNonEmptyString(value);
     if (!normalized) return fallback;
-    if (!MEMORY_CATEGORIES.has(normalized as MemoryCategory)) return undefined;
+    if (!VALID_MEMORY_CATEGORIES.has(normalized as MemoryCategory)) return undefined;
     return normalized as MemoryCategory;
   }
 
@@ -1502,6 +1489,7 @@ Best for:
             ...baseEvent,
             outcome: "failed",
             status: "rejected",
+            dryRun: dryRun === true,
             outputMemoryIds: [],
             reason: `validation: invalid category ${String(category)}`,
           });
