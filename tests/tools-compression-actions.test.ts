@@ -23,6 +23,7 @@ function buildHarness(options?: {
     options?: Record<string, unknown>,
   ) => Promise<boolean> | boolean;
   readAllMemories?: () => Promise<any[]> | any[];
+  readArchivedMemories?: () => Promise<any[]> | any[];
   writeMemoryFrontmatter?: (memory: any, patch: Record<string, unknown>, options?: Record<string, unknown>) => Promise<void> | void;
   addLinksToMemory?: (
     memoryId: string,
@@ -75,6 +76,12 @@ function buildHarness(options?: {
     readAllMemories: async () => {
       if (options?.readAllMemories) {
         return await options.readAllMemories();
+      }
+      return [];
+    },
+    readArchivedMemories: async () => {
+      if (options?.readArchivedMemories) {
+        return await options.readArchivedMemories();
       }
       return [];
     },
@@ -593,7 +600,21 @@ test("memory_action_apply derives source-memory eligibility for create_artifact 
     contextCompressionActionsEnabled: true,
     readAllMemories: async () => [
       {
-        path: "/tmp/fact-archived.md",
+        path: "/tmp/fact-active.md",
+        frontmatter: {
+          id: "fact-active",
+          confidence: 0.44,
+          lifecycleState: "candidate",
+          importance: { score: 0.12, level: "low", reasons: [], keywords: [] },
+          source: "manual",
+          status: "active",
+        },
+        content: "Active note for baseline coverage.",
+      },
+    ],
+    readArchivedMemories: async () => [
+      {
+        path: "/tmp/archive/2026-03-01/fact-archived.md",
         frontmatter: {
           id: "fact-archived",
           confidence: 0.61,

@@ -98,6 +98,34 @@ function deriveMemoryActionPolicyEligibility(
   };
 }
 
+async function readReferencedMemoryForPolicyEligibility(
+  storage: {
+    getMemoryById?: (id: string) => Promise<MemoryFile | null>;
+    readAllMemories?: () => Promise<MemoryFile[]>;
+    readArchivedMemories?: () => Promise<MemoryFile[]>;
+  },
+  memoryId: string | undefined,
+): Promise<MemoryFile | null | undefined> {
+  if (!memoryId) return undefined;
+
+  if (typeof storage.getMemoryById === "function") {
+    const direct = await storage.getMemoryById(memoryId);
+    if (direct) return direct;
+  }
+
+  if (typeof storage.readAllMemories === "function") {
+    const active = (await storage.readAllMemories()).find((memory) => memory.frontmatter.id === memoryId);
+    if (active) return active;
+  }
+
+  if (typeof storage.readArchivedMemories === "function") {
+    const archived = (await storage.readArchivedMemories()).find((memory) => memory.frontmatter.id === memoryId);
+    if (archived) return archived;
+  }
+
+  return undefined;
+}
+
 const WORK_TASK_STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
 const WORK_TASK_PRIORITIES = new Set(["low", "medium", "high"]);
 const WORK_PROJECT_STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
@@ -1569,12 +1597,7 @@ Best for:
           typeof orchestrator.getStorage === "function"
             ? await orchestrator.getStorage(ns)
             : orchestrator.storage;
-        const referencedMemory =
-          memoryIdValue && typeof storage.readAllMemories === "function"
-            ? (await storage.readAllMemories()).find(
-                (memory: { frontmatter: { id: string } }) => memory.frontmatter.id === memoryIdValue,
-              )
-            : undefined;
+        const referencedMemory = await readReferencedMemoryForPolicyEligibility(storage, memoryIdValue);
         const structuredEvent = {
           ...baseEvent,
           outcome: outcome ?? "applied",
