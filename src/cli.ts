@@ -48,11 +48,13 @@ import {
 } from "./namespaces/migrate.js";
 import {
   runBenchmarkRecall,
+  runOperatorConfigReview,
   runOperatorDoctor,
   runOperatorInventory,
   runOperatorRepair,
   runOperatorSetup,
   type BenchmarkRecallReport,
+  type OperatorConfigReviewReport,
   type OperatorDoctorReport,
   type OperatorInventoryReport,
   type OperatorRepairReport,
@@ -2806,6 +2808,34 @@ function formatOperatorDoctorCli(report: OperatorDoctorReport): string {
   return lines.join("\n");
 }
 
+function formatOperatorConfigReviewCli(report: OperatorConfigReviewReport): string {
+  const lines = [
+    "=== Engram Config Review ===",
+    "",
+    `Config parsed: ${report.config.parsed ? "yes" : "no"}`,
+    `Config path: ${report.config.path}`,
+    `Preset: ${report.profile.memoryOsPreset ?? "(unset)"}`,
+    `Search backend: ${report.profile.searchBackend}`,
+    `QMD enabled: ${report.profile.qmdEnabled ? "yes" : "no"}`,
+    `QMD daemon enabled: ${report.profile.qmdDaemonEnabled ? "yes" : "no"}`,
+    `Native knowledge enabled: ${report.profile.nativeKnowledgeEnabled ? "yes" : "no"}`,
+    `File hygiene enabled: ${report.profile.fileHygieneEnabled ? "yes" : "no"}`,
+    `Conversation index enabled: ${report.profile.conversationIndexEnabled ? "yes" : "no"}`,
+    "",
+    `Summary: recommend=${report.summary.recommend} problem=${report.summary.problem}`,
+  ];
+  if (!report.config.parsed && report.config.error) {
+    lines.push(`Config error: ${report.config.error}`);
+  }
+  for (const finding of report.findings) {
+    lines.push(`- [${finding.status.toUpperCase()}] ${finding.key}: ${finding.summary}`);
+    lines.push(`  setting: ${finding.setting}`);
+    lines.push(`  current/default/recommended: ${finding.currentValue} / ${finding.defaultValue} / ${finding.recommendedValue}`);
+    lines.push(`  why: ${finding.rationale}`);
+  }
+  return lines.join("\n");
+}
+
 function formatOperatorInventoryCli(report: OperatorInventoryReport): string {
   const lines = [
     "=== Engram Inventory ===",
@@ -2985,6 +3015,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.log(JSON.stringify(report, null, 2));
           } else {
             console.log(formatOperatorDoctorCli(report));
+          }
+          if (!report.ok) {
+            process.exitCode = 1;
+            return;
+          }
+          if (!reportHasMachineReadableOutput(options)) console.log("OK");
+        });
+
+      cmd
+        .command("config-review")
+        .description("Review Engram config defaults, recommendations, and contradictory settings")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const report = await runOperatorConfigReview({ orchestrator });
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(formatOperatorConfigReviewCli(report));
           }
           if (!report.ok) {
             process.exitCode = 1;
