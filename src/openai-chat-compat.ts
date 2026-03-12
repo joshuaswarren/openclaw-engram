@@ -2,12 +2,16 @@ function normalizedModel(model: string): string {
   return model.trim().toLowerCase();
 }
 
+function matchesModelFamily(normalized: string, familyPattern: RegExp): boolean {
+  return familyPattern.test(normalized);
+}
+
 export function usesMaxCompletionTokens(model: string): boolean {
   const normalized = normalizedModel(model);
-  if (normalized.startsWith("gpt-5")) return true;
-  if (normalized.startsWith("gpt-4o")) return true;
-  if (normalized.startsWith("gpt-4.1")) return true;
-  return /^o\d/.test(normalized);
+  if (matchesModelFamily(normalized, /^gpt-5(?:$|[-.])/)) return true;
+  if (matchesModelFamily(normalized, /^gpt-4o(?:$|[-.])/)) return true;
+  if (matchesModelFamily(normalized, /^gpt-4\.1(?:$|[-.])/)) return true;
+  return matchesModelFamily(normalized, /^o\d+(?:$|[-.])/);
 }
 
 export function buildChatCompletionTokenLimit(

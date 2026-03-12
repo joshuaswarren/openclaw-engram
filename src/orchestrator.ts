@@ -2629,11 +2629,9 @@ export class Orchestrator {
           lastHybridTopUpSkippedReason = "intent_hint_active";
         } else {
           const hybridResults = options.collection
-            ? options.abortSignal
-              ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit, {
-                signal: options.abortSignal,
-              })
-              : await this.qmd.hybridSearch(prompt, options.collection, fetchLimit)
+            ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit, {
+              signal: options.abortSignal,
+            })
             : await this.searchAcrossNamespaces({
               query: prompt,
               namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
