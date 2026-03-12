@@ -1272,7 +1272,6 @@ Respond with valid JSON only, matching this schema:
           { role: "user", content: "Consolidate the new memories against existing ones." },
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
-        temperature: 0.3,
         ...buildChatCompletionTokenLimit(this.config.model, 4096, {
           assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
         }),
@@ -1546,7 +1545,6 @@ Respond with valid JSON matching this schema:
           { role: "user", content: fullProfileContent },
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
-        temperature: 0.3,
         ...buildChatCompletionTokenLimit(this.config.model, 4096, {
           assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
         }),
@@ -1761,7 +1759,6 @@ Respond with valid JSON matching this schema:
           { role: "user", content: fullIdentityContent },
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
-        temperature: 0.3,
         ...buildChatCompletionTokenLimit(this.config.model, 4096, {
           assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
         }),
@@ -1979,7 +1976,6 @@ Respond with valid JSON matching this schema:
           { role: "system", content: systemPrompt },
           { role: "user", content: input },
         ],
-        temperature: 0.3,
         ...buildChatCompletionTokenLimit(this.config.model, 2048, {
           assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
         }),
@@ -2095,7 +2091,6 @@ Respond with valid JSON matching this schema:
           { role: "system", content: systemPrompt },
           { role: "user", content: input },
         ],
-        temperature: 0.3,
         ...buildChatCompletionTokenLimit(this.config.model, 2048, {
           assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
         }),
@@ -2200,7 +2195,6 @@ Respond with valid JSON matching this schema:
           { role: "system", content: systemPrompt },
           { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
         ],
-        temperature: 0.3,
         ...buildChatCompletionTokenLimit(this.config.model, 4096, {
           assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
         }),
