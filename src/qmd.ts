@@ -1292,7 +1292,7 @@ export class QmdClient implements SearchBackend {
       }
       const durationMs = Date.now() - startedAtMs;
       const results = parseMcpSearchResult(result);
-      log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms`);
+      log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms (v2=${v2})`);
       this.recordDaemonSuccess();
       return results;
     } catch (err) {
