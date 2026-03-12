@@ -1,37 +1,63 @@
 # Engram
 
-**Persistent memory for AI coding agents.** Your agents forget everything between sessions — Engram fixes that.
+**Persistent, private memory for AI agents.** Your agents forget everything between sessions — Engram fixes that.
 
-Engram gives AI agents long-term memory that survives across conversations. Decisions, preferences, debugging history, architecture context, project conventions — everything your agent learns persists and resurfaces exactly when it's needed.
+Engram gives AI agents long-term memory that survives across conversations. Decisions, preferences, project context, personal details, past mistakes — everything your agent learns persists and resurfaces exactly when it's needed. All data stays on your machine as plain markdown files. No cloud services, no subscriptions, no sharing your data with third parties.
 
 [![npm version](https://img.shields.io/npm/v/@joshuaswarren/openclaw-engram)](https://www.npmjs.com/package/@joshuaswarren/openclaw-engram)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/joshuaswarren)
 
 ## The Problem
 
-Every AI coding session starts from zero. Your agent doesn't know your project conventions, your architecture decisions, the bugs you already debugged, or even your name. You re-explain the same context over and over — and the agent still makes the same mistakes.
+Every AI agent session starts from zero. Your agent doesn't know your name, your projects, the decisions you've already made, or the bugs you already debugged. Whether it's a personal assistant, a coding agent, a research agent, or a multi-agent team — they all forget everything between conversations. You re-explain the same context over and over, and your agents still make the same mistakes.
+
+OpenClaw's built-in memory works for simple cases, but it doesn't scale. It lacks semantic search, lifecycle management, entity tracking, and governance. Third-party memory services exist, but they cost money and require sending your private data to someone else's servers.
 
 ## The Solution
 
-Engram watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. It works with **[OpenClaw](https://github.com/openclaw/openclaw)** as a native plugin and with **[Codex CLI](https://github.com/openai/codex)** via MCP — with more integrations coming.
+Engram is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Use OpenAI or a **local LLM** (Ollama, LM Studio, etc.) for extraction — your choice.
+
+It works as a native **[OpenClaw](https://github.com/openclaw/openclaw)** plugin, with **[Codex CLI](https://github.com/openai/codex)** via MCP, and with any other MCP-compatible client — with more integrations coming.
 
 | Without Engram | With Engram |
 |---|---|
-| Re-explain project conventions every session | Agent recalls coding standards and patterns automatically |
-| Repeat architecture context for every task | Entity knowledge surfaces schemas, API contracts, and module boundaries |
-| Lose debugging context between sessions | Past root causes and dead ends are recalled — no repeated work |
-| Manually restate tool/linter/workflow preferences | Preferences persist across sessions and projects |
+| Re-explain who you are and what you're working on | Agent recalls your identity, projects, and preferences automatically |
+| Repeat context for every task | Entity knowledge surfaces people, projects, tools, and relationships on demand |
+| Lose debugging and research context between sessions | Past root causes, dead ends, and findings are recalled — no repeated work |
+| Manually restate preferences every session | Preferences persist across sessions, agents, and projects |
 | Context-switching tax when resuming work | Session-start recall brings you back to speed instantly |
+| Default OpenClaw memory doesn't scale | Hybrid search, lifecycle management, namespaces, and governance |
+| Third-party memory services cost money and share your data | Everything stays local — your filesystem, your rules |
 
-## Quick Start
+## Installation
 
-### With OpenClaw (native plugin)
+### Option 1: Install from the CLI
 
 ```bash
 openclaw plugins install @joshuaswarren/openclaw-engram --pin
 ```
 
-Add to `openclaw.json`:
+### Option 2: Ask your OpenClaw agent to install it
+
+Tell any OpenClaw agent:
+
+> Install the openclaw-engram plugin and configure it as my memory system.
+
+Your agent will run the install command, update `openclaw.json`, and restart the gateway for you.
+
+### Option 3: Developer install from source
+
+```bash
+git clone https://github.com/joshuaswarren/openclaw-engram.git \
+  ~/.openclaw/extensions/openclaw-engram
+cd ~/.openclaw/extensions/openclaw-engram
+npm ci && npm run build
+```
+
+### Configure
+
+After installation, add Engram to your `openclaw.json`:
 
 ```jsonc
 {
@@ -42,7 +68,13 @@ Add to `openclaw.json`:
       "openclaw-engram": {
         "enabled": true,
         "config": {
+          // Use OpenAI for extraction:
           "openaiApiKey": "${OPENAI_API_KEY}"
+
+          // OR use a local LLM (no API key needed):
+          // "localLlmEnabled": true,
+          // "localLlmUrl": "http://localhost:1234/v1",
+          // "localLlmModel": "qwen2.5-32b-instruct"
         }
       }
     }
@@ -50,9 +82,26 @@ Add to `openclaw.json`:
 }
 ```
 
-Restart the gateway and start a conversation — Engram begins learning immediately.
+Restart the gateway:
 
-### With Codex CLI (via MCP)
+```bash
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway   # macOS
+# or: systemctl restart openclaw-gateway                    # Linux
+```
+
+Start a conversation — Engram begins learning immediately.
+
+> **Note:** This shows only the minimal config. Engram has 60+ configuration options for search backends, capture modes, memory OS features, and more. See the [full config reference](docs/config-reference.md) for every setting.
+
+### Verify installation
+
+```bash
+openclaw engram setup --json         # Validates config, scaffolds directories
+openclaw engram doctor --json        # Health diagnostics with remediation hints
+openclaw engram config-review --json # Opinionated config tuning recommendations
+```
+
+## Using Engram with Codex CLI
 
 Start the Engram HTTP server:
 
@@ -75,9 +124,9 @@ url = "http://127.0.0.1:4318/mcp"
 bearer_token_env_var = "OPENCLAW_ENGRAM_ACCESS_TOKEN"
 ```
 
-That's it. Codex now has access to Engram's recall, store, and entity tools. See the [full Codex integration guide](docs/guides/codex-cli.md) for session-start hooks and cross-machine setup.
+That's it. Codex now has access to Engram's recall, store, and entity tools. See the [full Codex integration guide](docs/guides/codex-cli.md) for session-start hooks, cross-machine setup, and automatic recall at session start.
 
-### With Any MCP Client (Claude Code, etc.)
+## Using Engram with Any MCP Client
 
 Run the stdio MCP server:
 
@@ -85,7 +134,7 @@ Run the stdio MCP server:
 openclaw engram access mcp-serve
 ```
 
-Point your MCP client's command at `openclaw engram access mcp-serve`. The server exposes the same tools as the HTTP endpoint.
+Point your MCP client's command at `openclaw engram access mcp-serve`. Works with Claude Code, and any other MCP-compatible client. The server exposes the same 8 tools as the HTTP endpoint.
 
 ## How It Works
 
@@ -114,13 +163,21 @@ Memory categories include: `fact`, `decision`, `preference`, `correction`, `rela
 
 ## Why Engram?
 
-### Local-first, zero lock-in
+### Your data stays yours
 
-All memory lives on your filesystem as markdown. No cloud dependency, no proprietary formats. Back it up with git, rsync, or Time Machine. Move it between machines with a folder copy.
+All memory lives on your filesystem as plain markdown files. No cloud dependency, no subscriptions, no proprietary formats, no sending your private conversations to third-party servers. Back it up with git, rsync, or Time Machine. Move it between machines with a folder copy. You own your data completely.
+
+### A real upgrade from default OpenClaw memory
+
+OpenClaw's built-in memory is basic — it works for getting started, but lacks semantic search, entity tracking, lifecycle management, governance, and multi-agent isolation. Engram is a drop-in replacement that brings all of those capabilities while keeping the same local-first philosophy.
 
 ### Smart recall, not keyword search
 
 Engram uses hybrid search (BM25 + vector + reranking via [QMD](https://github.com/tobilu/qmd)) to find semantically relevant memories. It doesn't just match keywords — it understands what you're working on and surfaces the right context.
+
+### OpenAI or local LLM — your choice
+
+Use OpenAI for extraction and reranking, or run entirely offline with a local LLM via Ollama, LM Studio, or any OpenAI-compatible endpoint. The `local-llm-heavy` preset is optimized for fully local operation. See the [Local LLM Guide](docs/guides/local-llm.md).
 
 ### Progressive complexity
 
@@ -274,22 +331,22 @@ See the [full CLI reference](docs/api.md#cli-commands) for all commands.
 
 ## Configuration
 
-All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`.
-
-Key settings:
+All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`. The table below shows the most commonly changed settings — Engram has **60+ configuration options** covering search backends, capture modes, memory OS features, namespaces, governance, benchmarking, and more.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `openaiApiKey` | `(env)` | OpenAI API key (optional with local LLM) |
-| `model` | `gpt-5.2` | LLM for extraction |
-| `searchBackend` | `"qmd"` | Search engine to use |
-| `captureMode` | `implicit` | Memory write policy |
+| `openaiApiKey` | `(env)` | OpenAI API key (optional when using a local LLM) |
+| `localLlmEnabled` | `false` | Use a local LLM instead of OpenAI for extraction |
+| `localLlmUrl` | unset | Local LLM endpoint (e.g., `http://localhost:1234/v1`) |
+| `localLlmModel` | unset | Local model name (e.g., `qwen2.5-32b-instruct`) |
+| `model` | `gpt-5.2` | OpenAI model for extraction (when not using local LLM) |
+| `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
+| `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, `hybrid` |
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Recall budget (default ~8K chars; set 64K+ for large-context models) |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `memoryOsPreset` | unset | Quick config: `conservative`, `balanced`, `research-max`, `local-llm-heavy` |
-| `localLlmEnabled` | `false` | Use local LLM for extraction |
 
-Full reference: [docs/config-reference.md](docs/config-reference.md)
+**[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
 ## Documentation
 
@@ -313,22 +370,6 @@ Full reference: [docs/config-reference.md](docs/config-reference.md)
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Migration Guide](docs/guides/migrations.md) — Upgrading from older versions
 
-## Developer Install
-
-```bash
-git clone https://github.com/joshuaswarren/openclaw-engram.git \
-  ~/.openclaw/extensions/openclaw-engram
-cd ~/.openclaw/extensions/openclaw-engram
-npm ci && npm run build
-```
-
-Run tests:
-
-```bash
-npm test              # Full suite (672 tests)
-npm run check-types   # TypeScript type checking
-```
-
 ## Contributing
 
 Contributions are welcome! Please:
@@ -336,8 +377,14 @@ Contributions are welcome! Please:
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Write tests for new functionality
-4. Ensure `npm test` and `npm run check-types` pass
+4. Ensure `npm test` (672 tests) and `npm run check-types` pass
 5. Submit a pull request
+
+## Sponsorship
+
+If Engram is useful to you, consider [sponsoring the project](https://github.com/sponsors/joshuaswarren). Sponsorship helps fund continued development, new integrations, and keeping Engram free and open source.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
 
 ## License
 
