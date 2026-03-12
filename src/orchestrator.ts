@@ -8,7 +8,7 @@ import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
-import type { SearchBackend, SearchQueryOptions } from "./search/port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "./search/port.js";
 import { createSearchBackend, createConversationIndexRuntime } from "./search/factory.js";
 import { NoopSearchBackend } from "./search/noop-backend.js";
 import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
@@ -90,7 +90,7 @@ import {
   searchNativeKnowledge,
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
-import type { MemoryIntent, MemorySummary } from "./types.js";
+import { confidenceTier, type MemoryIntent, type MemorySummary } from "./types.js";
 import { shouldSkipImplicitExtraction } from "./explicit-capture.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -236,6 +236,7 @@ export interface RecallInvocationOptions {
   namespace?: string;
   topK?: number;
   mode?: RecallPlanMode;
+  abortSignal?: AbortSignal;
 }
 
 type QueryAwarePrefilter = {
@@ -246,6 +247,41 @@ type QueryAwarePrefilter = {
   combination: "none" | "temporal" | "tag" | "intersection" | "union";
   filteredToFullSearch: boolean;
 };
+
+function abortRecallError(message: string): Error {
+  const err = new Error(message);
+  Object.defineProperty(err, "name", { value: "AbortError" });
+  return err;
+}
+
+function throwIfRecallAborted(signal?: AbortSignal, message = "recall aborted"): void {
+  if (signal?.aborted) {
+    throw abortRecallError(message);
+  }
+}
+
+async function raceRecallAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+  message = "recall aborted",
+): Promise<T> {
+  throwIfRecallAborted(signal, message);
+  if (!signal) return promise;
+
+  let onAbort: (() => void) | null = null;
+  const abortPromise = new Promise<T>((_resolve, reject) => {
+    onAbort = () => reject(abortRecallError(message));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+}
 
 /** Maximum age (ms) before a compaction-reset signal file is considered stale and removed. */
 const COMPACTION_SIGNAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
@@ -941,6 +977,7 @@ export class Orchestrator {
     maxResults?: number;
     mode?: "search" | "hybrid" | "bm25" | "vector";
     searchOptions?: SearchQueryOptions;
+    execution?: SearchExecutionOptions;
   }): Promise<QmdSearchResult[]> {
     const namespaces = this.config.namespacesEnabled
       ? Array.from(
@@ -955,17 +992,18 @@ export class Orchestrator {
     if (!this.config.namespacesEnabled) {
       switch (options.mode) {
         case "hybrid":
-          return await this.qmd.hybridSearch(options.query, undefined, options.maxResults);
+          return await this.qmd.hybridSearch(options.query, undefined, options.maxResults, options.execution);
         case "bm25":
-          return await this.qmd.bm25Search(options.query, undefined, options.maxResults);
+          return await this.qmd.bm25Search(options.query, undefined, options.maxResults, options.execution);
         case "vector":
-          return await this.qmd.vectorSearch(options.query, undefined, options.maxResults);
+          return await this.qmd.vectorSearch(options.query, undefined, options.maxResults, options.execution);
         default:
           return await this.qmd.search(
             options.query,
             undefined,
             options.maxResults,
             options.searchOptions,
+            options.execution,
           );
       }
     }
@@ -976,6 +1014,7 @@ export class Orchestrator {
       maxResults: options.maxResults,
       mode: options.mode,
       searchOptions: options.searchOptions,
+      execution: options.execution,
     });
   }
 
@@ -2152,14 +2191,40 @@ export class Orchestrator {
     sessionKey?: string,
     options: RecallInvocationOptions = {},
   ): Promise<string> {
+    const abortController = new AbortController();
+    const onAbort = () => {
+      abortController.abort();
+    };
+    if (options.abortSignal?.aborted) {
+      abortController.abort();
+    } else {
+      options.abortSignal?.addEventListener("abort", onAbort, { once: true });
+    }
+
     // Wait for initialization to complete before attempting recall.
     // Timeout after 15s in case initialize() never fires (edge case).
+    let initGateTimeoutHandle: NodeJS.Timeout | null = null;
+    let onInitGateAbort: (() => void) | null = null;
     if (this.initPromise) {
       const INIT_GATE_TIMEOUT_MS = 15_000;
       const gateResult = await Promise.race([
         this.initPromise.then(() => "ok" as const),
-        new Promise<"timeout">((r) => setTimeout(() => r("timeout"), INIT_GATE_TIMEOUT_MS)),
+        new Promise<"timeout">((resolve) => {
+          initGateTimeoutHandle = setTimeout(() => resolve("timeout"), INIT_GATE_TIMEOUT_MS);
+        }),
+        abortController.signal.aborted
+          ? Promise.resolve("aborted" as const)
+          : new Promise<"aborted">((resolve) => {
+            onInitGateAbort = () => resolve("aborted");
+            abortController.signal.addEventListener("abort", onInitGateAbort, { once: true });
+          }),
       ]);
+      if (initGateTimeoutHandle) clearTimeout(initGateTimeoutHandle);
+      if (onInitGateAbort) abortController.signal.removeEventListener("abort", onInitGateAbort);
+      if (gateResult === "aborted") {
+        this.logRecallFailure(abortRecallError("recall aborted before init"));
+        return "";
+      }
       if (gateResult === "timeout") {
         log.warn("recall: init gate timed out — proceeding without full init");
       }
@@ -2168,15 +2233,28 @@ export class Orchestrator {
     // Keep outer recall timeout above worst-case serialized hybrid search:
     // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
     const RECALL_TIMEOUT_MS = 75_000;
-    return Promise.race([
-      this.recallInternal(prompt, sessionKey, options),
-      new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error("recall timeout")), RECALL_TIMEOUT_MS)
-      ),
-    ]).catch((err) => {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<string>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        abortController.abort();
+        reject(new Error("recall timeout"));
+      }, RECALL_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([
+        this.recallInternal(prompt, sessionKey, {
+          ...options,
+          abortSignal: abortController.signal,
+        }),
+        timeoutPromise,
+      ]);
+    } catch (err) {
       this.logRecallFailure(err);
       return ""; // Return empty context on timeout/error
-    });
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      options.abortSignal?.removeEventListener("abort", onAbort);
+    }
   }
 
   private logRecallFailure(err: unknown): void {
@@ -2446,8 +2524,10 @@ export class Orchestrator {
       queryAwarePrefilter?: QueryAwarePrefilter;
       searchOptions?: SearchQueryOptions;
       onDebugSnapshot?: (snapshot: QmdRecallSnapshot) => Promise<void>;
+      abortSignal?: AbortSignal;
     },
   ): Promise<QmdSearchResult[]> {
+    throwIfRecallAborted(options.abortSignal);
     const queryAwarePrefilter = options.queryAwarePrefilter
       ?? await this.buildQueryAwarePrefilter(prompt, options.recallNamespaces);
     const scopedSeedResults = queryAwarePrefilter.candidatePaths?.size
@@ -2515,18 +2595,24 @@ export class Orchestrator {
     };
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      throwIfRecallAborted(options.abortSignal);
       if (Date.now() - startedAtMs >= QMD_RECALL_BUDGET_MS) {
         break;
       }
 
       const primaryResults = options.collection
-        ? await this.qmd.search(prompt, options.collection, fetchLimit, primarySearchOptions)
+        ? options.abortSignal
+          ? await this.qmd.search(prompt, options.collection, fetchLimit, primarySearchOptions, {
+            signal: options.abortSignal,
+          })
+          : await this.qmd.search(prompt, options.collection, fetchLimit, primarySearchOptions)
         : await this.searchAcrossNamespaces({
           query: prompt,
           namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
           maxResults: fetchLimit,
           mode: "search",
           searchOptions: primarySearchOptions,
+          execution: { signal: options.abortSignal },
         });
       lastPrimaryResultCount = primaryResults.length;
       lastHybridResultCount = 0;
@@ -2543,12 +2629,15 @@ export class Orchestrator {
           lastHybridTopUpSkippedReason = "intent_hint_active";
         } else {
           const hybridResults = options.collection
-            ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit)
+            ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit, {
+              signal: options.abortSignal,
+            })
             : await this.searchAcrossNamespaces({
               query: prompt,
               namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
               maxResults: fetchLimit,
               mode: "hybrid",
+              execution: { signal: options.abortSignal },
             });
           lastHybridResultCount = hybridResults.length;
           lastHybridTopUpUsed = hybridResults.length > 0;
@@ -2883,8 +2972,71 @@ export class Orchestrator {
     sectionBuckets.set(sectionId, existing);
   }
 
-  private assembleRecallSections(sectionBuckets: Map<string, string[]>): string[] {
-    const ordered: string[] = [];
+  private truncateRecallSectionToBudget(content: string, maxChars: number): string {
+    if (maxChars <= 0) return "";
+    if (content.length <= maxChars) return content;
+    const suffix = "\n\n...(memory context trimmed)";
+    if (maxChars <= suffix.length) {
+      return content.slice(0, maxChars);
+    }
+    return `${content.slice(0, maxChars - suffix.length)}${suffix}`;
+  }
+
+  private protectedRecallSectionIds(sectionBuckets: Map<string, string[]>): Set<string> {
+    const protectedIds = new Set<string>();
+    if ((sectionBuckets.get("memories")?.length ?? 0) > 0) {
+      protectedIds.add("memories");
+    }
+    return protectedIds;
+  }
+
+  private protectedRecallReservationChars(content: string): number {
+    const headingBoundary = content.indexOf("\n\n");
+    const headingChars = headingBoundary >= 0 ? headingBoundary + 2 : Math.min(content.length, 24);
+    return Math.min(content.length, Math.max(headingChars, 24));
+  }
+
+  private estimateReservedRecallBudget(
+    entries: Array<{ id: string; content: string }>,
+    startIndex: number,
+    protectedIds: Set<string>,
+    alreadyIncludedCount: number,
+  ): number {
+    const separatorLength = "\n\n---\n\n".length;
+    let reserved = 0;
+    let simulatedIncluded = alreadyIncludedCount;
+    for (let i = startIndex; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (!entry || !protectedIds.has(entry.id)) continue;
+      if (simulatedIncluded > 0) {
+        reserved += separatorLength;
+      }
+      reserved += this.protectedRecallReservationChars(entry.content);
+      simulatedIncluded += 1;
+    }
+    return reserved;
+  }
+
+  private getRecallBudgetChars(): number {
+    const configuredBudget = this.config.recallBudgetChars;
+    if (typeof configuredBudget === "number" && Number.isFinite(configuredBudget) && configuredBudget >= 0) {
+      return Math.floor(configuredBudget);
+    }
+    const tokenBudget = this.config.maxMemoryTokens;
+    if (typeof tokenBudget === "number" && Number.isFinite(tokenBudget) && tokenBudget >= 0) {
+      return Math.floor(tokenBudget * 4);
+    }
+    return 0;
+  }
+
+  private assembleRecallSections(sectionBuckets: Map<string, string[]>): {
+    sections: string[];
+    includedIds: string[];
+    omittedIds: string[];
+    truncated: boolean;
+    finalChars: number;
+  } {
+    const orderedEntries: Array<{ id: string; content: string }> = [];
     const pipeline = Array.isArray(this.config.recallPipeline)
       ? this.config.recallPipeline
       : [];
@@ -2896,17 +3048,68 @@ export class Orchestrator {
     for (const id of orderedIds) {
       const chunks = sectionBuckets.get(id);
       if (!chunks || chunks.length === 0) continue;
-      ordered.push(chunks.join("\n\n"));
+      orderedEntries.push({ id, content: chunks.join("\n\n") });
       seen.add(id);
     }
 
     for (const [id, chunks] of sectionBuckets.entries()) {
       if (seen.has(id)) continue;
       if (chunks.length === 0) continue;
-      ordered.push(chunks.join("\n\n"));
+      orderedEntries.push({ id, content: chunks.join("\n\n") });
     }
 
-    return ordered;
+    const budget = this.getRecallBudgetChars();
+    if (budget === 0) {
+      return {
+        sections: [],
+        includedIds: [],
+        omittedIds: orderedEntries.map((entry) => entry.id),
+        truncated: orderedEntries.length > 0,
+        finalChars: 0,
+      };
+    }
+
+    const separator = "\n\n---\n\n";
+    const protectedIds = this.protectedRecallSectionIds(sectionBuckets);
+    const sections: string[] = [];
+    const includedIds: string[] = [];
+    const omittedIds: string[] = [];
+    let usedChars = 0;
+    let truncated = false;
+
+    for (let index = 0; index < orderedEntries.length; index += 1) {
+      const entry = orderedEntries[index]!;
+      const separatorChars = sections.length > 0 ? separator.length : 0;
+      const reserve = protectedIds.has(entry.id)
+        ? 0
+        : this.estimateReservedRecallBudget(orderedEntries, index + 1, protectedIds, sections.length + 1);
+      const availableForEntry = budget - usedChars - separatorChars - reserve;
+      if (availableForEntry <= 0) {
+        omittedIds.push(entry.id);
+        truncated = true;
+        continue;
+      }
+      const finalContent = this.truncateRecallSectionToBudget(entry.content, availableForEntry);
+      if (!finalContent) {
+        omittedIds.push(entry.id);
+        truncated = true;
+        continue;
+      }
+      if (finalContent.length < entry.content.length) {
+        truncated = true;
+      }
+      sections.push(finalContent);
+      includedIds.push(entry.id);
+      usedChars += separatorChars + finalContent.length;
+    }
+
+    return {
+      sections,
+      includedIds,
+      omittedIds,
+      truncated,
+      finalChars: usedChars,
+    };
   }
 
   private async recallInternal(
@@ -3152,6 +3355,7 @@ export class Orchestrator {
     const profileStorage = await this.storageRouter.storageFor(selfNamespace);
 
     // --- Phase 1: Launch ALL independent data fetches in parallel ---
+    throwIfRecallAborted(options.abortSignal);
 
     // 0. Shared context (v4.0, optional)
     const sharedContextPromise = (async (): Promise<string | null> => {
@@ -3548,6 +3752,7 @@ export class Orchestrator {
           resolveNamespace: (p) => this.namespaceFromPath(p),
           queryAwarePrefilter,
           searchOptions: qmdSearchOptions,
+          abortSignal: options.abortSignal,
           onDebugSnapshot: async (snapshot) => {
             await this.recordLastQmdRecallSnapshot({
               storage: profileStorage,
@@ -3833,28 +4038,34 @@ export class Orchestrator {
       nativeKnowledgeSection,
       conversationRecallSection,
       compoundingSection,
-    ] = await Promise.all([
-      sharedContextPromise,
-      profilePromise,
-      identityContinuityPromise,
-      entityRetrievalPromise,
-      knowledgeIndexPromise,
-      artifactsPromise,
-      objectiveStatePromise,
-      causalTrajectoryPromise,
-      trustZonePromise,
-      harmonicRetrievalPromise,
-      verifiedRecallPromise,
-      verifiedRulesPromise,
-      workProductsPromise,
-      qmdPromise,
-      transcriptPromise,
-      compactionPromise,
-      summariesPromise,
-      nativeKnowledgePromise,
-      conversationRecallPromise,
-      compoundingPromise,
-    ]);
+    ] = await raceRecallAbort(
+      Promise.all([
+        sharedContextPromise,
+        profilePromise,
+        identityContinuityPromise,
+        entityRetrievalPromise,
+        knowledgeIndexPromise,
+        artifactsPromise,
+        objectiveStatePromise,
+        causalTrajectoryPromise,
+        trustZonePromise,
+        harmonicRetrievalPromise,
+        verifiedRecallPromise,
+        verifiedRulesPromise,
+        workProductsPromise,
+        qmdPromise,
+        transcriptPromise,
+        compactionPromise,
+        summariesPromise,
+        nativeKnowledgePromise,
+        conversationRecallPromise,
+        compoundingPromise,
+      ]),
+      options.abortSignal,
+      "recall aborted during phase-one preamble",
+    );
+
+    throwIfRecallAborted(options.abortSignal);
 
     // --- Phase 2: Assemble sections in correct order ---
 
@@ -4230,6 +4441,7 @@ export class Orchestrator {
             recallResultLimit,
             recallMode,
             queryAwarePrefilter,
+            abortSignal: options.abortSignal,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -4352,6 +4564,7 @@ export class Orchestrator {
               recallResultLimit,
               recallMode,
               queryAwarePrefilter,
+              abortSignal: options.abortSignal,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -4428,6 +4641,7 @@ export class Orchestrator {
                 recallResultLimit,
                 recallMode,
                 queryAwarePrefilter,
+                abortSignal: options.abortSignal,
               });
               if (longTerm.length > 0) {
                 if (shouldPersistGraphSnapshot) {
@@ -4463,6 +4677,7 @@ export class Orchestrator {
             recallResultLimit,
             recallMode,
             queryAwarePrefilter,
+            abortSignal: options.abortSignal,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -4589,6 +4804,7 @@ export class Orchestrator {
     }
 
     const finalizedQueryAwarePrefilter = await queryAwarePrefilterPromise;
+    throwIfRecallAborted(options.abortSignal);
     if (timings.queryAware && finalizedQueryAwarePrefilter.candidatePaths?.size) {
       const helpedCount = recalledMemoryPaths.filter((memoryPath) =>
         finalizedQueryAwarePrefilter.candidatePaths?.has(memoryPath)
@@ -4601,16 +4817,21 @@ export class Orchestrator {
     const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
     log.debug(`recall: ${timingParts}`);
 
-    const orderedSections = this.assembleRecallSections(sectionBuckets);
-    const context = orderedSections.length === 0 ? "" : orderedSections.join("\n\n---\n\n");
+    const assembledRecall = this.assembleRecallSections(sectionBuckets);
+    const context = assembledRecall.sections.length === 0 ? "" : assembledRecall.sections.join("\n\n---\n\n");
     const sourcesUsed = this.collectLastRecallSources(sectionBuckets, recallSource);
     const budgetsApplied = this.buildLastRecallBudgetSummary({
       requestedTopK,
       recallResultLimit,
       qmdFetchLimit,
       qmdHybridFetchLimit,
+      finalContextChars: assembledRecall.finalChars,
+      truncated: assembledRecall.truncated,
+      includedSections: assembledRecall.includedIds,
+      omittedSections: assembledRecall.omittedIds,
     });
     if (sessionKey) {
+      throwIfRecallAborted(options.abortSignal);
       this.lastRecall
         .record({
           sessionKey,
@@ -5343,8 +5564,14 @@ export class Orchestrator {
   ): Promise<string[]> {
     const persistedIds: string[] = [];
     const persistedIdsByStorage = new Map<string, { storage: StorageManager; ids: string[] }>();
-    const trackPersistedId = (targetStorage: StorageManager, id: string): void => {
-      persistedIds.push(id);
+    const trackPersistedId = (
+      targetStorage: StorageManager,
+      id: string,
+      options: { includeReturnedIds?: boolean } = {},
+    ): void => {
+      if (options.includeReturnedIds !== false) {
+        persistedIds.push(id);
+      }
       const key = targetStorage.dir;
       const existing = persistedIdsByStorage.get(key);
       if (existing) {
@@ -5364,6 +5591,72 @@ export class Orchestrator {
         return;
       }
       behaviorSignalsByStorage.set(key, { storage: targetStorage, events: [...events] });
+    };
+    const confidenceTierOrder = ["explicit", "implied", "inferred", "speculative"] as const;
+    const shouldPromoteToShared = (
+      targetStorage: StorageManager,
+      category: string,
+      confidence: number,
+    ): boolean => {
+      if (!this.config.namespacesEnabled || !this.config.autoPromoteToSharedEnabled) return false;
+      if (this.namespaceFromStorageDir(targetStorage.dir) === this.config.sharedNamespace) return false;
+      if (!this.config.autoPromoteToSharedCategories.includes(category as any)) return false;
+      const actualTier = confidenceTier(confidence);
+      const actualRank = confidenceTierOrder.indexOf(actualTier);
+      const minimumRank = confidenceTierOrder.indexOf(this.config.autoPromoteMinConfidenceTier);
+      if (actualRank === -1 || minimumRank === -1) return false;
+      return actualRank <= minimumRank;
+    };
+    const promoteMemoryToShared = async (options: {
+      sourceStorage: StorageManager;
+      category: string;
+      content: string;
+      confidence: number;
+      tags: string[];
+      entityRef?: string;
+      sourceMemoryId: string;
+      importance?: ReturnType<typeof scoreImportance>;
+      intentGoal?: string;
+      intentActionType?: string;
+      intentEntityTypes?: string[];
+      memoryKind?: MemoryFrontmatter["memoryKind"];
+      source: string;
+    }): Promise<void> => {
+      if (!shouldPromoteToShared(options.sourceStorage, options.category, options.confidence)) return;
+      try {
+        const sharedStorage = await this.storageRouter.storageFor(this.config.sharedNamespace);
+        if (options.category === "fact" && await sharedStorage.hasFactContentHash(options.content)) {
+          return;
+        }
+        const promotedId = await sharedStorage.writeMemory(options.category as any, options.content, {
+          confidence: options.confidence,
+          tags: [...options.tags, "shared-promotion"],
+          entityRef: options.entityRef,
+          source: `${options.source}-shared-promotion`,
+          importance: options.importance,
+          lineage: [options.sourceMemoryId],
+          sourceMemoryId: options.sourceMemoryId,
+          intentGoal: options.intentGoal,
+          intentActionType: options.intentActionType,
+          intentEntityTypes: options.intentEntityTypes,
+          memoryKind: options.memoryKind,
+        });
+        trackPersistedId(sharedStorage, promotedId, { includeReturnedIds: false });
+        await this.indexPersistedMemory(sharedStorage, promotedId);
+        trackBehaviorSignals(
+          sharedStorage,
+          buildBehaviorSignalsForMemory({
+            memoryId: promotedId,
+            category: options.category as any,
+            content: options.content,
+            namespace: this.config.sharedNamespace,
+            confidence: options.confidence,
+            source: "extraction",
+          }),
+        );
+      } catch (err) {
+        log.warn(`persistExtraction: shared promotion failed open for ${options.sourceMemoryId}: ${err}`);
+      }
     };
 
     // Defensive: validate result and facts array
@@ -5552,6 +5845,21 @@ export class Orchestrator {
             threadEpisodeIdsForGraph.push(parentId);
           }
           await this.indexPersistedMemory(targetStorage, parentId);
+          await promoteMemoryToShared({
+            sourceStorage: targetStorage,
+            category: writeCategory,
+            content: fact.content,
+            confidence: fact.confidence,
+            tags: fact.tags,
+            entityRef: fact.entityRef,
+            sourceMemoryId: parentId,
+            importance,
+            intentGoal: inferredIntent?.goal,
+            intentActionType: inferredIntent?.actionType,
+            intentEntityTypes: inferredIntent?.entityTypes,
+            memoryKind,
+            source: extractionWriteSource,
+          });
           // Register chunked content in hash index too
           if (this.contentHashIndex) {
             this.contentHashIndex.add(fact.content);
@@ -5716,6 +6024,21 @@ export class Orchestrator {
         threadEpisodeIdsForGraph.push(memoryId);
       }
       await this.indexPersistedMemory(targetStorage, memoryId);
+      await promoteMemoryToShared({
+        sourceStorage: targetStorage,
+        category: writeCategory,
+        content: fact.content,
+        confidence: fact.confidence,
+        tags: fact.tags,
+        entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
+        sourceMemoryId: memoryId,
+        importance,
+        intentGoal: inferredIntent?.goal,
+        intentActionType: inferredIntent?.actionType,
+        intentEntityTypes: inferredIntent?.entityTypes,
+        memoryKind,
+        source: extractionWriteSource,
+      });
       // v8.2: graph edge building (fail-open — errors caught inside GraphIndex)
       if (this.config.multiGraphMemoryEnabled) {
         try {
@@ -7333,14 +7656,22 @@ export class Orchestrator {
     recallResultLimit: number;
     qmdFetchLimit: number;
     qmdHybridFetchLimit: number;
+    finalContextChars?: number;
+    truncated?: boolean;
+    includedSections?: string[];
+    omittedSections?: string[];
   }): LastRecallBudgetSummary {
     return {
       requestedTopK: options.requestedTopK,
       appliedTopK: options.recallResultLimit,
-      recallBudgetChars: this.config.recallBudgetChars,
+      recallBudgetChars: this.getRecallBudgetChars(),
       maxMemoryTokens: this.config.maxMemoryTokens,
       qmdFetchLimit: options.qmdFetchLimit,
       qmdHybridFetchLimit: options.qmdHybridFetchLimit,
+      finalContextChars: options.finalContextChars,
+      truncated: options.truncated,
+      includedSections: [...(options.includedSections ?? [])],
+      omittedSections: [...(options.omittedSections ?? [])],
     };
   }
 
@@ -7390,7 +7721,9 @@ export class Orchestrator {
     recallNamespaces: string[],
     limit: number,
     queryAwarePrefilter?: QueryAwarePrefilter,
+    abortSignal?: AbortSignal,
   ): Promise<QmdSearchResult[]> {
+    throwIfRecallAborted(abortSignal);
     const cappedLimit = Math.max(0, limit);
     if (cappedLimit === 0) return [];
 
@@ -7411,11 +7744,13 @@ export class Orchestrator {
     const tokens = Array.from(new Set(tokenizeRecallQuery(prompt)));
     if (tokens.length === 0) return scopedSeedResults;
 
+    throwIfRecallAborted(abortSignal);
     const archivedMemories = await this.readArchivedMemoriesForNamespaces(recallNamespaces);
     if (archivedMemories.length === 0) return scopedSeedResults;
 
     const scored: QmdSearchResult[] = [];
     for (const memory of archivedMemories) {
+      throwIfRecallAborted(abortSignal);
       const haystack = [
         memory.content,
         memory.frontmatter.category,
@@ -7461,6 +7796,7 @@ export class Orchestrator {
     recallResultLimit: number;
     recallMode: RecallPlanMode;
     queryAwarePrefilter?: QueryAwarePrefilter;
+    abortSignal?: AbortSignal;
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
     const coldCollection = this.config.qmdColdCollection ?? "openclaw-engram-cold";
@@ -7489,6 +7825,7 @@ export class Orchestrator {
             collection: coldCollection,
             queryAwarePrefilter: options.queryAwarePrefilter,
             searchOptions: this.buildConfiguredQmdSearchOptions(options.prompt),
+            abortSignal: options.abortSignal,
           },
         );
         if (longTerm.length > 0) {
@@ -7502,6 +7839,7 @@ export class Orchestrator {
         options.recallNamespaces,
         options.recallResultLimit,
         options.queryAwarePrefilter,
+        options.abortSignal,
       );
       if (longTerm.length > 0) {
         log.debug("cold-tier recall source=archive-scan");

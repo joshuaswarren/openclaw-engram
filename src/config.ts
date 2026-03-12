@@ -1037,8 +1037,8 @@ export function parseConfig(raw: unknown): PluginConfig {
           : "auto",
     autoPromoteToSharedEnabled: cfg.autoPromoteToSharedEnabled === true,
     autoPromoteToSharedCategories: Array.isArray(cfg.autoPromoteToSharedCategories)
-      ? (cfg.autoPromoteToSharedCategories as any[]).filter((c) => c === "correction" || c === "decision" || c === "preference")
-      : ["correction", "decision", "preference"],
+      ? (cfg.autoPromoteToSharedCategories as any[]).filter((c) => c === "fact" || c === "correction" || c === "decision" || c === "preference")
+      : ["fact", "correction", "decision", "preference"],
     autoPromoteMinConfidenceTier:
       cfg.autoPromoteMinConfidenceTier === "explicit"
         ? "explicit"

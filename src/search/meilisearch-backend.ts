@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions, SearchResult } from "./port.js";
 import { scanMemoryDir } from "./document-scanner.js";
 
 export interface MeilisearchBackendOptions {
@@ -63,6 +63,7 @@ export class MeilisearchBackend implements SearchBackend {
     collection?: string,
     maxResults?: number,
     _options?: SearchQueryOptions,
+    _execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]> {
     // Try hybrid first; fall back to plain FTS only if hybrid throws (e.g. no embedder configured)
     try {
@@ -72,7 +73,7 @@ export class MeilisearchBackend implements SearchBackend {
     }
   }
 
-  async searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]> {
+  async searchGlobal(query: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const limit = maxResults ?? 10;
     if (!this.available) return [];
 
@@ -100,15 +101,15 @@ export class MeilisearchBackend implements SearchBackend {
     }
   }
 
-  async bm25Search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async bm25Search(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.doSearch(query, maxResults ?? 10, undefined, collection);
   }
 
-  async vectorSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async vectorSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.doSearch(query, maxResults ?? 10, { hybrid: { semanticRatio: 1.0, embedder: "default" } }, collection);
   }
 
-  async hybridSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async hybridSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.doSearch(query, maxResults ?? 10, { hybrid: { semanticRatio: 0.5, embedder: "default" } }, collection);
   }
 

@@ -1,6 +1,10 @@
 import { log } from "./logger.js";
 import type { GatewayConfig, ModelProviderConfig } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
+import {
+  buildChatCompletionTokenLimit,
+  shouldAssumeOpenAiChatCompletions,
+} from "./openai-chat-compat.js";
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -217,7 +221,13 @@ export class FallbackLlmClient {
         return await this.callAnthropic(model.providerConfig, model.modelId, messages, options);
       case "openai-completions":
       default:
-        return await this.callOpenAI(model.providerConfig, model.modelId, messages, options);
+        return await this.callOpenAI(
+          model.providerConfig,
+          model.modelId,
+          messages,
+          options,
+          shouldAssumeOpenAiChatCompletions(model.providerConfig.baseUrl),
+        );
     }
   }
 
@@ -229,6 +239,7 @@ export class FallbackLlmClient {
     modelId: string,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions,
+    assumeOpenAI: boolean,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
     const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
@@ -248,7 +259,9 @@ export class FallbackLlmClient {
       model: modelId,
       messages,
       temperature: options.temperature ?? 0.3,
-      max_tokens: options.maxTokens ?? 4096,
+      ...buildChatCompletionTokenLimit(modelId, options.maxTokens ?? 4096, {
+        assumeOpenAI,
+      }),
     };
 
     const response = await fetch(url, {

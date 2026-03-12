@@ -1,5 +1,5 @@
 import type { PluginConfig, QmdSearchResult } from "../types.js";
-import type { SearchBackend, SearchQueryOptions } from "../search/port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "../search/port.js";
 import { createSearchBackend } from "../search/factory.js";
 
 export function namespaceCollectionName(
@@ -61,6 +61,7 @@ export class NamespaceSearchRouter {
     maxResults?: number;
     mode?: "search" | "hybrid" | "bm25" | "vector";
     searchOptions?: SearchQueryOptions;
+    execution?: SearchExecutionOptions;
   }): Promise<QmdSearchResult[]> {
     const query = options.query.trim();
     if (!query) return [];
@@ -77,17 +78,18 @@ export class NamespaceSearchRouter {
         if (!record.available || record.collectionState === "missing") return [] as QmdSearchResult[];
         switch (method) {
           case "hybrid":
-            return await record.backend.hybridSearch(query, undefined, maxResults);
+            return await record.backend.hybridSearch(query, undefined, maxResults, options.execution);
           case "bm25":
-            return await record.backend.bm25Search(query, undefined, maxResults);
+            return await record.backend.bm25Search(query, undefined, maxResults, options.execution);
           case "vector":
-            return await record.backend.vectorSearch(query, undefined, maxResults);
+            return await record.backend.vectorSearch(query, undefined, maxResults, options.execution);
           default:
             return await record.backend.search(
               query,
               undefined,
               maxResults,
               options.searchOptions,
+              options.execution,
             );
         }
       }),

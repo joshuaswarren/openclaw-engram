@@ -414,6 +414,152 @@ test("query-aware prefilter scopes candidate paths to authorized namespaces", as
   assert.doesNotMatch(results[0]?.path ?? "", /namespaces[\\/]+shared/i);
 });
 
+test("persistExtraction auto-promotes shared facts so shared-only recall still succeeds", async () => {
+  const orchestrator = await makeOrchestrator("engram-query-aware-shared-promote-", {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    defaultRecallNamespaces: ["shared"],
+    autoPromoteToSharedEnabled: true,
+    autoPromoteToSharedCategories: ["fact"],
+    queryAwareIndexingEnabled: false,
+    qmdEnabled: false,
+    embeddingFallbackEnabled: false,
+  });
+  const defaultStorage = await (orchestrator as any).getStorage("default");
+  const sharedStorage = await (orchestrator as any).getStorage("shared");
+
+  const persistedIds = await (orchestrator as any).persistExtraction(
+    {
+      facts: [
+        {
+          category: "fact",
+          content: "Shared infra ops memory promoted for every agent.",
+          confidence: 0.96,
+          tags: ["infra/ops"],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    },
+    defaultStorage,
+  );
+
+  const sharedMemories = await sharedStorage.readAllMemories();
+  assert.equal(persistedIds.length, 1);
+  assert.equal(sharedMemories.length, 1);
+  assert.equal(sharedMemories[0]?.frontmatter.sourceMemoryId?.startsWith("fact-"), true);
+  assert.equal(sharedMemories[0]?.frontmatter.tags?.includes("shared-promotion"), true);
+
+  const context = await (orchestrator as any).recallInternal(
+    "What happened with infra ops?",
+    "agent:worker:shared-only",
+  );
+
+  assert.match(context, /Shared infra ops memory promoted for every agent/i);
+});
+
+test("persistExtraction keeps primary fact persistence when shared promotion write fails", async () => {
+  const orchestrator = await makeOrchestrator("engram-query-aware-shared-promote-write-fail-", {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    autoPromoteToSharedEnabled: true,
+    autoPromoteToSharedCategories: ["fact"],
+    queryAwareIndexingEnabled: false,
+    qmdEnabled: false,
+    embeddingFallbackEnabled: false,
+  });
+  const defaultStorage = await (orchestrator as any).getStorage("default");
+  const sharedStorage = await (orchestrator as any).getStorage("shared");
+  const originalWriteMemory = sharedStorage.writeMemory.bind(sharedStorage);
+  sharedStorage.writeMemory = (async () => {
+    throw new Error("shared promotion write failed");
+  }) as typeof sharedStorage.writeMemory;
+
+  try {
+    const persistedIds = await (orchestrator as any).persistExtraction(
+      {
+        facts: [
+          {
+            category: "fact",
+            content: "Default namespace memory must survive shared promotion failures.",
+            confidence: 0.96,
+            tags: ["infra/ops"],
+          },
+        ],
+        entities: [],
+        questions: [],
+        profileUpdates: [],
+      },
+      defaultStorage,
+    );
+
+    const defaultMemories = await defaultStorage.readAllMemories();
+    const sharedMemories = await sharedStorage.readAllMemories();
+
+    assert.equal(persistedIds.length, 1);
+    assert.equal(defaultMemories.length, 1);
+    assert.match(defaultMemories[0]?.content ?? "", /survive shared promotion failures/i);
+    assert.equal(sharedMemories.length, 0);
+  } finally {
+    sharedStorage.writeMemory = originalWriteMemory;
+  }
+});
+
+test("persistExtraction keeps primary fact persistence when shared promotion indexing fails", async () => {
+  const orchestrator = await makeOrchestrator("engram-query-aware-shared-promote-index-fail-", {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    autoPromoteToSharedEnabled: true,
+    autoPromoteToSharedCategories: ["fact"],
+    queryAwareIndexingEnabled: false,
+    qmdEnabled: false,
+    embeddingFallbackEnabled: false,
+  });
+  const defaultStorage = await (orchestrator as any).getStorage("default");
+  const sharedStorage = await (orchestrator as any).getStorage("shared");
+  const originalIndexPersistedMemory = (orchestrator as any).indexPersistedMemory.bind(orchestrator);
+  (orchestrator as any).indexPersistedMemory = async (targetStorage: typeof defaultStorage, memoryId: string) => {
+    if (targetStorage.dir === sharedStorage.dir) {
+      throw new Error(`shared promotion indexing failed for ${memoryId}`);
+    }
+    return originalIndexPersistedMemory(targetStorage, memoryId);
+  };
+
+  try {
+    const persistedIds = await (orchestrator as any).persistExtraction(
+      {
+        facts: [
+          {
+            category: "fact",
+            content: "Default namespace memory must survive shared indexing failures.",
+            confidence: 0.96,
+            tags: ["infra/ops"],
+          },
+        ],
+        entities: [],
+        questions: [],
+        profileUpdates: [],
+      },
+      defaultStorage,
+    );
+
+    const defaultMemories = await defaultStorage.readAllMemories();
+    const sharedMemories = await sharedStorage.readAllMemories();
+
+    assert.equal(persistedIds.length, 1);
+    assert.equal(defaultMemories.length, 1);
+    assert.match(defaultMemories[0]?.content ?? "", /survive shared indexing failures/i);
+    assert.equal(sharedMemories.length, 1);
+    assert.match(sharedMemories[0]?.content ?? "", /survive shared indexing failures/i);
+  } finally {
+    (orchestrator as any).indexPersistedMemory = originalIndexPersistedMemory;
+  }
+});
+
 test("query-aware prefilter fails open when the tag index is corrupt", async () => {
   const orchestrator = await makeOrchestrator("engram-query-aware-corrupt-");
   const stateDir = path.join(orchestrator.config.memoryDir, "state");
