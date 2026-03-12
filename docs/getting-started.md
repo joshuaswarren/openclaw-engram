@@ -53,7 +53,7 @@ grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -5
 
 [QMD](https://github.com/tobi/qmd) provides hybrid BM25 + vector + reranking search. Without it, Engram falls back to semantic embedding search (using your OpenAI key when available) and then recency-ordered file reads.
 
-**QMD 2.0+ is required.** Install via bun or npm:
+**QMD 2.0+ is recommended.** QMD 1.x still works but 2.0 resolves several known issues natively (session ID crash, model override env vars, join performance). Install via bun or npm:
 
 ```bash
 bun install -g @tobilu/qmd

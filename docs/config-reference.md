@@ -183,7 +183,7 @@ The recall budget controls how much context Engram injects into each agent promp
 
 **How it works (v9.0.66+):** Engram assembles recall context in pipeline section order (shared-context → profile → entity retrieval → knowledge index → ... → memories → transcripts → summaries). The budget-aware assembler reserves space for the `memories` section so earlier sections cannot fully exhaust the budget. However, the reservation is minimal (heading-sized). If the total budget is too small, earlier sections still crowd out memory content.
 
-**Common pitfall:** The default budget is `maxMemoryTokens * 4` = **8,000 chars**. A typical profile is 4,000–8,000 chars and shared context adds another 4,000–6,000 chars. With these defaults, the actual memories section gets zero characters and is silently omitted. The `lastRecall` state file will show successful memory retrieval (non-empty `memoryIds`) but the agent never sees them because they are truncated during context assembly.
+**Common pitfall:** The default budget is `maxMemoryTokens * 4` = **8,000 chars**. A typical profile is 4,000–8,000 chars and shared context adds another 4,000–6,000 chars. With these defaults, the `memories` section is still included (it is a protected section), but may be truncated to heading-only (~24 chars) with no actual memory content. The `lastRecall` state file will show successful memory retrieval (non-empty `memoryIds`) but the agent sees only the section heading because the content was truncated during context assembly.
 
 **Recommended values:**
 
@@ -201,7 +201,7 @@ The recall budget controls how much context Engram injects into each agent promp
 }
 ```
 
-**Diagnosing budget exhaustion:** Check `~/.openclaw/workspace/memory/local/state/last_recall.json`. Each session entry records `includedSections` and `omittedSections`. If `memoryIds` is non-empty but `omittedSections` includes `"memories"`, the budget was too small and memories were retrieved but truncated away.
+**Diagnosing budget exhaustion:** Check `~/.openclaw/workspace/memory/local/state/last_recall.json`. Each session entry records `includedSections`, `finalContextChars`, and `memoryIds`. Because memories is a protected section, it is always included — but under tight budgets it may be truncated to heading-only. If `memoryIds` is non-empty but `finalContextChars` is close to the budget and the memories section content is missing or minimal, the budget was too small and memories were retrieved but truncated during assembly.
 
 **Capping individual sections:** You can override the `recallPipeline` to add `maxChars` to any section:
 
@@ -217,7 +217,7 @@ The recall budget controls how much context Engram injects into each agent promp
 }
 ```
 
-Note: when you provide `recallPipeline`, only the sections listed are included. Omit sections you don't want.
+Note: `recallPipeline` controls ordering and can explicitly disable sections via `"enabled": false`. Unlisted sections default to enabled and are appended after the listed entries. To exclude a section, include it with `"enabled": false` rather than omitting it.
 
 ## Native Knowledge
 
@@ -1154,8 +1154,8 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `cronRecallInstructionHeavyTokenCap` | `36` | `36` |
 | `cronConversationRecallMode` | `auto` | `auto` |
 | `autoPromoteToSharedEnabled` | `false` | `false` |
-| `autoPromoteToSharedCategories` | `["correction","decision","preference"]` | `["correction","decision","preference"]` |
-| `autoPromoteMinConfidenceTier` | `explicit` | `explicit` |
+| `autoPromoteToSharedCategories` | `["fact","correction","decision","preference"]` | `["fact","correction","decision","preference"]` |
+| `autoPromoteMinConfidenceTier` | `explicit` | `implied` (recommended) |
 | `routingRulesEnabled` | `false` | `false` |
 | `routingRulesStateFile` | `state/routing-rules.json` | `state/routing-rules.json` |
 | `sharedContextEnabled` | `false` | `false` unless you are actively using cross-agent memory sharing |

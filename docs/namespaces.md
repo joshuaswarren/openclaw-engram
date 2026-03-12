@@ -13,7 +13,7 @@ Namespaces allow multiple agents to share one Engram installation while keeping 
 
 ## Cross-Agent Memory Access
 
-Non-generalist agents (any agent besides the one matching the `defaultNamespace`) depend on the **shared namespace** for memory context. If the shared namespace is empty, these agents receive zero memories from recall.
+Non-generalist agents (any agent besides the one matching the `defaultNamespace`) recall from both their own **self namespace** and the **shared namespace** (as configured via `defaultRecallNamespaces`). Each agent's extracted memories are stored in its `self` namespace, so agents always have access to their own memories. The shared namespace provides cross-agent context — if it is empty, these agents still receive their own memories but miss context extracted by other agents.
 
 **Shared namespace promotion (v9.0.66+):** When `autoPromoteToSharedEnabled: true`, extracted memories are automatically promoted to the shared namespace. This is the primary mechanism for cross-agent memory sharing. Verify promotion is working:
 
@@ -21,9 +21,38 @@ Non-generalist agents (any agent besides the one matching the `defaultNamespace`
 ls ~/.openclaw/workspace/memory/local/namespaces/shared/facts/
 ```
 
-If this directory is empty or missing, non-generalist agents will have no memory context. Check that `autoPromoteToSharedEnabled` is `true` and that `autoPromoteMinConfidenceTier` is set to a tier your extractions produce (e.g., `"explicit"` or `"implied"`).
+If this directory is empty or missing, non-generalist agents will have no cross-agent memory context (they still have their own `self` namespace memories). Check that `autoPromoteToSharedEnabled` is `true` and that `autoPromoteMinConfidenceTier` is set to `"implied"` (recommended) to ensure most extracted memories get promoted. The `"explicit"` tier is more conservative and may miss memories that lack strong confidence signals.
 
-**Query-aware prefilter (v9.0.66+):** The recall pipeline's prefilter is bypassed when agents have no transcript history, preventing non-generalist agents from being silently excluded from recall results.
+**Categories eligible for promotion:** The `autoPromoteToSharedCategories` setting controls which memory categories are promoted. The default is `["fact", "correction", "decision", "preference"]`. The `"fact"` category was added in v9.0.67 — prior versions defaulted to `["correction", "decision", "preference"]` only.
+
+**Cross-agent recall:** The primary mechanism for cross-agent memory sharing is shared namespace promotion. When promotion is configured, memories extracted by any agent are copied to the shared namespace and become available to all agents during recall.
+
+## QMD Collections for Namespaces
+
+When namespaces are enabled, QMD needs entries for namespace-specific collections in `~/.config/qmd/index.yml`. The collection names follow the pattern `<base-collection>--ns--<namespace>`:
+
+```yaml
+# Base collection (legacy / default namespace root)
+openclaw-engram:
+  path: ~/.openclaw/workspace/memory/local
+  extensions: [.md]
+
+# Shared namespace
+openclaw-engram-hot-facts--ns--shared:
+  path: ~/.openclaw/workspace/memory/local/namespaces/shared
+  extensions: [.md]
+
+# Default namespace (if migrated to namespaces/ layout)
+openclaw-engram-hot-facts--ns--main:
+  path: ~/.openclaw/workspace/memory/local/namespaces/main
+  extensions: [.md]
+```
+
+After adding entries, rebuild the indexes:
+
+```bash
+qmd update && qmd embed
+```
 
 ## Storage Layout
 
