@@ -409,21 +409,15 @@ export class OpikExporter {
   // -------------------------------------------------------------------------
 
   /**
-   * Convert a sessionKey to a stable UUID v7-shaped deterministic ID so that
+   * Convert a sessionKey to a stable, deterministic UUID v7-shaped ID so that
    * spans for the same session share a trace_id and are threaded in Opik.
-   * Uses SHA-256 for collision resistance, stamps UUID v7 version/variant bits.
+   * Uses SHA-256 for collision resistance. The timestamp bytes (0-5) come from
+   * the hash itself — they don't reflect real time, but Opik only validates
+   * the version/variant bits, not timestamp ordering.
    */
   private sessionToTraceId(sessionKey: string): string {
     const digest = createHash("sha256").update(sessionKey).digest();
-    // Inject current timestamp into bytes 0-5 for UUID v7 time component
-    const now = Date.now();
-    digest[0] = (now / 2 ** 40) & 0xff;
-    digest[1] = (now / 2 ** 32) & 0xff;
-    digest[2] = (now / 2 ** 24) & 0xff;
-    digest[3] = (now / 2 ** 16) & 0xff;
-    digest[4] = (now / 2 ** 8) & 0xff;
-    digest[5] = now & 0xff;
-    // Version 7
+    // Version 7 (bytes 0-5 are hash-derived, not real timestamps)
     digest[6] = (digest[6] & 0x0f) | 0x70;
     // Variant 10xx
     digest[8] = (digest[8] & 0x3f) | 0x80;
