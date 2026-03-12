@@ -446,7 +446,7 @@ async function connectAndBootstrap() {
 function copyMemoryPath() {
   const rawPathField = $("memoryRawPath");
   const value = rawPathField?.value?.trim();
-  if (!value || value === rawPathField?.dataset?.emptyValue) {
+  if (!value) {
     setStatus("memoryDetailStatus", "No memory path to copy.", "error");
     return;
   }

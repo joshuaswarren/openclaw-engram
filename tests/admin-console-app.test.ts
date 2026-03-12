@@ -59,6 +59,7 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
   vm.runInContext(script, context, { filename: scriptPath });
   return {
     browserState: vm.runInContext("browserState", context) as { limit: number; offset: number; total: number },
+    copyMemoryPath: vm.runInContext("copyMemoryPath", context) as () => void,
     renderQuality: vm.runInContext("renderQuality", context) as (response: unknown) => void,
     stepMemoryPage: vm.runInContext("stepMemoryPage", context) as (direction: number) => void,
   };
@@ -98,4 +99,17 @@ test("admin console quality renderer tolerates a missing JSON mount", async () =
       latestGovernanceRun: { qualityScore: { score: 90 } },
     });
   });
+});
+
+test("admin console copy path fails cleanly when no memory is selected", async () => {
+  const detailStatus = new FakeElement();
+  const { copyMemoryPath } = await loadAdminConsoleContext("25", {
+    memoryDetailStatus: detailStatus,
+    memoryRawPath: new FakeElement(),
+  });
+
+  copyMemoryPath();
+
+  assert.equal(detailStatus.textContent, "No memory path to copy.");
+  assert.equal(detailStatus.className, "status error");
 });
