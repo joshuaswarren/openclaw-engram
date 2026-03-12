@@ -169,55 +169,57 @@ test("operator doctor surfaces auth and qmd problems", async () => {
   // Clear env var so authToken falls back to undefined (test expects "error" status)
   const savedToken = process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
   delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
-  const fixture = await makeFixture({
-    qmdEnabled: true,
-    agentAccessHttp: { enabled: true, port: 8765 },
-    fileHygiene: {
+  try {
+    const fixture = await makeFixture({
+      qmdEnabled: true,
+      agentAccessHttp: { enabled: true, port: 8765 },
+      fileHygiene: {
+        enabled: true,
+        lintEnabled: true,
+        lintPaths: ["MEMORY.md"],
+        lintBudgetBytes: 100,
+        lintWarnRatio: 0.5,
+      },
+    });
+    await writeFile(path.join(fixture.workspaceDir, "MEMORY.md"), "x".repeat(80), "utf-8");
+    fixture.orchestrator.qmd = {
+      async probe() {
+        return false;
+      },
+      isAvailable() {
+        return false;
+      },
+      async ensureCollection() {
+        return "missing";
+      },
+      debugStatus() {
+        return "cli=false";
+      },
+    };
+    fixture.orchestrator.getConversationIndexHealth = async () => ({
       enabled: true,
-      lintEnabled: true,
-      lintPaths: ["MEMORY.md"],
-      lintBudgetBytes: 100,
-      lintWarnRatio: 0.5,
-    },
-  });
-  await writeFile(path.join(fixture.workspaceDir, "MEMORY.md"), "x".repeat(80), "utf-8");
-  fixture.orchestrator.qmd = {
-    async probe() {
-      return false;
-    },
-    isAvailable() {
-      return false;
-    },
-    async ensureCollection() {
-      return "missing";
-    },
-    debugStatus() {
-      return "cli=false";
-    },
-  };
-  fixture.orchestrator.getConversationIndexHealth = async () => ({
-    enabled: true,
-    backend: "qmd",
-    status: "degraded",
-    chunkDocCount: 0,
-    lastUpdateAt: null,
-    qmdAvailable: false,
-  });
+      backend: "qmd",
+      status: "degraded",
+      chunkDocCount: 0,
+      lastUpdateAt: null,
+      qmdAvailable: false,
+    });
 
-  const report = await runOperatorDoctor({
-    orchestrator: fixture.orchestrator,
-    configPath: fixture.configPath,
-  });
+    const report = await runOperatorDoctor({
+      orchestrator: fixture.orchestrator,
+      configPath: fixture.configPath,
+    });
 
-  assert.equal(report.ok, false);
-  assert.ok(report.summary.error >= 1);
-  assert.equal(report.checks.some((check) => check.key === "access_http_auth" && check.status === "error"), true);
-  assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
-  assert.equal(report.checks.some((check) => check.key === "conversation_index" && check.status === "error"), true);
-  assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
-
-  // Restore env var
-  if (savedToken !== undefined) process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = savedToken;
+    assert.equal(report.ok, false);
+    assert.ok(report.summary.error >= 1);
+    assert.equal(report.checks.some((check) => check.key === "access_http_auth" && check.status === "error"), true);
+    assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
+    assert.equal(report.checks.some((check) => check.key === "conversation_index" && check.status === "error"), true);
+    assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
+  } finally {
+    if (savedToken !== undefined) process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = savedToken;
+    else delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+  }
 });
 
 test("operator doctor treats unreachable qmd as an error even when collection state is unknown", async () => {

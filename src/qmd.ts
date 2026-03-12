@@ -1159,6 +1159,9 @@ export class QmdClient implements SearchBackend {
         if (options?.intent) {
           args.intent = options.intent;
         }
+        if (options?.explain === true) {
+          args.explain = true;
+        }
       } else {
         // QMD v1: query tool accepts { query, collection?, limit }
         args = { query, limit: maxResults };
