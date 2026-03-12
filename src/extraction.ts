@@ -29,6 +29,7 @@ import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
+import { buildChatCompletionTokenLimit } from "./openai-chat-compat.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 type ExtractedFactResult = ExtractionResult["facts"][number];
@@ -956,7 +957,7 @@ ${truncatedConversation}`;
         { role: "user", content: conversation },
       ],
       temperature: 0.3,
-      max_tokens: 4096,
+      ...buildChatCompletionTokenLimit(this.config.model, 4096),
     });
 
     const content = response.choices?.[0]?.message?.content?.trim();
@@ -1267,7 +1268,7 @@ Respond with valid JSON only, matching this schema:
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
-        max_tokens: 4096,
+        ...buildChatCompletionTokenLimit(this.config.model, 4096),
       });
 
       const rawContent = response.choices?.[0]?.message?.content?.trim();
@@ -1539,7 +1540,7 @@ Respond with valid JSON matching this schema:
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
-        max_tokens: 4096,
+        ...buildChatCompletionTokenLimit(this.config.model, 4096),
       });
 
       const rawContent = response.choices?.[0]?.message?.content?.trim();
@@ -1752,7 +1753,7 @@ Respond with valid JSON matching this schema:
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
-        max_tokens: 4096,
+        ...buildChatCompletionTokenLimit(this.config.model, 4096),
       });
 
       const rawContent = response.choices?.[0]?.message?.content?.trim();
@@ -1910,6 +1911,36 @@ Respond with valid JSON matching this schema:
   "whichIsNewer": "first"
 }`;
 
+      if (this.config.localLlmEnabled) {
+        try {
+          const localResponse = await this.localLlm.chatCompletion(
+            [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: input },
+            ],
+            { temperature: 0.3, maxTokens: 2048, operation: "contradiction_verification" },
+          );
+          const normalized = this.normalizeContradictionVerificationResult(
+            this.parseJsonObject(localResponse?.content),
+          );
+          if (normalized) {
+            log.debug(
+              `contradiction check via local LLM: ${normalized.isContradiction ? "YES" : "NO"} (confidence: ${normalized.confidence})`,
+            );
+            return normalized;
+          }
+          if (!this.config.localLlmFallback) {
+            log.warn("contradiction verification skipped — local LLM returned invalid JSON and cloud fallback is disabled");
+            return null;
+          }
+        } catch (err) {
+          if (!this.config.localLlmFallback) {
+            log.warn(`contradiction verification skipped — local LLM failed and cloud fallback is disabled: ${err}`);
+            return null;
+          }
+        }
+      }
+
       if (!this.client) {
         const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
@@ -1938,7 +1969,7 @@ Respond with valid JSON matching this schema:
           { role: "user", content: input },
         ],
         temperature: 0.3,
-        max_tokens: 2048,
+        ...buildChatCompletionTokenLimit(this.config.model, 2048),
       });
 
       const normalized = this.normalizeContradictionVerificationResult(
@@ -2002,6 +2033,32 @@ Respond with valid JSON matching this schema:
   "links": [{"targetId": "memory-id", "linkType": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
 }`;
 
+      if (this.config.localLlmEnabled) {
+        try {
+          const localResponse = await this.localLlm.chatCompletion(
+            [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: input },
+            ],
+            { temperature: 0.3, maxTokens: 2048, operation: "link_suggestion" },
+          );
+          const normalized = this.normalizeSuggestedLinksResult(this.parseJsonObject(localResponse?.content));
+          if (normalized) {
+            log.debug(`suggested ${normalized.links.length} links via local LLM`);
+            return normalized;
+          }
+          if (!this.config.localLlmFallback) {
+            log.warn("link suggestion skipped — local LLM returned invalid JSON and cloud fallback is disabled");
+            return null;
+          }
+        } catch (err) {
+          if (!this.config.localLlmFallback) {
+            log.warn(`link suggestion skipped — local LLM failed and cloud fallback is disabled: ${err}`);
+            return null;
+          }
+        }
+      }
+
       if (!this.client) {
         const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
@@ -2026,7 +2083,7 @@ Respond with valid JSON matching this schema:
           { role: "user", content: input },
         ],
         temperature: 0.3,
-        max_tokens: 2048,
+        ...buildChatCompletionTokenLimit(this.config.model, 2048),
       });
 
       const normalized = this.normalizeSuggestedLinksResult(
@@ -2077,6 +2134,34 @@ Respond with valid JSON matching this schema:
   "keyEntities": ["entity-1", "entity-2"]
 }`;
 
+      if (this.config.localLlmEnabled) {
+        try {
+          const localResponse = await this.localLlm.chatCompletion(
+            [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
+            ],
+            { temperature: 0.3, maxTokens: 4096, operation: "memory_summarization" },
+          );
+          const normalized = this.normalizeMemorySummaryResult(this.parseJsonObject(localResponse?.content));
+          if (normalized) {
+            log.debug(
+              `summarized ${memories.length} memories into ${normalized.keyFacts.length} key facts via local LLM`,
+            );
+            return normalized;
+          }
+          if (!this.config.localLlmFallback) {
+            log.warn("summarization skipped — local LLM returned invalid JSON and cloud fallback is disabled");
+            return null;
+          }
+        } catch (err) {
+          if (!this.config.localLlmFallback) {
+            log.warn(`summarization skipped — local LLM failed and cloud fallback is disabled: ${err}`);
+            return null;
+          }
+        }
+      }
+
       if (!this.client) {
         const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
@@ -2101,7 +2186,7 @@ Respond with valid JSON matching this schema:
           { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
         ],
         temperature: 0.3,
-        max_tokens: 4096,
+        ...buildChatCompletionTokenLimit(this.config.model, 4096),
       });
 
       const normalized = this.normalizeMemorySummaryResult(

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { QmdClient } from "../src/qmd.ts";
 
 test("search falls back to subprocess when daemon returns empty results", async () => {
@@ -196,4 +199,83 @@ test("daemon parser uses path field when file is absent", async () => {
   assert.equal(subprocessCalls, 0);
   assert.equal(out.length, 1);
   assert.equal(out[0]?.path, "/tmp/facts/fact-daemon-path.md");
+});
+
+test("probe attempts daemon connectivity even when CLI probe fails", async () => {
+  const client = new QmdClient("openclaw-engram", 5, { daemonUrl: "http://127.0.0.1:9020" }) as any;
+  let cliCalls = 0;
+  let daemonCalls = 0;
+  client.probeCli = async () => {
+    cliCalls += 1;
+    client.available = false;
+    return false;
+  };
+  client.probeDaemon = async () => {
+    daemonCalls += 1;
+    client.daemonAvailable = true;
+    return true;
+  };
+
+  const ok = await client.probe();
+
+  assert.equal(ok, true);
+  assert.equal(cliCalls, 1);
+  assert.equal(daemonCalls, 1);
+  assert.equal(client.daemonAvailable, true);
+});
+
+test("embed retries with force re-embed after vector dimension mismatch", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  const calls: string[][] = [];
+  client.runQmdCommand = async (args: string[]) => {
+    calls.push(args);
+    if (args[0] === "embed" && args[1] === "-c") {
+      throw new Error("vector dimension mismatch: vectors_vec expects float[3072]");
+    }
+    return { stdout: "", stderr: "" };
+  };
+
+  await client.embed();
+
+  assert.deepEqual(calls, [
+    ["embed", "-c", "openclaw-engram"],
+    ["embed", "-f"],
+  ]);
+});
+
+test("search aborts while waiting on the QMD mutex", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-abort-wait-"));
+  const scriptPath = path.join(tmpDir, "fake-qmd");
+  await writeFile(
+    scriptPath,
+    `#!/bin/sh
+set -eu
+if [ "$1" = "query" ]; then
+  sleep 2
+  printf '[]'
+  exit 0
+fi
+printf '[]'
+`,
+    "utf8",
+  );
+  await chmod(scriptPath, 0o755);
+
+  const client = new QmdClient("openclaw-engram", 5, { qmdPath: scriptPath }) as any;
+  client.available = true;
+  client.daemonAvailable = false;
+  client.maybeProbeDaemon = async () => {};
+
+  const firstSearch = client.search("first", undefined, 3);
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+  const secondSearch = client.search("second", undefined, 3, undefined, { signal: abortController.signal });
+  setTimeout(() => abortController.abort(), 50);
+
+  await secondSearch;
+  const elapsedMs = Date.now() - startedAt;
+  await firstSearch;
+
+  assert.ok(elapsedMs < 1000, `expected aborted search to resolve quickly, saw ${elapsedMs}ms`);
 });

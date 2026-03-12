@@ -408,7 +408,7 @@ export interface PluginConfig {
   cronRecallInstructionHeavyTokenCap: number;
   cronConversationRecallMode: CronConversationRecallMode;
   autoPromoteToSharedEnabled: boolean;
-  autoPromoteToSharedCategories: Array<"correction" | "decision" | "preference">;
+  autoPromoteToSharedCategories: Array<"fact" | "correction" | "decision" | "preference">;
   autoPromoteMinConfidenceTier: ConfidenceTier;
   routingRulesEnabled: boolean;
   routingRulesStateFile: string;

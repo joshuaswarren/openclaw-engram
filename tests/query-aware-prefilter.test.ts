@@ -414,6 +414,51 @@ test("query-aware prefilter scopes candidate paths to authorized namespaces", as
   assert.doesNotMatch(results[0]?.path ?? "", /namespaces[\\/]+shared/i);
 });
 
+test("persistExtraction auto-promotes shared facts so shared-only recall still succeeds", async () => {
+  const orchestrator = await makeOrchestrator("engram-query-aware-shared-promote-", {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    defaultRecallNamespaces: ["shared"],
+    autoPromoteToSharedEnabled: true,
+    autoPromoteToSharedCategories: ["fact"],
+    queryAwareIndexingEnabled: false,
+    qmdEnabled: false,
+    embeddingFallbackEnabled: false,
+  });
+  const defaultStorage = await (orchestrator as any).getStorage("default");
+  const sharedStorage = await (orchestrator as any).getStorage("shared");
+
+  await (orchestrator as any).persistExtraction(
+    {
+      facts: [
+        {
+          category: "fact",
+          content: "Shared infra ops memory promoted for every agent.",
+          confidence: 0.96,
+          tags: ["infra/ops"],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    },
+    defaultStorage,
+  );
+
+  const sharedMemories = await sharedStorage.readAllMemories();
+  assert.equal(sharedMemories.length, 1);
+  assert.equal(sharedMemories[0]?.frontmatter.sourceMemoryId?.startsWith("fact-"), true);
+  assert.equal(sharedMemories[0]?.frontmatter.tags?.includes("shared-promotion"), true);
+
+  const context = await (orchestrator as any).recallInternal(
+    "What happened with infra ops?",
+    "agent:worker:shared-only",
+  );
+
+  assert.match(context, /Shared infra ops memory promoted for every agent/i);
+});
+
 test("query-aware prefilter fails open when the tag index is corrupt", async () => {
   const orchestrator = await makeOrchestrator("engram-query-aware-corrupt-");
   const stateDir = path.join(orchestrator.config.memoryDir, "state");

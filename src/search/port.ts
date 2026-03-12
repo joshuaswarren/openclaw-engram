@@ -8,6 +8,10 @@ export interface SearchQueryOptions {
   explain?: boolean;
 }
 
+export interface SearchExecutionOptions {
+  signal?: AbortSignal;
+}
+
 /**
  * Abstract search backend interface.
  *
@@ -33,11 +37,27 @@ export interface SearchBackend {
     collection?: string,
     maxResults?: number,
     options?: SearchQueryOptions,
+    execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]>;
-  searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]>;
-  bm25Search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]>;
-  vectorSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]>;
-  hybridSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]>;
+  searchGlobal(query: string, maxResults?: number, execution?: SearchExecutionOptions): Promise<SearchResult[]>;
+  bm25Search(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+    execution?: SearchExecutionOptions,
+  ): Promise<SearchResult[]>;
+  vectorSearch(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+    execution?: SearchExecutionOptions,
+  ): Promise<SearchResult[]>;
+  hybridSearch(
+    query: string,
+    collection?: string,
+    maxResults?: number,
+    execution?: SearchExecutionOptions,
+  ): Promise<SearchResult[]>;
 
   // ── Maintenance ──
   update(): Promise<void>;

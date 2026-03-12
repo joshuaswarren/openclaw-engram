@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { log } from "../logger.js";
-import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions, SearchResult } from "./port.js";
 import type { EmbedHelper } from "./embed-helper.js";
 import { scanMemoryDir } from "./document-scanner.js";
 
@@ -64,11 +64,12 @@ export class OramaBackend implements SearchBackend {
     _collection?: string,
     maxResults?: number,
     _options?: SearchQueryOptions,
+    _execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]> {
     return this.hybridSearch(query, _collection, maxResults);
   }
 
-  async searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]> {
+  async searchGlobal(query: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const limit = maxResults ?? 10;
     if (!this.available) return [];
     try {
@@ -88,19 +89,19 @@ export class OramaBackend implements SearchBackend {
     }
   }
 
-  async bm25Search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async bm25Search(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const db = await this.ensureDbForCollection(collection ?? this.collection);
     if (!db) return [];
     return this.searchDb(db, query, "fulltext", maxResults ?? 10);
   }
 
-  async vectorSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async vectorSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const db = await this.ensureDbForCollection(collection ?? this.collection);
     if (!db) return [];
     return this.searchDb(db, query, "vector", maxResults ?? 10);
   }
 
-  async hybridSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async hybridSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const db = await this.ensureDbForCollection(collection ?? this.collection);
     if (!db) return [];
     return this.searchDb(db, query, "hybrid", maxResults ?? 10);

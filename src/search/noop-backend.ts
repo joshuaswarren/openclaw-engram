@@ -1,4 +1,4 @@
-import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions, SearchResult } from "./port.js";
 
 /**
  * No-op search backend for graceful degradation.
@@ -22,23 +22,24 @@ export class NoopSearchBackend implements SearchBackend {
     _collection?: string,
     _maxResults?: number,
     _options?: SearchQueryOptions,
+    _execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]> {
     return [];
   }
 
-  async searchGlobal(_query: string, _maxResults?: number): Promise<SearchResult[]> {
+  async searchGlobal(_query: string, _maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return [];
   }
 
-  async bm25Search(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
+  async bm25Search(_query: string, _collection?: string, _maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return [];
   }
 
-  async vectorSearch(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
+  async vectorSearch(_query: string, _collection?: string, _maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return [];
   }
 
-  async hybridSearch(_query: string, _collection?: string, _maxResults?: number): Promise<SearchResult[]> {
+  async hybridSearch(_query: string, _collection?: string, _maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return [];
   }
 

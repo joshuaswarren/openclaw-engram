@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions, SearchResult } from "./port.js";
 import type { EmbedHelper } from "./embed-helper.js";
 import { scanMemoryDir } from "./document-scanner.js";
 
@@ -60,11 +60,12 @@ export class LanceDbBackend implements SearchBackend {
     _collection?: string,
     maxResults?: number,
     _options?: SearchQueryOptions,
+    _execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]> {
     return this.hybridSearch(query, _collection, maxResults);
   }
 
-  async searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]> {
+  async searchGlobal(query: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const limit = maxResults ?? 10;
     if (!this.available) return [];
 
@@ -91,19 +92,19 @@ export class LanceDbBackend implements SearchBackend {
     }
   }
 
-  async bm25Search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async bm25Search(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const table = await this.ensureTableForCollection(collection ?? this.collection);
     if (!table) return [];
     return this.searchTable(table, query, "fts", maxResults ?? 10);
   }
 
-  async vectorSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async vectorSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const table = await this.ensureTableForCollection(collection ?? this.collection);
     if (!table) return [];
     return this.searchTable(table, query, "vector", maxResults ?? 10);
   }
 
-  async hybridSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async hybridSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     const table = await this.ensureTableForCollection(collection ?? this.collection);
     if (!table) return [];
     return this.searchTable(table, query, "hybrid", maxResults ?? 10);

@@ -17,6 +17,17 @@ function buildEngine() {
   return new ExtractionEngine(config);
 }
 
+function buildLocalOnlyEngine() {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+    localLlmEnabled: true,
+    localLlmFallback: false,
+  });
+  return new ExtractionEngine(config);
+}
+
 test("verifyContradiction falls back to gateway AI when no OpenAI key is configured", async () => {
   const engine = buildEngine();
   let fallbackCalled = false;
@@ -170,6 +181,156 @@ test("summarizeMemories falls back to gateway AI when no OpenAI key is configure
   assert.equal(fallbackCalled, true);
   assert.deepEqual(result, {
     summaryText: "Two shipping incidents point to carrier reliability issues.",
+    keyFacts: ["Carrier outage delayed shipments", "Customers were notified about delays"],
+    keyEntities: ["carrier", "customers"],
+  });
+});
+
+test("verifyContradiction honors localLlmEnabled before cloud routing", async () => {
+  const engine = buildLocalOnlyEngine();
+  let localCalled = false;
+  let cloudCalled = false;
+  (engine as any).localLlm = {
+    chatCompletion: async () => {
+      localCalled = true;
+      return {
+        content: JSON.stringify({
+          isContradiction: false,
+          confidence: 0.72,
+          reasoning: "both memories can coexist",
+          whichIsNewer: "unknown",
+        }),
+      };
+    },
+  };
+  (engine as any).client = {
+    chat: {
+      completions: {
+        create: async () => {
+          cloudCalled = true;
+          throw new Error("cloud path should not run when localLlmFallback=false");
+        },
+      },
+    },
+  };
+
+  const result = await engine.verifyContradiction(
+    { category: "fact", content: "User uses TypeScript" },
+    {
+      id: "memory-1",
+      category: "fact",
+      content: "User also uses JavaScript",
+      created: "2026-03-01T00:00:00.000Z",
+    },
+  );
+
+  assert.equal(localCalled, true);
+  assert.equal(cloudCalled, false);
+  assert.deepEqual(result, {
+    isContradiction: false,
+    confidence: 0.72,
+    reasoning: "both memories can coexist",
+    whichIsNewer: "unclear",
+  });
+});
+
+test("suggestLinks honors localLlmEnabled before cloud routing", async () => {
+  const engine = buildLocalOnlyEngine();
+  let localCalled = false;
+  let cloudCalled = false;
+  (engine as any).localLlm = {
+    chatCompletion: async () => {
+      localCalled = true;
+      return {
+        content: JSON.stringify({
+          links: [
+            {
+              targetId: "memory-2",
+              linkType: "supports",
+              strength: 0.67,
+              reason: "same outage timeline",
+            },
+          ],
+        }),
+      };
+    },
+  };
+  (engine as any).client = {
+    chat: {
+      completions: {
+        create: async () => {
+          cloudCalled = true;
+          throw new Error("cloud path should not run when localLlmFallback=false");
+        },
+      },
+    },
+  };
+
+  const result = await engine.suggestLinks(
+    { category: "fact", content: "Carrier outage delayed shipments" },
+    [{ id: "memory-2", category: "fact", content: "Carrier outage affected delivery windows" }],
+  );
+
+  assert.equal(localCalled, true);
+  assert.equal(cloudCalled, false);
+  assert.deepEqual(result, {
+    links: [
+      {
+        targetId: "memory-2",
+        linkType: "supports",
+        strength: 0.67,
+        reason: "same outage timeline",
+      },
+    ],
+  });
+});
+
+test("summarizeMemories honors localLlmEnabled before cloud routing", async () => {
+  const engine = buildLocalOnlyEngine();
+  let localCalled = false;
+  let cloudCalled = false;
+  (engine as any).localLlm = {
+    chatCompletion: async () => {
+      localCalled = true;
+      return {
+        content: JSON.stringify({
+          summaryText: "Shipping incidents share the same carrier outage root cause.",
+          keyFacts: ["Carrier outage delayed shipments", "Customers were notified about delays"],
+          keyEntities: ["carrier", "customers"],
+        }),
+      };
+    },
+  };
+  (engine as any).client = {
+    chat: {
+      completions: {
+        create: async () => {
+          cloudCalled = true;
+          throw new Error("cloud path should not run when localLlmFallback=false");
+        },
+      },
+    },
+  };
+
+  const result = await engine.summarizeMemories([
+    {
+      id: "memory-1",
+      category: "fact",
+      content: "Carrier outage delayed shipments.",
+      created: "2026-03-01T00:00:00.000Z",
+    },
+    {
+      id: "memory-2",
+      category: "fact",
+      content: "Customers were notified about delays.",
+      created: "2026-03-02T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(localCalled, true);
+  assert.equal(cloudCalled, false);
+  assert.deepEqual(result, {
+    summaryText: "Shipping incidents share the same carrier outage root cause.",
     keyFacts: ["Carrier outage delayed shipments", "Customers were notified about delays"],
     keyEntities: ["carrier", "customers"],
   });

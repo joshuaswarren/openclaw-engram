@@ -31,14 +31,14 @@ test("QmdClient.update() passes collection flag to qmd subprocess", async () => 
   // runUpdateForCollection() must still pass -c collection to qmd
   assert.match(
     qmdSource,
-    /runQmd\(\["update",\s*"-c",\s*name\]/,
+    /runQmd(?:Command)?\(\["update",\s*"-c",\s*name\]/,
     "runUpdateForCollection() should pass -c name to scope updates to the target collection",
   );
 
   // embed() must pass -c collection
   assert.match(
     qmdSource,
-    /runQmd\(\["embed",\s*"-c",\s*this\.collection\]/,
+    /runQmd(?:Command)?\(\["embed",\s*"-c",\s*this\.collection\]/,
     "embed() should pass -c this.collection to scope embedding to the engram collection",
   );
 });

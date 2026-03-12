@@ -1,6 +1,7 @@
 import { log } from "./logger.js";
 import type { GatewayConfig, ModelProviderConfig } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
+import { buildChatCompletionTokenLimit } from "./openai-chat-compat.js";
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -248,7 +249,7 @@ export class FallbackLlmClient {
       model: modelId,
       messages,
       temperature: options.temperature ?? 0.3,
-      max_tokens: options.maxTokens ?? 4096,
+      ...buildChatCompletionTokenLimit(modelId, options.maxTokens ?? 4096),
     };
 
     const response = await fetch(url, {

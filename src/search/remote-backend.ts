@@ -1,5 +1,5 @@
 import { log } from "../logger.js";
-import type { SearchBackend, SearchQueryOptions, SearchResult } from "./port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions, SearchResult } from "./port.js";
 
 export interface RemoteSearchBackendOptions {
   baseUrl: string;
@@ -56,23 +56,24 @@ export class RemoteSearchBackend implements SearchBackend {
     collection?: string,
     maxResults?: number,
     _options?: SearchQueryOptions,
+    _execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]> {
     return this.post("/search/deep", { query, collection, maxResults });
   }
 
-  async searchGlobal(query: string, maxResults?: number): Promise<SearchResult[]> {
+  async searchGlobal(query: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.post("/search/deep", { query, maxResults });
   }
 
-  async bm25Search(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async bm25Search(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.post("/search/bm25", { query, collection, maxResults });
   }
 
-  async vectorSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async vectorSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.post("/search/vector", { query, collection, maxResults });
   }
 
-  async hybridSearch(query: string, collection?: string, maxResults?: number): Promise<SearchResult[]> {
+  async hybridSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
     return this.post("/search/hybrid", { query, collection, maxResults });
   }
 

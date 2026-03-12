@@ -11,6 +11,10 @@ export interface LastRecallBudgetSummary {
   maxMemoryTokens: number;
   qmdFetchLimit?: number;
   qmdHybridFetchLimit?: number;
+  finalContextChars?: number;
+  truncated?: boolean;
+  includedSections?: string[];
+  omittedSections?: string[];
 }
 
 export interface LastRecallSnapshot {
