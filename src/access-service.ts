@@ -344,14 +344,30 @@ function compareBrowseMemory(
 
   switch (sort) {
     case "updated_asc":
-      return leftUpdated.localeCompare(rightUpdated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+      return (
+        leftUpdated.localeCompare(rightUpdated) ||
+        leftCreated.localeCompare(rightCreated) ||
+        left.frontmatter.id.localeCompare(right.frontmatter.id)
+      );
     case "created_desc":
-      return rightCreated.localeCompare(leftCreated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+      return (
+        rightCreated.localeCompare(leftCreated) ||
+        rightUpdated.localeCompare(leftUpdated) ||
+        left.frontmatter.id.localeCompare(right.frontmatter.id)
+      );
     case "created_asc":
-      return leftCreated.localeCompare(rightCreated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+      return (
+        leftCreated.localeCompare(rightCreated) ||
+        leftUpdated.localeCompare(rightUpdated) ||
+        left.frontmatter.id.localeCompare(right.frontmatter.id)
+      );
     case "updated_desc":
     default:
-      return rightUpdated.localeCompare(leftUpdated) || left.frontmatter.id.localeCompare(right.frontmatter.id);
+      return (
+        rightUpdated.localeCompare(leftUpdated) ||
+        rightCreated.localeCompare(leftCreated) ||
+        left.frontmatter.id.localeCompare(right.frontmatter.id)
+      );
   }
 }
 

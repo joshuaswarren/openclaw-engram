@@ -1357,6 +1357,75 @@ test("access service supports explicit browse sorting for projection-backed and 
   }
 });
 
+test("access service fallback browse matches projection secondary timestamp tie breakers", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-browse-tiebreak-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-01/fact-earlier-created.md",
+      memoryDoc(
+        "fact-earlier-created",
+        "Equal updated timestamps should still sort by created timestamp.",
+        ['created: 2026-03-01T00:00:00.000Z', 'updated: 2026-03-08T12:00:00.000Z'],
+      ),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-05/fact-later-created.md",
+      memoryDoc(
+        "fact-later-created",
+        "Equal updated timestamps should still sort by created timestamp.",
+        ['created: 2026-03-05T00:00:00.000Z', 'updated: 2026-03-08T12:00:00.000Z'],
+      ),
+    );
+
+    await rebuildMemoryProjection({
+      memoryDir,
+      dryRun: false,
+      now: new Date("2026-03-08T12:00:00.000Z"),
+    });
+
+    const storage = new StorageManager(memoryDir);
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    const projectedPage = await service.memoryBrowse({
+      sort: "updated_desc",
+      limit: 10,
+      offset: 0,
+    });
+    assert.deepEqual(projectedPage.memories.map((memory) => memory.id), [
+      "fact-later-created",
+      "fact-earlier-created",
+    ]);
+
+    await rm(getMemoryProjectionPath(memoryDir), { force: true });
+
+    const fallbackPage = await service.memoryBrowse({
+      sort: "updated_desc",
+      limit: 10,
+      offset: 0,
+    });
+    assert.deepEqual(fallbackPage.memories.map((memory) => memory.id), [
+      "fact-later-created",
+      "fact-earlier-created",
+    ]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service fallback browse infers archived status from archive paths without a projection", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-fallback-archived-"));
   try {
