@@ -163,7 +163,7 @@ async function postTraceBatch(
   cfg: OpikExporterConfig,
   traces: unknown[],
   log: LoggerBackend,
-): Promise<void> {
+): Promise<boolean> {
   const url = `${cfg.apiUrl.replace(/\/$/, "")}/v1/private/traces/batch`;
   try {
     const res = await fetch(url, {
@@ -174,9 +174,12 @@ async function postTraceBatch(
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       log.debug?.(`[opik-exporter] trace batch failed ${res.status}: ${text}`);
+      return false;
     }
+    return true;
   } catch (err) {
     log.debug?.(`[opik-exporter] trace batch error: ${err}`);
+    return false;
   }
 }
 
@@ -463,10 +466,9 @@ export class OpikExporter {
       tags: ["engram"],
     };
 
-    await postTraceBatch(this.cfg, [trace], this.log);
+    const ok = await postTraceBatch(this.cfg, [trace], this.log);
+    if (!ok) return; // transient failure — allow retry on next span
 
-    // Mark as created only after successful post so transient failures
-    // allow a retry on the next span for this trace.
     this.createdTraces.add(traceId);
 
     // Cap the set size to prevent unbounded growth in long-running processes.
