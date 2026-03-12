@@ -33,15 +33,25 @@ Codex is stateless by default. Every session starts from zero — it doesn't kno
 
 ## Setup
 
-### 1. Start the Engram HTTP server
+### 1. Generate and set the token
 
-On the machine where Engram runs:
+Generate a secure token and add it to your shell profile (`~/.zshenv`, `~/.bashrc`, etc.) on every machine where Codex or Engram runs:
 
 ```bash
 # Generate a token (or use any secure random string)
 openssl rand -base64 32
 
-# Start the server
+# Add to your shell profile
+export OPENCLAW_ENGRAM_ACCESS_TOKEN="<paste-generated-token-here>"
+```
+
+Source the profile or open a new terminal so the variable is available.
+
+### 2. Start the Engram HTTP server
+
+On the machine where Engram runs:
+
+```bash
 openclaw engram access http-serve \
   --host 0.0.0.0 \
   --port 4318 \
@@ -59,16 +69,6 @@ openclaw engram access http-serve \
 ```
 
 For persistent operation, set up a launchd plist (macOS), systemd unit (Linux), or similar service manager so the server survives reboots.
-
-### 2. Set the token environment variable
-
-Add to your shell profile (`~/.zshenv`, `~/.bashrc`, etc.):
-
-```bash
-export OPENCLAW_ENGRAM_ACCESS_TOKEN="<your-token-here>"
-```
-
-This must be set on every machine where Codex runs.
 
 ### 3. Add Engram as an MCP server
 
