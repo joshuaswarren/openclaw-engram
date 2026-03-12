@@ -5559,8 +5559,14 @@ export class Orchestrator {
   ): Promise<string[]> {
     const persistedIds: string[] = [];
     const persistedIdsByStorage = new Map<string, { storage: StorageManager; ids: string[] }>();
-    const trackPersistedId = (targetStorage: StorageManager, id: string): void => {
-      persistedIds.push(id);
+    const trackPersistedId = (
+      targetStorage: StorageManager,
+      id: string,
+      options: { includeReturnedIds?: boolean } = {},
+    ): void => {
+      if (options.includeReturnedIds !== false) {
+        persistedIds.push(id);
+      }
       const key = targetStorage.dir;
       const existing = persistedIdsByStorage.get(key);
       if (existing) {
@@ -5630,7 +5636,7 @@ export class Orchestrator {
           intentEntityTypes: options.intentEntityTypes,
           memoryKind: options.memoryKind,
         });
-        trackPersistedId(sharedStorage, promotedId);
+        trackPersistedId(sharedStorage, promotedId, { includeReturnedIds: false });
         await this.indexPersistedMemory(sharedStorage, promotedId);
         trackBehaviorSignals(
           sharedStorage,

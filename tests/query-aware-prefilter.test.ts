@@ -429,7 +429,7 @@ test("persistExtraction auto-promotes shared facts so shared-only recall still s
   const defaultStorage = await (orchestrator as any).getStorage("default");
   const sharedStorage = await (orchestrator as any).getStorage("shared");
 
-  await (orchestrator as any).persistExtraction(
+  const persistedIds = await (orchestrator as any).persistExtraction(
     {
       facts: [
         {
@@ -447,6 +447,7 @@ test("persistExtraction auto-promotes shared facts so shared-only recall still s
   );
 
   const sharedMemories = await sharedStorage.readAllMemories();
+  assert.equal(persistedIds.length, 1);
   assert.equal(sharedMemories.length, 1);
   assert.equal(sharedMemories[0]?.frontmatter.sourceMemoryId?.startsWith("fact-"), true);
   assert.equal(sharedMemories[0]?.frontmatter.tags?.includes("shared-promotion"), true);
@@ -549,7 +550,7 @@ test("persistExtraction keeps primary fact persistence when shared promotion ind
     const defaultMemories = await defaultStorage.readAllMemories();
     const sharedMemories = await sharedStorage.readAllMemories();
 
-    assert.equal(persistedIds.length, 2);
+    assert.equal(persistedIds.length, 1);
     assert.equal(defaultMemories.length, 1);
     assert.match(defaultMemories[0]?.content ?? "", /survive shared indexing failures/i);
     assert.equal(sharedMemories.length, 1);
