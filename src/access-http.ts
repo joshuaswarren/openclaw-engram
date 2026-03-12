@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
+import { EngramMcpServer } from "./access-mcp.js";
 import type { RecallPlanMode } from "./types.js";
 
 export interface EngramAccessHttpServerOptions {
@@ -61,6 +62,7 @@ export class EngramAccessHttpServer {
   private readonly adminConsoleEnabled: boolean;
   private readonly adminConsolePublicDir: string;
   private readonly writeRequestTimestamps: number[] = [];
+  private readonly mcpServer: EngramMcpServer;
   private server: Server | null = null;
   private boundPort = 0;
 
@@ -75,6 +77,7 @@ export class EngramAccessHttpServer {
       : 131072;
     this.adminConsoleEnabled = options.adminConsoleEnabled !== false;
     this.adminConsolePublicDir = options.adminConsolePublicDir ?? defaultAdminConsolePublicDir;
+    this.mcpServer = new EngramMcpServer(this.service, { principal: options.principal });
   }
 
   async start(): Promise<EngramAccessHttpServerStatus> {
@@ -160,6 +163,11 @@ export class EngramAccessHttpServer {
         "www-authenticate": "Bearer",
       });
       res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/mcp") {
+      await this.handleMcpRequest(req, res);
       return;
     }
 
@@ -363,6 +371,22 @@ export class EngramAccessHttpServer {
     }
 
     this.respondJson(res, 404, { error: "not_found" });
+  }
+
+  private async handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req);
+    const response = await this.mcpServer.handleRequest(body as {
+      jsonrpc?: string;
+      id?: string | number | null;
+      method?: string;
+      params?: Record<string, unknown>;
+    });
+    if (response === null) {
+      res.statusCode = 202;
+      res.end();
+      return;
+    }
+    this.respondJson(res, 200, response);
   }
 
   private respondJson(res: ServerResponse, status: number, payload: unknown): void {

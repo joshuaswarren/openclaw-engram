@@ -1064,6 +1064,111 @@ test("access HTTP server returns 400 for empty recall query", async () => {
   }
 });
 
+test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
+  const server = new EngramAccessHttpServer({
+    service: createFakeService(),
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 4096,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+
+    // initialize handshake
+    const initRes = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "codex-test", version: "0.1.0" },
+        },
+      }),
+    });
+    assert.equal(initRes.status, 200);
+    const initPayload = await initRes.json() as {
+      jsonrpc: string;
+      id: number;
+      result: { protocolVersion: string; serverInfo: { name: string } };
+    };
+    assert.equal(initPayload.jsonrpc, "2.0");
+    assert.equal(initPayload.id, 1);
+    assert.equal(initPayload.result.protocolVersion, "2024-11-05");
+    assert.equal(initPayload.result.serverInfo.name, "openclaw-engram");
+
+    // list tools
+    const toolsRes = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+      }),
+    });
+    assert.equal(toolsRes.status, 200);
+    const toolsPayload = await toolsRes.json() as {
+      result: { tools: Array<{ name: string }> };
+    };
+    const toolNames = toolsPayload.result.tools.map((t) => t.name);
+    assert.ok(toolNames.includes("engram.recall"));
+    assert.ok(toolNames.includes("engram.memory_store"));
+    assert.ok(toolNames.includes("engram.entity_get"));
+
+    // call engram.recall tool
+    const callRes = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "engram.recall",
+          arguments: { query: "what did we decide?" },
+        },
+      }),
+    });
+    assert.equal(callRes.status, 200);
+    const callPayload = await callRes.json() as {
+      result: { isError: boolean; structuredContent: { context: string } };
+    };
+    assert.equal(callPayload.result.isError, false);
+    assert.equal(callPayload.result.structuredContent.context, "memory context");
+
+    // notifications return 202 (no response body)
+    const notifRes = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(notifRes.status, 202);
+
+    // requires auth
+    const noAuthRes = await fetch(`${base}/mcp`, {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "ping" }),
+    });
+    assert.equal(noAuthRes.status, 401);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server returns 400 for explicit-capture validation errors", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-http-validation-"));
   const storage = new StorageManager(memoryDir);
