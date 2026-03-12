@@ -166,6 +166,9 @@ test("operator setup can remove managed capture instructions after captureMode i
 });
 
 test("operator doctor surfaces auth and qmd problems", async () => {
+  // Clear env var so authToken falls back to undefined (test expects "error" status)
+  const savedToken = process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+  delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
   const fixture = await makeFixture({
     qmdEnabled: true,
     agentAccessHttp: { enabled: true, port: 8765 },
@@ -212,6 +215,9 @@ test("operator doctor surfaces auth and qmd problems", async () => {
   assert.equal(report.checks.some((check) => check.key === "qmd" && check.status === "error"), true);
   assert.equal(report.checks.some((check) => check.key === "conversation_index" && check.status === "error"), true);
   assert.equal(report.checks.some((check) => check.key === "file_hygiene" && check.status === "warn"), true);
+
+  // Restore env var
+  if (savedToken !== undefined) process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = savedToken;
 });
 
 test("operator doctor treats unreachable qmd as an error even when collection state is unknown", async () => {
