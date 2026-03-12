@@ -159,6 +159,27 @@ async function postSpanBatch(
   }
 }
 
+async function postTraceBatch(
+  cfg: OpikExporterConfig,
+  traces: unknown[],
+  log: LoggerBackend,
+): Promise<void> {
+  const url = `${cfg.apiUrl.replace(/\/$/, "")}/v1/private/traces/batch`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: buildHeaders(cfg),
+      body: JSON.stringify({ traces }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      log.debug?.(`[opik-exporter] trace batch failed ${res.status}: ${text}`);
+    }
+  } catch (err) {
+    log.debug?.(`[opik-exporter] trace batch error: ${err}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // In-flight LLM span tracking
 // ---------------------------------------------------------------------------
@@ -182,6 +203,8 @@ export class OpikExporter {
   private readonly log: LoggerBackend;
   private _handler: ((e: EngramTraceEvent) => void) | undefined;
   private readonly inFlight = new Map<string, InFlightLlm>();
+  /** Track which trace_ids we have already created parent trace objects for. */
+  private readonly createdTraces = new Set<string>();
   /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
   private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -318,9 +341,14 @@ export class OpikExporter {
 
     if (evt.timings) metadata.timings = evt.timings;
 
+    const traceId = evt.sessionKey ? this.sessionToTraceId(evt.sessionKey) : uuidV7();
+
+    // Ensure parent trace exists so the span is not orphaned in Opik.
+    await this.ensureTrace(traceId, evt.sessionKey ?? "engram:recall", startTime, endTime);
+
     const span = {
       id: uuidV7(),
-      trace_id: evt.sessionKey ? this.sessionToTraceId(evt.sessionKey) : uuidV7(),
+      trace_id: traceId,
       project_name: this.cfg.projectName,
       name: "engram:recall",
       type: "general",
@@ -376,9 +404,14 @@ export class OpikExporter {
     if (evt.tokenUsage?.output != null) usage.completion_tokens = evt.tokenUsage.output;
     if (evt.tokenUsage?.total != null) usage.total_tokens = evt.tokenUsage.total;
 
+    const traceId = state?.traceId ?? uuidV7();
+
+    // Ensure parent trace exists so the span is not orphaned in Opik.
+    await this.ensureTrace(traceId, `engram:${evt.operation}`, startTime, endTime);
+
     const span: Record<string, unknown> = {
       id: state?.spanId ?? uuidV7(),
-      trace_id: state?.traceId ?? uuidV7(),
+      trace_id: traceId,
       project_name: this.cfg.projectName,
       name: `engram:${evt.operation}`,
       type: "llm",
@@ -407,6 +440,38 @@ export class OpikExporter {
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Create a parent trace object in Opik if we haven't already.
+   * Opik does NOT auto-create traces from spans, so without this
+   * the spans are orphaned and don't show up in the trace list UI.
+   */
+  private async ensureTrace(
+    traceId: string,
+    name: string,
+    startTime: string,
+    endTime: string,
+  ): Promise<void> {
+    if (this.createdTraces.has(traceId)) return;
+    this.createdTraces.add(traceId);
+
+    // Cap the set size to prevent unbounded growth in long-running processes.
+    if (this.createdTraces.size > 10_000) {
+      const first = this.createdTraces.values().next().value;
+      if (first) this.createdTraces.delete(first);
+    }
+
+    const trace = {
+      id: traceId,
+      project_name: this.cfg.projectName,
+      name,
+      start_time: startTime,
+      end_time: endTime,
+      tags: ["engram"],
+    };
+
+    await postTraceBatch(this.cfg, [trace], this.log);
+  }
 
   /**
    * Convert a sessionKey to a stable, deterministic UUID v7-shaped ID so that

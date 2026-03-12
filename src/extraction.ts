@@ -644,18 +644,18 @@ export class ExtractionEngine {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: { temperature?: number; maxTokens?: number } = {},
   ): Promise<T | null> {
-    const result = await this.fallbackLlm.parseWithSchema(messages, schema, options);
-    if (result) {
+    const detailed = await this.fallbackLlm.parseWithSchemaDetailed(messages, schema, options);
+    if (detailed?.result) {
       const durationMs = Date.now() - startedAtMs;
       this.emit({
         kind: "llm_end",
         traceId,
-        model: "fallback",
+        model: detailed.modelUsed,
         operation,
         durationMs,
-        output: JSON.stringify(result).slice(0, 2000),
+        output: JSON.stringify(detailed.result).slice(0, 2000),
       });
-      return result;
+      return detailed.result;
     }
     return null;
   }
@@ -730,13 +730,24 @@ export class ExtractionEngine {
           const sanitized = this.sanitizeExtractionResult(directResult, messageTimestamp);
           return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
+        // Emit error event so Opik sees the direct client failure before fallback
+        this.emit({
+          kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+          durationMs: Date.now() - startTime, error: "direct client returned no result",
+        });
         log.info("extraction: direct client returned no result, falling back to gateway AI");
       } catch (err) {
+        this.emit({
+          kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+          durationMs: Date.now() - startTime, error: String(err),
+        });
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
       }
     }
 
-    // Fall back to gateway's default AI
+    // Fall back to gateway's default AI — emit a fresh llm_start so the fallback
+    // gets its own trace rather than being orphaned under the direct-client traceId.
+    const fallbackTraceId = crypto.randomUUID();
     log.info("extraction: falling back to gateway default AI");
 
     try {
@@ -745,7 +756,9 @@ export class ExtractionEngine {
         { role: "user" as const, content: conversation },
       ];
 
-      const result = await this.fallbackLlm.parseWithSchema(
+      this.emit({ kind: "llm_start", traceId: fallbackTraceId, model: "fallback", operation: "extraction", input: conversation });
+
+      const detailed = await this.fallbackLlm.parseWithSchemaDetailed(
         messages,
         ExtractionResultSchema,
         { temperature: 0.3, maxTokens: 4096 },
@@ -753,13 +766,14 @@ export class ExtractionEngine {
 
       const durationMs = Date.now() - startTime;
 
-      if (result && Array.isArray(result.facts)) {
+      if (detailed?.result && Array.isArray(detailed.result.facts)) {
+        const result = detailed.result;
         this.emit({
-          kind: "llm_end", traceId, model: "fallback", operation: "extraction", durationMs,
+          kind: "llm_end", traceId: fallbackTraceId, model: detailed.modelUsed, operation: "extraction", durationMs,
           output: JSON.stringify(result).slice(0, 2000),
         });
         log.debug(
-          `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback`,
+          `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback (${detailed.modelUsed})`,
         );
         const sanitized = this.sanitizeExtractionResult({
           ...result,
@@ -769,11 +783,15 @@ export class ExtractionEngine {
         return await this.applyProactiveQuestionPass(conversation, sanitized);
       }
 
+      this.emit({
+        kind: "llm_error", traceId: fallbackTraceId, model: "fallback", operation: "extraction",
+        durationMs, error: "fallback returned no parsed output",
+      });
       log.warn("extraction fallback returned no parsed output");
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     } catch (err) {
       this.emit({
-        kind: "llm_error", traceId, model: "fallback", operation: "extraction",
+        kind: "llm_error", traceId: fallbackTraceId, model: "fallback", operation: "extraction",
         durationMs: Date.now() - startTime, error: String(err),
       });
       log.error("extraction fallback failed", err);
