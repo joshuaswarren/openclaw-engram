@@ -253,12 +253,13 @@ export class EngramAccessHttpServer {
     if (req.method === "GET" && pathname === "/engram/v1/memories") {
       const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "50", 10);
       const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      const sortParam = parsed.searchParams.get("sort") ?? undefined;
       const response = await this.service.memoryBrowse({
         query: parsed.searchParams.get("q") ?? undefined,
         status: parsed.searchParams.get("status") ?? undefined,
         category: parsed.searchParams.get("category") ?? undefined,
         namespace: parsed.searchParams.get("namespace") ?? undefined,
-        sort: parsed.searchParams.get("sort") as "updated_desc" | "updated_asc" | "created_desc" | "created_asc" | null ?? undefined,
+        sort: sortParam,
         limit: Number.isFinite(limitRaw) ? limitRaw : 50,
         offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,
       });

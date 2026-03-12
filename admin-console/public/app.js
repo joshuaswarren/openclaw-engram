@@ -96,8 +96,12 @@ function syncBrowserControls() {
     pageStatus.textContent = "No results";
     return;
   }
-  const start = browserState.offset + 1;
-  const end = Math.min(browserState.offset + browserState.limit, browserState.total);
+  const pageOffset = Math.min(
+    browserState.offset,
+    Math.max(0, browserState.total - 1),
+  );
+  const start = pageOffset + 1;
+  const end = Math.min(pageOffset + browserState.limit, browserState.total);
   pageStatus.textContent = `${start}-${end} of ${browserState.total}`;
 }
 
@@ -284,6 +288,13 @@ async function loadMemoryBrowser(resetOffset = false) {
   params.set("offset", String(browserState.offset));
   const response = await fetchJson(`/engram/v1/memories?${params.toString()}`);
   browserState.total = response.total || 0;
+  const maxOffset = browserState.total > 0
+    ? Math.floor((browserState.total - 1) / browserState.limit) * browserState.limit
+    : 0;
+  if (!resetOffset && browserState.offset > maxOffset) {
+    browserState.offset = maxOffset;
+    return loadMemoryBrowser(false);
+  }
   renderMemoryList(response.memories);
   syncBrowserControls();
   setStatus("memoryBrowserStatus", `Loaded ${response.count} of ${response.total} memories.`, "ok");
