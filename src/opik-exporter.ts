@@ -453,13 +453,6 @@ export class OpikExporter {
     endTime: string,
   ): Promise<void> {
     if (this.createdTraces.has(traceId)) return;
-    this.createdTraces.add(traceId);
-
-    // Cap the set size to prevent unbounded growth in long-running processes.
-    if (this.createdTraces.size > 10_000) {
-      const first = this.createdTraces.values().next().value;
-      if (first) this.createdTraces.delete(first);
-    }
 
     const trace = {
       id: traceId,
@@ -471,6 +464,16 @@ export class OpikExporter {
     };
 
     await postTraceBatch(this.cfg, [trace], this.log);
+
+    // Mark as created only after successful post so transient failures
+    // allow a retry on the next span for this trace.
+    this.createdTraces.add(traceId);
+
+    // Cap the set size to prevent unbounded growth in long-running processes.
+    if (this.createdTraces.size > 10_000) {
+      const first = this.createdTraces.values().next().value;
+      if (first) this.createdTraces.delete(first);
+    }
   }
 
   /**

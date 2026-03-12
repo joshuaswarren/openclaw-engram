@@ -743,11 +743,18 @@ export class ExtractionEngine {
         });
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
       }
+    } else {
+      // No direct client configured — close the initial llm_start so it isn't orphaned.
+      this.emit({
+        kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+        durationMs: Date.now() - startTime, error: "no direct client configured",
+      });
     }
 
     // Fall back to gateway's default AI — emit a fresh llm_start so the fallback
     // gets its own trace rather than being orphaned under the direct-client traceId.
     const fallbackTraceId = crypto.randomUUID();
+    const fallbackStartTime = Date.now();
     log.info("extraction: falling back to gateway default AI");
 
     try {
@@ -764,13 +771,13 @@ export class ExtractionEngine {
         { temperature: 0.3, maxTokens: 4096 },
       );
 
-      const durationMs = Date.now() - startTime;
+      const fallbackDurationMs = Date.now() - fallbackStartTime;
 
       if (detailed?.result && Array.isArray(detailed.result.facts)) {
         const result = detailed.result;
         this.emit({
-          kind: "llm_end", traceId: fallbackTraceId, model: detailed.modelUsed, operation: "extraction", durationMs,
-          output: JSON.stringify(result).slice(0, 2000),
+          kind: "llm_end", traceId: fallbackTraceId, model: detailed.modelUsed, operation: "extraction",
+          durationMs: fallbackDurationMs, output: JSON.stringify(result).slice(0, 2000),
         });
         log.debug(
           `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback (${detailed.modelUsed})`,
@@ -785,14 +792,14 @@ export class ExtractionEngine {
 
       this.emit({
         kind: "llm_error", traceId: fallbackTraceId, model: "fallback", operation: "extraction",
-        durationMs, error: "fallback returned no parsed output",
+        durationMs: fallbackDurationMs, error: "fallback returned no parsed output",
       });
       log.warn("extraction fallback returned no parsed output");
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     } catch (err) {
       this.emit({
         kind: "llm_error", traceId: fallbackTraceId, model: "fallback", operation: "extraction",
-        durationMs: Date.now() - startTime, error: String(err),
+        durationMs: Date.now() - fallbackStartTime, error: String(err),
       });
       log.error("extraction fallback failed", err);
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
