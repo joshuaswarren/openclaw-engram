@@ -267,10 +267,11 @@ test("embedCollection retries with force re-embed against the same collection", 
 
 test("daemon request success removes abort listeners from the caller signal", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-daemon-cleanup-"));
+  const daemonScriptPath = path.join(tmpDir, "fake-qmd-daemon.js");
   const scriptPath = path.join(tmpDir, "fake-qmd-daemon");
   await writeFile(
-    scriptPath,
-    `#!/usr/bin/env node
+    daemonScriptPath,
+    `
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -295,6 +296,13 @@ rl.on("line", (line) => {
     }) + "\\n");
   }
 });
+`,
+    "utf8",
+  );
+  await writeFile(
+    scriptPath,
+    `#!/bin/sh
+exec "${process.execPath}" "${daemonScriptPath}" "$@"
 `,
     "utf8",
   );
