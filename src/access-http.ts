@@ -254,12 +254,18 @@ export class EngramAccessHttpServer {
       const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "50", 10);
       const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
       const sortParam = parsed.searchParams.get("sort") ?? undefined;
+      const sort = sortParam === "updated_desc"
+        || sortParam === "updated_asc"
+        || sortParam === "created_desc"
+        || sortParam === "created_asc"
+        ? sortParam
+        : undefined;
       const response = await this.service.memoryBrowse({
         query: parsed.searchParams.get("q") ?? undefined,
         status: parsed.searchParams.get("status") ?? undefined,
         category: parsed.searchParams.get("category") ?? undefined,
         namespace: parsed.searchParams.get("namespace") ?? undefined,
-        sort: sortParam,
+        sort,
         limit: Number.isFinite(limitRaw) ? limitRaw : 50,
         offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,
       });
