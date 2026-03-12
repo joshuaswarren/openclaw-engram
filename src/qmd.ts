@@ -928,7 +928,7 @@ export class QmdClient implements SearchBackend {
         results = await this.searchViaDaemon(trimmed, col, n, searchOptions, execution?.signal);
       } catch (err) {
         if (isCallerCancellation(err, execution?.signal)) {
-          return [];
+          throw isAbortError(err) ? err : abortError("QMD daemon search aborted");
         }
         throw err;
       }
@@ -964,7 +964,7 @@ export class QmdClient implements SearchBackend {
         results = await this.searchViaDaemon(trimmed, undefined, n, undefined, execution?.signal);
       } catch (err) {
         if (isCallerCancellation(err, execution?.signal)) {
-          return [];
+          throw isAbortError(err) ? err : abortError("QMD daemon global search aborted");
         }
         throw err;
       }
@@ -1001,7 +1001,7 @@ export class QmdClient implements SearchBackend {
         results = await this.bm25SearchViaDaemon(trimmed, col, n, execution?.signal);
       } catch (err) {
         if (isCallerCancellation(err, execution?.signal)) {
-          return [];
+          throw isAbortError(err) ? err : abortError("QMD daemon bm25 aborted");
         }
         throw err;
       }
@@ -1036,7 +1036,7 @@ export class QmdClient implements SearchBackend {
         results = await this.vsearchViaDaemon(trimmed, col, n, execution?.signal);
       } catch (err) {
         if (isCallerCancellation(err, execution?.signal)) {
-          return [];
+          throw isAbortError(err) ? err : abortError("QMD daemon vsearch aborted");
         }
         throw err;
       }

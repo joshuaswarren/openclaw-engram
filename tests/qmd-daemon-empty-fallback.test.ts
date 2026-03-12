@@ -534,7 +534,7 @@ test("vsearchViaDaemon invalidates daemon session on real daemon faults", async 
   assert.equal(client.daemonAvailable, false);
 });
 
-test("search returns immediately on daemon cancellation without subprocess fallback", async () => {
+test("search rethrows daemon cancellation without subprocess fallback", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   const controller = new AbortController();
   controller.abort();
@@ -552,12 +552,14 @@ test("search returns immediately on daemon cancellation without subprocess fallb
     return [{ docid: "unexpected", path: "/tmp/unexpected.md", snippet: "unexpected", score: 0.1 }];
   };
 
-  const out = await client.search("cancelled", undefined, 3, undefined, { signal: controller.signal });
-  assert.deepEqual(out, []);
+  await expectAbortError(
+    () => client.search("cancelled", undefined, 3, undefined, { signal: controller.signal }),
+    "QMD daemon search aborted",
+  );
   assert.equal(subprocessCalls, 0);
 });
 
-test("bm25Search returns immediately on daemon cancellation without subprocess fallback", async () => {
+test("bm25Search rethrows daemon cancellation without subprocess fallback", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   const controller = new AbortController();
   controller.abort();
@@ -575,12 +577,14 @@ test("bm25Search returns immediately on daemon cancellation without subprocess f
     return [{ docid: "unexpected", path: "/tmp/unexpected.md", snippet: "unexpected", score: 0.1 }];
   };
 
-  const out = await client.bm25Search("cancelled", undefined, 3, { signal: controller.signal });
-  assert.deepEqual(out, []);
+  await expectAbortError(
+    () => client.bm25Search("cancelled", undefined, 3, { signal: controller.signal }),
+    "QMD daemon bm25 aborted",
+  );
   assert.equal(subprocessCalls, 0);
 });
 
-test("vectorSearch returns immediately on daemon cancellation without subprocess fallback", async () => {
+test("vectorSearch rethrows daemon cancellation without subprocess fallback", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   const controller = new AbortController();
   controller.abort();
@@ -598,8 +602,10 @@ test("vectorSearch returns immediately on daemon cancellation without subprocess
     return [{ docid: "unexpected", path: "/tmp/unexpected.md", snippet: "unexpected", score: 0.1 }];
   };
 
-  const out = await client.vectorSearch("cancelled", undefined, 3, { signal: controller.signal });
-  assert.deepEqual(out, []);
+  await expectAbortError(
+    () => client.vectorSearch("cancelled", undefined, 3, { signal: controller.signal }),
+    "QMD daemon vsearch aborted",
+  );
   assert.equal(subprocessCalls, 0);
 });
 
