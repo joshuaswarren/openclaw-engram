@@ -514,7 +514,7 @@ test("bm25SearchViaDaemon keeps daemon session active on caller cancellation", a
   assert.equal(client.daemonAvailable, true);
 });
 
-test("vsearchViaDaemon invalidates daemon session on real daemon faults", async () => {
+test("vsearchViaDaemon tolerates transient failures before invalidating daemon session", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   let invalidated = 0;
 
@@ -528,8 +528,20 @@ test("vsearchViaDaemon invalidates daemon session on real daemon faults", async 
     },
   };
 
-  const out = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
-  assert.equal(out, null);
+  // First two failures are transient — daemon stays available
+  const out1 = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
+  assert.equal(out1, null);
+  assert.equal(invalidated, 0);
+  assert.equal(client.daemonAvailable, true);
+
+  const out2 = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
+  assert.equal(out2, null);
+  assert.equal(invalidated, 0);
+  assert.equal(client.daemonAvailable, true);
+
+  // Third consecutive failure triggers invalidation
+  const out3 = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
+  assert.equal(out3, null);
   assert.equal(invalidated, 1);
   assert.equal(client.daemonAvailable, false);
 });
@@ -633,7 +645,8 @@ test("search falls back when daemon reports cancelled text without caller abort"
   const out = await client.search("cancelled", undefined, 3);
   assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
   assert.equal(subprocessCalls, 1);
-  assert.equal(invalidated, 1);
+  // First transient failure doesn't invalidate — daemon stays available for retry
+  assert.equal(invalidated, 0);
 });
 
 test("bm25Search falls back when daemon reports cancelled text without caller abort", async () => {
@@ -660,7 +673,8 @@ test("bm25Search falls back when daemon reports cancelled text without caller ab
   const out = await client.bm25Search("cancelled", undefined, 3);
   assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
   assert.equal(subprocessCalls, 1);
-  assert.equal(invalidated, 1);
+  // First transient failure doesn't invalidate — daemon stays available for retry
+  assert.equal(invalidated, 0);
 });
 
 test("vectorSearch falls back when daemon reports cancelled text without caller abort", async () => {
@@ -687,5 +701,6 @@ test("vectorSearch falls back when daemon reports cancelled text without caller 
   const out = await client.vectorSearch("cancelled", undefined, 3);
   assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
   assert.equal(subprocessCalls, 1);
-  assert.equal(invalidated, 1);
+  // First transient failure doesn't invalidate — daemon stays available for retry
+  assert.equal(invalidated, 0);
 });

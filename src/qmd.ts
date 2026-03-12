@@ -710,6 +710,9 @@ export class QmdClient implements SearchBackend {
   private lastDaemonCheckAtMs = 0;
   private readonly daemonEnabled: boolean;
   private readonly daemonRecheckIntervalMs: number;
+  /** Consecutive transient daemon failures before invalidating the session. */
+  private daemonTransientFailures = 0;
+  private static readonly DAEMON_MAX_TRANSIENT_FAILURES = 3;
 
   constructor(
     private readonly collection: string,
@@ -725,7 +728,7 @@ export class QmdClient implements SearchBackend {
       this.qmdPathSource = "configured";
     }
     this.daemonEnabled = Boolean(opts?.daemonUrl);
-    this.daemonRecheckIntervalMs = opts?.daemonRecheckIntervalMs ?? 60_000;
+    this.daemonRecheckIntervalMs = opts?.daemonRecheckIntervalMs ?? 15_000;
   }
 
   private qmdPath: string = "qmd";
@@ -750,6 +753,7 @@ export class QmdClient implements SearchBackend {
       }
       log.info(`QMD daemon: stdio session active (collection=${this.collection})`);
       this.daemonAvailable = true;
+      this.daemonTransientFailures = 0;
       return true;
     } catch (err) {
       log.debug(`QMD daemon: probe failed: ${err}`);
@@ -870,6 +874,38 @@ export class QmdClient implements SearchBackend {
 
   isDaemonMode(): boolean {
     return this.daemonAvailable;
+  }
+
+  /**
+   * Record a daemon search success — resets the transient failure counter.
+   */
+  private recordDaemonSuccess(): void {
+    this.daemonTransientFailures = 0;
+  }
+
+  /**
+   * Handle a non-timeout, non-cancellation daemon error.
+   * Tolerates up to DAEMON_MAX_TRANSIENT_FAILURES consecutive failures
+   * before invalidating the session. This prevents a single transient
+   * error from pushing all concurrent searches through the subprocess
+   * mutex for the full recheck interval.
+   */
+  private handleDaemonTransientError(label: string, err: unknown, durationMs: number): void {
+    // If daemon was already marked unavailable by a concurrent call, don't
+    // increment further — the counter will reset on the next successful probe.
+    if (!this.daemonAvailable) {
+      log.debug(`QMD daemon ${label} failed after ${durationMs}ms (daemon already unavailable, ignoring): ${err}`);
+      return;
+    }
+    this.daemonTransientFailures += 1;
+    if (this.daemonTransientFailures >= QmdClient.DAEMON_MAX_TRANSIENT_FAILURES) {
+      log.debug(`QMD daemon ${label} failed after ${durationMs}ms (${this.daemonTransientFailures} consecutive failures, invalidating): ${err}`);
+      this.daemonSession?.invalidate();
+      this.daemonAvailable = false;
+      this.daemonTransientFailures = 0;
+    } else {
+      log.debug(`QMD daemon ${label} failed after ${durationMs}ms (transient ${this.daemonTransientFailures}/${QmdClient.DAEMON_MAX_TRANSIENT_FAILURES}): ${err}`);
+    }
   }
 
   private async runQmdCommand(
@@ -1123,6 +1159,7 @@ export class QmdClient implements SearchBackend {
       const results = parseMcpSearchResult(result, "daemon");
 
       log.debug(`QMD daemon search: ${results.length} results in ${durationMs}ms`);
+      this.recordDaemonSuccess();
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
@@ -1135,10 +1172,8 @@ export class QmdClient implements SearchBackend {
         log.debug(`QMD daemon search timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
-      // Connection error: mark unavailable, maybeProbeDaemon() will restart.
-      log.debug(`QMD daemon search failed after ${durationMs}ms: ${err}`);
-      this.daemonSession.invalidate();
-      this.daemonAvailable = false;
+      // Transient error: tolerate a few before invalidating.
+      this.handleDaemonTransientError("search", err, durationMs);
       return null;
     }
   }
@@ -1162,6 +1197,7 @@ export class QmdClient implements SearchBackend {
       const durationMs = Date.now() - startedAtMs;
       const results = parseMcpSearchResult(result);
       log.debug(`QMD daemon bm25: ${results.length} results in ${durationMs}ms`);
+      this.recordDaemonSuccess();
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
@@ -1173,9 +1209,7 @@ export class QmdClient implements SearchBackend {
         log.debug(`QMD daemon bm25 timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
-      log.debug(`QMD daemon bm25 failed after ${durationMs}ms: ${err}`);
-      this.daemonSession.invalidate();
-      this.daemonAvailable = false;
+      this.handleDaemonTransientError("bm25", err, durationMs);
       return null;
     }
   }
@@ -1199,6 +1233,7 @@ export class QmdClient implements SearchBackend {
       const durationMs = Date.now() - startedAtMs;
       const results = parseMcpSearchResult(result);
       log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms`);
+      this.recordDaemonSuccess();
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
@@ -1210,9 +1245,7 @@ export class QmdClient implements SearchBackend {
         log.debug(`QMD daemon vsearch timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
-      log.debug(`QMD daemon vsearch failed after ${durationMs}ms: ${err}`);
-      this.daemonSession.invalidate();
-      this.daemonAvailable = false;
+      this.handleDaemonTransientError("vsearch", err, durationMs);
       return null;
     }
   }
