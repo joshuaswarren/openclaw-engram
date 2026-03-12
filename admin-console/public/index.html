@@ -65,9 +65,6 @@
       .grid {
         grid-template-columns: 1.2fr 0.8fr;
       }
-      .subgrid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
       .card {
         background: linear-gradient(180deg, var(--surface-strong) 0%, var(--surface) 100%);
         border: 1px solid var(--line);
@@ -106,6 +103,9 @@
         background: #fffefb;
         color: var(--ink);
       }
+      input[readonly] {
+        background: #f7f2ea;
+      }
       textarea {
         min-height: 140px;
         resize: vertical;
@@ -129,11 +129,21 @@
       button.warn {
         background: var(--warn);
       }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
       .toolbar {
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
         align-items: end;
+      }
+      .toolbar > label {
+        flex: 1 1 180px;
+      }
+      .pager {
+        justify-content: space-between;
       }
       .list {
         display: grid;
@@ -190,10 +200,32 @@
       .status.error {
         color: var(--warn);
       }
+      .quality-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-top: 12px;
+      }
+      .quality-stat {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.74);
+        padding: 14px;
+      }
+      .quality-stat strong {
+        display: block;
+        font-size: 1.5rem;
+        line-height: 1;
+        margin-bottom: 4px;
+      }
+      .subgrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
       @media (max-width: 1080px) {
         .grid,
         .subgrid,
-        .auth-bar {
+        .auth-bar,
+        .quality-grid {
           grid-template-columns: 1fr;
         }
       }
@@ -204,7 +236,7 @@
       <header>
         <h1>Engram Admin Console</h1>
         <div class="subtitle">
-          Local operator surface for recall inspection, memory review, entity browsing, and maintenance status.
+          Local operator surface for recall inspection, quality review, memory browsing, and maintenance status.
           The UI shell is static; every data fetch and operator action still goes through the loopback bearer-token API.
         </div>
       </header>
@@ -238,22 +270,60 @@
                 <option value="quarantined">quarantined</option>
                 <option value="rejected">rejected</option>
                 <option value="superseded">superseded</option>
+                <option value="archived">archived</option>
               </select>
             </label>
             <label>
               Category
               <input id="memoryCategory" type="text" placeholder="fact, decision, preference..." />
             </label>
+            <label>
+              Sort
+              <select id="memorySort">
+                <option value="updated_desc">updated desc</option>
+                <option value="updated_asc">updated asc</option>
+                <option value="created_desc">created desc</option>
+                <option value="created_asc">created asc</option>
+              </select>
+            </label>
+            <label>
+              Page Size
+              <select id="memoryPageSize">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+              </select>
+            </label>
             <button id="searchMemoriesButton">Search</button>
           </div>
-          <div class="status" id="memoryBrowserStatus">No search run yet.</div>
+          <div class="toolbar pager" style="margin-top: 12px;">
+            <div class="status" id="memoryBrowserStatus">No search run yet.</div>
+            <div class="toolbar">
+              <button class="secondary" id="memoryPrevButton">Previous</button>
+              <div class="status" id="memoryPageStatus">Page 1</div>
+              <button class="secondary" id="memoryNextButton">Next</button>
+            </div>
+          </div>
           <div class="list" id="memoryList"></div>
         </section>
 
         <section class="card">
           <h2>Memory Detail</h2>
           <div class="status" id="memoryDetailStatus">Select a memory from the browser or review queue.</div>
-          <div class="pill-row" id="memoryDetailMeta"></div>
+          <div class="toolbar" style="margin-top: 12px;">
+            <label style="flex: 1;">
+              Raw Path
+              <input
+                id="memoryRawPath"
+                type="text"
+                readonly
+                value=""
+                placeholder="No memory selected."
+              />
+            </label>
+            <button class="secondary" id="copyMemoryPathButton">Copy Path</button>
+          </div>
+          <div class="pill-row" id="memoryDetailMeta" style="margin-top: 12px;"></div>
           <div class="subgrid" style="margin-top: 12px;">
             <div class="mono-box"><pre id="memoryContent">No memory selected.</pre></div>
             <div class="mono-box"><pre id="memoryTimeline">Timeline will appear here.</pre></div>
@@ -283,9 +353,10 @@
         </section>
 
         <section class="card">
-          <h2>Maintenance</h2>
-          <div class="status" id="maintenanceStatus">Not loaded.</div>
-          <div class="mono-box"><pre id="maintenanceJson">Maintenance summary will appear here.</pre></div>
+          <h2>Quality Dashboard</h2>
+          <div class="status" id="qualityStatus">Not loaded.</div>
+          <div class="quality-grid" id="qualitySummary"></div>
+          <div class="mono-box" style="margin-top: 12px;"><pre id="qualityJson">Quality summary will appear here.</pre></div>
         </section>
       </div>
 
@@ -315,6 +386,12 @@
           </div>
         </section>
       </div>
+
+      <section class="card" style="margin-top: 16px;">
+        <h2>Maintenance</h2>
+        <div class="status" id="maintenanceStatus">Not loaded.</div>
+        <div class="mono-box"><pre id="maintenanceJson">Maintenance summary will appear here.</pre></div>
+      </section>
     </main>
     <script src="/engram/ui/app.js"></script>
   </body>

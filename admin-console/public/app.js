@@ -1,4 +1,10 @@
 const tokenKey = "engram.adminConsole.token";
+const browserState = {
+  sort: "updated_desc",
+  limit: 25,
+  offset: 0,
+  total: 0,
+};
 
 function $(id) {
   return document.getElementById(id);
@@ -76,6 +82,37 @@ async function fetchJson(url, options = {}) {
     throw error;
   }
   return payload;
+}
+
+function syncBrowserControls() {
+  const prevButton = $("memoryPrevButton");
+  const nextButton = $("memoryNextButton");
+  if (prevButton) prevButton.disabled = browserState.offset <= 0;
+  if (nextButton) nextButton.disabled = browserState.offset + browserState.limit >= browserState.total;
+
+  const pageStatus = $("memoryPageStatus");
+  if (!pageStatus) return;
+  if (browserState.total === 0) {
+    pageStatus.textContent = "No results";
+    return;
+  }
+  const pageOffset = Math.min(
+    browserState.offset,
+    Math.max(0, browserState.total - 1),
+  );
+  const start = pageOffset + 1;
+  const end = Math.min(pageOffset + browserState.limit, browserState.total);
+  pageStatus.textContent = `${start}-${end} of ${browserState.total}`;
+}
+
+function readMemoryPageSize() {
+  return Number.parseInt($("memoryPageSize")?.value || String(browserState.limit || 25), 10) || 25;
+}
+
+function stepMemoryPage(direction) {
+  const pageSize = readMemoryPageSize();
+  browserState.limit = pageSize;
+  browserState.offset = Math.max(0, browserState.offset + direction * pageSize);
 }
 
 function renderMemoryList(memories) {
@@ -217,7 +254,40 @@ function renderEntityList(entities) {
   });
 }
 
-async function loadMemoryBrowser() {
+function renderQuality(response) {
+  const summary = $("qualitySummary");
+  if (!summary) return;
+  clearChildren(summary);
+  const cards = [
+    ["Memories", String(response.totalMemories ?? 0)],
+    ["Pending Review", String(response.archivePressure?.pendingReview ?? 0)],
+    ["Archived", String(response.archivePressure?.archived ?? 0)],
+    ["Quality Score", typeof response.latestGovernanceRun?.qualityScore?.score === "number"
+      ? String(response.latestGovernanceRun.qualityScore.score)
+      : "n/a"],
+  ];
+  cards.forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = "quality-stat";
+    const strong = document.createElement("strong");
+    strong.textContent = value;
+    card.appendChild(strong);
+    const caption = document.createElement("div");
+    caption.className = "status";
+    caption.textContent = label;
+    card.appendChild(caption);
+    summary.appendChild(card);
+  });
+  const qualityJson = $("qualityJson");
+  if (qualityJson) {
+    qualityJson.textContent = JSON.stringify(response, null, 2);
+  }
+}
+
+async function loadMemoryBrowser(resetOffset = false) {
+  if (resetOffset) browserState.offset = 0;
+  browserState.sort = $("memorySort")?.value || "updated_desc";
+  browserState.limit = readMemoryPageSize();
   setStatus("memoryBrowserStatus", "Loading memory browser...");
   const params = new URLSearchParams();
   const query = $("memoryQuery")?.value?.trim();
@@ -226,8 +296,20 @@ async function loadMemoryBrowser() {
   if (query) params.set("q", query);
   if (status) params.set("status", status);
   if (category) params.set("category", category);
+  params.set("sort", browserState.sort);
+  params.set("limit", String(browserState.limit));
+  params.set("offset", String(browserState.offset));
   const response = await fetchJson(`/engram/v1/memories?${params.toString()}`);
+  browserState.total = response.total || 0;
+  const maxOffset = browserState.total > 0
+    ? Math.floor((browserState.total - 1) / browserState.limit) * browserState.limit
+    : 0;
+  if (!resetOffset && browserState.offset > maxOffset) {
+    browserState.offset = maxOffset;
+    return loadMemoryBrowser(false);
+  }
   renderMemoryList(response.memories);
+  syncBrowserControls();
   setStatus("memoryBrowserStatus", `Loaded ${response.count} of ${response.total} memories.`, "ok");
 }
 
@@ -240,6 +322,7 @@ async function loadMemoryDetail(memoryId) {
   ]);
   $("memoryContent").textContent = JSON.stringify(memory.memory, null, 2);
   $("memoryTimeline").textContent = JSON.stringify(timeline.timeline, null, 2);
+  $("memoryRawPath").value = memory.memory?.path || "";
   const meta = $("memoryDetailMeta");
   clearChildren(meta);
   appendPill(meta, memory.memory.category);
@@ -289,7 +372,13 @@ async function applyDisposition(memoryId, status) {
       reasonCode: status === "active" ? "operator_confirmed" : "operator_review",
     }),
   });
-  await Promise.all([loadReviewQueue(), loadMemoryBrowser(), loadMemoryDetail(memoryId).catch(() => {})]);
+  await Promise.all([
+    loadReviewQueue(),
+    loadMemoryBrowser(),
+    loadMemoryDetail(memoryId).catch(() => {}),
+    loadQuality(),
+    loadMaintenance(),
+  ]);
   setStatus("reviewQueueStatus", `Applied ${status} to ${memoryId}.`, "ok");
 }
 
@@ -307,6 +396,19 @@ async function loadEntityDetail(name) {
   if (!name) return;
   const response = await fetchJson(`/engram/v1/entities/${encodeURIComponent(name)}`);
   $("entityDetail").textContent = JSON.stringify(response.entity, null, 2);
+}
+
+async function loadQuality() {
+  setStatus("qualityStatus", "Loading quality dashboard...");
+  const response = await fetchJson("/engram/v1/quality");
+  renderQuality(response);
+  setStatus(
+    "qualityStatus",
+    response.latestGovernanceRun?.found
+      ? `Loaded quality summary for ${response.totalMemories} memories and governance run ${response.latestGovernanceRun.runId}.`
+      : `Loaded quality summary for ${response.totalMemories} memories.`,
+    "ok",
+  );
 }
 
 async function loadMaintenance() {
@@ -330,14 +432,35 @@ async function connectAndBootstrap() {
     await fetchJson("/engram/v1/health");
     setStatus("authStatus", "Connected to Engram access API.", "ok");
     await Promise.allSettled([
-      loadMemoryBrowser(),
+      loadMemoryBrowser(true),
       loadReviewQueue(),
       loadEntities(),
+      loadQuality(),
       loadMaintenance(),
     ]);
   } catch (error) {
     setStatus("authStatus", error.message || String(error), "error");
   }
+}
+
+function copyMemoryPath() {
+  const rawPathField = $("memoryRawPath");
+  const value = rawPathField?.value?.trim();
+  if (!value) {
+    setStatus("memoryDetailStatus", "No memory path to copy.", "error");
+    return;
+  }
+  if (!navigator.clipboard?.writeText) {
+    setStatus("memoryDetailStatus", "Clipboard API is unavailable in this browser.", "error");
+    return;
+  }
+  navigator.clipboard.writeText(value)
+    .then(() => {
+      setStatus("memoryDetailStatus", "Copied raw memory path.", "ok");
+    })
+    .catch((error) => {
+      setStatus("memoryDetailStatus", error.message || String(error), "error");
+    });
 }
 
 function bootstrap() {
@@ -352,13 +475,24 @@ function bootstrap() {
     if ($("tokenInput")) $("tokenInput").value = "";
     setStatus("authStatus", "Cleared stored token.", "default");
   });
-  $("searchMemoriesButton")?.addEventListener("click", () => void loadMemoryBrowser());
+  $("searchMemoriesButton")?.addEventListener("click", () => void loadMemoryBrowser(true));
+  $("memoryPrevButton")?.addEventListener("click", () => {
+    stepMemoryPage(-1);
+    void loadMemoryBrowser(false);
+  });
+  $("memoryNextButton")?.addEventListener("click", () => {
+    stepMemoryPage(1);
+    void loadMemoryBrowser(false);
+  });
   $("runRecallButton")?.addEventListener("click", () => void runRecallDebugger());
   $("refreshQueueButton")?.addEventListener("click", () => void loadReviewQueue());
   $("searchEntitiesButton")?.addEventListener("click", () => void loadEntities());
+  $("copyMemoryPathButton")?.addEventListener("click", copyMemoryPath);
 
   if (remembered) {
     void connectAndBootstrap();
+  } else {
+    syncBrowserControls();
   }
 }
 

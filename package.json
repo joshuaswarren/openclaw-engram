@@ -70,7 +70,7 @@
     ]
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/copy-admin-console.mjs",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
