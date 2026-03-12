@@ -71,6 +71,24 @@ Available MCP tools:
 
 The MCP adapter calls the same `EngramAccessService` methods used by HTTP, so equivalent request classes return the same structured payloads.
 
+### MCP over HTTP
+
+The HTTP server also exposes an MCP JSON-RPC endpoint at `POST /mcp`, allowing remote MCP clients (e.g., Codex CLI, Claude Code) to use Engram tools over HTTP instead of STDIO:
+
+```bash
+openclaw engram access http-serve --host 0.0.0.0 --port 4318 --token "$TOKEN"
+```
+
+Clients send standard MCP JSON-RPC requests to `http://<host>:4318/mcp` with an `Authorization: Bearer <token>` header. All 8 MCP tools are available. Write operations (`engram.memory_store`, `engram.suggestion_submit`) are subject to the same rate limits as the REST write endpoints.
+
+**Namespace-enabled deployments:** If you have `namespacesEnabled: true`, pass `--principal <name>` to set the authenticated principal for all MCP connections. The principal must appear in `writePrincipals` for the target namespace. Without `--principal`, the principal resolves to `"default"`, which may not have write access:
+
+```bash
+openclaw engram access http-serve --host 0.0.0.0 --principal generalist --token "$TOKEN"
+```
+
+Deployments with `namespacesEnabled: false` (the default) do not need `--principal` — all writes are permitted.
+
 ## Agent Tools
 
 These tools are registered with the OpenClaw gateway and are callable by agents.
