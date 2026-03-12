@@ -720,6 +720,10 @@ export class QmdClient implements SearchBackend {
     this.updateTimeoutMs = opts?.updateTimeoutMs ?? 120_000;
     this.updateMinIntervalMs = Math.max(0, opts?.updateMinIntervalMs ?? 15 * 60_000);
     this.configuredQmdPath = opts?.qmdPath?.trim() ? opts.qmdPath.trim() : undefined;
+    if (this.configuredQmdPath) {
+      this.qmdPath = this.configuredQmdPath;
+      this.qmdPathSource = "configured";
+    }
     this.daemonEnabled = Boolean(opts?.daemonUrl);
     this.daemonRecheckIntervalMs = opts?.daemonRecheckIntervalMs ?? 60_000;
   }
