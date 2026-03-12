@@ -56,25 +56,25 @@ export class RemoteSearchBackend implements SearchBackend {
     collection?: string,
     maxResults?: number,
     _options?: SearchQueryOptions,
-    _execution?: SearchExecutionOptions,
+    execution?: SearchExecutionOptions,
   ): Promise<SearchResult[]> {
-    return this.post("/search/deep", { query, collection, maxResults });
+    return this.post("/search/deep", { query, collection, maxResults }, execution);
   }
 
-  async searchGlobal(query: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
-    return this.post("/search/deep", { query, maxResults });
+  async searchGlobal(query: string, maxResults?: number, execution?: SearchExecutionOptions): Promise<SearchResult[]> {
+    return this.post("/search/deep", { query, maxResults }, execution);
   }
 
-  async bm25Search(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
-    return this.post("/search/bm25", { query, collection, maxResults });
+  async bm25Search(query: string, collection?: string, maxResults?: number, execution?: SearchExecutionOptions): Promise<SearchResult[]> {
+    return this.post("/search/bm25", { query, collection, maxResults }, execution);
   }
 
-  async vectorSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
-    return this.post("/search/vector", { query, collection, maxResults });
+  async vectorSearch(query: string, collection?: string, maxResults?: number, execution?: SearchExecutionOptions): Promise<SearchResult[]> {
+    return this.post("/search/vector", { query, collection, maxResults }, execution);
   }
 
-  async hybridSearch(query: string, collection?: string, maxResults?: number, _execution?: SearchExecutionOptions): Promise<SearchResult[]> {
-    return this.post("/search/hybrid", { query, collection, maxResults });
+  async hybridSearch(query: string, collection?: string, maxResults?: number, execution?: SearchExecutionOptions): Promise<SearchResult[]> {
+    return this.post("/search/hybrid", { query, collection, maxResults }, execution);
   }
 
   async update(): Promise<void> {}
@@ -94,14 +94,20 @@ export class RemoteSearchBackend implements SearchBackend {
     return h;
   }
 
-  private async post(endpoint: string, body: Record<string, unknown>): Promise<SearchResult[]> {
+  private async post(
+    endpoint: string,
+    body: Record<string, unknown>,
+    execution?: SearchExecutionOptions,
+  ): Promise<SearchResult[]> {
     if (!this.available) return [];
     try {
       const res = await fetch(`${this.baseUrl}${endpoint}`, {
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: execution?.signal
+          ? AbortSignal.any([execution.signal, AbortSignal.timeout(this.timeoutMs)])
+          : AbortSignal.timeout(this.timeoutMs),
       });
       if (!res.ok) {
         log.debug(`RemoteSearchBackend ${endpoint} returned ${res.status}`);

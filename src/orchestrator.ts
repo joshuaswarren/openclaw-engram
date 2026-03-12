@@ -260,6 +260,29 @@ function throwIfRecallAborted(signal?: AbortSignal, message = "recall aborted"):
   }
 }
 
+async function raceRecallAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+  message = "recall aborted",
+): Promise<T> {
+  throwIfRecallAborted(signal, message);
+  if (!signal) return promise;
+
+  let onAbort: (() => void) | null = null;
+  const abortPromise = new Promise<T>((_resolve, reject) => {
+    onAbort = () => reject(abortRecallError(message));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
 /** Maximum age (ms) before a compaction-reset signal file is considered stale and removed. */
 const COMPACTION_SIGNAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
@@ -4010,28 +4033,32 @@ export class Orchestrator {
       nativeKnowledgeSection,
       conversationRecallSection,
       compoundingSection,
-    ] = await Promise.all([
-      sharedContextPromise,
-      profilePromise,
-      identityContinuityPromise,
-      entityRetrievalPromise,
-      knowledgeIndexPromise,
-      artifactsPromise,
-      objectiveStatePromise,
-      causalTrajectoryPromise,
-      trustZonePromise,
-      harmonicRetrievalPromise,
-      verifiedRecallPromise,
-      verifiedRulesPromise,
-      workProductsPromise,
-      qmdPromise,
-      transcriptPromise,
-      compactionPromise,
-      summariesPromise,
-      nativeKnowledgePromise,
-      conversationRecallPromise,
-      compoundingPromise,
-    ]);
+    ] = await raceRecallAbort(
+      Promise.all([
+        sharedContextPromise,
+        profilePromise,
+        identityContinuityPromise,
+        entityRetrievalPromise,
+        knowledgeIndexPromise,
+        artifactsPromise,
+        objectiveStatePromise,
+        causalTrajectoryPromise,
+        trustZonePromise,
+        harmonicRetrievalPromise,
+        verifiedRecallPromise,
+        verifiedRulesPromise,
+        workProductsPromise,
+        qmdPromise,
+        transcriptPromise,
+        compactionPromise,
+        summariesPromise,
+        nativeKnowledgePromise,
+        conversationRecallPromise,
+        compoundingPromise,
+      ]),
+      options.abortSignal,
+      "recall aborted during phase-one preamble",
+    );
 
     throwIfRecallAborted(options.abortSignal);
 

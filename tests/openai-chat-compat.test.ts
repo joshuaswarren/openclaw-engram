@@ -11,8 +11,9 @@ test("usesMaxCompletionTokens detects newer OpenAI chat-completions models", () 
   assert.equal(usesMaxCompletionTokens("gpt-5-mini"), true);
   assert.equal(usesMaxCompletionTokens("gpt-4o"), true);
   assert.equal(usesMaxCompletionTokens("gpt-4o-mini"), true);
+  assert.equal(usesMaxCompletionTokens("gpt-4.1"), true);
+  assert.equal(usesMaxCompletionTokens("gpt-4.1-mini"), true);
   assert.equal(usesMaxCompletionTokens("o3-mini"), true);
-  assert.equal(usesMaxCompletionTokens("gpt-4.1"), false);
   assert.equal(usesMaxCompletionTokens("llama3.2"), false);
 });
 
@@ -24,7 +25,7 @@ test("buildChatCompletionTokenLimit selects max_completion_tokens for gpt-5 mode
     max_completion_tokens: 1024,
   });
   assert.deepEqual(buildChatCompletionTokenLimit("gpt-4.1", 2048), {
-    max_tokens: 2048,
+    max_completion_tokens: 2048,
   });
 });
 

@@ -186,3 +186,45 @@ test("cold fallback abort stops before archive scanning", async () => {
   );
   assert.equal(archiveReads, 0);
 });
+
+test("recallInternal aborts while phase-one preamble promises are still pending", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-phase-one-abort-");
+  const callerAbortController = new AbortController();
+  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context";
+  let releaseSharedRead: (() => void) | null = null;
+  let sharedReadStarted = false;
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      sharedReadStarted = true;
+      await new Promise<void>((resolve) => {
+        releaseSharedRead = resolve;
+      });
+      return "slow priorities";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+
+  const startedAt = Date.now();
+  const recallPromise = (orchestrator as any).recallInternal("phase one abort test", "agent:test:phase-one", {
+    mode: "full",
+    abortSignal: callerAbortController.signal,
+  });
+
+  const waitForStartDeadline = Date.now() + 100;
+  while (!sharedReadStarted && Date.now() < waitForStartDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  callerAbortController.abort();
+
+  await assert.rejects(
+    recallPromise,
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
+  const elapsedMs = Date.now() - startedAt;
+
+  releaseSharedRead?.();
+
+  assert.equal(sharedReadStarted, true);
+  assert.ok(elapsedMs < 80, `expected phase-one abort before slow shared-context read completed, saw ${elapsedMs}ms`);
+});
