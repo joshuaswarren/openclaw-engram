@@ -59,6 +59,28 @@ test("assembleRecallSections preserves memories within the recall budget", async
   assert.ok(context.length <= 220);
 });
 
+test("assembleRecallSections does not omit earlier sections when protected sections will truncate anyway", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-budget-tight-", {
+    recallBudgetChars: 60,
+    recallPipeline: [
+      { id: "profile", enabled: true },
+      { id: "memories", enabled: true },
+    ],
+  });
+
+  const sectionBuckets = new Map<string, string[]>();
+  (orchestrator as any).appendRecallSection(sectionBuckets, "profile", "P".repeat(50));
+  (orchestrator as any).appendRecallSection(sectionBuckets, "memories", "M".repeat(50));
+
+  const assembled = (orchestrator as any).assembleRecallSections(sectionBuckets);
+  const context = assembled.sections.join("\n\n---\n\n");
+
+  assert.deepEqual(assembled.includedIds, ["profile", "memories"]);
+  assert.equal(assembled.omittedIds.length, 0);
+  assert.equal(assembled.truncated, true);
+  assert.ok(context.length <= 60);
+});
+
 test("recall aborts the in-flight pipeline when the outer timeout fires", async () => {
   const orchestrator = await makeOrchestrator("engram-recall-timeout-");
   let observedAbortSignal: AbortSignal | undefined;

@@ -149,7 +149,7 @@ test("fallback OpenAI client uses max_completion_tokens for gpt-5 providers", as
       providers: {
         openai: {
           api: "openai-completions",
-          baseUrl: "https://example.com/v1",
+          baseUrl: "https://api.openai.com/v1",
           apiKey: "test-key",
           models: [],
         },
@@ -199,7 +199,7 @@ test("fallback OpenAI client uses max_completion_tokens for gpt-4o providers", a
       providers: {
         openai: {
           api: "openai-completions",
-          baseUrl: "https://example.com/v1",
+          baseUrl: "https://api.openai.com/v1",
           apiKey: "test-key",
           models: [],
         },
@@ -231,6 +231,56 @@ test("fallback OpenAI client uses max_completion_tokens for gpt-4o providers", a
     assert.equal(requestBody?.model, "gpt-4o-mini");
     assert.equal(requestBody?.max_completion_tokens, 512);
     assert.equal("max_tokens" in (requestBody ?? {}), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fallback OpenAI client keeps max_tokens for custom base URLs", async () => {
+  const gatewayConfig: GatewayConfig = {
+    agents: {
+      defaults: {
+        model: {
+          primary: "openai/gpt-5.2",
+        },
+      },
+    },
+    models: {
+      providers: {
+        openai: {
+          api: "openai-completions",
+          baseUrl: "https://api.example.test/v1",
+          apiKey: "test-key",
+          models: [],
+        },
+      },
+    },
+  };
+
+  const client = new FallbackLlmClient(gatewayConfig);
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "{\"ok\":true}" } }],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await client.chatCompletion([{ role: "user", content: "hello" }], {
+      maxTokens: 256,
+    });
+    assert.ok(response);
+    assert.equal(requestBody?.model, "gpt-5.2");
+    assert.equal(requestBody?.max_tokens, 256);
+    assert.equal("max_completion_tokens" in (requestBody ?? {}), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

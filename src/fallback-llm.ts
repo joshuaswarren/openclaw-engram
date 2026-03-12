@@ -1,7 +1,10 @@
 import { log } from "./logger.js";
 import type { GatewayConfig, ModelProviderConfig } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
-import { buildChatCompletionTokenLimit } from "./openai-chat-compat.js";
+import {
+  buildChatCompletionTokenLimit,
+  shouldAssumeOpenAiChatCompletions,
+} from "./openai-chat-compat.js";
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -223,7 +226,7 @@ export class FallbackLlmClient {
           model.modelId,
           messages,
           options,
-          model.providerId === "openai",
+          shouldAssumeOpenAiChatCompletions(model.providerConfig.baseUrl),
         );
     }
   }

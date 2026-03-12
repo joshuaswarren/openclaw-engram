@@ -2990,6 +2990,12 @@ export class Orchestrator {
     return protectedIds;
   }
 
+  private protectedRecallReservationChars(content: string): number {
+    const headingBoundary = content.indexOf("\n\n");
+    const headingChars = headingBoundary >= 0 ? headingBoundary + 2 : Math.min(content.length, 24);
+    return Math.min(content.length, Math.max(headingChars, 24));
+  }
+
   private estimateReservedRecallBudget(
     entries: Array<{ id: string; content: string }>,
     startIndex: number,
@@ -3005,7 +3011,7 @@ export class Orchestrator {
       if (simulatedIncluded > 0) {
         reserved += separatorLength;
       }
-      reserved += entry.content.length;
+      reserved += this.protectedRecallReservationChars(entry.content);
       simulatedIncluded += 1;
     }
     return reserved;
