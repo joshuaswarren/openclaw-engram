@@ -384,15 +384,25 @@ export class EngramAccessHttpServer {
 
     // Enforce write rate limiting for MCP tool calls that mutate state,
     // matching the same protection applied to the REST write endpoints.
-    if (request.method === "tools/call") {
-      const toolName = typeof request.params?.name === "string" ? request.params.name : "";
-      if (toolName === "engram.memory_store" || toolName === "engram.suggestion_submit") {
-        this.ensureWriteRateLimitAvailable();
-        this.recordWriteRateLimitHit();
-      }
+    // Pre-check ensures capacity; post-check skips counting dry runs and
+    // idempotency replays, consistent with the REST handlers.
+    const isMcpWrite =
+      request.method === "tools/call" &&
+      typeof request.params?.name === "string" &&
+      (request.params.name === "engram.memory_store" || request.params.name === "engram.suggestion_submit");
+    if (isMcpWrite) {
+      this.ensureWriteRateLimitAvailable();
     }
 
     const response = await this.mcpServer.handleRequest(request);
+
+    if (isMcpWrite && response !== null) {
+      const result = (response as Record<string, unknown>).result as Record<string, unknown> | undefined;
+      const structured = result?.structuredContent as { dryRun?: boolean; idempotencyReplay?: boolean } | undefined;
+      if (!structured || this.shouldCountWriteRateLimit(structured)) {
+        this.recordWriteRateLimitHit();
+      }
+    }
     if (response === null) {
       res.statusCode = 202;
       res.end();

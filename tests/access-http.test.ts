@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { EngramAccessHttpServer } from "../src/access-http.js";
-import { EngramAccessInputError, EngramAccessService, type EngramAccessService } from "../src/access-service.js";
+import { EngramAccessInputError, EngramAccessService } from "../src/access-service.js";
 import { StorageManager } from "../src/storage.js";
 
 function createFakeService(): EngramAccessService {

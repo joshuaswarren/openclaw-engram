@@ -79,7 +79,7 @@ The HTTP server also exposes an MCP JSON-RPC endpoint at `POST /mcp`, allowing r
 openclaw engram access http-serve --host 0.0.0.0 --port 4318 --token "$TOKEN"
 ```
 
-Clients send standard MCP JSON-RPC requests to `http://<host>:4318/mcp` with an `Authorization: Bearer <token>` header. All 8 MCP tools are available. Write operations (`engram.memory_store`, `engram.suggestion_submit`) are subject to the same rate limits as the REST write endpoints.
+Clients send standard MCP JSON-RPC requests to `http://<host>:4318/mcp` with an `Authorization: Bearer <token>` header. All 8 MCP tools are available. Write operations (`engram.memory_store`, `engram.suggestion_submit`) are rate-limited consistently with the REST write endpoints — dry runs and idempotency replays do not count toward the limit.
 
 **Namespace-enabled deployments:** If you have `namespacesEnabled: true`, pass `--principal <name>` to set the authenticated principal for all MCP connections. The principal must appear in `writePrincipals` for the target namespace. Without `--principal`, the principal resolves to `"default"`, which may not have write access:
 
