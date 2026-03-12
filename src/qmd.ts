@@ -89,7 +89,7 @@ function isCallerCancellation(err: unknown, signal?: AbortSignal): boolean {
     const code = "code" in err ? (err as { code?: unknown }).code : undefined;
     if (code === "ABORT_ERR" || code === "ERR_CANCELED") return true;
   }
-  return /\b(aborted|cancell?ed)\b/i.test(errorMessage(err));
+  return false;
 }
 
 function isDaemonTimeoutError(err: unknown): boolean {

@@ -416,3 +416,84 @@ test("vectorSearch returns immediately on daemon cancellation without subprocess
   assert.deepEqual(out, []);
   assert.equal(subprocessCalls, 0);
 });
+
+test("search falls back when daemon reports cancelled text without caller abort", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  let invalidated = 0;
+  client.daemonSession = {
+    callTool: async () => {
+      throw new Error("daemon search cancelled by internal restart");
+    },
+    invalidate: () => {
+      invalidated += 1;
+    },
+  };
+  client.maybeProbeDaemon = async () => {};
+
+  let subprocessCalls = 0;
+  client.searchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }];
+  };
+
+  const out = await client.search("cancelled", undefined, 3);
+  assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
+  assert.equal(subprocessCalls, 1);
+  assert.equal(invalidated, 1);
+});
+
+test("bm25Search falls back when daemon reports cancelled text without caller abort", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  let invalidated = 0;
+  client.daemonSession = {
+    callTool: async () => {
+      throw new Error("daemon bm25 cancelled by internal restart");
+    },
+    invalidate: () => {
+      invalidated += 1;
+    },
+  };
+  client.maybeProbeDaemon = async () => {};
+
+  let subprocessCalls = 0;
+  client.bm25SearchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }];
+  };
+
+  const out = await client.bm25Search("cancelled", undefined, 3);
+  assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
+  assert.equal(subprocessCalls, 1);
+  assert.equal(invalidated, 1);
+});
+
+test("vectorSearch falls back when daemon reports cancelled text without caller abort", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  let invalidated = 0;
+  client.daemonSession = {
+    callTool: async () => {
+      throw new Error("daemon vsearch cancelled by internal restart");
+    },
+    invalidate: () => {
+      invalidated += 1;
+    },
+  };
+  client.maybeProbeDaemon = async () => {};
+
+  let subprocessCalls = 0;
+  client.vsearchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }];
+  };
+
+  const out = await client.vectorSearch("cancelled", undefined, 3);
+  assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
+  assert.equal(subprocessCalls, 1);
+  assert.equal(invalidated, 1);
+});
