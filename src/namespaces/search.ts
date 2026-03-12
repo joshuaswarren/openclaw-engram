@@ -120,6 +120,15 @@ export class NamespaceSearchRouter {
     );
   }
 
+  /**
+   * Pre-warm daemon sessions for all listed namespaces so they are ready
+   * before the first real recall request arrives.
+   */
+  async warmUpNamespaces(namespaces: string[]): Promise<void> {
+    const unique = Array.from(new Set(namespaces.map((v) => v.trim()).filter(Boolean)));
+    await Promise.allSettled(unique.map((ns) => this.backendRecordFor(ns)));
+  }
+
   async ensureNamespaceCollection(namespace: string): Promise<"present" | "missing" | "unknown" | "skipped"> {
     const record = await this.backendRecordFor(namespace);
     return record.collectionState;

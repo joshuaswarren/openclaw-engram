@@ -1133,7 +1133,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.qmdDaemonUrl
         : "http://localhost:8181/mcp",
     qmdDaemonRecheckIntervalMs:
-      typeof cfg.qmdDaemonRecheckIntervalMs === "number" ? cfg.qmdDaemonRecheckIntervalMs : 60_000,
+      typeof cfg.qmdDaemonRecheckIntervalMs === "number" ? cfg.qmdDaemonRecheckIntervalMs : 15_000,
     qmdIntentHintsEnabled: cfg.qmdIntentHintsEnabled === true,
     qmdExplainEnabled: cfg.qmdExplainEnabled === true,
 
