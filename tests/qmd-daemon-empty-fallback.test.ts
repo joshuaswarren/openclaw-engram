@@ -279,3 +279,67 @@ printf '[]'
 
   assert.ok(elapsedMs < 1000, `expected aborted search to resolve quickly, saw ${elapsedMs}ms`);
 });
+
+test("searchViaDaemon keeps daemon session active on AbortError", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  let invalidated = 0;
+  const abortErr = new Error("request aborted by caller");
+  Object.defineProperty(abortErr, "name", { value: "AbortError" });
+
+  client.daemonAvailable = true;
+  client.daemonSession = {
+    callTool: async () => {
+      throw abortErr;
+    },
+    invalidate: () => {
+      invalidated += 1;
+    },
+  };
+
+  const out = await client.searchViaDaemon("needle", "openclaw-engram", 3);
+  assert.equal(out, null);
+  assert.equal(invalidated, 0);
+  assert.equal(client.daemonAvailable, true);
+});
+
+test("bm25SearchViaDaemon keeps daemon session active on caller cancellation", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  let invalidated = 0;
+  const controller = new AbortController();
+  controller.abort();
+
+  client.daemonAvailable = true;
+  client.daemonSession = {
+    callTool: async () => {
+      throw new Error("socket write failed");
+    },
+    invalidate: () => {
+      invalidated += 1;
+    },
+  };
+
+  const out = await client.bm25SearchViaDaemon("needle", "openclaw-engram", 3, controller.signal);
+  assert.equal(out, null);
+  assert.equal(invalidated, 0);
+  assert.equal(client.daemonAvailable, true);
+});
+
+test("vsearchViaDaemon invalidates daemon session on real daemon faults", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  let invalidated = 0;
+
+  client.daemonAvailable = true;
+  client.daemonSession = {
+    callTool: async () => {
+      throw new Error("broken pipe");
+    },
+    invalidate: () => {
+      invalidated += 1;
+    },
+  };
+
+  const out = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
+  assert.equal(out, null);
+  assert.equal(invalidated, 1);
+  assert.equal(client.daemonAvailable, false);
+});

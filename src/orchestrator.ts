@@ -5568,36 +5568,40 @@ export class Orchestrator {
       source: string;
     }): Promise<void> => {
       if (!shouldPromoteToShared(options.sourceStorage, options.category, options.confidence)) return;
-      const sharedStorage = await this.storageRouter.storageFor(this.config.sharedNamespace);
-      if (options.category === "fact" && await sharedStorage.hasFactContentHash(options.content)) {
-        return;
-      }
-      const promotedId = await sharedStorage.writeMemory(options.category as any, options.content, {
-        confidence: options.confidence,
-        tags: [...options.tags, "shared-promotion"],
-        entityRef: options.entityRef,
-        source: `${options.source}-shared-promotion`,
-        importance: options.importance,
-        lineage: [options.sourceMemoryId],
-        sourceMemoryId: options.sourceMemoryId,
-        intentGoal: options.intentGoal,
-        intentActionType: options.intentActionType,
-        intentEntityTypes: options.intentEntityTypes,
-        memoryKind: options.memoryKind,
-      });
-      trackPersistedId(sharedStorage, promotedId);
-      await this.indexPersistedMemory(sharedStorage, promotedId);
-      trackBehaviorSignals(
-        sharedStorage,
-        buildBehaviorSignalsForMemory({
-          memoryId: promotedId,
-          category: options.category as any,
-          content: options.content,
-          namespace: this.config.sharedNamespace,
+      try {
+        const sharedStorage = await this.storageRouter.storageFor(this.config.sharedNamespace);
+        if (options.category === "fact" && await sharedStorage.hasFactContentHash(options.content)) {
+          return;
+        }
+        const promotedId = await sharedStorage.writeMemory(options.category as any, options.content, {
           confidence: options.confidence,
-          source: "extraction",
-        }),
-      );
+          tags: [...options.tags, "shared-promotion"],
+          entityRef: options.entityRef,
+          source: `${options.source}-shared-promotion`,
+          importance: options.importance,
+          lineage: [options.sourceMemoryId],
+          sourceMemoryId: options.sourceMemoryId,
+          intentGoal: options.intentGoal,
+          intentActionType: options.intentActionType,
+          intentEntityTypes: options.intentEntityTypes,
+          memoryKind: options.memoryKind,
+        });
+        trackPersistedId(sharedStorage, promotedId);
+        await this.indexPersistedMemory(sharedStorage, promotedId);
+        trackBehaviorSignals(
+          sharedStorage,
+          buildBehaviorSignalsForMemory({
+            memoryId: promotedId,
+            category: options.category as any,
+            content: options.content,
+            namespace: this.config.sharedNamespace,
+            confidence: options.confidence,
+            source: "extraction",
+          }),
+        );
+      } catch (err) {
+        log.warn(`persistExtraction: shared promotion failed open for ${options.sourceMemoryId}: ${err}`);
+      }
     };
 
     // Defensive: validate result and facts array

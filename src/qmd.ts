@@ -73,6 +73,29 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
 }
 
+function errorMessage(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err && typeof (err as { message?: unknown }).message === "string") {
+    return (err as { message: string }).message;
+  }
+  return String(err);
+}
+
+function isCallerCancellation(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (isAbortError(err)) return true;
+  if (err && typeof err === "object") {
+    const code = "code" in err ? (err as { code?: unknown }).code : undefined;
+    if (code === "ABORT_ERR" || code === "ERR_CANCELED") return true;
+  }
+  return /\b(aborted|cancell?ed)\b/i.test(errorMessage(err));
+}
+
+function isDaemonTimeoutError(err: unknown): boolean {
+  return /timed out/i.test(errorMessage(err));
+}
+
 function throwIfAborted(signal?: AbortSignal, message = "operation aborted"): void {
   if (signal?.aborted) {
     throw abortError(message);
@@ -1064,11 +1087,11 @@ export class QmdClient implements SearchBackend {
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
-      const errMsg = String(err);
       // Timeout or abort: don't invalidate session — daemon is still running,
       // just slow. Fall back to subprocess for this query only.
-      if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
-        log.debug(`QMD daemon search timed out after ${durationMs}ms, falling back to subprocess`);
+      if (isCallerCancellation(err, signal) || isDaemonTimeoutError(err)) {
+        const reason = isCallerCancellation(err, signal) ? "aborted/cancelled" : "timed out";
+        log.debug(`QMD daemon search ${reason} after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
       // Connection error: mark unavailable, maybeProbeDaemon() will restart.
@@ -1101,9 +1124,9 @@ export class QmdClient implements SearchBackend {
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
-      const errMsg = String(err);
-      if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
-        log.debug(`QMD daemon bm25 timed out after ${durationMs}ms, falling back to subprocess`);
+      if (isCallerCancellation(err, signal) || isDaemonTimeoutError(err)) {
+        const reason = isCallerCancellation(err, signal) ? "aborted/cancelled" : "timed out";
+        log.debug(`QMD daemon bm25 ${reason} after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
       log.debug(`QMD daemon bm25 failed after ${durationMs}ms: ${err}`);
@@ -1135,9 +1158,9 @@ export class QmdClient implements SearchBackend {
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
-      const errMsg = String(err);
-      if (errMsg.includes("AbortError") || errMsg.includes("abort") || errMsg.includes("timed out")) {
-        log.debug(`QMD daemon vsearch timed out after ${durationMs}ms, falling back to subprocess`);
+      if (isCallerCancellation(err, signal) || isDaemonTimeoutError(err)) {
+        const reason = isCallerCancellation(err, signal) ? "aborted/cancelled" : "timed out";
+        log.debug(`QMD daemon vsearch ${reason} after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
       log.debug(`QMD daemon vsearch failed after ${durationMs}ms: ${err}`);
