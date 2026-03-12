@@ -105,6 +105,16 @@ function syncBrowserControls() {
   pageStatus.textContent = `${start}-${end} of ${browserState.total}`;
 }
 
+function readMemoryPageSize() {
+  return Number.parseInt($("memoryPageSize")?.value || String(browserState.limit || 25), 10) || 25;
+}
+
+function stepMemoryPage(direction) {
+  const pageSize = readMemoryPageSize();
+  browserState.limit = pageSize;
+  browserState.offset = Math.max(0, browserState.offset + direction * pageSize);
+}
+
 function renderMemoryList(memories) {
   const list = $("memoryList");
   if (!list) return;
@@ -274,7 +284,7 @@ function renderQuality(response) {
 async function loadMemoryBrowser(resetOffset = false) {
   if (resetOffset) browserState.offset = 0;
   browserState.sort = $("memorySort")?.value || "updated_desc";
-  browserState.limit = Number.parseInt($("memoryPageSize")?.value || "25", 10) || 25;
+  browserState.limit = readMemoryPageSize();
   setStatus("memoryBrowserStatus", "Loading memory browser...");
   const params = new URLSearchParams();
   const query = $("memoryQuery")?.value?.trim();
@@ -464,11 +474,11 @@ function bootstrap() {
   });
   $("searchMemoriesButton")?.addEventListener("click", () => void loadMemoryBrowser(true));
   $("memoryPrevButton")?.addEventListener("click", () => {
-    browserState.offset = Math.max(0, browserState.offset - browserState.limit);
+    stepMemoryPage(-1);
     void loadMemoryBrowser(false);
   });
   $("memoryNextButton")?.addEventListener("click", () => {
-    browserState.offset += browserState.limit;
+    stepMemoryPage(1);
     void loadMemoryBrowser(false);
   });
   $("runRecallButton")?.addEventListener("click", () => void runRecallDebugger());
