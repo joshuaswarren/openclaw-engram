@@ -753,6 +753,7 @@ export class QmdClient implements SearchBackend {
       }
       log.info(`QMD daemon: stdio session active (collection=${this.collection})`);
       this.daemonAvailable = true;
+      this.daemonTransientFailures = 0;
       return true;
     } catch (err) {
       log.debug(`QMD daemon: probe failed: ${err}`);
@@ -890,6 +891,12 @@ export class QmdClient implements SearchBackend {
    * mutex for the full recheck interval.
    */
   private handleDaemonTransientError(label: string, err: unknown, durationMs: number): void {
+    // If daemon was already marked unavailable by a concurrent call, don't
+    // increment further — the counter will reset on the next successful probe.
+    if (!this.daemonAvailable) {
+      log.debug(`QMD daemon ${label} failed after ${durationMs}ms (daemon already unavailable, ignoring): ${err}`);
+      return;
+    }
     this.daemonTransientFailures += 1;
     if (this.daemonTransientFailures >= QmdClient.DAEMON_MAX_TRANSIENT_FAILURES) {
       log.debug(`QMD daemon ${label} failed after ${durationMs}ms (${this.daemonTransientFailures} consecutive failures, invalidating): ${err}`);
