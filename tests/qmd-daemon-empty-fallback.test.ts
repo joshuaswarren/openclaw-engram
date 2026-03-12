@@ -528,15 +528,20 @@ test("vsearchViaDaemon tolerates transient failures before invalidating daemon s
     },
   };
 
-  // First failure is transient — daemon stays available
+  // First two failures are transient — daemon stays available
   const out1 = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
   assert.equal(out1, null);
   assert.equal(invalidated, 0);
   assert.equal(client.daemonAvailable, true);
 
-  // Second consecutive failure triggers invalidation
   const out2 = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
   assert.equal(out2, null);
+  assert.equal(invalidated, 0);
+  assert.equal(client.daemonAvailable, true);
+
+  // Third consecutive failure triggers invalidation
+  const out3 = await client.vsearchViaDaemon("needle", "openclaw-engram", 3);
+  assert.equal(out3, null);
   assert.equal(invalidated, 1);
   assert.equal(client.daemonAvailable, false);
 });

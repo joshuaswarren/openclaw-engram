@@ -1339,11 +1339,6 @@ export class Orchestrator {
             log.warn(`Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`);
           }
         }
-        // Pre-warm daemon sessions for all namespaces so the first recall
-        // doesn't pay the daemon handshake cost under contention.
-        if (this.config.namespacesEnabled) {
-          await this.namespaceSearchRouter.warmUpNamespaces(namespaces).catch(() => undefined);
-        }
       } else if (this.qmd instanceof NoopSearchBackend) {
         log.debug(`Search backend: noop (search intentionally disabled)`);
       } else {

@@ -712,7 +712,7 @@ export class QmdClient implements SearchBackend {
   private readonly daemonRecheckIntervalMs: number;
   /** Consecutive transient daemon failures before invalidating the session. */
   private daemonTransientFailures = 0;
-  private static readonly DAEMON_MAX_TRANSIENT_FAILURES = 2;
+  private static readonly DAEMON_MAX_TRANSIENT_FAILURES = 3;
 
   constructor(
     private readonly collection: string,
