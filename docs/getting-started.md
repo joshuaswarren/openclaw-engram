@@ -29,9 +29,12 @@ Add to `openclaw.json` under `plugins.entries.openclaw-engram.config`:
 
 ```jsonc
 {
-  "openaiApiKey": "${OPENAI_API_KEY}"
+  "openaiApiKey": "${OPENAI_API_KEY}",
+  "recallBudgetChars": 64000
 }
 ```
+
+**Important:** The `recallBudgetChars` setting controls how much memory context is injected into agent prompts. The default (8,000 chars) is too small for most deployments — profile and shared context alone can exhaust it, leaving no room for actual memories. Set it to 64,000 for large-context models (Claude, GPT-5) or 32,000 for smaller models. See [Recall Budget Tuning](config-reference.md#recall-budget-tuning).
 
 All other settings have sensible defaults. Config changes require a full gateway restart (hot reload via `SIGUSR1` does not fire `gateway_start`):
 
@@ -93,6 +96,7 @@ Enable the most impactful features incrementally:
 ```jsonc
 {
   "openaiApiKey": "${OPENAI_API_KEY}",
+  "recallBudgetChars": 64000,
   "qmdEnabled": true,
   "qmdCollection": "openclaw-engram",
 

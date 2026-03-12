@@ -103,11 +103,12 @@ Access-layer safety notes:
 
 See [Search Backends](search-backends.md) for detailed configuration and comparison.
 
-## Retrieval
+## Retrieval & Recall Budget
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `maxMemoryTokens` | `2000` | Token cap for injected memory context |
+| `recallBudgetChars` | `maxMemoryTokens * 4` | **Total character budget for assembled recall context.** Controls how much memory context is injected into agent prompts. If unset, falls back to `maxMemoryTokens * 4`. See [Recall Budget Tuning](#recall-budget-tuning) below. |
+| `maxMemoryTokens` | `2000` | Legacy token cap. Only used to compute `recallBudgetChars` when that setting is absent. **Prefer setting `recallBudgetChars` directly.** |
 | `qmdEnabled` | `true` | Use QMD for hybrid search |
 | `qmdCollection` | `openclaw-engram` | QMD collection name |
 | `qmdMaxResults` | `8` | Final result cap after over-scanning and ranking (fetch size may be larger) |
@@ -175,6 +176,48 @@ Supported keys:
 | `topK` | `number` | `conversation-recall` section only |
 | `timeoutMs` | `number` | `conversation-recall` section only |
 | `maxPatterns` | `number` | `compounding` section only |
+
+### Recall Budget Tuning
+
+The recall budget controls how much context Engram injects into each agent prompt. Getting this right is critical — too small and memories are silently truncated; too large and you waste context window space.
+
+**How it works (v9.0.66+):** Engram assembles recall context in pipeline section order (shared-context → profile → entity retrieval → knowledge index → ... → memories → transcripts → summaries). The budget-aware assembler reserves space for the `memories` section so earlier sections cannot fully exhaust the budget. However, the reservation is minimal (heading-sized). If the total budget is too small, earlier sections still crowd out memory content.
+
+**Common pitfall:** The default budget is `maxMemoryTokens * 4` = **8,000 chars**. A typical profile is 4,000–8,000 chars and shared context adds another 4,000–6,000 chars. With these defaults, the actual memories section gets zero characters and is silently omitted. The `lastRecall` state file will show successful memory retrieval (non-empty `memoryIds`) but the agent never sees them because they are truncated during context assembly.
+
+**Recommended values:**
+
+| Model context window | Suggested `recallBudgetChars` | Reasoning |
+|---------------------|-------------------------------|-----------|
+| 8K–16K tokens | `16000` | Tight budget; consider capping profile via `recallPipeline` |
+| 32K–128K tokens | `32000`–`64000` | Room for all sections including memories |
+| 200K+ tokens (Claude Opus/Sonnet, GPT-5) | `64000`–`128000` | Generous budget; 16K–32K tokens is a small fraction of context |
+
+**Example config for large-context models:**
+
+```jsonc
+{
+  "recallBudgetChars": 64000
+}
+```
+
+**Diagnosing budget exhaustion:** Check `~/.openclaw/workspace/memory/local/state/last_recall.json`. Each session entry records `includedSections` and `omittedSections`. If `memoryIds` is non-empty but `omittedSections` includes `"memories"`, the budget was too small and memories were retrieved but truncated away.
+
+**Capping individual sections:** You can override the `recallPipeline` to add `maxChars` to any section:
+
+```jsonc
+{
+  "recallPipeline": [
+    { "id": "shared-context", "enabled": true, "maxChars": 4000 },
+    { "id": "profile", "enabled": true, "maxChars": 4000 },
+    { "id": "entity-retrieval", "enabled": true, "maxChars": 2400 },
+    { "id": "knowledge-index", "enabled": true, "maxChars": 4000 },
+    { "id": "memories", "enabled": true }
+  ]
+}
+```
+
+Note: when you provide `recallPipeline`, only the sections listed are included. Omit sections you don't want.
 
 ## Native Knowledge
 

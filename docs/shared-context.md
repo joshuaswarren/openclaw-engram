@@ -63,6 +63,11 @@ Compatibility aliases remain supported:
 
 Injection:
 - When enabled, Engram injects `priorities.md`, the latest `roundtable/*.md`, and the latest `cross-signals/*.md` into the system prompt (timeboxed and capped by `sharedContextMaxInjectChars`).
+- Shared context is assembled at **position 1** in the recall pipeline — before profile and memories. It consumes recall budget first.
+
+### Budget interaction
+
+With the default `recallBudgetChars` of 8,000 and `sharedContextMaxInjectChars` of 6,000, shared context plus profile (~7,500 chars) can exhaust the entire budget, leaving zero room for actual memories. If you enable shared context, set `recallBudgetChars` to at least 32,000 (or 64,000+ for large-context models). See [Recall Budget Tuning](config-reference.md#recall-budget-tuning).
 
 ## Scheduling
 

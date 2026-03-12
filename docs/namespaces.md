@@ -11,6 +11,20 @@ Namespaces allow multiple agents to share one Engram installation while keeping 
 - `principalFromSessionKeyMode` + `principalFromSessionKeyRules`: derive a principal from `sessionKey`
 - `defaultRecallNamespaces`: typically `["self", "shared"]`
 
+## Cross-Agent Memory Access
+
+Non-generalist agents (any agent besides the one matching the `defaultNamespace`) depend on the **shared namespace** for memory context. If the shared namespace is empty, these agents receive zero memories from recall.
+
+**Shared namespace promotion (v9.0.66+):** When `autoPromoteToSharedEnabled: true`, extracted memories are automatically promoted to the shared namespace. This is the primary mechanism for cross-agent memory sharing. Verify promotion is working:
+
+```bash
+ls ~/.openclaw/workspace/memory/local/namespaces/shared/facts/
+```
+
+If this directory is empty or missing, non-generalist agents will have no memory context. Check that `autoPromoteToSharedEnabled` is `true` and that `autoPromoteMinConfidenceTier` is set to a tier your extractions produce (e.g., `"explicit"` or `"implied"`).
+
+**Query-aware prefilter (v9.0.66+):** The recall pipeline's prefilter is bypassed when agents have no transcript history, preventing non-generalist agents from being silently excluded from recall results.
+
 ## Storage Layout
 
 Compatibility behavior:

@@ -36,6 +36,8 @@ In `openclaw.json`:
           "localLlmMaxContext": 4096,
           "qmdPath": "/opt/homebrew/bin/qmd",
 
+          "recallBudgetChars": 64000,
+
           "rerankEnabled": true,
           "rerankProvider": "local",
           "rerankMaxCandidates": 20,
@@ -362,6 +364,8 @@ Behavior:
 
 Keep semantic cross-signals off until deterministic shared-context behavior is stable and load-tested.
 
+**Budget interaction:** Shared context is assembled at position 1 in the recall pipeline (before profile). With the default 8,000 char budget, 6,000 chars of shared context leaves very little room for profile and memories. If you use shared context, ensure `recallBudgetChars` is set high enough to accommodate all sections. A budget of 64,000+ is recommended when shared context is enabled alongside a full profile.
+
 ## 5) v5.0 Compounding
 
 ```jsonc
@@ -398,6 +402,12 @@ Use isolated `agentTurn` jobs and `delivery.mode: "none"`:
 - action: call tool `compounding_weekly_synthesize`
 
 ## 7) Tuning Checklist
+
+Recall budget (most important):
+- **Set `recallBudgetChars` explicitly.** The default (8,000 chars) is too small for most deployments. With a profile (~7,500 chars) and shared context (~4,000 chars), the default budget silently drops all actual memories.
+- For 200K+ context models (Claude, GPT-5): use `64000`–`128000`.
+- For smaller context models (32K–128K): use `32000`–`64000`.
+- Diagnose via `last_recall.json`: check `omittedSections` for `"memories"`.
 
 Reliability / load:
 - Keep extraction guardrails enabled (defaults are safe):
