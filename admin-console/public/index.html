@@ -313,7 +313,14 @@
           <div class="toolbar" style="margin-top: 12px;">
             <label style="flex: 1;">
               Raw Path
-              <input id="memoryRawPath" type="text" readonly value="No memory selected." />
+              <input
+                id="memoryRawPath"
+                type="text"
+                readonly
+                value=""
+                placeholder="No memory selected."
+                data-empty-value="No memory selected."
+              />
             </label>
             <button class="secondary" id="copyMemoryPathButton">Copy Path</button>
           </div>
