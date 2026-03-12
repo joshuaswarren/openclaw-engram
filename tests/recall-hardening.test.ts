@@ -62,6 +62,7 @@ test("assembleRecallSections preserves memories within the recall budget", async
 test("recall aborts the in-flight pipeline when the outer timeout fires", async () => {
   const orchestrator = await makeOrchestrator("engram-recall-timeout-");
   let observedAbortSignal: AbortSignal | undefined;
+  const callerAbortController = new AbortController();
   (orchestrator as any).initPromise = null;
   (orchestrator as any).recallInternal = async (
     _prompt: string,
@@ -86,10 +87,14 @@ test("recall aborts the in-flight pipeline when the outer timeout fires", async 
     originalSetTimeout(handler, timeout === 75_000 ? 5 : timeout, ...args)) as typeof setTimeout;
 
   try {
-    const result = await orchestrator.recall("timeout test", "agent:test:timeout");
+    const result = await orchestrator.recall("timeout test", "agent:test:timeout", {
+      abortSignal: callerAbortController.signal,
+    });
     assert.equal(result, "");
     assert.ok(observedAbortSignal);
+    assert.notEqual(observedAbortSignal, callerAbortController.signal);
     assert.equal(observedAbortSignal?.aborted, true);
+    assert.equal(callerAbortController.signal.aborted, false);
   } finally {
     global.setTimeout = originalSetTimeout;
   }

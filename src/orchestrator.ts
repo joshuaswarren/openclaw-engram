@@ -2200,7 +2200,7 @@ export class Orchestrator {
       return await Promise.race([
         this.recallInternal(prompt, sessionKey, {
           ...options,
-          abortSignal: options.abortSignal ?? abortController.signal,
+          abortSignal: abortController.signal,
         }),
         timeoutPromise,
       ]);
