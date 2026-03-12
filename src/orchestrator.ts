@@ -2168,30 +2168,7 @@ export class Orchestrator {
     sessionKey?: string,
     options: RecallInvocationOptions = {},
   ): Promise<string> {
-    // Wait for initialization to complete before attempting recall.
-    // Timeout after 15s in case initialize() never fires (edge case).
-    if (this.initPromise) {
-      const INIT_GATE_TIMEOUT_MS = 15_000;
-      const gateResult = await Promise.race([
-        this.initPromise.then(() => "ok" as const),
-        new Promise<"timeout">((r) => setTimeout(() => r("timeout"), INIT_GATE_TIMEOUT_MS)),
-      ]);
-      if (gateResult === "timeout") {
-        log.warn("recall: init gate timed out — proceeding without full init");
-      }
-    }
-
-    // Keep outer recall timeout above worst-case serialized hybrid search:
-    // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
-    const RECALL_TIMEOUT_MS = 75_000;
     const abortController = new AbortController();
-    let timeoutHandle: NodeJS.Timeout | null = null;
-    const timeoutPromise = new Promise<string>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        abortController.abort();
-        reject(new Error("recall timeout"));
-      }, RECALL_TIMEOUT_MS);
-    });
     const onAbort = () => {
       abortController.abort();
     };
@@ -2200,6 +2177,46 @@ export class Orchestrator {
     } else {
       options.abortSignal?.addEventListener("abort", onAbort, { once: true });
     }
+
+    // Wait for initialization to complete before attempting recall.
+    // Timeout after 15s in case initialize() never fires (edge case).
+    let initGateTimeoutHandle: NodeJS.Timeout | null = null;
+    let onInitGateAbort: (() => void) | null = null;
+    if (this.initPromise) {
+      const INIT_GATE_TIMEOUT_MS = 15_000;
+      const gateResult = await Promise.race([
+        this.initPromise.then(() => "ok" as const),
+        new Promise<"timeout">((resolve) => {
+          initGateTimeoutHandle = setTimeout(() => resolve("timeout"), INIT_GATE_TIMEOUT_MS);
+        }),
+        abortController.signal.aborted
+          ? Promise.resolve("aborted" as const)
+          : new Promise<"aborted">((resolve) => {
+            onInitGateAbort = () => resolve("aborted");
+            abortController.signal.addEventListener("abort", onInitGateAbort, { once: true });
+          }),
+      ]);
+      if (initGateTimeoutHandle) clearTimeout(initGateTimeoutHandle);
+      if (onInitGateAbort) abortController.signal.removeEventListener("abort", onInitGateAbort);
+      if (gateResult === "aborted") {
+        this.logRecallFailure(abortRecallError("recall aborted before init"));
+        return "";
+      }
+      if (gateResult === "timeout") {
+        log.warn("recall: init gate timed out — proceeding without full init");
+      }
+    }
+
+    // Keep outer recall timeout above worst-case serialized hybrid search:
+    // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
+    const RECALL_TIMEOUT_MS = 75_000;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<string>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        abortController.abort();
+        reject(new Error("recall timeout"));
+      }, RECALL_TIMEOUT_MS);
+    });
     try {
       return await Promise.race([
         this.recallInternal(prompt, sessionKey, {
@@ -7666,7 +7683,9 @@ export class Orchestrator {
     recallNamespaces: string[],
     limit: number,
     queryAwarePrefilter?: QueryAwarePrefilter,
+    abortSignal?: AbortSignal,
   ): Promise<QmdSearchResult[]> {
+    throwIfRecallAborted(abortSignal);
     const cappedLimit = Math.max(0, limit);
     if (cappedLimit === 0) return [];
 
@@ -7687,11 +7706,13 @@ export class Orchestrator {
     const tokens = Array.from(new Set(tokenizeRecallQuery(prompt)));
     if (tokens.length === 0) return scopedSeedResults;
 
+    throwIfRecallAborted(abortSignal);
     const archivedMemories = await this.readArchivedMemoriesForNamespaces(recallNamespaces);
     if (archivedMemories.length === 0) return scopedSeedResults;
 
     const scored: QmdSearchResult[] = [];
     for (const memory of archivedMemories) {
+      throwIfRecallAborted(abortSignal);
       const haystack = [
         memory.content,
         memory.frontmatter.category,
@@ -7780,6 +7801,7 @@ export class Orchestrator {
         options.recallNamespaces,
         options.recallResultLimit,
         options.queryAwarePrefilter,
+        options.abortSignal,
       );
       if (longTerm.length > 0) {
         log.debug("cold-tier recall source=archive-scan");

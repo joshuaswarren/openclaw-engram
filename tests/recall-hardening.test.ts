@@ -125,3 +125,64 @@ test("recall propagates an already-aborted external signal to the inner controll
   assert.notEqual(observedAbortSignal, callerAbortController.signal);
   assert.equal(observedAbortSignal?.aborted, true);
 });
+
+test("recall aborts while waiting on the init gate", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-init-gate-abort-");
+  const callerAbortController = new AbortController();
+  let recallInternalCalled = false;
+  (orchestrator as any).initPromise = new Promise<void>(() => {});
+  (orchestrator as any).recallInternal = async () => {
+    recallInternalCalled = true;
+    return "should not run";
+  };
+
+  const originalSetTimeout = global.setTimeout;
+  global.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: any[]) =>
+    originalSetTimeout(handler, timeout === 15_000 ? 100 : timeout, ...args)) as typeof setTimeout;
+
+  try {
+    const startedAt = Date.now();
+    const recallPromise = orchestrator.recall("init gate abort test", "agent:test:init-gate", {
+      abortSignal: callerAbortController.signal,
+    });
+    setTimeout(() => callerAbortController.abort(), 5);
+
+    const result = await recallPromise;
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(result, "");
+    assert.equal(recallInternalCalled, false);
+    assert.ok(elapsedMs < 80, `expected init gate abort before timeout fallback, saw ${elapsedMs}ms`);
+  } finally {
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test("cold fallback abort stops before archive scanning", async () => {
+  const orchestrator = await makeOrchestrator("engram-cold-fallback-abort-", {
+    qmdColdTierEnabled: true,
+    qmdEnabled: true,
+  });
+  const callerAbortController = new AbortController();
+  callerAbortController.abort();
+
+  let archiveReads = 0;
+  (orchestrator as any).qmd = { isAvailable: () => true };
+  (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async () => [];
+  (orchestrator as any).readArchivedMemoriesForNamespaces = async () => {
+    archiveReads += 1;
+    return [];
+  };
+
+  await assert.rejects(
+    (orchestrator as any).applyColdFallbackPipeline({
+      prompt: "archive abort test",
+      recallNamespaces: ["default"],
+      recallResultLimit: 5,
+      recallMode: "minimal",
+      abortSignal: callerAbortController.signal,
+    }),
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
+  assert.equal(archiveReads, 0);
+});
