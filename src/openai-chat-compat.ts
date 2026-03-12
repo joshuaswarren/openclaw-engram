@@ -5,6 +5,7 @@ function normalizedModel(model: string): string {
 export function usesMaxCompletionTokens(model: string): boolean {
   const normalized = normalizedModel(model);
   if (normalized.startsWith("gpt-5")) return true;
+  if (normalized.startsWith("gpt-4o")) return true;
   return /^o\d/.test(normalized);
 }
 
