@@ -117,7 +117,7 @@ Sections are assembled in pipeline order. The assembler tracks cumulative charac
 | 7 | `memory-boxes` | off by default | variable |
 | 8 | `temporal-memory-tree` | off by default | variable |
 | 9–14 | various opt-in sections | off by default | variable |
-| 15 | **`memories`** (protected) | always enabled | variable |
+| 15 | **`memories`** (protected) | enabled by default | variable |
 | 16 | `compression-guidelines` | off by default | variable |
 | 17 | `native-knowledge` | off by default | 0–2,400 chars |
 | 18 | `transcript` | enabled by default | 0–4,000 chars |

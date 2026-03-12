@@ -21,7 +21,9 @@ Non-generalist agents (any agent besides the one matching the `defaultNamespace`
 ls ~/.openclaw/workspace/memory/local/namespaces/shared/facts/
 ```
 
-If this directory is empty or missing, non-generalist agents will have no cross-agent memory context (they still have their own `self` namespace memories). Check that `autoPromoteToSharedEnabled` is `true` and that `autoPromoteMinConfidenceTier` is set to `"implied"` (recommended) to ensure most extracted memories get promoted. The `"explicit"` tier is more conservative and may miss memories that lack strong confidence signals.
+If this directory is empty or missing, non-generalist agents may have limited cross-agent memory context (they still have their own `self` namespace memories). Check that `autoPromoteToSharedEnabled` is `true` and that `autoPromoteMinConfidenceTier` is set to `"implied"` (recommended) to ensure most extracted memories get promoted. The `"explicit"` tier is more conservative and may miss memories that lack strong confidence signals.
+
+**Note:** Shared namespace promotion is not the only source of cross-agent recall. Namespaces configured with `includeInRecallByDefault: true` in `namespacePolicies` are also included in recall for all agents. Check your namespace policies if agents need access to specific namespaces beyond `self` and `shared`.
 
 **Categories eligible for promotion:** The `autoPromoteToSharedCategories` setting controls which memory categories are promoted. The default is `["fact", "correction", "decision", "preference"]`. The `"fact"` category was added in v9.0.67 — prior versions defaulted to `["correction", "decision", "preference"]` only.
 
