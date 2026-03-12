@@ -19,7 +19,7 @@ class FakeElement {
   }
 }
 
-async function loadAdminConsoleContext(pageSizeValue: string) {
+async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Record<string, FakeElement> = {}) {
   const scriptPath = path.resolve("admin-console/public/app.js");
   const script = await readFile(scriptPath, "utf8");
   const elements = new Map<string, FakeElement>([
@@ -27,6 +27,7 @@ async function loadAdminConsoleContext(pageSizeValue: string) {
     ["memoryNextButton", new FakeElement()],
     ["memoryPageStatus", new FakeElement()],
     ["memoryPageSize", Object.assign(new FakeElement(), { value: pageSizeValue })],
+    ...Object.entries(extraElements),
   ]);
   const session = new Map<string, string>();
   const context = vm.createContext({
@@ -58,6 +59,7 @@ async function loadAdminConsoleContext(pageSizeValue: string) {
   vm.runInContext(script, context, { filename: scriptPath });
   return {
     browserState: vm.runInContext("browserState", context) as { limit: number; offset: number; total: number },
+    renderQuality: vm.runInContext("renderQuality", context) as (response: unknown) => void,
     stepMemoryPage: vm.runInContext("stepMemoryPage", context) as (direction: number) => void,
   };
 }
@@ -82,4 +84,18 @@ test("admin console pagination step reads the current page size before retreatin
 
   assert.equal(browserState.limit, 10);
   assert.equal(browserState.offset, 40);
+});
+
+test("admin console quality renderer tolerates a missing JSON mount", async () => {
+  const { renderQuality } = await loadAdminConsoleContext("25", {
+    qualitySummary: new FakeElement(),
+  });
+
+  assert.doesNotThrow(() => {
+    renderQuality({
+      totalMemories: 2,
+      archivePressure: { pendingReview: 1, archived: 0 },
+      latestGovernanceRun: { qualityScore: { score: 90 } },
+    });
+  });
 });

@@ -278,7 +278,10 @@ function renderQuality(response) {
     card.appendChild(caption);
     summary.appendChild(card);
   });
-  $("qualityJson").textContent = JSON.stringify(response, null, 2);
+  const qualityJson = $("qualityJson");
+  if (qualityJson) {
+    qualityJson.textContent = JSON.stringify(response, null, 2);
+  }
 }
 
 async function loadMemoryBrowser(resetOffset = false) {
