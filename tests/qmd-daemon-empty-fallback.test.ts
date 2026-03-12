@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
@@ -240,8 +241,93 @@ test("embed retries with force re-embed after vector dimension mismatch", async 
 
   assert.deepEqual(calls, [
     ["embed", "-c", "openclaw-engram"],
-    ["embed", "-f"],
+    ["embed", "-f", "-c", "openclaw-engram"],
   ]);
+});
+
+test("embedCollection retries with force re-embed against the same collection", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  const calls: string[][] = [];
+  client.runQmdCommand = async (args: string[]) => {
+    calls.push(args);
+    if (args[0] === "embed" && args[1] === "-c") {
+      throw new Error("vector dimension mismatch: vectors_vec expects float[3072]");
+    }
+    return { stdout: "", stderr: "" };
+  };
+
+  await client.embedCollection("shared-memory");
+
+  assert.deepEqual(calls, [
+    ["embed", "-c", "shared-memory"],
+    ["embed", "-f", "-c", "shared-memory"],
+  ]);
+});
+
+test("daemon request success removes abort listeners from the caller signal", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-daemon-cleanup-"));
+  const scriptPath = path.join(tmpDir, "fake-qmd-daemon");
+  await writeFile(
+    scriptPath,
+    `#!/usr/bin/env node
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        serverInfo: { name: "fake-qmd", version: "1.0.0" }
+      }
+    }) + "\\n");
+    return;
+  }
+  if (msg.method === "tools/call") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: { structuredContent: { results: [] } }
+    }) + "\\n");
+  }
+});
+`,
+    "utf8",
+  );
+  await chmod(scriptPath, 0o755);
+
+  const client = new QmdClient("openclaw-engram", 5, { qmdPath: scriptPath }) as any;
+  const ok = await client.probeDaemon();
+  assert.equal(ok, true);
+
+  const controller = new AbortController();
+  const daemonSession = client.daemonSession as any;
+  const originalWrite = daemonSession.child.stdin.write.bind(daemonSession.child.stdin);
+  daemonSession.child.stdin.write = (chunk: string, callback?: (err?: Error | null) => void) => {
+    const message = JSON.parse(chunk.trim());
+    if (message.method === "tools/call" && message.id) {
+      setImmediate(() => {
+        daemonSession.handleMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { structuredContent: { results: [] } },
+        });
+      });
+      callback?.(null);
+      return true;
+    }
+    return originalWrite(chunk, callback);
+  };
+  const result = await daemonSession.callTool("query", { query: "cleanup", limit: 1 }, 1_000, controller.signal);
+
+  assert.deepEqual(result, { structuredContent: { results: [] } });
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+
+  daemonSession.invalidate();
 });
 
 test("search aborts while waiting on the QMD mutex", async () => {

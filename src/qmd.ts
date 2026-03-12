@@ -392,6 +392,7 @@ class QmdDaemonSession {
       resolve: (value: unknown) => void;
       reject: (reason: Error) => void;
       timer: ReturnType<typeof setTimeout>;
+      cleanup: () => void;
     }
   >();
   private readonly qmdPath: string;
@@ -519,7 +520,7 @@ class QmdDaemonSession {
         signal?.removeEventListener("abort", onAbort);
       };
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.pendingRequests.set(id, { resolve, reject, timer, cleanup });
       signal?.addEventListener("abort", onAbort, { once: true });
       const message = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
       this.child.stdin.write(message, (err) => {
@@ -562,6 +563,7 @@ class QmdDaemonSession {
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingRequests.delete(msg.id as number);
+        pending.cleanup();
         if (msg.error) {
           pending.reject(new Error(JSON.stringify(msg.error)));
         } else {
@@ -587,6 +589,7 @@ class QmdDaemonSession {
     this.initialized = false;
     for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
+      pending.cleanup();
       pending.reject(new Error("QMD mcp process terminated"));
     }
     this.pendingRequests.clear();
@@ -1467,7 +1470,7 @@ export class QmdClient implements SearchBackend {
       if (isVectorDimensionMismatchError(err)) {
         try {
           log.warn("QMD embed hit a vector dimension mismatch; retrying with force re-embed");
-          await this.runQmdCommand(["embed", "-f"], 300_000);
+          await this.runQmdCommand(["embed", "-f", "-c", this.collection], 300_000);
           globalState.lastGlobalEmbedRunAtMs = Date.now();
           this.lastEmbedFailAtMs = null;
           globalState.lastGlobalEmbedFailAtMs = null;
@@ -1524,7 +1527,7 @@ export class QmdClient implements SearchBackend {
       if (isVectorDimensionMismatchError(err)) {
         try {
           log.warn(`QMD embed for collection ${name} hit a vector dimension mismatch; retrying with force re-embed`);
-          await this.runQmdCommand(["embed", "-f"], 300_000);
+          await this.runQmdCommand(["embed", "-f", "-c", name], 300_000);
           const recoveredAt = Date.now();
           globalState.lastEmbedByCollectionMs[name] = recoveredAt;
           globalState.lastGlobalEmbedRunAtMs = recoveredAt;
