@@ -109,7 +109,7 @@ Sections are assembled in pipeline order. The assembler tracks cumulative charac
 | Position | Section ID | Default | Typical Size |
 |----------|-----------|---------|--------------|
 | 1 | `shared-context` | enabled when `sharedContextEnabled: true` | 2,000–6,000 chars |
-| 2 | `profile` | always enabled | 4,000–8,000 chars |
+| 2 | `profile` | enabled by default | 4,000–8,000 chars |
 | 3 | `identity-continuity` | off by default | 0–1,200 chars |
 | 4 | `entity-retrieval` | enabled by default | 0–2,400 chars |
 | 5 | `knowledge-index` | enabled by default | 0–4,000 chars |
