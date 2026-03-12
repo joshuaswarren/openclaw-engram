@@ -99,3 +99,29 @@ test("recall aborts the in-flight pipeline when the outer timeout fires", async 
     global.setTimeout = originalSetTimeout;
   }
 });
+
+test("recall propagates an already-aborted external signal to the inner controller", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-preaborted-");
+  const callerAbortController = new AbortController();
+  callerAbortController.abort();
+
+  let observedAbortSignal: AbortSignal | undefined;
+  (orchestrator as any).initPromise = null;
+  (orchestrator as any).recallInternal = async (
+    _prompt: string,
+    _sessionKey?: string,
+    options: { abortSignal?: AbortSignal } = {},
+  ) => {
+    observedAbortSignal = options.abortSignal;
+    throw new Error("should not reach active recall work");
+  };
+
+  const result = await orchestrator.recall("pre-aborted test", "agent:test:preaborted", {
+    abortSignal: callerAbortController.signal,
+  });
+
+  assert.equal(result, "");
+  assert.ok(observedAbortSignal);
+  assert.notEqual(observedAbortSignal, callerAbortController.signal);
+  assert.equal(observedAbortSignal?.aborted, true);
+});

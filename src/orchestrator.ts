@@ -2195,7 +2195,11 @@ export class Orchestrator {
     const onAbort = () => {
       abortController.abort();
     };
-    options.abortSignal?.addEventListener("abort", onAbort, { once: true });
+    if (options.abortSignal?.aborted) {
+      abortController.abort();
+    } else {
+      options.abortSignal?.addEventListener("abort", onAbort, { once: true });
+    }
     try {
       return await Promise.race([
         this.recallInternal(prompt, sessionKey, {
