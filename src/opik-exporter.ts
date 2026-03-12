@@ -208,6 +208,8 @@ export class OpikExporter {
   private readonly inFlight = new Map<string, InFlightLlm>();
   /** Track which trace_ids we have already created parent trace objects for. */
   private readonly createdTraces = new Set<string>();
+  /** Guard against concurrent ensureTrace calls for the same traceId. */
+  private readonly pendingTraces = new Set<string>();
   /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
   private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -456,6 +458,9 @@ export class OpikExporter {
     endTime: string,
   ): Promise<void> {
     if (this.createdTraces.has(traceId)) return;
+    if (this.pendingTraces.has(traceId)) return;
+
+    this.pendingTraces.add(traceId);
 
     const trace = {
       id: traceId,
@@ -467,6 +472,7 @@ export class OpikExporter {
     };
 
     const ok = await postTraceBatch(this.cfg, [trace], this.log);
+    this.pendingTraces.delete(traceId);
     if (!ok) return; // transient failure — allow retry on next span
 
     this.createdTraces.add(traceId);

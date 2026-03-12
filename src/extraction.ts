@@ -745,9 +745,10 @@ export class ExtractionEngine {
       }
     } else {
       // No direct client configured — close the initial llm_start so it isn't orphaned.
+      // This is NOT an error; it's the expected path for fallback-only deployments.
       this.emit({
-        kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
-        durationMs: Date.now() - startTime, error: "no direct client configured",
+        kind: "llm_end", traceId, model: this.config.model, operation: "extraction",
+        durationMs: Date.now() - startTime, output: "skipped: no direct client configured",
       });
     }
 
