@@ -228,3 +228,30 @@ test("recallInternal aborts while phase-one preamble promises are still pending"
   assert.equal(sharedReadStarted, true);
   assert.ok(elapsedMs < 80, `expected phase-one abort before slow shared-context read completed, saw ${elapsedMs}ms`);
 });
+
+test("recallInternal does not launch phase-one preamble work for an already-aborted signal", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-phase-one-preaborted-");
+  const callerAbortController = new AbortController();
+  callerAbortController.abort();
+
+  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context";
+  let sharedReadStarted = false;
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      sharedReadStarted = true;
+      return "should not run";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+
+  await assert.rejects(
+    (orchestrator as any).recallInternal("phase one pre-aborted test", "agent:test:phase-one-preaborted", {
+      mode: "full",
+      abortSignal: callerAbortController.signal,
+    }),
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
+
+  assert.equal(sharedReadStarted, false);
+});

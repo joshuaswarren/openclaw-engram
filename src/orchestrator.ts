@@ -3349,6 +3349,7 @@ export class Orchestrator {
     const profileStorage = await this.storageRouter.storageFor(selfNamespace);
 
     // --- Phase 1: Launch ALL independent data fetches in parallel ---
+    throwIfRecallAborted(options.abortSignal);
 
     // 0. Shared context (v4.0, optional)
     const sharedContextPromise = (async (): Promise<string | null> => {
