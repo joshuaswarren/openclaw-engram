@@ -296,8 +296,10 @@ test("searchViaDaemon keeps daemon session active on AbortError", async () => {
     },
   };
 
-  const out = await client.searchViaDaemon("needle", "openclaw-engram", 3);
-  assert.equal(out, null);
+  await assert.rejects(
+    client.searchViaDaemon("needle", "openclaw-engram", 3),
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
   assert.equal(invalidated, 0);
   assert.equal(client.daemonAvailable, true);
 });
@@ -318,8 +320,10 @@ test("bm25SearchViaDaemon keeps daemon session active on caller cancellation", a
     },
   };
 
-  const out = await client.bm25SearchViaDaemon("needle", "openclaw-engram", 3, controller.signal);
-  assert.equal(out, null);
+  await assert.rejects(
+    client.bm25SearchViaDaemon("needle", "openclaw-engram", 3, controller.signal),
+    (err: unknown) => err instanceof Error && err.name === "AbortError",
+  );
   assert.equal(invalidated, 0);
   assert.equal(client.daemonAvailable, true);
 });
@@ -342,4 +346,73 @@ test("vsearchViaDaemon invalidates daemon session on real daemon faults", async 
   assert.equal(out, null);
   assert.equal(invalidated, 1);
   assert.equal(client.daemonAvailable, false);
+});
+
+test("search returns immediately on daemon cancellation without subprocess fallback", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  const controller = new AbortController();
+  controller.abort();
+  client.available = true;
+  client.daemonAvailable = true;
+  client.daemonSession = {};
+  client.maybeProbeDaemon = async () => {};
+
+  let subprocessCalls = 0;
+  client.searchViaDaemon = async () => {
+    throw new Error("daemon search cancelled");
+  };
+  client.searchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [{ docid: "unexpected", path: "/tmp/unexpected.md", snippet: "unexpected", score: 0.1 }];
+  };
+
+  const out = await client.search("cancelled", undefined, 3, undefined, { signal: controller.signal });
+  assert.deepEqual(out, []);
+  assert.equal(subprocessCalls, 0);
+});
+
+test("bm25Search returns immediately on daemon cancellation without subprocess fallback", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  const controller = new AbortController();
+  controller.abort();
+  client.available = true;
+  client.daemonAvailable = true;
+  client.daemonSession = {};
+  client.maybeProbeDaemon = async () => {};
+
+  let subprocessCalls = 0;
+  client.bm25SearchViaDaemon = async () => {
+    throw new Error("daemon bm25 cancelled");
+  };
+  client.bm25SearchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [{ docid: "unexpected", path: "/tmp/unexpected.md", snippet: "unexpected", score: 0.1 }];
+  };
+
+  const out = await client.bm25Search("cancelled", undefined, 3, { signal: controller.signal });
+  assert.deepEqual(out, []);
+  assert.equal(subprocessCalls, 0);
+});
+
+test("vectorSearch returns immediately on daemon cancellation without subprocess fallback", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  const controller = new AbortController();
+  controller.abort();
+  client.available = true;
+  client.daemonAvailable = true;
+  client.daemonSession = {};
+  client.maybeProbeDaemon = async () => {};
+
+  let subprocessCalls = 0;
+  client.vsearchViaDaemon = async () => {
+    throw new Error("daemon vsearch cancelled");
+  };
+  client.vsearchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [{ docid: "unexpected", path: "/tmp/unexpected.md", snippet: "unexpected", score: 0.1 }];
+  };
+
+  const out = await client.vectorSearch("cancelled", undefined, 3, { signal: controller.signal });
+  assert.deepEqual(out, []);
+  assert.equal(subprocessCalls, 0);
 });

@@ -916,7 +916,15 @@ export class QmdClient implements SearchBackend {
     // Try daemon first (bypasses QMD_MUTEX — daemon handles its own concurrency)
     await this.maybeProbeDaemon();
     if (this.daemonAvailable) {
-      const results = await this.searchViaDaemon(trimmed, col, n, searchOptions, execution?.signal);
+      let results: QmdSearchResult[] | null;
+      try {
+        results = await this.searchViaDaemon(trimmed, col, n, searchOptions, execution?.signal);
+      } catch (err) {
+        if (isCallerCancellation(err, execution?.signal)) {
+          return [];
+        }
+        throw err;
+      }
       if (results !== null) {
         if (results.length > 0) return results;
         // Fail-open: daemon sometimes returns zero hits while subprocess
@@ -944,7 +952,15 @@ export class QmdClient implements SearchBackend {
     await this.maybeProbeDaemon();
     if (this.daemonAvailable) {
       // Global search: no collection filter
-      const results = await this.searchViaDaemon(trimmed, undefined, n, undefined, execution?.signal);
+      let results: QmdSearchResult[] | null;
+      try {
+        results = await this.searchViaDaemon(trimmed, undefined, n, undefined, execution?.signal);
+      } catch (err) {
+        if (isCallerCancellation(err, execution?.signal)) {
+          return [];
+        }
+        throw err;
+      }
       if (results !== null) {
         if (results.length > 0) return results;
         log.debug("QMD daemon global search returned 0 results; falling back to subprocess query");
@@ -973,7 +989,15 @@ export class QmdClient implements SearchBackend {
     // Try daemon first — BM25 via daemon is much faster than subprocess.
     await this.maybeProbeDaemon();
     if (this.daemonAvailable && this.daemonSession) {
-      const results = await this.bm25SearchViaDaemon(trimmed, col, n, execution?.signal);
+      let results: QmdSearchResult[] | null;
+      try {
+        results = await this.bm25SearchViaDaemon(trimmed, col, n, execution?.signal);
+      } catch (err) {
+        if (isCallerCancellation(err, execution?.signal)) {
+          return [];
+        }
+        throw err;
+      }
       if (results !== null) {
         if (results.length > 0) return results;
         log.debug("QMD daemon bm25 returned 0 results; falling back to subprocess query");
@@ -1000,7 +1024,15 @@ export class QmdClient implements SearchBackend {
     // Try daemon first — keeps models warm, avoids cold subprocess loads.
     await this.maybeProbeDaemon();
     if (this.daemonAvailable && this.daemonSession) {
-      const results = await this.vsearchViaDaemon(trimmed, col, n, execution?.signal);
+      let results: QmdSearchResult[] | null;
+      try {
+        results = await this.vsearchViaDaemon(trimmed, col, n, execution?.signal);
+      } catch (err) {
+        if (isCallerCancellation(err, execution?.signal)) {
+          return [];
+        }
+        throw err;
+      }
       if (results !== null) {
         if (results.length > 0) return results;
         log.debug("QMD daemon vsearch returned 0 results; falling back to subprocess query");
@@ -1087,11 +1119,13 @@ export class QmdClient implements SearchBackend {
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
-      // Timeout or abort: don't invalidate session — daemon is still running,
-      // just slow. Fall back to subprocess for this query only.
-      if (isCallerCancellation(err, signal) || isDaemonTimeoutError(err)) {
-        const reason = isCallerCancellation(err, signal) ? "aborted/cancelled" : "timed out";
-        log.debug(`QMD daemon search ${reason} after ${durationMs}ms, falling back to subprocess`);
+      if (isCallerCancellation(err, signal)) {
+        log.debug(`QMD daemon search aborted/cancelled after ${durationMs}ms`);
+        throw isAbortError(err) ? err : abortError("QMD daemon search aborted");
+      }
+      // Timeout: don't invalidate session — daemon is still running, just slow.
+      if (isDaemonTimeoutError(err)) {
+        log.debug(`QMD daemon search timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
       // Connection error: mark unavailable, maybeProbeDaemon() will restart.
@@ -1124,9 +1158,12 @@ export class QmdClient implements SearchBackend {
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
-      if (isCallerCancellation(err, signal) || isDaemonTimeoutError(err)) {
-        const reason = isCallerCancellation(err, signal) ? "aborted/cancelled" : "timed out";
-        log.debug(`QMD daemon bm25 ${reason} after ${durationMs}ms, falling back to subprocess`);
+      if (isCallerCancellation(err, signal)) {
+        log.debug(`QMD daemon bm25 aborted/cancelled after ${durationMs}ms`);
+        throw isAbortError(err) ? err : abortError("QMD daemon bm25 aborted");
+      }
+      if (isDaemonTimeoutError(err)) {
+        log.debug(`QMD daemon bm25 timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
       log.debug(`QMD daemon bm25 failed after ${durationMs}ms: ${err}`);
@@ -1158,9 +1195,12 @@ export class QmdClient implements SearchBackend {
       return results;
     } catch (err) {
       const durationMs = Date.now() - startedAtMs;
-      if (isCallerCancellation(err, signal) || isDaemonTimeoutError(err)) {
-        const reason = isCallerCancellation(err, signal) ? "aborted/cancelled" : "timed out";
-        log.debug(`QMD daemon vsearch ${reason} after ${durationMs}ms, falling back to subprocess`);
+      if (isCallerCancellation(err, signal)) {
+        log.debug(`QMD daemon vsearch aborted/cancelled after ${durationMs}ms`);
+        throw isAbortError(err) ? err : abortError("QMD daemon vsearch aborted");
+      }
+      if (isDaemonTimeoutError(err)) {
+        log.debug(`QMD daemon vsearch timed out after ${durationMs}ms, falling back to subprocess`);
         return null;
       }
       log.debug(`QMD daemon vsearch failed after ${durationMs}ms: ${err}`);
