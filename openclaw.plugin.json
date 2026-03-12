@@ -1878,8 +1878,8 @@
       },
       "autoPromoteToSharedCategories": {
         "type": "array",
-        "items": { "type": "string", "enum": ["correction", "decision", "preference"] },
-        "default": ["correction", "decision", "preference"],
+        "items": { "type": "string", "enum": ["fact", "correction", "decision", "preference"] },
+        "default": ["fact", "correction", "decision", "preference"],
         "description": "Categories eligible for auto-promotion to shared."
       },
       "autoPromoteMinConfidenceTier": {

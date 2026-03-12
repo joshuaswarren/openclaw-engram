@@ -36,6 +36,8 @@ In `openclaw.json`:
           "localLlmMaxContext": 4096,
           "qmdPath": "/opt/homebrew/bin/qmd",
 
+          "recallBudgetChars": 64000,
+
           "rerankEnabled": true,
           "rerankProvider": "local",
           "rerankMaxCandidates": 20,
@@ -362,6 +364,8 @@ Behavior:
 
 Keep semantic cross-signals off until deterministic shared-context behavior is stable and load-tested.
 
+**Budget interaction:** Shared context is assembled at position 1 in the recall pipeline (before profile). With the default 8,000 char budget, 6,000 chars of shared context leaves very little room for profile and memories. If you use shared context, ensure `recallBudgetChars` is set high enough to accommodate all sections. A budget of 64,000+ is recommended when shared context is enabled alongside a full profile.
+
 ## 5) v5.0 Compounding
 
 ```jsonc
@@ -399,6 +403,12 @@ Use isolated `agentTurn` jobs and `delivery.mode: "none"`:
 
 ## 7) Tuning Checklist
 
+Recall budget (most important):
+- **Set `recallBudgetChars` explicitly.** The default (8,000 chars) is too small for most deployments. With a profile (~7,500 chars) and shared context (~4,000 chars), the default budget silently drops all actual memories.
+- For 200K+ context models (Claude, GPT-5): use `64000`–`128000`.
+- For smaller context models (32K–128K): use `32000`–`64000`.
+- Diagnose via `last_recall.json`: if `memoryIds` is non-empty but `finalContextChars` is close to `recallBudgetChars`, the budget was exhausted and the `memories` section (which is protected) was truncated to heading-only.
+
 Reliability / load:
 - Keep extraction guardrails enabled (defaults are safe):
   - `extractionDedupeEnabled: true`
@@ -425,9 +435,10 @@ Reliability / load:
   - `cronRecallMode: "allowlist"` to default cron sessions to no recall.
   - Populate `cronRecallAllowlist` with only context-heavy cron job ids/patterns (`*:cron:<job-id>:*`).
   - Keep ingestion/integration script crons out of the allowlist unless they genuinely need memory context.
-- QMD performance patches (as of 2026-02-14):
-  - Apply PRs [#166](https://github.com/tobi/qmd/pull/166), [#112](https://github.com/tobi/qmd/pull/112), [#117](https://github.com/tobi/qmd/pull/117) locally for daemon stability, model overrides, and FTS join fixes. See README for details.
-  - With the daemon fix (#166), `qmd mcp --http --daemon` keeps models warm — queries drop from ~13s to ~30ms.
+- QMD version:
+  - **QMD 2.0+ is recommended.** All 1.x patches (PRs #166, #112, #117) are resolved natively in 2.0. QMD 1.x still works but requires manual patches.
+  - The QMD daemon keeps models warm — queries drop from ~13s to ~30ms after the first call.
+  - See [Getting Started](getting-started.md#upgrading-from-qmd-1x-to-20) for upgrade steps.
 - Local LLM failure damping:
   - `localLlmRetry5xxCount: 1`
   - `localLlmRetryBackoffMs: 400`

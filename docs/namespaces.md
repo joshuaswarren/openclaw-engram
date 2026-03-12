@@ -11,6 +11,53 @@ Namespaces allow multiple agents to share one Engram installation while keeping 
 - `principalFromSessionKeyMode` + `principalFromSessionKeyRules`: derive a principal from `sessionKey`
 - `defaultRecallNamespaces`: typically `["self", "shared"]`
 
+## Cross-Agent Memory Access
+
+Non-generalist agents (any agent besides the one matching the `defaultNamespace`) recall from both their own **self namespace** and the **shared namespace** (as configured via `defaultRecallNamespaces`). Each agent's extracted memories are stored in its `self` namespace, so agents always have access to their own memories. The shared namespace provides cross-agent context — if it is empty, these agents still receive their own memories but miss context extracted by other agents.
+
+**Shared namespace promotion (v9.0.66+):** When `autoPromoteToSharedEnabled: true`, extracted memories are automatically promoted to the shared namespace. This is the primary mechanism for cross-agent memory sharing. Verify promotion is working:
+
+```bash
+ls ~/.openclaw/workspace/memory/local/namespaces/shared/facts/
+```
+
+If this directory is empty or missing, non-generalist agents may have limited cross-agent memory context (they still have their own `self` namespace memories). Check that `autoPromoteToSharedEnabled` is `true` and that `autoPromoteMinConfidenceTier` is set to `"implied"` (recommended) to ensure most extracted memories get promoted. The `"explicit"` tier is more conservative and may miss memories that lack strong confidence signals.
+
+**Note:** Shared namespace promotion is not the only source of cross-agent recall. Namespaces configured with `includeInRecallByDefault: true` in `namespacePolicies` are also included in recall for all agents. Check your namespace policies if agents need access to specific namespaces beyond `self` and `shared`.
+
+**Categories eligible for promotion:** The `autoPromoteToSharedCategories` setting controls which memory categories are promoted. The default is `["fact", "correction", "decision", "preference"]`. The `"fact"` category was added in v9.0.67 — prior versions defaulted to `["correction", "decision", "preference"]` only.
+
+**Cross-agent recall:** The primary mechanism for cross-agent memory sharing is shared namespace promotion. When promotion is configured, memories extracted by any agent are copied to the shared namespace and become available to all agents during recall.
+
+## QMD Collections for Namespaces
+
+When namespaces are enabled, QMD needs entries for namespace-specific collections in `~/.config/qmd/index.yml`. The collection names follow the pattern `<qmdCollection>--ns--<namespace>`, where `<qmdCollection>` is the base collection name from your Engram config (default: `openclaw-engram`). This matches the runtime logic in `namespaceCollectionName()` (`src/namespaces/search.ts`). Check the gateway log for the exact names — Engram logs `QMD collection "..." not found` with the expected name when entries are missing.
+
+```yaml
+# Base collection (default namespace root)
+openclaw-engram:
+  path: ~/.openclaw/workspace/memory/local
+  extensions: [.md]
+
+# Shared namespace (for cross-agent memory)
+openclaw-engram--ns--shared:
+  path: ~/.openclaw/workspace/memory/local/namespaces/shared
+  extensions: [.md]
+
+# Main namespace (if using namespaces/ layout)
+openclaw-engram--ns--main:
+  path: ~/.openclaw/workspace/memory/local/namespaces/main
+  extensions: [.md]
+```
+
+**Note:** The exact collection names depend on your `qmdCollection` config value. The examples above use the default `openclaw-engram` base, which produces `openclaw-engram--ns--<namespace>` for namespace variants. If your `qmdCollection` is set to e.g. `my-memory`, the shared namespace collection would be `my-memory--ns--shared`.
+
+After adding entries, rebuild the indexes:
+
+```bash
+qmd update && qmd embed
+```
+
 ## Storage Layout
 
 Compatibility behavior:

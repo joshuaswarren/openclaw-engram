@@ -29,9 +29,12 @@ Add to `openclaw.json` under `plugins.entries.openclaw-engram.config`:
 
 ```jsonc
 {
-  "openaiApiKey": "${OPENAI_API_KEY}"
+  "openaiApiKey": "${OPENAI_API_KEY}",
+  "recallBudgetChars": 64000
 }
 ```
+
+**Important:** The `recallBudgetChars` setting controls how much memory context is injected into agent prompts. The default (8,000 chars) is too small for most deployments — profile and shared context alone can exhaust it, leaving no room for actual memories. Set it to 64,000 for large-context models (Claude, GPT-5) or 32,000 for smaller models. See [Recall Budget Tuning](config-reference.md#recall-budget-tuning).
 
 All other settings have sensible defaults. Config changes require a full gateway restart (hot reload via `SIGUSR1` does not fire `gateway_start`):
 
@@ -48,7 +51,17 @@ grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -5
 
 ## Set Up QMD (Recommended)
 
-QMD provides hybrid BM25 + vector + reranking search. Without it, Engram falls back to semantic embedding search (using your OpenAI key when available) and then recency-ordered file reads.
+[QMD](https://github.com/tobi/qmd) provides hybrid BM25 + vector + reranking search. Without it, Engram falls back to semantic embedding search (using your OpenAI key when available) and then recency-ordered file reads.
+
+**QMD 2.0+ is recommended.** QMD 1.x still works but 2.0 resolves several known issues natively (session ID crash, model override env vars, join performance). Install via bun or npm:
+
+```bash
+bun install -g @tobilu/qmd
+# or: npm install -g @tobilu/qmd
+
+# Verify
+qmd --version  # should show 2.0.0+
+```
 
 Add to `~/.config/qmd/index.yml`:
 
@@ -73,18 +86,45 @@ Enable in your plugin config:
 }
 ```
 
-### Recommended QMD Patches (as of 2026-02-14)
+### Upgrading from QMD 1.x to 2.0
 
-Apply these locally to `~/.bun/install/global/node_modules/qmd/` until merged upstream:
+QMD 2.0 is a drop-in upgrade — existing collections, indexes, and config files work without changes. The MCP tool interface (`query`, `get`, `multi_get`, `status`) is backward compatible.
 
-1. **[PR #166](https://github.com/tobi/qmd/pull/166) — HTTP daemon crash fix**
-   In `src/mcp.ts`, add `sessionIdGenerator: () => crypto.randomUUID()` to the `WebStandardStreamableHTTPServerTransport` constructor. Without this, the daemon crashes on the second MCP request.
+**What changed:**
+- Unified `search()` replaces the old query/search/structuredSearch split internally
+- MCP server rewritten as a clean SDK consumer (same external contract)
+- Source reorganized into `src/cli/` and `src/mcp/` subdirectories
+- New programmatic SDK: `import { createStore } from '@tobilu/qmd'`
+- `better-sqlite3` bumped to ^12.4.5 (Node 25 support)
 
-2. **[PR #112](https://github.com/tobi/qmd/pull/112) — Model override env vars**
-   Adds `QMD_EMBED_MODEL`, `QMD_RERANK_MODEL`, etc. Allows faster cold-start reranking with a smaller model.
+**Patches no longer needed:** The following QMD 1.x patches are resolved natively in 2.0:
+- PR #166 (MCP session ID crash) — built-in `sessionIdGenerator`
+- PR #112 (model override env vars) — `QMD_EMBED_MODEL`, `QMD_GENERATE_MODEL`, `QMD_RERANK_MODEL` supported
+- PR #117 (CROSS JOIN fix) — vector search uses two-step query pattern
 
-3. **[PR #117](https://github.com/tobi/qmd/pull/117) — SQLite pathological join fix**
-   Changes `JOIN` to `CROSS JOIN` in `searchFTS()`. Critical for large collections (90K+ files).
+**Upgrade steps:**
+
+```bash
+# 1. Install QMD 2.0
+bun install -g @tobilu/qmd
+
+# 2. If bun blocked the postinstall, rebuild native bindings
+cd ~/.bun/install/global/node_modules/better-sqlite3
+npm rebuild better-sqlite3
+
+# 3. Verify
+qmd --version       # 2.0.0+
+qmd status           # should show existing collections
+
+# 4. Restart the gateway
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+
+# 5. Verify Engram picked up QMD 2.0
+grep "cliVersion" ~/.openclaw/logs/gateway.log | tail -1
+# Should show: cliVersion=qmd 2.0.x
+```
+
+**Note:** If you used the OpenClaw patcher for QMD patches, those patches target QMD 1.x source paths that no longer exist in 2.0. The patcher will harmlessly skip them. You can remove old QMD patch entries from the patcher config.
 
 ## Five-Minute Config
 
@@ -93,6 +133,7 @@ Enable the most impactful features incrementally:
 ```jsonc
 {
   "openaiApiKey": "${OPENAI_API_KEY}",
+  "recallBudgetChars": 64000,
   "qmdEnabled": true,
   "qmdCollection": "openclaw-engram",
 

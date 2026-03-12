@@ -308,6 +308,7 @@ Key settings:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `recallBudgetChars` | `maxMemoryTokens * 4` | **Total character budget for recall context injection.** Default is 8,000 chars — too small for most deployments. Set to 64,000+ for large-context models. See [docs/config-reference.md](docs/config-reference.md#recall-budget-tuning). |
 | `openaiApiKey` | `(env fallback)` | Optional OpenAI API key or `${ENV_VAR}` reference for direct-client paths |
 | `model` | `gpt-5.2` | LLM model for extraction |
 | `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
