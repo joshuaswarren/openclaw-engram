@@ -924,6 +924,17 @@ export class QmdClient implements SearchBackend {
     return versionAtLeast(parseQmdVersion(this.cliVersion), [1, 1, 2]);
   }
 
+  /**
+   * QMD v2 (>= 2.0.0) uses a new MCP tool API:
+   * - `search` and `vsearch` tools removed; only `query` tool exists
+   * - `query` accepts `{ searches: [{ type, query }], collections?: string[] }`
+   *   instead of `{ query: string, collection?: string }`
+   * - `collection` (singular) → `collections` (plural array)
+   */
+  private isQmdV2(): boolean {
+    return versionAtLeast(parseQmdVersion(this.cliVersion), [2, 0, 0]);
+  }
+
   private resolveSearchOptions(options?: SearchQueryOptions): SearchQueryOptions | undefined {
     const normalized = normalizeSearchOptions(options);
     if (!normalized) return undefined;
@@ -1132,19 +1143,37 @@ export class QmdClient implements SearchBackend {
     if (!this.daemonSession || !this.daemonAvailable) return null;
 
     const startedAtMs = Date.now();
+    const v2 = this.isQmdV2();
     try {
-      const args: Record<string, unknown> = {
-        query,
-        limit: maxResults,
-      };
-      if (collection) {
-        args.collection = collection;
-      }
-      if (options?.intent) {
-        args.intent = options.intent;
-      }
-      if (options?.explain === true) {
-        args.explain = true;
+      let args: Record<string, unknown>;
+      if (v2) {
+        // QMD v2: query tool expects { searches: [...], collections?: [...] }
+        // A plain query without type prefix uses LLM auto-expansion on the daemon side
+        const searches: Array<{ type: string; query: string }> = [{ type: "lex", query }];
+        // Add a vec sub-query for hybrid recall (mirrors v1 behavior)
+        searches.push({ type: "vec", query });
+        args = { searches, limit: maxResults };
+        if (collection) {
+          args.collections = [collection];
+        }
+        if (options?.intent) {
+          args.intent = options.intent;
+        }
+        if (options?.explain === true) {
+          args.explain = true;
+        }
+      } else {
+        // QMD v1: query tool accepts { query, collection?, limit }
+        args = { query, limit: maxResults };
+        if (collection) {
+          args.collection = collection;
+        }
+        if (options?.intent) {
+          args.intent = options.intent;
+        }
+        if (options?.explain === true) {
+          args.explain = true;
+        }
       }
 
       const result = await this.daemonSession.callTool("query", args, QMD_DAEMON_TIMEOUT_MS, signal);
@@ -1152,13 +1181,13 @@ export class QmdClient implements SearchBackend {
 
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(
-          `SLOW QMD daemon query: durationMs=${durationMs} collection=${collection ?? "global"} maxResults=${maxResults} queryChars=${query.length}`,
+          `SLOW QMD daemon query: durationMs=${durationMs} collection=${collection ?? "global"} maxResults=${maxResults} queryChars=${query.length} v2=${v2}`,
         );
       }
 
       const results = parseMcpSearchResult(result, "daemon");
 
-      log.debug(`QMD daemon search: ${results.length} results in ${durationMs}ms`);
+      log.debug(`QMD daemon search: ${results.length} results in ${durationMs}ms (v2=${v2})`);
       this.recordDaemonSuccess();
       return results;
     } catch (err) {
@@ -1187,16 +1216,33 @@ export class QmdClient implements SearchBackend {
     if (!this.daemonSession || !this.daemonAvailable) return null;
 
     const startedAtMs = Date.now();
+    const v2 = this.isQmdV2();
     try {
-      const result = await this.daemonSession.callTool(
-        "search",
-        { query, limit: maxResults, collection },
-        QMD_DAEMON_TIMEOUT_MS,
-        signal,
-      );
+      let result: unknown;
+      if (v2) {
+        // QMD v2: no `search` tool — use `query` with lex-only sub-query
+        result = await this.daemonSession.callTool(
+          "query",
+          {
+            searches: [{ type: "lex", query }],
+            collections: [collection],
+            limit: maxResults,
+          },
+          QMD_DAEMON_TIMEOUT_MS,
+          signal,
+        );
+      } else {
+        // QMD v1: dedicated `search` tool for BM25
+        result = await this.daemonSession.callTool(
+          "search",
+          { query, limit: maxResults, collection },
+          QMD_DAEMON_TIMEOUT_MS,
+          signal,
+        );
+      }
       const durationMs = Date.now() - startedAtMs;
       const results = parseMcpSearchResult(result);
-      log.debug(`QMD daemon bm25: ${results.length} results in ${durationMs}ms`);
+      log.debug(`QMD daemon bm25: ${results.length} results in ${durationMs}ms (v2=${v2})`);
       this.recordDaemonSuccess();
       return results;
     } catch (err) {
@@ -1223,16 +1269,33 @@ export class QmdClient implements SearchBackend {
     if (!this.daemonSession || !this.daemonAvailable) return null;
 
     const startedAtMs = Date.now();
+    const v2 = this.isQmdV2();
     try {
-      const result = await this.daemonSession.callTool(
-        "vsearch",
-        { query, limit: maxResults, collection },
-        QMD_DAEMON_TIMEOUT_MS,
-        signal,
-      );
+      let result: unknown;
+      if (v2) {
+        // QMD v2: no `vsearch` tool — use `query` with vec-only sub-query
+        result = await this.daemonSession.callTool(
+          "query",
+          {
+            searches: [{ type: "vec", query }],
+            collections: [collection],
+            limit: maxResults,
+          },
+          QMD_DAEMON_TIMEOUT_MS,
+          signal,
+        );
+      } else {
+        // QMD v1: dedicated `vsearch` tool for vector search
+        result = await this.daemonSession.callTool(
+          "vsearch",
+          { query, limit: maxResults, collection },
+          QMD_DAEMON_TIMEOUT_MS,
+          signal,
+        );
+      }
       const durationMs = Date.now() - startedAtMs;
       const results = parseMcpSearchResult(result);
-      log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms`);
+      log.debug(`QMD daemon vsearch: ${results.length} results in ${durationMs}ms (v2=${v2})`);
       this.recordDaemonSuccess();
       return results;
     } catch (err) {
