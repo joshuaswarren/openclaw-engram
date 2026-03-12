@@ -960,7 +960,6 @@ ${truncatedConversation}`;
         },
         { role: "user", content: conversation },
       ],
-      temperature: 0.3,
       ...buildChatCompletionTokenLimit(this.config.model, 4096, {
         assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
       }),
