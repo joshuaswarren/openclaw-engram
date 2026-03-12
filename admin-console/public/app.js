@@ -246,6 +246,7 @@ function renderEntityList(entities) {
 
 function renderQuality(response) {
   const summary = $("qualitySummary");
+  if (!summary) return;
   clearChildren(summary);
   const cards = [
     ["Memories", String(response.totalMemories ?? 0)],
@@ -256,7 +257,6 @@ function renderQuality(response) {
       : "n/a"],
   ];
   cards.forEach(([label, value]) => {
-    if (!summary) return;
     const card = document.createElement("div");
     card.className = "quality-stat";
     const strong = document.createElement("strong");
