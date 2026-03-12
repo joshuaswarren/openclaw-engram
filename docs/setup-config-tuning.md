@@ -407,7 +407,7 @@ Recall budget (most important):
 - **Set `recallBudgetChars` explicitly.** The default (8,000 chars) is too small for most deployments. With a profile (~7,500 chars) and shared context (~4,000 chars), the default budget silently drops all actual memories.
 - For 200K+ context models (Claude, GPT-5): use `64000`–`128000`.
 - For smaller context models (32K–128K): use `32000`–`64000`.
-- Diagnose via `last_recall.json`: check `omittedSections` for `"memories"`.
+- Diagnose via `last_recall.json`: if `memoryIds` is non-empty but `finalContextChars` is close to `recallBudgetChars`, the budget was exhausted and the `memories` section (which is protected) was truncated to heading-only.
 
 Reliability / load:
 - Keep extraction guardrails enabled (defaults are safe):
@@ -436,7 +436,7 @@ Reliability / load:
   - Populate `cronRecallAllowlist` with only context-heavy cron job ids/patterns (`*:cron:<job-id>:*`).
   - Keep ingestion/integration script crons out of the allowlist unless they genuinely need memory context.
 - QMD version:
-  - **QMD 2.0+ is required.** All 1.x patches (PRs #166, #112, #117) are resolved natively in 2.0.
+  - **QMD 2.0+ is recommended.** All 1.x patches (PRs #166, #112, #117) are resolved natively in 2.0. QMD 1.x still works but requires manual patches.
   - The QMD daemon keeps models warm — queries drop from ~13s to ~30ms after the first call.
   - See [Getting Started](getting-started.md#upgrading-from-qmd-1x-to-20) for upgrade steps.
 - Local LLM failure damping:

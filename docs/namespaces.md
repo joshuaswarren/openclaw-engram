@@ -29,7 +29,7 @@ If this directory is empty or missing, non-generalist agents will have no cross-
 
 ## QMD Collections for Namespaces
 
-When namespaces are enabled, QMD needs entries for namespace-specific collections in `~/.config/qmd/index.yml`. The collection names follow the pattern `<base-collection>--ns--<namespace>`:
+When namespaces are enabled, QMD needs entries for namespace-specific collections in `~/.config/qmd/index.yml`. The collection names follow the pattern `<hot-facts-collection>--ns--<namespace>`, where the hot-facts collection name depends on your configuration. Check the gateway log for the exact names — Engram logs `QMD collection "..." not found` with the expected name when entries are missing.
 
 ```yaml
 # Base collection (legacy / default namespace root)
@@ -37,16 +37,23 @@ openclaw-engram:
   path: ~/.openclaw/workspace/memory/local
   extensions: [.md]
 
-# Shared namespace
+# Hot facts collection (used for fast recall)
+openclaw-engram-hot-facts:
+  path: ~/.openclaw/workspace/memory/local/facts
+  extensions: [.md]
+
+# Shared namespace (for cross-agent memory)
 openclaw-engram-hot-facts--ns--shared:
   path: ~/.openclaw/workspace/memory/local/namespaces/shared
   extensions: [.md]
 
-# Default namespace (if migrated to namespaces/ layout)
+# Main namespace (if using namespaces/ layout)
 openclaw-engram-hot-facts--ns--main:
   path: ~/.openclaw/workspace/memory/local/namespaces/main
   extensions: [.md]
 ```
+
+**Note:** The exact collection names depend on your `qmdCollection` config. The examples above use the default `openclaw-engram` base, which produces `openclaw-engram-hot-facts` for the facts collection and `openclaw-engram-hot-facts--ns--<namespace>` for namespace variants.
 
 After adding entries, rebuild the indexes:
 
