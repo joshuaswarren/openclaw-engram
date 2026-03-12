@@ -1169,6 +1169,77 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
   }
 });
 
+test("access HTTP server rate-limits MCP write tool calls", async () => {
+  const server = new EngramAccessHttpServer({
+    service: createFakeService(),
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 4096,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const headers = {
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    };
+
+    // Exhaust the write rate limit via MCP memory_store calls
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: i + 10,
+          method: "tools/call",
+          params: {
+            name: "engram.memory_store",
+            arguments: { content: `memory ${i}` },
+          },
+        }),
+      });
+      assert.equal(res.status, 200);
+    }
+
+    // 31st write should be rate-limited
+    const limited = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 999,
+        method: "tools/call",
+        params: {
+          name: "engram.memory_store",
+          arguments: { content: "overflow" },
+        },
+      }),
+    });
+    assert.equal(limited.status, 429);
+
+    // Read-only MCP calls should still work
+    const recallRes = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1000,
+        method: "tools/call",
+        params: {
+          name: "engram.recall",
+          arguments: { query: "test" },
+        },
+      }),
+    });
+    assert.equal(recallRes.status, 200);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server returns 400 for explicit-capture validation errors", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-http-validation-"));
   const storage = new StorageManager(memoryDir);

@@ -375,12 +375,24 @@ export class EngramAccessHttpServer {
 
   private async handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readJsonBody(req);
-    const response = await this.mcpServer.handleRequest(body as {
+    const request = body as {
       jsonrpc?: string;
       id?: string | number | null;
       method?: string;
       params?: Record<string, unknown>;
-    });
+    };
+
+    // Enforce write rate limiting for MCP tool calls that mutate state,
+    // matching the same protection applied to the REST write endpoints.
+    if (request.method === "tools/call") {
+      const toolName = typeof request.params?.name === "string" ? request.params.name : "";
+      if (toolName === "engram.memory_store" || toolName === "engram.suggestion_submit") {
+        this.ensureWriteRateLimitAvailable();
+        this.recordWriteRateLimitHit();
+      }
+    }
+
+    const response = await this.mcpServer.handleRequest(request);
     if (response === null) {
       res.statusCode = 202;
       res.end();
