@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 /**
  * opik-exporter.ts — Engram-native Opik trace exporter
  *
@@ -102,6 +102,28 @@ function readOpikOpenclawConfig(log?: LoggerBackend): Partial<OpikExporterConfig
     log?.debug?.(`[opik-exporter] could not read opik-openclaw config: ${err}`);
     return {};
   }
+}
+
+// ---------------------------------------------------------------------------
+// UUID v7 generator (Opik requires v7, not v4)
+// ---------------------------------------------------------------------------
+
+function uuidV7(): string {
+  const now = Date.now();
+  const bytes = randomBytes(16);
+  // Timestamp: 48-bit ms since epoch in bytes 0-5
+  bytes[0] = (now / 2 ** 40) & 0xff;
+  bytes[1] = (now / 2 ** 32) & 0xff;
+  bytes[2] = (now / 2 ** 24) & 0xff;
+  bytes[3] = (now / 2 ** 16) & 0xff;
+  bytes[4] = (now / 2 ** 8) & 0xff;
+  bytes[5] = now & 0xff;
+  // Version 7
+  bytes[6] = (bytes[6] & 0x0f) | 0x70;
+  // Variant 10xx
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,8 +319,8 @@ export class OpikExporter {
     if (evt.timings) metadata.timings = evt.timings;
 
     const span = {
-      id: randomUUID(),
-      trace_id: evt.sessionKey ? this.sessionToTraceId(evt.sessionKey) : randomUUID(),
+      id: uuidV7(),
+      trace_id: evt.sessionKey ? this.sessionToTraceId(evt.sessionKey) : uuidV7(),
       project_name: this.cfg.projectName,
       name: "engram:recall",
       type: "general",
@@ -355,8 +377,8 @@ export class OpikExporter {
     if (evt.tokenUsage?.total != null) usage.total_tokens = evt.tokenUsage.total;
 
     const span: Record<string, unknown> = {
-      id: state?.spanId ?? randomUUID(),
-      trace_id: state?.traceId ?? randomUUID(),
+      id: state?.spanId ?? uuidV7(),
+      trace_id: state?.traceId ?? uuidV7(),
       project_name: this.cfg.projectName,
       name: `engram:${evt.operation}`,
       type: "llm",
@@ -387,15 +409,17 @@ export class OpikExporter {
   // -------------------------------------------------------------------------
 
   /**
-   * Convert a sessionKey to a stable UUID v5-like deterministic ID so that
+   * Convert a sessionKey to a stable, deterministic UUID v7-shaped ID so that
    * spans for the same session share a trace_id and are threaded in Opik.
-   * Uses SHA-256 so sessions with similar keys produce distinct trace IDs.
+   * Uses SHA-256 for collision resistance. The timestamp bytes (0-5) come from
+   * the hash itself — they don't reflect real time, but Opik only validates
+   * the version/variant bits, not timestamp ordering.
    */
   private sessionToTraceId(sessionKey: string): string {
-    // SHA-256 gives 32 bytes; we use the first 16 for a collision-resistant UUID.
     const digest = createHash("sha256").update(sessionKey).digest();
-    // Stamp UUID v4/variant-1 bits so the output is a valid RFC-4122 UUID shape.
-    digest[6] = (digest[6] & 0x0f) | 0x40;
+    // Version 7 (bytes 0-5 are hash-derived, not real timestamps)
+    digest[6] = (digest[6] & 0x0f) | 0x70;
+    // Variant 10xx
     digest[8] = (digest[8] & 0x3f) | 0x80;
     const hex = digest.slice(0, 16).toString("hex");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
