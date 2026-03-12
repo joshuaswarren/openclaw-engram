@@ -7,28 +7,34 @@ import { FallbackLlmClient } from "../src/fallback-llm.ts";
 import type { GatewayConfig } from "../src/types.ts";
 
 test("usesMaxCompletionTokens detects newer OpenAI chat-completions models", () => {
-  assert.equal(usesMaxCompletionTokens("gpt-5.2"), true);
-  assert.equal(usesMaxCompletionTokens("gpt-5-mini"), true);
-  assert.equal(usesMaxCompletionTokens("gpt-4o"), true);
-  assert.equal(usesMaxCompletionTokens("gpt-4o-mini"), true);
-  assert.equal(usesMaxCompletionTokens("gpt-4.1"), true);
-  assert.equal(usesMaxCompletionTokens("gpt-4.1-mini"), true);
-  assert.equal(usesMaxCompletionTokens("o3-mini"), true);
+  assert.equal(usesMaxCompletionTokens("gpt-5.2", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("gpt-5-mini", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("gpt-4o", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("gpt-4o-mini", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("gpt-4.1", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("gpt-4.1-mini", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("o3-mini", { assumeOpenAI: true }), true);
+  assert.equal(usesMaxCompletionTokens("gpt-5.2"), false);
+  assert.equal(usesMaxCompletionTokens("o3-mini"), false);
   assert.equal(usesMaxCompletionTokens("gpt-4orca"), false);
   assert.equal(usesMaxCompletionTokens("gpt-5compat"), false);
+  assert.equal(usesMaxCompletionTokens("o2-local", { assumeOpenAI: true }), false);
   assert.equal(usesMaxCompletionTokens("orca2"), false);
   assert.equal(usesMaxCompletionTokens("llama3.2"), false);
 });
 
 test("buildChatCompletionTokenLimit selects max_completion_tokens for gpt-5 models", () => {
-  assert.deepEqual(buildChatCompletionTokenLimit("gpt-5.2", 4096), {
+  assert.deepEqual(buildChatCompletionTokenLimit("gpt-5.2", 4096, { assumeOpenAI: true }), {
     max_completion_tokens: 4096,
   });
-  assert.deepEqual(buildChatCompletionTokenLimit("gpt-4o-mini", 1024), {
+  assert.deepEqual(buildChatCompletionTokenLimit("gpt-4o-mini", 1024, { assumeOpenAI: true }), {
     max_completion_tokens: 1024,
   });
-  assert.deepEqual(buildChatCompletionTokenLimit("gpt-4.1", 2048), {
+  assert.deepEqual(buildChatCompletionTokenLimit("gpt-4.1", 2048, { assumeOpenAI: true }), {
     max_completion_tokens: 2048,
+  });
+  assert.deepEqual(buildChatCompletionTokenLimit("o2-local", 2048, { assumeOpenAI: true }), {
+    max_tokens: 2048,
   });
 });
 

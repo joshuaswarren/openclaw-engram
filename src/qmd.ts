@@ -1250,6 +1250,9 @@ export class QmdClient implements SearchBackend {
 
       return parseQmdSearchStdout(stdout, "subprocess");
     } catch (err) {
+      if (isCallerCancellation(err, signal)) {
+        throw isAbortError(err) ? err : abortError("QMD subprocess search aborted");
+      }
       log.debug(`QMD search failed: ${err}`);
       return [];
     }
@@ -1273,6 +1276,9 @@ export class QmdClient implements SearchBackend {
       log.debug(`QMD bm25: ${Date.now() - startedAtMs}ms`);
       return parseQmdSearchStdout(stdout);
     } catch (err) {
+      if (isCallerCancellation(err, signal)) {
+        throw isAbortError(err) ? err : abortError("QMD subprocess bm25 aborted");
+      }
       log.debug(`QMD bm25 search failed: ${err}`);
       return [];
     }
@@ -1296,6 +1302,9 @@ export class QmdClient implements SearchBackend {
       log.debug(`QMD vsearch: ${Date.now() - startedAtMs}ms`);
       return parseQmdSearchStdout(stdout);
     } catch (err) {
+      if (isCallerCancellation(err, signal)) {
+        throw isAbortError(err) ? err : abortError("QMD subprocess vsearch aborted");
+      }
       log.debug(`QMD vsearch failed: ${err}`);
       return [];
     }
@@ -1325,6 +1334,9 @@ export class QmdClient implements SearchBackend {
 
       return parseQmdSearchStdout(stdout);
     } catch (err) {
+      if (isCallerCancellation(err, signal)) {
+        throw isAbortError(err) ? err : abortError("QMD subprocess global search aborted");
+      }
       log.debug(`QMD global search failed: ${err}`);
       return [];
     }

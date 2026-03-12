@@ -218,7 +218,13 @@ export class FallbackLlmClient {
         return await this.callAnthropic(model.providerConfig, model.modelId, messages, options);
       case "openai-completions":
       default:
-        return await this.callOpenAI(model.providerConfig, model.modelId, messages, options);
+        return await this.callOpenAI(
+          model.providerConfig,
+          model.modelId,
+          messages,
+          options,
+          model.providerId === "openai",
+        );
     }
   }
 
@@ -230,6 +236,7 @@ export class FallbackLlmClient {
     modelId: string,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions,
+    assumeOpenAI: boolean,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
     const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
@@ -249,7 +256,9 @@ export class FallbackLlmClient {
       model: modelId,
       messages,
       temperature: options.temperature ?? 0.3,
-      ...buildChatCompletionTokenLimit(modelId, options.maxTokens ?? 4096),
+      ...buildChatCompletionTokenLimit(modelId, options.maxTokens ?? 4096, {
+        assumeOpenAI,
+      }),
     };
 
     const response = await fetch(url, {

@@ -6,20 +6,24 @@ function matchesModelFamily(normalized: string, familyPattern: RegExp): boolean 
   return familyPattern.test(normalized);
 }
 
-export function usesMaxCompletionTokens(model: string): boolean {
+export function usesMaxCompletionTokens(model: string, options?: { assumeOpenAI?: boolean }): boolean {
   const normalized = normalizedModel(model);
+  if (options?.assumeOpenAI !== true) return false;
   if (matchesModelFamily(normalized, /^gpt-5(?:$|[-.])/)) return true;
   if (matchesModelFamily(normalized, /^gpt-4o(?:$|[-.])/)) return true;
   if (matchesModelFamily(normalized, /^gpt-4\.1(?:$|[-.])/)) return true;
-  return matchesModelFamily(normalized, /^o\d+(?:$|[-.])/);
+  if (matchesModelFamily(normalized, /^o1(?:$|[-.])/)) return true;
+  if (matchesModelFamily(normalized, /^o3(?:$|[-.])/)) return true;
+  return matchesModelFamily(normalized, /^o4-mini(?:$|[-.])/);
 }
 
 export function buildChatCompletionTokenLimit(
   model: string,
   maxTokens: number,
+  options?: { assumeOpenAI?: boolean },
 ): { max_tokens: number } | { max_completion_tokens: number } {
   const safeMaxTokens = Math.max(0, Math.floor(maxTokens));
-  if (usesMaxCompletionTokens(model)) {
+  if (usesMaxCompletionTokens(model, options)) {
     return { max_completion_tokens: safeMaxTokens };
   }
   return { max_tokens: safeMaxTokens };

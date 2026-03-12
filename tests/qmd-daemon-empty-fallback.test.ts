@@ -338,7 +338,7 @@ exec "${process.execPath}" "${daemonScriptPath}" "$@"
   daemonSession.invalidate();
 });
 
-test("search aborts while waiting on the QMD mutex", async () => {
+test("search aborts while waiting on the QMD mutex", { concurrency: false }, async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "engram-qmd-abort-wait-"));
   const scriptPath = path.join(tmpDir, "fake-qmd");
   await writeFile(
@@ -367,11 +367,103 @@ printf '[]'
   const secondSearch = client.search("second", undefined, 3, undefined, { signal: abortController.signal });
   setTimeout(() => abortController.abort(), 50);
 
-  await secondSearch;
+  await expectAbortError(
+    () => secondSearch,
+    "operation aborted while waiting for qmd mutex",
+  );
   const elapsedMs = Date.now() - startedAt;
   await firstSearch;
 
   assert.ok(elapsedMs < 1000, `expected aborted search to resolve quickly, saw ${elapsedMs}ms`);
+});
+
+async function createSlowQmdScript(prefix: string): Promise<string> {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  const scriptPath = path.join(tmpDir, "fake-qmd");
+  await writeFile(
+    scriptPath,
+    `#!/bin/sh
+set -eu
+sleep 2
+printf '[]'
+`,
+    "utf8",
+  );
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}
+
+async function expectAbortError(
+  fn: () => Promise<unknown>,
+  message?: string,
+): Promise<void> {
+  await assert.rejects(fn, (err: unknown) => {
+    return (
+      err instanceof Error &&
+      err.name === "AbortError" &&
+      (typeof message !== "string" || err.message.includes(message))
+    );
+  });
+}
+
+test("search aborts during subprocess execution instead of returning an empty result", { concurrency: false }, async () => {
+  const scriptPath = await createSlowQmdScript("engram-qmd-subprocess-search-abort-");
+  const client = new QmdClient("openclaw-engram", 5, { qmdPath: scriptPath }) as any;
+  client.available = true;
+  client.daemonAvailable = false;
+  client.maybeProbeDaemon = async () => {};
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 50);
+
+  await expectAbortError(
+    () => client.search("search abort", undefined, 3, undefined, { signal: controller.signal }),
+  );
+});
+
+test("searchGlobal aborts during subprocess execution instead of returning an empty result", { concurrency: false }, async () => {
+  const scriptPath = await createSlowQmdScript("engram-qmd-subprocess-global-abort-");
+  const client = new QmdClient("openclaw-engram", 5, { qmdPath: scriptPath }) as any;
+  client.available = true;
+  client.daemonAvailable = false;
+  client.maybeProbeDaemon = async () => {};
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 50);
+
+  await expectAbortError(
+    () => client.searchGlobal("global abort", 3, { signal: controller.signal }),
+  );
+});
+
+test("bm25Search aborts during subprocess execution instead of returning an empty result", { concurrency: false }, async () => {
+  const scriptPath = await createSlowQmdScript("engram-qmd-subprocess-bm25-abort-");
+  const client = new QmdClient("openclaw-engram", 5, { qmdPath: scriptPath }) as any;
+  client.available = true;
+  client.daemonAvailable = false;
+  client.maybeProbeDaemon = async () => {};
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 50);
+
+  await expectAbortError(
+    () => client.bm25Search("bm25 abort", undefined, 3, { signal: controller.signal }),
+  );
+});
+
+test("vectorSearch aborts during subprocess execution instead of returning an empty result", { concurrency: false }, async () => {
+  const scriptPath = await createSlowQmdScript("engram-qmd-subprocess-vsearch-abort-");
+  const client = new QmdClient("openclaw-engram", 5, { qmdPath: scriptPath }) as any;
+  client.available = true;
+  client.daemonAvailable = false;
+  client.maybeProbeDaemon = async () => {};
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 50);
+
+  await expectAbortError(
+    () => client.vectorSearch("vector abort", undefined, 3, { signal: controller.signal }),
+  );
 });
 
 test("searchViaDaemon keeps daemon session active on AbortError", async () => {
