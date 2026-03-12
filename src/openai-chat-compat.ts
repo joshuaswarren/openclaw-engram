@@ -6,6 +6,15 @@ function matchesModelFamily(normalized: string, familyPattern: RegExp): boolean 
   return familyPattern.test(normalized);
 }
 
+export function shouldAssumeOpenAiChatCompletions(baseUrl?: string): boolean {
+  if (!baseUrl) return true;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === "api.openai.com";
+  } catch {
+    return false;
+  }
+}
+
 export function usesMaxCompletionTokens(model: string, options?: { assumeOpenAI?: boolean }): boolean {
   const normalized = normalizedModel(model);
   if (options?.assumeOpenAI !== true) return false;

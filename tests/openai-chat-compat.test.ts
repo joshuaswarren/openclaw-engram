@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChatCompletionTokenLimit, usesMaxCompletionTokens } from "../src/openai-chat-compat.ts";
+import {
+  buildChatCompletionTokenLimit,
+  shouldAssumeOpenAiChatCompletions,
+  usesMaxCompletionTokens,
+} from "../src/openai-chat-compat.ts";
 import { parseConfig } from "../src/config.ts";
 import { ExtractionEngine } from "../src/extraction.ts";
 import { FallbackLlmClient } from "../src/fallback-llm.ts";
@@ -36,6 +40,13 @@ test("buildChatCompletionTokenLimit selects max_completion_tokens for gpt-5 mode
   assert.deepEqual(buildChatCompletionTokenLimit("o2-local", 2048, { assumeOpenAI: true }), {
     max_tokens: 2048,
   });
+});
+
+test("shouldAssumeOpenAiChatCompletions only enables native OpenAI endpoints", () => {
+  assert.equal(shouldAssumeOpenAiChatCompletions(), true);
+  assert.equal(shouldAssumeOpenAiChatCompletions("https://api.openai.com/v1"), true);
+  assert.equal(shouldAssumeOpenAiChatCompletions("https://api.example.test/v1"), false);
+  assert.equal(shouldAssumeOpenAiChatCompletions("http://localhost:11434/v1"), false);
 });
 
 test("extractWithDirectClient uses max_completion_tokens for gpt-5 chat completions", async () => {
@@ -79,6 +90,50 @@ test("extractWithDirectClient uses max_completion_tokens for gpt-5 chat completi
   assert.equal(capturedBody?.model, "gpt-5.2");
   assert.equal("max_completion_tokens" in (capturedBody ?? {}), true);
   assert.equal("max_tokens" in (capturedBody ?? {}), false);
+});
+
+test("extractWithDirectClient keeps max_tokens for custom chat-compatible base URLs", async () => {
+  const engine = new ExtractionEngine(
+    parseConfig({
+      memoryDir: ".tmp/memory",
+      workspaceDir: ".tmp/workspace",
+      openaiApiKey: "test-key",
+      openaiBaseUrl: "https://api.example.test/v1",
+      model: "gpt-5.2",
+    }),
+  ) as any;
+
+  let capturedBody: Record<string, unknown> | null = null;
+  engine.client = {
+    chat: {
+      completions: {
+        create: async (body: Record<string, unknown>) => {
+          capturedBody = body;
+          return {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    facts: [],
+                    entities: [],
+                    profileUpdates: [],
+                    questions: [],
+                    relationships: [],
+                  }),
+                },
+              },
+            ],
+          };
+        },
+      },
+    },
+  };
+
+  const result = await engine.extractWithDirectClient("hello world");
+  assert.ok(result);
+  assert.equal(capturedBody?.model, "gpt-5.2");
+  assert.equal("max_completion_tokens" in (capturedBody ?? {}), false);
+  assert.equal("max_tokens" in (capturedBody ?? {}), true);
 });
 
 test("fallback OpenAI client uses max_completion_tokens for gpt-5 providers", async () => {

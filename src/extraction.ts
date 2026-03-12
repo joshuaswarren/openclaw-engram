@@ -29,7 +29,7 @@ import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
-import { buildChatCompletionTokenLimit } from "./openai-chat-compat.js";
+import { buildChatCompletionTokenLimit, shouldAssumeOpenAiChatCompletions } from "./openai-chat-compat.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 type ExtractedFactResult = ExtractionResult["facts"][number];
@@ -99,6 +99,10 @@ export class ExtractionEngine {
     } catch {
       // Never throw — broken subscriber must not crash extraction
     }
+  }
+
+  private directClientUsesOpenAiTokenSemantics(): boolean {
+    return shouldAssumeOpenAiChatCompletions(this.config.openaiBaseUrl);
   }
 
   private sanitizeExtractionResult(result: ExtractionResult, messageTimestamp?: Date): ExtractionResult {
@@ -957,7 +961,9 @@ ${truncatedConversation}`;
         { role: "user", content: conversation },
       ],
       temperature: 0.3,
-      ...buildChatCompletionTokenLimit(this.config.model, 4096, { assumeOpenAI: true }),
+      ...buildChatCompletionTokenLimit(this.config.model, 4096, {
+        assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+      }),
     });
 
     const content = response.choices?.[0]?.message?.content?.trim();
@@ -1268,7 +1274,9 @@ Respond with valid JSON only, matching this schema:
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
-        ...buildChatCompletionTokenLimit(this.config.model, 4096, { assumeOpenAI: true }),
+        ...buildChatCompletionTokenLimit(this.config.model, 4096, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
       });
 
       const rawContent = response.choices?.[0]?.message?.content?.trim();
@@ -1540,7 +1548,9 @@ Respond with valid JSON matching this schema:
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
-        ...buildChatCompletionTokenLimit(this.config.model, 4096, { assumeOpenAI: true }),
+        ...buildChatCompletionTokenLimit(this.config.model, 4096, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
       });
 
       const rawContent = response.choices?.[0]?.message?.content?.trim();
@@ -1753,7 +1763,9 @@ Respond with valid JSON matching this schema:
         ],
         ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
         temperature: 0.3,
-        ...buildChatCompletionTokenLimit(this.config.model, 4096, { assumeOpenAI: true }),
+        ...buildChatCompletionTokenLimit(this.config.model, 4096, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
       });
 
       const rawContent = response.choices?.[0]?.message?.content?.trim();
@@ -1969,7 +1981,9 @@ Respond with valid JSON matching this schema:
           { role: "user", content: input },
         ],
         temperature: 0.3,
-        ...buildChatCompletionTokenLimit(this.config.model, 2048, { assumeOpenAI: true }),
+        ...buildChatCompletionTokenLimit(this.config.model, 2048, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
       });
 
       const normalized = this.normalizeContradictionVerificationResult(
@@ -2083,7 +2097,9 @@ Respond with valid JSON matching this schema:
           { role: "user", content: input },
         ],
         temperature: 0.3,
-        ...buildChatCompletionTokenLimit(this.config.model, 2048, { assumeOpenAI: true }),
+        ...buildChatCompletionTokenLimit(this.config.model, 2048, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
       });
 
       const normalized = this.normalizeSuggestedLinksResult(
@@ -2186,7 +2202,9 @@ Respond with valid JSON matching this schema:
           { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
         ],
         temperature: 0.3,
-        ...buildChatCompletionTokenLimit(this.config.model, 4096, { assumeOpenAI: true }),
+        ...buildChatCompletionTokenLimit(this.config.model, 4096, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
       });
 
       const normalized = this.normalizeMemorySummaryResult(
