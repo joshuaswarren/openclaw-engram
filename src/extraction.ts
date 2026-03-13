@@ -736,18 +736,23 @@ export class ExtractionEngine {
           const sanitized = this.sanitizeExtractionResult(directResult, messageTimestamp);
           return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
-        // Emit error event so Opik sees the direct client failure before fallback
-        this.emit({
-          kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
-          durationMs: Date.now() - startTime, error: "direct client returned no result",
-        });
+        // Emit error event so Opik sees the direct client failure before fallback.
+        // Wrapped in try/catch so a subscriber error doesn't break the fallback path.
+        try {
+          this.emit({
+            kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+            durationMs: Date.now() - startTime, error: "direct client returned no result",
+          });
+        } catch { /* trace emit must not block fallback */ }
         closedDirectTrace = true;
         log.info("extraction: direct client returned no result, falling back to gateway AI");
       } catch (err) {
-        this.emit({
-          kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
-          durationMs: Date.now() - startTime, error: String(err),
-        });
+        try {
+          this.emit({
+            kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+            durationMs: Date.now() - startTime, error: String(err),
+          });
+        } catch { /* trace emit must not block fallback */ }
         closedDirectTrace = true;
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
       }
@@ -755,10 +760,12 @@ export class ExtractionEngine {
 
     // Close any orphaned direct-path llm_start (e.g., local LLM failed, no direct client)
     if (emittedDirectStart && !closedDirectTrace) {
-      this.emit({
-        kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
-        durationMs: Date.now() - startTime, error: "local LLM failed, handing off to gateway fallback",
-      });
+      try {
+        this.emit({
+          kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+          durationMs: Date.now() - startTime, error: "local LLM failed, handing off to gateway fallback",
+        });
+      } catch { /* trace emit must not block fallback */ }
     }
 
     // Fall back to gateway's default AI — emit a fresh llm_start so the fallback

@@ -469,7 +469,8 @@ export class OpikExporter {
       const retrying = this.pendingTraces.get(traceId);
       if (retrying) {
         await retrying;
-        return;
+        // Only return if the retry actually succeeded.
+        if (this.createdTraces.has(traceId)) return;
       }
       // No one else retrying; fall through to create.
     }
@@ -485,10 +486,13 @@ export class OpikExporter {
       };
 
       const ok = await postTraceBatch(this.cfg, [trace], this.log);
-      this.pendingTraces.delete(traceId);
-      if (!ok) return; // transient failure — allow retry on next span
+      if (!ok) {
+        this.pendingTraces.delete(traceId);
+        return; // transient failure — allow retry on next span
+      }
 
       this.createdTraces.add(traceId);
+      this.pendingTraces.delete(traceId);
 
       // Cap the set size to prevent unbounded growth in long-running processes.
       if (this.createdTraces.size > 10_000) {
