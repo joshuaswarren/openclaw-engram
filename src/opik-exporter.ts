@@ -459,12 +459,13 @@ export class OpikExporter {
   ): Promise<void> {
     if (this.createdTraces.has(traceId)) return;
 
-    // If another call is already creating this trace, wait for it instead of
-    // returning early — the caller needs the trace to exist before posting spans.
+    // If another call is already creating this trace, wait for it and then
+    // re-check — if the first attempt failed we'll retry below.
     const existing = this.pendingTraces.get(traceId);
     if (existing) {
       await existing;
-      return;
+      if (this.createdTraces.has(traceId)) return;
+      // First attempt failed; fall through to retry.
     }
 
     const work = (async () => {
