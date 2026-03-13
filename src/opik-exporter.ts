@@ -208,8 +208,8 @@ export class OpikExporter {
   private readonly inFlight = new Map<string, InFlightLlm>();
   /** Track which trace_ids we have already created parent trace objects for. */
   private readonly createdTraces = new Set<string>();
-  /** Guard against concurrent ensureTrace calls for the same traceId. */
-  private readonly pendingTraces = new Set<string>();
+  /** In-flight ensureTrace promises keyed by traceId — concurrent callers await the same promise. */
+  private readonly pendingTraces = new Map<string, Promise<void>>();
   /** TTL for in-flight LLM entries (ms). Entries older than this are discarded. */
   private static readonly IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -458,30 +458,40 @@ export class OpikExporter {
     endTime: string,
   ): Promise<void> {
     if (this.createdTraces.has(traceId)) return;
-    if (this.pendingTraces.has(traceId)) return;
 
-    this.pendingTraces.add(traceId);
-
-    const trace = {
-      id: traceId,
-      project_name: this.cfg.projectName,
-      name,
-      start_time: startTime,
-      end_time: endTime,
-      tags: ["engram"],
-    };
-
-    const ok = await postTraceBatch(this.cfg, [trace], this.log);
-    this.pendingTraces.delete(traceId);
-    if (!ok) return; // transient failure — allow retry on next span
-
-    this.createdTraces.add(traceId);
-
-    // Cap the set size to prevent unbounded growth in long-running processes.
-    if (this.createdTraces.size > 10_000) {
-      const first = this.createdTraces.values().next().value;
-      if (first) this.createdTraces.delete(first);
+    // If another call is already creating this trace, wait for it instead of
+    // returning early — the caller needs the trace to exist before posting spans.
+    const existing = this.pendingTraces.get(traceId);
+    if (existing) {
+      await existing;
+      return;
     }
+
+    const work = (async () => {
+      const trace = {
+        id: traceId,
+        project_name: this.cfg.projectName,
+        name,
+        start_time: startTime,
+        end_time: endTime,
+        tags: ["engram"],
+      };
+
+      const ok = await postTraceBatch(this.cfg, [trace], this.log);
+      this.pendingTraces.delete(traceId);
+      if (!ok) return; // transient failure — allow retry on next span
+
+      this.createdTraces.add(traceId);
+
+      // Cap the set size to prevent unbounded growth in long-running processes.
+      if (this.createdTraces.size > 10_000) {
+        const first = this.createdTraces.values().next().value;
+        if (first) this.createdTraces.delete(first);
+      }
+    })();
+
+    this.pendingTraces.set(traceId, work);
+    await work;
   }
 
   /**
