@@ -359,6 +359,7 @@ export class EngramMcpServer {
         return this.service.memoryGet(
           typeof args.memoryId === "string" ? args.memoryId : "",
           typeof args.namespace === "string" ? args.namespace : undefined,
+          this.authenticatedPrincipal,
         );
       case "engram.memory_timeline": {
         const limit = typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : 200;
@@ -366,6 +367,7 @@ export class EngramMcpServer {
           typeof args.memoryId === "string" ? args.memoryId : "",
           typeof args.namespace === "string" ? args.namespace : undefined,
           limit,
+          this.authenticatedPrincipal,
         );
       }
       case "engram.memory_store":
@@ -409,6 +411,7 @@ export class EngramMcpServer {
         return this.service.reviewQueue(
           typeof args.runId === "string" ? args.runId : undefined,
           typeof args.namespace === "string" ? args.namespace : undefined,
+          this.authenticatedPrincipal,
         );
       default:
         throw new Error(`unknown tool: ${name}`);

@@ -250,7 +250,11 @@ export async function searchCausalTrajectories(options: {
     };
   });
 
-  const filtered = scored.filter((result) => result.lexicalScore > 0);
+  const filtered = scored.filter((result) => {
+    if (result.lexicalScore <= 0) return false;
+    if (options.sessionKey && result.record.sessionKey !== options.sessionKey) return false;
+    return true;
+  });
 
   filtered.sort((left, right) => {
     if (right.score !== left.score) return right.score - left.score;

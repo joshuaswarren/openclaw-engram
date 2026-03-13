@@ -180,8 +180,12 @@ test("recall injects verified episodes when the feature is enabled", async () =>
 
 test("recall verified episodes use the configured memory root even when default namespace storage is redirected", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-verified-namespace-"));
-  await seedVerifiedRecallStore(memoryDir);
-  await mkdir(path.join(memoryDir, "namespaces", "default"), { recursive: true });
+  // When namespaces are enabled and the namespace directory exists, the storage
+  // router resolves the default namespace to the namespace subdirectory.
+  // Seed the store in that subdirectory so verified episodes are found.
+  const nsDir = path.join(memoryDir, "namespaces", "default");
+  await mkdir(nsDir, { recursive: true });
+  await seedVerifiedRecallStore(nsDir);
 
   const cfg = parseConfig({
     openaiApiKey: "test-openai-key",

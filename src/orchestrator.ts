@@ -3634,7 +3634,7 @@ export class Orchestrator {
       }
 
       const results = await searchVerifiedEpisodes({
-        memoryDir: this.config.memoryDir,
+        memoryDir: profileStorage.dir,
         query: retrievalQuery,
         maxResults,
         boxRecallDays: this.config.boxRecallDays,
@@ -7375,7 +7375,6 @@ export class Orchestrator {
       const header = [
         `[${index + 1}] ${record.recordedAt.replace("T", " ").slice(0, 16)}`,
         record.outcomeKind,
-        record.sessionKey,
       ].join(" | ");
       const details = [
         `goal: ${record.goal}`,

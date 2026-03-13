@@ -320,7 +320,10 @@ test("queueExplicitCaptureForReview preserves requested namespace isolation when
     new Error("unsupported namespace: team"),
   );
 
-  assert.deepEqual(requestedNamespaces, ["team", "team"]);
+  // Finding 5 security fix: resolveExplicitCaptureReviewNamespace returns undefined
+  // (not the raw namespace) when namespace resolution fails, so getStorage receives
+  // the default namespace instead of the unsupported one.
+  assert.deepEqual(requestedNamespaces, ["default", "default"]);
 });
 
 test("persistExplicitCapture attributes lifecycle actors to the correct tool source", async () => {

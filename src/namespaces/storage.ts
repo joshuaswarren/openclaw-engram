@@ -1,5 +1,6 @@
 import path from "node:path";
 import { access } from "node:fs/promises";
+import { isSafeRouteNamespace } from "../routing/engine.js";
 import { StorageManager } from "../storage.js";
 import type { PluginConfig } from "../types.js";
 
@@ -52,6 +53,9 @@ export class NamespaceStorageRouter {
 
   async storageFor(namespace: string): Promise<StorageManager> {
     const ns = namespace || this.config.defaultNamespace;
+    if (ns !== this.config.defaultNamespace && !isSafeRouteNamespace(ns)) {
+      throw new Error(`unsafe namespace: ${ns}`);
+    }
     if (this.cache.has(ns)) return this.cache.get(ns)!;
 
     if (ns === this.config.defaultNamespace) {

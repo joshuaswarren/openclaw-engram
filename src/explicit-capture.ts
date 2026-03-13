@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Orchestrator } from "./orchestrator.js";
+import { isSafeRouteNamespace } from "./routing/engine.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { ContentHashIndex } from "./storage.js";
 import type { CaptureMode, MemoryCategory, MemoryLifecycleEvent, PluginConfig } from "./types.js";
@@ -115,7 +116,7 @@ function resolveExplicitCaptureReviewNamespace(
   try {
     return resolveExplicitCaptureNamespace(orchestrator, normalized);
   } catch {
-    return orchestrator.config.namespacesEnabled ? normalized : undefined;
+    return undefined;
   }
 }
 
@@ -290,6 +291,10 @@ export function validateExplicitCaptureInput(
   const confidence = Number.isFinite(input.confidence) ? Number(input.confidence) : 0.95;
   if (confidence < 0 || confidence > 1) {
     throw new Error("confidence must be between 0 and 1");
+  }
+  const requestedNamespace = asTrimmed(input.namespace);
+  if (requestedNamespace && !isSafeRouteNamespace(requestedNamespace)) {
+    throw new Error(`unsafe namespace: ${requestedNamespace}`);
   }
   const expiresAt = parseExplicitCaptureTtl(input.ttl);
 

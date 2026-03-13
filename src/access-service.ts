@@ -426,6 +426,14 @@ export class EngramAccessService {
     return resolved;
   }
 
+  private resolveReadableNamespace(namespace: string | undefined, principal?: string): string {
+    const resolved = this.resolveNamespace(namespace);
+    if (principal && !canReadNamespace(principal, resolved, this.orchestrator.config)) {
+      throw new EngramAccessInputError(`namespace is not readable: ${resolved}`);
+    }
+    return resolved;
+  }
+
   private async buildRecallDebug(
     snapshot: LastRecallSnapshot | null,
     namespace: string,
@@ -868,9 +876,9 @@ export class EngramAccessService {
     }
   }
 
-  async memoryGet(memoryId: string, namespace?: string): Promise<EngramAccessMemoryResponse> {
-    const storage = await this.orchestrator.getStorage(namespace);
-    const resolvedNamespace = namespace?.trim() || this.orchestrator.config.defaultNamespace;
+  async memoryGet(memoryId: string, namespace?: string, principal?: string): Promise<EngramAccessMemoryResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) {
       return { found: false, namespace: resolvedNamespace };
@@ -949,9 +957,10 @@ export class EngramAccessService {
     memoryId: string,
     namespace?: string,
     limit: number = 200,
+    principal?: string,
   ): Promise<EngramAccessTimelineResponse> {
-    const storage = await this.orchestrator.getStorage(namespace);
-    const resolvedNamespace = namespace?.trim() || this.orchestrator.config.defaultNamespace;
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const timeline = await storage.getMemoryTimeline(memoryId, limit);
     return {
       found: timeline.length > 0,
@@ -1021,8 +1030,8 @@ export class EngramAccessService {
     };
   }
 
-  async reviewQueue(runId?: string, namespace?: string): Promise<EngramAccessReviewQueueResponse> {
-    const resolvedNamespace = this.resolveNamespace(namespace);
+  async reviewQueue(runId?: string, namespace?: string, principal?: string): Promise<EngramAccessReviewQueueResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const projected = await storage.getProjectedGovernanceRecord();
     if (projected && (!runId || projected.runId === runId.trim())) {
@@ -1115,8 +1124,8 @@ export class EngramAccessService {
     };
   }
 
-  async maintenance(namespace?: string): Promise<EngramAccessMaintenanceResponse> {
-    const resolvedNamespace = this.resolveNamespace(namespace);
+  async maintenance(namespace?: string, principal?: string): Promise<EngramAccessMaintenanceResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
     return {
       namespace: resolvedNamespace,
       health: await this.health(resolvedNamespace),
@@ -1124,8 +1133,8 @@ export class EngramAccessService {
     };
   }
 
-  async quality(namespace?: string): Promise<EngramAccessQualityResponse> {
-    const resolvedNamespace = this.resolveNamespace(namespace);
+  async quality(namespace?: string, principal?: string): Promise<EngramAccessQualityResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const governance = await this.reviewQueue(undefined, resolvedNamespace);
     const nowMs = Date.now();

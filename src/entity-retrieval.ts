@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sanitizeMemoryContent } from "./sanitize.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./native-knowledge.js";
@@ -132,6 +133,14 @@ function isLikelyInstructionLike(value: string): boolean {
   return INSTRUCTION_LIKE_RE.test(value) || METADATA_WRAPPER_RE.test(value);
 }
 
+function sanitizeEntityFact(fact: string): string {
+  const sanitized = sanitizeMemoryContent(fact);
+  const clean = sanitized.text.trim();
+  if (!clean) return "";
+  if (INSTRUCTION_LIKE_RE.test(clean) && clean.length > 100) return "";
+  return clean;
+}
+
 function jaccardSimilarity(a: string, b: string): number {
   const aTokens = new Set(tokenize(a));
   const bTokens = new Set(tokenize(b));
@@ -260,7 +269,7 @@ async function buildEntityMentionIndex(
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
       summary: entity.summary,
-      facts: entity.facts.map((fact) => compactLine(fact, 180)),
+      facts: entity.facts.map((fact) => compactLine(sanitizeEntityFact(fact) || fact, 180)).filter(Boolean),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
       factCount: entity.facts.length,
