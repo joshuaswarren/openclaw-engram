@@ -28,7 +28,7 @@ const DEFAULT_WORKSPACE_DIR = path.join(
 );
 
 function resolveEnvVars(value: string): string {
-  return value.replace(/\$\{([^}]+)\}/g, (_, envVar: string) => {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, envVar: string) => {
     const envValue = process.env[envVar];
     if (!envValue) {
       throw new Error(`Environment variable ${envVar} is not set`);
