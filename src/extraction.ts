@@ -690,7 +690,11 @@ export class ExtractionEngine {
     const messageTimestamp = lastTurnTs && !isNaN(lastTurnTs.getTime()) ? lastTurnTs : undefined;
 
     const traceId = crypto.randomUUID();
-    this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
+    // Only emit llm_start for the direct path when a client or local LLM is configured.
+    // Fallback-only deployments skip this to avoid fake spans in Opik.
+    if (this.client || this.config.localLlmEnabled) {
+      this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
+    }
     const startTime = Date.now();
 
     // Try local LLM first if enabled
@@ -743,13 +747,6 @@ export class ExtractionEngine {
         });
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
       }
-    } else {
-      // No direct client configured — close the initial llm_start so it isn't orphaned.
-      // This is NOT an error; it's the expected path for fallback-only deployments.
-      this.emit({
-        kind: "llm_end", traceId, model: this.config.model, operation: "extraction",
-        durationMs: Date.now() - startTime, output: "skipped: no direct client configured",
-      });
     }
 
     // Fall back to gateway's default AI — emit a fresh llm_start so the fallback
