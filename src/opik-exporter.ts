@@ -351,6 +351,16 @@ export class OpikExporter {
     // Ensure parent trace exists so the span is not orphaned in Opik.
     await this.ensureTrace(traceId, evt.sessionKey ?? "engram:recall", startTime, endTime);
 
+    const output: Record<string, unknown> = {
+      injected: evt.injected,
+      recalledMemoryCount: evt.recalledMemoryCount,
+      contextChars: evt.contextChars,
+      durationMs: evt.durationMs,
+    };
+    if (this.cfg.traceRecallContent && evt.recalledContent) {
+      output.recalledContent = evt.recalledContent;
+    }
+
     const span = {
       id: uuidV7(),
       trace_id: traceId,
@@ -360,6 +370,7 @@ export class OpikExporter {
       start_time: startTime,
       end_time: endTime,
       input,
+      output,
       metadata,
       tags: ["engram", "recall"],
     };

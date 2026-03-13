@@ -509,6 +509,7 @@ export interface PluginConfig {
   maxProactiveQuestionsPerExtraction: number;
   proactiveExtractionTimeoutMs: number;
   proactiveExtractionMaxTokens: number;
+  extractionMaxOutputTokens: number;
   proactiveExtractionCategoryAllowlist?: MemoryCategory[];
   maxCompressionTokensPerHour: number;
   behaviorLoopAutoTuneEnabled: boolean;
