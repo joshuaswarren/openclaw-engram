@@ -1201,10 +1201,6 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.proactiveExtractionMaxTokens === "number"
         ? Math.max(0, Math.floor(cfg.proactiveExtractionMaxTokens))
         : 900,
-    extractionMaxOutputTokens:
-      typeof cfg.extractionMaxOutputTokens === "number"
-        ? Math.max(1, Math.floor(cfg.extractionMaxOutputTokens))
-        : 16384,
     proactiveExtractionCategoryAllowlist: Array.isArray(cfg.proactiveExtractionCategoryAllowlist)
       ? (cfg.proactiveExtractionCategoryAllowlist as unknown[]).filter(
           (category): category is PluginConfig["lifecycleProtectedCategories"][number] =>
