@@ -1129,14 +1129,14 @@ export class EngramAccessService {
     return {
       namespace: resolvedNamespace,
       health: await this.health(resolvedNamespace),
-      latestGovernanceRun: await this.reviewQueue(undefined, resolvedNamespace),
+      latestGovernanceRun: await this.reviewQueue(undefined, resolvedNamespace, principal),
     };
   }
 
   async quality(namespace?: string, principal?: string): Promise<EngramAccessQualityResponse> {
     const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
-    const governance = await this.reviewQueue(undefined, resolvedNamespace);
+    const governance = await this.reviewQueue(undefined, resolvedNamespace, principal);
     const nowMs = Date.now();
     const statusCounts: Record<string, number> = {};
     const categoryCounts: Record<string, number> = {};

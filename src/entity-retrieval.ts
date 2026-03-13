@@ -269,7 +269,7 @@ async function buildEntityMentionIndex(
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
       summary: entity.summary,
-      facts: entity.facts.map((fact) => compactLine(sanitizeEntityFact(fact) || fact, 180)).filter(Boolean),
+      facts: entity.facts.map((fact) => sanitizeEntityFact(fact)).filter(Boolean).map((fact) => compactLine(fact, 180)),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
       factCount: entity.facts.length,
