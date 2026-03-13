@@ -644,18 +644,18 @@ export class ExtractionEngine {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: { temperature?: number; maxTokens?: number } = {},
   ): Promise<T | null> {
-    const result = await this.fallbackLlm.parseWithSchema(messages, schema, options);
-    if (result) {
+    const detailed = await this.fallbackLlm.parseWithSchemaDetailed(messages, schema, options);
+    if (detailed?.result) {
       const durationMs = Date.now() - startedAtMs;
       this.emit({
         kind: "llm_end",
         traceId,
-        model: "fallback",
+        model: detailed.modelUsed,
         operation,
         durationMs,
-        output: JSON.stringify(result).slice(0, 2000),
+        output: JSON.stringify(detailed.result).slice(0, 2000),
       });
-      return result;
+      return detailed.result;
     }
     return null;
   }
@@ -690,7 +690,13 @@ export class ExtractionEngine {
     const messageTimestamp = lastTurnTs && !isNaN(lastTurnTs.getTime()) ? lastTurnTs : undefined;
 
     const traceId = crypto.randomUUID();
-    this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
+    // Only emit llm_start for the direct path when a client or local LLM is configured.
+    // Fallback-only deployments skip this to avoid fake spans in Opik.
+    const emittedDirectStart = !!(this.client || this.config.localLlmEnabled);
+    if (emittedDirectStart) {
+      this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
+    }
+    let closedDirectTrace = false;
     const startTime = Date.now();
 
     // Try local LLM first if enabled
@@ -730,13 +736,42 @@ export class ExtractionEngine {
           const sanitized = this.sanitizeExtractionResult(directResult, messageTimestamp);
           return await this.applyProactiveQuestionPass(conversation, sanitized);
         }
+        // Emit error event so Opik sees the direct client failure before fallback.
+        // Wrapped in try/catch so a subscriber error doesn't break the fallback path.
+        try {
+          this.emit({
+            kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+            durationMs: Date.now() - startTime, error: "direct client returned no result",
+          });
+        } catch { /* trace emit must not block fallback */ }
+        closedDirectTrace = true;
         log.info("extraction: direct client returned no result, falling back to gateway AI");
       } catch (err) {
+        try {
+          this.emit({
+            kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+            durationMs: Date.now() - startTime, error: String(err),
+          });
+        } catch { /* trace emit must not block fallback */ }
+        closedDirectTrace = true;
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
       }
     }
 
-    // Fall back to gateway's default AI
+    // Close any orphaned direct-path llm_start (e.g., local LLM failed, no direct client)
+    if (emittedDirectStart && !closedDirectTrace) {
+      try {
+        this.emit({
+          kind: "llm_error", traceId, model: this.config.model, operation: "extraction",
+          durationMs: Date.now() - startTime, error: "local LLM failed, handing off to gateway fallback",
+        });
+      } catch { /* trace emit must not block fallback */ }
+    }
+
+    // Fall back to gateway's default AI — emit a fresh llm_start so the fallback
+    // gets its own trace rather than being orphaned under the direct-client traceId.
+    const fallbackTraceId = crypto.randomUUID();
+    const fallbackStartTime = Date.now();
     log.info("extraction: falling back to gateway default AI");
 
     try {
@@ -745,21 +780,24 @@ export class ExtractionEngine {
         { role: "user" as const, content: conversation },
       ];
 
-      const result = await this.fallbackLlm.parseWithSchema(
+      this.emit({ kind: "llm_start", traceId: fallbackTraceId, model: "fallback", operation: "extraction", input: conversation });
+
+      const detailed = await this.fallbackLlm.parseWithSchemaDetailed(
         messages,
         ExtractionResultSchema,
         { temperature: 0.3, maxTokens: 4096 },
       );
 
-      const durationMs = Date.now() - startTime;
+      const fallbackDurationMs = Date.now() - fallbackStartTime;
 
-      if (result && Array.isArray(result.facts)) {
+      if (detailed?.result && Array.isArray(detailed.result.facts)) {
+        const result = detailed.result;
         this.emit({
-          kind: "llm_end", traceId, model: "fallback", operation: "extraction", durationMs,
-          output: JSON.stringify(result).slice(0, 2000),
+          kind: "llm_end", traceId: fallbackTraceId, model: detailed.modelUsed, operation: "extraction",
+          durationMs: fallbackDurationMs, output: JSON.stringify(result).slice(0, 2000),
         });
         log.debug(
-          `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback`,
+          `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback (${detailed.modelUsed})`,
         );
         const sanitized = this.sanitizeExtractionResult({
           ...result,
@@ -769,12 +807,16 @@ export class ExtractionEngine {
         return await this.applyProactiveQuestionPass(conversation, sanitized);
       }
 
+      this.emit({
+        kind: "llm_error", traceId: fallbackTraceId, model: "fallback", operation: "extraction",
+        durationMs: fallbackDurationMs, error: "fallback returned no parsed output",
+      });
       log.warn("extraction fallback returned no parsed output");
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     } catch (err) {
       this.emit({
-        kind: "llm_error", traceId, model: "fallback", operation: "extraction",
-        durationMs: Date.now() - startTime, error: String(err),
+        kind: "llm_error", traceId: fallbackTraceId, model: "fallback", operation: "extraction",
+        durationMs: Date.now() - fallbackStartTime, error: String(err),
       });
       log.error("extraction fallback failed", err);
       return { facts: [], profileUpdates: [], entities: [], questions: [] };

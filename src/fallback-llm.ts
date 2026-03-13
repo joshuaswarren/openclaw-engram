@@ -125,6 +125,19 @@ export class FallbackLlmClient {
     schema: { parse: (data: unknown) => T },
     options: FallbackLlmOptions = {},
   ): Promise<T | null> {
+    const detailed = await this.parseWithSchemaDetailed(messages, schema, options);
+    return detailed?.result ?? null;
+  }
+
+  /**
+   * Like parseWithSchema but also returns the model that was used,
+   * so callers can emit accurate trace events.
+   */
+  async parseWithSchemaDetailed<T>(
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    schema: { parse: (data: unknown) => T },
+    options: FallbackLlmOptions = {},
+  ): Promise<{ result: T; modelUsed: string } | null> {
     const response = await this.chatCompletion(messages, options);
     if (!response?.content) return null;
 
@@ -133,7 +146,7 @@ export class FallbackLlmClient {
       for (const c of candidates) {
         try {
           const parsed = JSON.parse(c);
-          return schema.parse(parsed);
+          return { result: schema.parse(parsed), modelUsed: response.modelUsed };
         } catch {
           // keep trying other candidates
         }

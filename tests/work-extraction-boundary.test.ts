@@ -100,6 +100,20 @@ test("applyWorkExtractionBoundary does not strip inline paired wrapper syntax in
   assert.equal(bounded, conversation);
 });
 
+/** Helper to build a mock fallbackLlm that tracks whether it was called. */
+function mockFallbackLlm(tracker: { called: boolean }) {
+  return {
+    parseWithSchema: async () => {
+      tracker.called = true;
+      return null;
+    },
+    parseWithSchemaDetailed: async () => {
+      tracker.called = true;
+      return null;
+    },
+  };
+}
+
 test("extraction skips work-only conversation before calling fallback parser", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",
@@ -109,13 +123,8 @@ test("extraction skips work-only conversation before calling fallback parser", a
   });
 
   const engine = new ExtractionEngine(config);
-  let fallbackCalled = false;
-  (engine as any).fallbackLlm = {
-    parseWithSchema: async () => {
-      fallbackCalled = true;
-      return null;
-    },
-  };
+  const tracker = { called: false };
+  (engine as any).fallbackLlm = mockFallbackLlm(tracker);
 
   const result = await engine.extract([
     {
@@ -126,7 +135,7 @@ test("extraction skips work-only conversation before calling fallback parser", a
   ]);
 
   assert.deepEqual(result, { facts: [], profileUpdates: [], entities: [], questions: [] });
-  assert.equal(fallbackCalled, false);
+  assert.equal(tracker.called, false);
 });
 
 test("extraction does not strip user-authored work-layer delimiters", async () => {
@@ -138,13 +147,8 @@ test("extraction does not strip user-authored work-layer delimiters", async () =
   });
 
   const engine = new ExtractionEngine(config);
-  let fallbackCalled = false;
-  (engine as any).fallbackLlm = {
-    parseWithSchema: async () => {
-      fallbackCalled = true;
-      return null;
-    },
-  };
+  const tracker = { called: false };
+  (engine as any).fallbackLlm = mockFallbackLlm(tracker);
 
   await engine.extract([
     {
@@ -154,5 +158,5 @@ test("extraction does not strip user-authored work-layer delimiters", async () =
     },
   ]);
 
-  assert.equal(fallbackCalled, true);
+  assert.equal(tracker.called, true);
 });
