@@ -982,7 +982,10 @@ ${truncatedConversation}`;
   ): Promise<ExtractionResult | null> {
     if (!this.client) return null;
 
-    log.debug(`extractWithDirectClient: calling ${this.config.model}...`);
+    const tokenParams = buildChatCompletionTokenLimit(this.config.model, this.config.extractionMaxOutputTokens, {
+      assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+    });
+    log.info(`extractWithDirectClient: calling model=${this.config.model} tokenParams=${JSON.stringify(tokenParams)}`);
 
     const response = await this.client.chat.completions.create({
       model: this.config.model,
@@ -1002,18 +1005,16 @@ ${truncatedConversation}`;
         },
         { role: "user", content: conversation },
       ],
-      ...buildChatCompletionTokenLimit(this.config.model, 4096, {
-        assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
-      }),
+      ...tokenParams,
     });
 
     const content = response.choices?.[0]?.message?.content?.trim();
     if (!content) {
-      log.debug("extractWithDirectClient: empty response");
+      log.info(`extractWithDirectClient: empty response — choices=${JSON.stringify(response.choices?.length ?? 0)} finishReason=${response.choices?.[0]?.finish_reason ?? "n/a"}`);
       return null;
     }
 
-    log.debug(
+    log.info(
       `extractWithDirectClient: got response, length=${content.length}`,
     );
 
@@ -1027,7 +1028,7 @@ ${truncatedConversation}`;
       }
     }
 
-    log.debug("extractWithDirectClient: failed to parse JSON from response");
+    log.info(`extractWithDirectClient: failed to parse JSON from response (first 200 chars: ${content.slice(0, 200)})`);
     return null;
   }
 

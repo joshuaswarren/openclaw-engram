@@ -2069,6 +2069,11 @@
         "default": 900,
         "description": "Token budget for each proactive extraction sub-call (0 disables the proactive second pass)."
       },
+      "extractionMaxOutputTokens": {
+        "type": "number",
+        "default": 16384,
+        "description": "Maximum output tokens (max_completion_tokens) for the direct-client extraction call."
+      },
       "proactiveExtractionCategoryAllowlist": {
         "type": "array",
         "items": { "type": "string" },
@@ -3044,6 +3049,11 @@
       "label": "Proactive Extraction Max Tokens",
       "advanced": true,
       "placeholder": "900"
+    },
+    "extractionMaxOutputTokens": {
+      "label": "Extraction Max Output Tokens",
+      "advanced": true,
+      "placeholder": "16384"
     },
     "proactiveExtractionCategoryAllowlist": {
       "label": "Proactive Category Allowlist",
