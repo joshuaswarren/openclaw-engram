@@ -263,16 +263,17 @@ async function buildEntityMentionIndex(
   const entities = new Map<string, EntityMentionIndexEntry>();
   for (const entity of entityFiles) {
     const canonicalId = normalizeEntityName(entity.name, entity.type);
+    const sanitizedFacts = entity.facts.map((fact) => sanitizeEntityFact(fact)).filter(Boolean).map((fact) => compactLine(fact, 180));
     entities.set(canonicalId, {
       canonicalId,
       name: entity.name,
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
       summary: entity.summary,
-      facts: entity.facts.map((fact) => sanitizeEntityFact(fact)).filter(Boolean).map((fact) => compactLine(fact, 180)),
+      facts: sanitizedFacts,
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
-      factCount: entity.facts.length,
+      factCount: sanitizedFacts.length,
       memorySnippets: [],
       nativeChunks: [],
     });
