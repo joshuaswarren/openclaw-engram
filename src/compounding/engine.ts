@@ -579,6 +579,7 @@ export class CompoundingEngine {
     weekId: string;
     candidateId: string;
     dryRun?: boolean;
+    storage?: StorageManager;
   }): Promise<CompoundingPromotionReport> {
     const report: CompoundingPromotionReport = {
       enabled: this.config.compoundingEnabled === true && this.config.compoundingSemanticEnabled === true,
@@ -606,7 +607,7 @@ export class CompoundingEngine {
 
     const content = normalizePromotedGuidanceContent(candidate.content);
     const persistedContent = sanitizeMemoryContent(content).text;
-    const storage = new StorageManager(this.config.memoryDir);
+    const storage = opts.storage ?? new StorageManager(this.config.memoryDir);
     const existing = (await storage.readAllMemories()).find((memory) =>
       memory.frontmatter.category === candidate.category &&
       memory.frontmatter.status !== "archived" &&

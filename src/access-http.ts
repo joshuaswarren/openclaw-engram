@@ -285,7 +285,7 @@ export class EngramAccessHttpServer {
     if (req.method === "GET" && memoryMatch) {
       const memoryId = decodeURIComponent(memoryMatch[1] ?? "");
       const namespace = parsed.searchParams.get("namespace") ?? undefined;
-      const response = await this.service.memoryGet(memoryId, namespace);
+      const response = await this.service.memoryGet(memoryId, namespace, this.authenticatedPrincipal);
       this.respondJson(res, response.found ? 200 : 404, response);
       return;
     }
@@ -296,7 +296,7 @@ export class EngramAccessHttpServer {
       const namespace = parsed.searchParams.get("namespace") ?? undefined;
       const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "200", 10);
       const limit = Number.isFinite(limitRaw) ? limitRaw : 200;
-      const response = await this.service.memoryTimeline(memoryId, namespace, limit);
+      const response = await this.service.memoryTimeline(memoryId, namespace, limit, this.authenticatedPrincipal);
       this.respondJson(res, response.found ? 200 : 404, response);
       return;
     }
@@ -327,18 +327,19 @@ export class EngramAccessHttpServer {
       const response = await this.service.reviewQueue(
         parsed.searchParams.get("runId") ?? undefined,
         parsed.searchParams.get("namespace") ?? undefined,
+        this.authenticatedPrincipal,
       );
       this.respondJson(res, 200, response);
       return;
     }
 
     if (req.method === "GET" && pathname === "/engram/v1/maintenance") {
-      this.respondJson(res, 200, await this.service.maintenance(parsed.searchParams.get("namespace") ?? undefined));
+      this.respondJson(res, 200, await this.service.maintenance(parsed.searchParams.get("namespace") ?? undefined, this.authenticatedPrincipal));
       return;
     }
 
     if (req.method === "GET" && pathname === "/engram/v1/quality") {
-      this.respondJson(res, 200, await this.service.quality(parsed.searchParams.get("namespace") ?? undefined));
+      this.respondJson(res, 200, await this.service.quality(parsed.searchParams.get("namespace") ?? undefined, this.authenticatedPrincipal));
       return;
     }
 
