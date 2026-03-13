@@ -465,7 +465,13 @@ export class OpikExporter {
     if (existing) {
       await existing;
       if (this.createdTraces.has(traceId)) return;
-      // First attempt failed; fall through to retry.
+      // First attempt failed — check if another waiter is already retrying.
+      const retrying = this.pendingTraces.get(traceId);
+      if (retrying) {
+        await retrying;
+        return;
+      }
+      // No one else retrying; fall through to create.
     }
 
     const work = (async () => {
