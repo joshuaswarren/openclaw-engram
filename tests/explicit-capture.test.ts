@@ -298,32 +298,34 @@ test("queueExplicitCaptureForReview preserves requested namespace isolation when
     appendMemoryLifecycleEvents: async () => 1,
   };
 
-  await queueExplicitCaptureForReview(
-    {
-      config: {
-        defaultNamespace: "default",
-        sharedNamespace: "shared",
-        namespacesEnabled: true,
-        namespacePolicies: [],
+  await assert.rejects(
+    () => queueExplicitCaptureForReview(
+      {
+        config: {
+          defaultNamespace: "default",
+          sharedNamespace: "shared",
+          namespacesEnabled: true,
+          namespacePolicies: [],
+        },
+        getStorage: async (namespace?: string) => {
+          requestedNamespaces.push(namespace ?? "default");
+          return storage;
+        },
+      } as never,
+      {
+        content: "This explicit note targeted a private namespace and should stay isolated while queued.",
+        category: "fact",
+        namespace: "team",
       },
-      getStorage: async (namespace?: string) => {
-        requestedNamespaces.push(namespace ?? "default");
-        return storage;
-      },
-    } as never,
-    {
-      content: "This explicit note targeted a private namespace and should stay isolated while queued.",
-      category: "fact",
-      namespace: "team",
-    },
-    "inline",
-    new Error("unsupported namespace: team"),
+      "inline",
+      new Error("unsupported namespace: team"),
+    ),
+    /unsupported namespace: team/,
   );
 
-  // Finding 5 security fix: resolveExplicitCaptureReviewNamespace returns undefined
-  // (not the raw namespace) when namespace resolution fails, so getStorage receives
-  // the default namespace instead of the unsupported one.
-  assert.deepEqual(requestedNamespaces, ["default", "default"]);
+  // Security fix: rejected namespace now throws instead of silently
+  // falling back to the default namespace, preserving isolation.
+  assert.deepEqual(requestedNamespaces, []);
 });
 
 test("persistExplicitCapture attributes lifecycle actors to the correct tool source", async () => {

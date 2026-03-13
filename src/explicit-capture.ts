@@ -113,11 +113,7 @@ function resolveExplicitCaptureReviewNamespace(
 ): string | undefined {
   const normalized = asTrimmed(namespace);
   if (!normalized) return undefined;
-  try {
-    return resolveExplicitCaptureNamespace(orchestrator, normalized);
-  } catch {
-    return undefined;
-  }
+  return resolveExplicitCaptureNamespace(orchestrator, normalized);
 }
 
 function resolveExplicitCaptureNamespace(

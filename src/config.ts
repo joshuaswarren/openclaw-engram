@@ -28,13 +28,18 @@ const DEFAULT_WORKSPACE_DIR = path.join(
 );
 
 function resolveEnvVars(value: string): string {
-  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, envVar: string) => {
+  const resolved = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, envVar: string) => {
     const envValue = process.env[envVar];
     if (!envValue) {
       throw new Error(`Environment variable ${envVar} is not set`);
     }
     return envValue;
   });
+  const remaining = resolved.match(/\$\{[^}]*\}/);
+  if (remaining) {
+    throw new Error(`Malformed environment variable placeholder: ${remaining[0]}`);
+  }
+  return resolved;
 }
 
 function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "env"): string | undefined {
@@ -1196,6 +1201,10 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.proactiveExtractionMaxTokens === "number"
         ? Math.max(0, Math.floor(cfg.proactiveExtractionMaxTokens))
         : 900,
+    extractionMaxOutputTokens:
+      typeof cfg.extractionMaxOutputTokens === "number"
+        ? Math.max(1, Math.floor(cfg.extractionMaxOutputTokens))
+        : 16384,
     proactiveExtractionCategoryAllowlist: Array.isArray(cfg.proactiveExtractionCategoryAllowlist)
       ? (cfg.proactiveExtractionCategoryAllowlist as unknown[]).filter(
           (category): category is PluginConfig["lifecycleProtectedCategories"][number] =>
