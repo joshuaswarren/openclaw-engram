@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 The notes below describe the current protected-branch-safe release flow on `main`.
 
 ### Added
+- **`engram.day_summary` MCP tool + `loadDaySummaryPrompt()` export**: Optimized day-summary generation with two access paths. The MCP tool accepts memory content and returns `{ summary, bullets, next_actions, risks_or_open_loops }` via local LLM → gateway → OpenAI fallback chain. The `loadDaySummaryPrompt()` function exports the raw prompt text for OpenClaw cron jobs to import directly. Config: `daySummaryEnabled` (default: true). Prompt was optimized via 24-iteration autonomous evaluation (100% coverage at peak). Existing day-summary crons are unaffected — this is an additive option.
 - **`traceRecallContent` config option**: When set to `true`, Engram populates `RecallTraceEvent.recalledContent` with the full memory context injected into each agent turn. Allows external trace collectors (Langfuse, LangSmith, etc.) to see exactly which memories were recalled per conversation turn. Disabled by default — opt in only when you want memory content flowing to external systems.
 - Generic memory lifecycle ledger foundation: Engram now records append-only `created`, `updated`, `archived`, and `superseded` events under the local `state/memory-lifecycle-ledger.jsonl`, plus a rebuild utility and CLI for regenerating that ledger from markdown memory state.
 
