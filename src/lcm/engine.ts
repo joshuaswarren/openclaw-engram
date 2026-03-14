@@ -112,14 +112,12 @@ export class LcmEngine {
     if (!this.config.enabled) return "";
     await this.ensureInitialized();
 
-    const effectiveBudget = Math.min(
-      budgetChars,
-      Math.ceil(budgetChars * this.config.recallBudgetShare),
-    );
+    const effectiveBudget = Math.ceil(budgetChars * this.config.recallBudgetShare);
+    if (effectiveBudget <= 0) return "";
 
     return assembleCompressedHistory(this.dag!, this.archive!, sessionId, {
       freshTailTurns: this.config.freshTailTurns,
-      budgetChars: effectiveBudget > 0 ? effectiveBudget : budgetChars,
+      budgetChars: effectiveBudget,
     });
   }
 

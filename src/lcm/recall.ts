@@ -1,6 +1,5 @@
 import type { LcmDag, SummaryNode } from "./dag.js";
 import type { LcmArchive } from "./archive.js";
-import { estimateTokens } from "./archive.js";
 import { log } from "../logger.js";
 
 export interface LcmRecallConfig {
