@@ -78,23 +78,6 @@ export class LcmArchive {
     return row?.max_turn ?? -1;
   }
 
-  /** Count unsummarized turns (turns after the last leaf summary). */
-  getUnsummarizedTurnCount(sessionId: string): number {
-    const lastLeafEnd = this.db
-      .prepare(
-        "SELECT MAX(msg_end) as last_end FROM lcm_summary_nodes WHERE session_id = ? AND depth = 0",
-      )
-      .get(sessionId) as { last_end: number | null } | undefined;
-
-    const lastSummarized = lastLeafEnd?.last_end ?? -1;
-    const row = this.db
-      .prepare(
-        "SELECT COUNT(*) as cnt FROM lcm_messages WHERE session_id = ? AND turn_index > ?",
-      )
-      .get(sessionId, lastSummarized) as { cnt: number };
-    return row.cnt;
-  }
-
   /** Retrieve messages in a turn range (inclusive). */
   getMessages(sessionId: string, fromTurn: number, toTurn: number): LcmMessage[] {
     return this.db

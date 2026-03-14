@@ -35,6 +35,9 @@ function applySchema(db: Database.Database): void {
   const currentVersion = meta ? parseInt(meta.value, 10) : 0;
 
   if (currentVersion < LCM_SCHEMA_VERSION) {
+    // TODO: When v2 is needed, add explicit ALTER TABLE migrations here
+    // instead of relying on CREATE TABLE IF NOT EXISTS (which won't add
+    // new columns to existing tables).
     log.info(`LCM schema upgrade: v${currentVersion} → v${LCM_SCHEMA_VERSION}`);
     createTables(db);
   }

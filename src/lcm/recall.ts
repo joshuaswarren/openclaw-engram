@@ -43,11 +43,13 @@ export function assembleCompressedHistory(
     }
   }
 
-  // Collect leaf nodes covering the fresh tail (exclude nodes that straddle the boundary
-  // to avoid duplicate content with the old section)
+  // Collect leaf nodes that overlap with the fresh tail region.
+  // The old section uses deep nodes (depth > 0), so leaf nodes included here
+  // won't duplicate old-section content. Use msg_end >= freshTailStart to
+  // include straddling leaf nodes that partially cover the fresh region.
   const freshNodes = allNodes
     .filter(
-      (n) => n.depth === 0 && n.msg_start >= freshTailStart && n.msg_end <= maxTurn,
+      (n) => n.depth === 0 && n.msg_end >= freshTailStart && n.msg_end <= maxTurn,
     )
     .sort((a, b) => a.msg_start - b.msg_start);
 
