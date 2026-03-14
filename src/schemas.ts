@@ -300,8 +300,6 @@ export const DaySummaryResultSchema = z.object({
   risks_or_open_loops: z.array(z.string()).describe("Open loops, blockers, or fragile assumptions still needing attention."),
 });
 
-export type DaySummaryResultParsed = z.infer<typeof DaySummaryResultSchema>;
-
 // v8.15 behavior-loop auto-tuning state contracts
 export const BehaviorLoopAdjustmentSchema = z.object({
   parameter: z.string().min(1),
@@ -339,4 +337,4 @@ export type ConsolidationResultParsed = z.infer<
   typeof ConsolidationResultSchema
 >;
 
-export type DaySummaryResult = z.infer<typeof DaySummaryResultSchema>;
+
