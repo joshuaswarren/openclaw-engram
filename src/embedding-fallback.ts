@@ -101,10 +101,11 @@ export class EmbeddingFallback {
 
     for (const p of providers) {
       if (p === "openai" && this.config.openaiApiKey) {
+        const baseUrl = this.config.openaiBaseUrl ?? "https://api.openai.com/v1";
         return {
           type: "openai",
           model: DEFAULT_OPENAI_MODEL,
-          endpoint: "https://api.openai.com/v1/embeddings",
+          endpoint: `${baseUrl.replace(/\/$/, "")}/embeddings`,
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${this.config.openaiApiKey}`,

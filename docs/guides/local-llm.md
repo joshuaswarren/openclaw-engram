@@ -55,6 +55,49 @@ Use the fast local tier for short-turn helpers:
 - If reranking feels slow, lower `rerankTimeoutMs` before changing the main extraction timeout.
 - The local path is fail-open by default. If the endpoint disappears, Engram should degrade rather than block the gateway.
 
+## Custom OpenAI-Compatible Endpoint (Self-Hosted)
+
+If you run a single OpenAI-compatible server (vLLM, Ollama, LM Studio, etc.) that serves both chat completions and embeddings, you can point everything at it with just `openaiBaseUrl`:
+
+```jsonc
+{
+  "openaiBaseUrl": "http://localhost:8005/v1",
+  "openaiApiKey": "dummy",
+  "embeddingFallbackEnabled": true,
+  "embeddingFallbackProvider": "openai"
+}
+```
+
+Engram routes extraction, consolidation, and embedding requests to your endpoint. The embedding path appends `/embeddings` to `openaiBaseUrl` automatically.
+
+### Separate Chat and Embedding Models
+
+If your chat model and embedding model live on different servers, use `openaiBaseUrl` for chat and the `localLlm*` settings for embeddings:
+
+```jsonc
+{
+  "openaiBaseUrl": "http://localhost:8005/v1",
+  "openaiApiKey": "dummy",
+  "localLlmEnabled": true,
+  "localLlmUrl": "http://localhost:8006/v1",
+  "localLlmModel": "bge-m3",
+  "localLlmApiKey": "dummy",
+  "embeddingFallbackEnabled": true,
+  "embeddingFallbackProvider": "local"
+}
+```
+
+### Docker Networking
+
+When running OpenClaw in Docker and the LLM server on the host, use `host.docker.internal` instead of `localhost`:
+
+```jsonc
+{
+  "openaiBaseUrl": "http://host.docker.internal:8005/v1",
+  "openaiApiKey": "dummy"
+}
+```
+
 ## When Not To Use It
 
 - If you do not have a stable local endpoint yet, start with `memoryOsPreset: "balanced"`.
