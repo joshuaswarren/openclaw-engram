@@ -2245,9 +2245,29 @@ Return valid JSON only.` },
       }
     }
 
-    // Gateway fallback already attempted above; no direct client path
-    // (AGENTS.md: OpenAI Responses API only — never use Chat Completions).
-    this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "all generation paths exhausted (local LLM + gateway)" });
+    // Direct Responses API fallback (AGENTS.md-compliant: never Chat Completions)
+    if (this.client) {
+      try {
+        const response = await (this.client as any).responses.create({
+          model: this.config.model,
+          instructions: `${systemPrompt}\n\nReturn valid JSON only.`,
+          input: userPrompt,
+          max_output_tokens: 2048,
+        });
+        const rawText = typeof response.output_text === "string" ? response.output_text : JSON.stringify(response.output_text ?? "");
+        const normalized = this.normalizeDaySummaryResult(this.parseJsonObject(rawText));
+        if (normalized) {
+          this.emit({ kind: "llm_end", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, output: JSON.stringify(normalized).slice(0, 2000) });
+          log.debug(`generated day summary via Responses API (${normalized.bullets.length} bullets)`);
+          return normalized;
+        }
+        this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "Responses API returned unparseable output" });
+      } catch (err) {
+        this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: `Responses API failed: ${err}` });
+      }
+    }
+
+    this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "all generation paths exhausted (local LLM + gateway + Responses API)" });
     log.warn("day summary skipped — all generation paths exhausted");
     return null;
   }

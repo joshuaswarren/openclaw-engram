@@ -52,7 +52,7 @@ Tone:
 function candidateRoots(): string[] {
   const currentFile = fileURLToPath(import.meta.url);
   const here = path.dirname(currentFile);
-  const candidates = [path.resolve(here, ".."), path.resolve(here, "..", ".."), process.cwd()];
+  const candidates = [path.resolve(here, ".."), path.resolve(here, "..", "..")];
 
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
