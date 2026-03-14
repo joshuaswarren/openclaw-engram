@@ -100,7 +100,7 @@ export interface EngramAccessRecallExplainResponse {
 }
 
 export interface EngramAccessDaySummaryRequest {
-  memories: string;
+  memories?: string;
   sessionKey?: string;
   namespace?: string;
 }
@@ -603,13 +603,13 @@ export class EngramAccessService {
       throw new EngramAccessInputError("day summary is disabled");
     }
 
-    const memories = request.memories.trim();
-    if (memories.length === 0) {
-      throw new EngramAccessInputError("memories is required");
-    }
+    const memories = (request.memories ?? "").trim();
+    const namespace = this.resolveRecallNamespace(request.namespace, request.sessionKey);
 
-    // Validate namespace access (result intentionally unused — day summary operates on caller-provided text, not stored memories)
-    this.resolveRecallNamespace(request.namespace, request.sessionKey);
+    if (memories.length === 0) {
+      // Auto-gather today's facts from the resolved namespace
+      return this.orchestrator.generateDaySummaryAuto(namespace);
+    }
     return this.orchestrator.generateDaySummary(memories);
   }
 
