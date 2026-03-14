@@ -2246,6 +2246,7 @@ Return valid JSON only.` },
     }
 
     if (!this.client) {
+      this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "no OpenAI API key and fallback unavailable" });
       log.warn("day summary skipped — no OpenAI API key and fallback unavailable");
       return null;
     }
@@ -2282,6 +2283,7 @@ Return valid JSON only.` },
         return normalized;
       }
 
+      this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "direct client returned unparseable output" });
       log.warn("day summary returned no parsed output");
       return null;
     } catch (err) {
