@@ -80,13 +80,13 @@ function selectBestCoverage(
 
   if (candidates.length === 0) return [];
 
-  // Sort by depth descending (prefer deeper), then by msg_start ascending
+  // Sort by msg_start ascending, then depth descending (prefer deeper at same position)
   candidates.sort((a, b) => {
-    if (b.depth !== a.depth) return b.depth - a.depth;
-    return a.msg_start - b.msg_start;
+    if (a.msg_start !== b.msg_start) return a.msg_start - b.msg_start;
+    return b.depth - a.depth;
   });
 
-  // Greedily select non-overlapping nodes
+  // Greedily select non-overlapping nodes, preferring deeper coverage
   const selected: SummaryNode[] = [];
   let coveredUpTo = fromTurn - 1;
 
