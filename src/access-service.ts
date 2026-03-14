@@ -608,7 +608,8 @@ export class EngramAccessService {
       throw new EngramAccessInputError("memories is required");
     }
 
-    void this.resolveRecallNamespace(request.namespace, request.sessionKey);
+    // Validate namespace access (result intentionally unused — day summary operates on caller-provided text, not stored memories)
+    this.resolveRecallNamespace(request.namespace, request.sessionKey);
     return this.orchestrator.generateDaySummary(memories);
   }
 

@@ -1520,10 +1520,17 @@ export class Orchestrator {
 
   async generateDaySummary(memories: string | MemoryFile[]): Promise<DaySummaryResult | null> {
     if (this.initPromise) {
-      await Promise.race([
-        this.initPromise.catch(() => undefined),
-        new Promise((resolve) => setTimeout(resolve, 15_000)),
-      ]);
+      let initGateTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          this.initPromise.catch(() => undefined),
+          new Promise((resolve) => {
+            initGateTimeoutHandle = setTimeout(resolve, 15_000);
+          }),
+        ]);
+      } finally {
+        if (initGateTimeoutHandle) clearTimeout(initGateTimeoutHandle);
+      }
     }
     return this.extraction.generateDaySummary(memories);
   }
