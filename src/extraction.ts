@@ -2211,6 +2211,7 @@ Return valid JSON only.` },
           return normalized;
         }
         if (!this.config.localLlmFallback) {
+          this.emit({ kind: "llm_error", traceId, model: this.config.localLlmModel, operation: "day_summary", durationMs: Date.now() - startedAt, error: "local LLM returned invalid JSON and fallback disabled" });
           log.warn("day summary skipped — local LLM returned invalid JSON and fallback disabled");
           return null;
         }
@@ -2237,8 +2238,11 @@ Return valid JSON only.` },
       { temperature: 0.2, maxTokens: 2048 },
     );
     if (fallbackResult) {
-      log.debug(`generated day summary via fallback (${fallbackResult.bullets.length} bullets)`);
-      return fallbackResult;
+      const normalized = this.normalizeDaySummaryResult(fallbackResult);
+      if (normalized) {
+        log.debug(`generated day summary via fallback (${normalized.bullets.length} bullets)`);
+        return normalized;
+      }
     }
 
     if (!this.client) {

@@ -1233,6 +1233,11 @@
         "default": true,
         "description": "Enable hourly conversation summaries"
       },
+      "daySummaryEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable end-of-day summary generation via engram.day_summary MCP tool"
+      },
       "summaryRecallHours": {
         "type": "number",
         "default": 24,
