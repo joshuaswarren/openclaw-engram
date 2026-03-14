@@ -304,6 +304,7 @@ export class LcmEngine {
       this.archive = null;
       this.dag = null;
       this.summarizer = null;
+      this.initPromise = null;
     }
   }
 }
