@@ -5,6 +5,7 @@ import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
 import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
+import { registerLcmTools } from "./lcm/index.js";
 import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { EngramAccessService } from "./access-service.js";
@@ -388,6 +389,24 @@ export default {
               await orchestrator.processTurn(role, stripped, sessionKey);
             }
           }
+
+          // LCM: index messages into lossless archive (best-effort)
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              const lcmMessages = lastTurn
+                .map((msg) => {
+                  const rawRole = typeof msg.role === "string" ? msg.role : "";
+                  const content = extractTextContent(msg);
+                  return { role: rawRole, content };
+                })
+                .filter((m) => m.content.length > 0);
+              if (lcmMessages.length > 0) {
+                await orchestrator.lcmEngine.observeMessages(sessionKey, lcmMessages);
+              }
+            } catch (lcmErr) {
+              log.debug(`LCM agent_end indexing error: ${lcmErr}`);
+            }
+          }
         } catch (err) {
           log.error("agent_end processing failed", err);
         }
@@ -467,6 +486,17 @@ export default {
             });
             log.info(`saved checkpoint for ${sessionKey} before compaction`);
           }
+
+          // LCM: flush pending summaries and record compaction boundary
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              const tokensBefore = typeof event.tokensBefore === "number" ? event.tokensBefore : 0;
+              const tokensAfter = typeof event.tokensAfter === "number" ? event.tokensAfter : 0;
+              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
+            } catch (lcmErr) {
+              log.debug(`LCM before_compaction error: ${lcmErr}`);
+            }
+          }
         } catch (err) {
           log.error("before_compaction hook failed", err);
         }
@@ -544,6 +574,14 @@ export default {
               `api.resetSession not available — compaction reset requires OC fork with PR #29985. ` +
               `Session ${sessionKey} will continue without reset.`,
             );
+          }
+          // LCM: verify archive coverage after compaction
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
+            } catch (lcmErr) {
+              log.debug(`LCM after_compaction verify error: ${lcmErr}`);
+            }
           }
         } catch (err) {
           log.error("after_compaction reset failed", err);
@@ -639,6 +677,10 @@ export default {
     if (isFirstRegistration) {
       registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
       registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+      // Register LCM tools when enabled
+      if (orchestrator.lcmEngine?.enabled) {
+        registerLcmTools(api as unknown as Parameters<typeof registerLcmTools>[0], orchestrator.lcmEngine);
+      }
     }
 
     // ========================================================================
