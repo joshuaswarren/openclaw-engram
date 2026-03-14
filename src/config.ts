@@ -1449,10 +1449,6 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.lcmArchiveRetentionDays === "number"
         ? Math.max(1, Math.floor(cfg.lcmArchiveRetentionDays))
         : 90,
-    lcmSummaryModel:
-      typeof cfg.lcmSummaryModel === "string" && cfg.lcmSummaryModel.length > 0
-        ? cfg.lcmSummaryModel
-        : null,
   };
 }
 

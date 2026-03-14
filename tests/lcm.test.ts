@@ -571,7 +571,6 @@ test("LCM config fields parse correctly", async () => {
   assert.equal(config.lcmRecallBudgetShare, 0.15);
   assert.equal(config.lcmDeterministicMaxTokens, 512);
   assert.equal(config.lcmArchiveRetentionDays, 90);
-  assert.equal(config.lcmSummaryModel, null);
 });
 
 test("LCM config fields accept custom values", async () => {
@@ -588,7 +587,6 @@ test("LCM config fields accept custom values", async () => {
     lcmRecallBudgetShare: 0.25,
     lcmDeterministicMaxTokens: 256,
     lcmArchiveRetentionDays: 30,
-    lcmSummaryModel: "my-model",
   });
 
   assert.equal(config.lcmEnabled, true);
@@ -599,7 +597,6 @@ test("LCM config fields accept custom values", async () => {
   assert.equal(config.lcmRecallBudgetShare, 0.25);
   assert.equal(config.lcmDeterministicMaxTokens, 256);
   assert.equal(config.lcmArchiveRetentionDays, 30);
-  assert.equal(config.lcmSummaryModel, "my-model");
 });
 
 test("LCM config clamps values to valid ranges", async () => {

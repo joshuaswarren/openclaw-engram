@@ -43,10 +43,11 @@ export function assembleCompressedHistory(
     }
   }
 
-  // Collect leaf nodes covering the fresh tail
+  // Collect leaf nodes covering the fresh tail (exclude nodes that straddle the boundary
+  // to avoid duplicate content with the old section)
   const freshNodes = allNodes
     .filter(
-      (n) => n.depth === 0 && n.msg_end >= freshTailStart && n.msg_start <= maxTurn,
+      (n) => n.depth === 0 && n.msg_start >= freshTailStart && n.msg_end <= maxTurn,
     )
     .sort((a, b) => a.msg_start - b.msg_start);
 

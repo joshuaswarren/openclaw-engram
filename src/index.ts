@@ -471,11 +471,12 @@ export default {
         try {
           // LCM: flush pending summaries and record compaction boundary
           // (runs regardless of checkpoint setting — LCM needs compaction boundaries)
+          // Note: tokensAfter is 0 here since compaction hasn't happened yet;
+          // after_compaction will have the actual post-compaction token count.
           if (orchestrator.lcmEngine?.enabled) {
             try {
               const tokensBefore = typeof event.tokensBefore === "number" ? event.tokensBefore : 0;
-              const tokensAfter = typeof event.tokensAfter === "number" ? event.tokensAfter : 0;
-              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
+              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, 0);
             } catch (lcmErr) {
               log.debug(`LCM before_compaction error: ${lcmErr}`);
             }

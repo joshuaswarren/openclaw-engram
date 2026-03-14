@@ -655,7 +655,6 @@ export interface PluginConfig {
   lcmRecallBudgetShare: number;
   lcmDeterministicMaxTokens: number;
   lcmArchiveRetentionDays: number;
-  lcmSummaryModel: string | null;
 }
 
 export interface BootstrapOptions {

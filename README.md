@@ -189,6 +189,7 @@ Start with zero config. Enable features as your needs grow:
 | **+ Search tuning** | Choose from 6 search backends (QMD, Orama, LanceDB, Meilisearch, remote, noop) |
 | **+ Capture control** | `implicit`, `explicit`, or `hybrid` capture modes for memory write policy |
 | **+ Memory OS** | Memory boxes, graph reasoning, compounding, shared context, identity continuity |
+| **+ LCM** | Lossless Context Management — never lose conversation context to compaction |
 | **+ Advanced** | Trust zones, causal trajectories, harmonic retrieval, evaluation harness, poisoning defense |
 
 Use a preset to jump to a recommended level: `conservative`, `balanced`, `research-max`, or `local-llm-heavy`.
@@ -245,6 +246,36 @@ These capabilities can be enabled progressively:
 - **Native Knowledge** — Search curated markdown (workspace docs, Obsidian vaults) without extracting into memory
 - **Behavior Loop Tuning** — Runtime self-tuning of extraction and recall parameters
 
+### Lossless Context Management (LCM)
+
+When your AI agent hits its context window limit, the runtime silently compresses old messages — and that context is gone forever. LCM fixes this by proactively archiving every message into a local SQLite database and building a hierarchical summary DAG (directed acyclic graph) alongside it. When context gets compacted, LCM injects compressed session history back into recall, so your agent never loses track of what happened earlier in the conversation.
+
+- **Proactive archiving** — Every message is indexed with full-text search before compaction can discard it
+- **Hierarchical summaries** — Leaf summaries cover ~8 turns, depth-1 covers ~32, depth-2 ~128, etc.
+- **Fresh tail protection** — Recent turns always use the most detailed (leaf-level) summaries
+- **Three-level summarization** — Normal LLM summary, aggressive bullet compression, and deterministic truncation (guaranteed convergence, no LLM needed)
+- **MCP expansion tools** — Agents can search, describe, or expand any part of conversation history on demand
+- **Zero data loss** — Raw messages are retained for the configured retention period (default 90 days)
+
+Enable it in your `openclaw.json`:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          "lcmEnabled": true
+          // All other LCM settings have sensible defaults
+        }
+      }
+    }
+  }
+}
+```
+
+See the [LCM Guide](docs/guides/lossless-context-management.md) for architecture details, configuration options, and how it complements native compaction.
+
 ### Advanced (opt-in)
 
 - **Objective-State Recall** — Surfaces file/process/tool state snapshots alongside semantic memory
@@ -289,6 +320,9 @@ Available via both stdio and HTTP transports:
 | `engram.suggestion_submit` | Queue a memory for review |
 | `engram.entity_get` | Look up a known entity |
 | `engram.review_queue_list` | View the governance review queue |
+| `engram_context_search` | Full-text search across all archived conversation history (LCM) |
+| `engram_context_describe` | Get a compressed summary of a turn range (LCM) |
+| `engram_context_expand` | Retrieve raw lossless messages for a turn range (LCM) |
 
 ### MCP over HTTP
 
@@ -346,6 +380,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Recall budget (default ~8K chars; set 64K+ for large-context models) |
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `memoryOsPreset` | unset | Quick config: `conservative`, `balanced`, `research-max`, `local-llm-heavy` |
+| `lcmEnabled` | `false` | Enable Lossless Context Management (proactive session archive + summary DAG) |
 
 **[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
@@ -368,6 +403,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Graph Reasoning](docs/architecture/graph-reasoning.md) — Opt-in graph traversal
 - [Evaluation Harness](docs/evaluation-harness.md) — Benchmarks and CI delta gates
 - [Operations](docs/operations.md) — Backup, export, maintenance
+- [Lossless Context Management](docs/guides/lossless-context-management.md) — Never lose context to compaction
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Migration Guide](docs/guides/migrations.md) — Upgrading from older versions
 
