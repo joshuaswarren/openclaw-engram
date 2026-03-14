@@ -76,13 +76,17 @@ function resolvePromptPath(): string | null {
 export async function loadDaySummaryPrompt(): Promise<string> {
   const promptPath = resolvePromptPath();
   if (promptPath) {
-    const raw = await readFile(promptPath, "utf-8");
-    // CRLF-compatible regex: allow \r\n or \n line endings
-    const match = raw.match(/```(?:[a-zA-Z0-9_-]+)?\r?\n([\s\S]*?)\r?\n```/);
-    if (match?.[1]) {
-      return match[1].trim();
+    try {
+      const raw = await readFile(promptPath, "utf-8");
+      // CRLF-compatible regex: allow \r\n or \n line endings
+      const match = raw.match(/```(?:[a-zA-Z0-9_-]+)?\r?\n([\s\S]*?)\r?\n```/);
+      if (match?.[1]) {
+        return match[1].trim();
+      }
+      log.warn("day summary prompt file does not contain a fenced prompt block; using embedded fallback");
+    } catch (err) {
+      log.warn(`day summary prompt file read failed; using embedded fallback: ${err}`);
     }
-    log.warn("day summary prompt file does not contain a fenced prompt block; using embedded fallback");
   }
   return EMBEDDED_DAY_SUMMARY_PROMPT;
 }

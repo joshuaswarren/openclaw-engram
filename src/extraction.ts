@@ -2245,52 +2245,11 @@ Return valid JSON only.` },
       }
     }
 
-    if (!this.client) {
-      this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "no OpenAI API key and fallback unavailable" });
-      log.warn("day summary skipped — no OpenAI API key and fallback unavailable");
-      return null;
-    }
-
-    try {
-      const response = await this.client.chat.completions.create({
-        model: this.config.model,
-        messages: [
-          { role: "system", content: `${systemPrompt}
-
-Return valid JSON only.` },
-          { role: "user", content: userPrompt },
-        ],
-        ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
-        ...buildChatCompletionTokenLimit(this.config.model, 2048, {
-          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
-        }),
-      });
-
-      const rawContent = response.choices?.[0]?.message?.content?.trim();
-      const usage = (response as any).usage;
-      const normalized = this.normalizeDaySummaryResult(this.parseJsonObject(rawContent));
-      if (normalized) {
-        this.emit({
-          kind: "llm_end",
-          traceId,
-          model: this.config.model,
-          operation: "day_summary",
-          durationMs: Date.now() - startedAt,
-          output: JSON.stringify(normalized).slice(0, 2000),
-          tokenUsage: usage ? { input: usage.prompt_tokens, output: usage.completion_tokens, total: usage.total_tokens } : undefined,
-        });
-        log.debug(`generated day summary via direct client (${normalized.bullets.length} bullets)`);
-        return normalized;
-      }
-
-      this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "direct client returned unparseable output" });
-      log.warn("day summary returned no parsed output");
-      return null;
-    } catch (err) {
-      this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: String(err) });
-      log.error("day summary generation failed", err);
-      return null;
-    }
+    // Gateway fallback already attempted above; no direct client path
+    // (AGENTS.md: OpenAI Responses API only — never use Chat Completions).
+    this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: "all generation paths exhausted (local LLM + gateway)" });
+    log.warn("day summary skipped — all generation paths exhausted");
+    return null;
   }
 
 
