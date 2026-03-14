@@ -2,7 +2,9 @@ import { log } from "./logger.js";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { formatDaySummaryMemories } from "./day-summary.js";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
@@ -1420,10 +1422,76 @@ export class Orchestrator {
 
     log.info("orchestrator initialized");
 
+    // Fire-and-forget: auto-register day-summary cron job if enabled
+    if (this.config.daySummaryEnabled) {
+      this.autoRegisterDaySummaryCron().catch((err) => {
+        log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
+      });
+    }
+
     // Open the init gate — any recall() calls waiting on this will proceed
     if (this.resolveInit) {
       this.resolveInit();
       this.resolveInit = null;
+    }
+  }
+
+  /**
+   * Auto-register the engram-day-summary cron job in OpenClaw if it doesn't exist.
+   * Fire-and-forget — never blocks init or crashes on failure.
+   */
+  private async autoRegisterDaySummaryCron(): Promise<void> {
+    const CRON_ID = "engram-day-summary";
+    const home = process.env.HOME || os.homedir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("day-summary cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+
+      const raw = await readFile(jobsPath, "utf-8");
+      const parsed = JSON.parse(raw);
+
+      // jobs.json may be { version, jobs: [...] } or a plain array
+      const jobsArray: Array<{ id?: string; [key: string]: unknown }> =
+        Array.isArray(parsed) ? parsed : Array.isArray(parsed?.jobs) ? parsed.jobs : null as any;
+
+      if (!jobsArray) {
+        log.debug("day-summary cron: jobs.json has unexpected structure, skipping auto-register");
+        return;
+      }
+
+      if (jobsArray.some((j) => j.id === CRON_ID)) {
+        log.debug("day-summary cron already exists, skipping auto-register");
+        return;
+      }
+
+      jobsArray.push({
+        id: CRON_ID,
+        agentId: "main",
+        name: "Engram Day Summary (auto)",
+        enabled: true,
+        schedule: { kind: "cron", expr: "47 23 * * *", tz: "America/Chicago" },
+        sessionTarget: "isolated",
+        wakeMode: "now",
+        payload: {
+          kind: "agentTurn",
+          timeoutSeconds: 900,
+          thinking: "off",
+          message:
+            "You are OpenClaw automation. Call tool engram.day_summary with empty params (it will auto-gather today's facts). If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
+        },
+        delivery: { mode: "none" },
+      });
+
+      // Write back preserving the original shape
+      const output = Array.isArray(parsed) ? jobsArray : { ...parsed, jobs: jobsArray };
+      await writeFile(jobsPath, JSON.stringify(output, null, 2) + "\n", "utf-8");
+      log.info("day-summary cron auto-registered (engram-day-summary, 23:47 CT)");
+    } catch (err) {
+      log.debug(`day-summary cron auto-register error: ${err}`);
     }
   }
 
@@ -1558,6 +1626,123 @@ export class Orchestrator {
       }
     }
     return this.extraction.generateDaySummary(memories);
+  }
+
+  /**
+   * Auto-gather today's facts and hourly summaries from storage, then generate a day summary.
+   * Returns null if no facts are found for today.
+   */
+  async generateDaySummaryAuto(): Promise<DaySummaryResult | null> {
+    const gathered = await this.gatherTodayFacts();
+    if (!gathered || gathered.length === 0) {
+      log.warn("generateDaySummaryAuto: no facts found for today, skipping");
+      return null;
+    }
+    return this.generateDaySummary(gathered);
+  }
+
+  /**
+   * Read today's facts and hourly summaries from storage, returning them
+   * as a formatted string suitable for generateDaySummary().
+   */
+  async gatherTodayFacts(): Promise<string> {
+    const storage = await this.storageRouter.storageFor(this.config.defaultNamespace);
+    const today = new Date().toISOString().slice(0, 10);
+    const factsDir = path.join(storage.dir, "facts", today);
+    const MAX_CHARS = 100_000;
+
+    // --- Read today's fact files ---
+    const facts: MemoryFile[] = [];
+    try {
+      const entries = await readdir(factsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.name.endsWith(".md")) continue;
+        const fullPath = path.join(factsDir, entry.name);
+        try {
+          const raw = await readFile(fullPath, "utf-8");
+          const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+          if (!fmMatch) continue;
+          const fmBlock = fmMatch[1];
+          const content = fmMatch[2].trim();
+          const fm: Record<string, string> = {};
+          for (const line of fmBlock.split("\n")) {
+            const colonIdx = line.indexOf(":");
+            if (colonIdx === -1) continue;
+            fm[line.slice(0, colonIdx).trim()] = line.slice(colonIdx + 1).trim();
+          }
+          facts.push({
+            path: fullPath,
+            frontmatter: {
+              id: fm.id || path.basename(entry.name, ".md"),
+              category: (fm.category as any) || "fact",
+              created: fm.created || "unknown",
+              updated: fm.updated || fm.created || "unknown",
+              source: fm.source || "unknown",
+              confidence: parseFloat(fm.confidence || "0.8"),
+              confidenceTier: (fm.confidenceTier as any) || "implied",
+              tags: [],
+            },
+            content,
+          });
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    } catch {
+      // Directory doesn't exist — no facts for today
+    }
+
+    // Sort facts by created timestamp (most recent last) so truncation keeps newest
+    facts.sort((a, b) => (a.frontmatter.created < b.frontmatter.created ? -1 : 1));
+
+    // --- Read hourly summaries for today ---
+    const hourlySummaries: string[] = [];
+    const hourlyBaseDir = path.join(storage.dir, "summaries", "hourly");
+    try {
+      const sessionKeys = await readdir(hourlyBaseDir, { withFileTypes: true });
+      for (const sk of sessionKeys) {
+        if (!sk.isDirectory()) continue;
+        const summaryFile = path.join(hourlyBaseDir, sk.name, `${today}.md`);
+        try {
+          const raw = await readFile(summaryFile, "utf-8");
+          if (raw.trim().length > 0) {
+            hourlySummaries.push(raw.trim());
+          }
+        } catch {
+          // No summary file for this session today
+        }
+      }
+    } catch {
+      // No hourly summaries directory
+    }
+
+    // --- Format and truncate ---
+    let formatted = formatDaySummaryMemories(facts);
+    if (hourlySummaries.length > 0) {
+      formatted += "\n\n---\n## Hourly Summaries\n\n" + hourlySummaries.join("\n\n---\n\n");
+    }
+
+    // Truncate intelligently if over budget: drop oldest facts first
+    if (formatted.length > MAX_CHARS) {
+      // Re-build with fewer facts, keeping most recent
+      while (facts.length > 1 && formatted.length > MAX_CHARS) {
+        facts.shift(); // drop oldest
+        formatted = formatDaySummaryMemories(facts);
+        if (hourlySummaries.length > 0) {
+          formatted += "\n\n---\n## Hourly Summaries\n\n" + hourlySummaries.join("\n\n---\n\n");
+        }
+      }
+      // If still over, hard truncate
+      if (formatted.length > MAX_CHARS) {
+        formatted = formatted.slice(0, MAX_CHARS);
+      }
+    }
+
+    log.info(
+      `gatherTodayFacts: collected ${facts.length} facts, ${hourlySummaries.length} hourly summaries (${formatted.length} chars)`,
+    );
+
+    return formatted;
   }
 
   previewMemoryActionEvent(
