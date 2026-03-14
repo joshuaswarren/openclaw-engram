@@ -59,7 +59,11 @@ export class LcmEngine {
       await this.initPromise;
       return;
     }
-    this.initPromise = this.doInit();
+    this.initPromise = this.doInit().catch((err) => {
+      // Reset so next call retries instead of caching the failure
+      this.initPromise = null;
+      throw err;
+    });
     await this.initPromise;
   }
 

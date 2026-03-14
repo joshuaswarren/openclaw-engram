@@ -2,7 +2,6 @@ import { log } from "../logger.js";
 import type { LcmArchive, LcmMessage } from "./archive.js";
 import { LcmDag } from "./dag.js";
 import { estimateTokens } from "./archive.js";
-import type { PluginConfig } from "../types.js";
 
 /** Generate a ULID-like ID (timestamp + random). */
 function generateNodeId(): string {
