@@ -20,13 +20,22 @@
       },
       "reasoningEffort": {
         "type": "string",
-        "enum": ["none", "low", "medium", "high"],
+        "enum": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
         "default": "low",
         "description": "Reasoning effort for extraction"
       },
       "triggerMode": {
         "type": "string",
-        "enum": ["smart", "every_n", "time_based"],
+        "enum": [
+          "smart",
+          "every_n",
+          "time_based"
+        ],
         "default": "smart",
         "description": "Buffer trigger mode"
       },
@@ -47,7 +56,9 @@
       },
       "highSignalPatterns": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Custom regex patterns for immediate extraction"
       },
       "maxMemoryTokens": {
@@ -57,7 +68,13 @@
       },
       "memoryOsPreset": {
         "type": "string",
-        "enum": ["conservative", "balanced", "research", "research-max", "local-llm-heavy"],
+        "enum": [
+          "conservative",
+          "balanced",
+          "research",
+          "research-max",
+          "local-llm-heavy"
+        ],
         "description": "Optional named preset that seeds Engram's advanced config surface before explicit per-setting overrides are applied. `research` is accepted as a backward-compatible alias for `research-max`."
       },
       "qmdEnabled": {
@@ -132,7 +149,11 @@
       },
       "embeddingFallbackProvider": {
         "type": "string",
-        "enum": ["auto", "openai", "local"],
+        "enum": [
+          "auto",
+          "openai",
+          "local"
+        ],
         "default": "auto",
         "description": "Embedding provider selection for semantic fallback"
       },
@@ -161,7 +182,11 @@
       },
       "identityInjectionMode": {
         "type": "string",
-        "enum": ["recovery_only", "minimal", "full"],
+        "enum": [
+          "recovery_only",
+          "minimal",
+          "full"
+        ],
         "default": "recovery_only",
         "description": "Controls when identity continuity context is injected into recall assembly"
       },
@@ -196,16 +221,38 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "maxBytes": { "type": "number" },
-            "triggerDeltaBytes": { "type": "number" },
-            "triggerDeltaTokens": { "type": "number" }
+            "maxBytes": {
+              "type": "number"
+            },
+            "triggerDeltaBytes": {
+              "type": "number"
+            },
+            "triggerDeltaTokens": {
+              "type": "number"
+            }
           },
-          "required": ["maxBytes", "triggerDeltaBytes", "triggerDeltaTokens"]
+          "required": [
+            "maxBytes",
+            "triggerDeltaBytes",
+            "triggerDeltaTokens"
+          ]
         },
         "default": [
-          { "maxBytes": 50000, "triggerDeltaBytes": 4800, "triggerDeltaTokens": 1200 },
-          { "maxBytes": 200000, "triggerDeltaBytes": 9600, "triggerDeltaTokens": 2400 },
-          { "maxBytes": 1000000000, "triggerDeltaBytes": 19200, "triggerDeltaTokens": 4800 }
+          {
+            "maxBytes": 50000,
+            "triggerDeltaBytes": 4800,
+            "triggerDeltaTokens": 1200
+          },
+          {
+            "maxBytes": 200000,
+            "triggerDeltaBytes": 9600,
+            "triggerDeltaTokens": 2400
+          },
+          {
+            "maxBytes": 1000000000,
+            "triggerDeltaBytes": 19200,
+            "triggerDeltaTokens": 4800
+          }
         ]
       },
       "injectQuestions": {
@@ -249,8 +296,13 @@
           },
           "lintPaths": {
             "type": "array",
-            "items": { "type": "string" },
-            "default": ["IDENTITY.md", "MEMORY.md"],
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "IDENTITY.md",
+              "MEMORY.md"
+            ],
             "description": "Workspace-relative paths to lint (or absolute paths)."
           },
           "rotateEnabled": {
@@ -270,8 +322,12 @@
           },
           "rotatePaths": {
             "type": "array",
-            "items": { "type": "string" },
-            "default": ["IDENTITY.md"],
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "IDENTITY.md"
+            ],
             "description": "Workspace-relative paths to rotate (or absolute paths)."
           },
           "archiveDir": {
@@ -305,7 +361,9 @@
             "description": "Workspace-relative index path (if indexEnabled)."
           }
         },
-        "required": ["enabled"]
+        "required": [
+          "enabled"
+        ]
       },
       "nativeKnowledge": {
         "type": "object",
@@ -319,8 +377,13 @@
           },
           "includeFiles": {
             "type": "array",
-            "items": { "type": "string" },
-            "default": ["IDENTITY.md", "MEMORY.md"],
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "IDENTITY.md",
+              "MEMORY.md"
+            ],
             "description": "Workspace-relative curated markdown files to scan for native knowledge recall."
           },
           "maxChunkChars": {
@@ -355,48 +418,74 @@
               },
               "bootstrapFiles": {
                 "type": "array",
-                "items": { "type": "string" },
-                "default": ["IDENTITY.md", "MEMORY.md", "USER.md"],
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "IDENTITY.md",
+                  "MEMORY.md",
+                  "USER.md"
+                ],
                 "description": "Workspace-relative bootstrap docs treated as high-confidence native knowledge."
               },
               "handoffGlobs": {
                 "type": "array",
-                "items": { "type": "string" },
-                "default": ["**/*handoff*.md", "handoffs/**/*.md"],
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "**/*handoff*.md",
+                  "handoffs/**/*.md"
+                ],
                 "description": "Glob patterns (relative to workspaceDir) used to discover handoff notes."
               },
               "dailySummaryGlobs": {
                 "type": "array",
-                "items": { "type": "string" },
-                "default": ["**/*daily*summary*.md", "summaries/**/*.md"],
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "**/*daily*summary*.md",
+                  "summaries/**/*.md"
+                ],
                 "description": "Glob patterns (relative to workspaceDir) used to discover daily summary notes."
               },
               "automationNoteGlobs": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "default": [],
                 "description": "Optional glob patterns for automation-written status or operating notes."
               },
               "workspaceDocGlobs": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "default": [],
                 "description": "Optional glob patterns for other explicitly allowlisted workspace docs."
               },
               "excludeGlobs": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "default": [],
                 "description": "Additional glob patterns appended to the built-in workspace safety excludes."
               },
               "sharedSafeGlobs": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "default": [],
                 "description": "Optional glob patterns that should be tagged as shared-safe when no explicit privacy class is present."
               }
             },
-            "required": ["enabled"]
+            "required": [
+              "enabled"
+            ]
           },
           "obsidianVaults": {
             "type": "array",
@@ -416,14 +505,28 @@
                 },
                 "includeGlobs": {
                   "type": "array",
-                  "items": { "type": "string" },
-                  "default": ["**/*.md"],
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [
+                    "**/*.md"
+                  ],
                   "description": "Glob patterns (relative to the vault root) that are eligible for sync."
                 },
                 "excludeGlobs": {
                   "type": "array",
-                  "items": { "type": "string" },
-                  "default": [".obsidian/**", "**/*.canvas", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.gif", "**/*.pdf"],
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [
+                    ".obsidian/**",
+                    "**/*.canvas",
+                    "**/*.png",
+                    "**/*.jpg",
+                    "**/*.jpeg",
+                    "**/*.gif",
+                    "**/*.pdf"
+                  ],
                   "description": "Glob patterns excluded from sync."
                 },
                 "namespace": {
@@ -455,13 +558,19 @@
                         "description": "Privacy-class override for matching notes."
                       }
                     },
-                    "required": ["pathPrefix"]
+                    "required": [
+                      "pathPrefix"
+                    ]
                   }
                 },
                 "dailyNotePatterns": {
                   "type": "array",
-                  "items": { "type": "string" },
-                  "default": ["YYYY-MM-DD"],
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [
+                    "YYYY-MM-DD"
+                  ],
                   "description": "Filename patterns used to derive daily-note dates (for example `YYYY-MM-DD` or `YYYY/MM/DD`)."
                 },
                 "materializeBacklinks": {
@@ -470,11 +579,15 @@
                   "description": "If true, compute backlinks from wikilink targets for recall hints and explainability."
                 }
               },
-              "required": ["rootDir"]
+              "required": [
+                "rootDir"
+              ]
             }
           }
         },
-        "required": ["enabled"]
+        "required": [
+          "enabled"
+        ]
       },
       "agentAccessHttp": {
         "type": "object",
@@ -510,7 +623,9 @@
             "description": "Maximum accepted JSON request body size for the local Engram HTTP API."
           }
         },
-        "required": ["enabled"]
+        "required": [
+          "enabled"
+        ]
       },
       "accessTrackingEnabled": {
         "type": "boolean",
@@ -616,9 +731,25 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill"]
+          "enum": [
+            "fact",
+            "preference",
+            "correction",
+            "entity",
+            "decision",
+            "relationship",
+            "principle",
+            "commitment",
+            "moment",
+            "skill"
+          ]
         },
-        "default": ["decision", "correction", "principle", "commitment"],
+        "default": [
+          "decision",
+          "correction",
+          "principle",
+          "commitment"
+        ],
         "description": "Memory categories eligible for artifact extraction."
       },
       "memoryBoxesEnabled": {
@@ -1043,7 +1174,10 @@
         "type": "string",
         "default": "local",
         "description": "Re-ranking provider: 'local' uses local LLM only. 'cloud' is reserved/experimental (currently treated as no-op).",
-        "enum": ["local", "cloud"]
+        "enum": [
+          "local",
+          "cloud"
+        ]
       },
       "rerankMaxCandidates": {
         "type": "number",
@@ -1162,8 +1296,15 @@
       },
       "summarizationProtectedTags": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["commitment", "preference", "decision", "principle"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "commitment",
+          "preference",
+          "decision",
+          "principle"
+        ],
         "description": "Tags that protect memories from compression"
       },
       "topicExtractionEnabled": {
@@ -1183,7 +1324,11 @@
       },
       "captureMode": {
         "type": "string",
-        "enum": ["implicit", "explicit", "hybrid"],
+        "enum": [
+          "implicit",
+          "explicit",
+          "hybrid"
+        ],
         "default": "implicit",
         "description": "Memory capture policy. implicit preserves normal extraction, explicit stores only structured capture, and hybrid allows both."
       },
@@ -1194,8 +1339,12 @@
       },
       "transcriptSkipChannelTypes": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["cron"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "cron"
+        ],
         "description": "Channel types to skip from transcript logging (e.g., cron)"
       },
       "transcriptRecallHours": {
@@ -1480,7 +1629,10 @@
       },
       "conversationIndexBackend": {
         "type": "string",
-        "enum": ["qmd", "faiss"],
+        "enum": [
+          "qmd",
+          "faiss"
+        ],
         "default": "qmd",
         "description": "Backend for conversation indexing. qmd indexes chunk docs into a QMD collection; faiss uses the bundled Python sidecar and local FAISS artifacts under memoryDir/state/conversation-index/faiss."
       },
@@ -1805,7 +1957,11 @@
       },
       "principalFromSessionKeyMode": {
         "type": "string",
-        "enum": ["map", "prefix", "regex"],
+        "enum": [
+          "map",
+          "prefix",
+          "regex"
+        ],
         "default": "map",
         "description": "How to derive principal identity from sessionKey."
       },
@@ -1816,10 +1972,17 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "match": { "type": "string" },
-            "principal": { "type": "string" }
+            "match": {
+              "type": "string"
+            },
+            "principal": {
+              "type": "string"
+            }
           },
-          "required": ["match", "principal"]
+          "required": [
+            "match",
+            "principal"
+          ]
         }
       },
       "namespacePolicies": {
@@ -1829,29 +1992,62 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "name": { "type": "string" },
-            "readPrincipals": { "type": "array", "items": { "type": "string" } },
-            "writePrincipals": { "type": "array", "items": { "type": "string" } },
-            "includeInRecallByDefault": { "type": "boolean" }
+            "name": {
+              "type": "string"
+            },
+            "readPrincipals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "writePrincipals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "includeInRecallByDefault": {
+              "type": "boolean"
+            }
           },
-          "required": ["name", "readPrincipals", "writePrincipals"]
+          "required": [
+            "name",
+            "readPrincipals",
+            "writePrincipals"
+          ]
         }
       },
       "defaultRecallNamespaces": {
         "type": "array",
         "description": "Which namespaces to include by default in recall.",
-        "items": { "type": "string", "enum": ["self", "shared"] },
-        "default": ["self", "shared"]
+        "items": {
+          "type": "string",
+          "enum": [
+            "self",
+            "shared"
+          ]
+        },
+        "default": [
+          "self",
+          "shared"
+        ]
       },
       "cronRecallMode": {
         "type": "string",
-        "enum": ["all", "none", "allowlist"],
+        "enum": [
+          "all",
+          "none",
+          "allowlist"
+        ],
         "default": "all",
         "description": "Recall behavior for cron sessions. Use allowlist to opt specific cron sessionKeys in."
       },
       "cronRecallAllowlist": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "default": [],
         "description": "Session-key wildcard patterns (supports *) allowed for recall when cronRecallMode=allowlist."
       },
@@ -1872,7 +2068,11 @@
       },
       "cronConversationRecallMode": {
         "type": "string",
-        "enum": ["auto", "always", "never"],
+        "enum": [
+          "auto",
+          "always",
+          "never"
+        ],
         "default": "auto",
         "description": "Controls conversation semantic recall in cron sessions. auto skips it for instruction-heavy prompts."
       },
@@ -1883,13 +2083,29 @@
       },
       "autoPromoteToSharedCategories": {
         "type": "array",
-        "items": { "type": "string", "enum": ["fact", "correction", "decision", "preference"] },
-        "default": ["fact", "correction", "decision", "preference"],
+        "items": {
+          "type": "string",
+          "enum": [
+            "fact",
+            "correction",
+            "decision",
+            "preference"
+          ]
+        },
+        "default": [
+          "fact",
+          "correction",
+          "decision",
+          "preference"
+        ],
         "description": "Categories eligible for auto-promotion to shared."
       },
       "autoPromoteMinConfidenceTier": {
         "type": "string",
-        "enum": ["explicit", "implied"],
+        "enum": [
+          "explicit",
+          "implied"
+        ],
         "default": "explicit",
         "description": "Minimum confidence tier for auto-promotion."
       },
@@ -1994,8 +2210,15 @@
       },
       "factArchivalProtectedCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["commitment", "preference", "decision", "principle"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "commitment",
+          "preference",
+          "decision",
+          "principle"
+        ],
         "description": "Categories that protect a fact from archival regardless of other criteria."
       },
       "lifecyclePolicyEnabled": {
@@ -2025,8 +2248,15 @@
       },
       "lifecycleProtectedCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["decision", "principle", "commitment", "preference"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "decision",
+          "principle",
+          "commitment",
+          "preference"
+        ],
         "description": "Categories that lifecycle policy will not auto-archive."
       },
       "lifecycleMetricsEnabled": {
@@ -2081,7 +2311,9 @@
       },
       "proactiveExtractionCategoryAllowlist": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Optional memory categories allowed from proactive second-pass writes. When omitted, proactive writes can emit any standard memory category."
       },
       "maxCompressionTokensPerHour": {
@@ -2111,7 +2343,9 @@
       },
       "behaviorLoopProtectedParams": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "default": [
           "maxMemoryTokens",
           "qmdMaxResults",
@@ -2123,7 +2357,14 @@
       },
       "searchBackend": {
         "type": "string",
-        "enum": ["qmd", "remote", "noop", "lancedb", "meilisearch", "orama"],
+        "enum": [
+          "qmd",
+          "remote",
+          "noop",
+          "lancedb",
+          "meilisearch",
+          "orama"
+        ],
         "default": "qmd",
         "description": "Search backend: qmd (local hybrid), remote (HTTP REST), noop (disabled), lancedb (embedded hybrid), meilisearch (server-based), orama (embedded JS)"
       },
@@ -2297,23 +2538,97 @@
         "items": {
           "type": "object",
           "properties": {
-            "id": { "type": "string" },
-            "enabled": { "type": "boolean", "default": true },
-            "maxChars": { "type": ["number", "null"] },
-            "consolidateTriggerLines": { "type": "number" },
-            "consolidateTargetLines": { "type": "number" },
-            "maxEntities": { "type": "number" },
-            "maxResults": { "type": "number" },
-            "maxTurns": { "type": "number" },
-            "maxTokens": { "type": "number" },
-            "lookbackHours": { "type": "number" },
-            "maxCount": { "type": "number" },
-            "topK": { "type": "number" },
-            "timeoutMs": { "type": "number" },
-            "maxPatterns": { "type": "number" }
+            "id": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "maxChars": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "consolidateTriggerLines": {
+              "type": "number"
+            },
+            "consolidateTargetLines": {
+              "type": "number"
+            },
+            "maxEntities": {
+              "type": "number"
+            },
+            "maxResults": {
+              "type": "number"
+            },
+            "maxTurns": {
+              "type": "number"
+            },
+            "maxTokens": {
+              "type": "number"
+            },
+            "lookbackHours": {
+              "type": "number"
+            },
+            "maxCount": {
+              "type": "number"
+            },
+            "topK": {
+              "type": "number"
+            },
+            "timeoutMs": {
+              "type": "number"
+            },
+            "maxPatterns": {
+              "type": "number"
+            }
           },
-          "required": ["id"]
+          "required": [
+            "id"
+          ]
         }
+      },
+      "lcmEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Lossless Context Management (LCM) subsystem"
+      },
+      "lcmLeafBatchSize": {
+        "type": "number",
+        "default": 8,
+        "description": "Number of turns per leaf node in the LCM DAG"
+      },
+      "lcmRollupFanIn": {
+        "type": "number",
+        "default": 4,
+        "description": "Number of children per rollup node in the LCM DAG"
+      },
+      "lcmFreshTailTurns": {
+        "type": "number",
+        "default": 16,
+        "description": "Number of recent turns kept verbatim (not summarized)"
+      },
+      "lcmMaxDepth": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum depth of the LCM summary DAG"
+      },
+      "lcmRecallBudgetShare": {
+        "type": "number",
+        "default": 0.15,
+        "description": "Fraction of recall budget allocated to LCM compressed history (0-1)"
+      },
+      "lcmDeterministicMaxTokens": {
+        "type": "number",
+        "default": 512,
+        "description": "Max tokens for deterministic (non-LLM) summaries"
+      },
+      "lcmArchiveRetentionDays": {
+        "type": "number",
+        "default": 90,
+        "description": "Days to retain archived LCM summaries"
       }
     }
   },
