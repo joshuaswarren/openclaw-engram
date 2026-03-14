@@ -145,6 +145,7 @@ import type {
   MemoryLink,
   MemoryFile,
   MemoryFrontmatter,
+  DaySummaryResult,
   PluginConfig,
   QmdSearchResult,
   RecallPlanMode,
@@ -1515,6 +1516,16 @@ export class Orchestrator {
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
+  }
+
+  async generateDaySummary(memories: string | MemoryFile[]): Promise<DaySummaryResult | null> {
+    if (this.initPromise) {
+      await Promise.race([
+        this.initPromise.catch(() => undefined),
+        new Promise((resolve) => setTimeout(resolve, 15_000)),
+      ]);
+    }
+    return this.extraction.generateDaySummary(memories);
   }
 
   previewMemoryActionEvent(

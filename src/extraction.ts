@@ -14,6 +14,7 @@ import {
   type SuggestedLinks,
   type MemorySummaryResult,
   type ProactiveQuestionsResultParsed,
+  DaySummaryResultSchema,
 } from "./schemas.js";
 import type {
   BufferTurn,
@@ -24,12 +25,14 @@ import type {
   LlmTraceEvent,
   GatewayConfig,
   MemoryCategory,
+  DaySummaryResult as DaySummaryResultShape,
 } from "./types.js";
 import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
 import { buildChatCompletionTokenLimit, shouldAssumeOpenAiChatCompletions } from "./openai-chat-compat.js";
+import { formatDaySummaryMemories, loadDaySummaryPrompt } from "./day-summary.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 type ExtractedFactResult = ExtractionResult["facts"][number];
@@ -283,6 +286,25 @@ export class ExtractionEngine {
     };
 
     return normalized.summaryText.length > 0 ? normalized : null;
+  }
+
+  private normalizeDaySummaryResult(parsed: any): DaySummaryResultShape | null {
+    if (!parsed) return null;
+
+    const normalized: DaySummaryResultShape = {
+      summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+      bullets: Array.isArray(parsed.bullets)
+        ? parsed.bullets.filter((item: unknown) => typeof item === "string").map((item: string) => item.trim()).filter(Boolean)
+        : [],
+      next_actions: Array.isArray(parsed.next_actions)
+        ? parsed.next_actions.filter((item: unknown) => typeof item === "string").map((item: string) => item.trim()).filter(Boolean)
+        : [],
+      risks_or_open_loops: Array.isArray(parsed.risks_or_open_loops)
+        ? parsed.risks_or_open_loops.filter((item: unknown) => typeof item === "string").map((item: string) => item.trim()).filter(Boolean)
+        : [],
+    };
+
+    return normalized.summary.length > 0 ? normalized : null;
   }
 
   private sanitizeConsolidationResult(result: ConsolidationResult): ConsolidationResult {
@@ -2153,6 +2175,118 @@ Respond with valid JSON matching this schema:
       return null;
     }
   }
+
+  async generateDaySummary(memories: string | MemoryFile[]): Promise<DaySummaryResultShape | null> {
+    if (!this.config.daySummaryEnabled) {
+      log.warn("day summary skipped — disabled by config");
+      return null;
+    }
+
+    const memoryContext = formatDaySummaryMemories(memories);
+    if (memoryContext.length === 0) return null;
+
+    const systemPrompt = await loadDaySummaryPrompt();
+    const userPrompt = `Generate an end-of-day summary from this Engram memory context:
+
+${memoryContext}`;
+    const traceId = crypto.randomUUID();
+    const startedAt = Date.now();
+    this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "day_summary", input: memoryContext.slice(0, 4000) });
+
+    if (this.config.localLlmEnabled) {
+      try {
+        const localResponse = await this.localLlm.chatCompletion(
+          [
+            { role: "system", content: `${systemPrompt}
+
+Return valid JSON only.` },
+            { role: "user", content: userPrompt },
+          ],
+          { temperature: 0.2, maxTokens: 2048, operation: "day_summary" },
+        );
+        const normalized = this.normalizeDaySummaryResult(this.parseJsonObject(localResponse?.content));
+        if (normalized) {
+          this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "day_summary", durationMs: Date.now() - startedAt, output: JSON.stringify(normalized).slice(0, 2000) });
+          log.debug(`generated day summary via local LLM (${normalized.bullets.length} bullets)`);
+          return normalized;
+        }
+        if (!this.config.localLlmFallback) {
+          log.warn("day summary skipped — local LLM returned invalid JSON and fallback disabled");
+          return null;
+        }
+      } catch (err) {
+        if (!this.config.localLlmFallback) {
+          this.emit({ kind: "llm_error", traceId, model: this.config.localLlmModel, operation: "day_summary", durationMs: Date.now() - startedAt, error: String(err) });
+          log.warn(`day summary skipped — local LLM failed and fallback disabled: ${err}`);
+          return null;
+        }
+      }
+    }
+
+    const fallbackResult = await this.parseWithGatewayFallback(
+      traceId,
+      "day_summary",
+      startedAt,
+      DaySummaryResultSchema,
+      [
+        { role: "system", content: `${systemPrompt}
+
+Return valid JSON only.` },
+        { role: "user", content: userPrompt },
+      ],
+      { temperature: 0.2, maxTokens: 2048 },
+    );
+    if (fallbackResult) {
+      log.debug(`generated day summary via fallback (${fallbackResult.bullets.length} bullets)`);
+      return fallbackResult;
+    }
+
+    if (!this.client) {
+      log.warn("day summary skipped — no OpenAI API key and fallback unavailable");
+      return null;
+    }
+
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: `${systemPrompt}
+
+Return valid JSON only.` },
+          { role: "user", content: userPrompt },
+        ],
+        ...(this.config.reasoningEffort !== "none" ? { reasoning_effort: this.config.reasoningEffort } : {}),
+        ...buildChatCompletionTokenLimit(this.config.model, 2048, {
+          assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
+        }),
+      });
+
+      const rawContent = response.choices?.[0]?.message?.content?.trim();
+      const usage = (response as any).usage;
+      const normalized = this.normalizeDaySummaryResult(this.parseJsonObject(rawContent));
+      if (normalized) {
+        this.emit({
+          kind: "llm_end",
+          traceId,
+          model: this.config.model,
+          operation: "day_summary",
+          durationMs: Date.now() - startedAt,
+          output: JSON.stringify(normalized).slice(0, 2000),
+          tokenUsage: usage ? { input: usage.prompt_tokens, output: usage.completion_tokens, total: usage.total_tokens } : undefined,
+        });
+        log.debug(`generated day summary via direct client (${normalized.bullets.length} bullets)`);
+        return normalized;
+      }
+
+      log.warn("day summary returned no parsed output");
+      return null;
+    } catch (err) {
+      this.emit({ kind: "llm_error", traceId, model: this.config.model, operation: "day_summary", durationMs: Date.now() - startedAt, error: String(err) });
+      log.error("day summary generation failed", err);
+      return null;
+    }
+  }
+
 
   /**
    * Summarize a batch of old memories into a compact summary (Phase 4A).

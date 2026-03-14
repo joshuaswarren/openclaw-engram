@@ -1,3 +1,4 @@
+export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
