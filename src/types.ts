@@ -646,6 +646,15 @@ export interface PluginConfig {
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;
   tmtSummaryMaxTokens: number;
+  // Lossless Context Management (LCM)
+  lcmEnabled: boolean;
+  lcmLeafBatchSize: number;
+  lcmRollupFanIn: number;
+  lcmFreshTailTurns: number;
+  lcmMaxDepth: number;
+  lcmRecallBudgetShare: number;
+  lcmDeterministicMaxTokens: number;
+  lcmArchiveRetentionDays: number;
 }
 
 export interface BootstrapOptions {

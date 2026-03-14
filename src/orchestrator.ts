@@ -91,6 +91,7 @@ import {
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import { confidenceTier, type MemoryIntent, type MemorySummary } from "./types.js";
+import { LcmEngine } from "./lcm/index.js";
 import { shouldSkipImplicitExtraction } from "./explicit-capture.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
@@ -868,6 +869,8 @@ export class Orchestrator {
   private readonly boxBuilders = new Map<string, BoxBuilder>();
   /** Temporal Memory Tree builder — builds hour/day/week/persona summary nodes. */
   private readonly tmtBuilder: TmtBuilder;
+  /** Lossless Context Management engine — proactive session archive + DAG summarization. */
+  readonly lcmEngine: LcmEngine | null = null;
   private readonly rerankCache = new RerankCache();
   /**
    * Per-session workspace overrides keyed by sessionKey.
@@ -1079,6 +1082,28 @@ export class Orchestrator {
       tmtHourlyMinMemories: config.tmtHourlyMinMemories,
       tmtSummaryMaxTokens: config.tmtSummaryMaxTokens,
     });
+
+    // Lossless Context Management (LCM) — proactive session archive + DAG summarization
+    if (config.lcmEnabled) {
+      const summarizeFn = async (text: string, targetTokens: number, aggressive: boolean) => {
+        const systemPrompt = aggressive
+          ? `Compress the following into bullet points. One bullet per distinct fact or decision. Maximum ${targetTokens} tokens total. No prose.`
+          : `Compress the following conversation segment into a dense summary. Preserve: decisions made, code artifacts mentioned, errors encountered, open questions, and any commitments or next-steps. Omit: pleasantries, restatements, and anything the agent would not need to recall later. Output a single paragraph, maximum ${targetTokens} tokens.`;
+        try {
+          const result = await this.localLlm.chatCompletion(
+            [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: text.slice(0, 12000) },
+            ],
+            { maxTokens: targetTokens * 2, operation: "lcm-summarize" },
+          );
+          return result?.content ?? null;
+        } catch {
+          return null;
+        }
+      };
+      this.lcmEngine = new LcmEngine(config, summarizeFn);
+    }
 
     // Create init gate — recall() will await this before proceeding
     this.initPromise = new Promise<void>((resolve) => {
@@ -4156,6 +4181,22 @@ export class Orchestrator {
       if (tmtNode) {
         const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
         this.appendRecallSection(sectionBuckets, "temporal-memory-tree", `## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
+      }
+    }
+
+    // LCM compressed history section
+    if (
+      this.lcmEngine?.enabled &&
+      recallMode !== "minimal" &&
+      (recallMode as RecallPlanMode) !== "no_recall"
+    ) {
+      try {
+        const lcmSection = await this.lcmEngine.assembleRecall(sessionKey ?? "default", this.config.recallBudgetChars);
+        if (lcmSection) {
+          this.appendRecallSection(sectionBuckets, "lcm-compressed-history", lcmSection);
+        }
+      } catch (err) {
+        log.debug(`LCM recall assembly error: ${err}`);
       }
     }
 

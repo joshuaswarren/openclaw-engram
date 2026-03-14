@@ -5,6 +5,7 @@ import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
 import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
+import { registerLcmTools } from "./lcm/index.js";
 import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { EngramAccessService } from "./access-service.js";
@@ -388,6 +389,24 @@ export default {
               await orchestrator.processTurn(role, stripped, sessionKey);
             }
           }
+
+          // LCM: index messages into lossless archive (best-effort)
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              const lcmMessages = lastTurn
+                .map((msg) => {
+                  const rawRole = typeof msg.role === "string" ? msg.role : "";
+                  const content = extractTextContent(msg);
+                  return { role: rawRole, content };
+                })
+                .filter((m) => m.content.length > 0);
+              if (lcmMessages.length > 0) {
+                await orchestrator.lcmEngine.observeMessages(sessionKey, lcmMessages);
+              }
+            } catch (lcmErr) {
+              log.debug(`LCM agent_end indexing error: ${lcmErr}`);
+            }
+          }
         } catch (err) {
           log.error("agent_end processing failed", err);
         }
@@ -449,11 +468,24 @@ export default {
       ) => {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
-        if (!orchestrator.config.checkpointEnabled) {
-          return;
-        }
-
         try {
+          // LCM: flush pending summaries and record compaction boundary
+          // (runs regardless of checkpoint setting — LCM needs compaction boundaries)
+          // Note: tokensAfter is 0 here since compaction hasn't happened yet;
+          // after_compaction will have the actual post-compaction token count.
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              const tokensBefore = typeof event.tokensBefore === "number" ? event.tokensBefore : 0;
+              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, 0);
+            } catch (lcmErr) {
+              log.debug(`LCM before_compaction error: ${lcmErr}`);
+            }
+          }
+
+          if (!orchestrator.config.checkpointEnabled) {
+            return;
+          }
+
           // Get recent turns from transcript
           const entries = await orchestrator.transcript.readRecent(1, sessionKey);
           const checkpointTurns = entries.slice(-orchestrator.config.checkpointTurns);
@@ -485,6 +517,16 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
+          // LCM: verify archive coverage after compaction
+          // (runs regardless of reset setting — LCM needs post-compaction verification)
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
+            } catch (lcmErr) {
+              log.debug(`LCM after_compaction verify error: ${lcmErr}`);
+            }
+          }
+
           if (!orchestrator.config.compactionResetEnabled) {
             log.debug(
               `compaction completed for ${sessionKey}, reset disabled — skipping`,
@@ -639,6 +681,10 @@ export default {
     if (isFirstRegistration) {
       registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
       registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+      // Register LCM tools when enabled
+      if (orchestrator.lcmEngine?.enabled) {
+        registerLcmTools(api as unknown as Parameters<typeof registerLcmTools>[0], orchestrator.lcmEngine);
+      }
     }
 
     // ========================================================================

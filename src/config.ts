@@ -1427,6 +1427,28 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.tmtHourlyMinMemories === "number" ? cfg.tmtHourlyMinMemories : 3,
     tmtSummaryMaxTokens:
       typeof cfg.tmtSummaryMaxTokens === "number" ? cfg.tmtSummaryMaxTokens : 300,
+    // Lossless Context Management (LCM)
+    lcmEnabled: cfg.lcmEnabled === true,
+    lcmLeafBatchSize:
+      typeof cfg.lcmLeafBatchSize === "number" ? Math.max(2, Math.floor(cfg.lcmLeafBatchSize)) : 8,
+    lcmRollupFanIn:
+      typeof cfg.lcmRollupFanIn === "number" ? Math.max(2, Math.floor(cfg.lcmRollupFanIn)) : 4,
+    lcmFreshTailTurns:
+      typeof cfg.lcmFreshTailTurns === "number" ? Math.max(1, Math.floor(cfg.lcmFreshTailTurns)) : 16,
+    lcmMaxDepth:
+      typeof cfg.lcmMaxDepth === "number" ? Math.max(1, Math.floor(cfg.lcmMaxDepth)) : 5,
+    lcmRecallBudgetShare:
+      typeof cfg.lcmRecallBudgetShare === "number"
+        ? Math.max(0, Math.min(1, cfg.lcmRecallBudgetShare))
+        : 0.15,
+    lcmDeterministicMaxTokens:
+      typeof cfg.lcmDeterministicMaxTokens === "number"
+        ? Math.max(64, Math.floor(cfg.lcmDeterministicMaxTokens))
+        : 512,
+    lcmArchiveRetentionDays:
+      typeof cfg.lcmArchiveRetentionDays === "number"
+        ? Math.max(1, Math.floor(cfg.lcmArchiveRetentionDays))
+        : 90,
   };
 }
 
@@ -1525,6 +1547,7 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     { id: "verbatim-artifacts", enabled: cfg.verbatimArtifactsEnabled === true },
     { id: "memory-boxes", enabled: cfg.memoryBoxesEnabled === true },
     { id: "temporal-memory-tree", enabled: cfg.temporalMemoryTreeEnabled === true },
+    { id: "lcm-compressed-history", enabled: cfg.lcmEnabled === true },
     {
       id: "objective-state",
       enabled: cfg.objectiveStateRecallEnabled === true,
