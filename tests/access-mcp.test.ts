@@ -144,6 +144,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
   assert.deepEqual(listed, [
     "engram.recall",
     "engram.recall_explain",
+    "engram.day_summary",
     "engram.memory_get",
     "engram.memory_timeline",
     "engram.memory_store",
