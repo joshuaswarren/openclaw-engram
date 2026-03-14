@@ -468,11 +468,23 @@ export default {
       ) => {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
-        if (!orchestrator.config.checkpointEnabled) {
-          return;
-        }
-
         try {
+          // LCM: flush pending summaries and record compaction boundary
+          // (runs regardless of checkpoint setting — LCM needs compaction boundaries)
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              const tokensBefore = typeof event.tokensBefore === "number" ? event.tokensBefore : 0;
+              const tokensAfter = typeof event.tokensAfter === "number" ? event.tokensAfter : 0;
+              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
+            } catch (lcmErr) {
+              log.debug(`LCM before_compaction error: ${lcmErr}`);
+            }
+          }
+
+          if (!orchestrator.config.checkpointEnabled) {
+            return;
+          }
+
           // Get recent turns from transcript
           const entries = await orchestrator.transcript.readRecent(1, sessionKey);
           const checkpointTurns = entries.slice(-orchestrator.config.checkpointTurns);
@@ -485,17 +497,6 @@ export default {
               ttl: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
             });
             log.info(`saved checkpoint for ${sessionKey} before compaction`);
-          }
-
-          // LCM: flush pending summaries and record compaction boundary
-          if (orchestrator.lcmEngine?.enabled) {
-            try {
-              const tokensBefore = typeof event.tokensBefore === "number" ? event.tokensBefore : 0;
-              const tokensAfter = typeof event.tokensAfter === "number" ? event.tokensAfter : 0;
-              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
-            } catch (lcmErr) {
-              log.debug(`LCM before_compaction error: ${lcmErr}`);
-            }
           }
         } catch (err) {
           log.error("before_compaction hook failed", err);
@@ -515,6 +516,16 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
+          // LCM: verify archive coverage after compaction
+          // (runs regardless of reset setting — LCM needs post-compaction verification)
+          if (orchestrator.lcmEngine?.enabled) {
+            try {
+              await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
+            } catch (lcmErr) {
+              log.debug(`LCM after_compaction verify error: ${lcmErr}`);
+            }
+          }
+
           if (!orchestrator.config.compactionResetEnabled) {
             log.debug(
               `compaction completed for ${sessionKey}, reset disabled — skipping`,
@@ -574,14 +585,6 @@ export default {
               `api.resetSession not available — compaction reset requires OC fork with PR #29985. ` +
               `Session ${sessionKey} will continue without reset.`,
             );
-          }
-          // LCM: verify archive coverage after compaction
-          if (orchestrator.lcmEngine?.enabled) {
-            try {
-              await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
-            } catch (lcmErr) {
-              log.debug(`LCM after_compaction verify error: ${lcmErr}`);
-            }
           }
         } catch (err) {
           log.error("after_compaction reset failed", err);

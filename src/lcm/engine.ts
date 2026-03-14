@@ -236,13 +236,26 @@ export class LcmEngine {
     const result: Array<{ turn_index: number; role: string; content: string }> = [];
     let budget = maxChars;
 
-    // Add first messages
-    for (const m of messages) {
+    // Reserve space for the last message
+    const lastMsg = messages[messages.length - 1];
+    const lastMsgChars = Math.min(lastMsg.content.length, Math.floor(maxChars * 0.3));
+    budget -= lastMsgChars;
+
+    // Add messages from the beginning
+    for (let i = 0; i < messages.length - 1; i++) {
       if (budget <= 0) break;
+      const m = messages[i];
       const truncated = m.content.slice(0, budget);
       result.push({ turn_index: m.turn_index, role: m.role, content: truncated });
       budget -= truncated.length;
     }
+
+    // Always append the last message
+    result.push({
+      turn_index: lastMsg.turn_index,
+      role: lastMsg.role,
+      content: lastMsg.content.slice(0, lastMsgChars + Math.max(0, budget)),
+    });
 
     return result;
   }
