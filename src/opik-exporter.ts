@@ -29,7 +29,7 @@ type EngramLlmTraceEvent = {
   kind: "llm_start" | "llm_end" | "llm_error";
   traceId: string;
   model: string;
-  operation: "extraction" | "consolidation" | "profile_consolidation" | "identity_consolidation";
+  operation: "extraction" | "consolidation" | "profile_consolidation" | "identity_consolidation" | "day_summary";
   input?: string;
   output?: string;
   durationMs?: number;

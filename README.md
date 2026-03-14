@@ -282,6 +282,7 @@ Available via both stdio and HTTP transports:
 |------|---------|
 | `engram.recall` | Retrieve relevant memories for a query |
 | `engram.recall_explain` | Debug the last recall |
+| `engram.day_summary` | Generate structured end-of-day summary from memory content |
 | `engram.memory_get` | Fetch a specific memory by ID |
 | `engram.memory_timeline` | View a memory's lifecycle history |
 | `engram.memory_store` | Store a new memory |

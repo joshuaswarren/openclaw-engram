@@ -76,6 +76,20 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.day_summary",
+        description: "Generate a structured end-of-day summary from recent memory content.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            memories: { type: "string" },
+            sessionKey: { type: "string" },
+            namespace: { type: "string" },
+          },
+          required: ["memories"],
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.memory_get",
         description: "Fetch one Engram memory by id.",
         inputSchema: {
@@ -352,6 +366,12 @@ export class EngramMcpServer {
         });
       case "engram.recall_explain":
         return this.service.recallExplain({
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+        });
+      case "engram.day_summary":
+        return this.service.daySummary({
+          memories: typeof args.memories === "string" ? args.memories : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });

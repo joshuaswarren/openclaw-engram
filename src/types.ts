@@ -245,6 +245,7 @@ export interface PluginConfig {
   compactionResetEnabled: boolean;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
+  daySummaryEnabled: boolean;
   /** If true, Engram may attempt to auto-register an hourly summary cron job (default off). */
   hourlySummaryCronAutoRegister: boolean;
   summaryRecallHours: number;
@@ -851,6 +852,13 @@ export interface MemorySummary {
   sourceEpisodeIds: string[];
 }
 
+export interface DaySummaryResult {
+  summary: string;
+  bullets: string[];
+  next_actions: string[];
+  risks_or_open_loops: string[];
+}
+
 // Topic Extraction (Phase 4B)
 export interface TopicScore {
   term: string;
@@ -1236,7 +1244,7 @@ export interface LlmTraceEvent {
   kind: "llm_start" | "llm_end" | "llm_error";
   traceId: string;
   model: string;
-  operation: "extraction" | "consolidation" | "profile_consolidation" | "identity_consolidation";
+  operation: "extraction" | "consolidation" | "profile_consolidation" | "identity_consolidation" | "day_summary";
   input?: string;
   output?: string;
   durationMs?: number;

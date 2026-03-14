@@ -737,6 +737,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     compactionResetEnabled: cfg.compactionResetEnabled === true,
     // Hourly summaries
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
+    daySummaryEnabled: cfg.daySummaryEnabled !== false, // default: true
     hourlySummaryCronAutoRegister: cfg.hourlySummaryCronAutoRegister === true,
     summaryRecallHours:
       typeof cfg.summaryRecallHours === "number" ? cfg.summaryRecallHours : 24,

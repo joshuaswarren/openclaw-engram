@@ -99,6 +99,12 @@ export interface EngramAccessRecallExplainResponse {
   graph?: GraphRecallSnapshot | null;
 }
 
+export interface EngramAccessDaySummaryRequest {
+  memories: string;
+  sessionKey?: string;
+  namespace?: string;
+}
+
 export interface EngramAccessMemoryRecord {
   id: string;
   path: string;
@@ -588,6 +594,23 @@ export class EngramAccessService {
       nativeKnowledgeEnabled: this.orchestrator.config.nativeKnowledge?.enabled === true,
       projectionAvailable,
     };
+  }
+
+  async daySummary(
+    request: EngramAccessDaySummaryRequest,
+  ): Promise<import("./types.js").DaySummaryResult | null> {
+    if (!this.orchestrator.config.daySummaryEnabled) {
+      throw new EngramAccessInputError("day summary is disabled");
+    }
+
+    const memories = request.memories.trim();
+    if (memories.length === 0) {
+      throw new EngramAccessInputError("memories is required");
+    }
+
+    // Validate namespace access (result intentionally unused — day summary operates on caller-provided text, not stored memories)
+    this.resolveRecallNamespace(request.namespace, request.sessionKey);
+    return this.orchestrator.generateDaySummary(memories);
   }
 
   async recall(request: EngramAccessRecallRequest): Promise<EngramAccessRecallResponse> {
