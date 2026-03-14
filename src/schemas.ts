@@ -295,9 +295,9 @@ export type MemorySummaryResult = z.infer<typeof MemorySummarySchema>;
 
 export const DaySummaryResultSchema = z.object({
   summary: z.string().min(1).describe("A concise end-of-day summary paragraph."),
-  bullets: z.array(z.string()).describe("The most important moments from the day."),
-  next_actions: z.array(z.string()).describe("Concrete next actions for tomorrow."),
-  risks_or_open_loops: z.array(z.string()).describe("Open loops, blockers, or fragile assumptions still needing attention."),
+  bullets: z.array(z.string()).default([]).describe("The most important moments from the day."),
+  next_actions: z.array(z.string()).default([]).describe("Concrete next actions for tomorrow."),
+  risks_or_open_loops: z.array(z.string()).default([]).describe("Open loops, blockers, or fragile assumptions still needing attention."),
 });
 
 // v8.15 behavior-loop auto-tuning state contracts
