@@ -604,13 +604,11 @@ export class EngramAccessService {
     }
 
     const memories = (request.memories ?? "").trim();
-
-    // Validate namespace access (result intentionally unused — day summary operates on caller-provided text, not stored memories)
-    this.resolveRecallNamespace(request.namespace, request.sessionKey);
+    const namespace = this.resolveRecallNamespace(request.namespace, request.sessionKey);
 
     if (memories.length === 0) {
-      // Auto-gather today's facts when memories not provided
-      return this.orchestrator.generateDaySummaryAuto();
+      // Auto-gather today's facts from the resolved namespace
+      return this.orchestrator.generateDaySummaryAuto(namespace);
     }
     return this.orchestrator.generateDaySummary(memories);
   }

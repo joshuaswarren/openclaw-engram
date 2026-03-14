@@ -1632,8 +1632,8 @@ export class Orchestrator {
    * Auto-gather today's facts and hourly summaries from storage, then generate a day summary.
    * Returns null if no facts are found for today.
    */
-  async generateDaySummaryAuto(): Promise<DaySummaryResult | null> {
-    const gathered = await this.gatherTodayFacts();
+  async generateDaySummaryAuto(namespace?: string): Promise<DaySummaryResult | null> {
+    const gathered = await this.gatherTodayFacts(namespace);
     if (!gathered || gathered.length === 0) {
       log.warn("generateDaySummaryAuto: no facts found for today, skipping");
       return null;
@@ -1645,71 +1645,84 @@ export class Orchestrator {
    * Read today's facts and hourly summaries from storage, returning them
    * as a formatted string suitable for generateDaySummary().
    */
-  async gatherTodayFacts(): Promise<string> {
-    const storage = await this.storageRouter.storageFor(this.config.defaultNamespace);
-    const today = new Date().toISOString().slice(0, 10);
-    const factsDir = path.join(storage.dir, "facts", today);
+  async gatherTodayFacts(namespace?: string): Promise<string> {
+    const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
+    const storage = await this.storageRouter.storageFor(ns);
+    // Facts are stored under UTC dates, but a local calendar day can span
+    // two UTC dates (e.g. 23:47 CT is 04:47 UTC the next day). To capture
+    // all facts for the local day, read from both the current UTC date and
+    // yesterday's UTC date (which covers the local day's morning hours).
+    const now = new Date();
+    const utcToday = now.toISOString().slice(0, 10);
+    const yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const datesToScan = [yesterday, utcToday].filter((v, i, a) => a.indexOf(v) === i);
+    const factsBaseDir = path.join(storage.dir, "facts");
     const MAX_CHARS = 100_000;
 
-    // --- Read today's fact files ---
+    // --- Read fact files from each date directory ---
     const facts: MemoryFile[] = [];
-    try {
-      const entries = await readdir(factsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.name.endsWith(".md")) continue;
-        const fullPath = path.join(factsDir, entry.name);
-        try {
-          const raw = await readFile(fullPath, "utf-8");
-          const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-          if (!fmMatch) continue;
-          const fmBlock = fmMatch[1];
-          const content = fmMatch[2].trim();
-          const fm: Record<string, string> = {};
-          for (const line of fmBlock.split("\n")) {
-            const colonIdx = line.indexOf(":");
-            if (colonIdx === -1) continue;
-            fm[line.slice(0, colonIdx).trim()] = line.slice(colonIdx + 1).trim();
+    for (const date of datesToScan) {
+      const factsDir = path.join(factsBaseDir, date);
+      try {
+        const entries = await readdir(factsDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.name.endsWith(".md")) continue;
+          const fullPath = path.join(factsDir, entry.name);
+          try {
+            const raw = await readFile(fullPath, "utf-8");
+            const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+            if (!fmMatch) continue;
+            const fmBlock = fmMatch[1];
+            const content = fmMatch[2].trim();
+            const fm: Record<string, string> = {};
+            for (const line of fmBlock.split("\n")) {
+              const colonIdx = line.indexOf(":");
+              if (colonIdx === -1) continue;
+              fm[line.slice(0, colonIdx).trim()] = line.slice(colonIdx + 1).trim();
+            }
+            facts.push({
+              path: fullPath,
+              frontmatter: {
+                id: fm.id || path.basename(entry.name, ".md"),
+                category: (fm.category as any) || "fact",
+                created: fm.created || "unknown",
+                updated: fm.updated || fm.created || "unknown",
+                source: fm.source || "unknown",
+                confidence: parseFloat(fm.confidence || "0.8"),
+                confidenceTier: (fm.confidenceTier as any) || "implied",
+                tags: [],
+              },
+              content,
+            });
+          } catch {
+            // Skip unreadable files
           }
-          facts.push({
-            path: fullPath,
-            frontmatter: {
-              id: fm.id || path.basename(entry.name, ".md"),
-              category: (fm.category as any) || "fact",
-              created: fm.created || "unknown",
-              updated: fm.updated || fm.created || "unknown",
-              source: fm.source || "unknown",
-              confidence: parseFloat(fm.confidence || "0.8"),
-              confidenceTier: (fm.confidenceTier as any) || "implied",
-              tags: [],
-            },
-            content,
-          });
-        } catch {
-          // Skip unreadable files
         }
+      } catch {
+        // Directory doesn't exist — no facts for this date
       }
-    } catch {
-      // Directory doesn't exist — no facts for today
     }
 
     // Sort facts by created timestamp (most recent last) so truncation keeps newest
     facts.sort((a, b) => (a.frontmatter.created < b.frontmatter.created ? -1 : 1));
 
-    // --- Read hourly summaries for today ---
+    // --- Read hourly summaries for the scanned dates ---
     const hourlySummaries: string[] = [];
     const hourlyBaseDir = path.join(storage.dir, "summaries", "hourly");
     try {
       const sessionKeys = await readdir(hourlyBaseDir, { withFileTypes: true });
       for (const sk of sessionKeys) {
         if (!sk.isDirectory()) continue;
-        const summaryFile = path.join(hourlyBaseDir, sk.name, `${today}.md`);
-        try {
-          const raw = await readFile(summaryFile, "utf-8");
-          if (raw.trim().length > 0) {
-            hourlySummaries.push(raw.trim());
+        for (const date of datesToScan) {
+          const summaryFile = path.join(hourlyBaseDir, sk.name, `${date}.md`);
+          try {
+            const raw = await readFile(summaryFile, "utf-8");
+            if (raw.trim().length > 0) {
+              hourlySummaries.push(raw.trim());
+            }
+          } catch {
+            // No summary file for this session/date
           }
-        } catch {
-          // No summary file for this session today
         }
       }
     } catch {
