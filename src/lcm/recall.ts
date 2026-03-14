@@ -86,14 +86,16 @@ function selectBestCoverage(
     return b.depth - a.depth;
   });
 
-  // Greedily select non-overlapping nodes, preferring deeper coverage
+  // Greedily select non-overlapping nodes, preferring deeper coverage.
+  // Clamp msg_end to toTurn to prevent deep nodes from extending
+  // past the requested range (e.g., into the fresh tail region).
   const selected: SummaryNode[] = [];
   let coveredUpTo = fromTurn - 1;
 
   for (const node of candidates) {
     if (node.msg_start > coveredUpTo) {
       selected.push(node);
-      coveredUpTo = node.msg_end;
+      coveredUpTo = Math.min(node.msg_end, toTurn);
       if (coveredUpTo >= toTurn) break;
     }
   }
