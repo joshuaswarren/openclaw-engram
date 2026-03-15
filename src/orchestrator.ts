@@ -1493,7 +1493,7 @@ export class Orchestrator {
       // Write back preserving the original shape
       const output = Array.isArray(parsed) ? jobsArray : { ...parsed, jobs: jobsArray };
       await writeFile(jobsPath, JSON.stringify(output, null, 2) + "\n", "utf-8");
-      log.info("day-summary cron auto-registered (engram-day-summary, 23:47 CT)");
+      log.info("day-summary cron auto-registered (engram-day-summary, 23:47)");
     } catch (err) {
       log.debug(`day-summary cron auto-register error: ${err}`);
     }

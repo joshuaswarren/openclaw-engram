@@ -77,7 +77,8 @@ export class EngramMcpServer {
       },
       {
         name: "engram.day_summary",
-        description: "Generate a structured end-of-day summary from recent memory content.",
+        description:
+          "Generate a structured end-of-day summary. When memories is omitted or empty, auto-gathers today's facts and hourly summaries from storage.",
         inputSchema: {
           type: "object",
           properties: {
@@ -85,7 +86,7 @@ export class EngramMcpServer {
             sessionKey: { type: "string" },
             namespace: { type: "string" },
           },
-          required: ["memories"],
+          required: [],
           additionalProperties: false,
         },
       },
