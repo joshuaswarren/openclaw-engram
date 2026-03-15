@@ -62,6 +62,21 @@ export function containsAnswer(predicted: string, expected: string | number | un
   return pred.includes(exp) ? 1.0 : 0.0;
 }
 
+/** LLM judge score — uses the gateway's model chain for semantic evaluation. */
+export async function llmJudgeScore(
+  judge: { score(q: string, p: string, e: string): Promise<number> } | undefined,
+  question: string,
+  predicted: string,
+  expected: string,
+): Promise<number> {
+  if (!judge) return -1; // -1 signals "judge unavailable"
+  try {
+    return await judge.score(question, predicted, expected);
+  } catch {
+    return -1;
+  }
+}
+
 /** Aggregate metrics from an array of per-task scores. */
 export function aggregateScores(
   scores: Array<Record<string, number>>,

@@ -24,7 +24,7 @@ import type {
   MemorySystem,
   TaskScore,
 } from "../../adapter/types.js";
-import { f1Score, containsAnswer, aggregateScores, timed } from "../../scorer.js";
+import { f1Score, containsAnswer, llmJudgeScore, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
 // ── Dataset types (matches amemgym-v1-base.json) ──
@@ -199,13 +199,17 @@ async function run(
 
       const f1 = f1Score(recallText, expectedAnswer);
       const contains = containsAnswer(recallText, expectedAnswer);
+      const judgeScore = await llmJudgeScore(system.judge, qa.query, recallText, expectedAnswer);
+
+      const metrics: Record<string, number> = {
+        f1,
+        contains_answer: contains,
+      };
+      if (judgeScore >= 0) metrics.llm_judge = judgeScore;
 
       scores.push({
         taskId: `${profile.id}-q${qi}`,
-        metrics: {
-          f1,
-          contains_answer: contains,
-        },
+        metrics,
         details: {
           question: qa.query,
           expected: expectedAnswer.slice(0, 200),

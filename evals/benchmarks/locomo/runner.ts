@@ -28,7 +28,7 @@ import type {
   MemorySystem,
   TaskScore,
 } from "../../adapter/types.js";
-import { f1Score, containsAnswer, rougeL, aggregateScores, timed } from "../../scorer.js";
+import { f1Score, containsAnswer, rougeL, llmJudgeScore, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
 // ── Dataset types (matches locomo10.json) ──
@@ -162,14 +162,18 @@ async function run(
       const f1 = f1Score(recallText, qa.answer);
       const contains = containsAnswer(recallText, qa.answer);
       const rouge = rougeL(recallText, qa.answer);
+      const judgeScore = await llmJudgeScore(system.judge, qa.question, recallText, qa.answer);
+
+      const metrics: Record<string, number> = {
+        f1,
+        contains_answer: contains,
+        rouge_l: rouge,
+      };
+      if (judgeScore >= 0) metrics.llm_judge = judgeScore;
 
       scores.push({
         taskId: `${conv.sample_id}-q${qi}-${catName}`,
-        metrics: {
-          f1,
-          contains_answer: contains,
-          rouge_l: rouge,
-        },
+        metrics,
         details: {
           question: qa.question,
           expected: qa.answer,

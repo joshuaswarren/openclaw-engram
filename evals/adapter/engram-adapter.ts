@@ -20,20 +20,33 @@
  * which only exercises LCM + FTS (no external services needed).
  */
 
-import { mkdtemp, rm, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm, mkdir, readFile } from "node:fs/promises";
+import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import type {
   MemorySystem,
   Message,
   SearchResult,
   MemoryStats,
+  LlmJudge,
 } from "./types.js";
 import { parseConfig } from "../../src/config.js";
 import { Orchestrator } from "../../src/orchestrator.js";
 import { EngramAccessService } from "../../src/access-service.js";
 import { LcmEngine } from "../../src/lcm/engine.js";
+import { FallbackLlmClient } from "../../src/fallback-llm.js";
 import type { PluginConfig } from "../../src/types.js";
+
+/** Load gateway config from ~/.openclaw/openclaw.json for LLM access. */
+async function loadGatewayConfig(): Promise<Record<string, unknown> | undefined> {
+  try {
+    const configPath = path.join(homedir(), ".openclaw", "openclaw.json");
+    const raw = await readFile(configPath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
 
 // ── Full-stack adapter ──
 
@@ -52,12 +65,16 @@ export async function createEngramAdapter(
 ): Promise<MemorySystem> {
   let tempDir = await mkdtemp(path.join(tmpdir(), "engram-eval-"));
   const evalCollection = options?.qmdCollection ?? `engram-eval-${Date.now()}`;
+  const gatewayConfig = await loadGatewayConfig();
 
   const buildConfig = (dir: string): PluginConfig =>
     parseConfig({
       // Isolated storage
       memoryDir: dir,
       workspaceDir: dir,
+
+      // Gateway config for LLM judge access
+      gatewayConfig,
 
       // Use eval-specific QMD collection (shares daemon, isolated data)
       qmdEnabled: true,
@@ -129,6 +146,44 @@ export async function createEngramAdapter(
   await orchestrator.initialize();
   let accessService = new EngramAccessService(orchestrator);
 
+  // Build LLM judge from the gateway's configured model chain
+  function buildJudge(cfg: PluginConfig): LlmJudge | undefined {
+    const llm = new FallbackLlmClient(cfg.gatewayConfig);
+    if (!llm.isAvailable()) return undefined;
+    return {
+      async score(question: string, predicted: string, expected: string): Promise<number> {
+        const resp = await llm.chatCompletion([
+          {
+            role: "system",
+            content:
+              "You are evaluating a memory retrieval system. Given a question and expected answer, " +
+              "you will receive the context that the memory system retrieved. " +
+              "Score how well this retrieved context would allow someone to correctly answer the question. " +
+              "Respond with ONLY a JSON object: {\"score\": <number from 0.0 to 1.0>, \"reason\": \"<brief>\"}. " +
+              "1.0 = the retrieved context clearly contains or implies the correct answer. " +
+              "0.5 = the context has relevant information but the answer requires inference. " +
+              "0.0 = the context does not contain information needed to answer correctly.",
+          },
+          {
+            role: "user",
+            content:
+              `Question: ${question}\n\n` +
+              `Expected correct answer: ${expected}\n\n` +
+              `Retrieved context from memory system (evaluate this):\n${predicted.slice(0, 3000)}`,
+          },
+        ], { temperature: 0, maxTokens: 150, timeoutMs: 15000 });
+        if (!resp?.content) return 0;
+        try {
+          const match = resp.content.match(/\{[^}]*"score"\s*:\s*([\d.]+)[^}]*\}/);
+          if (match) return Math.min(1, Math.max(0, parseFloat(match[1])));
+        } catch {}
+        return 0;
+      },
+    };
+  }
+
+  let judge: LlmJudge | undefined = buildJudge(config);
+
   async function fallbackRecall(sessionId: string, query: string, budgetChars: number): Promise<string> {
     if (!orchestrator.lcmEngine?.enabled) return "";
     const engine = orchestrator.lcmEngine;
@@ -168,7 +223,9 @@ export async function createEngramAdapter(
     return sections.join("\n\n");
   }
 
-  return {
+  const system: MemorySystem = {
+    judge,
+
     async store(sessionId: string, messages: Message[]): Promise<void> {
       // Feed messages through the full extraction pipeline
       const turns = messages.map((m, i) => ({
@@ -255,6 +312,8 @@ export async function createEngramAdapter(
       orchestrator = new Orchestrator(config);
       await orchestrator.initialize();
       accessService = new EngramAccessService(orchestrator);
+      judge = buildJudge(config);
+      system.judge = judge;
     },
 
     async getStats(sessionId?: string): Promise<MemoryStats> {
@@ -269,6 +328,8 @@ export async function createEngramAdapter(
       await rm(tempDir, { recursive: true, force: true });
     },
   };
+
+  return system;
 }
 
 // ── Lightweight adapter (CI-friendly, no external services) ──

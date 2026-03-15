@@ -22,6 +22,15 @@ export interface MemoryStats {
   maxDepth: number;
 }
 
+/** LLM judge for semantic scoring — uses the gateway's configured model chain. */
+export interface LlmJudge {
+  /**
+   * Ask the LLM whether `predicted` correctly answers `question` given `expected`.
+   * Returns a score from 0.0 to 1.0.
+   */
+  score(question: string, predicted: string, expected: string): Promise<number>;
+}
+
 export interface MemorySystem {
   /** Feed conversation turns into memory. */
   store(sessionId: string, messages: Message[]): Promise<void>;
@@ -40,6 +49,9 @@ export interface MemorySystem {
 
   /** Tear down resources (close DB, etc). */
   destroy(): Promise<void>;
+
+  /** Optional LLM judge for semantic scoring (available when gateway has LLM access). */
+  judge?: LlmJudge;
 }
 
 export interface BenchmarkTask {

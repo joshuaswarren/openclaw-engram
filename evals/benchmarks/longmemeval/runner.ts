@@ -27,7 +27,7 @@ import type {
   MemorySystem,
   TaskScore,
 } from "../../adapter/types.js";
-import { f1Score, containsAnswer, aggregateScores, timed } from "../../scorer.js";
+import { f1Score, containsAnswer, llmJudgeScore, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
 // ── Dataset types (matches longmemeval_oracle.json) ──
@@ -133,15 +133,19 @@ async function run(
 
     const f1 = f1Score(recallText, item.answer);
     const contains = containsAnswer(recallText, item.answer);
+    const judgeScore = await llmJudgeScore(system.judge, item.question, recallText, item.answer);
     const ability = abilityCategory(item.question_type);
+
+    const metrics: Record<string, number> = {
+      f1,
+      contains_answer: contains,
+      search_hits: searchHits,
+    };
+    if (judgeScore >= 0) metrics.llm_judge = judgeScore;
 
     scores.push({
       taskId: `q${item.question_id}`,
-      metrics: {
-        f1,
-        contains_answer: contains,
-        search_hits: searchHits,
-      },
+      metrics,
       details: {
         question: item.question,
         expected: item.answer,

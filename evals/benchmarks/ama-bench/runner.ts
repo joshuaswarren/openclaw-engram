@@ -27,7 +27,7 @@ import type {
   MemorySystem,
   TaskScore,
 } from "../../adapter/types.js";
-import { f1Score, containsAnswer, aggregateScores, timed } from "../../scorer.js";
+import { f1Score, containsAnswer, llmJudgeScore, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
 // ── Dataset types (matches open_end_qa_set.jsonl) ──
@@ -123,13 +123,17 @@ async function run(
 
       const f1 = f1Score(recallText, qa.answer);
       const contains = containsAnswer(recallText, qa.answer);
+      const judgeScore = await llmJudgeScore(system.judge, qa.question, recallText, qa.answer);
+
+      const metrics: Record<string, number> = {
+        f1,
+        contains_answer: contains,
+      };
+      if (judgeScore >= 0) metrics.llm_judge = judgeScore;
 
       scores.push({
         taskId: qa.question_uuid,
-        metrics: {
-          f1,
-          contains_answer: contains,
-        },
+        metrics,
         details: {
           question: qa.question,
           expected: qa.answer.slice(0, 200), // Truncate for readability in results
