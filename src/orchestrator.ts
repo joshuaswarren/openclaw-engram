@@ -1477,7 +1477,7 @@ export class Orchestrator {
         agentId: "main",
         name: "Engram Day Summary (auto)",
         enabled: true,
-        schedule: { kind: "cron", expr: "47 23 * * *" },
+        schedule: { kind: "cron", expr: "47 23 * * *", tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
         sessionTarget: "isolated",
         wakeMode: "now",
         payload: {
@@ -1493,7 +1493,7 @@ export class Orchestrator {
       // Write back preserving the original shape
       const output = Array.isArray(parsed) ? jobsArray : { ...parsed, jobs: jobsArray };
       await writeFile(jobsPath, JSON.stringify(output, null, 2) + "\n", "utf-8");
-      log.info("day-summary cron auto-registered (engram-day-summary, 23:47)");
+      log.info(`day-summary cron auto-registered (engram-day-summary, 23:47 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
     } catch (err) {
       log.debug(`day-summary cron auto-register error: ${err}`);
     }
@@ -1653,7 +1653,7 @@ export class Orchestrator {
     const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
     const storage = await this.storageRouter.storageFor(ns);
     // Facts are stored under UTC dates, but a local calendar day can span
-    // two UTC dates (e.g. 23:47 CT is 04:47 UTC the next day). To capture
+    // two UTC dates (e.g. 23:47 local in UTC-6 is 05:47 UTC the next day). To capture
     // all facts for the local day, read from both the current UTC date and
     // yesterday's UTC date (which covers the local day's morning hours).
     const now = new Date();
