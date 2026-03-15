@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import type {
   MemoryGovernanceAppliedAction,
@@ -518,14 +519,6 @@ export function readProjectedMemoryBrowse(
     const whereClauses: string[] = [];
     const params: unknown[] = [];
 
-    if (normalizedQuery) {
-      const likePattern = `%${normalizedQuery}%`;
-      whereClauses.push(
-        `(LOWER(${currentSelect.previewText}) LIKE ? OR LOWER(category) LIKE ? OR LOWER(entity_ref) LIKE ? OR LOWER(${currentSelect.tagsJson}) LIKE ?)`,
-      );
-      params.push(likePattern, likePattern, likePattern, likePattern);
-    }
-
     if (options.status) {
       whereClauses.push("status = ?");
       params.push(options.status);
@@ -549,6 +542,74 @@ export function readProjectedMemoryBrowse(
       }
     })();
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    if (normalizedQuery) {
+      // Query-based browse: fetch all matching rows, filter by full file content, then paginate in JS
+      const allRows = db
+        .prepare(`
+          SELECT
+            memory_id,
+            path_rel,
+            category,
+            status,
+            created_at,
+            updated_at,
+            entity_ref,
+            ${currentSelect.tagsJson},
+            ${currentSelect.previewText}
+          FROM memory_current
+          ${whereSql}
+          ORDER BY ${orderBySql}
+        `)
+        .all(...params) as Array<Record<string, unknown>>;
+
+      const filtered = allRows.filter((row) => {
+        if (typeof row.memory_id !== "string" || typeof row.path_rel !== "string") return false;
+        // Check preview, category, entity_ref, tags first (fast)
+        const preview = typeof row.preview_text === "string" ? row.preview_text.toLowerCase() : "";
+        const category = typeof row.category === "string" ? row.category.toLowerCase() : "";
+        const entityRef = typeof row.entity_ref === "string" ? row.entity_ref.toLowerCase() : "";
+        const tags = typeof row.tags_json === "string" ? row.tags_json.toLowerCase() : "";
+        if (preview.includes(normalizedQuery) || category.includes(normalizedQuery) ||
+            entityRef.includes(normalizedQuery) || tags.includes(normalizedQuery)) {
+          return true;
+        }
+        // Fall back to reading full file content from disk
+        try {
+          const filePath = path.join(memoryDir, row.path_rel as string);
+          const content = readFileSync(filePath, "utf-8").toLowerCase();
+          return content.includes(normalizedQuery);
+        } catch {
+          return false;
+        }
+      });
+
+      const pageRows = filtered.slice(options.offset, options.offset + options.limit);
+      return {
+        total: filtered.length,
+        memories: pageRows
+          .filter(
+            (row) =>
+              typeof row.memory_id === "string" &&
+              typeof row.path_rel === "string" &&
+              typeof row.category === "string" &&
+              typeof row.status === "string",
+          )
+          .map((row) => ({
+            id: row.memory_id as string,
+            path: path.join(memoryDir, row.path_rel as string),
+            category: row.category as MemoryCategory,
+            status: row.status as MemoryStatus,
+            created: typeof row.created_at === "string" ? row.created_at : undefined,
+            updated: typeof row.updated_at === "string" ? row.updated_at : undefined,
+            tags: parseStringArray(row.tags_json),
+            entityRef: typeof row.entity_ref === "string" ? row.entity_ref : undefined,
+            preview: typeof row.preview_text === "string" ? row.preview_text : "",
+          })),
+      };
+    }
+
+    // No query: use SQL pagination directly
     const totalRow = db
       .prepare(`SELECT COUNT(*) AS total FROM memory_current ${whereSql}`)
       .get(...params) as { total?: number } | undefined;
