@@ -457,6 +457,9 @@ export default {
       );
     }
 
+    // Stash pre-compaction token counts so after_compaction can record the pair.
+    const lcmTokensBefore = new Map<string, number>();
+
     // ========================================================================
     // HOOK: before_compaction — Save checkpoint before context is lost
     // ========================================================================
@@ -469,14 +472,15 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
-          // LCM: flush pending summaries and record compaction boundary
-          // (runs regardless of checkpoint setting — LCM needs compaction boundaries)
-          // Note: tokensAfter is 0 here since compaction hasn't happened yet;
-          // after_compaction will have the actual post-compaction token count.
+          // LCM: flush pending summaries before context is lost
+          // (runs regardless of checkpoint setting — LCM needs pre-compaction flush)
+          // Token count is stashed here; after_compaction records the final pair.
           if (orchestrator.lcmEngine?.enabled) {
             try {
-              const tokensBefore = typeof event.tokensBefore === "number" ? event.tokensBefore : 0;
-              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, 0);
+              const tokensBefore = typeof event.tokenCount === "number" ? event.tokenCount
+                : (typeof event.tokensBefore === "number" ? event.tokensBefore : 0);
+              lcmTokensBefore.set(sessionKey, tokensBefore);
+              await orchestrator.lcmEngine.preCompactionFlush(sessionKey);
             } catch (lcmErr) {
               log.debug(`LCM before_compaction error: ${lcmErr}`);
             }
@@ -517,13 +521,18 @@ export default {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
         try {
-          // LCM: verify archive coverage after compaction
-          // (runs regardless of reset setting — LCM needs post-compaction verification)
+          // LCM: record compaction with real token counts and verify coverage
+          // (runs regardless of reset setting — LCM needs compaction metrics)
           if (orchestrator.lcmEngine?.enabled) {
             try {
+              const tokensAfter = typeof event.tokenCount === "number" ? event.tokenCount
+                : (typeof event.tokensAfter === "number" ? event.tokensAfter : 0);
+              const tokensBefore = lcmTokensBefore.get(sessionKey) ?? 0;
+              lcmTokensBefore.delete(sessionKey);
+              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
               await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
             } catch (lcmErr) {
-              log.debug(`LCM after_compaction verify error: ${lcmErr}`);
+              log.debug(`LCM after_compaction error: ${lcmErr}`);
             }
           }
 
