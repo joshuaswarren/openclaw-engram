@@ -580,7 +580,7 @@ recent updated
   }
 });
 
-test("projection browse returns null for text queries so callers can preserve full-content fallback parity", async () => {
+test("projection browse matches full content beyond preview text for text queries", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-projection-query-fallback-"));
   try {
     await writeText(
@@ -607,7 +607,9 @@ test("projection browse returns null for text queries so callers can preserve fu
       limit: 20,
       offset: 0,
     });
-    assert.equal(browse, null);
+    assert.ok(browse !== null);
+    assert.equal(browse!.total, 1);
+    assert.equal(browse!.memories[0]?.id, "fact-query");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
