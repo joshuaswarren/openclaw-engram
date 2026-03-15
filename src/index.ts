@@ -457,6 +457,9 @@ export default {
       );
     }
 
+    // Stash pre-compaction token counts so after_compaction can record the pair.
+    const lcmTokensBefore = new Map<string, number>();
+
     // ========================================================================
     // HOOK: before_compaction — Save checkpoint before context is lost
     // ========================================================================
@@ -476,8 +479,7 @@ export default {
             try {
               const tokensBefore = typeof event.tokenCount === "number" ? event.tokenCount
                 : (typeof event.tokensBefore === "number" ? event.tokensBefore : 0);
-              (orchestrator as any)._lcmTokensBefore ??= {};
-              (orchestrator as any)._lcmTokensBefore[sessionKey] = tokensBefore;
+              lcmTokensBefore.set(sessionKey, tokensBefore);
               await orchestrator.lcmEngine.preCompactionFlush(sessionKey);
             } catch (lcmErr) {
               log.debug(`LCM before_compaction error: ${lcmErr}`);
@@ -525,10 +527,8 @@ export default {
             try {
               const tokensAfter = typeof event.tokenCount === "number" ? event.tokenCount
                 : (typeof event.tokensAfter === "number" ? event.tokensAfter : 0);
-              const tokensBefore: number = (orchestrator as any)._lcmTokensBefore?.[sessionKey] ?? 0;
-              if ((orchestrator as any)._lcmTokensBefore) {
-                delete (orchestrator as any)._lcmTokensBefore[sessionKey];
-              }
+              const tokensBefore = lcmTokensBefore.get(sessionKey) ?? 0;
+              lcmTokensBefore.delete(sessionKey);
               await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
               await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
             } catch (lcmErr) {
