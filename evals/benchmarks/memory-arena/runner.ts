@@ -1,12 +1,18 @@
 /**
- * MemoryArena runner — interdependent agentic memory tasks.
+ * MemoryArena runner — Benchmarking Agent Memory in Interdependent Multi-Session Agentic Tasks.
  *
- * Tests multi-step flows: store → update → cross-reference → recall.
- * Each task builds on prior stored context, exercising temporal ordering
- * and cross-session references.
+ * 701 tasks across 5 domains, each with sequential interdependent questions.
+ * The agent must store context from earlier subtasks to solve later ones.
  *
- * Dataset: https://github.com/shenzhi-wang/MemoryArena
- * Citation: MemoryArena: Evaluating Memory in Agentic AI Systems (2024)
+ * Domains:
+ *   bundled_shopping (150)  |  progressive_search (221)  |  group_travel_planner (270)
+ *   formal_reasoning_math (40)  |  formal_reasoning_phys (20)
+ *
+ * Published baselines: Agents perform poorly despite near-saturated performance
+ * on existing long-context memory benchmarks.
+ *
+ * Dataset: https://huggingface.co/datasets/ZexueHe/memoryarena
+ * Paper:   MemoryArena: Benchmarking Agent Memory in Interdependent Multi-Session Agentic Tasks (2025)
  */
 
 import { readFile, readdir } from "node:fs/promises";
@@ -18,126 +24,153 @@ import type {
   MemorySystem,
   TaskScore,
 } from "../../adapter/types.js";
-import { f1Score, containsAnswer, exactMatch, aggregateScores, timed } from "../../scorer.js";
+import { f1Score, containsAnswer, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
-interface ArenaStep {
-  action: "store" | "update" | "query";
-  session_id?: string;
-  content?: string;
-  query?: string;
-  expected_answer?: string;
-  depends_on?: string[];
+// ── Dataset types (matches data.jsonl per domain) ──
+
+interface ArenaAnswer {
+  target_asin?: string;
+  attributes?: string[];
+  [key: string]: unknown;
 }
 
 interface ArenaTask {
-  id: string;
-  description: string;
-  steps: ArenaStep[];
-  category?: string;
+  id: number;
+  questions: string[];    // Sequential subtask prompts
+  answers: ArenaAnswer[]; // Expected answers (one per question)
+  category: string;
 }
 
-async function loadDataset(datasetDir: string, limit?: number): Promise<ArenaTask[]> {
-  try {
-    const raw = await readFile(path.join(datasetDir, "arena-tasks.json"), "utf-8");
-    const data = JSON.parse(raw);
-    const tasks: ArenaTask[] = Array.isArray(data) ? data : data.tasks ?? [];
-    return limit ? tasks.slice(0, limit) : tasks;
-  } catch {
-    // Try individual task files
-    try {
-      const tasksDir = path.join(datasetDir, "tasks");
-      let files = (await readdir(tasksDir)).filter((f) => f.endsWith(".json")).sort();
-      if (limit) files = files.slice(0, limit);
-      const tasks: ArenaTask[] = [];
-      for (const file of files) {
-        const raw = await readFile(path.join(tasksDir, file), "utf-8");
-        tasks.push(JSON.parse(raw));
-      }
-      return tasks;
-    } catch {
-      throw new Error(
-        `MemoryArena dataset not found at ${datasetDir}. Run: bash evals/scripts/download-datasets.sh --benchmark memory-arena`,
-      );
+interface DomainData {
+  domain: string;
+  tasks: ArenaTask[];
+}
+
+async function loadDataset(datasetDir: string, limit?: number): Promise<DomainData[]> {
+  const domainFiles = (await readdir(datasetDir)).filter((f) => f.endsWith(".jsonl"));
+  if (domainFiles.length === 0) {
+    throw new Error(
+      `MemoryArena dataset not found at ${datasetDir}. Download with:\n` +
+      `  git clone --depth 1 https://huggingface.co/datasets/ZexueHe/memoryarena /tmp/memoryarena\n` +
+      `  for d in /tmp/memoryarena/*/; do cp "$d/data.jsonl" "${datasetDir}/$(basename $d).jsonl"; done`,
+    );
+  }
+
+  const domains: DomainData[] = [];
+  for (const file of domainFiles.sort()) {
+    const domain = file.replace(".jsonl", "");
+    const raw = await readFile(path.join(datasetDir, file), "utf-8");
+    let tasks = raw
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as ArenaTask);
+    if (limit) tasks = tasks.slice(0, limit);
+    domains.push({ domain, tasks });
+    console.log(`  [memory-arena] ${domain}: ${tasks.length} tasks`);
+  }
+  return domains;
+}
+
+/** Serialize an answer object into a comparable string. */
+function answerToString(answer: ArenaAnswer): string {
+  if (typeof answer === "string") return answer;
+  const parts: string[] = [];
+  if (answer.target_asin) parts.push(answer.target_asin);
+  if (answer.attributes) parts.push(answer.attributes.join(", "));
+  // For other answer formats, serialize relevant fields
+  for (const [key, val] of Object.entries(answer)) {
+    if (key !== "target_asin" && key !== "attributes" && val !== undefined) {
+      parts.push(`${key}: ${typeof val === "string" ? val : JSON.stringify(val)}`);
     }
   }
+  return parts.join(" | ");
 }
 
 const meta: BenchmarkMeta = {
   name: "memory-arena",
-  version: "1.0.0",
-  description: "Interdependent agentic memory tasks — store, update, cross-reference, recall",
+  version: "2.0.0",
+  description: "Interdependent multi-session agentic memory — 701 tasks across 5 domains",
   category: "agentic",
-  citation: "MemoryArena: Evaluating Memory in Agentic AI Systems (2024)",
+  citation: "MemoryArena: Benchmarking Agent Memory in Interdependent Multi-Session Agentic Tasks (2025)",
 };
 
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
 ): Promise<BenchmarkResult> {
-  const tasks = await loadDataset(options.datasetDir, options.limit);
+  const domains = await loadDataset(options.datasetDir, options.limit);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
 
-  for (const task of tasks) {
-    await system.reset();
-    const defaultSessionId = `arena-${task.id}`;
+  for (const { domain, tasks } of domains) {
+    for (let ti = 0; ti < tasks.length; ti++) {
+      const task = tasks[ti];
+      await system.reset();
 
-    for (let stepIdx = 0; stepIdx < task.steps.length; stepIdx++) {
-      const step = task.steps[stepIdx];
-      const sessionId = step.session_id ?? defaultSessionId;
-      const stepId = `${task.id}-step${stepIdx}`;
+      const sessionId = `arena-${domain}-${task.id}`;
 
-      if (step.action === "store" && step.content) {
+      // Process subtasks sequentially — each builds on the previous
+      for (let qi = 0; qi < task.questions.length; qi++) {
+        const question = task.questions[qi];
+        const expectedAnswer = task.answers[qi];
+        const expectedStr = answerToString(expectedAnswer);
+
+        // Store the question as context (simulates the agent receiving the task)
         await system.store(sessionId, [
-          { role: "user", content: step.content },
+          { role: "user", content: question },
+          { role: "assistant", content: `Processing subtask ${qi + 1}: ${question.slice(0, 100)}...` },
         ]);
-      } else if (step.action === "update" && step.content) {
-        // Updates are stores with newer info that should supersede prior facts
-        await system.store(sessionId, [
-          { role: "user", content: `[UPDATE] ${step.content}` },
-        ]);
-      } else if (step.action === "query" && step.query && step.expected_answer) {
-        const { result: recallText, durationMs } = await timed(() =>
-          system.recall(sessionId, step.query!),
-        );
 
-        const f1 = f1Score(recallText, step.expected_answer!);
-        const contains = containsAnswer(recallText, step.expected_answer!);
-        const exact = exactMatch(recallText, step.expected_answer!);
-        const hasCrossRef = step.depends_on && step.depends_on.length > 0 ? 1.0 : 0.0;
+        // Recall relevant context from previous subtasks
+        const { result: recallText, durationMs } = await timed(async () => {
+          return system.recall(sessionId, question);
+        });
+
+        const f1 = f1Score(recallText, expectedStr);
+        const contains = containsAnswer(recallText, expectedStr);
 
         scores.push({
-          taskId: stepId,
+          taskId: `${domain}-t${task.id}-q${qi}`,
           metrics: {
             f1,
             contains_answer: contains,
-            exact_match: exact,
-            is_cross_reference: hasCrossRef,
           },
           details: {
-            query: step.query,
-            expected: step.expected_answer,
-            recalled_length: recallText.length,
-            depends_on: step.depends_on,
+            domain,
+            task_id: task.id,
+            subtask_index: qi,
             category: task.category,
+            question: question.slice(0, 200),
+            expected: expectedStr.slice(0, 200),
+            recalled_length: recallText.length,
           },
           latencyMs: durationMs,
         });
+
+        // Store the answer as context for subsequent subtasks
+        await system.store(sessionId, [
+          { role: "assistant", content: `Answer for subtask ${qi + 1}: ${expectedStr}` },
+        ]);
       }
     }
   }
 
   const durationMs = Math.round(performance.now() - overallStart);
 
-  // Compute cross-reference specific aggregate
-  const crossRefScores = scores.filter((s) => s.metrics.is_cross_reference === 1.0);
-  const baseAggregate = aggregateScores(scores.map((s) => s.metrics));
+  // Overall aggregate
+  const aggregate = aggregateScores(scores.map((s) => s.metrics));
 
-  if (crossRefScores.length > 0) {
-    const crossRefF1s = crossRefScores.map((s) => s.metrics.f1);
-    baseAggregate.cross_reference_f1_mean =
-      crossRefF1s.reduce((a, b) => a + b, 0) / crossRefF1s.length;
+  // Per-domain aggregates
+  for (const { domain } of domains) {
+    const domainScores = scores.filter((s) => (s.details as any)?.domain === domain);
+    if (domainScores.length > 0) {
+      const domF1 = domainScores.map((s) => s.metrics.f1);
+      const domContains = domainScores.map((s) => s.metrics.contains_answer);
+      aggregate[`${domain}_f1`] = domF1.reduce((a, b) => a + b, 0) / domF1.length;
+      aggregate[`${domain}_accuracy`] = domContains.reduce((a, b) => a + b, 0) / domContains.length;
+      aggregate[`${domain}_count`] = domainScores.length;
+    }
   }
 
   return enrichResult({
@@ -148,10 +181,11 @@ async function run(
     adapterMode: "direct",
     taskCount: scores.length,
     scores,
-    aggregate: baseAggregate,
+    aggregate,
     config: {
       limit: options.limit,
       datasetDir: options.datasetDir,
+      domains_run: domains.map((d) => d.domain),
     },
     durationMs,
   });

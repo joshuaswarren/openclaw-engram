@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATASETS_DIR="$(cd "$SCRIPT_DIR/../datasets" && pwd)"
+DATASETS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/datasets"
 
 usage() {
   echo "Usage: $0 [--benchmark <name>]"
@@ -37,146 +37,117 @@ check_deps() {
 
 download_ama_bench() {
   local dir="$DATASETS_DIR/ama-bench"
-  if [[ -d "$dir" && -f "$dir/ama-bench.json" ]]; then
+  if [[ -f "$dir/open_end_qa_set.jsonl" ]]; then
     echo "[ama-bench] Already downloaded at $dir"
     return
   fi
-  echo "[ama-bench] Downloading from GitHub..."
+  echo "[ama-bench] Downloading from HuggingFace (AMA-bench/AMA-bench)..."
   mkdir -p "$dir"
   local tmpdir
   tmpdir=$(mktemp -d)
-  git clone --depth 1 https://github.com/tongxin97/AMA-Bench.git "$tmpdir/repo" 2>/dev/null || {
-    echo "[ama-bench] WARNING: Could not clone repo. Creating placeholder dataset."
-    echo '[{"id":"placeholder","memorize_texts":["The capital of France is Paris."],"queries":[{"query":"What is the capital of France?","expected_answer":"Paris","category":"factual"}]}]' > "$dir/ama-bench.json"
+  git clone --depth 1 https://huggingface.co/datasets/AMA-bench/AMA-bench "$tmpdir/repo" 2>/dev/null || {
+    echo "[ama-bench] ERROR: Could not clone. Try manually:"
+    echo "  git clone --depth 1 https://huggingface.co/datasets/AMA-bench/AMA-bench /tmp/amabench"
+    echo "  cp /tmp/amabench/test/open_end_qa_set.jsonl $dir/"
     rm -rf "$tmpdir"
-    return
+    return 1
   }
-  # Look for data files in common locations
-  if [[ -d "$tmpdir/repo/data" ]]; then
-    cp -r "$tmpdir/repo/data/"* "$dir/" 2>/dev/null || true
-  fi
-  if [[ -d "$tmpdir/repo/benchmark" ]]; then
-    cp -r "$tmpdir/repo/benchmark/"* "$dir/" 2>/dev/null || true
-  fi
-  # If no structured data found, create a consolidated file from whatever exists
-  if [[ ! -f "$dir/ama-bench.json" && ! -d "$dir/tasks" ]]; then
-    find "$tmpdir/repo" -name "*.json" -not -path "*/node_modules/*" -not -name "package*.json" \
-      -exec cp {} "$dir/" \; 2>/dev/null || true
-  fi
+  cp "$tmpdir/repo/test/open_end_qa_set.jsonl" "$dir/" 2>/dev/null || true
   rm -rf "$tmpdir"
-  echo "[ama-bench] Downloaded to $dir"
+  echo "[ama-bench] Downloaded to $dir ($(wc -l < "$dir/open_end_qa_set.jsonl") episodes)"
 }
 
 download_longmemeval() {
   local dir="$DATASETS_DIR/longmemeval"
-  if [[ -d "$dir" && -f "$dir/longmemeval.json" ]]; then
+  if [[ -f "$dir/longmemeval_oracle.json" ]]; then
     echo "[longmemeval] Already downloaded at $dir"
     return
   fi
-  echo "[longmemeval] Downloading from HuggingFace..."
+  echo "[longmemeval] Downloading from HuggingFace (xiaowu0162/longmemeval-cleaned)..."
   mkdir -p "$dir"
-  # Try HuggingFace datasets API
-  curl -sL "https://huggingface.co/api/datasets/dt-research-group/LongMemEval/parquet/default/test/0.parquet" \
-    -o "$dir/test.parquet" 2>/dev/null || true
-  if [[ ! -s "$dir/test.parquet" ]]; then
-    # Fallback: try the git repo
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    git clone --depth 1 https://huggingface.co/datasets/dt-research-group/LongMemEval "$tmpdir/repo" 2>/dev/null || {
-      echo "[longmemeval] WARNING: Could not download. Creating placeholder dataset."
-      echo '[{"id":"placeholder","conversations":[{"role":"user","content":"My favorite color is blue.","session_id":"s1"},{"role":"assistant","content":"Got it, blue!","session_id":"s1"}],"queries":[{"query":"What is my favorite color?","expected_answer":"blue","category":"single_session"}]}]' > "$dir/longmemeval.json"
-      rm -rf "$tmpdir"
-      return
-    }
-    find "$tmpdir/repo" -name "*.json" -o -name "*.jsonl" | head -20 | while read -r f; do
-      cp "$f" "$dir/" 2>/dev/null || true
-    done
-    rm -rf "$tmpdir"
+  curl -sL "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json" \
+    -o "$dir/longmemeval_oracle.json"
+  if [[ ! -s "$dir/longmemeval_oracle.json" ]]; then
+    echo "[longmemeval] ERROR: Download failed. Try manually:"
+    echo "  curl -sL https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json -o $dir/longmemeval_oracle.json"
+    rm -f "$dir/longmemeval_oracle.json"
+    return 1
   fi
-  echo "[longmemeval] Downloaded to $dir"
+  echo "[longmemeval] Downloaded to $dir ($(du -h "$dir/longmemeval_oracle.json" | cut -f1))"
 }
 
 download_amemgym() {
   local dir="$DATASETS_DIR/amemgym"
-  if [[ -d "$dir" && -f "$dir/amemgym-tasks.json" ]]; then
+  if [[ -f "$dir/amemgym-v1-base.json" ]]; then
     echo "[amemgym] Already downloaded at $dir"
     return
   fi
-  echo "[amemgym] Downloading from GitHub..."
+  echo "[amemgym] Downloading from HuggingFace (AGI-Eval/AMemGym)..."
   mkdir -p "$dir"
   local tmpdir
   tmpdir=$(mktemp -d)
-  git clone --depth 1 https://github.com/agiresearch/AMemGym.git "$tmpdir/repo" 2>/dev/null || {
-    echo "[amemgym] WARNING: Could not clone repo. Creating placeholder dataset."
-    echo '[{"id":"placeholder","user_profile":{"user_id":"u1","preferences":{"cuisine":"Italian","color":"green"},"history":[{"role":"user","content":"I love Italian food"},{"role":"assistant","content":"Italian cuisine is wonderful!"}]},"queries":[{"query":"What cuisine do I prefer?","expected_answer":"Italian","relevant_preferences":["Italian"],"difficulty":"easy"}]}]' > "$dir/amemgym-tasks.json"
+  git clone --depth 1 https://huggingface.co/datasets/AGI-Eval/AMemGym "$tmpdir/repo" 2>/dev/null || {
+    echo "[amemgym] ERROR: Could not clone. Try manually:"
+    echo "  git clone --depth 1 https://huggingface.co/datasets/AGI-Eval/AMemGym /tmp/amemgym"
+    echo "  cp /tmp/amemgym/v1.base/data.json $dir/amemgym-v1-base.json"
     rm -rf "$tmpdir"
-    return
+    return 1
   }
-  if [[ -d "$tmpdir/repo/data" ]]; then
-    cp -r "$tmpdir/repo/data/"* "$dir/" 2>/dev/null || true
-  fi
-  if [[ -d "$tmpdir/repo/benchmark" ]]; then
-    cp -r "$tmpdir/repo/benchmark/"* "$dir/" 2>/dev/null || true
-  fi
-  if [[ ! -f "$dir/amemgym-tasks.json" && ! -d "$dir/tasks" ]]; then
-    find "$tmpdir/repo" -name "*.json" -not -path "*/node_modules/*" -not -name "package*.json" \
-      -exec cp {} "$dir/" \; 2>/dev/null || true
-  fi
+  cp "$tmpdir/repo/v1.base/data.json" "$dir/amemgym-v1-base.json" 2>/dev/null || true
   rm -rf "$tmpdir"
   echo "[amemgym] Downloaded to $dir"
 }
 
 download_locomo() {
   local dir="$DATASETS_DIR/locomo"
-  if [[ -d "$dir" && -f "$dir/locomo.json" ]]; then
+  if [[ -f "$dir/locomo10.json" ]]; then
     echo "[locomo] Already downloaded at $dir"
     return
   fi
-  echo "[locomo] Downloading from HuggingFace..."
+  echo "[locomo] Downloading from GitHub (snap-research/locomo)..."
   mkdir -p "$dir"
   local tmpdir
   tmpdir=$(mktemp -d)
-  git clone --depth 1 https://huggingface.co/datasets/LoCoMo/LoCoMo "$tmpdir/repo" 2>/dev/null || {
-    echo "[locomo] WARNING: Could not download. Creating placeholder dataset."
-    echo '[{"id":"placeholder","conversation":[{"role":"user","content":"I went to Paris last summer."},{"role":"assistant","content":"How was Paris?"},{"role":"user","content":"Amazing! I visited the Eiffel Tower."},{"role":"assistant","content":"The Eiffel Tower is iconic!"}],"questions":[{"question":"Where did I travel last summer?","answer":"Paris","question_type":"factual"}]}]' > "$dir/locomo.json"
+  git clone --depth 1 https://github.com/snap-research/locomo.git "$tmpdir/repo" 2>/dev/null || {
+    echo "[locomo] ERROR: Could not clone. Try manually:"
+    echo "  git clone --depth 1 https://github.com/snap-research/locomo.git /tmp/locomo"
+    echo "  cp /tmp/locomo/data/locomo10.json $dir/"
     rm -rf "$tmpdir"
-    return
+    return 1
   }
-  find "$tmpdir/repo" -name "*.json" -o -name "*.jsonl" | head -20 | while read -r f; do
-    cp "$f" "$dir/" 2>/dev/null || true
-  done
+  cp "$tmpdir/repo/data/locomo10.json" "$dir/" 2>/dev/null || true
   rm -rf "$tmpdir"
-  echo "[locomo] Downloaded to $dir"
+  echo "[locomo] Downloaded to $dir ($(du -h "$dir/locomo10.json" | cut -f1))"
 }
 
 download_memory_arena() {
   local dir="$DATASETS_DIR/memory-arena"
-  if [[ -d "$dir" && -f "$dir/arena-tasks.json" ]]; then
+  if [[ -d "$dir" ]] && ls "$dir"/*.jsonl &>/dev/null; then
     echo "[memory-arena] Already downloaded at $dir"
     return
   fi
-  echo "[memory-arena] Downloading from GitHub..."
+  echo "[memory-arena] Downloading from HuggingFace (ZexueHe/memoryarena)..."
   mkdir -p "$dir"
   local tmpdir
   tmpdir=$(mktemp -d)
-  git clone --depth 1 https://github.com/shenzhi-wang/MemoryArena.git "$tmpdir/repo" 2>/dev/null || {
-    echo "[memory-arena] WARNING: Could not clone repo. Creating placeholder dataset."
-    echo '[{"id":"placeholder","description":"Store and recall a fact","steps":[{"action":"store","content":"The project deadline is March 15."},{"action":"query","query":"When is the project deadline?","expected_answer":"March 15"}],"category":"single_step"}]' > "$dir/arena-tasks.json"
+  git clone --depth 1 https://huggingface.co/datasets/ZexueHe/memoryarena "$tmpdir/repo" 2>/dev/null || {
+    echo "[memory-arena] ERROR: Could not clone. Try manually:"
+    echo "  git clone --depth 1 https://huggingface.co/datasets/ZexueHe/memoryarena /tmp/memoryarena"
+    echo "  for d in /tmp/memoryarena/*/; do cp \"\$d/data.jsonl\" \"$dir/\$(basename \$d).jsonl\"; done"
     rm -rf "$tmpdir"
-    return
+    return 1
   }
-  if [[ -d "$tmpdir/repo/data" ]]; then
-    cp -r "$tmpdir/repo/data/"* "$dir/" 2>/dev/null || true
-  fi
-  if [[ -d "$tmpdir/repo/tasks" ]]; then
-    cp -r "$tmpdir/repo/tasks/"* "$dir/" 2>/dev/null || true
-  fi
-  if [[ ! -f "$dir/arena-tasks.json" && ! -d "$dir/tasks" ]]; then
-    find "$tmpdir/repo" -name "*.json" -not -path "*/node_modules/*" -not -name "package*.json" \
-      -exec cp {} "$dir/" \; 2>/dev/null || true
-  fi
+  for d in "$tmpdir/repo"/*/; do
+    local name
+    name=$(basename "$d")
+    if [[ -f "$d/data.jsonl" ]]; then
+      cp "$d/data.jsonl" "$dir/${name}.jsonl"
+    fi
+  done
   rm -rf "$tmpdir"
-  echo "[memory-arena] Downloaded to $dir"
+  local count
+  count=$(ls "$dir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+  echo "[memory-arena] Downloaded to $dir ($count domains)"
 }
 
 # ── Main ──

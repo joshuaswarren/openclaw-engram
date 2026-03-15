@@ -3,12 +3,12 @@
  */
 
 /** Exact string match (case-insensitive, trimmed). */
-export function exactMatch(predicted: string, expected: string): number {
-  return predicted.trim().toLowerCase() === expected.trim().toLowerCase() ? 1.0 : 0.0;
+export function exactMatch(predicted: string, expected: string | number | unknown): number {
+  return String(predicted ?? "").trim().toLowerCase() === String(expected ?? "").trim().toLowerCase() ? 1.0 : 0.0;
 }
 
 /** Token-level F1 score. */
-export function f1Score(predicted: string, expected: string): number {
+export function f1Score(predicted: string, expected: string | number | unknown): number {
   const predTokens = tokenize(predicted);
   const expTokens = tokenize(expected);
 
@@ -26,7 +26,7 @@ export function f1Score(predicted: string, expected: string): number {
 }
 
 /** ROUGE-L score (longest common subsequence based). */
-export function rougeL(predicted: string, expected: string): number {
+export function rougeL(predicted: string, expected: string | number | unknown): number {
   const predTokens = tokenize(predicted);
   const expTokens = tokenize(expected);
 
@@ -55,8 +55,11 @@ export function recallAtK(
 }
 
 /** Substring containment check — does the prediction contain the expected answer? */
-export function containsAnswer(predicted: string, expected: string): number {
-  return predicted.toLowerCase().includes(expected.toLowerCase().trim()) ? 1.0 : 0.0;
+export function containsAnswer(predicted: string, expected: string | number | unknown): number {
+  const pred = String(predicted ?? "").toLowerCase();
+  const exp = String(expected ?? "").toLowerCase().trim();
+  if (exp.length === 0) return 0.0;
+  return pred.includes(exp) ? 1.0 : 0.0;
 }
 
 /** Aggregate metrics from an array of per-task scores. */
@@ -94,8 +97,8 @@ export async function timed<T>(
 
 // ── Internal helpers ──
 
-function tokenize(text: string): string[] {
-  return text
+function tokenize(text: string | number | unknown): string[] {
+  return String(text ?? "")
     .toLowerCase()
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)

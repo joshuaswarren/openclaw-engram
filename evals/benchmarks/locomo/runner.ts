@@ -1,14 +1,25 @@
 /**
- * LoCoMo runner — Long Conversation Memory benchmark.
+ * LoCoMo runner — Evaluating Very Long-Term Conversational Memory of LLM Agents.
  *
- * Tests memory over extended multi-turn dialogues. Feeds conversation
- * segments, then asks questions requiring long-range context recall.
+ * 10 long conversations (~300 turns, ~9K tokens each, up to 35 sessions).
+ * 1,986 QA pairs across 5 categories.
  *
- * Dataset: https://huggingface.co/datasets/LoCoMo
- * Citation: LoCoMo: Long Conversation Memory for Language Models (2024)
+ * Categories (from paper):
+ *   1 = single-hop        (factual retrieval from one turn)
+ *   2 = multi-hop          (requires combining info across turns)
+ *   3 = temporal           (time-based reasoning)
+ *   4 = open-domain        (general questions about the conversation)
+ *   5 = adversarial/unanswerable
+ *
+ * Published baselines (QA F1, from paper Table 2):
+ *   GPT-4 + full context:  ~0.62  |  GPT-4 + RAG:  ~0.49
+ *   LLaMA-2 70B + RAG:     ~0.36  |  Human:        ~0.86
+ *
+ * Dataset: https://github.com/snap-research/locomo
+ * Paper:   Maharana et al. Evaluating Very Long-Term Conversational Memory of LLM Agents. ACL 2024.
  */
 
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   BenchmarkRunner,
@@ -20,116 +31,153 @@ import type {
 import { f1Score, containsAnswer, rougeL, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
+// ── Dataset types (matches locomo10.json) ──
+
 interface LoCoMoTurn {
-  role: "user" | "assistant";
-  content: string;
+  speaker: string;
+  dia_id: string;
+  text: string;
 }
 
-interface LoCoMoQuestion {
+interface LoCoMoQA {
   question: string;
   answer: string;
-  evidence_turn_indices?: number[];
-  question_type?: "factual" | "temporal" | "summary" | "comparison";
+  evidence: string[]; // e.g. ["D1:3", "D5:12"]
+  category: number;   // 1-5
 }
 
-interface LoCoMoTask {
-  id: string;
-  conversation: LoCoMoTurn[];
-  questions: LoCoMoQuestion[];
+interface LoCoMoConversation {
+  sample_id: string;
+  conversation: Record<string, any>; // speaker_a, speaker_b, session_1, session_1_date_time, etc.
+  qa: LoCoMoQA[];
+  event_summary: any;
+  observation: any;
+  session_summary: any;
 }
 
-async function loadDataset(datasetDir: string, limit?: number): Promise<LoCoMoTask[]> {
-  try {
-    const raw = await readFile(path.join(datasetDir, "locomo.json"), "utf-8");
-    const data = JSON.parse(raw);
-    const tasks: LoCoMoTask[] = Array.isArray(data) ? data : data.tasks ?? [];
-    return limit ? tasks.slice(0, limit) : tasks;
-  } catch {
+const CATEGORY_NAMES: Record<number, string> = {
+  1: "single_hop",
+  2: "multi_hop",
+  3: "temporal",
+  4: "open_domain",
+  5: "adversarial",
+};
+
+async function loadDataset(datasetDir: string): Promise<LoCoMoConversation[]> {
+  for (const filename of ["locomo10.json", "locomo.json"]) {
     try {
-      const tasksDir = path.join(datasetDir, "tasks");
-      let files = (await readdir(tasksDir)).filter((f) => f.endsWith(".json")).sort();
-      if (limit) files = files.slice(0, limit);
-      const tasks: LoCoMoTask[] = [];
-      for (const file of files) {
-        const raw = await readFile(path.join(tasksDir, file), "utf-8");
-        tasks.push(JSON.parse(raw));
-      }
-      return tasks;
+      const raw = await readFile(path.join(datasetDir, filename), "utf-8");
+      const data: LoCoMoConversation[] = JSON.parse(raw);
+      console.log(`  Loaded ${data.length} conversations from ${filename}`);
+      return data;
     } catch {
-      throw new Error(
-        `LoCoMo dataset not found at ${datasetDir}. Run: bash evals/scripts/download-datasets.sh --benchmark locomo`,
-      );
+      continue;
     }
   }
+  throw new Error(
+    `LoCoMo dataset not found at ${datasetDir}. Download with:\n` +
+    `  git clone --depth 1 https://github.com/snap-research/locomo.git /tmp/locomo && cp /tmp/locomo/data/locomo10.json ${datasetDir}/`,
+  );
+}
+
+/** Extract sessions from the conversation dict as ordered (sessionId, turns) pairs. */
+function extractSessions(conv: Record<string, any>): Array<{ sessionId: string; turns: LoCoMoTurn[] }> {
+  const sessions: Array<{ sessionId: string; turns: LoCoMoTurn[] }> = [];
+  const sessionKeys = Object.keys(conv)
+    .filter((k) => k.match(/^session_\d+$/) && Array.isArray(conv[k]))
+    .sort((a, b) => {
+      const na = parseInt(a.replace("session_", ""));
+      const nb = parseInt(b.replace("session_", ""));
+      return na - nb;
+    });
+
+  for (const key of sessionKeys) {
+    sessions.push({
+      sessionId: key,
+      turns: conv[key] as LoCoMoTurn[],
+    });
+  }
+  return sessions;
 }
 
 const meta: BenchmarkMeta = {
   name: "locomo",
-  version: "1.0.0",
-  description: "Long Conversation Memory — extended multi-turn dialogue recall",
+  version: "2.0.0",
+  description: "Long conversation memory — 1,986 QA pairs across 10 multi-session conversations (ACL 2024)",
   category: "conversational",
-  citation: "LoCoMo: Long Conversation Memory for Language Models (2024)",
+  citation: "Maharana et al. Evaluating Very Long-Term Conversational Memory of LLM Agents. ACL 2024.",
 };
 
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
 ): Promise<BenchmarkResult> {
-  const tasks = await loadDataset(options.datasetDir, options.limit);
+  const conversations = await loadDataset(options.datasetDir);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
 
-  for (const task of tasks) {
-    const sessionId = `locomo-${task.id}`;
+  // Limit applies to conversations (each has ~200 QA pairs)
+  const convsToRun = options.limit ? conversations.slice(0, options.limit) : conversations;
+
+  for (let ci = 0; ci < convsToRun.length; ci++) {
+    const conv = convsToRun[ci];
     await system.reset();
 
-    // Feed the full conversation in batches (simulate multi-turn)
-    const batchSize = 20;
-    for (let i = 0; i < task.conversation.length; i += batchSize) {
-      const batch = task.conversation.slice(i, i + batchSize).map((t) => ({
-        role: t.role,
-        content: t.content,
+    console.log(`  [locomo] Conversation ${ci + 1}/${convsToRun.length} (${conv.sample_id}): ${conv.qa.length} QA pairs`);
+
+    // Phase 1: Ingest all sessions
+    const sessions = extractSessions(conv.conversation);
+    const speakerA = conv.conversation.speaker_a ?? "Speaker A";
+    const speakerB = conv.conversation.speaker_b ?? "Speaker B";
+
+    for (const session of sessions) {
+      // Map speaker turns to user/assistant roles
+      // speakerA → user, speakerB → assistant (convention from paper)
+      const messages = session.turns.map((t) => ({
+        role: (t.speaker === speakerA ? "user" : "assistant") as "user" | "assistant",
+        content: t.text,
       }));
-      await system.store(sessionId, batch);
+      if (messages.length > 0) {
+        await system.store(`${conv.sample_id}-${session.sessionId}`, messages);
+      }
     }
 
-    // Query phase
-    for (const q of task.questions) {
-      const queryId = `${task.id}-${q.question.slice(0, 25).replace(/\s+/g, "_")}`;
+    // Phase 2: Query each QA pair
+    const sessionIds = sessions.map((s) => `${conv.sample_id}-${s.sessionId}`);
 
-      const { result: recallText, durationMs } = await timed(() =>
-        system.recall(sessionId, q.question),
-      );
+    for (let qi = 0; qi < conv.qa.length; qi++) {
+      const qa = conv.qa[qi];
+      const catName = CATEGORY_NAMES[qa.category] ?? `cat_${qa.category}`;
 
-      const f1 = f1Score(recallText, q.answer);
-      const contains = containsAnswer(recallText, q.answer);
-      const rouge = rougeL(recallText, q.answer);
+      const { result: recallText, durationMs } = await timed(async () => {
+        // Recall from all sessions
+        const parts: string[] = [];
+        for (const sid of sessionIds) {
+          const r = await system.recall(sid, qa.question);
+          if (r && r.trim().length > 0) parts.push(r);
+        }
+        return parts.join("\n\n");
+      });
 
-      // Evidence grounding: check if search finds the right turn indices
-      let evidenceRecall = 1.0;
-      if (q.evidence_turn_indices && q.evidence_turn_indices.length > 0) {
-        const searchResults = await system.search(q.question, 10, sessionId);
-        const retrievedTurns = new Set(searchResults.map((r) => r.turnIndex));
-        const evidenceFound = q.evidence_turn_indices.filter((t) =>
-          retrievedTurns.has(t),
-        ).length;
-        evidenceRecall = evidenceFound / q.evidence_turn_indices.length;
-      }
+      const f1 = f1Score(recallText, qa.answer);
+      const contains = containsAnswer(recallText, qa.answer);
+      const rouge = rougeL(recallText, qa.answer);
 
       scores.push({
-        taskId: queryId,
+        taskId: `${conv.sample_id}-q${qi}-${catName}`,
         metrics: {
           f1,
           contains_answer: contains,
           rouge_l: rouge,
-          evidence_recall: evidenceRecall,
         },
         details: {
-          question: q.question,
-          expected: q.answer,
-          question_type: q.question_type,
+          question: qa.question,
+          expected: qa.answer,
+          category: qa.category,
+          category_name: catName,
+          evidence: qa.evidence,
+          conversation_id: conv.sample_id,
           recalled_length: recallText.length,
-          conversation_length: task.conversation.length,
         },
         latencyMs: durationMs,
       });
@@ -137,6 +185,21 @@ async function run(
   }
 
   const durationMs = Math.round(performance.now() - overallStart);
+
+  // Overall aggregate
+  const aggregate = aggregateScores(scores.map((s) => s.metrics));
+
+  // Per-category aggregates
+  for (const [catNum, catName] of Object.entries(CATEGORY_NAMES)) {
+    const catScores = scores.filter((s) => (s.details as any)?.category === parseInt(catNum));
+    if (catScores.length > 0) {
+      const catF1 = catScores.map((s) => s.metrics.f1);
+      const catContains = catScores.map((s) => s.metrics.contains_answer);
+      aggregate[`${catName}_f1`] = catF1.reduce((a, b) => a + b, 0) / catF1.length;
+      aggregate[`${catName}_accuracy`] = catContains.reduce((a, b) => a + b, 0) / catContains.length;
+      aggregate[`${catName}_count`] = catScores.length;
+    }
+  }
 
   return enrichResult({
     meta,
@@ -146,10 +209,11 @@ async function run(
     adapterMode: "direct",
     taskCount: scores.length,
     scores,
-    aggregate: aggregateScores(scores.map((s) => s.metrics)),
+    aggregate,
     config: {
       limit: options.limit,
       datasetDir: options.datasetDir,
+      conversations_run: convsToRun.length,
     },
     durationMs,
   });

@@ -1,14 +1,24 @@
 /**
- * AMA-Bench runner — Agent Memory Abilities benchmark.
+ * AMA-Bench runner — Evaluating Long-Horizon Memory for Agentic Applications.
  *
- * Tests a 2-function memory interface: memorize(text) + recall(query) → text
- * Evaluates: recall accuracy, hallucination rate, session-boundary handling.
+ * 208 agent trajectories across 6 domains, 2,496 QA pairs total.
+ * Each trajectory is a sequence of (action, observation) turns that must be memorized,
+ * then the system is probed with questions about what happened.
  *
- * Dataset: https://github.com/tongxin97/AMA-Bench
- * Citation: AMA-Bench (2024) — Evaluating agent memory abilities
+ * Domains: Game, EMBODIED_AI, OPENWORLD_QA, TEXT2SQL, SOFTWARE, WEB
+ * QA types: recall, causal_inference, state_updating, state_abstraction
+ *
+ * Published baselines (Accuracy, Qwen3-32B backbone):
+ *   AMA-Agent: 0.5722  |  MemoRAG: 0.4606  |  HippoRAG2: 0.4480
+ *   MemoryBank: 0.3397  |  MemAgent: 0.2768
+ *   GPT-5.2 (long-context): 0.7226 (strongest overall)
+ *
+ * Dataset: https://huggingface.co/datasets/AMA-bench/AMA-bench
+ * Paper:   AMA-Bench: Evaluating Long-Horizon Memory for Agentic Applications (2025)
+ * Code:    https://github.com/AMA-Bench/AMA-Hub
  */
 
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   BenchmarkRunner,
@@ -20,97 +30,115 @@ import type {
 import { f1Score, containsAnswer, aggregateScores, timed } from "../../scorer.js";
 import { enrichResult } from "../../reporter.js";
 
-interface AmaTask {
-  id: string;
-  session_id: string;
-  memorize_texts: string[];
-  queries: Array<{
-    query: string;
-    expected_answer: string;
-    category?: string;
-  }>;
+// ── Dataset types (matches open_end_qa_set.jsonl) ──
+
+interface TrajectoryTurn {
+  turn_idx: number;
+  action: string;
+  observation: string;
 }
 
-async function loadDataset(datasetDir: string, limit?: number): Promise<AmaTask[]> {
-  const tasksDir = path.join(datasetDir, "tasks");
-  let files: string[];
+interface QAPair {
+  question: string;
+  answer: string;
+  type: string; // recall, causal_inference, state_updating, state_abstraction
+  question_uuid: string;
+}
+
+interface AMABenchEpisode {
+  episode_id: number;
+  task: string;
+  task_type: string;
+  domain: string;
+  success: boolean;
+  num_turns: number;
+  total_tokens: number;
+  trajectory: TrajectoryTurn[];
+  qa_pairs: QAPair[];
+}
+
+async function loadDataset(datasetDir: string, limit?: number): Promise<AMABenchEpisode[]> {
+  const filePath = path.join(datasetDir, "open_end_qa_set.jsonl");
   try {
-    files = (await readdir(tasksDir)).filter((f) => f.endsWith(".json")).sort();
+    const raw = await readFile(filePath, "utf-8");
+    const episodes = raw
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as AMABenchEpisode);
+    console.log(`  Loaded ${episodes.length} episodes (${episodes.reduce((s, e) => s + e.qa_pairs.length, 0)} QA pairs)`);
+    return limit ? episodes.slice(0, limit) : episodes;
   } catch {
-    // Fallback: single consolidated file
-    try {
-      const raw = await readFile(path.join(datasetDir, "ama-bench.json"), "utf-8");
-      const data = JSON.parse(raw);
-      const tasks = Array.isArray(data) ? data : data.tasks ?? [];
-      return limit ? tasks.slice(0, limit) : tasks;
-    } catch {
-      throw new Error(
-        `AMA-Bench dataset not found at ${datasetDir}. Run: bash evals/scripts/download-datasets.sh --benchmark ama-bench`,
-      );
-    }
+    throw new Error(
+      `AMA-Bench dataset not found at ${filePath}. Download with:\n` +
+      `  git clone --depth 1 https://huggingface.co/datasets/AMA-bench/AMA-bench /tmp/amabench && cp /tmp/amabench/test/open_end_qa_set.jsonl ${datasetDir}/`,
+    );
   }
-
-  if (limit) files = files.slice(0, limit);
-
-  const tasks: AmaTask[] = [];
-  for (const file of files) {
-    const raw = await readFile(path.join(tasksDir, file), "utf-8");
-    tasks.push(JSON.parse(raw));
-  }
-  return tasks;
 }
 
 const meta: BenchmarkMeta = {
   name: "ama-bench",
-  version: "1.0.0",
-  description: "Agent Memory Abilities — 2-function memorize/recall interface",
+  version: "2.0.0",
+  description: "Agent Memory Abilities — 2,496 QA pairs across 208 agentic trajectories in 6 domains",
   category: "agentic",
-  citation: "AMA-Bench: Evaluating Agent Memory Abilities (2024)",
+  citation: "AMA-Bench: Evaluating Long-Horizon Memory for Agentic Applications (2025)",
 };
 
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
 ): Promise<BenchmarkResult> {
-  const tasks = await loadDataset(options.datasetDir, options.limit);
+  const episodes = await loadDataset(options.datasetDir, options.limit);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
 
-  for (const task of tasks) {
-    const sessionId = `ama-${task.id}`;
+  for (let ei = 0; ei < episodes.length; ei++) {
+    const ep = episodes[ei];
     await system.reset();
 
-    // Phase 1: Memorize — feed all texts into memory
-    const memorizeMessages = task.memorize_texts.map((text, i) => ({
-      role: "user" as const,
-      content: text,
-    }));
-    await system.store(sessionId, memorizeMessages);
+    if ((ei + 1) % 10 === 0 || ei === 0) {
+      console.log(`  [ama-bench] Episode ${ei + 1}/${episodes.length} (${ep.domain}, ${ep.num_turns} turns, ${ep.qa_pairs.length} QA)`);
+    }
 
-    // Phase 2: Recall — query and score each
-    for (const q of task.queries) {
-      const queryId = `${task.id}-${q.query.slice(0, 30).replace(/\s+/g, "_")}`;
-      const { result: recallText, durationMs } = await timed(() =>
-        system.recall(sessionId, q.query),
-      );
+    const sessionId = `ama-ep-${ep.episode_id}`;
 
-      const f1 = f1Score(recallText, q.expected_answer);
-      const contains = containsAnswer(recallText, q.expected_answer);
-      // Hallucination proxy: low F1 but non-empty response
-      const hallucination = recallText.length > 10 && f1 < 0.1 ? 1.0 : 0.0;
+    // Phase 1: Ingest trajectory as alternating user/assistant turns
+    // action → user message, observation → assistant response
+    const messages = ep.trajectory.flatMap((t) => [
+      { role: "user" as const, content: `[Action ${t.turn_idx}]: ${t.action}` },
+      { role: "assistant" as const, content: `[Observation ${t.turn_idx}]: ${t.observation}` },
+    ]);
+
+    // Store in batches to avoid overwhelming the buffer
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      await system.store(sessionId, batch);
+    }
+
+    // Phase 2: Probe with QA pairs
+    for (const qa of ep.qa_pairs) {
+      const { result: recallText, durationMs } = await timed(async () => {
+        return system.recall(sessionId, qa.question);
+      });
+
+      const f1 = f1Score(recallText, qa.answer);
+      const contains = containsAnswer(recallText, qa.answer);
 
       scores.push({
-        taskId: queryId,
+        taskId: qa.question_uuid,
         metrics: {
           f1,
           contains_answer: contains,
-          hallucination,
         },
         details: {
-          query: q.query,
-          expected: q.expected_answer,
+          question: qa.question,
+          expected: qa.answer.slice(0, 200), // Truncate for readability in results
+          qa_type: qa.type,
+          domain: ep.domain,
+          episode_id: ep.episode_id,
+          num_turns: ep.num_turns,
+          total_tokens: ep.total_tokens,
           recalled_length: recallText.length,
-          category: q.category,
         },
         latencyMs: durationMs,
       });
@@ -118,6 +146,33 @@ async function run(
   }
 
   const durationMs = Math.round(performance.now() - overallStart);
+
+  // Overall aggregate
+  const aggregate = aggregateScores(scores.map((s) => s.metrics));
+
+  // Per-domain aggregates
+  const domains = [...new Set(episodes.map((e) => e.domain))];
+  for (const domain of domains) {
+    const domainScores = scores.filter((s) => (s.details as any)?.domain === domain);
+    if (domainScores.length > 0) {
+      const domF1 = domainScores.map((s) => s.metrics.f1);
+      const domContains = domainScores.map((s) => s.metrics.contains_answer);
+      aggregate[`${domain}_f1`] = domF1.reduce((a, b) => a + b, 0) / domF1.length;
+      aggregate[`${domain}_accuracy`] = domContains.reduce((a, b) => a + b, 0) / domContains.length;
+      aggregate[`${domain}_count`] = domainScores.length;
+    }
+  }
+
+  // Per-QA-type aggregates
+  const qaTypes = [...new Set(scores.map((s) => (s.details as any)?.qa_type).filter(Boolean))];
+  for (const qt of qaTypes) {
+    const qtScores = scores.filter((s) => (s.details as any)?.qa_type === qt);
+    if (qtScores.length > 0) {
+      const qtF1 = qtScores.map((s) => s.metrics.f1);
+      aggregate[`${qt}_f1`] = qtF1.reduce((a, b) => a + b, 0) / qtF1.length;
+      aggregate[`${qt}_count`] = qtScores.length;
+    }
+  }
 
   return enrichResult({
     meta,
@@ -127,10 +182,11 @@ async function run(
     adapterMode: "direct",
     taskCount: scores.length,
     scores,
-    aggregate: aggregateScores(scores.map((s) => s.metrics)),
+    aggregate,
     config: {
       limit: options.limit,
       datasetDir: options.datasetDir,
+      episodes_run: episodes.length,
     },
     durationMs,
   });
