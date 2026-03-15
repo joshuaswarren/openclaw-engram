@@ -6,6 +6,7 @@ import { log } from "./logger.js";
 import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerLcmTools } from "./lcm/index.js";
+import { estimateTokens as estimateLcmTokens } from "./lcm/archive.js";
 import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { EngramAccessService } from "./access-service.js";
@@ -477,8 +478,23 @@ export default {
           // Token count is stashed here; after_compaction records the final pair.
           if (orchestrator.lcmEngine?.enabled) {
             try {
-              const tokensBefore = typeof event.tokenCount === "number" ? event.tokenCount
-                : (typeof event.tokensBefore === "number" ? event.tokensBefore : 0);
+              let tokensBefore = 0;
+              if (typeof event.tokenCount === "number") {
+                tokensBefore = event.tokenCount;
+              } else if (Array.isArray(event.messages)) {
+                // Auto-compaction path: estimate from messages array
+                for (const msg of event.messages as Array<{ content?: unknown }>) {
+                  if (typeof msg.content === "string") {
+                    tokensBefore += estimateLcmTokens(msg.content);
+                  } else if (Array.isArray(msg.content)) {
+                    for (const block of msg.content) {
+                      if (typeof block === "string") tokensBefore += estimateLcmTokens(block);
+                      else if (block && typeof block === "object" && typeof (block as any).text === "string")
+                        tokensBefore += estimateLcmTokens((block as any).text);
+                    }
+                  }
+                }
+              }
               lcmTokensBefore.set(sessionKey, tokensBefore);
               await orchestrator.lcmEngine.preCompactionFlush(sessionKey);
             } catch (lcmErr) {
@@ -525,8 +541,21 @@ export default {
           // (runs regardless of reset setting — LCM needs compaction metrics)
           if (orchestrator.lcmEngine?.enabled) {
             try {
-              const tokensAfter = typeof event.tokenCount === "number" ? event.tokenCount
-                : (typeof event.tokensAfter === "number" ? event.tokensAfter : 0);
+              let tokensAfter = 0;
+              if (typeof event.tokenCount === "number") {
+                tokensAfter = event.tokenCount;
+              } else {
+                // Auto-compaction path: no token count available.
+                // Estimate from messageCount ratio if we have tokensBefore.
+                const storedBefore = lcmTokensBefore.get(sessionKey) ?? 0;
+                const msgCountAfter = typeof event.messageCount === "number" ? event.messageCount : 0;
+                const compacted = typeof event.compactedCount === "number" ? event.compactedCount : 0;
+                const msgCountBefore = msgCountAfter + compacted;
+                if (storedBefore > 0 && msgCountBefore > 0) {
+                  // Rough estimate: tokens scale proportionally to message count
+                  tokensAfter = Math.round(storedBefore * (msgCountAfter / msgCountBefore));
+                }
+              }
               const tokensBefore = lcmTokensBefore.get(sessionKey) ?? 0;
               lcmTokensBefore.delete(sessionKey);
               await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
