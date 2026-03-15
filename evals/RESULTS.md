@@ -159,7 +159,7 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 - Entity retrieval
 - recallBudgetChars: 64,000
 
-**Scoring:** Token-level F1, substring containsAnswer, and ROUGE-L (benchmark-dependent). All scoring is local — no LLM judge is used, which means scores are conservative compared to papers that use GPT-4o as a judge.
+**Scoring:** Token-level F1, substring containsAnswer, and ROUGE-L (benchmark-dependent). Optional LLM judge scoring via `--judge` flag uses the OpenClaw gateway model chain for semantic evaluation. Default runs use local metrics only, which are conservative compared to papers using GPT-4o as a judge.
 
 **Datasets:** All downloaded from official sources (HuggingFace, GitHub) using `evals/scripts/download-datasets.sh`. Formats match the published dataset schemas exactly.
 
@@ -167,9 +167,20 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 
 ---
 
+## Enhanced Config Experiment
+
+A second pass was run with additional Engram features enabled:
+- **Multi-hop graph traversal** (SYNAPSE-style spreading activation, 3 hops, 0.8 decay)
+- **Confidence gate** (threshold 0.12 — discard all results below threshold)
+- **Entity/time/causal graph edges**
+
+**Result: No measurable improvement.** AMemGym, LongMemEval, and LoCoMo returned identical scores within noise (±0.0002 F1). The graph features require entity edges to be created during extraction, but the eval adapter's ingestion path produces minimal entity references in the benchmark message context. This suggests the extraction pipeline — not the recall pipeline — is the bottleneck for these benchmarks.
+
+---
+
 ## Known Limitations
 
-1. **No LLM judge scoring.** LongMemEval and LoCoMo papers use GPT-4o as a semantic judge. Our substring/F1 metrics are stricter, likely underestimating Engram's true performance by 5-15%.
+1. **LLM judge available but opt-in.** The `--judge` flag enables semantic scoring via the OpenClaw gateway model chain (~15s/question). Default runs use substring/F1 only, which is stricter than papers using GPT-4o as a judge — likely underestimating Engram's true performance by 5-15%.
 
 2. **AMA-Bench partial coverage.** Only 20/208 episodes evaluated (Game domain). Full 6-domain evaluation would give a more complete picture.
 
