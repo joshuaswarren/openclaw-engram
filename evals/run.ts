@@ -69,6 +69,8 @@ Options:
   --mcp-token <token>    MCP auth token
   --limit <n>            Max tasks per benchmark
   --output-dir <path>    Results directory (default: evals/results)
+  --judge                Enable LLM judge scoring (uses gateway model chain;
+                         adds ~15s/question, off by default for speed)
 `);
     return;
   }
@@ -82,6 +84,7 @@ Options:
 
   const useMcp = hasFlag("--mcp");
   const useLightweight = hasFlag("--lightweight");
+  const useJudge = hasFlag("--judge");
   const mcpUrl = readArg("--mcp-url") ?? "http://localhost:18789";
   const mcpToken = readArg("--mcp-token");
   const limitStr = readArg("--limit");
@@ -122,6 +125,16 @@ Options:
     console.log("Adapter: Full-stack sandboxed Orchestrator (all Engram features)");
     console.log("  (use --lightweight for CI without LLM/QMD access)");
     system = await createEngramAdapter();
+  }
+
+  // Disable LLM judge unless explicitly requested (adds ~15s/question)
+  if (!useJudge && system.judge) {
+    console.log("  (LLM judge disabled — use --judge to enable semantic scoring)");
+    system.judge = undefined;
+  } else if (useJudge && system.judge) {
+    console.log("  LLM judge: enabled (gateway model chain)");
+  } else if (useJudge && !system.judge) {
+    console.log("  WARNING: --judge requested but no LLM available (gateway config not found?)");
   }
 
   let hasFailure = false;
