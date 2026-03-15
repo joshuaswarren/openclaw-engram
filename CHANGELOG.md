@@ -4,92 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-The notes below describe the current protected-branch-safe release flow on `main`.
-
-### Added
-- **`traceRecallContent` config option**: When set to `true`, Engram populates `RecallTraceEvent.recalledContent` with the full memory context injected into each agent turn. Allows external trace collectors (Langfuse, LangSmith, etc.) to see exactly which memories were recalled per conversation turn. Disabled by default — opt in only when you want memory content flowing to external systems.
-- Generic memory lifecycle ledger foundation: Engram now records append-only `created`, `updated`, `archived`, and `superseded` events under the local `state/memory-lifecycle-ledger.jsonl`, plus a rebuild utility and CLI for regenerating that ledger from markdown memory state.
-
-### Changed
-- Release automation now uses a protected-branch-safe flow: it validates the merged `main` commit, creates a local release commit with the package version bump, pushes only the annotated release tag, and publishes from that tagged source instead of trying to push release metadata back to protected `main`.
-- `CHANGELOG.md` on `main` now remains the contributor-facing `Unreleased` ledger, while GitHub Releases provide the published per-version notes for shipped tags.
-- Changelog guard now treats `CHANGELOG.md` as release-workflow owned by default and only validates format when a PR edits the changelog directly.
-- `THEORY.MD` is now ignored and removed from the repo so it does not keep reappearing in commits.
-
 ### Fixed
-- Projection and markdown fallback status inference now share one relative-path-based archive/status helper, preventing false `archived` reads when `memoryDir` lives under an ancestor path that happens to contain `/archive/`.
+- **Orchestrator init gate**: resolve the init gate after essential state loading (storage, aliases, relevance, transcript, summarizer) instead of waiting for slow QMD collection setup to finish. QMD probe and `ensureCollection` (~96s) now runs after the gate opens. Recall already degrades gracefully when QMD isn't ready, so there's no correctness risk. Fixes init gate timing out (15s timeout vs ~96s actual) and blocking recall on every startup.
 
-## [Released after v9.0.0] — 2026-03-07 to 2026-03-08
+## [v9.0.1 through v9.0.83] — 2026-03-07 to 2026-03-14
 
-This project auto-releases on every merge to `main`. The entries below are a consolidated summary of work that has already shipped on the active `v9.x` line but had accumulated incorrectly under `Unreleased`. Detailed per-release notes for the individual auto-generated tags live in GitHub Releases.
-
-### Fixed
-- Frontmatter parser now unescapes backslashes and escaped quotes for `importanceReasons` and `links[].reason`, preventing backslash doubling across save/load round-trips after serializer hardening.
-- Frontmatter link serialization now preserves parser symmetry for `links[].reason`: reasons are JSON-escaped when written and JSON-unescaped when parsed, preventing backslash amplification across save/load cycles while still addressing incomplete escaping. Parsing now also fail-opens for legacy files that contain previously-unescaped backslashes, so older memories continue to load instead of being dropped on parse.
-- Removed a redundant no-op `.replace("Z", "Z")` call from `toSafeTimestamp`, preserving the filesystem-safe `YYYYMMDDTHHMMSSmmmZ` format while resolving code-scanning alert #7.
-- **Objective-state follow-up**: plain-text tool results no longer get marked as failures just because they contain words like `errors` or `failed` inside otherwise successful messages such as `0 errors found` or `previously failed test now passes`.
-- Dashboard websocket origin validation now treats omitted default HTTP port as port 80, so same-origin upgrades on `http://127.0.0.1` and `http://127.0.0.1:80` both pass when the dashboard is bound to port 80; also removed an unreachable bracketed IPv6 loopback host entry.
-- Fallback contradiction verification, link suggestion, and memory summarization now normalize gateway/local LLM JSON aliases the same way as the direct OpenAI client, so `winner`, `type`, `summary`, and `entities` responses continue to work without an OpenAI API key.
-- **local-llm**: Read `reasoning_content` when `content` is empty — fixes thinking models (e.g. Qwen 3.5) returning null for entity summaries, consolidation, and question generation.
-- **fast-tier thinking suppression**: fast LLM client now sends `chat_template_kwargs: { enable_thinking: false }` to suppress chain-of-thought on thinking models (e.g. Qwen 3.5 small series). Prevents fast-tier operations from timing out when LM Studio forces thinking mode via chat template.
-- Add explicit `encoding_format: "float"` to local embedding requests for vLLM/LiteLLM compatibility.
-- Enrich extraction prompt few-shot examples with `entityRef` and entity `facts` fields, using realistic concrete values instead of generic placeholders.
-
-### Added
-- **Required benchmark baseline gate**: the required `eval-benchmark-gate` workflow now reads the named `required-main` baseline snapshot from the base branch fixture store and blocks PRs when candidate fixture runs regress relative to that stored release baseline.
-- **Named baseline delta reporting**: when `benchmarkDeltaReporterEnabled` is enabled, Engram can now compare the current eval store against a stored baseline snapshot via `openclaw engram benchmark-baseline-report --snapshot-id <id>`, emit both JSON and markdown delta summaries, and fail fast on benchmark regressions, missing coverage, or invalid candidate eval artifacts.
-- **Benchmark baseline snapshots**: when `benchmarkBaselineSnapshotsEnabled` is enabled, Engram can now capture typed `baselines/<snapshotId>.json` artifacts for the latest completed benchmark runs via `openclaw engram benchmark-baseline-snapshot`, and `openclaw engram benchmark-status` now reports stored baseline snapshot counts plus the latest baseline summary.
-- **Utility-learning runtime weighting**: when both `memoryUtilityLearningEnabled` and `promotionByOutcomeEnabled` are enabled and a learner snapshot exists, Engram now loads bounded utility runtime values from `state/utility-telemetry/learning-state.json`, applies learned `boost` / `suppress` multipliers to ranking heuristic deltas, and nudges tier-migration promotion/demotion thresholds without re-reading raw utility telemetry on the hot path.
-- **Utility-learning offline learner**: when `memoryUtilityLearningEnabled` is enabled, Engram can now read typed utility telemetry, learn bounded offline promotion/ranking weights grouped by `target + decision`, persist that learner snapshot under `state/utility-telemetry/learning-state.json`, inspect it with `openclaw engram utility-learning-status`, and recompute it deterministically with `openclaw engram utility-learn`.
-- **Utility-learning telemetry foundation**: added `memoryUtilityLearningEnabled`, `promotionByOutcomeEnabled`, a typed utility telemetry store under `state/utility-telemetry`, and the operator-facing `openclaw engram utility-status` / `openclaw engram utility-record` commands so later slices can learn promotion and ranking weights from downstream outcomes without changing the contract again.
-- **Commitment lifecycle foundation**: when `creationMemoryEnabled`, `commitmentLedgerEnabled`, and `commitmentLifecycleEnabled` are enabled, Engram can now transition typed commitment entries to `fulfilled` / `cancelled` / `expired`, report overdue, stale, and decay-eligible commitments in `openclaw engram commitment-status`, and run overdue-expiry plus resolved-entry cleanup with `openclaw engram commitment-lifecycle-run`.
-- **Commitment ledger foundation**: when both `creationMemoryEnabled` and `commitmentLedgerEnabled` are enabled, Engram can now persist typed commitment ledger entries under `state/commitment-ledger`, inspect them with `openclaw engram commitment-status`, and write deterministic entries through `openclaw engram commitment-record`.
-- **Artifact recovery recall**: when both `creationMemoryEnabled` and `workProductRecallEnabled` are enabled, Engram can now search the typed work-product ledger for reusable outputs, inject a dedicated `## Work Products` recall section, and preview recovery candidates with `openclaw engram work-product-recall-search <query>`.
-- **Creation-memory ledger**: when `creationMemoryEnabled` is enabled, Engram can now persist typed work-product ledger entries under `state/work-product-ledger`, inspect them with `openclaw engram work-product-status`, and write deterministic entries through `openclaw engram work-product-record`.
-- **Verified rule recall**: when `semanticRuleVerificationEnabled` is enabled, Engram can now re-check promoted semantic rules against their cited source episodes at recall time, downgrade stale provenance before surfacing those rules, inject a dedicated `## Verified Rules` recall section, and preview that surface with `openclaw engram semantic-rule-verify <query>`.
-- **Semantic rule promotion**: when `semanticRulePromotionEnabled` is enabled, Engram can now promote explicit `IF ... THEN ...` rules from verified episodic memories into durable `rule` memories with lineage, source-memory provenance, duplicate suppression, and the operator-facing `openclaw engram semantic-rule-promote --memory-id <id>` CLI.
-- **Verified episodic recall**: added `verifiedRecallEnabled`, `semanticRulePromotionEnabled`, bounded verified-episode search over recent memory boxes, a dedicated `## Verified Episodes` recall section, and `openclaw engram verified-recall-search <query>` for previewing verified episodic matches before semantic-rule promotion lands.
-- **Harmonic retrieval blender**: when `harmonicRetrievalEnabled` is enabled, Engram can now blend abstraction-node evidence and cue-anchor matches into a dedicated `## Harmonic Retrieval` recall section and inspect those blended results with `openclaw engram harmonic-search`.
-- **Cue-anchor index foundation**: when `harmonicRetrievalEnabled` and `abstractionAnchorsEnabled` are enabled, Engram can now persist typed cue anchors for entities, files, tools, outcomes, constraints, and dates under `state/abstraction-nodes/anchors`, and inspect them with `openclaw engram cue-anchor-status`.
-- **Abstraction-node foundation**: added `harmonicRetrievalEnabled`, `abstractionAnchorsEnabled`, `abstractionNodeStoreDir`, a typed abstraction-node store under `state/abstraction-nodes`, and `openclaw engram abstraction-node-status` for the first harmonic-retrieval storage slice.
-- **Memory red-team benchmark packs**: added `memoryRedTeamBenchEnabled`, typed `memory-red-team` benchmark manifest support (`benchmarkType`, `attackClass`, `targetSurface`), and benchmark-status accounting for poisoning-defense attack suites.
-- **Risky-promotion corroboration**: when `memoryPoisoningDefenseEnabled` is enabled, risky `working -> trusted` trust-zone promotions now require independent non-`quarantine` corroboration with anchored provenance and overlapping `entityRefs` or `tags`, and successful promotions record corroboration metadata.
-- **Provenance trust scoring**: added `memoryPoisoningDefenseEnabled`, deterministic trust-zone provenance scoring by source class and evidence anchors, and aggregate trust-band reporting in `openclaw engram trust-zone-status` as the first poisoning-defense signal.
-- **Trust-zone recall**: added `trustZoneRecallEnabled`, a separate `trust-zones` recall-pipeline section, bounded trust-zone search over `working` and `trusted` records, and `## Trust Zones` recall injection that excludes `quarantine` material by default.
-- **Trust-zone promotion path**: added deterministic trust-zone promotion planning, lineage-aware promoted records, guarded `openclaw engram trust-zone-promote`, direct `quarantine -> trusted` denial, and anchored-provenance enforcement for risky `working -> trusted` promotions.
-- **Trust-zone store foundation**: added `trustZonesEnabled`, `quarantinePromotionEnabled`, `trustZoneStoreDir`, a typed trust-zone record store under `state/trust-zones`, and `openclaw engram trust-zone-status` for inspecting quarantine, working, and trusted records before promotion logic lands.
-- **Causal trajectory recall**: added `causalTrajectoryRecallEnabled`, a separate `causal-trajectories` recall-pipeline section, bounded lexical trajectory search, and `## Causal Trajectories` recall injection with lightweight match explainability.
-- **Causal trajectory store foundation**: added `causalTrajectoryMemoryEnabled`, `causalTrajectoryStoreDir`, a typed causal-trajectory record store under `state/causal-trajectories`, and `openclaw engram causal-trajectory-status` for inspecting stored goal-action-observation-outcome chains.
-- **Objective-state writers**: when `objectiveStateMemoryEnabled` and `objectiveStateSnapshotWritesEnabled` are both enabled, Engram now derives normalized file/process/tool snapshots from `agent_end` tool activity and persists them into the objective-state store introduced in PR5.
-- **Evaluation harness foundation**: added config/schema flags (`evalHarnessEnabled`, `evalShadowModeEnabled`, `evalStoreDir`), typed benchmark manifest/run summary support, and `openclaw engram benchmark-status` for inspecting benchmark packs and the latest run summary.
-- **Benchmark pack tools**: added `openclaw engram benchmark-validate <path>` and `openclaw engram benchmark-import <path> [--force]` so operators can validate and install benchmark packs into Engram's eval store before later shadow-mode and CI-gating slices land.
-- **Shadow recall recording**: when `evalHarnessEnabled` and `evalShadowModeEnabled` are both enabled, Engram now records live recall decisions to `state/evals/shadow/YYYY-MM-DD/<trace-id>.json` and surfaces those records in `openclaw engram benchmark-status`.
-- **CI benchmark delta gate**: added `openclaw engram benchmark-ci-gate --base <dir> --candidate <dir>`, `scripts/eval-ci-gate.ts`, and an optional `eval-benchmark-gate` GitHub Actions workflow for base-vs-candidate eval-store comparison.
-- **Benchmark-first documentation**: added `docs/evaluation-harness.md`, a new benchmark-first roadmap in `docs/plans/2026-03-06-engram-agentic-memory-roadmap.md`, and a first-slice plan in `docs/plans/2026-03-06-engram-pr1-eval-harness-foundation.md`.
-- **Dual-tier local LLM**: route fast operations (rerank, entity_summary, tmt_summary, compression_guideline) to a smaller/faster model while heavy operations (extraction, consolidation, summarization) stay on the primary model. Opt-in via `localLlmFastEnabled`, `localLlmFastModel`, `localLlmFastUrl`, `localLlmFastTimeoutMs`.
-- **Causal rule extraction** (PlugMem-inspired): opt-in `"rule"` memory category for IF→THEN causal rules mined during extraction and consolidation. Enable via `causalRuleExtractionEnabled`.
-- **Episodic box metadata** (REMem-inspired): memory boxes now capture `goal`, `toolsUsed`, and `outcome` fields. Goal is derived from the first user message in each episode. `toolsUsed` merging infrastructure is in place but not yet populated (requires structured tool data in buffer turns). Enables "the time I debugged X" style retrieval.
-- **Memory reconstruction** (E-Mem-inspired): after recall, scans for entity references lacking context and performs targeted secondary retrieval. Opt-in via `memoryReconstructionEnabled`, with `memoryReconstructionMaxExpansions` (default 3) controlling expansion budget.
-- **De-linearization transform** (SimpleMem-inspired): resolves pronoun coreferences and anchors relative time expressions (yesterday, last week, etc.) to absolute ISO-8601 dates after extraction. Enabled by default via `delinearizeEnabled`.
-- **Recall confidence gate** (Synapse-inspired): opt-in gate that skips memory injection when top recall score is below threshold, preventing noisy low-relevance results. Configurable via `recallConfidenceGateEnabled`, `recallConfidenceGateThreshold`.
-- **Graph lateral inhibition** (Synapse-inspired): competitive suppression prevents hub nodes from dominating spreading activation results. Configurable via `graphLateralInhibitionEnabled`, `graphLateralInhibitionBeta`, `graphLateralInhibitionTopM`.
-- Compaction reset: opt-in session reset after compaction with BOOT.md injection (`compactionResetEnabled` config field).
-- Per-session signal files and workspace overrides for multi-agent safety.
-- Stale signal cleanup on startup (1-hour TTL).
-- 9 new tests for compaction reset lifecycle.
-
-### Changed
-- Plugin registration model: hooks re-register per agent registry; tools/CLI/service register once.
-
-### Changed
-- **README.md** rewritten with value proposition, feature highlights, search backend comparison, and contributing guide.
-
-### Added
-- `docs/search-backends.md` — comprehensive guide for all 6 search backends with configuration and tradeoffs.
-- `docs/writing-a-search-backend.md` — developer guide for implementing custom `SearchBackend` adapters.
-- Search backend settings table added to `docs/config-reference.md`.
-- v9 search architecture section added to `docs/architecture/overview.md`.
-- All existing docs updated with search backend references and links.
+This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/openclawai/openclaw-engram/releases).
 
 ## [9.0.0] — 2026-03-02
 
