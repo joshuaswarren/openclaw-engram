@@ -125,7 +125,19 @@ export class LcmEngine {
     });
   }
 
-  /** Record a compaction event (called from before_compaction hook). */
+  /** Flush pending summaries before compaction (called from before_compaction hook). */
+  async preCompactionFlush(sessionId: string): Promise<void> {
+    if (!this.config.enabled) return;
+    await this.ensureInitialized();
+
+    try {
+      await this.summarizer!.summarizeIncremental(sessionId);
+    } catch (err) {
+      log.debug(`LCM pre-compaction flush error: ${err}`);
+    }
+  }
+
+  /** Record a compaction event with real token counts (called from after_compaction hook). */
   async recordCompaction(
     sessionId: string,
     tokensBefore: number,
@@ -135,13 +147,6 @@ export class LcmEngine {
     await this.ensureInitialized();
 
     const maxTurn = this.archive!.getMaxTurnIndex(sessionId);
-
-    // Flush pending summarization before compaction
-    try {
-      await this.summarizer!.summarizeIncremental(sessionId);
-    } catch (err) {
-      log.debug(`LCM pre-compaction flush error: ${err}`);
-    }
 
     this.dag!.recordCompaction(sessionId, maxTurn, tokensBefore, tokensAfter);
     log.info(
