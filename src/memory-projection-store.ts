@@ -513,13 +513,18 @@ export function readProjectedMemoryBrowse(
 ): ProjectedMemoryBrowsePage | null {
   return withProjectionReadonly(memoryDir, (db) => {
     const normalizedQuery = options.query?.trim().toLowerCase() ?? "";
-    if (normalizedQuery) {
-      return null;
-    }
 
     const currentSelect = memoryCurrentSelectExpressions(db);
     const whereClauses: string[] = [];
     const params: unknown[] = [];
+
+    if (normalizedQuery) {
+      const likePattern = `%${normalizedQuery}%`;
+      whereClauses.push(
+        `(LOWER(${currentSelect.previewText}) LIKE ? OR LOWER(category) LIKE ? OR LOWER(entity_ref) LIKE ? OR LOWER(${currentSelect.tagsJson}) LIKE ?)`,
+      );
+      params.push(likePattern, likePattern, likePattern, likePattern);
+    }
 
     if (options.status) {
       whereClauses.push("status = ?");
