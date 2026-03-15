@@ -200,8 +200,31 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.sourceTurnId) lines.push(`sourceTurnId: ${fm.sourceTurnId}`);
   // v8.0 Phase 2B: HiMem episode/note classification
   if (fm.memoryKind) lines.push(`memoryKind: ${fm.memoryKind}`);
+  // Structured attributes (stored as JSON on a single line)
+  if (fm.structuredAttributes && Object.keys(fm.structuredAttributes).length > 0) {
+    lines.push(`structuredAttributes: ${JSON.stringify(fm.structuredAttributes)}`);
+  }
   lines.push("---");
   return lines.join("\n");
+}
+
+function parseStructuredAttributes(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw || !raw.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const result: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof k === "string" && typeof v === "string") {
+          result[k] = v;
+        }
+      }
+      return Object.keys(result).length > 0 ? result : undefined;
+    }
+  } catch {
+    // Not valid JSON — ignore
+  }
+  return undefined;
 }
 
 function parseLinkReasonValue(rawValue: string): string {
@@ -354,6 +377,8 @@ function parseFrontmatter(
       sourceTurnId: fm.sourceTurnId || undefined,
       // v8.0 Phase 2B: HiMem episode/note classification
       memoryKind: (fm.memoryKind as MemoryFrontmatter["memoryKind"]) || undefined,
+      // Structured attributes (JSON on a single line)
+      structuredAttributes: parseStructuredAttributes(fm.structuredAttributes),
     },
     content,
   };
@@ -957,6 +982,7 @@ export class StorageManager {
       sourceTurnId?: string;
       memoryKind?: MemoryFrontmatter["memoryKind"];
       expiresAt?: string;
+      structuredAttributes?: Record<string, string>;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -997,9 +1023,19 @@ export class StorageManager {
       sourceMemoryId: options.sourceMemoryId,
       sourceTurnId: options.sourceTurnId,
       memoryKind: options.memoryKind,
+      structuredAttributes: options.structuredAttributes,
     };
 
-    const sanitized = sanitizeMemoryContent(content);
+    // Append structured attributes as searchable suffix so QMD indexes them
+    let enrichedContent = content;
+    if (options.structuredAttributes && Object.keys(options.structuredAttributes).length > 0) {
+      const attrLines = Object.entries(options.structuredAttributes)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("; ");
+      enrichedContent = `${content}\n[Attributes: ${attrLines}]`;
+    }
+
+    const sanitized = sanitizeMemoryContent(enrichedContent);
     if (!sanitized.clean) {
       log.warn(`memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
     }

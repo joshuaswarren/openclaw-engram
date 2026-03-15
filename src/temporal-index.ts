@@ -622,7 +622,7 @@ export async function resolvePromptTagPrefilterAsync(
  * Used to decide whether to activate the temporal prefilter.
  */
 export function isTemporalQuery(prompt: string): boolean {
-  return /\b(today|yesterday|this week|last week|this month|last month|recent(?:ly)?|lately|just now|earlier today|this morning|last night|\d+ days? ago|\d+ hours? ago)\b/i.test(
+  return /\b(today|yesterday|this week|last week|this month|last month|recent(?:ly)?|lately|just now|earlier today|this morning|last night|last year|this year|\d+ days? ago|\d+ hours? ago|\d+ weeks? ago|\d+ months? ago|(?:in |on |during |since |before |after )?(?:january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+\d{1,4})?|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|(?:spring|summer|fall|autumn|winter)\s+\d{4}|on the \d{1,2}(?:st|nd|rd|th)?|last (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i.test(
     prompt,
   );
 }
@@ -633,6 +633,7 @@ export function isTemporalQuery(prompt: string): boolean {
  */
 export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now()): string {
   const p = prompt.toLowerCase();
+  const now = new Date(nowMs);
   let daysBack = 7; // default
 
   if (/\btoday\b/.test(p) || /\bthis morning\b/.test(p) || /\bjust now\b/.test(p) || /\bearlier today\b/.test(p)) {
@@ -647,16 +648,66 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
     daysBack = 31;
   } else if (/\blast month\b/.test(p)) {
     daysBack = 62;
+  } else if (/\bthis year\b/.test(p)) {
+    // From Jan 1 of current year
+    const jan1 = new Date(now.getFullYear(), 0, 1);
+    return jan1.toISOString().slice(0, 10);
+  } else if (/\blast year\b/.test(p)) {
+    const jan1LastYear = new Date(now.getFullYear() - 1, 0, 1);
+    return jan1LastYear.toISOString().slice(0, 10);
   } else {
-    const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
-    if (numMatch) {
-      daysBack = Math.min(365, parseInt(numMatch[1], 10)); // no off-by-one: "3 days ago" → 3
+    // Try specific month references: "in March", "during January", "since February"
+    const monthNames = ["january", "february", "march", "april", "may", "june",
+      "july", "august", "september", "october", "november", "december"];
+    const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
+    if (monthMatch) {
+      const monthIdx = monthNames.indexOf(monthMatch[1]);
+      const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
+      const monthStart = new Date(year, monthIdx, 1);
+      return monthStart.toISOString().slice(0, 10);
+    }
+
+    // Try "N weeks ago"
+    const weekMatch = p.match(/(\d{1,5})\s*weeks?\s*ago/);
+    if (weekMatch) {
+      daysBack = Math.min(365, parseInt(weekMatch[1], 10) * 7);
     } else {
-      const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
-      if (hrMatch) {
-        // Convert hours to days (ceiling); at least 1 day window
-        daysBack = Math.max(1, Math.ceil(parseInt(hrMatch[1], 10) / 24));
+      // Try "N months ago"
+      const monthsAgoMatch = p.match(/(\d{1,5})\s*months?\s*ago/);
+      if (monthsAgoMatch) {
+        daysBack = Math.min(730, parseInt(monthsAgoMatch[1], 10) * 31);
+      } else {
+        const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
+        if (numMatch) {
+          daysBack = Math.min(365, parseInt(numMatch[1], 10)); // no off-by-one: "3 days ago" → 3
+        } else {
+          const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
+          if (hrMatch) {
+            // Convert hours to days (ceiling); at least 1 day window
+            daysBack = Math.max(1, Math.ceil(parseInt(hrMatch[1], 10) / 24));
+          }
+        }
       }
+    }
+
+    // Try explicit date patterns: YYYY-MM-DD or MM/DD/YYYY
+    const isoMatch = p.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    }
+    const usMatch = p.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (usMatch) {
+      const year = usMatch[3].length === 2 ? 2000 + parseInt(usMatch[3], 10) : parseInt(usMatch[3], 10);
+      return `${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+    }
+
+    // Try "last Monday/Tuesday/etc"
+    const dayOfWeekMatch = p.match(/\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+    if (dayOfWeekMatch) {
+      const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+      const targetDay = dayNames.indexOf(dayOfWeekMatch[1]);
+      const currentDay = now.getDay();
+      daysBack = ((currentDay - targetDay + 7) % 7) || 7; // at least 7 days back
     }
   }
 

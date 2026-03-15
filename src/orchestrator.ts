@@ -6065,6 +6065,7 @@ export class Orchestrator {
             intentActionType: inferredIntent?.actionType,
             intentEntityTypes: inferredIntent?.entityTypes,
             memoryKind,
+            structuredAttributes: fact.structuredAttributes,
           });
 
           // Write individual chunks with parent reference
@@ -6263,6 +6264,7 @@ export class Orchestrator {
         intentActionType: inferredIntent?.actionType,
         intentEntityTypes: inferredIntent?.entityTypes,
         memoryKind,
+        structuredAttributes: fact.structuredAttributes,
       });
       if (routedRuleId) {
         log.debug(

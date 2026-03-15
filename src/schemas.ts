@@ -58,6 +58,11 @@ export const ExtractedFactSchema = z.object({
     .optional()
     .nullable()
     .describe("Optional proactive follow-up question that surfaced this fact."),
+  structuredAttributes: z
+    .record(z.string(), z.string())
+    .optional()
+    .nullable()
+    .describe("Structured key-value attributes when the fact contains measurable or categorical data (e.g., {\"price\": \"29.99\", \"color\": \"blue\", \"date\": \"2024-03-15\"})."),
 });
 
 export const EntityMentionSchema = z.object({
