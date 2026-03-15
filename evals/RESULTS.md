@@ -1,6 +1,6 @@
 # Engram Eval Suite — Benchmark Results
 
-**Engram version:** 9.0.0
+**Engram version:** 9.0.89
 **Git SHA:** 8d1530a
 **Date:** 2026-03-15
 **Adapter:** Full-stack sandboxed Orchestrator (all features: extraction, QMD search, recall planner, LCM, entity retrieval)
