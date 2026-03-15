@@ -1477,7 +1477,7 @@ export class Orchestrator {
         agentId: "main",
         name: "Engram Day Summary (auto)",
         enabled: true,
-        schedule: { kind: "cron", expr: "47 23 * * *", tz: "America/Chicago" },
+        schedule: { kind: "cron", expr: "47 23 * * *" },
         sessionTarget: "isolated",
         wakeMode: "now",
         payload: {
@@ -1638,7 +1638,7 @@ export class Orchestrator {
    */
   async generateDaySummaryAuto(namespace?: string): Promise<DaySummaryResult | null> {
     const gathered = await this.gatherTodayFacts(namespace);
-    if (!gathered || gathered.length === 0) {
+    if (!gathered || !gathered.trim()) {
       log.warn("generateDaySummaryAuto: no facts found for today, skipping");
       return null;
     }
