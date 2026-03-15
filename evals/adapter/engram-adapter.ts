@@ -105,6 +105,19 @@ export async function createEngramAdapter(
       harmonicRetrievalEnabled: true,
       lifecyclePolicyEnabled: true,
 
+      // Multi-hop graph traversal (entity + time + causal edges)
+      multiGraphMemoryEnabled: true,
+      graphRecallEnabled: true,
+      entityGraphEnabled: true,
+      timeGraphEnabled: true,
+      causalGraphEnabled: true,
+      maxGraphTraversalSteps: 3,
+      graphActivationDecay: 0.8,
+
+      // Confidence gate — abstain when no results are relevant
+      recallConfidenceGateEnabled: true,
+      recallConfidenceGateThreshold: 0.12,
+
       // Extraction defaults (uses OpenAI API key from env)
       extractionDedupeEnabled: true,
       extractionMinChars: 10,
@@ -312,8 +325,8 @@ export async function createEngramAdapter(
       orchestrator = new Orchestrator(config);
       await orchestrator.initialize();
       accessService = new EngramAccessService(orchestrator);
-      judge = buildJudge(config);
-      system.judge = judge;
+      // Note: judge is NOT rebuilt on reset — it's stateless and the
+      // --judge flag controls it at the run.ts level after creation.
     },
 
     async getStats(sessionId?: string): Promise<MemoryStats> {
