@@ -225,7 +225,7 @@ export class EngramAccessHttpServer {
         messages: Array.isArray(body.messages) ? body.messages.filter(
           (m: unknown): m is { role: "user" | "assistant"; content: string } =>
             typeof m === "object" && m !== null &&
-            typeof (m as any).role === "string" &&
+            ((m as any).role === "user" || (m as any).role === "assistant") &&
             typeof (m as any).content === "string"
         ) : [],
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
