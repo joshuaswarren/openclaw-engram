@@ -179,10 +179,6 @@ export function consolidatePreferences(
     return true;
   });
 
-  if (relevant.length === 0) {
-    return { preferences: [], recallSection: null };
-  }
-
   // Also include fact memories that contain preference-like language
   const preferenceFactMemories = memories.filter((m) => {
     if (m.frontmatter.category !== "fact") return false;
@@ -203,6 +199,10 @@ export function consolidatePreferences(
   });
 
   const allRelevant = [...relevant, ...preferenceFactMemories];
+
+  if (allRelevant.length === 0) {
+    return { preferences: [], recallSection: null };
+  }
 
   // Deduplicate by content similarity
   const seen = new Set<string>();
