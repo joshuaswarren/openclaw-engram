@@ -1081,6 +1081,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.compoundingSynthesisTimeoutMs === "number" ? cfg.compoundingSynthesisTimeoutMs : 15_000,
     compoundingInjectEnabled: cfg.compoundingInjectEnabled !== false,
 
+    // IRC (Inductive Rule Consolidation) — preference synthesis
+    ircEnabled: cfg.ircEnabled !== false,
+    ircMaxPreferences: typeof cfg.ircMaxPreferences === "number" ? cfg.ircMaxPreferences : 20,
+    ircIncludeCorrections: cfg.ircIncludeCorrections !== false,
+    ircMinConfidence: typeof cfg.ircMinConfidence === "number" ? cfg.ircMinConfidence : 0.3,
+
     // v7.0 Knowledge Graph Enhancement
     knowledgeIndexEnabled: cfg.knowledgeIndexEnabled !== false,
     knowledgeIndexMaxEntities:

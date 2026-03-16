@@ -431,6 +431,12 @@ export interface PluginConfig {
   compoundingSynthesisTimeoutMs: number;
   compoundingInjectEnabled: boolean;
 
+  // IRC (Inductive Rule Consolidation) — preference synthesis
+  ircEnabled: boolean;
+  ircMaxPreferences: number;
+  ircIncludeCorrections: boolean;
+  ircMinConfidence: number;
+
   // Search backend abstraction
   searchBackend?: "qmd" | "remote" | "noop" | "lancedb" | "meilisearch" | "orama";
   remoteSearchBaseUrl?: string;
