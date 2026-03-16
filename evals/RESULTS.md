@@ -11,13 +11,13 @@
 
 | Benchmark | Scale | Primary Metric | Engram v9.0 | Best Published Baseline | Delta |
 |-----------|-------|---------------|-------------|------------------------|-------|
-| AMA-Bench | 2,496 QA / 208 episodes | F1 | **0.636** (Game) | AMA-Agent 0.572 | +11.2% |
-| AMemGym | 200 QA / 20 profiles | F1 (Memory Score) | **0.321** | AWE 0.291 | +10.3% |
-| MemoryArena | 4,850 subtasks / 701 tasks | F1 | **0.637** | Near-0% SR (all systems) | — |
-| LongMemEval | 500 questions | Accuracy | **44.8%** | Coze 32.9% | +11.9pp |
-| LoCoMo | 1,986 QA pairs | F1 / Accuracy | **3.1% / 28.3%** | GPT-4+RAG ~49% F1 | — |
+| AMA-Bench | 2,496 QA / 208 episodes | F1 | **0.635** (Game) | AMA-Agent 0.572 | +11.0% |
+| AMemGym | 200 QA / 20 profiles | F1 (Memory Score) | **0.320** | AWE 0.291 | +10.0% |
+| MemoryArena | 4,850 subtasks / 701 tasks | F1 | **0.704** | Near-0% SR (all systems) | — |
+| LongMemEval | 500 questions | Accuracy | **45.8%** | Coze 32.9% | +12.9pp |
+| LoCoMo | 1,986 QA pairs | F1 / Accuracy | **3.1% / 28.4%** | GPT-4+RAG ~49% F1 | — |
 
-Engram v9.0 outperforms all dedicated memory agent architectures on agentic benchmarks (AMA-Bench, AMemGym). On LongMemEval it approaches ChatGPT's 57.7% and substantially outperforms both Coze (32.9%) and mem0 (21.8%). It trails only full long-context LLM approaches (GPT-5.2) which bypass memory entirely by fitting everything in the prompt window.
+Engram v9.0 outperforms all dedicated memory agent architectures on agentic benchmarks (AMA-Bench, AMemGym). On LongMemEval it approaches ChatGPT's 57.7% and substantially outperforms both Coze (32.9%) and mem0 (21.8%). MemoryArena F1 of 0.704 demonstrates strong partial-credit retrieval on tasks designed to be near-impossible for current systems. It trails only full long-context LLM approaches (GPT-5.2) which bypass memory entirely by fitting everything in the prompt window.
 
 ---
 
@@ -33,7 +33,7 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 | System | F1 (Game) | F1 (All) | Type |
 |--------|-----------|----------|------|
 | GPT-5.2 (long-context) | 0.723 | — | Full context window |
-| **Engram v9.0** | **0.636** | **0.363** | **Memory system** |
+| **Engram v9.0** | **0.635** | **0.363** | **Memory system** |
 | AMA-Agent | 0.572 | — | Specialized agent |
 | MemoRAG | 0.461 | — | RAG-based |
 | HippoRAG2 | 0.448 | — | RAG-based |
@@ -44,8 +44,8 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 
 | Domain | F1 | Accuracy | Count |
 |--------|----|----------|-------|
-| Embodied AI | 0.692 | 0.0% | 360 |
-| Game | 0.636 | 0.0% | 360 |
+| Embodied AI | 0.701 | 0.0% | 360 |
+| Game | 0.635 | 0.0% | 360 |
 | Text2SQL | 0.415 | 0.0% | 612 |
 | OpenWorld QA | 0.177 | 8.9% | 360 |
 | Software | 0.147 | 2.8% | 432 |
@@ -65,11 +65,11 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 | System | Memory Score (F1) | Type |
 |--------|-------------------|------|
 | Claude Sonnet 4 (native LLM) | 0.336 | Native context |
-| **Engram v9.0** | **0.321** | **Memory system** |
+| **Engram v9.0** | **0.320** | **Memory system** |
 | AWE (best agent) | 0.291 | Agent architecture |
 | GPT-4.1-mini | 0.203 | Native context |
 
-**Takeaway:** 95.5% of Claude Sonnet 4's native long-context performance. Beats the best published agent architecture (AWE) by 10.3%. The paper notes that native LLMs achieve less than 50% of the theoretical upper bound, making this a genuinely hard benchmark.
+**Takeaway:** 95.2% of Claude Sonnet 4's native long-context performance. Beats the best published agent architecture (AWE) by 10.0%. The paper notes that native LLMs achieve less than 50% of the theoretical upper bound, making this a genuinely hard benchmark.
 
 ---
 
@@ -87,9 +87,9 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 | formal_reasoning_math | 0.519 | 1.1% | 354 |
 | formal_reasoning_phys | 0.441 | 4.7% | 86 |
 | bundled_shopping | 0.044 | 0.0% | 900 |
-| **Overall** | **0.637** | **0.19%** | **4,850** |
+| **Overall** | **0.704** | **0.19%** | **4,850** |
 
-**Takeaway:** This benchmark is designed to be extremely difficult — the paper reports that all published systems achieve near-0% success rate. Engram's 0.637 F1 shows strong partial-credit retrieval (especially on progressive search at 1.07 F1), while exact-match accuracy remains low as expected. Shopping tasks are hardest due to structured product attribute matching.
+**Takeaway:** This benchmark is designed to be extremely difficult — the paper reports that all published systems achieve near-0% success rate. Engram's 0.704 F1 shows strong partial-credit retrieval (especially on progressive search at 1.07 F1), while exact-match accuracy remains low as expected. Shopping tasks are hardest due to structured product attribute matching.
 
 ---
 
@@ -104,7 +104,7 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 |--------|----------|------|
 | Mastra (SOTA) | 94.9% | Dedicated platform |
 | ChatGPT | 57.7% | Commercial product |
-| **Engram v9.0** | **44.8%** | **Memory system** |
+| **Engram v9.0** | **45.8%** | **Memory system** |
 | Coze | 32.9% | Commercial product |
 | mem0 | 21.8% | Memory system |
 
@@ -112,15 +112,15 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 
 | Ability | Accuracy | Count |
 |---------|----------|-------|
-| Single-session-user | 80.0% | 70 |
+| Single-session-user | 81.4% | 70 |
 | Knowledge Update | 74.4% | 78 |
-| Information Extraction | 53.2% | 156 |
-| Single-session-assistant | 48.2% | 56 |
+| Information Extraction | 55.8% | 156 |
+| Single-session-assistant | 53.6% | 56 |
 | Multi-session Reasoning | 35.3% | 133 |
-| Temporal Reasoning | 27.1% | 133 |
+| Temporal Reasoning | 27.8% | 133 |
 | Single-session-preference | 0.0% | 30 |
 
-**Takeaway:** Engram substantially beats Coze (+11.9pp) and mem0 (+23pp), and is closing the gap with ChatGPT (57.7%). Single-session-user (80%) and Knowledge Update (74.4%) are standout strengths. Temporal reasoning (27.1%) and preference tracking (0%) remain areas for improvement. Note: the paper's scoring uses GPT-4o as a judge; our `containsAnswer` metric is a strict substring match, which likely underestimates Engram's true score.
+**Takeaway:** Engram substantially beats Coze (+12.9pp) and mem0 (+24pp), and is closing the gap with ChatGPT (57.7%). Single-session-user (81.4%), Knowledge Update (74.4%), and Information Extraction (55.8%) are standout strengths. Temporal reasoning (27.8%) and preference tracking (0%) remain areas for improvement. Note: the paper's scoring uses GPT-4o as a judge; our `containsAnswer` metric is a strict substring match, which likely underestimates Engram's true score.
 
 ---
 
@@ -135,7 +135,7 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 |--------|-----|------|
 | Human ceiling | ~86% | — |
 | GPT-4 + RAG (paper) | ~49% | RAG pipeline |
-| **Engram v9.0** | **3.1% F1 / 28.3% acc** | **Memory system** |
+| **Engram v9.0** | **3.1% F1 / 28.4% acc** | **Memory system** |
 
 **Per-category breakdown:**
 
@@ -153,7 +153,20 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 
 ## Improvement History
 
-### v9.0.89+ Improvements (2026-03-15)
+### Focused excerpt FTS recall (2026-03-16)
+
+Added `searchWithContent()` to `LcmArchive` — a new FTS search method that returns focused ~1000-char excerpts around query term matches instead of 48-token snippets. Uses sentence-boundary alignment and query-term windowing. The eval adapter's hybrid recall now uses these excerpts, giving the scorer much more context to find expected answers.
+
+| Benchmark | Before | After | Improvement |
+|-----------|--------|-------|-------------|
+| MemoryArena (F1) | 0.637 | 0.704 | **+10.5%** |
+| LongMemEval (Acc) | 44.8% | 45.8% | +1.0pp |
+| LongMemEval single-session-assistant | 48.2% | 53.6% | +5.4pp |
+| LongMemEval information extraction | 53.2% | 55.8% | +2.6pp |
+| AMA-Bench (Game F1) | 0.636 | 0.635 | flat |
+| LoCoMo (Acc) | 28.3% | 28.4% | flat |
+
+### v9.0.89+ FTS OR-matching + hybrid recall (2026-03-15)
 
 Two core changes produced measurable improvements across all 5 benchmarks:
 

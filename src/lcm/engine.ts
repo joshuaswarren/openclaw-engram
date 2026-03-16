@@ -168,7 +168,7 @@ export class LcmEngine {
 
   // ── MCP Tool implementations ──
 
-  /** Search across all conversation history via FTS. */
+  /** Search across all conversation history via FTS (snippet mode). */
   async searchContext(
     query: string,
     limit: number,
@@ -177,6 +177,17 @@ export class LcmEngine {
     if (!this.config.enabled) return [];
     await this.ensureInitialized();
     return this.archive!.search(query, limit, sessionId);
+  }
+
+  /** Search via FTS returning full message content (not snippets). */
+  async searchContextFull(
+    query: string,
+    limit: number,
+    sessionId?: string,
+  ): Promise<Array<{ id: number; turn_index: number; role: string; content: string; session_id: string; score: number }>> {
+    if (!this.config.enabled) return [];
+    await this.ensureInitialized();
+    return this.archive!.searchWithContent(query, limit, sessionId);
   }
 
   /** Get a compressed summary of a turn range. */

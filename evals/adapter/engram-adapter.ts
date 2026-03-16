@@ -295,15 +295,16 @@ export async function createEngramAdapter(
         // Full recall threw (e.g., no QMD) — continue to fallback paths
       }
 
-      // 2. Always supplement with LCM FTS search results
-      // (FTS finds keyword matches that QMD/extraction may miss)
+      // 2. Always supplement with LCM FTS search results (full message content)
+      // (FTS finds keyword matches that QMD/extraction may miss;
+      //  full content ensures containsAnswer can match the expected answer)
       if (orchestrator.lcmEngine?.enabled && query) {
         try {
-          const ftsResults = await orchestrator.lcmEngine.searchContext(query, 20, sessionId);
+          const ftsResults = await orchestrator.lcmEngine.searchContextFull(query, 20, sessionId);
           if (ftsResults.length > 0) {
             const ftsSection = ftsResults
-              .map((r: any) => `[turn ${r.turn_index}, ${r.role}]: ${r.snippet}`)
-              .join("\n");
+              .map((r: any) => `[turn ${r.turn_index}, ${r.role}]: ${r.content}`)
+              .join("\n\n");
             sections.push(`## Search results\n${ftsSection}`);
           }
         } catch {

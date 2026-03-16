@@ -20,6 +20,15 @@ export interface LcmSearchResult {
   score: number;
 }
 
+export interface LcmSearchWithContentResult {
+  id: number;
+  turn_index: number;
+  role: string;
+  content: string;
+  session_id: string;
+  score: number;
+}
+
 /** Rough token count: ~4 chars per token. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -158,6 +167,80 @@ export class LcmArchive {
     }
   }
 
+  /**
+   * Full-text search returning focused excerpts around matching terms.
+   * Returns ~1000-char windows centered on query term matches.
+   * Deduplicates by message id and returns results sorted by FTS rank.
+   */
+  searchWithContent(query: string, limit: number, sessionId?: string, excerptChars = 1000): LcmSearchWithContentResult[] {
+    try {
+      const ftsQuery = sanitizeFtsQuery(query);
+      if (!ftsQuery) return [];
+
+      // Extract content words from query for excerpt windowing
+      const queryWords = query
+        .replace(/[^\w\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 1 && !STOPWORDS.has(w.toLowerCase()))
+        .map((w) => w.toLowerCase());
+
+      let sql: string;
+      const params: unknown[] = [ftsQuery];
+
+      if (sessionId) {
+        sql = `
+          SELECT m.id, m.turn_index, m.role, m.content, m.session_id, rank
+          FROM lcm_messages_fts f
+          JOIN lcm_messages m ON m.id = f.rowid
+          WHERE lcm_messages_fts MATCH ?
+            AND m.session_id = ?
+          ORDER BY rank
+          LIMIT ?
+        `;
+        params.push(sessionId, limit);
+      } else {
+        sql = `
+          SELECT m.id, m.turn_index, m.role, m.content, m.session_id, rank
+          FROM lcm_messages_fts f
+          JOIN lcm_messages m ON m.id = f.rowid
+          WHERE lcm_messages_fts MATCH ?
+          ORDER BY rank
+          LIMIT ?
+        `;
+        params.push(limit);
+      }
+
+      const rows = this.db.prepare(sql).all(...params) as Array<{
+        id: number;
+        turn_index: number;
+        role: string;
+        content: string;
+        session_id: string;
+        rank: number;
+      }>;
+
+      // Deduplicate by message id (same message may match multiple terms)
+      const seen = new Set<number>();
+      const results: LcmSearchWithContentResult[] = [];
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        results.push({
+          id: r.id,
+          turn_index: r.turn_index,
+          role: r.role,
+          content: extractExcerpt(r.content, queryWords, excerptChars),
+          session_id: r.session_id,
+          score: -r.rank,
+        });
+      }
+      return results;
+    } catch (err) {
+      log.debug(`LCM FTS searchWithContent error: ${err}`);
+      return [];
+    }
+  }
+
   /** Get total message count for a session. */
   getMessageCount(sessionId: string): number {
     const row = this.db
@@ -190,6 +273,58 @@ export class LcmArchive {
       .run(cutoff);
     return result.changes;
   }
+}
+
+/**
+ * Extract a focused excerpt from content centered on query term matches.
+ * Returns a window of ~excerptChars around the first matching term.
+ * If content is shorter than excerptChars, returns the full content.
+ */
+function extractExcerpt(content: string, queryWords: string[], excerptChars: number): string {
+  if (content.length <= excerptChars) return content;
+
+  // Find the earliest position of any query word in the content
+  const contentLower = content.toLowerCase();
+  let bestPos = -1;
+  for (const word of queryWords) {
+    const pos = contentLower.indexOf(word);
+    if (pos !== -1 && (bestPos === -1 || pos < bestPos)) {
+      bestPos = pos;
+    }
+  }
+
+  // If no match found (shouldn't happen for FTS results), return start
+  if (bestPos === -1) {
+    return content.slice(0, excerptChars) + "...";
+  }
+
+  // Center the window around the match
+  const halfWindow = Math.floor(excerptChars / 2);
+  let start = Math.max(0, bestPos - halfWindow);
+  let end = Math.min(content.length, start + excerptChars);
+
+  // Adjust start if we hit the end
+  if (end === content.length) {
+    start = Math.max(0, end - excerptChars);
+  }
+
+  // Extend to sentence boundaries if possible
+  if (start > 0) {
+    const sentenceStart = content.lastIndexOf(". ", start);
+    if (sentenceStart !== -1 && start - sentenceStart < 200) {
+      start = sentenceStart + 2;
+    }
+  }
+  if (end < content.length) {
+    const sentenceEnd = content.indexOf(". ", end - 1);
+    if (sentenceEnd !== -1 && sentenceEnd - end < 200) {
+      end = sentenceEnd + 1;
+    }
+  }
+
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < content.length ? "..." : "";
+  return prefix + content.slice(start, end) + suffix;
 }
 
 const STOPWORDS = new Set([
