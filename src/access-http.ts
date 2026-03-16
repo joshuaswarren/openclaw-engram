@@ -18,6 +18,7 @@ export interface EngramAccessHttpServerOptions {
   maxBodyBytes?: number;
   adminConsoleEnabled?: boolean;
   adminConsolePublicDir?: string;
+  trustPrincipalHeader?: boolean;
 }
 
 export interface EngramAccessHttpServerStatus {
@@ -61,6 +62,7 @@ export class EngramAccessHttpServer {
   private readonly maxBodyBytes: number;
   private readonly adminConsoleEnabled: boolean;
   private readonly adminConsolePublicDir: string;
+  private readonly trustPrincipalHeader: boolean;
   private readonly writeRequestTimestamps: number[] = [];
   private readonly mcpServer: EngramMcpServer;
   private server: Server | null = null;
@@ -77,6 +79,7 @@ export class EngramAccessHttpServer {
       : 131072;
     this.adminConsoleEnabled = options.adminConsoleEnabled !== false;
     this.adminConsolePublicDir = options.adminConsolePublicDir ?? defaultAdminConsolePublicDir;
+    this.trustPrincipalHeader = options.trustPrincipalHeader === true;
     this.mcpServer = new EngramMcpServer(this.service, { principal: options.principal });
   }
 
@@ -149,6 +152,20 @@ export class EngramAccessHttpServer {
     };
   }
 
+  private resolveRequestPrincipal(req: IncomingMessage): string | undefined {
+    if (this.trustPrincipalHeader) {
+      const headerValue = req.headers["x-engram-principal"];
+      const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+      if (typeof raw === "string") {
+        const trimmed = raw.trim();
+        if (trimmed.length > 0) {
+          return trimmed;
+        }
+      }
+    }
+    return this.authenticatedPrincipal;
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
     const pathname = parsed.pathname;
@@ -200,6 +217,44 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/engram/v1/observe") {
+      const body = await this.readJsonBody(req);
+      this.ensureWriteRateLimitAvailable();
+      const response = await this.service.observe({
+        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : "",
+        messages: Array.isArray(body.messages) ? body.messages.filter(
+          (m: unknown): m is { role: "user" | "assistant"; content: string } =>
+            typeof m === "object" && m !== null &&
+            ((m as any).role === "user" || (m as any).role === "assistant") &&
+            typeof (m as any).content === "string"
+        ) : [],
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
+        skipExtraction: body.skipExtraction === true,
+      });
+      this.recordWriteRateLimitHit();
+      this.respondJson(res, 202, response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/lcm/search") {
+      const body = await this.readJsonBody(req);
+      const response = await this.service.lcmSearch({
+        query: typeof body.query === "string" ? body.query : "",
+        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
+        limit: typeof body.limit === "number" ? body.limit : undefined,
+      });
+      this.respondJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/engram/v1/lcm/status") {
+      this.respondJson(res, 200, await this.service.lcmStatus());
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/engram/v1/memories") {
       const body = await this.readJsonBody(req);
       const request = {
@@ -207,7 +262,7 @@ export class EngramAccessHttpServer {
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
         dryRun: body.dryRun === true,
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
-        authenticatedPrincipal: this.authenticatedPrincipal,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
         content: typeof body.content === "string" ? body.content : "",
         category: typeof body.category === "string" ? body.category : undefined,
         confidence: typeof body.confidence === "number" ? body.confidence : undefined,
@@ -236,7 +291,7 @@ export class EngramAccessHttpServer {
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
         dryRun: body.dryRun === true,
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
-        authenticatedPrincipal: this.authenticatedPrincipal,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
         content: typeof body.content === "string" ? body.content : "",
         category: typeof body.category === "string" ? body.category : undefined,
         confidence: typeof body.confidence === "number" ? body.confidence : undefined,
@@ -285,7 +340,7 @@ export class EngramAccessHttpServer {
     if (req.method === "GET" && memoryMatch) {
       const memoryId = decodeURIComponent(memoryMatch[1] ?? "");
       const namespace = parsed.searchParams.get("namespace") ?? undefined;
-      const response = await this.service.memoryGet(memoryId, namespace, this.authenticatedPrincipal);
+      const response = await this.service.memoryGet(memoryId, namespace, this.resolveRequestPrincipal(req));
       this.respondJson(res, response.found ? 200 : 404, response);
       return;
     }
@@ -296,7 +351,7 @@ export class EngramAccessHttpServer {
       const namespace = parsed.searchParams.get("namespace") ?? undefined;
       const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "200", 10);
       const limit = Number.isFinite(limitRaw) ? limitRaw : 200;
-      const response = await this.service.memoryTimeline(memoryId, namespace, limit, this.authenticatedPrincipal);
+      const response = await this.service.memoryTimeline(memoryId, namespace, limit, this.resolveRequestPrincipal(req));
       this.respondJson(res, response.found ? 200 : 404, response);
       return;
     }
@@ -327,19 +382,19 @@ export class EngramAccessHttpServer {
       const response = await this.service.reviewQueue(
         parsed.searchParams.get("runId") ?? undefined,
         parsed.searchParams.get("namespace") ?? undefined,
-        this.authenticatedPrincipal,
+        this.resolveRequestPrincipal(req),
       );
       this.respondJson(res, 200, response);
       return;
     }
 
     if (req.method === "GET" && pathname === "/engram/v1/maintenance") {
-      this.respondJson(res, 200, await this.service.maintenance(parsed.searchParams.get("namespace") ?? undefined, this.authenticatedPrincipal));
+      this.respondJson(res, 200, await this.service.maintenance(parsed.searchParams.get("namespace") ?? undefined, this.resolveRequestPrincipal(req)));
       return;
     }
 
     if (req.method === "GET" && pathname === "/engram/v1/quality") {
-      this.respondJson(res, 200, await this.service.quality(parsed.searchParams.get("namespace") ?? undefined, this.authenticatedPrincipal));
+      this.respondJson(res, 200, await this.service.quality(parsed.searchParams.get("namespace") ?? undefined, this.resolveRequestPrincipal(req)));
       return;
     }
 
@@ -362,7 +417,7 @@ export class EngramAccessHttpServer {
         status,
         reasonCode: typeof body.reasonCode === "string" ? body.reasonCode : "",
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-        authenticatedPrincipal: this.authenticatedPrincipal,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
         this.recordWriteRateLimitHit();
@@ -390,12 +445,14 @@ export class EngramAccessHttpServer {
     const isMcpWrite =
       request.method === "tools/call" &&
       typeof request.params?.name === "string" &&
-      (request.params.name === "engram.memory_store" || request.params.name === "engram.suggestion_submit");
+      (request.params.name === "engram.memory_store" || request.params.name === "engram.suggestion_submit" || request.params.name === "engram.observe");
     if (isMcpWrite) {
       this.ensureWriteRateLimitAvailable();
     }
 
-    const response = await this.mcpServer.handleRequest(request);
+    const response = await this.mcpServer.handleRequest(request, {
+      principalOverride: this.resolveRequestPrincipal(req),
+    });
 
     if (isMcpWrite && response !== null) {
       const result = (response as Record<string, unknown>).result as Record<string, unknown> | undefined;

@@ -116,6 +116,9 @@ import {
   CompoundingEngine,
   defaultTierMigrationCycleBudget,
 } from "./compounding/engine.js";
+// IRC preference consolidation — used by eval adapter directly;
+// orchestrator integration planned for future PR.
+// import { consolidatePreferences, buildQueryAwarePreferenceSection, synthesizePreferencesFromLcm } from "./compounding/preference-consolidator.js";
 import { TierMigrationExecutor } from "./tier-migration.js";
 import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
 import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";

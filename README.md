@@ -134,7 +134,24 @@ Run the stdio MCP server:
 openclaw engram access mcp-serve
 ```
 
-Point your MCP client's command at `openclaw engram access mcp-serve`. Works with Claude Code, and any other MCP-compatible client. The server exposes the same 8 tools as the HTTP endpoint.
+Point your MCP client's command at `openclaw engram access mcp-serve`. Works with Claude Code, and any other MCP-compatible client. The server exposes the same tools as the HTTP endpoint.
+
+**Claude Code (MCP over HTTP):** Start the Engram HTTP server, then add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "url": "http://localhost:4318/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ENGRAM_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+See the [Standalone Server Guide](docs/guides/standalone-server.md) for multi-tenant setups and connecting multiple agent harnesses.
 
 ## How It Works
 
@@ -202,6 +219,10 @@ Use a preset to jump to a recommended level: `conservative`, `balanced`, `resear
 - **Scripts & automation** — Authenticated REST API for custom integrations
 - **Local LLMs** — Run extraction and reranking with local models (Ollama, LM Studio, etc.)
 
+### Standalone Multi-Tenant Server
+
+Run Engram as a standalone HTTP server that multiple agent harnesses share. Isolate tenants with namespace policies, feed conversations from any client via the observe endpoint, and search archived history with LCM full-text search. Works with OpenClaw, Codex CLI, Claude Code, and custom HTTP agents. See the [Standalone Server Guide](docs/guides/standalone-server.md).
+
 ### Built for production
 
 - **672 tests** with CI enforcement
@@ -215,6 +236,7 @@ Use a preset to jump to a recommended level: `conservative`, `balanced`, `resear
 ### Core
 
 - **Automatic memory extraction** — Facts, decisions, preferences, corrections extracted from conversations
+- **Observe endpoint** — Feed conversation messages from any agent into the extraction pipeline via HTTP or MCP
 - **Recall injection** — Relevant memories injected before each agent turn
 - **Entity tracking** — People, projects, tools, companies tracked as structured entities
 - **Lifecycle management** — Memories age through active, validated, stale, archived states
@@ -320,6 +342,8 @@ Available via both stdio and HTTP transports:
 | `engram.suggestion_submit` | Queue a memory for review |
 | `engram.entity_get` | Look up a known entity |
 | `engram.review_queue_list` | View the governance review queue |
+| `engram.observe` | Feed conversation messages into memory pipeline (LCM + extraction) |
+| `engram.lcm_search` | Full-text search over LCM-archived conversations |
 | `engram_context_search` | Full-text search across all archived conversation history (LCM) |
 | `engram_context_describe` | Get a compressed summary of a turn range (LCM) |
 | `engram_context_expand` | Retrieve raw lossless messages for a turn range (LCM) |
@@ -395,6 +419,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Writing a Search Backend](docs/writing-a-search-backend.md) — Build your own adapter
 - [API Reference](docs/api.md) — HTTP, MCP, and CLI documentation
 - [Codex CLI Integration](docs/guides/codex-cli.md) — Setup Engram with OpenAI's Codex
+- [Standalone Server Guide](docs/guides/standalone-server.md) — Multi-tenant HTTP server for multiple agent harnesses
 - [Local LLM Guide](docs/guides/local-llm.md) — Local-first extraction and reranking
 - [Cost Control Guide](docs/guides/cost-control.md) — Budget mappings and presets
 - [Namespaces](docs/namespaces.md) — Multi-agent memory isolation

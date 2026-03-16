@@ -814,7 +814,7 @@ export class ExtractionEngine {
       const detailed = await this.fallbackLlm.parseWithSchemaDetailed(
         messages,
         ExtractionResultSchema,
-        { temperature: 0.3, maxTokens: 4096 },
+        { temperature: 0.3, maxTokens: 4096, timeoutMs: 30_000 },
       );
 
       const fallbackDurationMs = Date.now() - fallbackStartTime;

@@ -21,6 +21,9 @@ Core routes:
 - `GET /engram/v1/review-queue` — latest governance review bundle when present
 - `GET /engram/v1/maintenance` — health plus latest governance artifact summary
 - `POST /engram/v1/review-disposition` — operator review decision write path
+- `POST /engram/v1/observe` — feed conversation messages into LCM archive and extraction pipeline
+- `POST /engram/v1/lcm/search` — full-text search over LCM-archived conversations
+- `GET /engram/v1/lcm/status` — LCM availability and stats
 
 Recall request fields:
 
@@ -50,6 +53,60 @@ Write request envelope:
 
 Write endpoints share the same explicit-capture validation and duplicate suppression as the OpenClaw tooling, enforce request-size limits, and are rate-limited before mutation paths run.
 
+#### `POST /engram/v1/observe`
+
+Feed conversation messages into the memory pipeline (LCM archive + extraction).
+
+Request fields:
+
+- `sessionKey` (string, required) — conversation session identifier
+- `messages` (array, required) — array of `{ role: "user" | "assistant", content: string }` objects; must be non-empty
+- `namespace` (string, optional) — target namespace; defaults to the resolved namespace from the principal
+- `skipExtraction` (boolean, optional) — when `true`, messages are archived in LCM but not sent through extraction
+
+Response (HTTP 202):
+
+- `accepted` — number of messages accepted
+- `sessionKey` — echo of the session key
+- `namespace` — resolved namespace
+- `lcmArchived` — whether messages were archived in LCM
+- `extractionQueued` — whether messages were queued for extraction
+
+Rate-limited to 30 requests per minute. See the [Standalone Server Guide](guides/standalone-server.md#the-observe-endpoint) for details.
+
+#### `POST /engram/v1/lcm/search`
+
+Full-text search over LCM-archived conversation messages.
+
+Request fields:
+
+- `query` (string, required) — search query
+- `sessionKey` (string, optional) — filter results to a specific session
+- `namespace` (string, optional) — filter by namespace
+- `limit` (number, optional, default: 10) — maximum results
+
+Response (HTTP 200):
+
+- `query` — echo of the search query
+- `namespace` — resolved namespace
+- `results` — array of `{ sessionId, content, turnIndex }` objects
+- `count` — number of results returned
+- `lcmEnabled` — whether LCM is enabled; if `false`, results will be empty
+
+#### `GET /engram/v1/lcm/status`
+
+Returns LCM availability and statistics.
+
+Response (HTTP 200):
+
+- `enabled` — whether LCM is enabled
+- `archiveAvailable` — whether the LCM archive is accessible
+- `stats` (optional) — `{ totalTurns }` when LCM is enabled
+
+#### `X-Engram-Principal` Header
+
+When the server is started with `--trust-principal-header`, requests can include an `X-Engram-Principal` header to override the authenticated principal for that request. This determines namespace read/write access. Without `--trust-principal-header`, the header is silently ignored.
+
 ### MCP
 
 Run the server with:
@@ -68,8 +125,34 @@ Available MCP tools:
 - `engram.suggestion_submit`
 - `engram.entity_get`
 - `engram.review_queue_list`
+- `engram.observe`
+- `engram.lcm_search`
 
 The MCP adapter calls the same `EngramAccessService` methods used by HTTP, so equivalent request classes return the same structured payloads.
+
+#### `engram.observe`
+
+Feed conversation messages into Engram's memory pipeline (LCM archive + extraction).
+
+**Parameters:**
+- `sessionKey` (string, required) — conversation session identifier
+- `messages` (array, required) — array of `{ role: "user" | "assistant", content: string }` objects
+- `namespace` (string, optional) — target namespace
+- `skipExtraction` (boolean, optional) — skip extraction, archive in LCM only
+
+**Returns:** `{ accepted, sessionKey, namespace, lcmArchived, extractionQueued }`
+
+#### `engram.lcm_search`
+
+Search the LCM conversation archive for matching content using full-text search.
+
+**Parameters:**
+- `query` (string, required) — search query
+- `sessionKey` (string, optional) — filter to a specific session
+- `namespace` (string, optional) — filter by namespace
+- `limit` (number, optional) — max results to return
+
+**Returns:** `{ query, namespace, results: [{ sessionId, content, turnIndex }], count, lcmEnabled }`
 
 ### MCP over HTTP
 
@@ -79,7 +162,7 @@ The HTTP server also exposes an MCP JSON-RPC endpoint at `POST /mcp`, allowing r
 openclaw engram access http-serve --host 0.0.0.0 --port 4318 --token "$TOKEN"
 ```
 
-Clients send standard MCP JSON-RPC requests to `http://<host>:4318/mcp` with an `Authorization: Bearer <token>` header. All 8 MCP tools are available. Write operations (`engram.memory_store`, `engram.suggestion_submit`) are rate-limited consistently with the REST write endpoints — dry runs and idempotency replays do not count toward the limit.
+Clients send standard MCP JSON-RPC requests to `http://<host>:4318/mcp` with an `Authorization: Bearer <token>` header. All 10 MCP tools are available. Write operations (`engram.memory_store`, `engram.suggestion_submit`, `engram.observe`) are rate-limited consistently with the REST write endpoints — dry runs and idempotency replays do not count toward the limit.
 
 **Namespace-enabled deployments:** If you have `namespacesEnabled: true`, pass `--principal <name>` to set the authenticated principal for all MCP connections. The principal must appear in `writePrincipals` for the target namespace. Without `--principal`, the principal resolves to `"default"`, which may not have write access:
 

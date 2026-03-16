@@ -671,6 +671,7 @@ export interface AccessHttpServeCliCommandOptions {
   authToken?: string;
   principal?: string;
   maxBodyBytes?: number;
+  trustPrincipalHeader?: boolean;
   createServer?: (options: {
     service: EngramAccessService;
     host?: string;
@@ -678,6 +679,7 @@ export interface AccessHttpServeCliCommandOptions {
     authToken?: string;
     principal?: string;
     maxBodyBytes?: number;
+    trustPrincipalHeader?: boolean;
   }) => AccessHttpServerLike;
 }
 
@@ -2366,6 +2368,7 @@ export async function runAccessHttpServeCliCommand(
         authToken: input.authToken,
         principal: input.principal,
         maxBodyBytes: input.maxBodyBytes,
+        trustPrincipalHeader: input.trustPrincipalHeader,
       }));
 
     const server = createServer(options);
@@ -4631,6 +4634,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--token <token>", "Bearer token (defaults to config/env)")
         .option("--principal <principal>", "Trusted principal (defaults to config/env)")
         .option("--max-body-bytes <n>", "Maximum request body size", "131072")
+        .option("--trust-principal-header", "Trust the X-Engram-Principal header for per-request principal resolution. Only enable when the server is behind a trusted proxy or when the auth token provides sufficient trust.")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const portRaw = parseInt(String(options.port ?? "4318"), 10);
@@ -4646,6 +4650,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 : orchestrator.config.agentAccessHttp.authToken,
             principal: resolveAccessPrincipalOverride(options.principal, orchestrator.config.agentAccessHttp.principal),
             maxBodyBytes: Number.isFinite(maxBodyBytesRaw) ? maxBodyBytesRaw : 131072,
+            trustPrincipalHeader: options.trustPrincipalHeader === true,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
