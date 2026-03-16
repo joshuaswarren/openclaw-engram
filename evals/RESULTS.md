@@ -82,14 +82,16 @@ Engram v9.0 outperforms all dedicated memory agent architectures on agentic benc
 
 | Domain | F1 | Accuracy | Subtasks |
 |--------|----|----------|----------|
-| progressive_search | 1.074 | 0.0% | 1,641 |
+| progressive_search | 1.074* | 0.0% | 1,641 |
 | group_travel_planner | 0.564 | 0.05% | 1,869 |
 | formal_reasoning_math | 0.519 | 1.1% | 354 |
 | formal_reasoning_phys | 0.441 | 4.7% | 86 |
 | bundled_shopping | 0.044 | 0.0% | 900 |
 | **Overall** | **0.704** | **0.19%** | **4,850** |
 
-**Takeaway:** This benchmark is designed to be extremely difficult — the paper reports that all published systems achieve near-0% success rate. Engram's 0.704 F1 shows strong partial-credit retrieval (especially on progressive search at 1.07 F1), while exact-match accuracy remains low as expected. Shopping tasks are hardest due to structured product attribute matching.
+*\* F1 > 1.0 was produced by a scorer bug (Set-based overlap counted duplicate tokens). Fixed in this PR with frequency-based overlap. Re-running benchmarks with the corrected scorer will produce valid F1 ≤ 1.0 values.*
+
+**Takeaway:** This benchmark is designed to be extremely difficult — the paper reports that all published systems achieve near-0% success rate. Engram's 0.704 F1 shows strong partial-credit retrieval, while exact-match accuracy remains low as expected. Shopping tasks are hardest due to structured product attribute matching.
 
 ---
 
