@@ -232,7 +232,7 @@ export class EngramMcpServer {
     ];
   }
 
-  async handleRequest(request: JsonRpcRequest): Promise<Record<string, unknown> | null> {
+  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string }): Promise<Record<string, unknown> | null> {
     const id = request.id ?? null;
     const method = request.method ?? "";
 
@@ -275,7 +275,8 @@ export class EngramMcpServer {
           : {};
 
       try {
-        const result = await this.callTool(name, argumentsObject);
+        const effectivePrincipal = options?.principalOverride ?? this.authenticatedPrincipal;
+        const result = await this.callTool(name, argumentsObject, effectivePrincipal);
         return {
           jsonrpc: "2.0",
           id,
@@ -395,7 +396,7 @@ export class EngramMcpServer {
     output.write(message);
   }
 
-  private async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  private async callTool(name: string, args: Record<string, unknown>, effectivePrincipal?: string): Promise<unknown> {
     switch (name) {
       case "engram.recall":
         return this.service.recall({
@@ -421,7 +422,7 @@ export class EngramMcpServer {
         return this.service.memoryGet(
           typeof args.memoryId === "string" ? args.memoryId : "",
           typeof args.namespace === "string" ? args.namespace : undefined,
-          this.authenticatedPrincipal,
+          effectivePrincipal,
         );
       case "engram.memory_timeline": {
         const limit = typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : 200;
@@ -429,7 +430,7 @@ export class EngramMcpServer {
           typeof args.memoryId === "string" ? args.memoryId : "",
           typeof args.namespace === "string" ? args.namespace : undefined,
           limit,
-          this.authenticatedPrincipal,
+          effectivePrincipal,
         );
       }
       case "engram.memory_store":
@@ -438,7 +439,7 @@ export class EngramMcpServer {
           idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
           dryRun: args.dryRun === true,
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
-          authenticatedPrincipal: this.authenticatedPrincipal,
+          authenticatedPrincipal: effectivePrincipal,
           content: typeof args.content === "string" ? args.content : "",
           category: typeof args.category === "string" ? args.category : undefined,
           confidence: typeof args.confidence === "number" ? args.confidence : undefined,
@@ -454,7 +455,7 @@ export class EngramMcpServer {
           idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
           dryRun: args.dryRun === true,
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
-          authenticatedPrincipal: this.authenticatedPrincipal,
+          authenticatedPrincipal: effectivePrincipal,
           content: typeof args.content === "string" ? args.content : "",
           category: typeof args.category === "string" ? args.category : undefined,
           confidence: typeof args.confidence === "number" ? args.confidence : undefined,
@@ -473,14 +474,14 @@ export class EngramMcpServer {
         return this.service.reviewQueue(
           typeof args.runId === "string" ? args.runId : undefined,
           typeof args.namespace === "string" ? args.namespace : undefined,
-          this.authenticatedPrincipal,
+          effectivePrincipal,
         );
       case "engram.observe":
         return this.service.observe({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
           messages: Array.isArray(args.messages) ? args.messages : [],
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
-          authenticatedPrincipal: this.authenticatedPrincipal,
+          authenticatedPrincipal: effectivePrincipal,
           skipExtraction: args.skipExtraction === true,
         });
       case "engram.lcm_search":
@@ -489,6 +490,7 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           limit: typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : undefined,
+          authenticatedPrincipal: effectivePrincipal,
         });
       default:
         throw new Error(`unknown tool: ${name}`);

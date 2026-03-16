@@ -323,6 +323,7 @@ export interface EngramAccessLcmSearchRequest {
   sessionKey?: string;
   namespace?: string;
   limit?: number;
+  authenticatedPrincipal?: string;
 }
 
 export interface EngramAccessLcmSearchResponse {
@@ -336,7 +337,7 @@ export interface EngramAccessLcmSearchResponse {
 export interface EngramAccessLcmStatusResponse {
   enabled: boolean;
   archiveAvailable: boolean;
-  stats?: { totalSessions?: number; totalTurns?: number };
+  stats?: { totalTurns?: number };
 }
 
 type EngramAccessIdempotencyStatus = "miss" | "replay" | "conflict";
@@ -1345,6 +1346,14 @@ export class EngramAccessService {
     if (!Array.isArray(request.messages) || request.messages.length === 0) {
       throw new EngramAccessInputError("messages is required and must be a non-empty array");
     }
+    for (const msg of request.messages) {
+      if (!msg || typeof msg !== "object" || typeof msg.role !== "string" || typeof msg.content !== "string") {
+        throw new EngramAccessInputError("each message must have a string 'role' and 'content'");
+      }
+      if (msg.role !== "user" && msg.role !== "assistant") {
+        throw new EngramAccessInputError(`invalid message role: ${msg.role} (expected 'user' or 'assistant')`);
+      }
+    }
 
     const namespace = this.resolveWritableNamespace(
       request.namespace,
@@ -1352,9 +1361,15 @@ export class EngramAccessService {
       request.authenticatedPrincipal,
     );
 
+    // Prefix sessionKey with namespace for LCM archival so turns are namespace-scoped.
+    // This ensures multi-tenant isolation in the LCM archive.
+    const lcmSessionKey = namespace !== this.orchestrator.config.defaultNamespace
+      ? `${namespace}:${request.sessionKey}`
+      : request.sessionKey;
+
     let lcmArchived = false;
     if (this.orchestrator.lcmEngine && this.orchestrator.lcmEngine.enabled) {
-      await this.orchestrator.lcmEngine.observeMessages(request.sessionKey, request.messages);
+      await this.orchestrator.lcmEngine.observeMessages(lcmSessionKey, request.messages);
       lcmArchived = true;
     }
 
@@ -1389,7 +1404,8 @@ export class EngramAccessService {
       throw new EngramAccessInputError("query is required and must be a non-empty string");
     }
 
-    const namespace = this.resolveNamespace(request.namespace);
+    const principal = this.resolveWritePrincipal(request.sessionKey, request.authenticatedPrincipal);
+    const namespace = this.resolveReadableNamespace(request.namespace, principal);
 
     if (!this.orchestrator.lcmEngine || !this.orchestrator.lcmEngine.enabled) {
       return {

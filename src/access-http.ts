@@ -243,6 +243,7 @@ export class EngramAccessHttpServer {
         query: typeof body.query === "string" ? body.query : "",
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
         limit: typeof body.limit === "number" ? body.limit : undefined,
       });
       this.respondJson(res, 200, response);
@@ -449,7 +450,9 @@ export class EngramAccessHttpServer {
       this.ensureWriteRateLimitAvailable();
     }
 
-    const response = await this.mcpServer.handleRequest(request);
+    const response = await this.mcpServer.handleRequest(request, {
+      principalOverride: this.resolveRequestPrincipal(req),
+    });
 
     if (isMcpWrite && response !== null) {
       const result = (response as Record<string, unknown>).result as Record<string, unknown> | undefined;
