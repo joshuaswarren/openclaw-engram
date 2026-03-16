@@ -1418,10 +1418,13 @@ export class EngramAccessService {
     }
 
     const limit = request.limit ?? 10;
+    const lcmSessionKey = request.sessionKey && namespace !== this.orchestrator.config.defaultNamespace
+      ? `${namespace}:${request.sessionKey}`
+      : request.sessionKey;
     const rawResults = await this.orchestrator.lcmEngine.searchContextFull(
       request.query,
       limit,
-      request.sessionKey,
+      lcmSessionKey,
     );
 
     const results = rawResults.map((r: { session_id: string; content: string; turn_index: number }) => ({
