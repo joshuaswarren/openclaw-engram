@@ -311,13 +311,18 @@ export function scorePreferencesForQuery(
     .map((pref) => {
       let score = 0;
 
-      // Keyword overlap
+      // Keyword overlap (exact match)
+      const exactMatched = new Set<string>();
       for (const kw of pref.keywords) {
-        if (queryTokens.has(kw)) score += 1;
+        if (queryTokens.has(kw)) {
+          score += 1;
+          exactMatched.add(kw);
+        }
       }
 
-      // Partial keyword match (prefix)
+      // Partial keyword match (prefix only, skip already exact-matched)
       for (const kw of pref.keywords) {
+        if (exactMatched.has(kw)) continue;
         for (const qt of queryTokens) {
           if (kw.startsWith(qt) || qt.startsWith(kw)) score += 0.5;
         }
