@@ -192,12 +192,35 @@ export class LcmArchive {
   }
 }
 
-/** Sanitize a query for FTS5 MATCH — wrap each word in quotes to avoid syntax errors. */
+const STOPWORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+  "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+  "on", "with", "at", "by", "from", "as", "into", "about", "between",
+  "through", "during", "before", "after", "and", "but", "or", "nor",
+  "not", "so", "if", "then", "than", "that", "this", "it", "its",
+  "what", "which", "who", "whom", "how", "when", "where", "why",
+  "all", "each", "every", "both", "few", "more", "most", "other",
+  "some", "such", "no", "only", "own", "same", "just", "very",
+  "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
+  "i", "you", "he", "she", "we", "they",
+]);
+
+/**
+ * Sanitize a query for FTS5 MATCH.
+ * Uses OR logic so partial matches rank higher than no matches.
+ * Filters stopwords to focus on content words.
+ */
 function sanitizeFtsQuery(raw: string): string {
   const words = raw
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 0);
-  if (words.length === 0) return "";
-  return words.map((w) => `"${w}"`).join(" ");
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w.toLowerCase()));
+  if (words.length === 0) {
+    // If all words were stopwords, fall back to using all words
+    const allWords = raw.replace(/[^\w\s]/g, " ").split(/\s+/).filter((w) => w.length > 1);
+    if (allWords.length === 0) return "";
+    return allWords.map((w) => `"${w}"`).join(" OR ");
+  }
+  return words.map((w) => `"${w}"`).join(" OR ");
 }

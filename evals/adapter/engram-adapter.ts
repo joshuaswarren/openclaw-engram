@@ -203,7 +203,7 @@ export async function createEngramAdapter(
     const sections: string[] = [];
 
     if (query) {
-      const searchResults = await engine.searchContext(query, 10, sessionId);
+      const searchResults = await engine.searchContext(query, 20, sessionId);
       if (searchResults.length > 0) {
         const searchSection = searchResults
           .map((r: any) => `[turn ${r.turn_index}, ${r.role}]: ${r.snippet}`)
@@ -269,7 +269,7 @@ export async function createEngramAdapter(
       try {
         const bufferedTurns = orchestrator.buffer.getTurns();
         if (bufferedTurns.length > 0) {
-          await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "eval");
+          await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode");
         }
       } catch {
         // Extraction may fail without LLM access — that's OK for eval.
@@ -278,24 +278,45 @@ export async function createEngramAdapter(
     },
 
     async recall(sessionId: string, query: string, budgetChars?: number): Promise<string> {
-      // Use EngramAccessService.recall() for the full recall pipeline:
-      // recall planner → intent routing → QMD search → reranking →
-      // budget assembly → LCM compressed history → entity retrieval
+      const budget = budgetChars ?? 32000;
+      const sections: string[] = [];
+
+      // 1. Try full recall pipeline (recall planner → QMD → reranking → budget assembly)
       try {
         const response = await accessService.recall({
           query,
           sessionKey: sessionId,
           includeDebug: false,
         });
-        // If the full pipeline returned content, use it; otherwise fall back to LCM
         if (response.context && response.context.trim().length > 0) {
-          return response.context;
+          sections.push(response.context);
         }
       } catch {
-        // Full recall threw (e.g., no QMD) — fall through to fallback
+        // Full recall threw (e.g., no QMD) — continue to fallback paths
       }
-      // Fall back to LCM-only recall (FTS + DAG summaries + raw messages)
-      return fallbackRecall(sessionId, query, budgetChars ?? 32000);
+
+      // 2. Always supplement with LCM FTS search results
+      // (FTS finds keyword matches that QMD/extraction may miss)
+      if (orchestrator.lcmEngine?.enabled && query) {
+        try {
+          const ftsResults = await orchestrator.lcmEngine.searchContext(query, 20, sessionId);
+          if (ftsResults.length > 0) {
+            const ftsSection = ftsResults
+              .map((r: any) => `[turn ${r.turn_index}, ${r.role}]: ${r.snippet}`)
+              .join("\n");
+            sections.push(`## Search results\n${ftsSection}`);
+          }
+        } catch {
+          // FTS search failed — continue with what we have
+        }
+      }
+
+      // 3. If still empty, fall back to LCM compressed history + raw messages
+      if (sections.length === 0) {
+        return fallbackRecall(sessionId, query, budget);
+      }
+
+      return sections.join("\n\n");
     },
 
     async search(
@@ -411,7 +432,7 @@ export async function createLightweightAdapter(
       const sections: string[] = [];
 
       if (query) {
-        const searchResults = await engine.searchContext(query, 10, sessionId);
+        const searchResults = await engine.searchContext(query, 20, sessionId);
         if (searchResults.length > 0) {
           const searchSection = searchResults
             .map((r) => `[turn ${r.turn_index}, ${r.role}]: ${r.snippet}`)
