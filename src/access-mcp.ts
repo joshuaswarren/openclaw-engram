@@ -188,6 +188,47 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "engram.observe",
+        description: "Feed conversation messages into Engram's memory pipeline (LCM archive + extraction).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionKey: { type: "string", description: "Conversation session identifier" },
+            messages: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  role: { type: "string", enum: ["user", "assistant"] },
+                  content: { type: "string" },
+                },
+                required: ["role", "content"],
+              },
+              description: "Conversation messages to observe",
+            },
+            namespace: { type: "string" },
+            skipExtraction: { type: "boolean" },
+          },
+          required: ["sessionKey", "messages"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.lcm_search",
+        description: "Search the LCM conversation archive for matching content.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            sessionKey: { type: "string", description: "Optional session filter" },
+            namespace: { type: "string" },
+            limit: { type: "number", description: "Max results to return" },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
     ];
   }
 
@@ -434,6 +475,21 @@ export class EngramMcpServer {
           typeof args.namespace === "string" ? args.namespace : undefined,
           this.authenticatedPrincipal,
         );
+      case "engram.observe":
+        return this.service.observe({
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
+          messages: Array.isArray(args.messages) ? args.messages : [],
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          authenticatedPrincipal: this.authenticatedPrincipal,
+          skipExtraction: args.skipExtraction === true,
+        });
+      case "engram.lcm_search":
+        return this.service.lcmSearch({
+          query: typeof args.query === "string" ? args.query : "",
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          limit: typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : undefined,
+        });
       default:
         throw new Error(`unknown tool: ${name}`);
     }

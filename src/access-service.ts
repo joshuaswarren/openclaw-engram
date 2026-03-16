@@ -302,6 +302,43 @@ export interface EngramAccessWriteResponse {
   idempotencyReplay?: boolean;
 }
 
+export interface EngramAccessObserveRequest {
+  sessionKey: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  namespace?: string;
+  authenticatedPrincipal?: string;
+  skipExtraction?: boolean;
+}
+
+export interface EngramAccessObserveResponse {
+  accepted: number;
+  sessionKey: string;
+  namespace: string;
+  lcmArchived: boolean;
+  extractionQueued: boolean;
+}
+
+export interface EngramAccessLcmSearchRequest {
+  query: string;
+  sessionKey?: string;
+  namespace?: string;
+  limit?: number;
+}
+
+export interface EngramAccessLcmSearchResponse {
+  query: string;
+  namespace: string;
+  results: Array<{ sessionId: string; content: string; turnIndex?: number }>;
+  count: number;
+  lcmEnabled: boolean;
+}
+
+export interface EngramAccessLcmStatusResponse {
+  enabled: boolean;
+  archiveAvailable: boolean;
+  stats?: { totalSessions?: number; totalTurns?: number };
+}
+
 type EngramAccessIdempotencyStatus = "miss" | "replay" | "conflict";
 
 function normalizePagination(limit?: number, offset?: number): { limit: number; offset: number } {
@@ -1298,6 +1335,109 @@ export class EngramAccessService {
       tags: normalizeProjectionTags(memory.frontmatter.tags),
       entityRef: memory.frontmatter.entityRef,
       preview: normalizeProjectionPreview(memory.content),
+    };
+  }
+
+  async observe(request: EngramAccessObserveRequest): Promise<EngramAccessObserveResponse> {
+    if (!request.sessionKey || typeof request.sessionKey !== "string" || request.sessionKey.trim().length === 0) {
+      throw new EngramAccessInputError("sessionKey is required and must be a non-empty string");
+    }
+    if (!Array.isArray(request.messages) || request.messages.length === 0) {
+      throw new EngramAccessInputError("messages is required and must be a non-empty array");
+    }
+
+    const namespace = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.authenticatedPrincipal,
+    );
+
+    let lcmArchived = false;
+    if (this.orchestrator.lcmEngine && this.orchestrator.lcmEngine.enabled) {
+      await this.orchestrator.lcmEngine.observeMessages(request.sessionKey, request.messages);
+      lcmArchived = true;
+    }
+
+    let extractionQueued = false;
+    if (request.skipExtraction !== true) {
+      const turns = request.messages.map((m) => ({
+        source: "openclaw" as const,
+        sessionKey: request.sessionKey,
+        role: m.role,
+        content: m.content,
+        timestamp: new Date().toISOString(),
+      }));
+      await this.orchestrator.ingestReplayBatch(turns);
+      extractionQueued = true;
+    }
+
+    log.info(
+      `access-observe namespace=${namespace} sessionKey=${request.sessionKey} messages=${request.messages.length} lcm=${lcmArchived} extraction=${extractionQueued}`,
+    );
+
+    return {
+      accepted: request.messages.length,
+      sessionKey: request.sessionKey,
+      namespace,
+      lcmArchived,
+      extractionQueued,
+    };
+  }
+
+  async lcmSearch(request: EngramAccessLcmSearchRequest): Promise<EngramAccessLcmSearchResponse> {
+    if (!request.query || typeof request.query !== "string" || request.query.trim().length === 0) {
+      throw new EngramAccessInputError("query is required and must be a non-empty string");
+    }
+
+    const namespace = this.resolveNamespace(request.namespace);
+
+    if (!this.orchestrator.lcmEngine || !this.orchestrator.lcmEngine.enabled) {
+      return {
+        query: request.query,
+        namespace,
+        results: [],
+        count: 0,
+        lcmEnabled: false,
+      };
+    }
+
+    const limit = request.limit ?? 10;
+    const rawResults = await this.orchestrator.lcmEngine.searchContextFull(
+      request.query,
+      limit,
+      request.sessionKey,
+    );
+
+    const results = rawResults.map((r: { session_id: string; content: string; turn_index: number }) => ({
+      sessionId: r.session_id,
+      content: r.content,
+      turnIndex: r.turn_index,
+    }));
+
+    return {
+      query: request.query,
+      namespace,
+      results,
+      count: results.length,
+      lcmEnabled: true,
+    };
+  }
+
+  async lcmStatus(): Promise<EngramAccessLcmStatusResponse> {
+    if (!this.orchestrator.lcmEngine || !this.orchestrator.lcmEngine.enabled) {
+      return {
+        enabled: false,
+        archiveAvailable: false,
+      };
+    }
+
+    const stats = await this.orchestrator.lcmEngine.getStats();
+    return {
+      enabled: true,
+      archiveAvailable: true,
+      stats: {
+        totalTurns: stats.totalMessages,
+      },
     };
   }
 }
