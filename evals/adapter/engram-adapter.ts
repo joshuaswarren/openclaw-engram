@@ -276,8 +276,8 @@ export async function createEngramAdapter(
             if (!idle) {
               extractionAvailable = false;
               console.warn("[eval] extraction timed out — disabling for remaining questions (LCM FTS + IRC still active)");
-              await orchestrator.buffer.clearAfterExtraction();
             }
+            await orchestrator.buffer.clearAfterExtraction();
           }
         } catch (err) {
           extractionAvailable = false;
@@ -382,6 +382,7 @@ export async function createEngramAdapter(
       orchestrator = new Orchestrator(config);
       await orchestrator.initialize();
       accessService = new EngramAccessService(orchestrator);
+      extractionAvailable = true; // Re-enable for new session
       // Note: judge is NOT rebuilt on reset — it's stateless and the
       // --judge flag controls it at the run.ts level after creation.
     },
