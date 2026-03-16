@@ -456,8 +456,9 @@ export class EngramAccessHttpServer {
 
     if (isMcpWrite && response !== null) {
       const result = (response as Record<string, unknown>).result as Record<string, unknown> | undefined;
+      const isError = result?.isError === true;
       const structured = result?.structuredContent as { dryRun?: boolean; idempotencyReplay?: boolean } | undefined;
-      if (!structured || this.shouldCountWriteRateLimit(structured)) {
+      if (!isError && structured && this.shouldCountWriteRateLimit(structured)) {
         this.recordWriteRateLimitHit();
       }
     }
