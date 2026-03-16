@@ -825,6 +825,8 @@ export interface MemoryFrontmatter {
   // v8.0 Phase 2B: HiMem episode/note classification
   /** episode = time-specific event; note = stable belief/preference/decision */
   memoryKind?: "episode" | "note";
+  /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
+  structuredAttributes?: Record<string, string>;
 }
 
 /** Memory link relationship types */
@@ -889,6 +891,8 @@ export interface ExtractedFact {
   entityRef?: string;
   source?: ExtractionPassSource;
   promptedByQuestion?: string;
+  /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
+  structuredAttributes?: Record<string, string>;
 }
 
 export interface MemoryIntent {

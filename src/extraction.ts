@@ -158,6 +158,13 @@ export class ExtractionEngine {
             entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
             promptedByQuestion:
               typeof f?.promptedByQuestion === "string" ? f.promptedByQuestion : undefined,
+            structuredAttributes:
+              f?.structuredAttributes && typeof f.structuredAttributes === "object" && !Array.isArray(f.structuredAttributes)
+                ? Object.fromEntries(
+                    Object.entries(f.structuredAttributes)
+                      .filter(([k, v]) => typeof k === "string" && typeof v === "string")
+                  ) as Record<string, string>
+                : undefined,
           }))
           .filter((f: any) => f.content.length > 0)
       : [];
@@ -922,6 +929,16 @@ These are durable insights - capture them:
 - CRITICAL: NEVER extract cron job schedules, automation configurations, or system monitoring details (these are operational noise)
 - If uncertain about relevance, prefer NOT extracting
 
+=== Structured Attributes ===
+When a fact contains measurable, categorical, or precisely valued data, add a "structuredAttributes" object with key-value string pairs. This captures exact values for precise retrieval later.
+Examples of when to add structuredAttributes:
+- Product details: {"price": "29.99", "brand": "Sony", "color": "black", "rating": "4.5"}
+- Person details: {"age": "32", "occupation": "engineer", "city": "Austin"}
+- Events with dates: {"date": "2024-03-15", "location": "San Francisco"}
+- Decisions: {"chosen": "PostgreSQL", "rejected": "MongoDB", "reason": "ACID compliance"}
+- Quantities/measurements: {"budget": "50000", "team_size": "5", "deadline": "2024-06-01"}
+Only add structuredAttributes when there are concrete values. Skip for abstract or narrative facts.
+
 Also generate:
 1. 1-3 genuine questions you're curious about from this conversation
 2. Profile updates about user patterns/behaviors (if any)
@@ -929,7 +946,7 @@ Also generate:
 
 Output JSON:
 {
-  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
+  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9, "structuredAttributes": {"chosen": "PostgreSQL", "rejected": "MongoDB"}}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0, "structuredAttributes": {"deadline": "end of March", "deliverable": "v2.0 API"}}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
   "entities": [{"name": "person-jane-doe", "type": "person", "facts": ["Works at Acme Corp", "Prefers Python over JavaScript"]}, {"name": "project-acme-store", "type": "project", "facts": ["Built with Next.js", "Deployed on Vercel"]}],
   "profileUpdates": ["User prefers dark mode in all editors"],
   "questions": [{"question": "Which cloud provider hosts the staging environment?", "context": "Came up during deployment discussion", "priority": 0.5}],
@@ -1018,7 +1035,7 @@ ${truncatedConversation}`;
             this.buildExtractionInstructions(existingEntities) +
             `\n\nRespond with valid JSON matching this schema:
 {
-  "facts": [{"category": "decision", "content": "Chose React over Vue for the dashboard rewrite", "importance": 8, "confidence": 0.9, "tags": ["frontend"]}, {"category": "fact", "content": "The API gateway uses rate limiting at 1000 req/min", "importance": 6, "confidence": 0.95, "tags": ["infra"], "entityRef": "project-dashboard"}],
+  "facts": [{"category": "decision", "content": "Chose React over Vue for the dashboard rewrite", "importance": 8, "confidence": 0.9, "tags": ["frontend"], "structuredAttributes": {"chosen": "React", "rejected": "Vue"}}, {"category": "fact", "content": "The API gateway uses rate limiting at 1000 req/min", "importance": 6, "confidence": 0.95, "tags": ["infra"], "entityRef": "project-dashboard", "structuredAttributes": {"rate_limit": "1000 req/min"}}],
   "entities": [{"name": "person-sarah-chen", "type": "person", "facts": ["Leads the backend team", "Joined from Google in 2024"]}, {"name": "project-dashboard", "type": "project", "facts": ["React-based admin panel", "Deployed on AWS ECS"]}],
   "profileUpdates": ["User prefers TypeScript over plain JavaScript"],
   "questions": [{"question": "What database does the analytics service use?", "context": "Came up during discussion of migration plan", "priority": 0.5}],
@@ -1145,6 +1162,7 @@ Rules:
 - CRITICAL: Entity names must be CANONICAL. Always use the hyphenated multi-word form: "acme-corp" NOT "acmecorp" or "acme". "jane-doe" NOT "janedoe" or "jane". If unsure, prefer the most specific full name.
 - Avoid creating entities typed as "other" when a more specific type fits (company, project, tool, person, place)
 - Tags should be concise and reusable (e.g., "coding-style", "personal", "tools")
+- When a fact contains measurable, categorical, or precisely valued data, include a "structuredAttributes" field with key-value string pairs (e.g., {"price": "29.99", "brand": "Sony"}, {"date": "2024-03-15", "location": "SF"}, {"chosen": "PostgreSQL", "rejected": "MongoDB"}). Only for concrete values, not narrative content.
 - Set confidence using these tiers:
   * Explicit (0.95-1.0): Direct user statements — "I prefer X", "my name is Y"
   * Implied (0.70-0.94): Strong contextual inference — user consistently does X, clear from conversation flow

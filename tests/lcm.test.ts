@@ -149,6 +149,43 @@ test("LcmArchive FTS search finds matching content", () => {
   }
 });
 
+test("LcmArchive searchWithContent returns focused excerpt", () => {
+  const dir = createTempDir();
+  try {
+    const db = openLcmDatabase(dir);
+    const archive = new LcmArchive(db);
+
+    // Short content — should return full content
+    const shortContent = "Deploy the application to production with zero downtime strategy";
+    archive.appendMessage("session-1", 0, "user", shortContent);
+    archive.appendMessage("session-1", 1, "assistant", "Running deployment pipeline now");
+
+    const results = archive.searchWithContent("deploy", 10);
+    assert.ok(results.length >= 1, "should find at least one result");
+
+    const match = results.find((r) => r.turn_index === 0);
+    assert.ok(match, "should match turn 0");
+    assert.equal(match!.content, shortContent, "short content should be returned in full");
+    assert.ok(match!.id > 0, "should have a valid message id");
+    assert.ok(match!.score > 0, "should have a positive score");
+
+    // Long content — should return focused excerpt around match
+    const padding = "Lorem ipsum dolor sit amet. ".repeat(100);
+    const longContent = padding + "The deploy key was updated. " + padding;
+    archive.appendMessage("session-1", 2, "user", longContent);
+
+    const longResults = archive.searchWithContent("deploy", 10, undefined, 500);
+    const longMatch = longResults.find((r) => r.turn_index === 2);
+    assert.ok(longMatch, "should match long message");
+    assert.ok(longMatch!.content.includes("deploy"), "excerpt should contain the match term");
+    assert.ok(longMatch!.content.length < longContent.length, "excerpt should be shorter than full content");
+
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("LcmArchive search with session filter", () => {
   const dir = createTempDir();
   try {
