@@ -1377,7 +1377,7 @@ export class EngramAccessService {
     if (request.skipExtraction !== true) {
       const turns = request.messages.map((m) => ({
         source: "openclaw" as const,
-        sessionKey: request.sessionKey,
+        sessionKey: lcmSessionKey,
         role: m.role,
         content: m.content,
         timestamp: new Date().toISOString(),
