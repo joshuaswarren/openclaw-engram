@@ -151,6 +151,8 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.suggestion_submit",
     "engram.entity_get",
     "engram.review_queue_list",
+    "engram.observe",
+    "engram.lcm_search",
   ]);
 
   const recall = await server.handleRequest({
