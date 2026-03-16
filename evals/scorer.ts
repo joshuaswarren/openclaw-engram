@@ -7,7 +7,7 @@ export function exactMatch(predicted: string, expected: string | number | unknow
   return String(predicted ?? "").trim().toLowerCase() === String(expected ?? "").trim().toLowerCase() ? 1.0 : 0.0;
 }
 
-/** Token-level F1 score. */
+/** Token-level F1 score (frequency-aware overlap). */
 export function f1Score(predicted: string, expected: string | number | unknown): number {
   const predTokens = tokenize(predicted);
   const expTokens = tokenize(expected);
@@ -15,8 +15,17 @@ export function f1Score(predicted: string, expected: string | number | unknown):
   if (predTokens.length === 0 && expTokens.length === 0) return 1.0;
   if (predTokens.length === 0 || expTokens.length === 0) return 0.0;
 
-  const expSet = new Set(expTokens);
-  const overlap = predTokens.filter((t) => expSet.has(t)).length;
+  // Count token frequencies to avoid inflated overlap from duplicates
+  const expFreq = new Map<string, number>();
+  for (const t of expTokens) expFreq.set(t, (expFreq.get(t) ?? 0) + 1);
+
+  const predFreq = new Map<string, number>();
+  for (const t of predTokens) predFreq.set(t, (predFreq.get(t) ?? 0) + 1);
+
+  let overlap = 0;
+  for (const [token, expCount] of expFreq) {
+    overlap += Math.min(expCount, predFreq.get(token) ?? 0);
+  }
 
   if (overlap === 0) return 0.0;
 

@@ -240,13 +240,6 @@ export async function createEngramAdapter(
     judge,
 
     async store(sessionId: string, messages: Message[]): Promise<void> {
-      // Feed messages through the full extraction pipeline
-      const turns = messages.map((m, i) => ({
-        role: m.role,
-        content: m.content,
-        turnIndex: i,
-      }));
-
       // Store via LCM if enabled (archive + summarization)
       if (orchestrator.lcmEngine?.enabled) {
         await orchestrator.lcmEngine.observeMessages(
