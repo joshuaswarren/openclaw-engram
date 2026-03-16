@@ -1417,7 +1417,7 @@ export class EngramAccessService {
       };
     }
 
-    const limit = request.limit ?? 10;
+    const limit = Math.max(1, Math.min(request.limit ?? 10, 100));
     const lcmSessionKey = request.sessionKey && namespace !== this.orchestrator.config.defaultNamespace
       ? `${namespace}:${request.sessionKey}`
       : request.sessionKey;
