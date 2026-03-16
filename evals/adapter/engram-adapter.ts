@@ -35,6 +35,7 @@ import { Orchestrator } from "../../src/orchestrator.js";
 import { EngramAccessService } from "../../src/access-service.js";
 import { LcmEngine } from "../../src/lcm/engine.js";
 import { FallbackLlmClient } from "../../src/fallback-llm.js";
+import { synthesizePreferencesFromLcm } from "../../src/compounding/preference-consolidator.js";
 import type { PluginConfig } from "../../src/types.js";
 
 /** Load gateway config from ~/.openclaw/openclaw.json for LLM access. */
@@ -142,7 +143,12 @@ export async function createEngramAdapter(
       compactionResetEnabled: false,
       namespacesEnabled: false,
       sharedContextEnabled: false,
-      compoundingEnabled: false,
+      compoundingEnabled: true,
+      // IRC (Inductive Rule Consolidation) — preference synthesis for recall
+      ircEnabled: true,
+      ircMaxPreferences: 20,
+      ircIncludeCorrections: true,
+      ircMinConfidence: 0.3,
       nativeKnowledge: { enabled: false },
       conversationIndexEnabled: false,
       workTasksEnabled: false,
@@ -196,6 +202,7 @@ export async function createEngramAdapter(
   }
 
   let judge: LlmJudge | undefined = buildJudge(config);
+  let extractionAvailable = true;
 
   async function fallbackRecall(sessionId: string, query: string, budgetChars: number): Promise<string> {
     if (!orchestrator.lcmEngine?.enabled) return "";
@@ -258,16 +265,23 @@ export async function createEngramAdapter(
           sessionKey: sessionId,
         });
       }
-      // Trigger extraction (flush buffer)
-      try {
-        const bufferedTurns = orchestrator.buffer.getTurns();
-        if (bufferedTurns.length > 0) {
-          await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode");
-          await orchestrator.buffer.clearAfterExtraction();
+      // Trigger extraction and wait for completion. After first timeout,
+      // skip extraction for remaining questions to avoid N × 35s waits.
+      if (extractionAvailable) {
+        try {
+          const bufferedTurns = orchestrator.buffer.getTurns();
+          if (bufferedTurns.length > 0) {
+            await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode");
+            const idle = await orchestrator.waitForExtractionIdle(35_000);
+            if (!idle) {
+              extractionAvailable = false;
+              console.warn("[eval] extraction timed out — disabling for remaining questions (LCM FTS + IRC still active)");
+            }
+          }
+        } catch (err) {
+          extractionAvailable = false;
+          console.warn("[eval] extraction failed — disabling:", (err as Error)?.message ?? err);
         }
-      } catch {
-        // Extraction may fail without LLM access — that's OK for eval.
-        // LCM archive + FTS still works.
       }
     },
 
@@ -306,7 +320,26 @@ export async function createEngramAdapter(
         }
       }
 
-      // 3. If still empty, fall back to LCM compressed history + raw messages
+      // 3. IRC preference synthesis directly from LCM conversation data.
+      // Runs when main recall pipeline didn't produce preference sections.
+      const hasPreferences = sections.some((s) => s.includes("User Preferences"));
+      if (!hasPreferences && orchestrator.lcmEngine?.enabled && query && config.ircEnabled) {
+        try {
+          const ircSection = await synthesizePreferencesFromLcm(
+            orchestrator.lcmEngine,
+            query,
+            sessionId,
+            config.ircMaxPreferences,
+          );
+          if (ircSection) {
+            sections.push(ircSection);
+          }
+        } catch {
+          // IRC is non-fatal
+        }
+      }
+
+      // 4. If still empty, fall back to LCM compressed history + raw messages
       if (sections.length === 0) {
         return fallbackRecall(sessionId, query, budget);
       }

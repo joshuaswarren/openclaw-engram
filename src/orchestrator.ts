@@ -116,6 +116,12 @@ import {
   CompoundingEngine,
   defaultTierMigrationCycleBudget,
 } from "./compounding/engine.js";
+import {
+  consolidatePreferences,
+  buildQueryAwarePreferenceSection,
+  synthesizePreferencesFromLcm,
+  type ConsolidatedPreference,
+} from "./compounding/preference-consolidator.js";
 import { TierMigrationExecutor } from "./tier-migration.js";
 import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
 import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
