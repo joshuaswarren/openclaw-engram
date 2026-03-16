@@ -222,12 +222,7 @@ export class EngramAccessHttpServer {
       this.ensureWriteRateLimitAvailable();
       const response = await this.service.observe({
         sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : "",
-        messages: Array.isArray(body.messages) ? body.messages.filter(
-          (m: unknown): m is { role: "user" | "assistant"; content: string } =>
-            typeof m === "object" && m !== null &&
-            ((m as any).role === "user" || (m as any).role === "assistant") &&
-            typeof (m as any).content === "string"
-        ) : [],
+        messages: Array.isArray(body.messages) ? body.messages : [],
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
         skipExtraction: body.skipExtraction === true,
