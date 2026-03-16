@@ -78,6 +78,99 @@ This prevents "lost memories" when an install enables namespaces before migratin
   - default namespace: `workspace/IDENTITY.md`
   - non-default namespaces: `workspace/IDENTITY.<namespace>.md`
 
+## Multi-Tenant Example
+
+Namespaces work well for multi-tenant deployments where different projects or clients share one Engram installation. Here is a generic configuration isolating two tenants with a shared knowledge layer:
+
+```json
+{
+  "namespacesEnabled": true,
+  "sharedNamespace": "shared",
+  "defaultRecallNamespaces": ["shared"],
+  "namespacePolicies": {
+    "default": { "read": ["*"], "write": ["default-principal"] },
+    "project-alpha": { "read": ["alpha-agent", "admin"], "write": ["alpha-agent"] },
+    "project-beta": { "read": ["beta-agent", "admin"], "write": ["beta-agent"] },
+    "shared": { "read": ["*"], "write": ["admin"] }
+  },
+  "principalFromSessionKeyMode": "prefix",
+  "principalFromSessionKeyRules": {
+    "project-alpha:": "alpha-agent",
+    "project-beta:": "beta-agent"
+  }
+}
+```
+
+Each tenant's agents use a session key prefix (e.g., `project-alpha:session-123`) which maps to a principal (`alpha-agent`) via the prefix rules. The principal determines namespace access: `alpha-agent` can read and write `project-alpha`, read `shared`, but cannot access `project-beta`.
+
+## Shared Knowledge Layer
+
+The shared namespace provides cross-tenant or cross-agent knowledge sharing. Typical configuration:
+
+- **Read access:** `"*"` (all principals can read)
+- **Write access:** restricted to `admin` or specific curators
+- **Included in recall:** add `"shared"` to `defaultRecallNamespaces` so all agents automatically include shared knowledge in recall
+
+Memories reach the shared namespace in two ways:
+
+1. **Auto-promotion** — When `autoPromoteToSharedEnabled: true`, extracted memories matching `autoPromoteToSharedCategories` (default: `["fact", "correction", "decision", "preference"]`) are automatically copied to the shared namespace. Use `autoPromoteMinConfidenceTier: "implied"` for broader promotion.
+
+2. **Manual promotion** — Use the `memory_promote` tool or `memory_store` with `namespace: "shared"` when the authenticated principal has write access.
+
+## Principal Resolution for HTTP Callers
+
+When connecting via the HTTP API or MCP-over-HTTP, the principal is resolved in this order:
+
+1. **`X-Engram-Principal` header** — If the server was started with `--trust-principal-header`, the header value overrides all other sources. This allows a single server instance to serve multiple tenants.
+
+2. **`--principal` CLI flag** — The default principal for all connections to this server instance.
+
+3. **Session key prefix rules** — If `principalFromSessionKeyMode` is `prefix`, the session key in the request is matched against `principalFromSessionKeyRules` to resolve a principal.
+
+4. **Fallback** — If no principal is resolved, `"default"` is used, which may not have write access to non-default namespaces.
+
+**Example with `X-Engram-Principal` header:**
+
+```bash
+# Start the server with header trust enabled
+openclaw engram access http-serve \
+  --host 127.0.0.1 --port 4318 \
+  --token "$ENGRAM_TOKEN" \
+  --trust-principal-header
+
+# Request as project-alpha's agent
+curl -X POST http://localhost:4318/engram/v1/observe \
+  -H "Authorization: Bearer $ENGRAM_TOKEN" \
+  -H "X-Engram-Principal: alpha-agent" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionKey": "s1", "messages": [{"role": "user", "content": "hello"}]}'
+
+# Request as project-beta's agent
+curl -X POST http://localhost:4318/engram/v1/observe \
+  -H "Authorization: Bearer $ENGRAM_TOKEN" \
+  -H "X-Engram-Principal: beta-agent" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionKey": "s2", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
+**Example with session key prefix mode (no header):**
+
+```bash
+# Start the server with a default principal
+openclaw engram access http-serve \
+  --host 127.0.0.1 --port 4318 \
+  --token "$ENGRAM_TOKEN"
+
+# The session key prefix determines the principal
+curl -X POST http://localhost:4318/engram/v1/observe \
+  -H "Authorization: Bearer $ENGRAM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionKey": "project-alpha:session-1", "messages": [{"role": "user", "content": "hello"}]}'
+# → principal resolves to "alpha-agent" via prefix rule
+```
+
+See the [Standalone Server Guide](guides/standalone-server.md) for full multi-tenant setup instructions.
+
 ## CLI
 
 First-class namespace commands:
