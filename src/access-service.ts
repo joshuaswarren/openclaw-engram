@@ -1377,7 +1377,7 @@ export class EngramAccessService {
     if (request.skipExtraction !== true) {
       const turns = request.messages.map((m) => ({
         source: "openclaw" as const,
-        sessionKey: request.sessionKey,
+        sessionKey: lcmSessionKey,
         role: m.role,
         content: m.content,
         timestamp: new Date().toISOString(),
@@ -1417,11 +1417,14 @@ export class EngramAccessService {
       };
     }
 
-    const limit = request.limit ?? 10;
+    const limit = Math.max(1, Math.min(request.limit ?? 10, 100));
+    const lcmSessionKey = request.sessionKey && namespace !== this.orchestrator.config.defaultNamespace
+      ? `${namespace}:${request.sessionKey}`
+      : request.sessionKey;
     const rawResults = await this.orchestrator.lcmEngine.searchContextFull(
       request.query,
       limit,
-      request.sessionKey,
+      lcmSessionKey,
     );
 
     const results = rawResults.map((r: { session_id: string; content: string; turn_index: number }) => ({
