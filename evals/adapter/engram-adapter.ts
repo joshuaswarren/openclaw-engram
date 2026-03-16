@@ -276,12 +276,18 @@ export async function createEngramAdapter(
             if (!idle) {
               extractionAvailable = false;
               console.warn("[eval] extraction timed out — disabling for remaining questions (LCM FTS + IRC still active)");
+              await orchestrator.buffer.clearAfterExtraction();
             }
           }
         } catch (err) {
           extractionAvailable = false;
           console.warn("[eval] extraction failed — disabling:", (err as Error)?.message ?? err);
+          await orchestrator.buffer.clearAfterExtraction();
         }
+      } else {
+        // Extraction disabled — clear buffer to prevent unbounded growth.
+        // LCM FTS + IRC still have the conversation data.
+        await orchestrator.buffer.clearAfterExtraction();
       }
     },
 

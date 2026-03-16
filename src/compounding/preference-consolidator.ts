@@ -405,14 +405,23 @@ const CONVERSATION_PREFERENCE_PATTERNS: Array<{
     },
   },
   {
-    // "my favorite X", "my preferred X", "my go-to X"
+    // "my favorite X", "my preferred X", "my go-to X", "my favorite is X"
     detect: /\bmy\s+(?:favorite|favourite|preferred|go-to)\b/i,
     extract: (content) => {
       const results: Array<{ verb: string; subject: string }> = [];
-      const re = /\bmy\s+(?:favorite|favourite|preferred|go-to)\s+(.+?)(?:\s+is\s+(.+?))?(?:\.|,|!|\?|$)/gi;
+      // Match "my favorite is X" first (the "is" form)
+      const isRe = /\bmy\s+(?:favorite|favourite|preferred|go-to)\s+is\s+(.+?)(?:\.|,|!|\?|$)/gi;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(content)) !== null) {
-        const what = m[2] ? m[2].trim() : m[1].trim();
+      while ((m = isRe.exec(content)) !== null) {
+        const what = m[1].trim();
+        if (what.length > 2 && what.length < 200) {
+          results.push({ verb: "favorite", subject: what.replace(/\s+/g, " ") });
+        }
+      }
+      // Then match "my favorite X" (noun form, no "is")
+      const nounRe = /\bmy\s+(?:favorite|favourite|preferred|go-to)\s+(?!is\b)(.+?)(?:\.|,|!|\?|$)/gi;
+      while ((m = nounRe.exec(content)) !== null) {
+        const what = m[1].trim();
         if (what.length > 2 && what.length < 200) {
           results.push({ verb: "favorite", subject: what.replace(/\s+/g, " ") });
         }
