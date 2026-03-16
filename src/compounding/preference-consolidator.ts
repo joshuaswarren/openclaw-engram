@@ -379,10 +379,11 @@ const CONVERSATION_PREFERENCE_PATTERNS: Array<{
 }> = [
   {
     // "I prefer X", "I really enjoy X", "I always like X", etc.
-    detect: /\b(?:I|i)\s+(?:\w+\s+)?(?:prefer|enjoy|like|love|favor)\b/,
+    // Excludes negation words: "I don't like X" should NOT match.
+    detect: /\b(?:I|i)\s+(?!don'?t\s|never\s|rarely\s|hardly\s|not\s|no\s)(?:\w+\s+)?(?:prefer|enjoy|like|love|favor)\b/,
     extract: (content) => {
       const results: Array<{ verb: string; subject: string }> = [];
-      const re = /\b[Ii]\s+(?:\w+\s+)?(prefer|enjoy|like|love|favor)\s+(.+?)(?:\.|,|!|\?|$)/g;
+      const re = /\b[Ii]\s+(?!don'?t\s|never\s|rarely\s|hardly\s|not\s|no\s)(?:\w+\s+)?(prefer|enjoy|like|love|favor)\s+(.+?)(?:\.|,|!|\?|$)/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(content)) !== null) {
         const subject = m[2].trim().replace(/\s+/g, " ");
@@ -395,10 +396,10 @@ const CONVERSATION_PREFERENCE_PATTERNS: Array<{
   },
   {
     // "I use X", "I usually work with X", "I code in X"
-    detect: /\b(?:I|i)\s+(?:\w+\s+)?(?:use|work\s+with|code\s+in|program\s+in)\b/,
+    detect: /\b(?:I|i)\s+(?!don'?t\s|never\s|rarely\s|hardly\s|not\s|no\s)(?:\w+\s+)?(?:use|work\s+with|code\s+in|program\s+in)\b/,
     extract: (content) => {
       const results: Array<{ verb: string; subject: string }> = [];
-      const re = /\b[Ii]\s+(?:\w+\s+)?(use|work\s+with|code\s+in|program\s+in)\s+(.+?)(?:\.|,|!|\?|$)/g;
+      const re = /\b[Ii]\s+(?!don'?t\s|never\s|rarely\s|hardly\s|not\s|no\s)(?:\w+\s+)?(use|work\s+with|code\s+in|program\s+in)\s+(.+?)(?:\.|,|!|\?|$)/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(content)) !== null) {
         const subject = m[2].trim().replace(/\s+/g, " ");
