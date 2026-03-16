@@ -103,10 +103,12 @@ async function run(
 
     // Phase 1: Ingest all haystack sessions
     // Each item has its own set of haystack sessions with session IDs
-    const sessionIds = item.haystack_session_ids;
+    // Track all session IDs actually used (including fallbacks for extra sessions)
+    const usedSessionIds: string[] = [];
     for (let si = 0; si < item.haystack_sessions.length; si++) {
       const session = item.haystack_sessions[si];
-      const sessionId = sessionIds[si] ?? `session-${si}`;
+      const sessionId = item.haystack_session_ids[si] ?? `session-${si}`;
+      usedSessionIds.push(sessionId);
       const messages = session.map((t) => ({
         role: t.role as "user" | "assistant",
         content: t.content,
@@ -118,9 +120,9 @@ async function run(
 
     // Phase 2: Recall and score
     const { result: recallText, durationMs } = await timed(async () => {
-      // Recall from all sessions and merge
+      // Recall from all sessions that were stored (including fallback IDs)
       const parts: string[] = [];
-      for (const sid of sessionIds) {
+      for (const sid of usedSessionIds) {
         const r = await system.recall(sid, item.question);
         if (r && r.trim().length > 0) parts.push(r);
       }
