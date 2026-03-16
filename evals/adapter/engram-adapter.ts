@@ -263,6 +263,7 @@ export async function createEngramAdapter(
         const bufferedTurns = orchestrator.buffer.getTurns();
         if (bufferedTurns.length > 0) {
           await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode");
+          await orchestrator.buffer.clearAfterExtraction();
         }
       } catch {
         // Extraction may fail without LLM access — that's OK for eval.
@@ -310,7 +311,9 @@ export async function createEngramAdapter(
         return fallbackRecall(sessionId, query, budget);
       }
 
-      return sections.join("\n\n");
+      // Truncate to budget to avoid unbounded context
+      const joined = sections.join("\n\n");
+      return joined.length > budget ? joined.slice(0, budget) : joined;
     },
 
     async search(
