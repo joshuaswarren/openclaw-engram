@@ -1087,6 +1087,30 @@ export function parseConfig(raw: unknown): PluginConfig {
     ircIncludeCorrections: cfg.ircIncludeCorrections !== false,
     ircMinConfidence: typeof cfg.ircMinConfidence === "number" ? cfg.ircMinConfidence : 0.3,
 
+    // CMC (Causal Memory Consolidation) — cross-session causal reasoning
+    cmcEnabled: cfg.cmcEnabled === true,
+    cmcStitchLookbackDays: typeof cfg.cmcStitchLookbackDays === "number" ? cfg.cmcStitchLookbackDays : 7,
+    cmcStitchMinScore: typeof cfg.cmcStitchMinScore === "number" ? cfg.cmcStitchMinScore : 2.5,
+    cmcStitchMaxEdgesPerTrajectory: typeof cfg.cmcStitchMaxEdgesPerTrajectory === "number" ? cfg.cmcStitchMaxEdgesPerTrajectory : 3,
+    cmcConsolidationEnabled: cfg.cmcConsolidationEnabled === true,
+    cmcConsolidationMinRecurrence: typeof cfg.cmcConsolidationMinRecurrence === "number" ? cfg.cmcConsolidationMinRecurrence : 3,
+    cmcConsolidationMinSessions: typeof cfg.cmcConsolidationMinSessions === "number" ? cfg.cmcConsolidationMinSessions : 2,
+    cmcConsolidationSuccessThreshold: typeof cfg.cmcConsolidationSuccessThreshold === "number" ? cfg.cmcConsolidationSuccessThreshold : 0.7,
+    cmcRetrievalEnabled: cfg.cmcRetrievalEnabled === true,
+    cmcRetrievalMaxDepth: typeof cfg.cmcRetrievalMaxDepth === "number" ? cfg.cmcRetrievalMaxDepth : 3,
+    cmcRetrievalMaxChars: typeof cfg.cmcRetrievalMaxChars === "number" ? cfg.cmcRetrievalMaxChars : 800,
+    cmcRetrievalCounterfactualBoost: typeof cfg.cmcRetrievalCounterfactualBoost === "number" ? cfg.cmcRetrievalCounterfactualBoost : 0.4,
+    cmcBehaviorLearningEnabled: cfg.cmcBehaviorLearningEnabled === true,
+    cmcBehaviorMinFrequency: typeof cfg.cmcBehaviorMinFrequency === "number" ? cfg.cmcBehaviorMinFrequency : 3,
+    cmcBehaviorMinSessions: typeof cfg.cmcBehaviorMinSessions === "number" ? cfg.cmcBehaviorMinSessions : 2,
+    cmcBehaviorConfidenceThreshold: typeof cfg.cmcBehaviorConfidenceThreshold === "number" ? cfg.cmcBehaviorConfidenceThreshold : 0.6,
+    cmcLifecycleCausalImpactWeight: typeof cfg.cmcLifecycleCausalImpactWeight === "number" ? cfg.cmcLifecycleCausalImpactWeight : 0.05,
+
+    // PEDC (Prediction-Error-Driven Calibration) — model-user alignment
+    calibrationEnabled: cfg.calibrationEnabled === true,
+    calibrationMaxRulesPerRecall: typeof cfg.calibrationMaxRulesPerRecall === "number" ? cfg.calibrationMaxRulesPerRecall : 10,
+    calibrationMaxChars: typeof cfg.calibrationMaxChars === "number" ? cfg.calibrationMaxChars : 1200,
+
     // v7.0 Knowledge Graph Enhancement
     knowledgeIndexEnabled: cfg.knowledgeIndexEnabled !== false,
     knowledgeIndexMaxEntities:

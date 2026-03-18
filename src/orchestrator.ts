@@ -3810,6 +3810,67 @@ export class Orchestrator {
       return results.length > 0 ? this.formatCausalTrajectoryResults(results) : null;
     })();
 
+    const cmcRetrievalPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.cmcRetrievalEnabled ||
+        !this.isRecallSectionEnabled("cmc-causal-chains", this.config.cmcRetrievalEnabled === true)
+      ) {
+        timings.cmcCausalChains = "skip";
+        return null;
+      }
+      try {
+        const { retrieveCausalChains } = await import("./causal-retrieval.js");
+        const section = await retrieveCausalChains({
+          memoryDir: this.config.memoryDir,
+          causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
+          query: retrievalQuery,
+          sessionKey,
+          config: {
+            maxDepth: this.config.cmcRetrievalMaxDepth,
+            maxChars: this.config.cmcRetrievalMaxChars,
+            counterfactualBoost: this.config.cmcRetrievalCounterfactualBoost,
+          },
+        });
+        timings.cmcCausalChains = `${Date.now() - t0}ms`;
+        return section;
+      } catch (err) {
+        log.warn("[cmc] causal retrieval failed (non-fatal)", err);
+        timings.cmcCausalChains = "error";
+        return null;
+      }
+    })();
+
+    const calibrationPromise = (async (): Promise<string | null> => {
+      const t0 = Date.now();
+      if (
+        !this.config.calibrationEnabled ||
+        !this.isRecallSectionEnabled("calibration-rules", this.config.calibrationEnabled === true)
+      ) {
+        timings.calibrationRules = "skip";
+        return null;
+      }
+      try {
+        const { getCalibrationRulesForRecall, buildCalibrationRecallSection } = await import("./calibration.js");
+        const rules = await getCalibrationRulesForRecall(this.config.memoryDir);
+        if (rules.length === 0) {
+          timings.calibrationRules = "skip(no-rules)";
+          return null;
+        }
+        const section = buildCalibrationRecallSection(
+          rules.slice(0, this.config.calibrationMaxRulesPerRecall),
+          retrievalQuery,
+          this.config.calibrationMaxChars,
+        );
+        timings.calibrationRules = `${Date.now() - t0}ms`;
+        return section;
+      } catch (err) {
+        log.warn("[calibration] recall section failed (non-fatal)", err);
+        timings.calibrationRules = "error";
+        return null;
+      }
+    })();
+
     const trustZonePromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
@@ -4274,6 +4335,8 @@ export class Orchestrator {
       artifacts,
       objectiveStateSection,
       causalTrajectorySection,
+      cmcCausalChainsSection,
+      calibrationSection,
       trustZoneSection,
       harmonicRetrievalSection,
       verifiedRecallSection,
@@ -4296,6 +4359,8 @@ export class Orchestrator {
         artifactsPromise,
         objectiveStatePromise,
         causalTrajectoryPromise,
+        cmcRetrievalPromise,
+        calibrationPromise,
         trustZonePromise,
         harmonicRetrievalPromise,
         verifiedRecallPromise,
@@ -4322,6 +4387,11 @@ export class Orchestrator {
 
     // 1. Profile
     if (profile) this.appendRecallSection(sectionBuckets, "profile", `## User Profile\n\n${profile}`);
+
+    // 1-pre. Calibration rules (injected early so model sees adjustments first)
+    if (calibrationSection) {
+      this.appendRecallSection(sectionBuckets, "calibration-rules", calibrationSection);
+    }
 
     // 1a. Identity continuity
     if (identityContinuity) {
@@ -4411,6 +4481,10 @@ export class Orchestrator {
 
     if (causalTrajectorySection) {
       this.appendRecallSection(sectionBuckets, "causal-trajectories", causalTrajectorySection);
+    }
+
+    if (cmcCausalChainsSection) {
+      this.appendRecallSection(sectionBuckets, "cmc-causal-chains", cmcCausalChainsSection);
     }
 
     if (trustZoneSection) {

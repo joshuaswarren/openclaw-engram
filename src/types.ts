@@ -437,6 +437,30 @@ export interface PluginConfig {
   ircIncludeCorrections: boolean;
   ircMinConfidence: number;
 
+  // CMC (Causal Memory Consolidation) — cross-session causal reasoning
+  cmcEnabled: boolean;
+  cmcStitchLookbackDays: number;
+  cmcStitchMinScore: number;
+  cmcStitchMaxEdgesPerTrajectory: number;
+  cmcConsolidationEnabled: boolean;
+  cmcConsolidationMinRecurrence: number;
+  cmcConsolidationMinSessions: number;
+  cmcConsolidationSuccessThreshold: number;
+  cmcRetrievalEnabled: boolean;
+  cmcRetrievalMaxDepth: number;
+  cmcRetrievalMaxChars: number;
+  cmcRetrievalCounterfactualBoost: number;
+  cmcBehaviorLearningEnabled: boolean;
+  cmcBehaviorMinFrequency: number;
+  cmcBehaviorMinSessions: number;
+  cmcBehaviorConfidenceThreshold: number;
+  cmcLifecycleCausalImpactWeight: number;
+
+  // PEDC (Prediction-Error-Driven Calibration) — model-user alignment
+  calibrationEnabled: boolean;
+  calibrationMaxRulesPerRecall: number;
+  calibrationMaxChars: number;
+
   // Search backend abstraction
   searchBackend?: "qmd" | "remote" | "noop" | "lancedb" | "meilisearch" | "orama";
   remoteSearchBaseUrl?: string;
@@ -731,7 +755,7 @@ export interface BehaviorLoopPolicyState {
   updatedAt: string;
 }
 
-export type BehaviorSignalType = "correction_override" | "preference_affinity";
+export type BehaviorSignalType = "correction_override" | "preference_affinity" | "topic_revisitation" | "action_pattern" | "outcome_preference" | "phrasing_style";
 export type BehaviorSignalDirection = "positive" | "negative";
 
 export interface BehaviorSignalEvent {

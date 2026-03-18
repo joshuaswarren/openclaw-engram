@@ -14,6 +14,7 @@
 import path from "node:path";
 import { createEngramAdapter, createLightweightAdapter } from "./adapter/engram-adapter.js";
 import { createMcpAdapter } from "./adapter/mcp-adapter.js";
+import { createCmcAdapter } from "./adapter/cmc-adapter.js";
 import type { BenchmarkRunner, MemorySystem } from "./adapter/types.js";
 import { amaBenchRunner } from "./benchmarks/ama-bench/runner.js";
 import { memoryArenaRunner } from "./benchmarks/memory-arena/runner.js";
@@ -84,6 +85,8 @@ Options:
 
   const useMcp = hasFlag("--mcp");
   const useLightweight = hasFlag("--lightweight");
+  const useCmc = hasFlag("--cmc");
+  const useCmcFull = hasFlag("--cmc-full");
   const useJudge = hasFlag("--judge");
   const mcpUrl = readArg("--mcp-url") ?? "http://localhost:18789";
   const mcpToken = readArg("--mcp-token");
@@ -116,6 +119,33 @@ Options:
     adapterMode = "mcp";
     console.log(`Adapter: MCP HTTP at ${mcpUrl}`);
     system = await createMcpAdapter({ baseUrl: mcpUrl, authToken: mcpToken });
+  } else if (useCmcFull) {
+    adapterMode = "direct";
+    console.log("Adapter: Full-stack Orchestrator + CMC (all Engram features + CMC enabled)");
+    system = await createEngramAdapter({
+      configOverrides: {
+        cmcEnabled: true,
+        cmcStitchLookbackDays: 30,
+        cmcStitchMinScore: 1.5,
+        cmcStitchMaxEdgesPerTrajectory: 5,
+        cmcConsolidationEnabled: true,
+        cmcConsolidationMinRecurrence: 2,
+        cmcConsolidationMinSessions: 1,
+        cmcRetrievalEnabled: true,
+        cmcRetrievalMaxDepth: 3,
+        cmcRetrievalMaxChars: 1200,
+        cmcRetrievalCounterfactualBoost: 0.4,
+        cmcBehaviorLearningEnabled: true,
+        cmcBehaviorMinFrequency: 2,
+        cmcBehaviorMinSessions: 1,
+        cmcBehaviorConfidenceThreshold: 0.4,
+        cmcLifecycleCausalImpactWeight: 0.05,
+      },
+    });
+  } else if (useCmc) {
+    adapterMode = "direct";
+    console.log("Adapter: CMC-enhanced (LCM + FTS + IRC + CMC, no LLM needed)");
+    system = await createCmcAdapter();
   } else if (useLightweight) {
     adapterMode = "direct";
     console.log("Adapter: Lightweight (LCM + FTS only, no external services)");

@@ -99,6 +99,10 @@ export async function recordCausalTrajectory(options: {
   memoryDir: string;
   causalTrajectoryStoreDir?: string;
   actionGraphRecallEnabled?: boolean;
+  cmcEnabled?: boolean;
+  cmcStitchLookbackDays?: number;
+  cmcStitchMinScore?: number;
+  cmcStitchMaxEdgesPerTrajectory?: number;
   record: CausalTrajectoryRecord;
 }): Promise<string> {
   const rootDir = resolveCausalTrajectoryStoreDir(options.memoryDir, options.causalTrajectoryStoreDir);
@@ -119,6 +123,26 @@ export async function recordCausalTrajectory(options: {
       const { log } = await import("./logger.js");
       log.warn(
         `[causal-trajectory] action-conditioned graph write failed for ${validated.trajectoryId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (options.cmcEnabled === true) {
+    try {
+      const { stitchCausalChain } = await import("./causal-chain.js");
+      await stitchCausalChain({
+        memoryDir: options.memoryDir,
+        causalTrajectoryStoreDir: options.causalTrajectoryStoreDir,
+        newTrajectory: validated,
+        config: {
+          lookbackDays: options.cmcStitchLookbackDays ?? 7,
+          minScore: options.cmcStitchMinScore ?? 2.5,
+          maxEdgesPerTrajectory: options.cmcStitchMaxEdgesPerTrajectory ?? 3,
+        },
+      });
+    } catch (error) {
+      const { log } = await import("./logger.js");
+      log.warn(
+        `[cmc] causal chain stitching failed for ${validated.trajectoryId}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
