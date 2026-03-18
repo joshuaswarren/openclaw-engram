@@ -94,11 +94,11 @@ async function readCorrections(memoryDir: string): Promise<CorrectionMemory[]> {
   // Also scan facts directories for correction-category files
   const factsDir = path.join(memoryDir, "facts");
   try {
-    const { readdirSync } = await import("node:fs");
-    const dayDirs = readdirSync(factsDir).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const { readdir } = await import("node:fs/promises");
+    const dayDirs = (await readdir(factsDir)).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     for (const day of dayDirs) {
       const dayPath = path.join(factsDir, day);
-      const dayFiles = readdirSync(dayPath)
+      const dayFiles = (await readdir(dayPath))
         .filter((f: string) => f.startsWith("correction-") && f.endsWith(".md"))
         .map((f: string) => path.join(dayPath, f));
       files.push(...dayFiles);
@@ -109,8 +109,8 @@ async function readCorrections(memoryDir: string): Promise<CorrectionMemory[]> {
 
   // Also check the dedicated corrections directory
   try {
-    const { readdirSync } = await import("node:fs");
-    const corrFiles = readdirSync(correctionsDir)
+    const { readdir } = await import("node:fs/promises");
+    const corrFiles = (await readdir(correctionsDir))
       .filter((f: string) => f.endsWith(".md"))
       .map((f: string) => path.join(correctionsDir, f));
     files.push(...corrFiles);
