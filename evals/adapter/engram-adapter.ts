@@ -36,6 +36,7 @@ import { EngramAccessService } from "../../src/access-service.js";
 import { LcmEngine } from "../../src/lcm/engine.js";
 import { FallbackLlmClient } from "../../src/fallback-llm.js";
 import { synthesizePreferencesFromLcm } from "../../src/compounding/preference-consolidator.js";
+import { extractTrajectoryFromConversation } from "../adapter/cmc-adapter.js";
 import type { PluginConfig } from "../../src/types.js";
 
 /** Load gateway config from ~/.openclaw/openclaw.json for LLM access. */
@@ -253,6 +254,26 @@ export async function createEngramAdapter(
           sessionId,
           messages.map((m) => ({ role: m.role, content: m.content })),
         );
+      }
+
+      // CMC: Extract and record a causal trajectory from this conversation
+      if (config.cmcEnabled) {
+        try {
+          const trajectory = extractTrajectoryFromConversation(sessionId, messages);
+          if (trajectory) {
+            const { recordCausalTrajectory } = await import("../../src/causal-trajectory.js");
+            await recordCausalTrajectory({
+              memoryDir: config.memoryDir,
+              record: trajectory,
+              cmcEnabled: true,
+              cmcStitchLookbackDays: config.cmcStitchLookbackDays,
+              cmcStitchMinScore: config.cmcStitchMinScore,
+              cmcStitchMaxEdgesPerTrajectory: config.cmcStitchMaxEdgesPerTrajectory,
+            });
+          }
+        } catch {
+          // CMC trajectory recording is non-fatal
+        }
       }
 
       // Run extraction (facts, entities, questions) through the orchestrator's

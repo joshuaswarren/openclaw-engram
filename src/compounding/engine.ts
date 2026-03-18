@@ -45,7 +45,7 @@ type ActionOutcomeSummary = {
 
 type PromotionCandidate = {
   id: string;
-  sourceType: "action-outcome" | "mistake-pattern" | "rubric";
+  sourceType: "action-outcome" | "mistake-pattern" | "rubric" | "causal-pattern";
   subject: string;
   category: "principle" | "rule";
   content: string;
@@ -493,9 +493,42 @@ export class CompoundingEngine {
     const previousMistakes = await this.readMistakes();
     const mistakes = this.buildMistakes(entries, actionPatterns, weekId, previousMistakes?.registry ?? []);
     const rubrics = this.buildRubricSnapshot(entries, outcomeSummary);
-    const promotionCandidates = this.config.compoundingSemanticEnabled
+    let promotionCandidates = this.config.compoundingSemanticEnabled
       ? this.derivePromotionCandidates(outcomeSummary, mistakes.registry, rubrics)
       : [];
+    if (this.config.cmcConsolidationEnabled) {
+      try {
+        const { deriveCausalPromotionCandidates } = await import("../causal-consolidation.js");
+        const causalCandidates = await deriveCausalPromotionCandidates({
+          memoryDir: this.config.memoryDir,
+          causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
+          gatewayConfig: this.config.gatewayConfig,
+          config: {
+            minRecurrence: this.config.cmcConsolidationMinRecurrence,
+            minSessions: this.config.cmcConsolidationMinSessions,
+            successThreshold: this.config.cmcConsolidationSuccessThreshold,
+          },
+        });
+        if (causalCandidates.length > 0) {
+          promotionCandidates = [...promotionCandidates, ...causalCandidates];
+        }
+      } catch (error) {
+        log.warn(`[cmc] causal consolidation in synthesizeWeekly failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    // PEDC: Run calibration consolidation during weekly synthesis
+    if (this.config.calibrationEnabled) {
+      try {
+        const { runCalibrationConsolidation } = await import("../calibration.js");
+        const calRules = await runCalibrationConsolidation({
+          memoryDir: this.config.memoryDir,
+          gatewayConfig: this.config.gatewayConfig,
+        });
+        log.debug(`[calibration] weekly synthesis produced ${calRules.length} calibration rule(s)`);
+      } catch (error) {
+        log.warn(`[calibration] weekly consolidation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     const continuity = this.config.continuityAuditEnabled
       ? await this.readContinuityAuditReferences(weekId)
       : { monthId: monthIdFromIsoWeek(weekId), weeklyPath: null, monthlyPath: null };
