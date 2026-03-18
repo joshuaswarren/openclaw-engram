@@ -341,6 +341,27 @@ export async function runCalibrationConsolidation(options: {
 }
 
 /**
+ * Standalone entry point for calibration consolidation that can be called
+ * independently of weekly compounding. The compounding engine's
+ * `synthesizeWeekly()` is one trigger, but orchestrators or periodic
+ * maintenance jobs should call this directly so calibration is not gated
+ * on weekly compounding being enabled.
+ */
+export async function runCalibrationIfEnabled(options: {
+  memoryDir: string;
+  calibrationEnabled: boolean;
+  gatewayConfig?: GatewayConfig;
+}): Promise<CalibrationRule[]> {
+  if (!options.calibrationEnabled) {
+    return [];
+  }
+  return runCalibrationConsolidation({
+    memoryDir: options.memoryDir,
+    gatewayConfig: options.gatewayConfig,
+  });
+}
+
+/**
  * Get calibration rules for recall injection.
  * Reads the pre-computed calibration index.
  */

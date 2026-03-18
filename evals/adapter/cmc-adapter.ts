@@ -76,6 +76,7 @@ export function extractTrajectoryFromConversation(
   const entityPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g;
   const entities = new Set<string>();
   for (const msg of messages) {
+    entityPattern.lastIndex = 0;
     let match;
     while ((match = entityPattern.exec(msg.content)) !== null) {
       entities.add(match[1]);

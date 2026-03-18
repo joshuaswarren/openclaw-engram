@@ -210,6 +210,22 @@ export function scoreStitchCandidate(
     }
   }
 
+  // 1b. Candidate follow-up → New goal match (reverse direction)
+  const candidateFollowUpTokens = new Set(
+    normalizeRecallTokens(candidate.followUpSummary ?? "", []),
+  );
+  const newGoalTokens = normalizeRecallTokens(newTrajectory.goal, []);
+  if (candidateFollowUpTokens.size > 0 && newGoalTokens.length > 0) {
+    const overlap = countRecallTokenOverlap(candidateFollowUpTokens, newTrajectory.goal, []);
+    const normalized = overlap / Math.max(candidateFollowUpTokens.size, newGoalTokens.length);
+    const component = normalized * 3.0;
+    score += component;
+    if (component > maxComponent) {
+      maxComponent = component;
+      dominantMethod = "lexical";
+    }
+  }
+
   // 2. Outcome → Goal match
   const newOutcomeTokens = new Set(
     normalizeRecallTokens(newTrajectory.outcomeSummary, []),
