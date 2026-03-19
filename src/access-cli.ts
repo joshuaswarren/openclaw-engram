@@ -53,6 +53,10 @@ function formatUsageError(error: UsageError): string {
   }
 }
 
+function writeCliOutput(text: string = ""): void {
+  process.stdout.write(`${text}\n`);
+}
+
 function usage(): string {
   return [
     "Usage:",
@@ -223,7 +227,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 }
 
 export function printUsage(): void {
-  console.error(usage());
+  writeCliOutput(usage());
 }
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -231,8 +235,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     await main(argv);
   } catch (error) {
     if (error instanceof UsageError) {
-      console.error(formatUsageError(error));
-      console.error("");
+      writeCliOutput(formatUsageError(error));
+      writeCliOutput();
       printUsage();
       process.exit(1);
     }
