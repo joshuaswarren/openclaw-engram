@@ -19,7 +19,39 @@ type Runtime = {
   service: EngramAccessService;
 };
 
-class UsageError extends Error {}
+type UsageErrorKind =
+  | "unsupported-command"
+  | "unexpected-positional"
+  | "missing-option"
+  | "missing-content"
+  | "invalid-integer"
+  | "invalid-number";
+
+class UsageError extends Error {
+  constructor(
+    readonly kind: UsageErrorKind,
+    readonly optionName?: string,
+  ) {
+    super("invalid access-cli arguments");
+  }
+}
+
+function formatUsageError(error: UsageError): string {
+  switch (error.kind) {
+    case "unsupported-command":
+      return "unsupported command";
+    case "unexpected-positional":
+      return "unexpected positional argument";
+    case "missing-option":
+      return `missing required option: --${error.optionName ?? "unknown"}`;
+    case "missing-content":
+      return "missing required option: --content or --content-file";
+    case "invalid-integer":
+      return `invalid integer for --${error.optionName ?? "unknown"}`;
+    case "invalid-number":
+      return `invalid number for --${error.optionName ?? "unknown"}`;
+  }
+}
 
 function usage(): string {
   return [
@@ -55,7 +87,7 @@ function usage(): string {
 function parseArgs(argv: string[]): ParsedArgs {
   const [commandRaw, ...rest] = argv;
   if (commandRaw !== "browse" && commandRaw !== "store") {
-    throw new UsageError("unsupported command");
+    throw new UsageError("unsupported-command");
   }
 
   const options: Record<string, string[]> = {};
@@ -64,7 +96,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
     if (!token.startsWith("--")) {
-      throw new UsageError("unexpected positional argument");
+      throw new UsageError("unexpected-positional");
     }
     const key = token.slice(2);
     const next = rest[i + 1];
@@ -99,7 +131,7 @@ function getAllOptions(args: ParsedArgs, name: string): string[] {
 function requireOption(args: ParsedArgs, name: string): string {
   const value = getLastOption(args, name);
   if (!value || value.trim().length === 0) {
-    throw new UsageError(`missing required option: --${name}`);
+    throw new UsageError("missing-option", name);
   }
   return value;
 }
@@ -109,7 +141,7 @@ function parseIntegerOption(args: ParsedArgs, name: string): number | undefined 
   if (!raw) return undefined;
   const value = parseInt(raw, 10);
   if (!Number.isFinite(value)) {
-    throw new UsageError(`invalid integer for --${name}`);
+    throw new UsageError("invalid-integer", name);
   }
   return value;
 }
@@ -119,7 +151,7 @@ function parseFloatOption(args: ParsedArgs, name: string): number | undefined {
   if (!raw) return undefined;
   const value = Number.parseFloat(raw);
   if (!Number.isFinite(value)) {
-    throw new UsageError(`invalid number for --${name}`);
+    throw new UsageError("invalid-number", name);
   }
   return value;
 }
@@ -161,7 +193,7 @@ async function runStore(args: ParsedArgs): Promise<void> {
   const inlineContent = getLastOption(args, "content");
   const content = contentFile ? fs.readFileSync(contentFile, "utf8") : inlineContent;
   if (!content || content.trim().length === 0) {
-    throw new UsageError("missing required option: --content or --content-file");
+    throw new UsageError("missing-content");
   }
 
   const result = await service.memoryStore({
@@ -198,9 +230,14 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   try {
     await main(argv);
   } catch (error) {
-    console.error(error instanceof UsageError ? "invalid access-cli arguments" : "access-cli failed");
-    console.error("");
-    printUsage();
+    if (error instanceof UsageError) {
+      console.error(formatUsageError(error));
+      console.error("");
+      printUsage();
+      process.exit(1);
+    }
+
+    console.error("access-cli failed");
     process.exit(1);
   }
 }
