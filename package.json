@@ -35,13 +35,20 @@
     "node": ">=22.12.0"
   },
   "main": "dist/index.js",
+  "bin": {
+    "engram-access": "./bin/engram-access.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js"
+    },
+    "./access-cli": {
+      "import": "./dist/access-cli.js"
     }
   },
   "files": [
     "dist",
+    "bin/engram-access.js",
     "openclaw.plugin.json"
   ],
   "dependencies": {
