@@ -138,8 +138,10 @@ test("register() registers tools on every api object, not just the first one", a
   }
 });
 
-test("register() registers CLI on every api object (not just first)", async () => {
-  // This test verifies registerCli is also called per-registration, not guarded.
+test("register() registers CLI only on the first api object (central registry — must not duplicate)", async () => {
+  // CLI commands live in the central plugin registry, not per-registry api state.
+  // Registering CLI on every api object would create duplicate engram command trees.
+  // Verify that only the first registration gets CLI, while the second does not.
   const GUARD_KEY = "__openclawEngramRegistered";
   const HOOK_APIS_KEY = "__openclawEngramHookApis";
   const ORCH_KEY = "__openclawEngramOrchestrator";
@@ -171,9 +173,10 @@ test("register() registers CLI on every api object (not just first)", async () =
       first.getCliCount() > 0,
       "first registry should have CLI registered",
     );
-    assert.ok(
-      second.getCliCount() > 0,
-      "second registry should have CLI registered (regression: was missing before fix)",
+    assert.equal(
+      second.getCliCount(),
+      0,
+      "second registry must NOT have CLI registered (would create duplicate central command trees)",
     );
   } finally {
     if (savedGuard !== undefined) (globalThis as any)[GUARD_KEY] = savedGuard;
