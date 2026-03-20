@@ -712,17 +712,19 @@ export default {
     }
 
     // ========================================================================
-    // Register tools, CLI, and service (first registration only)
+    // Register tools and CLI (every registration)
     // ========================================================================
-    // Tools, CLI, and services use global registries that don't need per-agent
-    // re-registration. Only register them once to avoid duplicates.
-    if (isFirstRegistration) {
-      registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
-      registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
-      // Register LCM tools when enabled
-      if (orchestrator.lcmEngine?.enabled) {
-        registerLcmTools(api as unknown as Parameters<typeof registerLcmTools>[0], orchestrator.lcmEngine);
-      }
+    // Tools and CLI are scoped to the current api/registry instance. When the
+    // gateway creates multiple plugin registries (e.g. different cache keys for
+    // cron vs. reply contexts), each registry gets its own api object and must
+    // have tools registered against it. Skipping registration on secondary
+    // calls leaves those registries with hooks but zero tools, making
+    // memory_summarize_hourly (and all other Engram tools) invisible to the LLM.
+    registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
+    registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+    // Register LCM tools when enabled
+    if (orchestrator.lcmEngine?.enabled) {
+      registerLcmTools(api as unknown as Parameters<typeof registerLcmTools>[0], orchestrator.lcmEngine);
     }
 
     // ========================================================================
