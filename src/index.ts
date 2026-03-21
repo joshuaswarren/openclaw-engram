@@ -776,7 +776,11 @@ export default {
         // and HTTP server are still initializing.
         if ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
           await (globalThis as any)[ENGRAM_INIT_PROMISE];
-          return;
+          // Re-check after awaiting: the primary's start() may have been aborted by
+          // a concurrent stop() (via the !didCountStart early return), leaving
+          // ENGRAM_SERVICE_STARTED=false even though the promise resolved successfully.
+          // In that case, fall through so this registry can become the new primary.
+          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
         }
         // No in-flight init — check if already fully initialized.
         if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
