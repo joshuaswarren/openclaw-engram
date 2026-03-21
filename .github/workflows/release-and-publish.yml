@@ -263,3 +263,21 @@ jobs:
           fi
           npm publish --access public
 
+      - name: Push release commits to main
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          TAG="${{ steps.version.outputs.tag_name }}"
+          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null || true)"
+          if [ -z "${RELEASE_COMMIT}" ]; then
+            echo "::notice::Tag ${TAG} not found locally; skipping main push."
+            exit 0
+          fi
+          git fetch origin main
+          if git merge-base --is-ancestor "${RELEASE_COMMIT}" origin/main; then
+            echo "::notice::Release commit already on main; skipping push."
+            exit 0
+          fi
+          git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" \
+            "${RELEASE_COMMIT}:refs/heads/main"
+
