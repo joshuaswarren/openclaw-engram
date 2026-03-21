@@ -439,14 +439,13 @@ test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD 
       true,
       "SERVICE_STARTED should be true after secondary completes init",
     );
-    // After secondary completes init successfully, GUARD is restored to true.
-    // CLI was registered by primary's register() call and is still active;
-    // GUARD=true prevents a subsequent register() call from re-registering it
-    // and duplicating the central engram command tree.
+    // After a full stop, GUARD remains false after secondary init completes.
+    // stop() cleared it so a subsequent register() can re-register CLI if the
+    // gateway rebuilt its command registry during the reload cycle.
     assert.equal(
       (globalThis as any)[GUARD_KEY],
-      true,
-      "REGISTERED_GUARD should be true after secondary completes init — prevents duplicate CLI registration",
+      false,
+      "REGISTERED_GUARD stays false after secondary init following a full stop — next register() re-registers CLI",
     );
   } finally {
     restoreGlobals(saved);

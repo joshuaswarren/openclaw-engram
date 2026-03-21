@@ -857,16 +857,6 @@ export default {
             // the await) prevents SERVICE_STARTED=true from being observable while init
             // is still in-flight, and ensures the flag accurately reflects completion.
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
-            // Restore the CLI-registration guard. When a stop-during-init deferred
-            // callback cleared the guard (or when stop() cleared it on a full stop)
-            // and a dormant secondary later becomes the new primary, GUARD=false
-            // while the service is running. That lets a subsequent register() call
-            // see isFirstRegistration=true and re-register CLI commands — duplicating
-            // the central engram command tree. Setting it back to true here ensures
-            // GUARD accurately reflects "CLI is registered and service is active",
-            // which is the correct state after any successful init — whether initial,
-            // takeover, or post-restart.
-            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
@@ -878,6 +868,12 @@ export default {
             // clear it defensively in case another code path set it.
             didCountStart = false;
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+            // Clear the CLI-registration guard on init failure so a subsequent
+            // register() can re-register CLI commands. Without this, when a takeover
+            // registry's initialize() rejects, GUARD stays true (set during the
+            // original register() call) even though no service is running, which
+            // blocks a fresh register() from restoring the CLI command tree.
+            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
             throw err;
           }
           // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
