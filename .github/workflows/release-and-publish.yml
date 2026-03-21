@@ -284,6 +284,8 @@ jobs:
             echo "::notice::Release commit already on main; skipping push."
             exit 0
           fi
+          # Plain fast-forward push. Fails safely on non-fast-forward (concurrent commits).
+          # Ruleset admin bypass allows this; GITHUB_TOKEN cannot bypass the ruleset.
           git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" \
             "${RELEASE_COMMIT}:refs/heads/main"
 
