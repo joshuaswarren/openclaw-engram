@@ -760,7 +760,10 @@ export default {
           log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
           return;
         }
+        // Set flag before init so concurrent start() calls are deduplicated; clear on failure
+        // so the next start() attempt (e.g. from another registry) can retry.
         (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+        try {
         log.info("initializing engram memory system...");
         await orchestrator.initialize();
 
@@ -795,6 +798,11 @@ export default {
         }
 
         log.info("engram memory system ready");
+        } catch (err) {
+          // Clear the flag so the next registry's start() can retry initialization.
+          (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+          throw err;
+        }
       },
       stop: async () => {
         activeOpikExporter?.unsubscribe();

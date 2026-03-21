@@ -233,10 +233,7 @@ test("service.start() runs initialize exactly once even when called from multipl
 
     // Both registered a service — now simulate startPluginServices() calling
     // start() on both (as the gateway would if it iterated all registries).
-    let initCount = 0;
-    const originalStarted = (globalThis as any)[SERVICE_STARTED_KEY];
 
-    // Intercept to count real init attempts — we verify via the started flag.
     // Before calling start(), the flag should be unset.
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
