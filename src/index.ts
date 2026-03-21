@@ -904,17 +904,39 @@ export default {
         }
         delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
         delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
-        // Clear the CLI-registration guard only on a full stop (no in-flight init).
-        // When stop() is called during init (ENGRAM_INIT_PROMISE is non-null), a
-        // secondary registry may be waiting and will take over as the new primary.
-        // Clearing the guard in that case would cause the next register() call to
-        // see isFirstRegistration=true and re-register CLI commands, duplicating the
-        // central engram command tree. Leave the guard intact so the takeover path
-        // does not trigger spurious re-registration.
-        // For a full stop (ENGRAM_INIT_PROMISE is null), clear the guard so a
-        // subsequent register() call re-registers CLI after a gateway rebuild.
-        if (!(globalThis as any)[ENGRAM_INIT_PROMISE]) {
+        // Clear the CLI-registration guard so a subsequent register() call can
+        // re-register CLI commands after a stop/reload cycle.
+        //
+        // Full stop (ENGRAM_INIT_PROMISE is null): clear immediately.
+        //
+        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null): defer the decision.
+        // A secondary registry may be waiting on the in-flight promise and will
+        // take over as the new primary once the current init aborts.  We must not
+        // clear the guard synchronously here because a takeover secondary was
+        // registered while GUARD=true (it did not call registerCli()) and a
+        // subsequent register() clearing GUARD=false would see isFirstRegistration=true
+        // and re-register CLI commands — duplicating the central engram command tree.
+        // Instead, attach a deferred check: after the in-flight init settles, if no
+        // service was started and no new init is in-flight (i.e. no takeover), clear
+        // the guard so a fresh register() call can restore CLI commands.
+        // queueMicrotask inside the callback ensures any takeover secondary that
+        // registers its own INIT_PROMISE in the same microtask flush runs before
+        // we evaluate the condition, regardless of .then() registration order.
+        const currentInitPromise = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+        if (!currentInitPromise) {
           (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        } else {
+          const clearGuardIfNoTakeover = () => {
+            queueMicrotask(() => {
+              if (
+                !(globalThis as any)[ENGRAM_SERVICE_STARTED] &&
+                !(globalThis as any)[ENGRAM_INIT_PROMISE]
+              ) {
+                (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+              }
+            });
+          };
+          void currentInitPromise.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
         }
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();

@@ -452,6 +452,86 @@ test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD 
   }
 });
 
+test("stop-during-init without takeover: REGISTERED_GUARD cleared after abort so next register() gets CLI", async () => {
+  // Scenario: one registry starts init, stop() fires before initialize() resolves
+  // (no secondary registry is waiting to take over), then a brand-new register()
+  // is called after the abort settles.
+  //
+  // Before this fix: stop() preserved the guard (INIT_PROMISE was non-null when
+  // stop() ran) but never deferred a guard-clearing callback. After init aborted
+  // and INIT_PROMISE became null, the guard stayed true. The next register() saw
+  // isFirstRegistration=false and skipped registerCli() — CLI commands missing.
+  //
+  // After this fix: stop() attaches a deferred callback to the in-flight promise.
+  // Once the promise settles, if no service was started and no new INIT_PROMISE
+  // exists (no takeover), the guard is cleared so the next register() can
+  // re-register CLI commands.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const primary = buildApi("primary-aborted");
+
+    plugin.register(primary.api as any);
+
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "guard should be true after first registration",
+    );
+
+    // Start init. We need to call stop() while the INIT_PROMISE is in-flight.
+    // The cleanest way: queue stop() as a microtask so it races with start() before
+    // orchestrator.initialize() returns.
+    const startPromise = primary.api._registeredStart?.() ?? Promise.resolve();
+    // stop() is called synchronously right after start() returns the promise —
+    // at this point INIT_PROMISE is set (start() assigns it synchronously before
+    // the first await inside the IIFE), so stop() sees it as non-null.
+    await primary.api._registeredStop?.();
+
+    // Await the start() promise (it should resolve without error, aborting cleanly).
+    await startPromise;
+
+    // Allow any deferred microtasks from the guard-clearing callback to run.
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    // Two microtask ticks: the clearGuardIfNoTakeover callback itself queues one
+    // more microtask — wait for it too.
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      false,
+      "SERVICE_STARTED should be false after aborted init",
+    );
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      false,
+      "REGISTERED_GUARD should be cleared after aborted init (no takeover) so next register() can register CLI",
+    );
+
+    // Now a fresh register() must see isFirstRegistration=true.
+    const fresh = buildApi("fresh-after-abort");
+    plugin.register(fresh.api as any);
+
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "REGISTERED_GUARD should be true after fresh register() re-registers CLI",
+    );
+
+    // Start the fresh registry — service should initialise cleanly.
+    await fresh.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "SERVICE_STARTED should be true after fresh start() completes",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
 // ============================================================================
 // Scenario B: cross-process boundary
 // ============================================================================
