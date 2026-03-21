@@ -248,7 +248,7 @@ jobs:
             echo "::notice::Tag ${TAG} not resolved locally; skipping main push."
             exit 0
           fi
-          git push origin "${RELEASE_COMMIT}:refs/heads/main" --force-with-lease
+          git push origin "${RELEASE_COMMIT}:refs/heads/main"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
