@@ -213,12 +213,12 @@ jobs:
               body = match.group(2).strip()
               if body:
                   replacement = f"## [Unreleased]\n\n## [v{version}] — {date}\n\n{body}\n"
+                  content = content[:match.start()] + replacement + content[match.end():]
+                  with open("CHANGELOG.md", "w") as f:
+                      f.write(content)
+                  print(f"Promoted [Unreleased] -> [v{version}] — {date}")
               else:
-                  replacement = f"## [Unreleased]\n\n## [v{version}] — {date}\n"
-              content = content[:match.start()] + replacement + content[match.end():]
-              with open("CHANGELOG.md", "w") as f:
-                  f.write(content)
-              print(f"Promoted [Unreleased] -> [v{version}] — {date}")
+                  print("No pending notes under [Unreleased]; skipping CHANGELOG promotion.")
           else:
               print("No [Unreleased] section found; skipping CHANGELOG promotion.")
           PYEOF
@@ -241,8 +241,14 @@ jobs:
         run: git push origin "refs/tags/${{ steps.version.outputs.tag_name }}"
 
       - name: Push release commits to main
-        if: steps.version.outputs.tag_exists != 'true'
-        run: git push origin HEAD:main --force-with-lease
+        run: |
+          TAG="${{ steps.version.outputs.tag_name }}"
+          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null || true)"
+          if [ -z "${RELEASE_COMMIT}" ]; then
+            echo "::notice::Tag ${TAG} not resolved locally; skipping main push."
+            exit 0
+          fi
+          git push origin "${RELEASE_COMMIT}:refs/heads/main" --force-with-lease
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
