@@ -2381,6 +2381,21 @@
         "default": 30000,
         "description": "Timeout in ms for remote search backend requests"
       },
+      "calibrationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable recall calibration rules injection (v9.0, default off)."
+      },
+      "calibrationMaxRulesPerRecall": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum number of calibration rules to inject per recall pass."
+      },
+      "calibrationMaxChars": {
+        "type": "number",
+        "default": 1200,
+        "description": "Maximum characters of calibration content to inject per recall pass."
+      },
       "lancedbEnabled": {
         "type": "boolean",
         "default": false,
@@ -2629,6 +2644,111 @@
         "type": "number",
         "default": 90,
         "description": "Days to retain archived LCM summaries"
+      },
+      "ircEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable Inductive Rule Consolidation (IRC) subsystem (default on)."
+      },
+      "ircMaxPreferences": {
+        "type": "number",
+        "default": 20,
+        "description": "Maximum number of preferences to include in IRC rule injection."
+      },
+      "ircIncludeCorrections": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include corrections when building IRC rules (default on)."
+      },
+      "ircMinConfidence": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Minimum confidence threshold for an IRC rule to be included (0-1)."
+      },
+      "cmcEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable Causal Memory Consolidation (CMC) subsystem (default off)."
+      },
+      "cmcStitchLookbackDays": {
+        "type": "number",
+        "default": 7,
+        "description": "Number of days to look back when stitching causal trajectories."
+      },
+      "cmcStitchMinScore": {
+        "type": "number",
+        "default": 2.5,
+        "description": "Minimum score for a causal edge to be stitched into a trajectory."
+      },
+      "cmcStitchMaxEdgesPerTrajectory": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum edges per trajectory during CMC stitching."
+      },
+      "cmcConsolidationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable CMC consolidation pass (default off)."
+      },
+      "cmcConsolidationMinRecurrence": {
+        "type": "number",
+        "default": 3,
+        "description": "Minimum recurrence count before a CMC pattern is consolidated."
+      },
+      "cmcConsolidationMinSessions": {
+        "type": "number",
+        "default": 2,
+        "description": "Minimum sessions a CMC pattern must appear in before consolidation."
+      },
+      "cmcConsolidationSuccessThreshold": {
+        "type": "number",
+        "default": 0.7,
+        "description": "Minimum success ratio required to consolidate a CMC pattern (0-1)."
+      },
+      "cmcRetrievalEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable CMC retrieval injection at recall time (default off)."
+      },
+      "cmcRetrievalMaxDepth": {
+        "type": "number",
+        "default": 3,
+        "description": "Maximum graph depth traversed during CMC retrieval."
+      },
+      "cmcRetrievalMaxChars": {
+        "type": "number",
+        "default": 800,
+        "description": "Maximum characters of CMC content injected per recall pass."
+      },
+      "cmcRetrievalCounterfactualBoost": {
+        "type": "number",
+        "default": 0.4,
+        "description": "Score boost applied to counterfactual nodes during CMC retrieval (0-1)."
+      },
+      "cmcBehaviorLearningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable CMC behavior pattern learning (default off)."
+      },
+      "cmcBehaviorMinFrequency": {
+        "type": "number",
+        "default": 3,
+        "description": "Minimum frequency for a behavior pattern to be learned by CMC."
+      },
+      "cmcBehaviorMinSessions": {
+        "type": "number",
+        "default": 2,
+        "description": "Minimum sessions a behavior must appear in before CMC learns it."
+      },
+      "cmcBehaviorConfidenceThreshold": {
+        "type": "number",
+        "default": 0.6,
+        "description": "Minimum confidence threshold for CMC behavior patterns (0-1)."
+      },
+      "cmcLifecycleCausalImpactWeight": {
+        "type": "number",
+        "default": 0.05,
+        "description": "Weight of causal impact score in CMC lifecycle scoring."
       }
     }
   },
