@@ -788,10 +788,21 @@ export default {
         // Set flag before init so additional concurrent start() calls see it and
         // await the promise above rather than racing to start a second init.
         (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+        // IMPORTANT: Do NOT put a `finally` inside the IIFE to clear ENGRAM_INIT_PROMISE.
+        // If anything in the try block throws synchronously (before the first `await`),
+        // the IIFE's finally would run before the outer assignment, and the outer line
+        // `ENGRAM_INIT_PROMISE = initPromise` would then overwrite null with a stale
+        // rejected promise — permanently blocking future start() calls. Instead, clear
+        // ENGRAM_INIT_PROMISE in the outer try-finally below after `await initPromise`.
         const initPromise = (async () => {
           try {
             log.info("initializing engram memory system...");
             await orchestrator.initialize();
+
+            // If stop() was called while orchestrator.initialize() was in progress,
+            // it already cleared didCountStart and ENGRAM_SERVICE_STARTED. Abort
+            // further setup to avoid scribbling over the cleared globals.
+            if (!didCountStart) return;
 
             // Initialize Opik exporter if configured
             activeOpikExporter = createOpikExporter({}, log);
@@ -825,18 +836,28 @@ export default {
 
             log.info("engram memory system ready");
           } catch (err) {
-            // Roll back so the next registry's start() can retry.
+            // Unsubscribe Opik exporter if it was subscribed before the failure so
+            // a retry from another registry doesn't accumulate multiple subscribers.
+            try { activeOpikExporter?.unsubscribe(); } catch {}
+            activeOpikExporter = null;
+            // Roll back ownership so the next registry's start() can retry.
             didCountStart = false;
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
             throw err;
-          } finally {
-            // Always clear the in-flight promise when done (success or failure)
-            // so future start() calls hit the ENGRAM_SERVICE_STARTED fast path.
-            (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
           }
+          // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
+          // by the outer try-finally after `await initPromise` below.
         })();
         (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
-        await initPromise;
+        try {
+          await initPromise;
+        } finally {
+          // Clear the in-flight promise after init settles (success or failure).
+          // Placing this here (not inside the IIFE) avoids the ordering hazard where
+          // a pre-await throw inside the IIFE would let the outer assignment overwrite
+          // null with the rejected promise.
+          (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
+        }
       },
       stop: async () => {
         // Only the registry whose start() successfully ran initialize() does teardown.
