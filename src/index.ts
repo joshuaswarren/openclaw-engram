@@ -789,9 +789,6 @@ export default {
         }
         // We are the first — claim ownership and drive initialization.
         didCountStart = true;
-        // Set flag before init so additional concurrent start() calls see it and
-        // await the promise above rather than racing to start a second init.
-        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
         // IMPORTANT: Do NOT put a `finally` inside the IIFE to clear ENGRAM_INIT_PROMISE.
         // If anything in the try block throws synchronously (before the first `await`),
         // the IIFE's finally would run before the outer assignment, and the outer line
@@ -860,7 +857,15 @@ export default {
           // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
           // by the outer try-finally after `await initPromise` below.
         })();
+        // Set ENGRAM_INIT_PROMISE BEFORE ENGRAM_SERVICE_STARTED to eliminate the
+        // window where a concurrent start() sees SERVICE_STARTED=true but
+        // INIT_PROMISE=null and fast-returns before init completes. Any concurrent
+        // caller running after this line will find INIT_PROMISE and await it.
         (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
+        // Set SERVICE_STARTED only after INIT_PROMISE is visible so the early-return
+        // fast path (the SERVICE_STARTED check above) is never reachable while an
+        // init is in-flight.
+        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
         try {
           await initPromise;
         } finally {
