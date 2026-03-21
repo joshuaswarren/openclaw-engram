@@ -768,17 +768,19 @@ export default {
     api.registerService({
       id: "openclaw-engram",
       start: async () => {
-        if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-          log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
-          return;
-        }
-        // If another registry's start() is currently initializing, await that
-        // in-flight promise so this call does not resolve before the orchestrator
-        // and HTTP server are fully ready. Concurrent start() calls are only
-        // possible when the gateway triggers startPluginServices() without awaiting
-        // each registry in sequence.
+        // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
+        // is set to true synchronously before ENGRAM_INIT_PROMISE is assigned, so
+        // checking started first would let concurrent callers return before init
+        // completes. By checking the promise first, concurrent start() calls await
+        // the in-flight init rather than resolving immediately while the orchestrator
+        // and HTTP server are still initializing.
         if ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
           await (globalThis as any)[ENGRAM_INIT_PROMISE];
+          return;
+        }
+        // No in-flight init — check if already fully initialized.
+        if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+          log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
           return;
         }
         // We are the first — claim ownership and drive initialization.
