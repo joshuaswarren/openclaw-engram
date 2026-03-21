@@ -143,10 +143,7 @@ jobs:
           EXISTING_TAG=""
           while IFS= read -r tag; do
             [ -z "${tag}" ] && continue
-            TAG_TARGET_SHA="$(git rev-parse "refs/tags/${tag}^{}")"
-            TAG_TARGET_PARENT_SHA="$(git rev-parse "${TAG_TARGET_SHA}^" 2>/dev/null || true)"
-            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}" \
-              && { [ "${TAG_TARGET_SHA}" = "${SOURCE_MAIN_SHA}" ] || [ "${TAG_TARGET_PARENT_SHA}" = "${SOURCE_MAIN_SHA}" ]; }; then
+            if git cat-file -p "refs/tags/${tag}" | grep -Fq "source-main-sha: ${SOURCE_MAIN_SHA}"; then
               EXISTING_TAG="${tag}"
               break
             fi
@@ -198,6 +195,40 @@ jobs:
             git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
           fi
 
+      - name: Promote CHANGELOG.md for release
+        if: steps.version.outputs.tag_exists != 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+          from datetime import datetime, timezone
+          version = os.environ["NEW_VERSION"]
+          date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+          with open("CHANGELOG.md") as f:
+              content = f.read()
+          # Match ## [Unreleased] and its body up to the next ## [ heading
+          match = re.search(r'(## \[Unreleased\])(.*?)(?=\n## \[|\Z)', content, re.DOTALL)
+          if match:
+              body = match.group(2).strip()
+              if body:
+                  replacement = f"## [Unreleased]\n\n## [v{version}] — {date}\n\n{body}\n"
+                  content = content[:match.start()] + replacement + content[match.end():]
+                  with open("CHANGELOG.md", "w") as f:
+                      f.write(content)
+                  print(f"Promoted [Unreleased] -> [v{version}] — {date}")
+              else:
+                  print("No pending notes under [Unreleased]; skipping CHANGELOG promotion.")
+          else:
+              print("No [Unreleased] section found; skipping CHANGELOG promotion.")
+          PYEOF
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "::notice title=CHANGELOG skip::Nothing staged; skipping changelog commit."
+          else
+            git commit -m "docs(changelog): promote [Unreleased] -> v${NEW_VERSION} [skip ci]"
+          fi
+
       - name: Create version tag on release commit
         if: steps.version.outputs.tag_exists != 'true'
         run: |
@@ -208,6 +239,16 @@ jobs:
       - name: Push release tag
         if: steps.version.outputs.tag_exists != 'true'
         run: git push origin "refs/tags/${{ steps.version.outputs.tag_name }}"
+
+      - name: Push release commits to main
+        run: |
+          TAG="${{ steps.version.outputs.tag_name }}"
+          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null || true)"
+          if [ -z "${RELEASE_COMMIT}" ]; then
+            echo "::notice::Tag ${TAG} not resolved locally; skipping main push."
+            exit 0
+          fi
+          git push origin "${RELEASE_COMMIT}:refs/heads/main"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
