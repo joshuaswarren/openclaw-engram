@@ -55,8 +55,6 @@ function buildApi(label: string) {
   const registeredToolNames: string[] = [];
   let registeredCliCount = 0;
   const registeredServiceIds: string[] = [];
-  let startCallCount = 0;
-  let stopCallCount = 0;
 
   const api = {
     label,
@@ -86,8 +84,6 @@ function buildApi(label: string) {
     // Captured from registerService for test invocation
     _registeredStart: null as (() => Promise<void>) | null,
     _registeredStop: null as (() => Promise<void>) | null,
-    _startCallCount: () => startCallCount,
-    _stopCallCount: () => stopCallCount,
   };
 
   return {
