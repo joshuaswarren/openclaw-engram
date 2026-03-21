@@ -4,12 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.0.100] — 2026-03-21
+
+### Fixed
+- **Service-started timing**: set `ENGRAM_SERVICE_STARTED` inside the IIFE on success only; guard teardown and hook-api reset against live secondary takeovers (#288).
+- **Registration guard**: never clear `ENGRAM_REGISTERED_GUARD` during stop-during-init — original CLI registration remains valid in the gateway registry.
+
+## [v9.0.84 through v9.0.99] — 2026-03-14 to 2026-03-21
+
+This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/joshuaswarren/openclaw-engram/releases).
+
 ### Fixed
 - **Orchestrator init gate**: resolve the init gate after essential state loading (storage, aliases, relevance, transcript, summarizer) instead of waiting for slow QMD collection setup to finish. QMD probe and `ensureCollection` (~96s) now runs after the gate opens. Recall already degrades gracefully when QMD isn't ready, so there's no correctness risk. Fixes init gate timing out (15s timeout vs ~96s actual) and blocking recall on every startup.
 
 ## [v9.0.1 through v9.0.83] — 2026-03-07 to 2026-03-14
 
-This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/openclawai/openclaw-engram/releases).
+This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/joshuaswarren/openclaw-engram/releases).
 
 ## [9.0.0] — 2026-03-02
 
