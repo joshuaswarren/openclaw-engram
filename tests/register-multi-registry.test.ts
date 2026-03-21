@@ -452,20 +452,19 @@ test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD 
   }
 });
 
-test("stop-during-init without takeover: REGISTERED_GUARD cleared after abort so next register() gets CLI", async () => {
+test("stop-during-init without takeover: REGISTERED_GUARD stays set — original CLI registration persists", async () => {
   // Scenario: one registry starts init, stop() fires before initialize() resolves
   // (no secondary registry is waiting to take over), then a brand-new register()
   // is called after the abort settles.
   //
-  // Before this fix: stop() preserved the guard (INIT_PROMISE was non-null when
-  // stop() ran) but never deferred a guard-clearing callback. After init aborted
-  // and INIT_PROMISE became null, the guard stayed true. The next register() saw
-  // isFirstRegistration=false and skipped registerCli() — CLI commands missing.
+  // Correct behavior (thread PRRT_kwDORJXyws5159Kz): GUARD must NOT be cleared
+  // after a stop-during-init abort. The CLI registered by the original register()
+  // call is still present in the gateway's registry (stop() does not unregister
+  // CLI commands). Clearing GUARD would allow a subsequent register() to register
+  // CLI again, duplicating the command tree on top of the still-live registration.
   //
-  // After this fix: stop() attaches a deferred callback to the in-flight promise.
-  // Once the promise settles, if no service was started and no new INIT_PROMISE
-  // exists (no takeover), the guard is cleared so the next register() can
-  // re-register CLI commands.
+  // A fresh register() after the abort therefore sees isFirstRegistration=false
+  // and correctly skips CLI registration — the original CLI remains the only one.
   const saved = saveAndResetGlobals();
   try {
     const { default: plugin } = await import("../src/index.js");
@@ -489,9 +488,9 @@ test("stop-during-init without takeover: REGISTERED_GUARD cleared after abort so
     // the first await inside the IIFE), so stop() sees it as non-null.
     await primary.api._registeredStop?.();
 
-    // stop() now awaits the in-flight promise internally (plus one queueMicrotask
-    // tick), so GUARD is already cleared by the time `await stop()` returns above.
-    // `await startPromise` is therefore immediate (the promise already settled).
+    // stop() awaits the in-flight promise internally (plus one queueMicrotask tick).
+    // GUARD is NOT cleared — the original CLI registration is still live in the registry.
+    // `await startPromise` is immediate (the promise already settled inside stop()).
     await startPromise;
 
     assert.equal(
@@ -501,21 +500,27 @@ test("stop-during-init without takeover: REGISTERED_GUARD cleared after abort so
     );
     assert.equal(
       (globalThis as any)[GUARD_KEY],
-      false,
-      "REGISTERED_GUARD should be cleared after aborted init (no takeover) so next register() can register CLI",
+      true,
+      "REGISTERED_GUARD should stay true after aborted init — original CLI registration is still live in the registry",
     );
 
-    // Now a fresh register() must see isFirstRegistration=true.
+    // A fresh register() sees GUARD=true → isFirstRegistration=false → CLI is
+    // NOT re-registered (the original CLI from the first register() is still live).
     const fresh = buildApi("fresh-after-abort");
     plugin.register(fresh.api as any);
 
     assert.equal(
       (globalThis as any)[GUARD_KEY],
       true,
-      "REGISTERED_GUARD should be true after fresh register() re-registers CLI",
+      "REGISTERED_GUARD should stay true after fresh register() — guard was not cleared, CLI not re-registered",
+    );
+    assert.equal(
+      fresh.getCliCount(),
+      0,
+      "fresh register() should NOT register CLI (isFirstRegistration=false — guard was not cleared after abort)",
     );
 
-    // Start the fresh registry — service should initialise cleanly.
+    // Start the fresh registry — SERVICE_STARTED=false so start() runs init cleanly.
     await fresh.api._registeredStart?.();
 
     assert.equal(

@@ -882,6 +882,16 @@ export default {
             // the await) prevents SERVICE_STARTED=true from being observable while init
             // is still in-flight, and ensures the flag accurately reflects completion.
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+            // Note: ENGRAM_REGISTERED_GUARD is intentionally NOT set here.
+            //
+            // In the stop-during-init takeover case (the one that prompted PR description
+            // language about "restoring GUARD=true"): stop() no longer clears GUARD for
+            // stop-during-init paths, so GUARD is already true when a secondary completes
+            // init — no restore is needed (thread PRRT_kwDORJXyws5159OQ).
+            //
+            // In the full-stop-then-secondary-start case: stop() cleared GUARD to signal
+            // that the next register() may re-register CLI. A secondary completing init
+            // after a full stop must leave GUARD=false so that signal is preserved.
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
@@ -949,18 +959,18 @@ export default {
         }
         delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
         delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
-        // Clear the CLI-registration guard so a subsequent register() call can
-        // re-register CLI commands after a stop/reload cycle.
+        // ENGRAM_REGISTERED_GUARD policy:
         //
-        // Full stop (ENGRAM_INIT_PROMISE is null): clear immediately.
+        // Full stop (ENGRAM_INIT_PROMISE is null when stop() is called):
+        //   Clear GUARD so a subsequent register() in a fresh session can
+        //   re-register CLI commands after a stop/reload cycle.
         //
-        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null): await the in-flight
-        // promise so that callers who do `await stop(); register(freshApi)` observe
-        // a fully settled GUARD state when register() is called. One queueMicrotask
-        // tick after the await lets any secondary whose .then() on the in-flight
-        // promise was registered *after* stop() registered its own handler (a
-        // "late-joining" start() call) run first and set INIT_PROMISE before we
-        // evaluate the no-takeover condition.
+        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null):
+        //   Leave GUARD as-is. The CLI registered by the original register()
+        //   call is still present in the gateway's registry — stop() does not
+        //   unregister CLI commands. Clearing GUARD here would allow a
+        //   subsequent register() to register CLI again on top of the
+        //   still-live registration, duplicating the CLI command tree.
         const currentInitPromise = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
         // Track whether a secondary completed init during stop()'s await window.
         // Used below to guard the SERVICE_STARTED=false assignment.
@@ -968,6 +978,12 @@ export default {
         if (!currentInitPromise) {
           (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         } else {
+          // Stop-during-init: leave GUARD as-is.
+          // The CLI registered by the original register() call is still present
+          // in the gateway's registry; clearing GUARD here would allow a
+          // subsequent register() to register CLI again, duplicating commands
+          // on top of the still-live registration (thread PRRT_kwDORJXyws5159Kz).
+          //
           // Await the in-flight init (didCountStart=false signals it to abort at
           // its next checkpoint). Ignore errors — we only care about settlement.
           try { await currentInitPromise; } catch {}
@@ -975,37 +991,20 @@ export default {
           // currentInitPromise runs after stop()'s `await` continuation will
           // execute here and synchronously set its own INIT_PROMISE.
           await new Promise<void>((resolve) => queueMicrotask(resolve));
-          const nextInit = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
-          if (!nextInit && !(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-            // No takeover and no service running — clear the guard.
-            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
-          } else if (nextInit) {
-            // A secondary is taking over. Attach a recursive watcher to clear
-            // GUARD after the entire takeover chain settles with no running
-            // service. Uses queueMicrotask inside to handle further late-joining
-            // registries at each level of the chain (same pattern as above).
-            secondaryTookOver = true;
-            const watchTakeover = () => {
-              queueMicrotask(() => {
-                const n = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
-                if (n) {
-                  void n.then(watchTakeover, watchTakeover);
-                } else if (!(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-                  (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
-                }
-              });
-            };
-            void nextInit.then(watchTakeover, watchTakeover);
-          } else {
-            // nextInit=null and SERVICE_STARTED=true: a secondary completed init
-            // during the queueMicrotask window — leave GUARD=true (its CLI
-            // registration is live) and mark the takeover so we don't clobber
-            // SERVICE_STARTED below.
+          if (
+            (globalThis as any)[ENGRAM_INIT_PROMISE] ||
+            (globalThis as any)[ENGRAM_SERVICE_STARTED]
+          ) {
             secondaryTookOver = true;
           }
         }
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
-        (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+        // Skip when a secondary is live — its api objects already have hooks bound
+        // and resetting the WeakSet here would cause duplicate hook registration
+        // the next time those api objects trigger hook paths (thread PRRT_kwDORJXyws5159K0).
+        if (!secondaryTookOver) {
+          (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+        }
         // Allow service.start() to reinitialize after a stop/restart cycle.
         // Skip this when a secondary completed init while stop() was suspended:
         // that registry's start() is the owner of SERVICE_STARTED=true, and its
