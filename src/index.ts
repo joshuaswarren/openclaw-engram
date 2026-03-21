@@ -815,6 +815,8 @@ export default {
             // Cleanup old transcripts
             if (orchestrator.config.transcriptEnabled) {
               await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
+              // Abort if stop() was called during transcript cleanup.
+              if (!didCountStart) return;
             }
 
             // Cron integration guard:
@@ -822,6 +824,8 @@ export default {
             // - Only auto-register when explicitly enabled by config.
             if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
               await ensureHourlySummaryCron(api);
+              // Abort if stop() was called during cron registration.
+              if (!didCountStart) return;
             } else if (orchestrator.config.hourlySummariesEnabled) {
               log.info(
                 "hourly summaries enabled; cron auto-register is disabled. " +
@@ -830,6 +834,8 @@ export default {
             }
 
             if (cfg.agentAccessHttp.enabled) {
+              // Abort if stop() was called before starting the HTTP server.
+              if (!didCountStart) return;
               try {
                 const status = await accessHttpServer.start();
                 log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
@@ -838,6 +844,8 @@ export default {
               }
             }
 
+            // Final abort check before marking service as ready.
+            if (!didCountStart) return;
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
