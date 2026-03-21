@@ -29,7 +29,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -265,9 +264,14 @@ jobs:
           npm publish --access public
 
       - name: Push release commits to main
-        if: steps.version.outputs.tag_exists != 'true'
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
-          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}")"
-          git fetch origin main
-          git push origin "${RELEASE_COMMIT}:refs/heads/main" --force-with-lease=refs/heads/main
+          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null || true)"
+          if [ -z "${RELEASE_COMMIT}" ]; then
+            echo "::notice::Tag ${TAG} not found locally; skipping main push."
+            exit 0
+          fi
+          git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" \
+            "${RELEASE_COMMIT}:refs/heads/main"
