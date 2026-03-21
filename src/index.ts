@@ -868,12 +868,17 @@ export default {
             // clear it defensively in case another code path set it.
             didCountStart = false;
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
-            // Clear the CLI-registration guard on init failure so a subsequent
-            // register() can re-register CLI commands. Without this, when a takeover
-            // registry's initialize() rejects, GUARD stays true (set during the
-            // original register() call) even though no service is running, which
-            // blocks a fresh register() from restoring the CLI command tree.
-            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+            // Do NOT clear ENGRAM_REGISTERED_GUARD here. On an ordinary startup
+            // failure (no preceding stop/reload) the CLI registered during register()
+            // is still present in the gateway's command registry. Clearing the guard
+            // would let a subsequent register() call re-register CLI commands,
+            // duplicating the central engram command tree.
+            //
+            // For the stop-during-init + failed-takeover case (stop() called while
+            // init was in-flight, secondary takes over but its init also fails), the
+            // deferred clearGuardIfNoTakeover callback attached in stop() is
+            // responsible for clearing the guard once the entire takeover chain
+            // settles with no service running.
             throw err;
           }
           // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
@@ -941,12 +946,18 @@ export default {
         if (!currentInitPromise) {
           (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         } else {
+          // Recursively watch the entire takeover chain. When a secondary
+          // registry becomes the new primary it sets its own INIT_PROMISE. If
+          // that secondary's init also fails, this callback re-attaches to the
+          // next INIT_PROMISE so that once the whole chain settles (no service
+          // started, no new init in-flight), the guard is cleared.
           const clearGuardIfNoTakeover = () => {
             queueMicrotask(() => {
-              if (
-                !(globalThis as any)[ENGRAM_SERVICE_STARTED] &&
-                !(globalThis as any)[ENGRAM_INIT_PROMISE]
-              ) {
+              const nextInit = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+              if (nextInit) {
+                // A new takeover has started — watch it too.
+                void nextInit.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
+              } else if (!(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
                 (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
               }
             });
