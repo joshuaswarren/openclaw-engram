@@ -769,23 +769,57 @@ export default {
       id: "openclaw-engram",
       start: async () => {
         // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
-        // is set to true synchronously before ENGRAM_INIT_PROMISE is assigned, so
-        // checking started first would let concurrent callers return before init
-        // completes. By checking the promise first, concurrent start() calls await
-        // the in-flight init rather than resolving immediately while the orchestrator
-        // and HTTP server are still initializing.
-        if ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
-          await (globalThis as any)[ENGRAM_INIT_PROMISE];
-          // Re-check after awaiting: the primary's start() may have been aborted by
-          // a concurrent stop() (via the !didCountStart early return), leaving
-          // ENGRAM_SERVICE_STARTED=false even though the promise resolved successfully.
-          // In that case, fall through so this registry can become the new primary.
-          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
-        }
-        // No in-flight init — check if already fully initialized.
-        if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-          log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
-          return;
+        // is set to true inside the IIFE (only on success), so checking the flag
+        // first would let concurrent callers return before init completes. By
+        // checking INIT_PROMISE first, concurrent start() calls await the in-flight
+        // init rather than resolving immediately while the orchestrator and HTTP
+        // server are still initializing.
+        //
+        // Outer loop handles two cases:
+        //   1. A failed takeover init: if an awaited INIT_PROMISE rejects (the
+        //      takeover primary's initialize() threw), the inner while catches the
+        //      rejection so the waiting secondary can retry — either await the next
+        //      INIT_PROMISE or claim ownership.
+        //   2. Defensive ownership re-check: after the inner while exits
+        //      (INIT_PROMISE=null) there is no await before the break, so in
+        //      single-threaded JS INIT_PROMISE cannot be set by another secondary
+        //      in that window. The explicit re-check makes the invariant clear.
+        for (;;) {
+          // Inner while: wait out any in-flight init.
+          // Loop rather than a single if: when multiple secondaries are awaiting the
+          // same INIT_PROMISE (e.g. after primary abort), the first waiter to resume
+          // synchronously sets a new INIT_PROMISE for its own takeover. Without the
+          // loop, subsequent waiters fall through the if-block and enter the init path
+          // concurrently — re-running orchestrator.initialize() multiple times. The
+          // while-loop re-checks INIT_PROMISE after every await so each waiter sees
+          // the new promise and awaits it instead of racing to become a second primary.
+          while ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
+            try {
+              await (globalThis as any)[ENGRAM_INIT_PROMISE];
+            } catch {
+              // A primary's init failed and its outer try-finally already cleared
+              // ENGRAM_INIT_PROMISE to null. Re-evaluate the while condition: if
+              // another secondary claimed INIT_PROMISE in the meantime, await it;
+              // otherwise exit and decide whether to become the next primary.
+            }
+            // Re-check after awaiting: the primary's start() may have been aborted by
+            // a concurrent stop() (via the !didCountStart early return), leaving
+            // ENGRAM_SERVICE_STARTED=false even though the promise resolved. In that
+            // case continue the loop — we will either see a new INIT_PROMISE (set by
+            // the first-resuming takeover waiter) or exit the loop to become primary.
+            if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
+          }
+          // No in-flight init — check if already fully initialized.
+          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+            log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
+            return;
+          }
+          // Defensive re-check before claiming ownership. In practice (single-threaded
+          // JS, no await between the inner while exit and here) INIT_PROMISE cannot
+          // become non-null at this point, but the check makes the ownership invariant
+          // self-documenting: we only proceed when no other primary is in-flight.
+          if ((globalThis as any)[ENGRAM_INIT_PROMISE]) continue;
+          break;
         }
         // We are the first — claim ownership and drive initialization.
         didCountStart = true;
@@ -801,8 +835,8 @@ export default {
             await orchestrator.initialize();
 
             // If stop() was called while orchestrator.initialize() was in progress,
-            // it already cleared didCountStart and ENGRAM_SERVICE_STARTED. Abort
-            // further setup to avoid scribbling over the cleared globals.
+            // it already cleared didCountStart. Abort further setup to avoid
+            // proceeding after the service was intentionally stopped.
             if (!didCountStart) return;
 
             // Initialize Opik exporter if configured
@@ -843,6 +877,21 @@ export default {
 
             // Final abort check before marking service as ready.
             if (!didCountStart) return;
+            // Mark service as started only after all initialization steps succeed and
+            // cancellation has not been requested. Setting the flag here (not before
+            // the await) prevents SERVICE_STARTED=true from being observable while init
+            // is still in-flight, and ensures the flag accurately reflects completion.
+            (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+            // Note: ENGRAM_REGISTERED_GUARD is intentionally NOT set here.
+            //
+            // In the stop-during-init takeover case (the one that prompted PR description
+            // language about "restoring GUARD=true"): stop() no longer clears GUARD for
+            // stop-during-init paths, so GUARD is already true when a secondary completes
+            // init — no restore is needed (thread PRRT_kwDORJXyws5159OQ).
+            //
+            // In the full-stop-then-secondary-start case: stop() cleared GUARD to signal
+            // that the next register() may re-register CLI. A secondary completing init
+            // after a full stop must leave GUARD=false so that signal is preserved.
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
@@ -850,22 +899,30 @@ export default {
             try { activeOpikExporter?.unsubscribe(); } catch {}
             activeOpikExporter = null;
             // Roll back ownership so the next registry's start() can retry.
+            // SERVICE_STARTED was not set yet (only set on success above), but
+            // clear it defensively in case another code path set it.
             didCountStart = false;
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+            // Do NOT clear ENGRAM_REGISTERED_GUARD here. On an ordinary startup
+            // failure (no preceding stop/reload) the CLI registered during register()
+            // is still present in the gateway's command registry. Clearing the guard
+            // would let a subsequent register() call re-register CLI commands,
+            // duplicating the central engram command tree.
+            //
+            // For the stop-during-init case: stop() leaves GUARD as-is because
+            // the CLI registered by the original register() call is still present
+            // in the gateway's registry. No deferred clearing is performed.
             throw err;
           }
           // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
           // by the outer try-finally after `await initPromise` below.
         })();
-        // Set ENGRAM_INIT_PROMISE BEFORE ENGRAM_SERVICE_STARTED to eliminate the
-        // window where a concurrent start() sees SERVICE_STARTED=true but
-        // INIT_PROMISE=null and fast-returns before init completes. Any concurrent
-        // caller running after this line will find INIT_PROMISE and await it.
+        // ENGRAM_SERVICE_STARTED is set inside the IIFE (on success only), so any
+        // concurrent caller that arrives after INIT_PROMISE is set will await the
+        // in-flight init. The SERVICE_STARTED early-return path above is only
+        // reachable when INIT_PROMISE is null (init not in-flight), which means
+        // SERVICE_STARTED truly reflects a completed, successful init.
         (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
-        // Set SERVICE_STARTED only after INIT_PROMISE is visible so the early-return
-        // fast path (the SERVICE_STARTED check above) is never reachable while an
-        // init is in-flight.
-        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
         try {
           await initPromise;
         } finally {
@@ -900,12 +957,61 @@ export default {
         }
         delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
         delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
-        // Allow tools/CLI/service to re-register after a stop/reload cycle.
-        (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        // ENGRAM_REGISTERED_GUARD policy:
+        //
+        // Full stop (ENGRAM_INIT_PROMISE is null when stop() is called):
+        //   Clear GUARD so a subsequent register() in a fresh session can
+        //   re-register CLI commands after a stop/reload cycle.
+        //
+        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null):
+        //   Leave GUARD as-is. The CLI registered by the original register()
+        //   call is still present in the gateway's registry — stop() does not
+        //   unregister CLI commands. Clearing GUARD here would allow a
+        //   subsequent register() to register CLI again on top of the
+        //   still-live registration, duplicating the CLI command tree.
+        const currentInitPromise = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+        // Track whether a secondary completed init during stop()'s await window.
+        // Used below to guard the SERVICE_STARTED=false assignment.
+        let secondaryTookOver = false;
+        if (!currentInitPromise) {
+          (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        } else {
+          // Stop-during-init: leave GUARD as-is.
+          // The CLI registered by the original register() call is still present
+          // in the gateway's registry; clearing GUARD here would allow a
+          // subsequent register() to register CLI again, duplicating commands
+          // on top of the still-live registration (thread PRRT_kwDORJXyws5159Kz).
+          //
+          // Await the in-flight init (didCountStart=false signals it to abort at
+          // its next checkpoint). Ignore errors — we only care about settlement.
+          try { await currentInitPromise; } catch {}
+          // One queueMicrotask tick: any secondary whose .then() on
+          // currentInitPromise runs after stop()'s `await` continuation will
+          // execute here and synchronously set its own INIT_PROMISE.
+          await new Promise<void>((resolve) => queueMicrotask(resolve));
+          if (
+            (globalThis as any)[ENGRAM_INIT_PROMISE] ||
+            (globalThis as any)[ENGRAM_SERVICE_STARTED]
+          ) {
+            secondaryTookOver = true;
+          }
+        }
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
-        (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+        // Skip when a secondary is live — its api objects already have hooks bound
+        // and resetting the WeakSet here would cause duplicate hook registration
+        // the next time those api objects trigger hook paths (thread PRRT_kwDORJXyws5159K0).
+        if (!secondaryTookOver) {
+          (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+        }
         // Allow service.start() to reinitialize after a stop/restart cycle.
-        (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+        // Skip this when a secondary completed init while stop() was suspended:
+        // that registry's start() is the owner of SERVICE_STARTED=true, and its
+        // own stop() call will clear the flag. Clobbering it here would let the
+        // next start() bypass the idempotency guard and re-run initialize() on
+        // the live singleton (Cursor review thread PRRT_kwDORJXyws5156Lw).
+        if (!secondaryTookOver) {
+          (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+        }
         // Do NOT clear ENGRAM_INIT_PROMISE here. If stop() is called while init is
         // still in-flight (start() suspended at an await), clearing the promise here
         // would let a new registry enter start() before the original initializer settles

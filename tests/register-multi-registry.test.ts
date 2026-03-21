@@ -389,6 +389,150 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
   }
 });
 
+test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD cleared for CLI re-registration", async () => {
+  // After a full stop (INIT_PROMISE is null when stop() runs), REGISTERED_GUARD is
+  // cleared so a subsequent register() can re-register CLI if the gateway rebuilt
+  // its command registry. A secondary registry taking over after a full stop should
+  // leave REGISTERED_GUARD=false so the next register() call can restore CLI.
+  //
+  // Note: The stop-during-init GUARD preservation (preventing spurious re-registration
+  // when stop() is called while init is in-flight) is handled by stop() checking
+  // ENGRAM_INIT_PROMISE before clearing the guard — not by setting it in the IIFE.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const primary = buildApi("primary-full-stop");
+    const secondary = buildApi("secondary-restart");
+
+    plugin.register(primary.api as any);
+    plugin.register(secondary.api as any);
+
+    // Primary starts and completes init.
+    await primary.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "guard should be true after successful start()",
+    );
+
+    // Primary stops cleanly (full stop, INIT_PROMISE=null) → guard cleared.
+    await primary.api._registeredStop?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      false,
+      "SERVICE_STARTED should be false after full stop()",
+    );
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      false,
+      "REGISTERED_GUARD should be false after full stop — allows CLI re-registration by next register()",
+    );
+
+    // Secondary takes over as the new primary after a full stop.
+    await secondary.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "SERVICE_STARTED should be true after secondary completes init",
+    );
+    // After a full stop, GUARD remains false after secondary init completes.
+    // stop() cleared it so a subsequent register() can re-register CLI if the
+    // gateway rebuilt its command registry during the reload cycle.
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      false,
+      "REGISTERED_GUARD stays false after secondary init following a full stop — next register() re-registers CLI",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("stop-during-init without takeover: REGISTERED_GUARD stays set — original CLI registration persists", async () => {
+  // Scenario: one registry starts init, stop() fires before initialize() resolves
+  // (no secondary registry is waiting to take over), then a brand-new register()
+  // is called after the abort settles.
+  //
+  // Correct behavior (thread PRRT_kwDORJXyws5159Kz): GUARD must NOT be cleared
+  // after a stop-during-init abort. The CLI registered by the original register()
+  // call is still present in the gateway's registry (stop() does not unregister
+  // CLI commands). Clearing GUARD would allow a subsequent register() to register
+  // CLI again, duplicating the command tree on top of the still-live registration.
+  //
+  // A fresh register() after the abort therefore sees isFirstRegistration=false
+  // and correctly skips CLI registration — the original CLI remains the only one.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const primary = buildApi("primary-aborted");
+
+    plugin.register(primary.api as any);
+
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "guard should be true after first registration",
+    );
+
+    // Start init. We need to call stop() while the INIT_PROMISE is in-flight.
+    // The cleanest way: queue stop() as a microtask so it races with start() before
+    // orchestrator.initialize() returns.
+    const startPromise = primary.api._registeredStart?.() ?? Promise.resolve();
+    // stop() is called synchronously right after start() returns the promise —
+    // at this point INIT_PROMISE is set (start() assigns it synchronously before
+    // the first await inside the IIFE), so stop() sees it as non-null.
+    await primary.api._registeredStop?.();
+
+    // stop() awaits the in-flight promise internally (plus one queueMicrotask tick).
+    // GUARD is NOT cleared — the original CLI registration is still live in the registry.
+    // `await startPromise` is immediate (the promise already settled inside stop()).
+    await startPromise;
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      false,
+      "SERVICE_STARTED should be false after aborted init",
+    );
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "REGISTERED_GUARD should stay true after aborted init — original CLI registration is still live in the registry",
+    );
+
+    // A fresh register() sees GUARD=true → isFirstRegistration=false → CLI is
+    // NOT re-registered (the original CLI from the first register() is still live).
+    const fresh = buildApi("fresh-after-abort");
+    plugin.register(fresh.api as any);
+
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "REGISTERED_GUARD should stay true after fresh register() — guard was not cleared, CLI not re-registered",
+    );
+    assert.equal(
+      fresh.getCliCount(),
+      0,
+      "fresh register() should NOT register CLI (isFirstRegistration=false — guard was not cleared after abort)",
+    );
+
+    // Start the fresh registry — SERVICE_STARTED=false so start() runs init cleanly.
+    await fresh.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "SERVICE_STARTED should be true after fresh start() completes",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
 // ============================================================================
 // Scenario B: cross-process boundary
 // ============================================================================
