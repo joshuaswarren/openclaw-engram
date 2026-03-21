@@ -389,6 +389,58 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
   }
 });
 
+test("stop-during-init takeover does not leave ENGRAM_REGISTERED_GUARD cleared (regression: CLI re-registration)", async () => {
+  // When stop() runs during init, it clears ENGRAM_REGISTERED_GUARD so that a
+  // full restart cycle can re-register CLI. But if a secondary registry wakes up
+  // and successfully takes over as primary (completing init), the guard should be
+  // restored to true — otherwise a later register() call sees isFirstRegistration=true
+  // and re-registers CLI commands, causing duplicates.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const primary = buildApi("primary-stop-during-init");
+    const secondary = buildApi("secondary-takeover");
+
+    plugin.register(primary.api as any);
+    plugin.register(secondary.api as any);
+
+    // Primary starts and completes init.
+    await primary.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "guard should be true after successful start()",
+    );
+
+    // Primary stops — clears guard so restart can re-register.
+    await primary.api._registeredStop?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      false,
+      "SERVICE_STARTED should be false after stop()",
+    );
+
+    // Secondary (already registered) now starts fresh — it becomes the new primary.
+    await secondary.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "SERVICE_STARTED should be true after secondary takeover init",
+    );
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      "ENGRAM_REGISTERED_GUARD must be restored after takeover — prevents CLI re-registration by future register() calls",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
 // ============================================================================
 // Scenario B: cross-process boundary
 // ============================================================================

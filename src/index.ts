@@ -801,8 +801,8 @@ export default {
             await orchestrator.initialize();
 
             // If stop() was called while orchestrator.initialize() was in progress,
-            // it already cleared didCountStart and ENGRAM_SERVICE_STARTED. Abort
-            // further setup to avoid scribbling over the cleared globals.
+            // it already cleared didCountStart. Abort further setup to avoid
+            // proceeding after the service was intentionally stopped.
             if (!didCountStart) return;
 
             // Initialize Opik exporter if configured
@@ -843,6 +843,15 @@ export default {
 
             // Final abort check before marking service as ready.
             if (!didCountStart) return;
+            // Mark service as started only after all initialization steps succeed and
+            // cancellation has not been requested. Setting the flag here (not before
+            // the await) prevents SERVICE_STARTED=true from being observable while init
+            // is still in-flight, and ensures the flag accurately reflects completion.
+            (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+            // Restore the CLI registration guard so that if stop() cleared it during
+            // a stop-during-init race, a later register() call does not see the guard
+            // as false and re-register CLI commands (causing duplicates).
+            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
@@ -850,6 +859,8 @@ export default {
             try { activeOpikExporter?.unsubscribe(); } catch {}
             activeOpikExporter = null;
             // Roll back ownership so the next registry's start() can retry.
+            // SERVICE_STARTED was not set yet (only set on success above), but
+            // clear it defensively in case another code path set it.
             didCountStart = false;
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
             throw err;
@@ -857,15 +868,12 @@ export default {
           // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
           // by the outer try-finally after `await initPromise` below.
         })();
-        // Set ENGRAM_INIT_PROMISE BEFORE ENGRAM_SERVICE_STARTED to eliminate the
-        // window where a concurrent start() sees SERVICE_STARTED=true but
-        // INIT_PROMISE=null and fast-returns before init completes. Any concurrent
-        // caller running after this line will find INIT_PROMISE and await it.
+        // ENGRAM_SERVICE_STARTED is set inside the IIFE (on success only), so any
+        // concurrent caller that arrives after INIT_PROMISE is set will await the
+        // in-flight init. The SERVICE_STARTED early-return path above is only
+        // reachable when INIT_PROMISE is null (init not in-flight), which means
+        // SERVICE_STARTED truly reflects a completed, successful init.
         (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
-        // Set SERVICE_STARTED only after INIT_PROMISE is visible so the early-return
-        // fast path (the SERVICE_STARTED check above) is never reachable while an
-        // init is in-flight.
-        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
         try {
           await initPromise;
         } finally {
