@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -240,6 +241,12 @@ jobs:
         if: steps.version.outputs.tag_exists != 'true'
         run: git push origin "refs/tags/${{ steps.version.outputs.tag_name }}"
 
+      - name: Push release commits to main
+        if: steps.version.outputs.tag_exists != 'true'
+        run: |
+          TAG="${{ steps.version.outputs.tag_name }}"
+          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}")"
+          git push origin "${RELEASE_COMMIT}:refs/heads/main"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
