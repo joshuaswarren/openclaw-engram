@@ -1,25 +1,60 @@
 /**
- * Tests that register() calls registerTools() and registerCli() on every api
- * object it receives, not just the first one.
+ * Registration contract tests: verifies the invariants that govern how
+ * register() behaves when the gateway calls it multiple times with different
+ * api objects (multiple registries) or across process boundaries.
  *
- * Regression test for: isFirstRegistration guard prevents tool registration in
- * secondary plugin registries (issue #282).
+ * ## Invariant table
  *
- * When the gateway creates multiple plugin registries with different cache keys
- * (e.g. cron vs. reply contexts), each registry gets a distinct `api` object
- * and calls `register()` independently. Without the fix, only the first api
- * object receives tool registrations; subsequent ones have hooks but zero
- * tools, making memory_summarize_hourly (and all other Engram tools)
- * invisible to the LLM.
+ * | Behavior            | Scope           | Reason                                      |
+ * |---------------------|-----------------|---------------------------------------------|
+ * | registerTools       | every registry  | Tools are per-registry; skipping = no tools |
+ * | registerLcmTools    | every registry  | Same as above                               |
+ * | registerCli         | first only      | Central registry; duplicates = broken CLI   |
+ * | registerService     | every registry  | startPluginServices() iterates own registry |
+ * | service.start() run | once per process| Idempotency via ENGRAM_SERVICE_STARTED flag; concurrent calls await ENGRAM_INIT_PROMISE |
+ * | service.stop() teardown | owner only  | didCountStart guard: only initializing registry tears down |
+ *
+ * ## Regression history
+ *
+ * - Issue #282 / PR #283: registerTools was first-only → tools missing in secondary registries
+ * - Issue #285 / PR ???:  registerService was first-only → start() never fired in secondary registry,
+ *                         orchestrator never initialized, all memory writes silently broken
+ *
+ * ## Scenarios covered
+ *
+ * Scenario A (same-process, multiple registries): The gateway creates different
+ * plugin registries for different cache keys (cron vs. reply contexts). Each
+ * gets a distinct api object and calls register() independently.
+ *
+ * Scenario B (cross-process boundary): The plugin loads in a companion process
+ * first, setting the ENGRAM_REGISTERED_GUARD. A fresh gateway process (own
+ * globalThis) must still register and start the service independently.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
 
-// Minimal api stub that only tracks registerTool calls.
+// ============================================================================
+// Shared constants — must match src/index.ts
+// ============================================================================
+const GUARD_KEY = "__openclawEngramRegistered";
+const HOOK_APIS_KEY = "__openclawEngramHookApis";
+const ORCH_KEY = "__openclawEngramOrchestrator";
+const ACCESS_SVC_KEY = "__openclawEngramAccessService";
+const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
+const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
+const INIT_PROMISE_KEY = "__openclawEngramInitPromise";
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
 function buildApi(label: string) {
   const registeredToolNames: string[] = [];
   let registeredCliCount = 0;
-  const registeredHooks: string[] = [];
+  const registeredServiceIds: string[] = [];
 
   const api = {
     label,
@@ -37,129 +72,101 @@ function buildApi(label: string) {
     registerCli(_spec: unknown) {
       registeredCliCount++;
     },
-    registerService(_spec: unknown) {
-      // no-op: only called on first registration
+    registerService(spec: { id: string; start: () => Promise<void>; stop: () => Promise<void> }) {
+      registeredServiceIds.push(spec.id);
+      // Capture start/stop for later invocation in tests
+      api._registeredStart = spec.start;
+      api._registeredStop = spec.stop;
     },
-    on(_event: string, _handler: unknown) {
-      registeredHooks.push(typeof _event === "string" ? _event : "unknown");
-    },
-    registerHook(_events: unknown, _handler: unknown, _opts?: unknown) {
-      // legacy heartbeat path — no-op
-    },
+    on(_event: string, _handler: unknown) {},
+    registerHook(_events: unknown, _handler: unknown, _opts?: unknown) {},
     runtime: { version: "0.0.0" },
+    // Captured from registerService for test invocation
+    _registeredStart: null as (() => Promise<void>) | null,
+    _registeredStop: null as (() => Promise<void>) | null,
   };
 
   return {
     api,
     getToolNames: () => [...registeredToolNames],
     getCliCount: () => registeredCliCount,
-    getHookNames: () => [...registeredHooks],
+    getServiceIds: () => [...registeredServiceIds],
   };
 }
 
-test("register() registers tools on every api object, not just the first one", async () => {
-  // Clean up globalThis state from any prior test runs so this test is isolated.
-  const GUARD_KEY = "__openclawEngramRegistered";
-  const HOOK_APIS_KEY = "__openclawEngramHookApis";
-  const ORCH_KEY = "__openclawEngramOrchestrator";
-  const ACCESS_SVC_KEY = "__openclawEngramAccessService";
-  const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
-
-  const savedGuard = (globalThis as any)[GUARD_KEY];
-  const savedHookApis = (globalThis as any)[HOOK_APIS_KEY];
-  const savedOrch = (globalThis as any)[ORCH_KEY];
-  const savedAccessSvc = (globalThis as any)[ACCESS_SVC_KEY];
-  const savedAccessHttp = (globalThis as any)[ACCESS_HTTP_KEY];
-
-  // Reset all state so we get a clean first registration
+function saveAndResetGlobals() {
+  const saved = {
+    guard: (globalThis as any)[GUARD_KEY],
+    hookApis: (globalThis as any)[HOOK_APIS_KEY],
+    orch: (globalThis as any)[ORCH_KEY],
+    accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
+    accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
+    serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
+    initPromise: (globalThis as any)[INIT_PROMISE_KEY],
+  };
   delete (globalThis as any)[GUARD_KEY];
   delete (globalThis as any)[HOOK_APIS_KEY];
   delete (globalThis as any)[ORCH_KEY];
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
+  delete (globalThis as any)[SERVICE_STARTED_KEY];
+  delete (globalThis as any)[INIT_PROMISE_KEY];
+  return saved;
+}
 
+function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
+  if (saved.guard !== undefined) (globalThis as any)[GUARD_KEY] = saved.guard;
+  else delete (globalThis as any)[GUARD_KEY];
+
+  if (saved.hookApis !== undefined) (globalThis as any)[HOOK_APIS_KEY] = saved.hookApis;
+  else delete (globalThis as any)[HOOK_APIS_KEY];
+
+  if (saved.orch !== undefined) (globalThis as any)[ORCH_KEY] = saved.orch;
+  else delete (globalThis as any)[ORCH_KEY];
+
+  if (saved.accessSvc !== undefined) (globalThis as any)[ACCESS_SVC_KEY] = saved.accessSvc;
+  else delete (globalThis as any)[ACCESS_SVC_KEY];
+
+  if (saved.accessHttp !== undefined) (globalThis as any)[ACCESS_HTTP_KEY] = saved.accessHttp;
+  else delete (globalThis as any)[ACCESS_HTTP_KEY];
+
+  if (saved.serviceStarted !== undefined) (globalThis as any)[SERVICE_STARTED_KEY] = saved.serviceStarted;
+  else delete (globalThis as any)[SERVICE_STARTED_KEY];
+
+  if (saved.initPromise !== undefined) (globalThis as any)[INIT_PROMISE_KEY] = saved.initPromise;
+  else delete (globalThis as any)[INIT_PROMISE_KEY];
+}
+
+// ============================================================================
+// Scenario A: same-process, multiple api instances (multiple gateway registries)
+// ============================================================================
+
+test("register() registers tools on every api object, not just the first one", async () => {
+  const saved = saveAndResetGlobals();
   try {
-    // Dynamically import so we pick up any module-level state freshly.
     const { default: plugin } = await import("../src/index.js");
 
     const first = buildApi("first-registry");
     const second = buildApi("second-registry");
 
-    // Simulate two separate plugin registries calling register() sequentially,
-    // as the gateway does when different cache keys produce different registries.
     plugin.register(first.api as any);
     plugin.register(second.api as any);
 
     const firstTools = first.getToolNames();
     const secondTools = second.getToolNames();
 
-    // Both registries must have at least one tool registered.
-    assert.ok(
-      firstTools.length > 0,
-      `first registry should have tools registered, got ${firstTools.length}`,
-    );
-    assert.ok(
-      secondTools.length > 0,
-      `second registry should have tools registered (was 0 before fix), got ${secondTools.length}`,
-    );
-
-    // Both registries should have the same tool set (same orchestrator, different api).
-    assert.deepEqual(
-      firstTools,
-      secondTools,
-      "both registries should receive identical tool registrations",
-    );
-
-    // memory_summarize_hourly is the specific tool cited in issue #282.
-    assert.ok(
-      firstTools.includes("memory_summarize_hourly"),
-      "first registry must include memory_summarize_hourly",
-    );
-    assert.ok(
-      secondTools.includes("memory_summarize_hourly"),
-      "second registry must include memory_summarize_hourly (regression: was missing before fix)",
-    );
+    assert.ok(firstTools.length > 0, `first registry should have tools, got ${firstTools.length}`);
+    assert.ok(secondTools.length > 0, `second registry should have tools (was 0 before #283 fix), got ${secondTools.length}`);
+    assert.deepEqual(firstTools, secondTools, "both registries should receive identical tool registrations");
+    assert.ok(firstTools.includes("memory_summarize_hourly"), "first registry must include memory_summarize_hourly");
+    assert.ok(secondTools.includes("memory_summarize_hourly"), "second registry must include memory_summarize_hourly (regression: was missing before #283)");
   } finally {
-    // Restore globalThis to avoid polluting other tests.
-    if (savedGuard !== undefined) (globalThis as any)[GUARD_KEY] = savedGuard;
-    else delete (globalThis as any)[GUARD_KEY];
-
-    if (savedHookApis !== undefined) (globalThis as any)[HOOK_APIS_KEY] = savedHookApis;
-    else delete (globalThis as any)[HOOK_APIS_KEY];
-
-    if (savedOrch !== undefined) (globalThis as any)[ORCH_KEY] = savedOrch;
-    else delete (globalThis as any)[ORCH_KEY];
-
-    if (savedAccessSvc !== undefined) (globalThis as any)[ACCESS_SVC_KEY] = savedAccessSvc;
-    else delete (globalThis as any)[ACCESS_SVC_KEY];
-
-    if (savedAccessHttp !== undefined) (globalThis as any)[ACCESS_HTTP_KEY] = savedAccessHttp;
-    else delete (globalThis as any)[ACCESS_HTTP_KEY];
+    restoreGlobals(saved);
   }
 });
 
-test("register() registers CLI only on the first api object (central registry — must not duplicate)", async () => {
-  // CLI commands live in the central plugin registry, not per-registry api state.
-  // Registering CLI on every api object would create duplicate engram command trees.
-  // Verify that only the first registration gets CLI, while the second does not.
-  const GUARD_KEY = "__openclawEngramRegistered";
-  const HOOK_APIS_KEY = "__openclawEngramHookApis";
-  const ORCH_KEY = "__openclawEngramOrchestrator";
-  const ACCESS_SVC_KEY = "__openclawEngramAccessService";
-  const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
-
-  const savedGuard = (globalThis as any)[GUARD_KEY];
-  const savedHookApis = (globalThis as any)[HOOK_APIS_KEY];
-  const savedOrch = (globalThis as any)[ORCH_KEY];
-  const savedAccessSvc = (globalThis as any)[ACCESS_SVC_KEY];
-  const savedAccessHttp = (globalThis as any)[ACCESS_HTTP_KEY];
-
-  delete (globalThis as any)[GUARD_KEY];
-  delete (globalThis as any)[HOOK_APIS_KEY];
-  delete (globalThis as any)[ORCH_KEY];
-  delete (globalThis as any)[ACCESS_SVC_KEY];
-  delete (globalThis as any)[ACCESS_HTTP_KEY];
-
+test("register() registers CLI only on the first api object (must not duplicate central registry)", async () => {
+  const saved = saveAndResetGlobals();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -169,29 +176,299 @@ test("register() registers CLI only on the first api object (central registry �
     plugin.register(first.api as any);
     plugin.register(second.api as any);
 
-    assert.ok(
-      first.getCliCount() > 0,
-      "first registry should have CLI registered",
+    assert.ok(first.getCliCount() > 0, "first registry should have CLI registered");
+    assert.equal(second.getCliCount(), 0, "second registry must NOT have CLI (would create duplicate command trees)");
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("register() calls registerService on every api object, not just the first one (regression: issue #285)", async () => {
+  // Before the fix, registerService was inside `if (isFirstRegistration)`.
+  // The second registry received hooks and tools but no service registration.
+  // When the gateway's startPluginServices() ran against the second registry,
+  // it found no service → start() never fired → orchestrator never initialized.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildApi("first-service");
+    const second = buildApi("second-service");
+    const third = buildApi("third-service");
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+    plugin.register(third.api as any);
+
+    assert.deepEqual(
+      first.getServiceIds(),
+      ["openclaw-engram"],
+      "first registry must have service registered",
     );
-    assert.equal(
-      second.getCliCount(),
-      0,
-      "second registry must NOT have CLI registered (would create duplicate central command trees)",
+    assert.deepEqual(
+      second.getServiceIds(),
+      ["openclaw-engram"],
+      "second registry must have service registered (was missing before #285 fix)",
+    );
+    assert.deepEqual(
+      third.getServiceIds(),
+      ["openclaw-engram"],
+      "third registry must have service registered (simulates 3-4 loads per restart)",
     );
   } finally {
-    if (savedGuard !== undefined) (globalThis as any)[GUARD_KEY] = savedGuard;
-    else delete (globalThis as any)[GUARD_KEY];
-
-    if (savedHookApis !== undefined) (globalThis as any)[HOOK_APIS_KEY] = savedHookApis;
-    else delete (globalThis as any)[HOOK_APIS_KEY];
-
-    if (savedOrch !== undefined) (globalThis as any)[ORCH_KEY] = savedOrch;
-    else delete (globalThis as any)[ORCH_KEY];
-
-    if (savedAccessSvc !== undefined) (globalThis as any)[ACCESS_SVC_KEY] = savedAccessSvc;
-    else delete (globalThis as any)[ACCESS_SVC_KEY];
-
-    if (savedAccessHttp !== undefined) (globalThis as any)[ACCESS_HTTP_KEY] = savedAccessHttp;
-    else delete (globalThis as any)[ACCESS_HTTP_KEY];
+    restoreGlobals(saved);
   }
+});
+
+test("service.start() runs initialize exactly once even when called from multiple registries", async () => {
+  // The ENGRAM_SERVICE_STARTED guard inside start() prevents double-init.
+  // Without it, multiple registries each calling start() would run
+  // orchestrator.initialize() multiple times → double I/O, double cron, etc.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildApi("first-start");
+    const second = buildApi("second-start");
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+
+    // Both registered a service — now simulate startPluginServices() calling
+    // start() on both (as the gateway would if it iterated all registries).
+
+    // Before calling start(), the flag should be unset.
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      undefined,
+      "ENGRAM_SERVICE_STARTED should not be set before any start() call",
+    );
+
+    // Call start() from first registry. orchestrator.initialize() only does file
+    // I/O (no OpenAI calls), so start() succeeds and sets the flag to true.
+    await first.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "ENGRAM_SERVICE_STARTED should be set after first start() call",
+    );
+
+    // Call start() from second registry — must be a no-op due to the guard.
+    // We verify this by checking the flag was already true before entry.
+    const flagBeforeSecond = (globalThis as any)[SERVICE_STARTED_KEY];
+    // Second registry's start() hits the guard and returns early — no error.
+    await second.api._registeredStart?.();
+
+    assert.equal(
+      flagBeforeSecond,
+      true,
+      "ENGRAM_SERVICE_STARTED was already true — second start() should have been a no-op",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("concurrent start() calls await the in-flight init promise (regression: issue P1 thread)", async () => {
+  // If the gateway triggers startPluginServices() without awaiting each registry
+  // in sequence, multiple start() calls overlap. The second call must not resolve
+  // before the first registry's orchestrator.initialize() completes — otherwise
+  // the gateway treats secondary registries as ready while shared state is still
+  // being initialized, allowing hooks to route turns through an uninitialized
+  // orchestrator.
+  //
+  // The fix: start() stores the init Promise in ENGRAM_INIT_PROMISE; concurrent
+  // calls await that promise rather than returning as soon as the boolean is set.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildApi("concurrent-first");
+    const second = buildApi("concurrent-second");
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+
+    // Launch both start() calls concurrently (no await between them).
+    const [r1, r2] = await Promise.allSettled([
+      first.api._registeredStart?.() ?? Promise.resolve(),
+      second.api._registeredStart?.() ?? Promise.resolve(),
+    ]);
+
+    // Neither call should reject.
+    assert.equal(r1.status, "fulfilled", `first start() rejected: ${(r1 as any).reason}`);
+    assert.equal(r2.status, "fulfilled", `second start() rejected: ${(r2 as any).reason}`);
+
+    // After both settle, SERVICE_STARTED must be true and INIT_PROMISE cleared.
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "ENGRAM_SERVICE_STARTED must be set after concurrent start() calls settle",
+    );
+    assert.equal(
+      (globalThis as any)[INIT_PROMISE_KEY],
+      null,
+      "ENGRAM_INIT_PROMISE must be null after init completes",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("service.stop() clears ENGRAM_SERVICE_STARTED so restart cycles reinitialize", async () => {
+  // If stop() doesn't clear the flag, a stop → start cycle would be a no-op
+  // and the orchestrator would never reinitialize after a gateway restart.
+  // orchestrator.initialize() defers API calls lazily, so start() succeeds here
+  // and isOwningRegistry is set to true — verifying the owning-registry stop path.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+    const stub = buildApi("stop-restart");
+
+    plugin.register(stub.api as any);
+
+    // start() succeeds (orchestrator.initialize() is file I/O only, no API calls).
+    await stub.api._registeredStart?.();
+    assert.equal((globalThis as any)[SERVICE_STARTED_KEY], true, "flag should be set after start");
+
+    // The owning registry's stop() must clear it.
+    try { await stub.api._registeredStop?.(); } catch { /* ok */ }
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      false,
+      "ENGRAM_SERVICE_STARTED must be cleared by stop() so the next start() reinitializes",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while primary is running", async () => {
+  // Regression guard for issue #285 follow-up: all registries now get a stop()
+  // registered. If any stop() call clears the shared flag, a per-registry teardown
+  // (e.g. cron vs. reply context hot-reload) would let a later registry re-run
+  // initialize() while the primary is still alive → double I/O, double cron.
+  //
+  // stop() guards on didCountStart: only the registry whose start() successfully ran
+  // initialize() performs teardown. Secondary registries (start() returned early on
+  // ENGRAM_SERVICE_STARTED) have didCountStart=false and return immediately.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildApi("primary-running");
+    const second = buildApi("secondary-teardown");
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+
+    // Primary starts successfully. didCountStart[first]=true.
+    await first.api._registeredStart?.();
+
+    // Secondary registry's start() hits the ENGRAM_SERVICE_STARTED guard — no-op.
+    // didCountStart[second] stays false.
+    await second.api._registeredStart?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "flag should still be true after secondary start() no-op",
+    );
+
+    // Secondary stop(): didCountStart[second]=false → early return. Flag stays true.
+    await second.api._registeredStop?.();
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (didCountStart=false → early return)",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+// ============================================================================
+// Scenario B: cross-process boundary
+// ============================================================================
+
+test("Scenario B: fresh process registers and starts service independently (process isolation)", () => {
+  // Simulates: openclaw-node companion process loads the plugin first, setting
+  // ENGRAM_REGISTERED_GUARD in its own globalThis. A separate gateway process
+  // (own globalThis) must still register and start the service independently.
+  //
+  // Each OS process has its own globalThis — ENGRAM_REGISTERED_GUARD from a
+  // companion process cannot bleed into the gateway process. This test documents
+  // and verifies that process isolation guarantee.
+  //
+  // We spawn tsx (not bare node) so TypeScript source imports resolve correctly,
+  // matching the actual runtime environment.
+
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const tsxBin = join(__dirname, "../node_modules/.bin/tsx");
+  const indexPath = join(__dirname, "../src/index.ts");
+
+  // Inline script passed via --eval / stdin using tsx
+  const script = `
+import { default as plugin } from ${JSON.stringify(indexPath)};
+
+const GUARD_KEY = "__openclawEngramRegistered";
+const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
+
+// A fresh process must always start with a clean globalThis.
+if (globalThis[GUARD_KEY] !== undefined) {
+  process.stderr.write("FAIL: GUARD_KEY was set in fresh process\\n");
+  process.exit(1);
+}
+if (globalThis[SERVICE_STARTED_KEY] !== undefined) {
+  process.stderr.write("FAIL: SERVICE_STARTED_KEY was set in fresh process\\n");
+  process.exit(1);
+}
+
+const serviceIds = [];
+const api = {
+  logger: { debug() {}, info() {}, warn() {}, error() {} },
+  pluginConfig: {},
+  config: {},
+  registerTool() {},
+  registerCli() {},
+  registerService(spec) { serviceIds.push(spec.id); },
+  on() {},
+  registerHook() {},
+  runtime: { version: "0.0.0" },
+};
+
+plugin.register(api);
+
+if (!serviceIds.includes("openclaw-engram")) {
+  process.stderr.write("FAIL: service not registered. ids=" + JSON.stringify(serviceIds) + "\\n");
+  process.exit(1);
+}
+if (globalThis[GUARD_KEY] !== true) {
+  process.stderr.write("FAIL: GUARD_KEY should be true after registration\\n");
+  process.exit(1);
+}
+
+process.stdout.write("PASS\\n");
+`;
+
+  const result = spawnSync(tsxBin, ["--input-type=module"], {
+    input: script,
+    encoding: "utf8",
+    timeout: 20_000,
+    cwd: join(__dirname, ".."),
+  });
+
+  if (result.error) throw result.error;
+
+  assert.equal(
+    result.status,
+    0,
+    `Cross-process registration test failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+  );
+  assert.ok(
+    result.stdout.includes("PASS"),
+    `Expected PASS in stdout:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+  );
 });

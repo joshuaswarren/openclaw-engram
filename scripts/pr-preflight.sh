@@ -15,6 +15,9 @@ run npm run check-types
 run npm run check-config-contract
 
 if [[ "$MODE" == "quick" ]]; then
+  # Registration contract tests catch silent lifecycle breakage (issues #282, #285).
+  # Run first — registration regressions are caught before slower tests.
+  run npm test -- tests/register-multi-registry.test.ts
   run npm test -- tests/intent.test.ts
   run npm test -- tests/runtime-input-guards.test.ts
   run npm test -- tests/artifact-recall-limit.test.ts

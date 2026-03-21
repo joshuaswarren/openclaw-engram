@@ -32,6 +32,20 @@ const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
 const ENGRAM_ACCESS_SERVICE = "__openclawEngramAccessService";
 const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
+/**
+ * Guards service.start() against duplicate invocation when multiple api instances
+ * each register the service (all registries get registerService, but initialize
+ * must only run once per process lifetime). Cleared by stop() so restart cycles
+ * re-initialize correctly.
+ */
+const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
+/**
+ * Holds the in-flight initialization Promise while the first registry's start()
+ * is running. Concurrent start() calls from other registries await this promise
+ * so they do not resolve before the orchestrator and HTTP server are fully ready.
+ * Set to null after init completes (success or failure) and cleared on stop().
+ */
+const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 
 type LegacyHeartbeatHookEvent = {
   context?: Record<string, unknown>;
@@ -735,50 +749,149 @@ export default {
     }
 
     // ========================================================================
-    // Register service
+    // Register service (every registration)
     // ========================================================================
-    // Holds the active Opik exporter so stop() can unsubscribe it.
+    // registerService must be called on every api instance, not just the first.
+    // Each gateway registry has its own api object; startPluginServices() iterates
+    // the registry it owns — if that registry has no service registered, start()
+    // never fires and the orchestrator never initializes (issue #285).
+    //
+    // Duplicate start() calls are safe: the ENGRAM_SERVICE_STARTED guard inside
+    // start() makes initialize() idempotent within a process lifetime. stop()
+    // clears the flag so restart cycles reinitialize correctly.
     let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
-    if (isFirstRegistration) api.registerService({
+    // Whether this specific registry's start() claimed a slot in ACTIVE_REGISTRIES.
+    // Ensures stop() only decrements the count for registries whose start() ran
+    // (not secondary registries whose start() was a no-op, nor registries whose
+    // start() threw before successfully initializing).
+    let didCountStart = false;
+    api.registerService({
       id: "openclaw-engram",
       start: async () => {
-        log.info("initializing engram memory system...");
-        await orchestrator.initialize();
-
-        // Initialize Opik exporter if configured
-        activeOpikExporter = createOpikExporter({}, log);
-        if (activeOpikExporter) activeOpikExporter.subscribe();
-
-        // Cleanup old transcripts
-        if (orchestrator.config.transcriptEnabled) {
-          await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
+        // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
+        // is set to true synchronously before ENGRAM_INIT_PROMISE is assigned, so
+        // checking started first would let concurrent callers return before init
+        // completes. By checking the promise first, concurrent start() calls await
+        // the in-flight init rather than resolving immediately while the orchestrator
+        // and HTTP server are still initializing.
+        if ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
+          await (globalThis as any)[ENGRAM_INIT_PROMISE];
+          // Re-check after awaiting: the primary's start() may have been aborted by
+          // a concurrent stop() (via the !didCountStart early return), leaving
+          // ENGRAM_SERVICE_STARTED=false even though the promise resolved successfully.
+          // In that case, fall through so this registry can become the new primary.
+          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
         }
-
-        // Cron integration guard:
-        // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
-        // - Only auto-register when explicitly enabled by config.
-        if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
-          await ensureHourlySummaryCron(api);
-        } else if (orchestrator.config.hourlySummariesEnabled) {
-          log.info(
-            "hourly summaries enabled; cron auto-register is disabled. " +
-            "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
-          );
+        // No in-flight init — check if already fully initialized.
+        if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+          log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
+          return;
         }
-
-        if (cfg.agentAccessHttp.enabled) {
+        // We are the first — claim ownership and drive initialization.
+        didCountStart = true;
+        // IMPORTANT: Do NOT put a `finally` inside the IIFE to clear ENGRAM_INIT_PROMISE.
+        // If anything in the try block throws synchronously (before the first `await`),
+        // the IIFE's finally would run before the outer assignment, and the outer line
+        // `ENGRAM_INIT_PROMISE = initPromise` would then overwrite null with a stale
+        // rejected promise — permanently blocking future start() calls. Instead, clear
+        // ENGRAM_INIT_PROMISE in the outer try-finally below after `await initPromise`.
+        const initPromise = (async () => {
           try {
-            const status = await accessHttpServer.start();
-            log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
-          } catch (err) {
-            log.error("failed to start engram access HTTP server", err);
-          }
-        }
+            log.info("initializing engram memory system...");
+            await orchestrator.initialize();
 
-        log.info("engram memory system ready");
+            // If stop() was called while orchestrator.initialize() was in progress,
+            // it already cleared didCountStart and ENGRAM_SERVICE_STARTED. Abort
+            // further setup to avoid scribbling over the cleared globals.
+            if (!didCountStart) return;
+
+            // Initialize Opik exporter if configured
+            activeOpikExporter = createOpikExporter({}, log);
+            if (activeOpikExporter) activeOpikExporter.subscribe();
+
+            // Cleanup old transcripts
+            if (orchestrator.config.transcriptEnabled) {
+              await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
+              // Abort if stop() was called during transcript cleanup.
+              if (!didCountStart) return;
+            }
+
+            // Cron integration guard:
+            // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
+            // - Only auto-register when explicitly enabled by config.
+            if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
+              await ensureHourlySummaryCron(api);
+              // Abort if stop() was called during cron registration.
+              if (!didCountStart) return;
+            } else if (orchestrator.config.hourlySummariesEnabled) {
+              log.info(
+                "hourly summaries enabled; cron auto-register is disabled. " +
+                "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
+              );
+            }
+
+            if (cfg.agentAccessHttp.enabled) {
+              // Abort if stop() was called before starting the HTTP server.
+              if (!didCountStart) return;
+              try {
+                const status = await accessHttpServer.start();
+                log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
+              } catch (err) {
+                log.error("failed to start engram access HTTP server", err);
+              }
+            }
+
+            // Final abort check before marking service as ready.
+            if (!didCountStart) return;
+            log.info("engram memory system ready");
+          } catch (err) {
+            // Unsubscribe Opik exporter if it was subscribed before the failure so
+            // a retry from another registry doesn't accumulate multiple subscribers.
+            try { activeOpikExporter?.unsubscribe(); } catch {}
+            activeOpikExporter = null;
+            // Roll back ownership so the next registry's start() can retry.
+            didCountStart = false;
+            (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+            throw err;
+          }
+          // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
+          // by the outer try-finally after `await initPromise` below.
+        })();
+        // Set ENGRAM_INIT_PROMISE BEFORE ENGRAM_SERVICE_STARTED to eliminate the
+        // window where a concurrent start() sees SERVICE_STARTED=true but
+        // INIT_PROMISE=null and fast-returns before init completes. Any concurrent
+        // caller running after this line will find INIT_PROMISE and await it.
+        (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
+        // Set SERVICE_STARTED only after INIT_PROMISE is visible so the early-return
+        // fast path (the SERVICE_STARTED check above) is never reachable while an
+        // init is in-flight.
+        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+        try {
+          await initPromise;
+        } finally {
+          // Clear the in-flight promise after init settles (success or failure).
+          // Placing this here (not inside the IIFE) avoids the ordering hazard where
+          // a pre-await throw inside the IIFE would let the outer assignment overwrite
+          // null with the rejected promise.
+          (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
+        }
       },
       stop: async () => {
-        activeOpikExporter?.unsubscribe();
+        // Only the registry whose start() successfully ran initialize() does teardown.
+        // Secondary registries (start() returned early on ENGRAM_SERVICE_STARTED) and
+        // failed registries (start() rolled back in catch) have didCountStart=false
+        // and skip all cleanup — including Opik — to avoid detaching a live exporter.
+        if (!didCountStart) return;
+        didCountStart = false;
+        // Opik cleanup: placed after the guard so secondary stop()s never detach
+        // the process-wide exporter while Engram is still running.
+        // Wrapped in try-catch (like accessHttpServer.stop()) so a throwing
+        // unsubscribe does not leave ENGRAM_SERVICE_STARTED=true and prevent restart.
+        try {
+          activeOpikExporter?.unsubscribe();
+        } catch (err) {
+          log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+        }
         activeOpikExporter = null;
         try {
           await accessHttpServer.stop();
@@ -791,6 +904,15 @@ export default {
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+        // Allow service.start() to reinitialize after a stop/restart cycle.
+        (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+        // Do NOT clear ENGRAM_INIT_PROMISE here. If stop() is called while init is
+        // still in-flight (start() suspended at an await), clearing the promise here
+        // would let a new registry enter start() before the original initializer settles
+        // and call orchestrator.initialize() a second time on the same singleton.
+        // The outer try-finally in start() already clears ENGRAM_INIT_PROMISE when
+        // initPromise settles, so no cleanup is needed here — in the normal (post-init)
+        // case it is already null, and in the in-flight case it must stay set.
         log.info("stopped");
       },
     });
