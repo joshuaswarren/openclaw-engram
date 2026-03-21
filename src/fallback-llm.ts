@@ -254,7 +254,10 @@ export class FallbackLlmClient {
     options: FallbackLlmOptions,
     assumeOpenAI: boolean,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
-    const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
+    const base = config.baseUrl.replace(/\/$/, "");
+    const url = base.endsWith("/v1")
+      ? `${base}/chat/completions`
+      : `${base}/v1/chat/completions`;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

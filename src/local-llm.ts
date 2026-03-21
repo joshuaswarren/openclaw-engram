@@ -729,7 +729,9 @@ export class LocalLlmClient {
       const baseUrl = this.config.localLlmUrl
         .replace("localhost", "127.0.0.1")
         .replace(/\/+$/, "");
-      const chatUrl = `${baseUrl}/chat/completions`;
+      const chatUrl = baseUrl.endsWith("/v1")
+        ? `${baseUrl}/chat/completions`
+        : `${baseUrl}/v1/chat/completions`;
 
       const requestBodyJson = JSON.stringify(requestBody);
       log.debug(
