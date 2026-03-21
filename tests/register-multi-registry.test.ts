@@ -11,7 +11,7 @@
  * | registerLcmTools    | every registry  | Same as above                               |
  * | registerCli         | first only      | Central registry; duplicates = broken CLI   |
  * | registerService     | every registry  | startPluginServices() iterates own registry |
- * | service.start() run | once per process| Idempotency via ENGRAM_SERVICE_STARTED flag |
+ * | service.start() run | once per process| Idempotency via ENGRAM_SERVICE_STARTED flag; concurrent calls await ENGRAM_INIT_PROMISE |
  * | service.stop() teardown | owner only  | didCountStart guard: only initializing registry tears down |
  *
  * ## Regression history
@@ -45,6 +45,7 @@ const ORCH_KEY = "__openclawEngramOrchestrator";
 const ACCESS_SVC_KEY = "__openclawEngramAccessService";
 const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
 const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
+const INIT_PROMISE_KEY = "__openclawEngramInitPromise";
 
 // ============================================================================
 // Helpers
@@ -105,6 +106,7 @@ function saveAndResetGlobals() {
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
+    initPromise: (globalThis as any)[INIT_PROMISE_KEY],
   };
   delete (globalThis as any)[GUARD_KEY];
   delete (globalThis as any)[HOOK_APIS_KEY];
@@ -112,6 +114,7 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
+  delete (globalThis as any)[INIT_PROMISE_KEY];
   return saved;
 }
 
@@ -133,6 +136,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.serviceStarted !== undefined) (globalThis as any)[SERVICE_STARTED_KEY] = saved.serviceStarted;
   else delete (globalThis as any)[SERVICE_STARTED_KEY];
+
+  if (saved.initPromise !== undefined) (globalThis as any)[INIT_PROMISE_KEY] = saved.initPromise;
+  else delete (globalThis as any)[INIT_PROMISE_KEY];
 }
 
 // ============================================================================
@@ -262,6 +268,52 @@ test("service.start() runs initialize exactly once even when called from multipl
       flagBeforeSecond,
       true,
       "ENGRAM_SERVICE_STARTED was already true — second start() should have been a no-op",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("concurrent start() calls await the in-flight init promise (regression: issue P1 thread)", async () => {
+  // If the gateway triggers startPluginServices() without awaiting each registry
+  // in sequence, multiple start() calls overlap. The second call must not resolve
+  // before the first registry's orchestrator.initialize() completes — otherwise
+  // the gateway treats secondary registries as ready while shared state is still
+  // being initialized, allowing hooks to route turns through an uninitialized
+  // orchestrator.
+  //
+  // The fix: start() stores the init Promise in ENGRAM_INIT_PROMISE; concurrent
+  // calls await that promise rather than returning as soon as the boolean is set.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildApi("concurrent-first");
+    const second = buildApi("concurrent-second");
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+
+    // Launch both start() calls concurrently (no await between them).
+    const [r1, r2] = await Promise.allSettled([
+      first.api._registeredStart?.() ?? Promise.resolve(),
+      second.api._registeredStart?.() ?? Promise.resolve(),
+    ]);
+
+    // Neither call should reject.
+    assert.equal(r1.status, "fulfilled", `first start() rejected: ${(r1 as any).reason}`);
+    assert.equal(r2.status, "fulfilled", `second start() rejected: ${(r2 as any).reason}`);
+
+    // After both settle, SERVICE_STARTED must be true and INIT_PROMISE cleared.
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "ENGRAM_SERVICE_STARTED must be set after concurrent start() calls settle",
+    );
+    assert.equal(
+      (globalThis as any)[INIT_PROMISE_KEY],
+      null,
+      "ENGRAM_INIT_PROMISE must be null after init completes",
     );
   } finally {
     restoreGlobals(saved);

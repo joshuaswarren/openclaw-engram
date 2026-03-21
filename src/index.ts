@@ -39,6 +39,13 @@ const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
  * re-initialize correctly.
  */
 const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
+/**
+ * Holds the in-flight initialization Promise while the first registry's start()
+ * is running. Concurrent start() calls from other registries await this promise
+ * so they do not resolve before the orchestrator and HTTP server are fully ready.
+ * Set to null after init completes (success or failure) and cleared on stop().
+ */
+const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 
 type LegacyHeartbeatHookEvent = {
   context?: Record<string, unknown>;
@@ -765,53 +772,69 @@ export default {
           log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
           return;
         }
-        // Mark this registry as the one that owns the initialized state.
-        // Cleared in catch if init fails so another registry can retry.
-        didCountStart = true;
-        // Set flag before init so concurrent start() calls are deduplicated; clear on failure
-        // so the next start() attempt (e.g. from another registry) can retry.
-        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
-        try {
-          log.info("initializing engram memory system...");
-          await orchestrator.initialize();
-
-          // Initialize Opik exporter if configured
-          activeOpikExporter = createOpikExporter({}, log);
-          if (activeOpikExporter) activeOpikExporter.subscribe();
-
-          // Cleanup old transcripts
-          if (orchestrator.config.transcriptEnabled) {
-            await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
-          }
-
-          // Cron integration guard:
-          // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
-          // - Only auto-register when explicitly enabled by config.
-          if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
-            await ensureHourlySummaryCron(api);
-          } else if (orchestrator.config.hourlySummariesEnabled) {
-            log.info(
-              "hourly summaries enabled; cron auto-register is disabled. " +
-              "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
-            );
-          }
-
-          if (cfg.agentAccessHttp.enabled) {
-            try {
-              const status = await accessHttpServer.start();
-              log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
-            } catch (err) {
-              log.error("failed to start engram access HTTP server", err);
-            }
-          }
-
-          log.info("engram memory system ready");
-        } catch (err) {
-          // Roll back so the next registry's start() can retry.
-          didCountStart = false;
-          (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
-          throw err;
+        // If another registry's start() is currently initializing, await that
+        // in-flight promise so this call does not resolve before the orchestrator
+        // and HTTP server are fully ready. Concurrent start() calls are only
+        // possible when the gateway triggers startPluginServices() without awaiting
+        // each registry in sequence.
+        if ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
+          await (globalThis as any)[ENGRAM_INIT_PROMISE];
+          return;
         }
+        // We are the first — claim ownership and drive initialization.
+        didCountStart = true;
+        // Set flag before init so additional concurrent start() calls see it and
+        // await the promise above rather than racing to start a second init.
+        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+        const initPromise = (async () => {
+          try {
+            log.info("initializing engram memory system...");
+            await orchestrator.initialize();
+
+            // Initialize Opik exporter if configured
+            activeOpikExporter = createOpikExporter({}, log);
+            if (activeOpikExporter) activeOpikExporter.subscribe();
+
+            // Cleanup old transcripts
+            if (orchestrator.config.transcriptEnabled) {
+              await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
+            }
+
+            // Cron integration guard:
+            // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
+            // - Only auto-register when explicitly enabled by config.
+            if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
+              await ensureHourlySummaryCron(api);
+            } else if (orchestrator.config.hourlySummariesEnabled) {
+              log.info(
+                "hourly summaries enabled; cron auto-register is disabled. " +
+                "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
+              );
+            }
+
+            if (cfg.agentAccessHttp.enabled) {
+              try {
+                const status = await accessHttpServer.start();
+                log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
+              } catch (err) {
+                log.error("failed to start engram access HTTP server", err);
+              }
+            }
+
+            log.info("engram memory system ready");
+          } catch (err) {
+            // Roll back so the next registry's start() can retry.
+            didCountStart = false;
+            (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+            throw err;
+          } finally {
+            // Always clear the in-flight promise when done (success or failure)
+            // so future start() calls hit the ENGRAM_SERVICE_STARTED fast path.
+            (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
+          }
+        })();
+        (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
+        await initPromise;
       },
       stop: async () => {
         // Only the registry whose start() successfully ran initialize() does teardown.
@@ -837,6 +860,8 @@ export default {
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
         // Allow service.start() to reinitialize after a stop/restart cycle.
         (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+        // Clear any stale in-flight init promise so restart begins cleanly.
+        (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
         log.info("stopped");
       },
     });
