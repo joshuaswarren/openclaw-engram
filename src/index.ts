@@ -954,44 +954,47 @@ export default {
         //
         // Full stop (ENGRAM_INIT_PROMISE is null): clear immediately.
         //
-        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null): defer the decision.
-        // A secondary registry may be waiting on the in-flight promise and will
-        // take over as the new primary once the current init aborts.  We must not
-        // clear the guard synchronously here because a takeover secondary was
-        // registered while GUARD=true (it did not call registerCli()) and a
-        // subsequent register() clearing GUARD=false would see isFirstRegistration=true
-        // and re-register CLI commands — duplicating the central engram command tree.
-        // Instead, attach a deferred check: after the in-flight init settles, if no
-        // service was started and no new init is in-flight (i.e. no takeover), clear
-        // the guard so a fresh register() call can restore CLI commands.
-        // queueMicrotask inside the callback ensures any takeover secondary that
-        // registers its own INIT_PROMISE in the same microtask flush runs before
-        // we evaluate the condition, regardless of .then() registration order.
+        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null): await the in-flight
+        // promise so that callers who do `await stop(); register(freshApi)` observe
+        // a fully settled GUARD state when register() is called. One queueMicrotask
+        // tick after the await lets any secondary whose .then() on the in-flight
+        // promise was registered *after* stop() registered its own handler (a
+        // "late-joining" start() call) run first and set INIT_PROMISE before we
+        // evaluate the no-takeover condition.
         const currentInitPromise = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
         if (!currentInitPromise) {
           (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         } else {
-          // Recursively watch the entire takeover chain. When a secondary
-          // registry becomes the new primary it sets its own INIT_PROMISE. If
-          // that secondary's init also fails, this callback re-attaches to the
-          // next INIT_PROMISE so that once the whole chain settles (no service
-          // started, no new init in-flight), the guard is cleared.
-          //
-          // No queueMicrotask here: any secondary waiting on currentInitPromise
-          // registers its .then() *before* this callback does (registration order
-          // mirrors call order). So it runs first and sets INIT_PROMISE
-          // synchronously. By the time this callback executes, INIT_PROMISE
-          // already reflects the takeover state — no extra microtask tick needed.
-          const clearGuardIfNoTakeover = () => {
-            const nextInit = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
-            if (nextInit) {
-              // A new takeover has started — watch it too.
-              void nextInit.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
-            } else if (!(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-              (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
-            }
-          };
-          void currentInitPromise.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
+          // Await the in-flight init (didCountStart=false signals it to abort at
+          // its next checkpoint). Ignore errors — we only care about settlement.
+          try { await currentInitPromise; } catch {}
+          // One queueMicrotask tick: any secondary whose .then() on
+          // currentInitPromise runs after stop()'s `await` continuation will
+          // execute here and synchronously set its own INIT_PROMISE.
+          await new Promise<void>((resolve) => queueMicrotask(resolve));
+          const nextInit = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+          if (!nextInit && !(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+            // No takeover and no service running — clear the guard.
+            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+          } else if (nextInit) {
+            // A secondary is taking over. Attach a recursive watcher to clear
+            // GUARD after the entire takeover chain settles with no running
+            // service. Uses queueMicrotask inside to handle further late-joining
+            // registries at each level of the chain (same pattern as above).
+            const watchTakeover = () => {
+              queueMicrotask(() => {
+                const n = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+                if (n) {
+                  void n.then(watchTakeover, watchTakeover);
+                } else if (!(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+                  (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+                }
+              });
+            };
+            void nextInit.then(watchTakeover, watchTakeover);
+          }
+          // If nextInit=null but SERVICE_STARTED=true: a secondary completed
+          // init successfully — leave GUARD=true (its CLI registration is live).
         }
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();

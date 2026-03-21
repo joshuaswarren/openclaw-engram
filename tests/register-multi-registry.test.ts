@@ -489,11 +489,9 @@ test("stop-during-init without takeover: REGISTERED_GUARD cleared after abort so
     // the first await inside the IIFE), so stop() sees it as non-null.
     await primary.api._registeredStop?.();
 
-    // Await the start() promise (it should resolve without error, aborting cleanly).
-    // clearGuardIfNoTakeover is registered as a .then() on initPromise and runs in
-    // a microtask *before* the test's await-startPromise continuation resumes
-    // (registration order: start()'s finally runs first, then clearGuardIfNoTakeover,
-    // then the test's continuation). No extra queueMicrotask drain is needed.
+    // stop() now awaits the in-flight promise internally (plus one queueMicrotask
+    // tick), so GUARD is already cleared by the time `await stop()` returns above.
+    // `await startPromise` is therefore immediate (the promise already settled).
     await startPromise;
 
     assert.equal(
