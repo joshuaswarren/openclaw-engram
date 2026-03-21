@@ -769,17 +769,26 @@ export default {
       id: "openclaw-engram",
       start: async () => {
         // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
-        // is set to true synchronously before ENGRAM_INIT_PROMISE is assigned, so
-        // checking started first would let concurrent callers return before init
-        // completes. By checking the promise first, concurrent start() calls await
-        // the in-flight init rather than resolving immediately while the orchestrator
-        // and HTTP server are still initializing.
-        if ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
+        // is set to true inside the IIFE (only on success), so checking the flag
+        // first would let concurrent callers return before init completes. By
+        // checking INIT_PROMISE first, concurrent start() calls await the in-flight
+        // init rather than resolving immediately while the orchestrator and HTTP
+        // server are still initializing.
+        //
+        // Loop rather than a single if: when multiple secondaries are awaiting the
+        // same INIT_PROMISE (e.g. after primary abort), the first waiter to resume
+        // synchronously sets a new INIT_PROMISE for its own takeover. Without the
+        // loop, subsequent waiters fall through the if-block and enter the init path
+        // concurrently — re-running orchestrator.initialize() multiple times. The
+        // while-loop re-checks INIT_PROMISE after every await so each waiter sees
+        // the new promise and awaits it instead of racing to become a second primary.
+        while ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
           await (globalThis as any)[ENGRAM_INIT_PROMISE];
           // Re-check after awaiting: the primary's start() may have been aborted by
           // a concurrent stop() (via the !didCountStart early return), leaving
-          // ENGRAM_SERVICE_STARTED=false even though the promise resolved successfully.
-          // In that case, fall through so this registry can become the new primary.
+          // ENGRAM_SERVICE_STARTED=false even though the promise resolved. In that
+          // case continue the loop — we will either see a new INIT_PROMISE (set by
+          // the first-resuming takeover waiter) or exit the loop to become primary.
           if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
         }
         // No in-flight init — check if already fully initialized.
@@ -848,6 +857,16 @@ export default {
             // the await) prevents SERVICE_STARTED=true from being observable while init
             // is still in-flight, and ensures the flag accurately reflects completion.
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
+            // Restore the CLI-registration guard. When a stop-during-init deferred
+            // callback cleared the guard (or when stop() cleared it on a full stop)
+            // and a dormant secondary later becomes the new primary, GUARD=false
+            // while the service is running. That lets a subsequent register() call
+            // see isFirstRegistration=true and re-register CLI commands — duplicating
+            // the central engram command tree. Setting it back to true here ensures
+            // GUARD accurately reflects "CLI is registered and service is active",
+            // which is the correct state after any successful init — whether initial,
+            // takeover, or post-restart.
+            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
