@@ -12,6 +12,7 @@
  * | registerCli         | first only      | Central registry; duplicates = broken CLI   |
  * | registerService     | every registry  | startPluginServices() iterates own registry |
  * | service.start() run | once per process| Idempotency via ENGRAM_SERVICE_STARTED flag |
+ * | service.stop() teardown | owning only | Secondary stop() must not disrupt primary   |
  *
  * ## Regression history
  *
@@ -271,6 +272,8 @@ test("service.start() runs initialize exactly once even when called from multipl
 test("service.stop() clears ENGRAM_SERVICE_STARTED so restart cycles reinitialize", async () => {
   // If stop() doesn't clear the flag, a stop → start cycle would be a no-op
   // and the orchestrator would never reinitialize after a gateway restart.
+  // orchestrator.initialize() defers API calls lazily, so start() succeeds here
+  // and isOwningRegistry is set to true — verifying the owning-registry stop path.
   const saved = saveAndResetGlobals();
   try {
     const { default: plugin } = await import("../src/index.js");
@@ -278,16 +281,59 @@ test("service.stop() clears ENGRAM_SERVICE_STARTED so restart cycles reinitializ
 
     plugin.register(stub.api as any);
 
-    // Simulate start() setting the flag (even if it errors internally).
-    try { await stub.api._registeredStart?.(); } catch { /* expected */ }
+    try { await stub.api._registeredStart?.(); } catch { /* ok if unexpected error */ }
     assert.equal((globalThis as any)[SERVICE_STARTED_KEY], true, "flag should be set after start");
 
-    // stop() must clear it.
+    // The owning registry's stop() must clear it.
     try { await stub.api._registeredStop?.(); } catch { /* ok */ }
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
       false,
       "ENGRAM_SERVICE_STARTED must be cleared by stop() so the next start() reinitializes",
+    );
+  } finally {
+    restoreGlobals(saved);
+  }
+});
+
+test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while primary is running", async () => {
+  // Regression guard for issue #285 follow-up: all registries now get a stop()
+  // registered. If any stop() call clears the shared flag, a per-registry teardown
+  // (e.g. cron vs. reply context hot-reload) would let a later registry re-run
+  // initialize() while the primary is still alive → double I/O, double cron.
+  //
+  // Only the registry whose start() ran initialize() (isOwningRegistry=true) is
+  // allowed to clear the shared globals. Secondary registries return early.
+  const saved = saveAndResetGlobals();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildApi("primary-running");
+    const second = buildApi("secondary-teardown");
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+
+    // Manually set the flag to simulate that the primary registry successfully
+    // initialized (we cannot do a real init in tests — no OpenAI key).
+    (globalThis as any)[SERVICE_STARTED_KEY] = true;
+
+    // Secondary registry's start() hits the guard and returns early; isOwningRegistry stays false.
+    try { await second.api._registeredStart?.(); } catch { /* should not throw — guard returned early */ }
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "flag should still be true after secondary start() no-op",
+    );
+
+    // Secondary stop() must be a no-op — must NOT clear the shared flag.
+    try { await second.api._registeredStop?.(); } catch { /* ok */ }
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (primary is still running)",
     );
   } finally {
     restoreGlobals(saved);

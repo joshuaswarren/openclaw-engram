@@ -753,6 +753,10 @@ export default {
     // start() makes initialize() idempotent within a process lifetime. stop()
     // clears the flag so restart cycles reinitialize correctly.
     let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
+    // Tracks whether this specific registry's start() was the one that ran
+    // initialization. Only the owning registry clears shared process-wide state
+    // on stop(); secondary registries only clean up their own per-registry state.
+    let isOwningRegistry = false;
     api.registerService({
       id: "openclaw-engram",
       start: async () => {
@@ -797,6 +801,7 @@ export default {
           }
         }
 
+        isOwningRegistry = true;
         log.info("engram memory system ready");
         } catch (err) {
           // Clear the flag so the next registry's start() can retry initialization.
@@ -807,6 +812,10 @@ export default {
       stop: async () => {
         activeOpikExporter?.unsubscribe();
         activeOpikExporter = null;
+        // Only the registry that ran initialize() owns the shared process-wide state.
+        // Secondary registries skip teardown to avoid disrupting the live service.
+        if (!isOwningRegistry) return;
+        isOwningRegistry = false;
         try {
           await accessHttpServer.stop();
         } catch (err) {
