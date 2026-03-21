@@ -962,6 +962,9 @@ export default {
         // "late-joining" start() call) run first and set INIT_PROMISE before we
         // evaluate the no-takeover condition.
         const currentInitPromise = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+        // Track whether a secondary completed init during stop()'s await window.
+        // Used below to guard the SERVICE_STARTED=false assignment.
+        let secondaryTookOver = false;
         if (!currentInitPromise) {
           (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         } else {
@@ -981,6 +984,7 @@ export default {
             // GUARD after the entire takeover chain settles with no running
             // service. Uses queueMicrotask inside to handle further late-joining
             // registries at each level of the chain (same pattern as above).
+            secondaryTookOver = true;
             const watchTakeover = () => {
               queueMicrotask(() => {
                 const n = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
@@ -992,14 +996,25 @@ export default {
               });
             };
             void nextInit.then(watchTakeover, watchTakeover);
+          } else {
+            // nextInit=null and SERVICE_STARTED=true: a secondary completed init
+            // during the queueMicrotask window — leave GUARD=true (its CLI
+            // registration is live) and mark the takeover so we don't clobber
+            // SERVICE_STARTED below.
+            secondaryTookOver = true;
           }
-          // If nextInit=null but SERVICE_STARTED=true: a secondary completed
-          // init successfully — leave GUARD=true (its CLI registration is live).
         }
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
         // Allow service.start() to reinitialize after a stop/restart cycle.
-        (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+        // Skip this when a secondary completed init while stop() was suspended:
+        // that registry's start() is the owner of SERVICE_STARTED=true, and its
+        // own stop() call will clear the flag. Clobbering it here would let the
+        // next start() bypass the idempotency guard and re-run initialize() on
+        // the live singleton (Cursor review thread PRRT_kwDORJXyws5156Lw).
+        if (!secondaryTookOver) {
+          (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+        }
         // Do NOT clear ENGRAM_INIT_PROMISE here. If stop() is called while init is
         // still in-flight (start() suspended at an await), clearing the promise here
         // would let a new registry enter start() before the original initializer settles
