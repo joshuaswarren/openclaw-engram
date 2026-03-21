@@ -195,6 +195,39 @@ jobs:
             git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
           fi
 
+      - name: Promote CHANGELOG.md for release
+        if: steps.version.outputs.tag_exists != 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+          from datetime import datetime, timezone
+          version = os.environ["NEW_VERSION"]
+          date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+          with open("CHANGELOG.md") as f:
+              content = f.read()
+          # Match ## [Unreleased] and its body up to the next ## [ heading
+          match = re.search(r'(## \[Unreleased\])(.*?)(?=\n## \[|\Z)', content, re.DOTALL)
+          if match:
+              body = match.group(2).strip()
+              if body:
+                  replacement = f"## [Unreleased]\n\n## [v{version}] — {date}\n\n{body}\n"
+                  content = content[:match.start()] + replacement + content[match.end():]
+                  with open("CHANGELOG.md", "w") as f:
+                      f.write(content)
+                  print(f"Promoted [Unreleased] -> [v{version}] — {date}")
+              else:
+                  print("No pending notes under [Unreleased]; skipping CHANGELOG promotion.")
+          else:
+              print("No [Unreleased] section found; skipping CHANGELOG promotion.")
+          PYEOF
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "::notice title=CHANGELOG skip::Nothing staged; skipping changelog commit."
+          else
+            git commit -m "docs(changelog): promote [Unreleased] -> v${NEW_VERSION} [skip ci]"
+          fi
 
       - name: Create version tag on release commit
         if: steps.version.outputs.tag_exists != 'true'
