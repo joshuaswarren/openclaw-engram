@@ -40,10 +40,11 @@ const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
  */
 const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
 /**
- * Counts how many distinct plugin registries are currently active. Used so that
- * the owning registry's stop() only tears down shared process-wide state once
- * every active registry has been stopped. Prevents premature shared-state
- * teardown when the owning registry stops while non-owning registries are live.
+ * Counts how many registries have successfully run start() (i.e. incremented
+ * this counter). Used for ref-counted teardown: shared process-wide state is
+ * only cleared when the last started registry calls stop(). Registries whose
+ * start() was a guard-early-return (secondary) or failed (rolled back in catch)
+ * do not hold a slot and do not participate in the decrement.
  */
 const ENGRAM_ACTIVE_REGISTRIES = "__openclawEngramActiveRegistries";
 
@@ -166,10 +167,6 @@ export default {
       return;
     }
     hookApis.add(api);
-    // Track active registries for ref-counted teardown: only clear shared state
-    // when the last registry stops, preventing premature teardown during partial
-    // hot-reload or per-context teardown.
-    (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 0) + 1;
 
     if (!isFirstRegistration) {
       log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
@@ -764,6 +761,11 @@ export default {
     // start() makes initialize() idempotent within a process lifetime. stop()
     // clears the flag so restart cycles reinitialize correctly.
     let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
+    // Whether this specific registry's start() claimed a slot in ACTIVE_REGISTRIES.
+    // Ensures stop() only decrements the count for registries whose start() ran
+    // (not secondary registries whose start() was a no-op, nor registries whose
+    // start() threw before successfully initializing).
+    let didCountStart = false;
     api.registerService({
       id: "openclaw-engram",
       start: async () => {
@@ -771,6 +773,11 @@ export default {
           log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
           return;
         }
+        // Claim a slot in the ref-count before setting the started flag so that
+        // a matching stop() will decrement it. Cleared in catch if init fails so
+        // that a later retry can re-claim.
+        (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 0) + 1;
+        didCountStart = true;
         // Set flag before init so concurrent start() calls are deduplicated; clear on failure
         // so the next start() attempt (e.g. from another registry) can retry.
         (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
@@ -810,7 +817,9 @@ export default {
 
           log.info("engram memory system ready");
         } catch (err) {
-          // Clear the flag so the next registry's start() can retry initialization.
+          // Roll back the count and flag so the next registry's start() can retry.
+          (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = Math.max(0, ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 1) - 1);
+          didCountStart = false;
           (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
           throw err;
         }
@@ -821,14 +830,14 @@ export default {
         activeOpikExporter?.unsubscribe();
         activeOpikExporter = null;
 
-        // Ref-counted teardown: decrement the active registry count. Only tear down
-        // shared process-wide state when the last active registry stops. Using
-        // "last to stop" (remaining == 0) rather than "owning registry" avoids the
-        // dead-path that `||` logic creates when the owning registry stops before
-        // non-owning ones and neither set ends up doing teardown.
-        // Assumption: the gateway calls stop() on every registry it calls register()
-        // on, even if start() failed. If that assumption ever breaks, the refcount
-        // would be inflated and teardown would be skipped until process exit.
+        // Ref-counted teardown: only registries that successfully ran start()
+        // (didCountStart=true) decrement the count. Secondary registries (whose
+        // start() returned early) and failed registries (whose start() rolled back
+        // the count in catch) are excluded, so the count accurately reflects how
+        // many registries are still live. Only tear down shared state when the last
+        // started registry stops (remaining == 0).
+        if (!didCountStart) return;
+        didCountStart = false;
         const remaining = Math.max(0, ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 1) - 1);
         (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = remaining;
         if (remaining > 0) return;

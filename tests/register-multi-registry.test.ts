@@ -318,13 +318,14 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
     const first = buildApi("primary-running");
     const second = buildApi("secondary-teardown");
 
-    plugin.register(first.api as any);  // ACTIVE_REGISTRIES = 1
-    plugin.register(second.api as any); // ACTIVE_REGISTRIES = 2
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
 
-    // Primary starts successfully (orchestrator.initialize() is file I/O only).
+    // Primary starts successfully. ACTIVE_REGISTRIES incremented to 1; didCountStart[first]=true.
     await first.api._registeredStart?.();
 
     // Secondary registry's start() hits the ENGRAM_SERVICE_STARTED guard — no-op.
+    // didCountStart[second] stays false; ACTIVE_REGISTRIES stays 1.
     await second.api._registeredStart?.();
 
     assert.equal(
@@ -333,13 +334,13 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
       "flag should still be true after secondary start() no-op",
     );
 
-    // Secondary stop(): remaining = 2-1 = 1 > 0 → early return. Flag stays true.
+    // Secondary stop(): didCountStart[second]=false → early return. Flag stays true.
     await second.api._registeredStop?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
       true,
-      "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (primary is still running, remaining=1)",
+      "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (didCountStart=false → early return)",
     );
   } finally {
     restoreGlobals(saved);
