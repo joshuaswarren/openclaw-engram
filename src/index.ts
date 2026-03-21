@@ -909,11 +909,9 @@ export default {
             // would let a subsequent register() call re-register CLI commands,
             // duplicating the central engram command tree.
             //
-            // For the stop-during-init + failed-takeover case (stop() called while
-            // init was in-flight, secondary takes over but its init also fails), the
-            // deferred clearGuardIfNoTakeover callback attached in stop() is
-            // responsible for clearing the guard once the entire takeover chain
-            // settles with no service running.
+            // For the stop-during-init case: stop() leaves GUARD as-is because
+            // the CLI registered by the original register() call is still present
+            // in the gateway's registry. No deferred clearing is performed.
             throw err;
           }
           // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
