@@ -764,10 +764,6 @@ export default {
     // start() makes initialize() idempotent within a process lifetime. stop()
     // clears the flag so restart cycles reinitialize correctly.
     let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
-    // Tracks whether this specific registry's start() was the one that ran
-    // initialization. Only the owning registry clears shared process-wide state
-    // on stop(); secondary registries only clean up their own per-registry state.
-    let isOwningRegistry = false;
     api.registerService({
       id: "openclaw-engram",
       start: async () => {
@@ -812,7 +808,6 @@ export default {
             }
           }
 
-          isOwningRegistry = true;
           log.info("engram memory system ready");
         } catch (err) {
           // Clear the flag so the next registry's start() can retry initialization.
@@ -822,18 +817,21 @@ export default {
       },
       stop: async () => {
         // Per-registry cleanup: always unsubscribe this registry's Opik exporter.
+        // For registries whose start() was a no-op, this is null and a no-op.
         activeOpikExporter?.unsubscribe();
         activeOpikExporter = null;
 
-        // Ref-count: decrement active registry count. Only tear down shared
-        // process-wide state when the owning registry is the last one alive.
-        // This prevents the owning registry's stop() from clearing shared state
-        // while non-owning registries still have live hooks.
+        // Ref-counted teardown: decrement the active registry count. Only tear down
+        // shared process-wide state when the last active registry stops. Using
+        // "last to stop" (remaining == 0) rather than "owning registry" avoids the
+        // dead-path that `||` logic creates when the owning registry stops before
+        // non-owning ones and neither set ends up doing teardown.
+        // Assumption: the gateway calls stop() on every registry it calls register()
+        // on, even if start() failed. If that assumption ever breaks, the refcount
+        // would be inflated and teardown would be skipped until process exit.
         const remaining = Math.max(0, ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 1) - 1);
         (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = remaining;
-        if (!isOwningRegistry || remaining > 0) return;
-
-        isOwningRegistry = false;
+        if (remaining > 0) return;
         try {
           await accessHttpServer.stop();
         } catch (err) {

@@ -12,7 +12,7 @@
  * | registerCli         | first only      | Central registry; duplicates = broken CLI   |
  * | registerService     | every registry  | startPluginServices() iterates own registry |
  * | service.start() run | once per process| Idempotency via ENGRAM_SERVICE_STARTED flag |
- * | service.stop() teardown | owning only | Secondary stop() must not disrupt primary   |
+ * | service.stop() teardown | last only   | Ref-counted: only last-to-stop tears down   |
  *
  * ## Regression history
  *
@@ -308,8 +308,9 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
   // (e.g. cron vs. reply context hot-reload) would let a later registry re-run
   // initialize() while the primary is still alive → double I/O, double cron.
   //
-  // Only the registry whose start() ran initialize() (isOwningRegistry=true) is
-  // allowed to clear the shared globals. Secondary registries return early.
+  // stop() uses ref-counting: shared state is only torn down when the LAST active
+  // registry stops (ACTIVE_REGISTRIES reaches 0). Stopping a non-last registry
+  // only decrements the count and cleans up its own per-registry state.
   const saved = saveAndResetGlobals();
   try {
     const { default: plugin } = await import("../src/index.js");
@@ -317,15 +318,13 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
     const first = buildApi("primary-running");
     const second = buildApi("secondary-teardown");
 
-    plugin.register(first.api as any);
-    plugin.register(second.api as any);
+    plugin.register(first.api as any);  // ACTIVE_REGISTRIES = 1
+    plugin.register(second.api as any); // ACTIVE_REGISTRIES = 2
 
     // Primary starts successfully (orchestrator.initialize() is file I/O only).
-    // isOwningRegistry is set to true in the primary's closure. ACTIVE_REGISTRIES = 2.
     await first.api._registeredStart?.();
 
-    // Secondary registry's start() hits the ENGRAM_SERVICE_STARTED guard and
-    // returns early — isOwningRegistry stays false in the secondary's closure.
+    // Secondary registry's start() hits the ENGRAM_SERVICE_STARTED guard — no-op.
     await second.api._registeredStart?.();
 
     assert.equal(
@@ -334,15 +333,13 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
       "flag should still be true after secondary start() no-op",
     );
 
-    // Secondary stop() must be a no-op:
-    // - isOwningRegistry[secondary] = false → early return
-    // - remaining = 2-1 = 1 (primary still active) → early return even if owner
+    // Secondary stop(): remaining = 2-1 = 1 > 0 → early return. Flag stays true.
     await second.api._registeredStop?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
       true,
-      "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (primary is still running)",
+      "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (primary is still running, remaining=1)",
     );
   } finally {
     restoreGlobals(saved);
