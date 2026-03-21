@@ -893,8 +893,13 @@ export default {
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
         // Allow service.start() to reinitialize after a stop/restart cycle.
         (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
-        // Clear any stale in-flight init promise so restart begins cleanly.
-        (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
+        // Do NOT clear ENGRAM_INIT_PROMISE here. If stop() is called while init is
+        // still in-flight (start() suspended at an await), clearing the promise here
+        // would let a new registry enter start() before the original initializer settles
+        // and call orchestrator.initialize() a second time on the same singleton.
+        // The outer try-finally in start() already clears ENGRAM_INIT_PROMISE when
+        // initPromise settles, so no cleanup is needed here — in the normal (post-init)
+        // case it is already null, and in the in-flight case it must stay set.
         log.info("stopped");
       },
     });
