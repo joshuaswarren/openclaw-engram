@@ -39,14 +39,6 @@ const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
  * re-initialize correctly.
  */
 const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
-/**
- * Counts how many registries have successfully run start() (i.e. incremented
- * this counter). Used for ref-counted teardown: shared process-wide state is
- * only cleared when the last started registry calls stop(). Registries whose
- * start() was a guard-early-return (secondary) or failed (rolled back in catch)
- * do not hold a slot and do not participate in the decrement.
- */
-const ENGRAM_ACTIVE_REGISTRIES = "__openclawEngramActiveRegistries";
 
 type LegacyHeartbeatHookEvent = {
   context?: Record<string, unknown>;
@@ -773,10 +765,8 @@ export default {
           log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
           return;
         }
-        // Claim a slot in the ref-count before setting the started flag so that
-        // a matching stop() will decrement it. Cleared in catch if init fails so
-        // that a later retry can re-claim.
-        (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 0) + 1;
+        // Mark this registry as the one that owns the initialized state.
+        // Cleared in catch if init fails so another registry can retry.
         didCountStart = true;
         // Set flag before init so concurrent start() calls are deduplicated; clear on failure
         // so the next start() attempt (e.g. from another registry) can retry.
@@ -817,30 +807,23 @@ export default {
 
           log.info("engram memory system ready");
         } catch (err) {
-          // Roll back the count and flag so the next registry's start() can retry.
-          (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = Math.max(0, ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 1) - 1);
+          // Roll back so the next registry's start() can retry.
           didCountStart = false;
           (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
           throw err;
         }
       },
       stop: async () => {
-        // Per-registry cleanup: always unsubscribe this registry's Opik exporter.
-        // For registries whose start() was a no-op, this is null and a no-op.
-        activeOpikExporter?.unsubscribe();
-        activeOpikExporter = null;
-
-        // Ref-counted teardown: only registries that successfully ran start()
-        // (didCountStart=true) decrement the count. Secondary registries (whose
-        // start() returned early) and failed registries (whose start() rolled back
-        // the count in catch) are excluded, so the count accurately reflects how
-        // many registries are still live. Only tear down shared state when the last
-        // started registry stops (remaining == 0).
+        // Only the registry whose start() successfully ran initialize() does teardown.
+        // Secondary registries (start() returned early on ENGRAM_SERVICE_STARTED) and
+        // failed registries (start() rolled back in catch) have didCountStart=false
+        // and skip all cleanup — including Opik — to avoid detaching a live exporter.
         if (!didCountStart) return;
         didCountStart = false;
-        const remaining = Math.max(0, ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 1) - 1);
-        (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = remaining;
-        if (remaining > 0) return;
+        // Opik cleanup: placed after the guard so secondary stop()s never detach
+        // the process-wide exporter while Engram is still running.
+        activeOpikExporter?.unsubscribe();
+        activeOpikExporter = null;
         try {
           await accessHttpServer.stop();
         } catch (err) {
@@ -848,7 +831,6 @@ export default {
         }
         delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
         delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
-        delete (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES];
         // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.

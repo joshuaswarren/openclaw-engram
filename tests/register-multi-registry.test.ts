@@ -12,7 +12,7 @@
  * | registerCli         | first only      | Central registry; duplicates = broken CLI   |
  * | registerService     | every registry  | startPluginServices() iterates own registry |
  * | service.start() run | once per process| Idempotency via ENGRAM_SERVICE_STARTED flag |
- * | service.stop() teardown | last only   | Ref-counted: only last-to-stop tears down   |
+ * | service.stop() teardown | owner only  | didCountStart guard: only initializing registry tears down |
  *
  * ## Regression history
  *
@@ -45,7 +45,6 @@ const ORCH_KEY = "__openclawEngramOrchestrator";
 const ACCESS_SVC_KEY = "__openclawEngramAccessService";
 const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
 const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
-const ACTIVE_REGISTRIES_KEY = "__openclawEngramActiveRegistries";
 
 // ============================================================================
 // Helpers
@@ -106,7 +105,6 @@ function saveAndResetGlobals() {
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
-    activeRegistries: (globalThis as any)[ACTIVE_REGISTRIES_KEY],
   };
   delete (globalThis as any)[GUARD_KEY];
   delete (globalThis as any)[HOOK_APIS_KEY];
@@ -114,7 +112,6 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
-  delete (globalThis as any)[ACTIVE_REGISTRIES_KEY];
   return saved;
 }
 
@@ -136,9 +133,6 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.serviceStarted !== undefined) (globalThis as any)[SERVICE_STARTED_KEY] = saved.serviceStarted;
   else delete (globalThis as any)[SERVICE_STARTED_KEY];
-
-  if (saved.activeRegistries !== undefined) (globalThis as any)[ACTIVE_REGISTRIES_KEY] = saved.activeRegistries;
-  else delete (globalThis as any)[ACTIVE_REGISTRIES_KEY];
 }
 
 // ============================================================================
@@ -308,9 +302,9 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
   // (e.g. cron vs. reply context hot-reload) would let a later registry re-run
   // initialize() while the primary is still alive → double I/O, double cron.
   //
-  // stop() uses ref-counting: shared state is only torn down when the LAST active
-  // registry stops (ACTIVE_REGISTRIES reaches 0). Stopping a non-last registry
-  // only decrements the count and cleans up its own per-registry state.
+  // stop() guards on didCountStart: only the registry whose start() successfully ran
+  // initialize() performs teardown. Secondary registries (start() returned early on
+  // ENGRAM_SERVICE_STARTED) have didCountStart=false and return immediately.
   const saved = saveAndResetGlobals();
   try {
     const { default: plugin } = await import("../src/index.js");
@@ -321,11 +315,11 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
     plugin.register(first.api as any);
     plugin.register(second.api as any);
 
-    // Primary starts successfully. ACTIVE_REGISTRIES incremented to 1; didCountStart[first]=true.
+    // Primary starts successfully. didCountStart[first]=true.
     await first.api._registeredStart?.();
 
     // Secondary registry's start() hits the ENGRAM_SERVICE_STARTED guard — no-op.
-    // didCountStart[second] stays false; ACTIVE_REGISTRIES stays 1.
+    // didCountStart[second] stays false.
     await second.api._registeredStart?.();
 
     assert.equal(
