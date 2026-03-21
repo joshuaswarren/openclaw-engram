@@ -848,10 +848,6 @@ export default {
             // the await) prevents SERVICE_STARTED=true from being observable while init
             // is still in-flight, and ensures the flag accurately reflects completion.
             (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
-            // Restore the CLI registration guard so that if stop() cleared it during
-            // a stop-during-init race, a later register() call does not see the guard
-            // as false and re-register CLI commands (causing duplicates).
-            (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
             log.info("engram memory system ready");
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
@@ -908,8 +904,18 @@ export default {
         }
         delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
         delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
-        // Allow tools/CLI/service to re-register after a stop/reload cycle.
-        (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        // Clear the CLI-registration guard only on a full stop (no in-flight init).
+        // When stop() is called during init (ENGRAM_INIT_PROMISE is non-null), a
+        // secondary registry may be waiting and will take over as the new primary.
+        // Clearing the guard in that case would cause the next register() call to
+        // see isFirstRegistration=true and re-register CLI commands, duplicating the
+        // central engram command tree. Leave the guard intact so the takeover path
+        // does not trigger spurious re-registration.
+        // For a full stop (ENGRAM_INIT_PROMISE is null), clear the guard so a
+        // subsequent register() call re-registers CLI after a gateway rebuild.
+        if (!(globalThis as any)[ENGRAM_INIT_PROMISE]) {
+          (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+        }
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
         // Allow service.start() to reinitialize after a stop/restart cycle.

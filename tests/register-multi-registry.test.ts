@@ -389,18 +389,21 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
   }
 });
 
-test("stop-during-init takeover does not leave ENGRAM_REGISTERED_GUARD cleared (regression: CLI re-registration)", async () => {
-  // When stop() runs during init, it clears ENGRAM_REGISTERED_GUARD so that a
-  // full restart cycle can re-register CLI. But if a secondary registry wakes up
-  // and successfully takes over as primary (completing init), the guard should be
-  // restored to true — otherwise a later register() call sees isFirstRegistration=true
-  // and re-registers CLI commands, causing duplicates.
+test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD cleared for CLI re-registration", async () => {
+  // After a full stop (INIT_PROMISE is null when stop() runs), REGISTERED_GUARD is
+  // cleared so a subsequent register() can re-register CLI if the gateway rebuilt
+  // its command registry. A secondary registry taking over after a full stop should
+  // leave REGISTERED_GUARD=false so the next register() call can restore CLI.
+  //
+  // Note: The stop-during-init GUARD preservation (preventing spurious re-registration
+  // when stop() is called while init is in-flight) is handled by stop() checking
+  // ENGRAM_INIT_PROMISE before clearing the guard — not by setting it in the IIFE.
   const saved = saveAndResetGlobals();
   try {
     const { default: plugin } = await import("../src/index.js");
 
-    const primary = buildApi("primary-stop-during-init");
-    const secondary = buildApi("secondary-takeover");
+    const primary = buildApi("primary-full-stop");
+    const secondary = buildApi("secondary-restart");
 
     plugin.register(primary.api as any);
     plugin.register(secondary.api as any);
@@ -414,27 +417,35 @@ test("stop-during-init takeover does not leave ENGRAM_REGISTERED_GUARD cleared (
       "guard should be true after successful start()",
     );
 
-    // Primary stops — clears guard so restart can re-register.
+    // Primary stops cleanly (full stop, INIT_PROMISE=null) → guard cleared.
     await primary.api._registeredStop?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
       false,
-      "SERVICE_STARTED should be false after stop()",
+      "SERVICE_STARTED should be false after full stop()",
+    );
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      false,
+      "REGISTERED_GUARD should be false after full stop — allows CLI re-registration by next register()",
     );
 
-    // Secondary (already registered) now starts fresh — it becomes the new primary.
+    // Secondary takes over as the new primary after a full stop.
     await secondary.api._registeredStart?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
       true,
-      "SERVICE_STARTED should be true after secondary takeover init",
+      "SERVICE_STARTED should be true after secondary completes init",
     );
+    // After a full stop, GUARD remains false until a new register() call runs.
+    // This is correct: the gateway may have rebuilt its command registry, so
+    // CLI must be re-registered on the next register() call.
     assert.equal(
       (globalThis as any)[GUARD_KEY],
-      true,
-      "ENGRAM_REGISTERED_GUARD must be restored after takeover — prevents CLI re-registration by future register() calls",
+      false,
+      "REGISTERED_GUARD stays false after secondary init following a full stop — next register() re-registers CLI",
     );
   } finally {
     restoreGlobals(saved);
