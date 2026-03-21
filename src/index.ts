@@ -39,6 +39,13 @@ const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
  * re-initialize correctly.
  */
 const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
+/**
+ * Counts how many distinct plugin registries are currently active. Used so that
+ * the owning registry's stop() only tears down shared process-wide state once
+ * every active registry has been stopped. Prevents premature shared-state
+ * teardown when the owning registry stops while non-owning registries are live.
+ */
+const ENGRAM_ACTIVE_REGISTRIES = "__openclawEngramActiveRegistries";
 
 type LegacyHeartbeatHookEvent = {
   context?: Record<string, unknown>;
@@ -159,6 +166,10 @@ export default {
       return;
     }
     hookApis.add(api);
+    // Track active registries for ref-counted teardown: only clear shared state
+    // when the last registry stops, preventing premature teardown during partial
+    // hot-reload or per-context teardown.
+    (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 0) + 1;
 
     if (!isFirstRegistration) {
       log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
@@ -768,41 +779,41 @@ export default {
         // so the next start() attempt (e.g. from another registry) can retry.
         (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
         try {
-        log.info("initializing engram memory system...");
-        await orchestrator.initialize();
+          log.info("initializing engram memory system...");
+          await orchestrator.initialize();
 
-        // Initialize Opik exporter if configured
-        activeOpikExporter = createOpikExporter({}, log);
-        if (activeOpikExporter) activeOpikExporter.subscribe();
+          // Initialize Opik exporter if configured
+          activeOpikExporter = createOpikExporter({}, log);
+          if (activeOpikExporter) activeOpikExporter.subscribe();
 
-        // Cleanup old transcripts
-        if (orchestrator.config.transcriptEnabled) {
-          await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
-        }
-
-        // Cron integration guard:
-        // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
-        // - Only auto-register when explicitly enabled by config.
-        if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
-          await ensureHourlySummaryCron(api);
-        } else if (orchestrator.config.hourlySummariesEnabled) {
-          log.info(
-            "hourly summaries enabled; cron auto-register is disabled. " +
-            "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
-          );
-        }
-
-        if (cfg.agentAccessHttp.enabled) {
-          try {
-            const status = await accessHttpServer.start();
-            log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
-          } catch (err) {
-            log.error("failed to start engram access HTTP server", err);
+          // Cleanup old transcripts
+          if (orchestrator.config.transcriptEnabled) {
+            await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
           }
-        }
 
-        isOwningRegistry = true;
-        log.info("engram memory system ready");
+          // Cron integration guard:
+          // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
+          // - Only auto-register when explicitly enabled by config.
+          if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
+            await ensureHourlySummaryCron(api);
+          } else if (orchestrator.config.hourlySummariesEnabled) {
+            log.info(
+              "hourly summaries enabled; cron auto-register is disabled. " +
+              "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
+            );
+          }
+
+          if (cfg.agentAccessHttp.enabled) {
+            try {
+              const status = await accessHttpServer.start();
+              log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
+            } catch (err) {
+              log.error("failed to start engram access HTTP server", err);
+            }
+          }
+
+          isOwningRegistry = true;
+          log.info("engram memory system ready");
         } catch (err) {
           // Clear the flag so the next registry's start() can retry initialization.
           (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
@@ -810,11 +821,18 @@ export default {
         }
       },
       stop: async () => {
+        // Per-registry cleanup: always unsubscribe this registry's Opik exporter.
         activeOpikExporter?.unsubscribe();
         activeOpikExporter = null;
-        // Only the registry that ran initialize() owns the shared process-wide state.
-        // Secondary registries skip teardown to avoid disrupting the live service.
-        if (!isOwningRegistry) return;
+
+        // Ref-count: decrement active registry count. Only tear down shared
+        // process-wide state when the owning registry is the last one alive.
+        // This prevents the owning registry's stop() from clearing shared state
+        // while non-owning registries still have live hooks.
+        const remaining = Math.max(0, ((globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] ?? 1) - 1);
+        (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES] = remaining;
+        if (!isOwningRegistry || remaining > 0) return;
+
         isOwningRegistry = false;
         try {
           await accessHttpServer.stop();
@@ -823,6 +841,7 @@ export default {
         }
         delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
         delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
+        delete (globalThis as any)[ENGRAM_ACTIVE_REGISTRIES];
         // Allow tools/CLI/service to re-register after a stop/reload cycle.
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.

@@ -45,6 +45,7 @@ const ORCH_KEY = "__openclawEngramOrchestrator";
 const ACCESS_SVC_KEY = "__openclawEngramAccessService";
 const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
 const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
+const ACTIVE_REGISTRIES_KEY = "__openclawEngramActiveRegistries";
 
 // ============================================================================
 // Helpers
@@ -105,6 +106,7 @@ function saveAndResetGlobals() {
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
+    activeRegistries: (globalThis as any)[ACTIVE_REGISTRIES_KEY],
   };
   delete (globalThis as any)[GUARD_KEY];
   delete (globalThis as any)[HOOK_APIS_KEY];
@@ -112,6 +114,7 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
+  delete (globalThis as any)[ACTIVE_REGISTRIES_KEY];
   return saved;
 }
 
@@ -133,6 +136,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.serviceStarted !== undefined) (globalThis as any)[SERVICE_STARTED_KEY] = saved.serviceStarted;
   else delete (globalThis as any)[SERVICE_STARTED_KEY];
+
+  if (saved.activeRegistries !== undefined) (globalThis as any)[ACTIVE_REGISTRIES_KEY] = saved.activeRegistries;
+  else delete (globalThis as any)[ACTIVE_REGISTRIES_KEY];
 }
 
 // ============================================================================
@@ -242,11 +248,9 @@ test("service.start() runs initialize exactly once even when called from multipl
       "ENGRAM_SERVICE_STARTED should not be set before any start() call",
     );
 
-    // Call start() from first registry (would throw without a real orchestrator,
-    // but we just need to verify the started-flag behavior).
-    // We catch the error from the real start() since orchestrator.initialize()
-    // will fail without a real OpenAI key — what matters is the flag is set.
-    try { await first.api._registeredStart?.(); } catch { /* expected in test env */ }
+    // Call start() from first registry. orchestrator.initialize() only does file
+    // I/O (no OpenAI calls), so start() succeeds and sets the flag to true.
+    await first.api._registeredStart?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
@@ -257,7 +261,8 @@ test("service.start() runs initialize exactly once even when called from multipl
     // Call start() from second registry — must be a no-op due to the guard.
     // We verify this by checking the flag was already true before entry.
     const flagBeforeSecond = (globalThis as any)[SERVICE_STARTED_KEY];
-    try { await second.api._registeredStart?.(); } catch { /* unexpected — guard should have returned early */ }
+    // Second registry's start() hits the guard and returns early — no error.
+    await second.api._registeredStart?.();
 
     assert.equal(
       flagBeforeSecond,
@@ -281,7 +286,8 @@ test("service.stop() clears ENGRAM_SERVICE_STARTED so restart cycles reinitializ
 
     plugin.register(stub.api as any);
 
-    try { await stub.api._registeredStart?.(); } catch { /* ok if unexpected error */ }
+    // start() succeeds (orchestrator.initialize() is file I/O only, no API calls).
+    await stub.api._registeredStart?.();
     assert.equal((globalThis as any)[SERVICE_STARTED_KEY], true, "flag should be set after start");
 
     // The owning registry's stop() must clear it.
@@ -314,12 +320,13 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
     plugin.register(first.api as any);
     plugin.register(second.api as any);
 
-    // Manually set the flag to simulate that the primary registry successfully
-    // initialized (we cannot do a real init in tests — no OpenAI key).
-    (globalThis as any)[SERVICE_STARTED_KEY] = true;
+    // Primary starts successfully (orchestrator.initialize() is file I/O only).
+    // isOwningRegistry is set to true in the primary's closure. ACTIVE_REGISTRIES = 2.
+    await first.api._registeredStart?.();
 
-    // Secondary registry's start() hits the guard and returns early; isOwningRegistry stays false.
-    try { await second.api._registeredStart?.(); } catch { /* should not throw — guard returned early */ }
+    // Secondary registry's start() hits the ENGRAM_SERVICE_STARTED guard and
+    // returns early — isOwningRegistry stays false in the secondary's closure.
+    await second.api._registeredStart?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
@@ -327,8 +334,10 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
       "flag should still be true after secondary start() no-op",
     );
 
-    // Secondary stop() must be a no-op — must NOT clear the shared flag.
-    try { await second.api._registeredStop?.(); } catch { /* ok */ }
+    // Secondary stop() must be a no-op:
+    // - isOwningRegistry[secondary] = false → early return
+    // - remaining = 2-1 = 1 (primary still active) → early return even if owner
+    await second.api._registeredStop?.();
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],
