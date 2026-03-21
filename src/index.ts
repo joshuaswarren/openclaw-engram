@@ -845,7 +845,13 @@ export default {
         didCountStart = false;
         // Opik cleanup: placed after the guard so secondary stop()s never detach
         // the process-wide exporter while Engram is still running.
-        activeOpikExporter?.unsubscribe();
+        // Wrapped in try-catch (like accessHttpServer.stop()) so a throwing
+        // unsubscribe does not leave ENGRAM_SERVICE_STARTED=true and prevent restart.
+        try {
+          activeOpikExporter?.unsubscribe();
+        } catch (err) {
+          log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+        }
         activeOpikExporter = null;
         try {
           await accessHttpServer.stop();
