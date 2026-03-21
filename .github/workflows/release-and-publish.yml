@@ -135,7 +135,7 @@ jobs:
             if git diff --cached --quiet; then
               echo "::notice title=Release commit skipped::Version already matches v${OVERRIDE}; no package files changed."
             else
-              git commit -m "chore(release): v${OVERRIDE} [skip ci]"
+              git commit -m "chore(release): v${OVERRIDE}"
             fi
             exit 0
           fi
@@ -192,7 +192,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "::notice title=Release commit skipped::Version already matches v${NEXT_VERSION}; no package files changed."
           else
-            git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
+            git commit -m "chore(release): v${NEXT_VERSION}"
           fi
 
       - name: Promote CHANGELOG.md for release
@@ -226,7 +226,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "::notice title=CHANGELOG skip::Nothing staged; skipping changelog commit."
           else
-            git commit -m "docs(changelog): promote [Unreleased] -> v${NEW_VERSION} [skip ci]"
+            git commit -m "docs(changelog): promote [Unreleased] -> v${NEW_VERSION}"
           fi
 
       - name: Create version tag on release commit
@@ -263,20 +263,3 @@ jobs:
           fi
           npm publish --access public
 
-      - name: Push release commits to main
-        env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
-        run: |
-          TAG="${{ steps.version.outputs.tag_name }}"
-          RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null || true)"
-          if [ -z "${RELEASE_COMMIT}" ]; then
-            echo "::notice::Tag ${TAG} not found locally; skipping main push."
-            exit 0
-          fi
-          git fetch origin main
-          if git merge-base --is-ancestor "${RELEASE_COMMIT}" origin/main; then
-            echo "::notice::Release commit already on main; skipping push."
-            exit 0
-          fi
-          git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" \
-            "${RELEASE_COMMIT}:refs/heads/main"
