@@ -32,6 +32,13 @@ const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
 const ENGRAM_ACCESS_SERVICE = "__openclawEngramAccessService";
 const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
+/**
+ * Guards service.start() against duplicate invocation when multiple api instances
+ * each register the service (all registries get registerService, but initialize
+ * must only run once per process lifetime). Cleared by stop() so restart cycles
+ * re-initialize correctly.
+ */
+const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
 
 type LegacyHeartbeatHookEvent = {
   context?: Record<string, unknown>;
@@ -735,13 +742,25 @@ export default {
     }
 
     // ========================================================================
-    // Register service
+    // Register service (every registration)
     // ========================================================================
-    // Holds the active Opik exporter so stop() can unsubscribe it.
+    // registerService must be called on every api instance, not just the first.
+    // Each gateway registry has its own api object; startPluginServices() iterates
+    // the registry it owns — if that registry has no service registered, start()
+    // never fires and the orchestrator never initializes (issue #285).
+    //
+    // Duplicate start() calls are safe: the ENGRAM_SERVICE_STARTED guard inside
+    // start() makes initialize() idempotent within a process lifetime. stop()
+    // clears the flag so restart cycles reinitialize correctly.
     let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
-    if (isFirstRegistration) api.registerService({
+    api.registerService({
       id: "openclaw-engram",
       start: async () => {
+        if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+          log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
+          return;
+        }
+        (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
         log.info("initializing engram memory system...");
         await orchestrator.initialize();
 
@@ -791,6 +810,8 @@ export default {
         (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+        // Allow service.start() to reinitialize after a stop/restart cycle.
+        (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
         log.info("stopped");
       },
     });
