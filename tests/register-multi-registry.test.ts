@@ -490,13 +490,11 @@ test("stop-during-init without takeover: REGISTERED_GUARD cleared after abort so
     await primary.api._registeredStop?.();
 
     // Await the start() promise (it should resolve without error, aborting cleanly).
+    // clearGuardIfNoTakeover is registered as a .then() on initPromise and runs in
+    // a microtask *before* the test's await-startPromise continuation resumes
+    // (registration order: start()'s finally runs first, then clearGuardIfNoTakeover,
+    // then the test's continuation). No extra queueMicrotask drain is needed.
     await startPromise;
-
-    // Allow any deferred microtasks from the guard-clearing callback to run.
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
-    // Two microtask ticks: the clearGuardIfNoTakeover callback itself queues one
-    // more microtask — wait for it too.
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
 
     assert.equal(
       (globalThis as any)[SERVICE_STARTED_KEY],

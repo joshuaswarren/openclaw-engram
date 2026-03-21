@@ -775,26 +775,51 @@ export default {
         // init rather than resolving immediately while the orchestrator and HTTP
         // server are still initializing.
         //
-        // Loop rather than a single if: when multiple secondaries are awaiting the
-        // same INIT_PROMISE (e.g. after primary abort), the first waiter to resume
-        // synchronously sets a new INIT_PROMISE for its own takeover. Without the
-        // loop, subsequent waiters fall through the if-block and enter the init path
-        // concurrently — re-running orchestrator.initialize() multiple times. The
-        // while-loop re-checks INIT_PROMISE after every await so each waiter sees
-        // the new promise and awaits it instead of racing to become a second primary.
-        while ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
-          await (globalThis as any)[ENGRAM_INIT_PROMISE];
-          // Re-check after awaiting: the primary's start() may have been aborted by
-          // a concurrent stop() (via the !didCountStart early return), leaving
-          // ENGRAM_SERVICE_STARTED=false even though the promise resolved. In that
-          // case continue the loop — we will either see a new INIT_PROMISE (set by
-          // the first-resuming takeover waiter) or exit the loop to become primary.
-          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
-        }
-        // No in-flight init — check if already fully initialized.
-        if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-          log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
-          return;
+        // Outer loop handles two cases:
+        //   1. A failed takeover init: if an awaited INIT_PROMISE rejects (the
+        //      takeover primary's initialize() threw), the inner while catches the
+        //      rejection so the waiting secondary can retry — either await the next
+        //      INIT_PROMISE or claim ownership.
+        //   2. Defensive ownership re-check: after the inner while exits
+        //      (INIT_PROMISE=null) there is no await before the break, so in
+        //      single-threaded JS INIT_PROMISE cannot be set by another secondary
+        //      in that window. The explicit re-check makes the invariant clear.
+        for (;;) {
+          // Inner while: wait out any in-flight init.
+          // Loop rather than a single if: when multiple secondaries are awaiting the
+          // same INIT_PROMISE (e.g. after primary abort), the first waiter to resume
+          // synchronously sets a new INIT_PROMISE for its own takeover. Without the
+          // loop, subsequent waiters fall through the if-block and enter the init path
+          // concurrently — re-running orchestrator.initialize() multiple times. The
+          // while-loop re-checks INIT_PROMISE after every await so each waiter sees
+          // the new promise and awaits it instead of racing to become a second primary.
+          while ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
+            try {
+              await (globalThis as any)[ENGRAM_INIT_PROMISE];
+            } catch {
+              // A primary's init failed and its outer try-finally already cleared
+              // ENGRAM_INIT_PROMISE to null. Re-evaluate the while condition: if
+              // another secondary claimed INIT_PROMISE in the meantime, await it;
+              // otherwise exit and decide whether to become the next primary.
+            }
+            // Re-check after awaiting: the primary's start() may have been aborted by
+            // a concurrent stop() (via the !didCountStart early return), leaving
+            // ENGRAM_SERVICE_STARTED=false even though the promise resolved. In that
+            // case continue the loop — we will either see a new INIT_PROMISE (set by
+            // the first-resuming takeover waiter) or exit the loop to become primary.
+            if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
+          }
+          // No in-flight init — check if already fully initialized.
+          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+            log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
+            return;
+          }
+          // Defensive re-check before claiming ownership. In practice (single-threaded
+          // JS, no await between the inner while exit and here) INIT_PROMISE cannot
+          // become non-null at this point, but the check makes the ownership invariant
+          // self-documenting: we only proceed when no other primary is in-flight.
+          if ((globalThis as any)[ENGRAM_INIT_PROMISE]) continue;
+          break;
         }
         // We are the first — claim ownership and drive initialization.
         didCountStart = true;
@@ -951,16 +976,20 @@ export default {
           // that secondary's init also fails, this callback re-attaches to the
           // next INIT_PROMISE so that once the whole chain settles (no service
           // started, no new init in-flight), the guard is cleared.
+          //
+          // No queueMicrotask here: any secondary waiting on currentInitPromise
+          // registers its .then() *before* this callback does (registration order
+          // mirrors call order). So it runs first and sets INIT_PROMISE
+          // synchronously. By the time this callback executes, INIT_PROMISE
+          // already reflects the takeover state — no extra microtask tick needed.
           const clearGuardIfNoTakeover = () => {
-            queueMicrotask(() => {
-              const nextInit = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
-              if (nextInit) {
-                // A new takeover has started — watch it too.
-                void nextInit.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
-              } else if (!(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-                (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
-              }
-            });
+            const nextInit = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+            if (nextInit) {
+              // A new takeover has started — watch it too.
+              void nextInit.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
+            } else if (!(globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+              (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+            }
           };
           void currentInitPromise.then(clearGuardIfNoTakeover, clearGuardIfNoTakeover);
         }
