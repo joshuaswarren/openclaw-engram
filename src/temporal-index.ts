@@ -749,54 +749,64 @@ export function recencyWindowBoundsFromPrompt(
   } else if (/\blast year\b/.test(p)) {
     toDate = `${now.getFullYear() - 1}-12-31`;
   } else {
+    // Mirror the structure of recencyWindowFromPrompt's else branch:
+    // month name → early set (highest priority), then ago patterns set a
+    // working offset, then ISO/US/weekday patterns run AFTER ago patterns
+    // and can override them — matching the priority ordering in recencyWindowFromPrompt.
+
     const monthNames = ["january", "february", "march", "april", "may", "june",
       "july", "august", "september", "october", "november", "december"];
     const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
     if (monthMatch) {
+      // Month name has highest priority — compute last day of matched month
       const monthIdx = monthNames.indexOf(monthMatch[1]);
       const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
-      // Day 0 of next month = last day of matched month
       toDate = new Date(year, monthIdx + 1, 0).toISOString().slice(0, 10);
     } else {
+      // Ago patterns set a working offset (recent edge of the N-ago window).
+      // Same nesting order as recencyWindowFromPrompt.
+      let toDaysBack = 0; // default: today
       const weekMatch = p.match(/(\d{1,5})\s*weeks?\s*ago/);
       if (weekMatch) {
-        const n = Math.min(52, parseInt(weekMatch[1], 10));
-        toDate = new Date(nowMs - Math.max(0, n - 1) * 7 * 86_400_000).toISOString().slice(0, 10);
+        toDaysBack = Math.max(0, Math.min(52, parseInt(weekMatch[1], 10)) - 1) * 7;
       } else {
         const monthsAgoMatch = p.match(/(\d{1,5})\s*months?\s*ago/);
         if (monthsAgoMatch) {
-          const n = Math.min(24, parseInt(monthsAgoMatch[1], 10));
-          toDate = new Date(nowMs - Math.max(0, n - 1) * 31 * 86_400_000).toISOString().slice(0, 10);
+          toDaysBack = Math.max(0, Math.min(24, parseInt(monthsAgoMatch[1], 10)) - 1) * 31;
         } else {
           const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
           if (numMatch) {
-            const n = Math.min(365, parseInt(numMatch[1], 10));
-            toDate = new Date(nowMs - n * 86_400_000).toISOString().slice(0, 10);
-          } else if (/(\d{1,5})\s*hours?\s*ago/.test(p)) {
-            toDate = today; // sub-day precision not tracked
+            toDaysBack = Math.min(365, parseInt(numMatch[1], 10));
           } else {
-            // Try explicit date patterns (same as recencyWindowFromPrompt)
-            const isoMatch = p.match(/(\d{4})-(\d{2})-(\d{2})/);
-            if (isoMatch) {
-              toDate = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-            } else {
-              const usMatch = p.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-              if (usMatch) {
-                const year = usMatch[3].length === 2 ? 2000 + parseInt(usMatch[3], 10) : parseInt(usMatch[3], 10);
-                toDate = `${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
-              } else {
-                const dayOfWeekMatch = p.match(/\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
-                if (dayOfWeekMatch) {
-                  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-                  const targetDay = dayNames.indexOf(dayOfWeekMatch[1]);
-                  const currentDay = now.getDay();
-                  const daysBack = ((currentDay - targetDay + 7) % 7) || 7;
-                  toDate = new Date(nowMs - daysBack * 86_400_000).toISOString().slice(0, 10);
-                } else {
-                  toDate = today; // open-ended default
-                }
-              }
+            const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
+            if (hrMatch) {
+              toDaysBack = 0; // sub-day precision: same day as today
             }
+          }
+        }
+      }
+
+      // Explicit date/weekday patterns run AFTER ago patterns (same as recencyWindowFromPrompt)
+      // and override the ago-derived offset when present.
+      const isoMatch = p.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        toDate = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+      } else {
+        const usMatch = p.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+        if (usMatch) {
+          const year = usMatch[3].length === 2 ? 2000 + parseInt(usMatch[3], 10) : parseInt(usMatch[3], 10);
+          toDate = `${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+        } else {
+          const dayOfWeekMatch = p.match(/\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+          if (dayOfWeekMatch) {
+            const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+            const targetDay = dayNames.indexOf(dayOfWeekMatch[1]);
+            const currentDay = now.getDay();
+            const daysBack = ((currentDay - targetDay + 7) % 7) || 7;
+            toDate = new Date(nowMs - daysBack * 86_400_000).toISOString().slice(0, 10);
+          } else {
+            // Use the ago-derived offset (or today if no pattern matched)
+            toDate = new Date(nowMs - toDaysBack * 86_400_000).toISOString().slice(0, 10);
           }
         }
       }

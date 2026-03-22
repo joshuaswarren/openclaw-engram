@@ -4077,6 +4077,11 @@ export class Orchestrator {
       // v9.1: Parallel agent augmentation — run DirectFact + Temporal agents
       // alongside the existing contextual search and merge results.
       // Skips gracefully if disabled or if index files are unavailable.
+      //
+      // Note: augmentation runs inside the QMD branch because augmentWithDirectAndTemporal
+      // takes contextual QMD results as input. When QMD is unavailable the direct/temporal
+      // agents also skip. Both agents use only local file I/O and could in principle run
+      // without QMD; that extension is deferred until a QMD-free recall path is added.
       let augmentedResults = filteredResults;
       if (this.config.parallelRetrievalEnabled) {
         try {

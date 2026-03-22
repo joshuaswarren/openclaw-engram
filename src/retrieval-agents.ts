@@ -408,9 +408,15 @@ export async function augmentWithDirectAndTemporal(
   ]);
   const durationMs = Date.now() - startMs;
 
-  // Direct agent results (entities/) are not indexed by temporal/tag prefilters so they
-  // bypass candidatePaths. Temporal results are already scoped inside runTemporalAgent.
-  const scopedDirect = directResults; // entity files bypass candidatePaths
+  // Direct agent results (entities/) intentionally bypass candidatePaths.
+  //
+  // Why: candidatePaths is built from temporal + tag indexes, which never include
+  // entity files (entities/*.md). Applying the filter here would silently drop ALL
+  // direct-agent results for any scoped query, making the direct agent a no-op.
+  // Entity files are identified by filename matching (query tokens vs. entity name),
+  // so they are already query-scoped independently of the time/tag prefilter.
+  // Temporal results are scoped inside runTemporalAgent() before the top-K cap.
+  const scopedDirect = directResults;
 
   // Tag contextual results with their source so they can participate in weighted merge.
   // We do NOT cap contextual here: contextualResults comes from fetchQmdMemoryResultsWithArtifactTopUp
