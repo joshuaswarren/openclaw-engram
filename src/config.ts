@@ -1479,6 +1479,21 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.lcmArchiveRetentionDays === "number"
         ? Math.max(1, Math.floor(cfg.lcmArchiveRetentionDays))
         : 90,
+
+    // v9.1 Parallel Specialized Retrieval
+    parallelRetrievalEnabled: cfg.parallelRetrievalEnabled === true,
+    parallelAgentWeights: (() => {
+      const w = cfg.parallelAgentWeights as Record<string, unknown> | undefined;
+      return {
+        direct: typeof w?.direct === "number" ? w.direct : 1.0,
+        contextual: typeof w?.contextual === "number" ? w.contextual : 0.7,
+        temporal: typeof w?.temporal === "number" ? w.temporal : 0.85,
+      };
+    })(),
+    parallelMaxResultsPerAgent:
+      typeof cfg.parallelMaxResultsPerAgent === "number"
+        ? Math.max(1, Math.floor(cfg.parallelMaxResultsPerAgent))
+        : 20,
   };
 }
 
