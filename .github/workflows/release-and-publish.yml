@@ -285,10 +285,11 @@ jobs:
             exit 0
           fi
           # Configure deploy key for SSH push. Ruleset DeployKey bypass allows this.
+          # Use a trap to ensure the key file is removed even if the push fails.
           mkdir -p ~/.ssh
           echo "${RELEASE_DEPLOY_KEY}" > ~/.ssh/release_deploy_key
           chmod 600 ~/.ssh/release_deploy_key
+          trap 'rm -f ~/.ssh/release_deploy_key' EXIT
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/release_deploy_key -o StrictHostKeyChecking=no"
           git push "git@github.com:${{ github.repository }}.git" "${RELEASE_COMMIT}:refs/heads/main"
-          rm -f ~/.ssh/release_deploy_key
 
