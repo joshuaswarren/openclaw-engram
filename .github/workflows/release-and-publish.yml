@@ -264,14 +264,14 @@ jobs:
           npm publish --access public
 
       - name: Push release commits to main
-        # Requires RELEASE_PAT (repo-admin fine-grained PAT, Contents R/W).
-        # GITHUB_TOKEN cannot bypass the branch ruleset; an admin-scoped PAT satisfies
-        # the Repository Admin bypass actor configured on the ruleset.
+        # Uses a deploy key (RELEASE_DEPLOY_KEY secret) for the push.
+        # PAT-based pushes (fine-grained or classic) do not satisfy the RepositoryRole
+        # bypass actor on personal-repo rulesets; a DeployKey bypass actor works reliably.
         # Commit messages carry [skip ci] to prevent this push from re-triggering
-        # the release workflow (github.actor would be the PAT owner, not
-        # github-actions[bot], so the job-level actor guard would not fire).
+        # the release workflow (github.actor would be github-actions[bot] for a key push,
+        # so the job-level actor guard would fire — [skip ci] is a belt-and-suspenders guard).
         env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
           RELEASE_COMMIT="$(git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null || true)"
@@ -284,8 +284,11 @@ jobs:
             echo "::notice::Release commit already on main; skipping push."
             exit 0
           fi
-          # Plain fast-forward push. Fails safely on non-fast-forward (concurrent commits).
-          # Ruleset admin bypass allows this; GITHUB_TOKEN cannot bypass the ruleset.
-          PUSH_URL="https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git"
-          git push "${PUSH_URL}" "${RELEASE_COMMIT}:refs/heads/main"
+          # Configure deploy key for SSH push. Ruleset DeployKey bypass allows this.
+          mkdir -p ~/.ssh
+          echo "${RELEASE_DEPLOY_KEY}" > ~/.ssh/release_deploy_key
+          chmod 600 ~/.ssh/release_deploy_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/release_deploy_key -o StrictHostKeyChecking=no"
+          git push "git@github.com:${{ github.repository }}.git" "${RELEASE_COMMIT}:refs/heads/main"
+          rm -f ~/.ssh/release_deploy_key
 
