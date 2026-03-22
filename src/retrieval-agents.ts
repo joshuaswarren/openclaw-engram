@@ -348,6 +348,42 @@ async function populateEmptySnippets(results: QmdSearchResult[]): Promise<QmdSea
   return results.map((r) => (r.path && snippetMap.has(r.path) ? { ...r, snippet: snippetMap.get(r.path)! } : r));
 }
 
+/**
+ * Merge pre-computed direct and temporal agent results with contextual results.
+ *
+ * This is the merge half of augmentWithDirectAndTemporal. Expose it separately so
+ * callers that started agents concurrently with the contextual search (for true
+ * parallel latency) can merge after all three complete, without re-running agents.
+ *
+ * Handles the same cases as augmentWithDirectAndTemporal:
+ * - Returns contextual unchanged (no reweighting) when both agents return nothing
+ * - Applies maxResults cap in all paths
+ * - Populates snippets for results discovered only by specialized agents
+ */
+export async function mergeWithAgentResults(
+  contextualResults: QmdSearchResult[],
+  directResults: ParallelSearchResult[],
+  temporalResults: ParallelSearchResult[],
+  weights: Record<SearchAgentSource, number>,
+  maxResults: number,
+): Promise<QmdSearchResult[]> {
+  if (directResults.length === 0 && temporalResults.length === 0) {
+    return contextualResults.slice(0, maxResults);
+  }
+
+  const contextualTagged: ParallelSearchResult[] = contextualResults.map((r) => ({
+    ...r,
+    agentSource: "contextual" as const,
+  }));
+
+  const merged = mergeAgentResults(
+    [...contextualTagged, ...directResults, ...temporalResults],
+    weights,
+    maxResults,
+  );
+  return populateEmptySnippets(merged);
+}
+
 // ─── Augmentation helper (used by orchestrator) ───────────────────────────────
 
 /**

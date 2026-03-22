@@ -21,7 +21,14 @@ import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
-import { augmentWithDirectAndTemporal } from "./retrieval-agents.js";
+import {
+  augmentWithDirectAndTemporal,
+  mergeWithAgentResults,
+  runDirectAgent,
+  runTemporalAgent,
+  shouldRunAgent,
+  type ParallelSearchResult,
+} from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
@@ -4049,6 +4056,31 @@ export class Orchestrator {
       }
       const t0 = Date.now();
       const queryAwarePrefilter = await queryAwarePrefilterPromise;
+
+      // v9.1: Start DirectFact + Temporal agents NOW, before QMD fetch begins.
+      // Both agents use only local file I/O (no network), so they run concurrently
+      // with the QMD hybrid search for true parallel latency:
+      //   total latency ≈ max(qmd, direct, temporal), not qmd + max(direct, temporal).
+      // Results are awaited after QMD completes and merged below.
+      const maxPerAgent = this.config.parallelMaxResultsPerAgent;
+      const specializedAgentPromise: Promise<[ParallelSearchResult[], ParallelSearchResult[]]> | null =
+        this.config.parallelRetrievalEnabled
+          ? Promise.all([
+            shouldRunAgent("direct", retrievalQuery, 0)
+              ? runDirectAgent(retrievalQuery, profileStorage.dir, maxPerAgent).catch((err) => {
+                log.debug(`DirectAgent pre-start failed: ${err}`);
+                return [] as ParallelSearchResult[];
+              })
+              : Promise.resolve([] as ParallelSearchResult[]),
+            shouldRunAgent("temporal", retrievalQuery, 0)
+              ? runTemporalAgent(retrievalQuery, profileStorage.dir, maxPerAgent, queryAwarePrefilter.candidatePaths).catch((err) => {
+                log.debug(`TemporalAgent pre-start failed: ${err}`);
+                return [] as ParallelSearchResult[];
+              })
+              : Promise.resolve([] as ParallelSearchResult[]),
+          ])
+          : null;
+
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
@@ -4074,25 +4106,21 @@ export class Orchestrator {
 
       timings.qmd = `${Date.now() - t0}ms`;
 
-      // v9.1: Parallel agent augmentation — run DirectFact + Temporal agents
-      // alongside the existing contextual search and merge results.
-      // Skips gracefully if disabled or if index files are unavailable.
-      //
-      // Note: augmentation runs inside the QMD branch because augmentWithDirectAndTemporal
-      // takes contextual QMD results as input. When QMD is unavailable the direct/temporal
-      // agents also skip. Both agents use only local file I/O and could in principle run
-      // without QMD; that extension is deferred until a QMD-free recall path is added.
+      // v9.1: Parallel agent augmentation — DirectFact + Temporal agents were started
+      // concurrently with the QMD fetch above for true parallel latency. Await their
+      // results now and merge, adding per-agent headroom to the cap so lifecycle
+      // filtering downstream still has candidates after dropping stale specialized hits.
       let augmentedResults = filteredResults;
-      if (this.config.parallelRetrievalEnabled) {
+      if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
         try {
-          augmentedResults = await augmentWithDirectAndTemporal(
-            retrievalQuery,
-            profileStorage.dir,
+          const [directResults, temporalResults] = await specializedAgentPromise;
+          const lifecycleHeadroom = this.config.parallelMaxResultsPerAgent * 2;
+          augmentedResults = await mergeWithAgentResults(
             filteredResults,
+            directResults,
+            temporalResults,
             this.config.parallelAgentWeights,
-            this.config.parallelMaxResultsPerAgent,
-            qmdFetchLimit, // total output cap; per-source capped to parallelMaxResultsPerAgent inside
-            queryAwarePrefilter.candidatePaths, // temporal agent filtered to prefilter scope
+            qmdFetchLimit + lifecycleHeadroom,
           );
         } catch (err) {
           log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
