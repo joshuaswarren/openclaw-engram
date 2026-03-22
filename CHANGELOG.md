@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.0.106] — 2026-03-22
+
 ### Added
 - **Parallel specialized retrieval** (`src/retrieval-agents.ts`) — three parallel search agents (DirectFact, Contextual, Temporal) run via `Promise.all()` so total latency = `max(agents)` not `sum(agents)`. Zero additional LLM inference cost: DirectFact uses entity filename index (<5ms), Temporal uses the temporal date index (<10ms), and Contextual reuses the existing `hybridSearch`. Enabled via `parallelRetrievalEnabled` config flag (default false); graceful degradation on any agent error.
 
