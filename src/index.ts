@@ -1,5 +1,6 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { createRequire } from "node:module";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
@@ -108,8 +109,8 @@ function tryDefinePluginEntry(def: {
   register: (api: OpenClawPluginApi) => void;
 }) {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { definePluginEntry } = require("openclaw/plugin-sdk/plugin-entry") as {
+    const _require = createRequire(import.meta.url);
+    const { definePluginEntry } = _require("openclaw/plugin-sdk/plugin-entry") as {
       definePluginEntry: (d: typeof def) => typeof def;
     };
     return definePluginEntry(def);
@@ -214,7 +215,12 @@ const pluginDefinition = {
     // ========================================================================
     // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
+    // When registerMemoryPromptSection is available (preferred path), skip the
+    // recall hook entirely to avoid dual memory injection.
+    const useMemoryPromptSection =
+      sdkCaps.hasRegisterMemoryPromptSection && typeof api.registerMemoryPromptSection === "function";
     const recallHookName = sdkCaps.hasBeforePromptBuild ? "before_prompt_build" : "before_agent_start";
+    if (!useMemoryPromptSection)
     api.on(
       recallHookName,
       async (
@@ -343,7 +349,8 @@ const pluginDefinition = {
           const eventTimestamp = new Date().toISOString();
 
           // Best-effort tool usage stats for extended hourly summaries.
-          if (orchestrator.config.hourlySummariesIncludeToolStats) {
+          // On new SDK, after_tool_call hook handles this — skip here to avoid double-counting.
+          if (orchestrator.config.hourlySummariesIncludeToolStats && !sdkCaps!.hasBeforePromptBuild) {
             const toolNames: string[] = [];
             for (const msg of messages) {
               const role = msg.role as string | undefined;
@@ -670,11 +677,7 @@ const pluginDefinition = {
         ) => {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
-          try {
-            await (orchestrator as any).flushPendingExtractions?.(sessionKey);
-          } catch (err) {
-            log.debug(`session_end flush failed: ${err}`);
-          }
+          // Future: flush pending extractions here when Orchestrator gains a flush method.
           if (orchestrator.config.compactionResetEnabled) {
             orchestrator.clearRecallWorkspaceOverride(sessionKey);
           }
@@ -755,6 +758,21 @@ const pluginDefinition = {
             `subagent_ended: ${event.subagentId ?? "?"} success=${event.success ?? "?"} ${event.durationMs ?? "?"}ms`,
           );
         },
+      );
+    } else {
+      // Legacy runtime: restore heartbeat observer for sessionObserverEnabled.
+      // On new SDK, session_start/session_end hooks replace this.
+      const runtimeApi = api as any;
+      runtimeApi.registerHook?.(
+        ["agent_heartbeat", "agent:heartbeat"],
+        (event: any) => {
+          if (orchestrator.config.sessionObserverEnabled !== true) return;
+          const sessionKey = (event?.context?.sessionKey as string) ?? "default";
+          void orchestrator.observeSessionHeartbeat(sessionKey).catch((err: unknown) => {
+            log.debug(`agent_heartbeat observer failed: ${err}`);
+          });
+        },
+        { name: "engram_agent_heartbeat_legacy", description: "Observe legacy heartbeat events for session observation." },
       );
     }
 

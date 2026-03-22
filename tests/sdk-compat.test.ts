@@ -81,6 +81,21 @@ test("new api with registrationMode only → isNewSdk true even without register
   assert.equal(caps.registrationMode, "setup-only");
 });
 
+test("runtime namespace alone does NOT imply hasBeforePromptBuild or hasTypedHooks", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    runtime: { version: "2026.3.22" },
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRuntimeNamespace, true);
+  assert.equal(caps.hasBeforePromptBuild, false, "runtime.version alone should not set hasBeforePromptBuild");
+  assert.equal(caps.hasTypedHooks, false, "runtime.version alone should not set hasTypedHooks");
+  assert.equal(caps.hasDefinePluginEntry, true, "runtime.version should still set hasDefinePluginEntry");
+  assert.equal(caps.sdkVersion, "2026.3.22");
+});
+
 test("runtime object without version string falls back to process.env or 'legacy'", () => {
   const api: Record<string, unknown> = {
     on: () => {},

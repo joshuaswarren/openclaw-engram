@@ -192,7 +192,10 @@ test("subagent_ended handler logs without throwing", async () => {
 
 test("before_prompt_build handler returns memory context or undefined without throwing", async () => {
   const { default: plugin } = await import("../src/index.js");
+  // Build api WITHOUT registerMemoryPromptSection so the recall hook is registered
+  // (when registerMemoryPromptSection is available, the hook is skipped in favor of the section builder).
   const api = buildHandlerCapturingApi("before-prompt-build-test");
+  delete api.registerMemoryPromptSection;
   plugin.register(api as any);
 
   const handler = api.handlers.get("before_prompt_build");

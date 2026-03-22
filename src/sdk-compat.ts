@@ -46,13 +46,17 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
   const isNewSdk =
     hasRegisterMemoryPromptSection || hasRuntimeNamespace || hasRegistrationMode;
 
+  // New hook system requires registerMemoryPromptSection or registrationMode.
+  // Just having runtime.version is NOT sufficient — some legacy builds expose it.
+  const hasNewHookSystem = hasRegisterMemoryPromptSection || hasRegistrationMode;
+
   return {
-    hasBeforePromptBuild: isNewSdk,
+    hasBeforePromptBuild: hasNewHookSystem,
     hasRegisterMemoryPromptSection,
-    hasDefinePluginEntry: isNewSdk,
+    hasDefinePluginEntry: isNewSdk, // entry point is less risky, keep broad detection
     hasRuntimeNamespace,
     hasRegistrationMode,
-    hasTypedHooks: isNewSdk,
+    hasTypedHooks: hasNewHookSystem,
     sdkVersion,
     registrationMode: hasRegistrationMode
       ? ((api as any).registrationMode as SdkCapabilities["registrationMode"])
