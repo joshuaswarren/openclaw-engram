@@ -15,11 +15,11 @@ POST /recall                 POST /recall                 POST /observe         
 (auto mode, 45s)             (minimal mode, 20s)          (incremental, bg)         (final flush, bg)
       │                             │                           │                          │
       ▼                             ▼                           ▼                          ▼
-additionalSystemPrompt       additionalContext             cursor advanced           cursor cleaned up
-(before turn 1)              (before each turn)            (new msgs only)           (remaining msgs)
+additionalContext            additionalContext             cursor advanced           cursor cleaned up
+(before turn 1)             (before each turn)            (new msgs only)           (remaining msgs)
 ```
 
-**SessionStart** (`engram-session-recall.sh`): Fires when a session opens. Queries Engram with the project name in `auto` mode, injecting matched memories as `additionalSystemPrompt`. Claude sees relevant cross-project context before the first message.
+**SessionStart** (`engram-session-recall.sh`): Fires when a session opens. Queries Engram with the project name in `auto` mode, injecting matched memories as `additionalContext`. Claude sees relevant cross-project context before the first message.
 
 **UserPromptSubmit** (`engram-user-prompt-recall.sh`): Fires synchronously before every user message. Uses the actual prompt text as the recall query (`minimal` mode, up to 20s). Injects results as `additionalContext` so Claude has relevant memories at the moment they're needed — not just at session start. Short prompts (<4 words) are skipped.
 
@@ -65,20 +65,15 @@ grep -i "engram.*token\|token.*engram" ~/Library/LaunchAgents/ai.openclaw.gatewa
 
 ### 3. Install the hook scripts
 
-All four scripts live in `~/.claude/scripts/`:
+The four scripts are included in this repository under `scripts/hooks/claude-code/`. Copy them to `~/.claude/scripts/`:
 
 ```bash
-# Recall at session start
-~/.claude/scripts/engram-session-recall.sh
-
-# Recall before each user message
-~/.claude/scripts/engram-user-prompt-recall.sh
-
-# Incremental store after each turn
-~/.claude/scripts/engram-session-store.sh
-
-# Final flush on session exit
-~/.claude/scripts/engram-session-end.sh
+mkdir -p ~/.claude/scripts
+cp scripts/hooks/claude-code/engram-session-recall.sh \
+   scripts/hooks/claude-code/engram-user-prompt-recall.sh \
+   scripts/hooks/claude-code/engram-session-store.sh \
+   scripts/hooks/claude-code/engram-session-end.sh \
+   ~/.claude/scripts/
 ```
 
 Make them executable:
@@ -243,12 +238,14 @@ additionalContext            additionalContext          cursor advanced
 
 ### Setup
 
-Scripts live in `~/.codex/scripts/`:
+The three scripts are included in this repository under `scripts/hooks/codex/`. Copy them to `~/.codex/scripts/`:
 
 ```bash
-~/.codex/scripts/engram-session-recall.sh
-~/.codex/scripts/engram-user-prompt-recall.sh
-~/.codex/scripts/engram-session-store.sh
+mkdir -p ~/.codex/scripts
+cp scripts/hooks/codex/engram-session-recall.sh \
+   scripts/hooks/codex/engram-user-prompt-recall.sh \
+   scripts/hooks/codex/engram-session-store.sh \
+   ~/.codex/scripts/
 ```
 
 Make them executable:
