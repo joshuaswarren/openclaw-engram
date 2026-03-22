@@ -48,15 +48,17 @@ print(json.dumps({
 [ -z "$REQUEST_BODY" ] && echo '{"continue":true}' && exit 0
 
 log "attempting full recall (auto mode)..."
-RESPONSE="$(curl -s --max-time 45 \
+RAW="$(curl -s -w "\n%{http_code}" --max-time 45 \
   -X POST "$ENGRAM_URL" \
   -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "$REQUEST_BODY" 2>/dev/null)"
 CURL_EXIT=$?
+HTTP_STATUS="$(echo "$RAW" | tail -1)"
+RESPONSE="$(echo "$RAW" | sed '$d')"
 
-if [ $CURL_EXIT -ne 0 ] || [ -z "$RESPONSE" ]; then
-  log "full recall failed (curl exit $CURL_EXIT) — falling back to minimal mode"
+if [ $CURL_EXIT -ne 0 ] || ! [[ "$HTTP_STATUS" =~ ^2 ]] || [ -z "$RESPONSE" ]; then
+  log "full recall failed (curl=$CURL_EXIT http=$HTTP_STATUS) — falling back to minimal mode"
   MINIMAL_BODY="$(python3 -c "
 import json, os
 print(json.dumps({
@@ -65,16 +67,18 @@ print(json.dumps({
     'topK': 8,
     'mode': 'minimal',
 }))" 2>/dev/null)"
-  RESPONSE="$(curl -s --max-time 20 \
+  RAW="$(curl -s -w "\n%{http_code}" --max-time 20 \
     -X POST "$ENGRAM_URL" \
     -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "${MINIMAL_BODY:-$REQUEST_BODY}" 2>/dev/null)"
   CURL_EXIT=$?
-  [ $CURL_EXIT -eq 0 ] && log "minimal recall succeeded" || log "minimal recall also failed (curl exit $CURL_EXIT)"
+  HTTP_STATUS="$(echo "$RAW" | tail -1)"
+  RESPONSE="$(echo "$RAW" | sed '$d')"
+  [[ "$CURL_EXIT" -eq 0 && "$HTTP_STATUS" =~ ^2 ]] && log "minimal recall succeeded" || { log "minimal recall also failed (curl=$CURL_EXIT http=$HTTP_STATUS)"; CURL_EXIT=1; }
 fi
 
-if [ $CURL_EXIT -eq 0 ] && [ -n "$RESPONSE" ]; then
+if [ $CURL_EXIT -eq 0 ] && [[ "$HTTP_STATUS" =~ ^2 ]] && [ -n "$RESPONSE" ]; then
   CONTEXT="$(echo "$RESPONSE" | python3 -c "
 import json, sys
 try:

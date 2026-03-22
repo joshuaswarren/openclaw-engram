@@ -144,7 +144,7 @@ print(json.dumps(d))
     -d "$CLEAN_PAYLOAD" 2>/dev/null)"
   CURL_EXIT=$?
   HTTP_STATUS="$(echo "$RAW" | tail -1)"
-  RESPONSE="$(echo "$RAW" | head -n -1)"
+  RESPONSE="$(echo "$RAW" | sed '$d')"
 
   if [ $CURL_EXIT -eq 0 ] && [[ "$HTTP_STATUS" =~ ^2 ]] && [ -n "$RESPONSE" ]; then
     RESULT="$(echo "$RESPONSE" | python3 -c "

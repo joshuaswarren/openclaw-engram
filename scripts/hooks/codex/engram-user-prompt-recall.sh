@@ -53,15 +53,17 @@ print(json.dumps({
 
 [ -z "$REQUEST_BODY" ] && echo '{"continue":true}' && exit 0
 
-RESPONSE="$(curl -s --max-time 20 \
+RAW="$(curl -s -w "\n%{http_code}" --max-time 20 \
   -X POST "$ENGRAM_URL" \
   -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "$REQUEST_BODY" 2>/dev/null)"
 CURL_EXIT=$?
+HTTP_STATUS="$(echo "$RAW" | tail -1)"
+RESPONSE="$(echo "$RAW" | sed '$d')"
 
-if [ $CURL_EXIT -ne 0 ] || [ -z "$RESPONSE" ]; then
-  log "recall failed (curl exit $CURL_EXIT) — passing through"
+if [ $CURL_EXIT -ne 0 ] || ! [[ "$HTTP_STATUS" =~ ^2 ]] || [ -z "$RESPONSE" ]; then
+  log "recall failed (curl=$CURL_EXIT http=$HTTP_STATUS) — passing through"
   echo '{"continue":true}'
   exit 0
 fi
