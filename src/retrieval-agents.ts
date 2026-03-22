@@ -22,7 +22,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 import type { QmdClient } from "./qmd.js";
-import { recencyWindowFromPrompt } from "./temporal-index.js";
+import { recencyWindowBoundsFromPrompt } from "./temporal-index.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -176,108 +176,9 @@ export async function runTemporalAgent(
       return []; // Index missing or unreadable — nothing to return
     }
 
-    const fromDate = recencyWindowFromPrompt(query);
-    // Compute toDate to honor explicit window intent (e.g. "yesterday" → [yesterday, yesterday]).
-    // Default is today so open-ended prompts include the most recent memories.
-    // If both toDate and fromDate target different keywords in the same query, guard against
-    // inversion (fromDate > toDate) by falling back to today for toDate.
-    const rawToDate = (() => {
-      const p = query.toLowerCase();
-      const now = Date.now();
-
-      // Exact-day keywords — bound to that exact day
-      if (/\btoday\b|\bthis morning\b|\bjust now\b|\bearlier today\b/.test(p)) {
-        return new Date(now).toISOString().slice(0, 10);
-      }
-      if (/\byesterday\b|\blast night\b/.test(p)) {
-        return new Date(now - 86_400_000).toISOString().slice(0, 10);
-      }
-
-      // Relative week/month/year ranges — bound to the far end of the named range
-      if (/\bthis week\b/.test(p) || /\bthis month\b/.test(p) || /\bthis year\b/.test(p)) {
-        return new Date(now).toISOString().slice(0, 10); // up to today
-      }
-      if (/\blast week\b/.test(p)) {
-        return new Date(now - 7 * 86_400_000).toISOString().slice(0, 10);
-      }
-      if (/\blast month\b/.test(p)) {
-        return new Date(now - 31 * 86_400_000).toISOString().slice(0, 10);
-      }
-      if (/\blast year\b/.test(p)) {
-        return `${new Date().getFullYear() - 1}-12-31`;
-      }
-
-      // Explicit month name: "in March 2025" → last day of March 2025
-      const monthNames = ["january", "february", "march", "april", "may", "june",
-        "july", "august", "september", "october", "november", "december"];
-      const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
-      if (monthMatch) {
-        const monthIdx = monthNames.indexOf(monthMatch[1]);
-        const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : new Date(now).getFullYear();
-        // Day 0 of the next month = last day of the matched month
-        const monthEnd = new Date(year, monthIdx + 1, 0);
-        return monthEnd.toISOString().slice(0, 10);
-      }
-
-      // "N weeks ago" — bound to the recent edge of that week-long window
-      const weekMatch = p.match(/(\d{1,5})\s*weeks?\s*ago/);
-      if (weekMatch) {
-        const n = Math.min(52, parseInt(weekMatch[1], 10));
-        return new Date(now - Math.max(0, n - 1) * 7 * 86_400_000).toISOString().slice(0, 10);
-      }
-
-      // "N months ago" — bound to the recent edge of that month-long window
-      const monthsAgoMatch = p.match(/(\d{1,5})\s*months?\s*ago/);
-      if (monthsAgoMatch) {
-        const n = Math.min(24, parseInt(monthsAgoMatch[1], 10));
-        return new Date(now - Math.max(0, n - 1) * 31 * 86_400_000).toISOString().slice(0, 10);
-      }
-
-      // "N days ago" — that exact day
-      const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
-      if (numMatch) {
-        const n = Math.min(365, parseInt(numMatch[1], 10));
-        return new Date(now - n * 86_400_000).toISOString().slice(0, 10);
-      }
-
-      // Explicit ISO date "2025-03-12" — that exact day
-      const isoMatch = p.match(/(\d{4})-(\d{2})-(\d{2})/);
-      if (isoMatch) {
-        return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-      }
-
-      // US date "03/12/2025" — that exact day
-      const usMatch = p.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-      if (usMatch) {
-        const year = usMatch[3].length === 2 ? 2000 + parseInt(usMatch[3], 10) : parseInt(usMatch[3], 10);
-        return `${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
-      }
-
-      // "last Monday/Tuesday/etc" — that exact weekday
-      const dayOfWeekMatch = p.match(/\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
-      if (dayOfWeekMatch) {
-        const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-        const targetDay = dayNames.indexOf(dayOfWeekMatch[1]);
-        const currentDay = new Date(now).getDay();
-        const daysBack = ((currentDay - targetDay + 7) % 7) || 7;
-        return new Date(now - daysBack * 86_400_000).toISOString().slice(0, 10);
-      }
-
-      // "N hours ago" — still within today (sub-day precision not tracked)
-      if (/(\d{1,5})\s*hours?\s*ago/.test(p)) {
-        return new Date(now).toISOString().slice(0, 10);
-      }
-
-      // Default: open-ended up to today.
-      // Patterns like "on the 12th" or "spring 2025" are not parsed here because
-      // recencyWindowFromPrompt() also does not parse them — both fall back to a
-      // 7-day window ending today, which is a safe open-ended default.
-      return new Date(now).toISOString().slice(0, 10);
-    })();
-    const today = new Date().toISOString().slice(0, 10);
-    // Guard: if the computed toDate is before fromDate (inverted window from conflicting
-    // temporal keywords), fall back to today so we never get an empty window.
-    const toDate = rawToDate >= fromDate ? rawToDate : today;
+    // Derive both window edges from the same function so fromDate/toDate always use
+    // consistent pattern-matching and priority ordering.
+    const { fromDate, toDate } = recencyWindowBoundsFromPrompt(query);
 
     // Build path → date map, filtering to the recency window in one pass.
     // Apply candidatePaths here (before scoring + top-K) so in-scope entries are
