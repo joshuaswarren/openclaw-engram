@@ -814,8 +814,11 @@ export function recencyWindowBoundsFromPrompt(
             // +1 day: exclusive upper bound includes the named weekday
             toDate = new Date(nowMs - (daysBack - 1) * 86_400_000).toISOString().slice(0, 10);
           } else {
-            // Use the ago-derived offset (or today if no pattern matched)
-            toDate = new Date(nowMs - toDaysBack * 86_400_000).toISOString().slice(0, 10);
+            // Use the ago-derived offset.
+            // toDaysBack=0 means "today / unspecified" — use tomorrow so today is included in the window.
+            toDate = toDaysBack === 0
+              ? tomorrow
+              : new Date(nowMs - toDaysBack * 86_400_000).toISOString().slice(0, 10);
           }
         }
       }
