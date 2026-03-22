@@ -202,6 +202,7 @@ export async function runTemporalAgent(
       // so filename token overlap is meaningless for relevance. Temporal agent
       // ranks purely by recency; contextual/direct agents handle query relevance.
       const score = recencyScore;
+      const baseName = path.basename(p, ".md");
 
       results.push({
         docid: baseName,
