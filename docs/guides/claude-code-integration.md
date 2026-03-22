@@ -50,12 +50,19 @@ The hooks read `OPENCLAW_ENGRAM_ACCESS_TOKEN` from the environment. This must be
 export OPENCLAW_ENGRAM_ACCESS_TOKEN="<your-token>"
 ```
 
-**For launchd (macOS)** — add to the gateway's plist `EnvironmentVariables`:
+This works when you launch Claude Code or Codex from a terminal that sources your profile.
 
-```xml
-<key>OPENCLAW_ENGRAM_ACCESS_TOKEN</key>
-<string>your-token-here</string>
+**If Claude Code is launched from the Dock, Spotlight, or a desktop shortcut** — those apps don't inherit shell profile variables. Set the variable in the user's launchd session environment instead:
+
+```bash
+# Set immediately (lost on next logout):
+launchctl setenv OPENCLAW_ENGRAM_ACCESS_TOKEN "your-token"
+
+# Persist across logins: add to ~/.zprofile (loaded by macOS login shells):
+echo 'export OPENCLAW_ENGRAM_ACCESS_TOKEN="your-token"' >> ~/.zprofile
 ```
+
+> **Note:** Adding the token to the OpenClaw *gateway* plist only sets it for the gateway process — hook scripts run inside Claude Code / Codex, not inside the gateway, so the gateway plist alone is not sufficient.
 
 To find your token, check the gateway plist or run:
 
