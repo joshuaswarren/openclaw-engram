@@ -126,7 +126,7 @@ export async function runDirectAgent(
       results.push({
         docid: nameWithoutExt,
         path: path.join(entitiesDir, entry),
-        snippet: "",
+        snippet: "", // populated by augmentWithDirectAndTemporal after merge
         score,
         transport: "scoped_prefilter",
         agentSource: "direct",
@@ -210,7 +210,7 @@ export async function runTemporalAgent(
       results.push({
         docid: baseName,
         path: p,
-        snippet: "",
+        snippet: "", // populated by augmentWithDirectAndTemporal after merge
         score,
         transport: "scoped_prefilter",
         agentSource: "temporal",
