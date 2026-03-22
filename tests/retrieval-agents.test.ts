@@ -8,6 +8,7 @@ import {
   runDirectAgent,
   runTemporalAgent,
   parallelRetrieval,
+  augmentWithDirectAndTemporal,
   shouldRunAgent,
   PARALLEL_AGENT_WEIGHTS,
   type SearchAgentSource,
@@ -349,4 +350,97 @@ test("parallelRetrieval: direct results get higher weight than contextual (same 
   // and contextual at score 1.0 * 0.7 = 0.7 — contextual wins because higher weighted
   // The key test: result exists and has a score
   assert.ok(r!.score > 0);
+});
+
+// ─── augmentWithDirectAndTemporal ────────────────────────────────────────────
+
+const DEFAULT_WEIGHTS = { direct: 1.0, contextual: 0.7, temporal: 0.85 };
+
+test("augmentWithDirectAndTemporal: returns weighted contextual-only when no agent data", async () => {
+  const tmpDir = await makeTempDir();
+  const contextual = [
+    { docid: "a", path: "/tmp/a.md", snippet: "a snippet", score: 1.0, transport: "hybrid" as const },
+  ];
+  const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
+  assert.ok(results.length > 0);
+  // Score must be contextual weight applied consistently
+  assert.ok(Math.abs(results[0].score - 0.7) < 0.01);
+});
+
+test("augmentWithDirectAndTemporal: applies contextual weight even with no augmentation", async () => {
+  // Edge case: no entity/temporal data, just contextual results
+  // Score must always be weighted (consistent with case where agents have results)
+  const tmpDir = await makeTempDir();
+  const contextual = [
+    { docid: "x", path: "/tmp/x.md", snippet: "x snippet", score: 0.8, transport: "hybrid" as const },
+  ];
+  const results = await augmentWithDirectAndTemporal("no entities here", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
+  assert.ok(results.length > 0);
+  // Contextual weight 0.7 applied: 0.8 * 0.7 = 0.56
+  assert.ok(Math.abs(results[0].score - 0.56) < 0.01);
+});
+
+test("augmentWithDirectAndTemporal: direct agent results merge with contextual", async () => {
+  const tmpDir = await makeTempDir();
+  await mkdir(path.join(tmpDir, "entities"), { recursive: true });
+  await writeFile(path.join(tmpDir, "entities", "alice.md"), "# Alice");
+
+  // Contextual has alice at score 0.6; direct hits alice at filename overlap
+  const contextual = [
+    { docid: "alice", path: path.join(tmpDir, "entities", "alice.md"), snippet: "alice info", score: 0.6, transport: "hybrid" as const },
+  ];
+  const results = await augmentWithDirectAndTemporal("alice project", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
+  const r = results.find((x) => x.path.includes("alice.md"));
+  assert.ok(r !== undefined);
+  // Direct weight=1.0 × some overlap score should be > contextual 0.6 × 0.7=0.42
+  assert.ok(r!.score > 0);
+});
+
+test("augmentWithDirectAndTemporal: preserves snippet when higher-scoring agent has empty snippet", async () => {
+  const tmpDir = await makeTempDir();
+  await mkdir(path.join(tmpDir, "entities"), { recursive: true });
+  await writeFile(path.join(tmpDir, "entities", "alice.md"), "# Alice");
+
+  // Contextual has alice with a snippet; direct also matches with higher score but no snippet
+  const contextual = [
+    { docid: "alice", path: path.join(tmpDir, "entities", "alice.md"), snippet: "preserved snippet", score: 0.1, transport: "hybrid" as const },
+  ];
+  const results = await augmentWithDirectAndTemporal("Alice something", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
+  const r = results.find((x) => x.path.includes("alice.md"));
+  assert.ok(r !== undefined);
+  // Snippet should be preserved even though direct agent has empty snippet
+  assert.equal(r!.snippet, "preserved snippet");
+});
+
+test("augmentWithDirectAndTemporal: deduplicates by path, keeps highest weighted score", async () => {
+  const tmpDir = await makeTempDir();
+  const stateDir = path.join(tmpDir, "state");
+  await mkdir(stateDir, { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  const sharedPath = "/tmp/shared.md";
+  await writeFile(
+    path.join(stateDir, "index_time.json"),
+    JSON.stringify({ version: 1, dates: { [today]: [sharedPath] } }),
+  );
+
+  // Contextual has shared path at score 0.5; temporal should also include it
+  const contextual = [
+    { docid: "shared", path: sharedPath, snippet: "shared snippet", score: 0.5, transport: "hybrid" as const },
+  ];
+  const results = await augmentWithDirectAndTemporal("what happened today", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
+  const sharedResults = results.filter((r) => r.path === sharedPath);
+  assert.equal(sharedResults.length, 1, "deduplication: path appears only once");
+});
+
+test("augmentWithDirectAndTemporal: respects maxResults limit", async () => {
+  const tmpDir = await makeTempDir();
+  const contextual = Array.from({ length: 30 }, (_, i) => ({
+    docid: `fact-${i}`,
+    path: `/tmp/fact-${i}.md`,
+    snippet: "",
+    score: 1 - i * 0.01,
+    transport: "hybrid" as const,
+  }));
+  const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 20, 5);
+  assert.ok(results.length <= 5);
 });

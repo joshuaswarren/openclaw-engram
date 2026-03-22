@@ -59,6 +59,7 @@ export function shouldRunAgent(
       return knownEntityCount > 0 || /\b[A-Z][a-zA-Z]{1,}/.test(query);
     case "temporal":
     case "contextual":
+      // Temporal and contextual always run — temporal context is broadly useful and cheap (<10ms)
       return true;
     default:
       return true;
@@ -148,7 +149,8 @@ export async function runDirectAgent(
  *
  * Uses the temporal index (index_time.json) to find memories from the
  * recent time window derived from the query (default: last 7 days).
- * Returns paths with uniform recency score. Zero LLM inference; File I/O + math.
+ * Combines recency decay with query-filename token overlap so results stay
+ * relevant to the query content, not just recency. Zero LLM inference; File I/O + math.
  *
  * Cost: read index_time.json + date range scan. Typically <10ms.
  */
@@ -171,6 +173,7 @@ export async function runTemporalAgent(
 
     const fromDate = recencyWindowFromPrompt(query);
     const toDate = new Date().toISOString().slice(0, 10);
+    const queryTokens = tokenize(query);
 
     // Build path → date map, filtering to the recency window in one pass
     const pathToDate = new Map<string, string>();
@@ -190,11 +193,22 @@ export async function runTemporalAgent(
     for (const [p, dateStr] of pathToDate) {
       const ageMs = todayMs - new Date(dateStr).getTime();
       const ageDays = ageMs / 86_400_000;
-      // Linear decay: score=1.0 on day 0, score=0.5 on day 7, score=0.2 floor on day 14+
-      const score = Math.max(0.2, 1.0 - ageDays / 14);
+      // Recency decay: score=1.0 on day 0, score=0.5 on day 7, score=0.2 floor on day 14+
+      const recencyScore = Math.max(0.2, 1.0 - ageDays / 14);
+
+      // Query relevance via filename token overlap — prevents unrelated recent memories
+      // from ranking above query-relevant results when temporal weight is applied.
+      const baseName = path.basename(p, ".md");
+      const fileTokens = baseName.split(/[-_]/).filter((t) => t.length >= 2);
+      const relevanceScore = queryTokens.length > 0 ? overlapScore(queryTokens, fileTokens) : 0;
+
+      // Combine: 70% recency + 30% relevance (recency-primary with query grounding)
+      const score = relevanceScore > 0
+        ? recencyScore * 0.7 + relevanceScore * 0.3
+        : recencyScore * 0.8; // penalize slightly when query has no filename overlap
 
       results.push({
-        docid: path.basename(p, ".md"),
+        docid: baseName,
         path: p,
         snippet: "",
         score,
@@ -239,6 +253,104 @@ export async function runContextualAgent(
     log.debug(`ContextualAgent error: ${err}`);
     return [];
   }
+}
+
+// ─── Merge helper ─────────────────────────────────────────────────────────────
+
+/**
+ * Merge results from multiple agents into a single deduplicated, weighted list.
+ * Preserves snippets: if a higher-scoring result lacks a snippet, the existing
+ * snippet from a lower-scoring source is retained.
+ */
+function mergeAgentResults(
+  allResults: ParallelSearchResult[],
+  weights: Record<SearchAgentSource, number>,
+  maxResults: number,
+): QmdSearchResult[] {
+  const merged = new Map<string, QmdSearchResult>();
+  for (const result of allResults) {
+    const key = result.path || result.docid;
+    const weightedScore = result.score * weights[result.agentSource];
+    const existing = merged.get(key);
+    if (!existing || weightedScore > existing.score) {
+      merged.set(key, {
+        docid: result.docid,
+        path: result.path,
+        // Preserve any snippet from the existing entry when the new one has none
+        snippet: result.snippet || existing?.snippet || "",
+        score: weightedScore,
+        transport: "hybrid",
+      });
+    }
+  }
+  return [...merged.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults);
+}
+
+// ─── Augmentation helper (used by orchestrator) ───────────────────────────────
+
+/**
+ * Augment a set of contextual (hybridSearch) results with direct and temporal
+ * agent results, returning a merged, deduplicated list.
+ *
+ * This is the integration point for the orchestrator: the caller already ran
+ * hybridSearch as the primary contextual pass. Direct and temporal agents run
+ * in parallel, then all three are merged with configurable weights.
+ *
+ * Contextual weight is always applied to `contextualResults` so scoring is
+ * consistent regardless of whether direct/temporal agents return anything.
+ *
+ * v9.1 limitation: `memoryDir` is the storage root for the current namespace.
+ * For multi-namespace deployments, only the active namespace's entities/ and
+ * temporal index are scanned. Cross-namespace entity lookup is a future improvement.
+ */
+export async function augmentWithDirectAndTemporal(
+  query: string,
+  memoryDir: string,
+  contextualResults: QmdSearchResult[],
+  weights: Record<SearchAgentSource, number>,
+  maxPerAgent: number,
+  maxResults: number,
+): Promise<QmdSearchResult[]> {
+  const knownEntityCount = (query.match(/\b[A-Z][a-z]{1,}/g) ?? []).length;
+  const runDirect = shouldRunAgent("direct", query, knownEntityCount);
+  // Temporal always runs per spec (shouldRunAgent("temporal") always returns true)
+  const runTemporal = shouldRunAgent("temporal", query, knownEntityCount);
+
+  const startMs = Date.now();
+  const [directResults, temporalResults] = await Promise.all([
+    runDirect
+      ? runDirectAgent(query, memoryDir, maxPerAgent).catch((err) => {
+        log.debug(`augmentWithDirectAndTemporal: DirectAgent failed — ${err}`);
+        return [] as ParallelSearchResult[];
+      })
+      : Promise.resolve([] as ParallelSearchResult[]),
+    runTemporal
+      ? runTemporalAgent(query, memoryDir, maxPerAgent).catch((err) => {
+        log.debug(`augmentWithDirectAndTemporal: TemporalAgent failed — ${err}`);
+        return [] as ParallelSearchResult[];
+      })
+      : Promise.resolve([] as ParallelSearchResult[]),
+  ]);
+  const durationMs = Date.now() - startMs;
+
+  // Tag contextual results with their source so they can participate in weighted merge
+  const contextualTagged: ParallelSearchResult[] = contextualResults.map((r) => ({
+    ...r,
+    agentSource: "contextual" as const,
+  }));
+
+  log.debug(
+    `augmentWithDirectAndTemporal: direct=${directResults.length} temporal=${temporalResults.length} contextual=${contextualTagged.length} agentMs=${durationMs}ms`,
+  );
+
+  // Merge all three; contextual weight is applied consistently regardless of agent counts
+  return mergeAgentResults(
+    [...contextualTagged, ...directResults, ...temporalResults],
+    weights,
+    maxResults,
+  );
 }
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
@@ -306,24 +418,9 @@ export async function parallelRetrieval(
     `parallelRetrieval: direct=${directResults.length} temporal=${temporalResults.length} contextual=${contextualResults.length} durationMs=${durationMs}ms`,
   );
 
-  // Merge by path with source-weighted scoring
-  const merged = new Map<string, QmdSearchResult>();
-  for (const result of [...directResults, ...temporalResults, ...contextualResults]) {
-    const key = result.path || result.docid;
-    const weightedScore = result.score * PARALLEL_AGENT_WEIGHTS[result.agentSource];
-    const existing = merged.get(key);
-    if (!existing || weightedScore > existing.score) {
-      merged.set(key, {
-        docid: result.docid,
-        path: result.path,
-        snippet: result.snippet || existing?.snippet || "",
-        score: weightedScore,
-        transport: "hybrid",
-      });
-    }
-  }
-
-  return [...merged.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxResults);
+  return mergeAgentResults(
+    [...directResults, ...temporalResults, ...contextualResults],
+    PARALLEL_AGENT_WEIGHTS,
+    maxResults,
+  );
 }

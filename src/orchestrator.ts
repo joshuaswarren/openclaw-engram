@@ -21,7 +21,7 @@ import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
-import { runDirectAgent, runTemporalAgent, shouldRunAgent } from "./retrieval-agents.js";
+import { augmentWithDirectAndTemporal } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
@@ -4080,55 +4080,14 @@ export class Orchestrator {
       let augmentedResults = filteredResults;
       if (this.config.parallelRetrievalEnabled) {
         try {
-          const agentStart = Date.now();
-          const memDir = this.storage.dir;
-          const maxPerAgent = this.config.parallelMaxResultsPerAgent;
-          const agentWeights = this.config.parallelAgentWeights;
-          // Entity count for shouldRunAgent heuristic
-          const knownEntityCount = (retrievalQuery.match(/\b[A-Z][a-z]{1,}/g) ?? []).length;
-          const runDirect = shouldRunAgent("direct", retrievalQuery, knownEntityCount);
-          const runTemporal = isTemporalQuery(retrievalQuery);
-          const [directResults, temporalResults] = await Promise.all([
-            runDirect
-              ? runDirectAgent(retrievalQuery, memDir, maxPerAgent).catch(() => [])
-              : Promise.resolve([]),
-            runTemporal
-              ? runTemporalAgent(retrievalQuery, memDir, maxPerAgent).catch(() => [])
-              : Promise.resolve([]),
-          ]);
-          const agentDurationMs = Date.now() - agentStart;
-
-          if (directResults.length > 0 || temporalResults.length > 0) {
-            // Seed map with contextual (filteredResults) at their weighted score
-            const byPath = new Map<string, QmdSearchResult>(
-              filteredResults.map((r) => [
-                r.path || r.docid,
-                { ...r, score: r.score * agentWeights.contextual },
-              ]),
-            );
-            for (const r of directResults) {
-              const key = r.path || r.docid;
-              const weightedScore = r.score * agentWeights.direct;
-              const existing = byPath.get(key);
-              if (!existing || weightedScore > existing.score) {
-                byPath.set(key, { ...r, score: weightedScore, transport: "hybrid" });
-              }
-            }
-            for (const r of temporalResults) {
-              const key = r.path || r.docid;
-              const weightedScore = r.score * agentWeights.temporal;
-              const existing = byPath.get(key);
-              if (!existing || weightedScore > existing.score) {
-                byPath.set(key, { ...r, score: weightedScore, transport: "hybrid" });
-              }
-            }
-            augmentedResults = [...byPath.values()]
-              .sort((a, b) => b.score - a.score)
-              .slice(0, qmdFetchLimit);
-            log.debug(
-              `parallelRetrieval: direct=${directResults.length} temporal=${temporalResults.length} agentMs=${agentDurationMs}ms merged=${augmentedResults.length}`,
-            );
-          }
+          augmentedResults = await augmentWithDirectAndTemporal(
+            retrievalQuery,
+            this.storage.dir,
+            filteredResults,
+            this.config.parallelAgentWeights,
+            this.config.parallelMaxResultsPerAgent,
+            qmdFetchLimit,
+          );
         } catch (err) {
           log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
           // Fall back to existing filteredResults (already assigned)
