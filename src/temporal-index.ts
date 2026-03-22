@@ -719,9 +719,19 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
 /**
  * Returns both the start and end of the temporal window implied by the prompt.
  *
- * Mirrors the pattern-matching in `recencyWindowFromPrompt` so both window edges
- * are always computed by the same logic, preventing divergence between `fromDate`
- * and `toDate`.
+ * `fromDate` is computed by delegating to `recencyWindowFromPrompt`, so the two
+ * functions cannot diverge on the lower bound.  `toDate` is computed independently
+ * here using the same pattern-priority ordering, because the upper-bound arithmetic
+ * differs (exclusive end vs. inclusive start) and would not be expressible as a
+ * simple wrapper.
+ *
+ * Known divergence to be aware of: for "N hours ago", `recencyWindowFromPrompt`
+ * uses `Math.max(1, Math.ceil(hours/24))` days back, so `fromDate` = yesterday for
+ * sub-24h values.  `toDate` here is always `tomorrow` when no explicit date is
+ * specified (see the `toDaysBack === 0` branch), giving a 2-day window.  This is
+ * intentional — the window must cover both yesterday and today for recent hour-level
+ * queries.  Any fix to the hours formula in `recencyWindowFromPrompt` must be
+ * manually reflected here.
  *
  * - `fromDate`: first day of the implied window (same as `recencyWindowFromPrompt`)
  * - `toDate`: first day NOT in the window (exclusive upper bound), so callers
@@ -784,7 +794,9 @@ export function recencyWindowBoundsFromPrompt(
           } else {
             const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
             if (hrMatch) {
-              toDaysBack = 0; // sub-day precision: same day as today
+              // Sub-day precision: toDate upper bound = tomorrow so today is included.
+              // fromDate already captures yesterday (recencyWindowFromPrompt uses ceiling).
+              toDaysBack = 0;
             }
           }
         }
