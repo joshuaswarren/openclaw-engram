@@ -205,7 +205,7 @@ The key benefit is that memories from one project automatically surface in other
 1. You fix a tricky Zod `optional().nullable()` bug in Project A
 2. Engram extracts this as a memory: "Zod optional fields must use `.optional().nullable()`, not just `.optional()`"
 3. In a future session on Project B, if you're working with Zod schemas, Engram recalls this pattern
-4. Claude sees it in `additionalSystemPrompt` before you even ask about it
+4. Claude sees it in `additionalContext` before you even ask about it
 
 This works because Engram's recall is query-based across all stored memories regardless of which project produced them.
 
