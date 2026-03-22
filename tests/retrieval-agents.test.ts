@@ -132,17 +132,24 @@ test("runTemporalAgent: returns empty when no temporal index", async () => {
 test("runTemporalAgent: returns paths from temporal index within window", async () => {
   const tmpDir = await makeTempDir();
   const stateDir = path.join(tmpDir, "state");
+  const factsDir = path.join(tmpDir, "facts");
   await mkdir(stateDir, { recursive: true });
+  await mkdir(factsDir, { recursive: true });
 
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
+  const todayFile = path.join(factsDir, "today-fact.md");
+  const yestFile = path.join(factsDir, "yesterday-fact.md");
+  await writeFile(todayFile, "---\nid: t\n---\n\ntoday fact");
+  await writeFile(yestFile, "---\nid: y\n---\n\nyesterday fact");
+
   const index = {
     version: 1,
     dates: {
-      [today]: [path.join(tmpDir, "facts", "today-fact.md")],
-      [yesterday]: [path.join(tmpDir, "facts", "yesterday-fact.md")],
-      "2020-01-01": [path.join(tmpDir, "facts", "old-fact.md")],
+      [today]: [todayFile],
+      [yesterday]: [yestFile],
+      "2020-01-01": [path.join(factsDir, "old-fact.md")], // does not exist on disk — filtered
     },
   };
   await writeFile(path.join(stateDir, "index_time.json"), JSON.stringify(index));
@@ -160,16 +167,23 @@ test("runTemporalAgent: returns paths from temporal index within window", async 
 test("runTemporalAgent: assigns higher score to more recent paths", async () => {
   const tmpDir = await makeTempDir();
   const stateDir = path.join(tmpDir, "state");
+  const factsDir = path.join(tmpDir, "facts");
   await mkdir(stateDir, { recursive: true });
+  await mkdir(factsDir, { recursive: true });
 
   const today = new Date().toISOString().slice(0, 10);
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
 
+  const freshFile = path.join(factsDir, "fresh.md");
+  const oldFile = path.join(factsDir, "week-old.md");
+  await writeFile(freshFile, "---\nid: f\n---\n\nfresh");
+  await writeFile(oldFile, "---\nid: o\n---\n\nold");
+
   const index = {
     version: 1,
     dates: {
-      [today]: [path.join(tmpDir, "facts", "fresh.md")],
-      [weekAgo]: [path.join(tmpDir, "facts", "week-old.md")],
+      [today]: [freshFile],
+      [weekAgo]: [oldFile],
     },
   };
   await writeFile(path.join(stateDir, "index_time.json"), JSON.stringify(index));
@@ -185,15 +199,22 @@ test("runTemporalAgent: assigns higher score to more recent paths", async () => 
 test("runTemporalAgent: respects maxResults limit", async () => {
   const tmpDir = await makeTempDir();
   const stateDir = path.join(tmpDir, "state");
+  const factsDir = path.join(tmpDir, "facts");
   await mkdir(stateDir, { recursive: true });
+  await mkdir(factsDir, { recursive: true });
 
   const today = new Date().toISOString().slice(0, 10);
-  const paths: Record<string, string[]> = {};
-  paths[today] = Array.from({ length: 25 }, (_, i) => `/tmp/fact-${i}.md`);
+  const factPaths = await Promise.all(
+    Array.from({ length: 25 }, async (_, i) => {
+      const p = path.join(factsDir, `fact-${i}.md`);
+      await writeFile(p, `---\nid: f${i}\n---\n\nfact ${i}`);
+      return p;
+    }),
+  );
 
   await writeFile(
     path.join(stateDir, "index_time.json"),
-    JSON.stringify({ version: 1, dates: paths }),
+    JSON.stringify({ version: 1, dates: { [today]: factPaths } }),
   );
 
   const results = await runTemporalAgent("what happened today", tmpDir, 10);
@@ -424,7 +445,9 @@ test("augmentWithDirectAndTemporal: deduplicates by path, keeps highest weighted
   const stateDir = path.join(tmpDir, "state");
   await mkdir(stateDir, { recursive: true });
   const today = new Date().toISOString().slice(0, 10);
-  const sharedPath = "/tmp/shared.md";
+  // Use an actual file in tmpDir so the path existence check in runTemporalAgent passes
+  const sharedPath = path.join(tmpDir, "shared.md");
+  await writeFile(sharedPath, "---\nid: s\n---\n\nshared memory");
   await writeFile(
     path.join(stateDir, "index_time.json"),
     JSON.stringify({ version: 1, dates: { [today]: [sharedPath] } }),
@@ -487,8 +510,9 @@ test("augmentWithDirectAndTemporal: candidatePaths filters temporal results but 
   const entityPath = path.join(tmpDir, "entities", "alice.md");
   await writeFile(entityPath, "# Alice");
 
-  // Memory file — returned by temporal agent; in temporal index
-  const memPath = `/tmp/mem-${Date.now()}.md`;
+  // Memory file — returned by temporal agent; in temporal index AND must exist on disk
+  const memPath = path.join(tmpDir, `mem-${Date.now()}.md`);
+  await writeFile(memPath, "---\nid: test\n---\n\ntemporary memory content");
   const today = new Date().toISOString().slice(0, 10);
   await writeFile(
     path.join(tmpDir, "state", "index_time.json"),

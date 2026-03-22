@@ -18,7 +18,7 @@
  */
 
 import path from "node:path";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 import type { QmdClient } from "./qmd.js";
@@ -160,6 +160,9 @@ export async function runTemporalAgent(
   query: string,
   memoryDir: string,
   maxResults = 20,
+  /** Optional candidate set from query-aware prefilter. Applied BEFORE the top-K cap so
+   * in-scope entries are not displaced by newer out-of-scope entries. */
+  candidatePaths?: Set<string> | null,
 ): Promise<ParallelSearchResult[]> {
   try {
     // Read index_time.json once — used for both date-range filtering and recency scoring.
@@ -176,7 +179,9 @@ export async function runTemporalAgent(
     const fromDate = recencyWindowFromPrompt(query);
     // Compute toDate to honor explicit window intent (e.g. "yesterday" → [yesterday, yesterday]).
     // Default is today so open-ended prompts include the most recent memories.
-    const toDate = (() => {
+    // If both toDate and fromDate target different keywords in the same query, guard against
+    // inversion (fromDate > toDate) by falling back to today for toDate.
+    const rawToDate = (() => {
       const p = query.toLowerCase();
       const now = Date.now();
       if (/\byesterday\b/.test(p) || /\blast night\b/.test(p)) {
@@ -193,13 +198,20 @@ export async function runTemporalAgent(
       }
       return new Date(now).toISOString().slice(0, 10);
     })();
-    const queryTokens = tokenize(query);
+    const today = new Date().toISOString().slice(0, 10);
+    // Guard: if the computed toDate is before fromDate (inverted window from conflicting
+    // temporal keywords), fall back to today so we never get an empty window.
+    const toDate = rawToDate >= fromDate ? rawToDate : today;
 
-    // Build path → date map, filtering to the recency window in one pass
+    // Build path → date map, filtering to the recency window in one pass.
+    // Apply candidatePaths here (before scoring + top-K) so in-scope entries are
+    // not displaced by newer out-of-scope entries at the slice boundary.
     const pathToDate = new Map<string, string>();
     for (const [date, datePaths] of Object.entries(dateIndex)) {
       if (date >= fromDate && date <= toDate) {
         for (const p of datePaths) {
+          // Skip paths excluded by the query-aware prefilter scope
+          if (candidatePaths && !candidatePaths.has(p)) continue;
           if (!pathToDate.has(p)) pathToDate.set(p, date);
         }
       }
@@ -215,6 +227,14 @@ export async function runTemporalAgent(
       const ageDays = ageMs / 86_400_000;
       // Recency decay: score=1.0 on day 0, score=0.5 on day 7, score=0.2 floor on day 14+
       const recencyScore = Math.max(0.2, 1.0 - ageDays / 14);
+
+      // Skip stale index entries — the file may have been deleted or not yet written.
+      // Avoids returning broken paths that downstream stages can't read.
+      try {
+        await stat(p);
+      } catch {
+        continue;
+      }
 
       // Memory files use opaque IDs (e.g. "a1b2c3.md"), not topic-bearing names,
       // so filename token overlap is meaningless for relevance. Temporal agent
@@ -396,7 +416,9 @@ export async function augmentWithDirectAndTemporal(
       })
       : Promise.resolve([] as ParallelSearchResult[]),
     runTemporal
-      ? runTemporalAgent(query, memoryDir, maxPerAgent).catch((err) => {
+      // Pass candidatePaths so scope-filtering happens before the top-K cap inside runTemporalAgent,
+      // preventing out-of-scope newer entries from displacing in-scope ones at the slice boundary.
+      ? runTemporalAgent(query, memoryDir, maxPerAgent, candidatePaths).catch((err) => {
         log.debug(`augmentWithDirectAndTemporal: TemporalAgent failed — ${err}`);
         return [] as ParallelSearchResult[];
       })
@@ -404,14 +426,9 @@ export async function augmentWithDirectAndTemporal(
   ]);
   const durationMs = Date.now() - startMs;
 
-  // candidatePaths comes from temporal/tag prefilters which index memory files
-  // (facts, decisions, etc.) but NOT entity files. Direct agent results live under
-  // entities/ and would always be filtered out if we applied candidatePaths to them.
-  // Only temporal results (memory files) need scope-restriction via candidatePaths.
+  // Direct agent results (entities/) are not indexed by temporal/tag prefilters so they
+  // bypass candidatePaths. Temporal results are already scoped inside runTemporalAgent.
   const scopedDirect = directResults; // entity files bypass candidatePaths
-  const scopedTemporal = candidatePaths
-    ? temporalResults.filter((r) => !r.path || candidatePaths.has(r.path))
-    : temporalResults;
 
   // Tag contextual results with their source so they can participate in weighted merge.
   // We do NOT cap contextual here: contextualResults comes from fetchQmdMemoryResultsWithArtifactTopUp
@@ -423,14 +440,14 @@ export async function augmentWithDirectAndTemporal(
   }));
 
   log.debug(
-    `augmentWithDirectAndTemporal: direct=${scopedDirect.length} temporal=${scopedTemporal.length} contextual=${contextualTagged.length} agentMs=${durationMs}ms`,
+    `augmentWithDirectAndTemporal: direct=${scopedDirect.length} temporal=${temporalResults.length} contextual=${contextualTagged.length} agentMs=${durationMs}ms`,
   );
 
   // Merge all three; contextual first so its snippets are preserved when a higher-scoring
   // direct/temporal result overrides the same path (see mergeAgentResults snippet logic).
   // Note: maxPerAgent=0 is handled by the early-return guard above; we never reach here with 0.
   const merged = mergeAgentResults(
-    [...contextualTagged, ...scopedDirect, ...scopedTemporal],
+    [...contextualTagged, ...scopedDirect, ...temporalResults],
     weights,
     maxResults,
   );
