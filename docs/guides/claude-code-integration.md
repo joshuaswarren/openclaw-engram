@@ -1,0 +1,192 @@
+# Claude Code Integration
+
+Engram integrates with Claude Code via two session hooks that automatically recall memories at session start and store session content at session end. This gives every Claude Code session (and Codex) access to the same cross-project memory that OpenClaw gateway sessions use.
+
+## How It Works
+
+```
+SessionStart hook              Stop hook
+     │                              │
+     ▼                              ▼
+engram-session-recall.sh     engram-session-store.sh
+     │                              │
+     ▼                              ▼
+POST /engram/v1/recall        POST /engram/v1/observe
+     │                              │
+     ▼                              ▼
+additionalSystemPrompt        Extraction pipeline
+(injected before turn 1)      (background, non-blocking)
+```
+
+**SessionStart**: The recall hook fires when a session opens. It queries Engram with the project name and injects matched memories as `additionalSystemPrompt`. Claude sees relevant cross-project context (past bug fixes, patterns, preferences, decisions) before the first message.
+
+**Stop**: The store hook fires when a session ends. It reads the session transcript from `transcript_path`, extracts user/assistant messages, and POSTs them to `/engram/v1/observe` in the background. The session stops immediately — observation is non-blocking. Engram's extraction pipeline then processes the transcript and writes durable memories.
+
+## Setup
+
+### 1. Ensure the Engram REST API is running
+
+The Engram HTTP server runs inside the OpenClaw gateway process on port `4318` by default. If you're running Engram standalone, see [standalone-server.md](./standalone-server.md).
+
+Verify it's up:
+
+```bash
+curl -s http://127.0.0.1:4318/engram/v1/health \
+  -H "Authorization: Bearer $OPENCLAW_ENGRAM_ACCESS_TOKEN"
+```
+
+### 2. Set the access token
+
+The hooks read `OPENCLAW_ENGRAM_ACCESS_TOKEN` from the environment. This must be set in whichever environment Claude Code launches from.
+
+**For terminal sessions** — add to your shell profile (`~/.zshrc`, `~/.bashrc`):
+
+```bash
+export OPENCLAW_ENGRAM_ACCESS_TOKEN="<your-token>"
+```
+
+**For launchd (macOS)** — add to the gateway's plist `EnvironmentVariables`:
+
+```xml
+<key>OPENCLAW_ENGRAM_ACCESS_TOKEN</key>
+<string>your-token-here</string>
+```
+
+To find your token, check the gateway plist or run:
+
+```bash
+grep -i "engram.*token\|token.*engram" ~/Library/LaunchAgents/ai.openclaw.gateway.plist
+```
+
+### 3. Install the hook scripts
+
+The two scripts live in `~/.claude/scripts/`:
+
+```bash
+# Recall hook (SessionStart)
+~/.claude/scripts/engram-session-recall.sh
+
+# Store hook (Stop)
+~/.claude/scripts/engram-session-store.sh
+```
+
+Both scripts are in `~/.claude/scripts/` and should be executable:
+
+```bash
+chmod +x ~/.claude/scripts/engram-session-recall.sh
+chmod +x ~/.claude/scripts/engram-session-store.sh
+```
+
+### 4. Wire the hooks in `~/.claude/settings.json`
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/engram-session-recall.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/engram-session-store.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## What Gets Stored
+
+The store hook extracts **text content only** from the session transcript:
+
+- User messages (full text)
+- Assistant messages (text blocks only — thinking blocks, tool calls, and tool results are excluded)
+
+This gives Engram clean, high-signal content for extraction. The extraction pipeline then identifies:
+
+- Bug fixes and solutions
+- Project-specific patterns and conventions
+- Decisions and their rationale
+- Repeated errors and how they were resolved
+- Configuration gotchas
+
+These become cross-project memories available in future sessions, including sessions on unrelated projects when the pattern is relevant.
+
+## What Gets Recalled
+
+At session start, the recall hook queries Engram with a prompt based on the project directory name:
+
+> "Starting a new coding session in project: `<project>`. Recall relevant memories, preferences, decisions, patterns, and context about this project and the user's coding style."
+
+Engram uses hybrid BM25 + vector search (via QMD) and returns the most relevant memories as injected context. The context appears before the first user turn.
+
+Recall uses `auto` mode (full recall, 45s timeout) with fallback to `minimal` mode (8 results, 20s timeout) if the server is slow.
+
+## Logs
+
+Both scripts log to `~/.claude/logs/`:
+
+```bash
+# Recall log
+tail -f ~/.claude/logs/engram-session-recall.log
+
+# Store log
+tail -f ~/.claude/logs/engram-session-store.log
+```
+
+Example recall log:
+```
+2026-03-22 14:01:10 session-recall fired: session=abc123 project=openclaw-engram
+2026-03-22 14:01:10 attempting full recall (auto mode)...
+2026-03-22 14:01:32 recall complete: [Engram Memory Recall — 9 memories, auto mode]
+```
+
+Example store log:
+```
+2026-03-22 16:30:55 stop hook fired: session=abc123 project=openclaw-engram transcript=/path/to/transcript.jsonl
+2026-03-22 16:30:55 background: parsing transcript (...)
+2026-03-22 16:30:55 background: observing 142 messages for session=abc123 project=openclaw-engram
+2026-03-22 16:31:10 background: observe response: accepted queued: True
+```
+
+## Cross-Project Memory Flow
+
+The key benefit is that memories from one project automatically surface in other projects:
+
+1. You fix a tricky Zod `optional().nullable()` bug in Project A
+2. Engram extracts this as a memory: "Zod optional fields must use `.optional().nullable()`, not just `.optional()`"
+3. In a future session on Project B, if you're working with Zod schemas, Engram recalls this pattern
+4. Claude sees it in `additionalSystemPrompt` before you even ask about it
+
+This works because Engram's recall is query-based across all stored memories regardless of which project produced them.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENCLAW_ENGRAM_ACCESS_TOKEN` | (required) | Bearer token for Engram REST API |
+| `ENGRAM_HOST` | `127.0.0.1` | Engram server hostname |
+| `ENGRAM_PORT` | `4318` | Engram server port |
+
+## Troubleshooting
+
+**Recall returns no memories**: The project name in the query may not match stored memory content. Check the recall log to see the query used, then try manually recalling with a broader query via the MCP tools (`mcp__engram__engram_recall`).
+
+**Store hook produces no output**: Check `~/.claude/logs/engram-session-store.log`. Common causes: empty transcript (session was very short), `transcript_path` not set (older Claude Code version), or server unreachable.
+
+**Recall times out every session**: The full `auto` recall involves QMD search + LLM planning and can take 20–40 seconds. If this is consistently too slow, consider switching to `minimal` mode by default (edit `engram-session-recall.sh` and change `'mode': 'auto'` to `'mode': 'minimal'`).
+
+**Token not found**: Run `echo $OPENCLAW_ENGRAM_ACCESS_TOKEN` in a new terminal. If empty, the variable isn't being exported from your shell profile. Add `export OPENCLAW_ENGRAM_ACCESS_TOKEN="..."` to `~/.zshrc` (not just `.zprofile` if Claude Code uses a login shell).
