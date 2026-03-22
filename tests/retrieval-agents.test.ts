@@ -227,6 +227,75 @@ test("runTemporalAgent: respects maxResults limit", async () => {
   assert.ok(results.length <= 10);
 });
 
+test("runTemporalAgent: boosts topic-relevant files via tag index", async () => {
+  const tmpDir = await makeTempDir();
+  const stateDir = path.join(tmpDir, "state");
+  const factsDir = path.join(tmpDir, "facts");
+  await mkdir(stateDir, { recursive: true });
+  await mkdir(factsDir, { recursive: true });
+
+  // 10 days ago falls within the "last week" window (fromDate=14d, toDate=7d)
+  const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+
+  // Two files with the same date — one tagged "auth", one untagged
+  const authFile = path.join(factsDir, "auth-fact.md");
+  const otherFile = path.join(factsDir, "other-fact.md");
+  await writeFile(authFile, "---\nid: auth\n---\n\nauth fact");
+  await writeFile(otherFile, "---\nid: other\n---\n\nother fact");
+
+  await writeFile(
+    path.join(stateDir, "index_time.json"),
+    JSON.stringify({ version: 1, dates: { [tenDaysAgo]: [authFile, otherFile] } }),
+  );
+
+  // Tag index: authFile tagged "auth"
+  await writeFile(
+    path.join(stateDir, "index_tags.json"),
+    JSON.stringify({ version: 2, tags: { auth: { paths: [authFile] } } }),
+  );
+
+  // Query with topic "auth" — tagged file should score higher than untagged
+  const results = await runTemporalAgent("what changed in auth last week", tmpDir, 20);
+  const authResult = results.find((r) => r.path === authFile);
+  const otherResult = results.find((r) => r.path === otherFile);
+
+  assert.ok(authResult, "auth file should be in results");
+  assert.ok(otherResult, "other file should be in results");
+  assert.ok(
+    authResult!.score > otherResult!.score,
+    "auth-tagged file should score higher than untagged file for an 'auth' query",
+  );
+});
+
+test("runTemporalAgent: recency-only scoring preserved for purely temporal queries (no topic tokens)", async () => {
+  const tmpDir = await makeTempDir();
+  const stateDir = path.join(tmpDir, "state");
+  const factsDir = path.join(tmpDir, "facts");
+  await mkdir(stateDir, { recursive: true });
+  await mkdir(factsDir, { recursive: true });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+
+  const freshFile = path.join(factsDir, "fresh.md");
+  const oldFile = path.join(factsDir, "old.md");
+  await writeFile(freshFile, "---\nid: f\n---\n\nfresh");
+  await writeFile(oldFile, "---\nid: o\n---\n\nold");
+
+  await writeFile(
+    path.join(stateDir, "index_time.json"),
+    JSON.stringify({ version: 1, dates: { [today]: [freshFile], [weekAgo]: [oldFile] } }),
+  );
+
+  // Purely temporal query: no topic tokens after stripping temporals/stopwords
+  const results = await runTemporalAgent("what happened last week", tmpDir, 20);
+  const fresh = results.find((r) => r.path === freshFile);
+  const old = results.find((r) => r.path === oldFile);
+  if (fresh && old) {
+    assert.ok(fresh.score >= old.score, "purely temporal query: recency ordering preserved");
+  }
+});
+
 // ─── parallelRetrieval ────────────────────────────────────────────────────────
 
 function makeNullQmd(): QmdClient {

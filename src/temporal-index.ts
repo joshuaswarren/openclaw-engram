@@ -664,8 +664,15 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
     if (monthMatch) {
       const monthIdx = monthNames.indexOf(monthMatch[1]);
       const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
-      const monthStart = new Date(year, monthIdx, 1);
-      return monthStart.toISOString().slice(0, 10);
+      // "before <month>" means everything prior to that month: use 2-year lookback
+      // as fromDate so the window isn't unbounded. toDate is set to the month start
+      // in recencyWindowBoundsFromPrompt.
+      if (/\bbefore\b/.test(p)) {
+        daysBack = 730;
+      } else {
+        const monthStart = new Date(year, monthIdx, 1);
+        return monthStart.toISOString().slice(0, 10);
+      }
     }
 
     // Try "N weeks ago"
@@ -771,16 +778,21 @@ export function recencyWindowBoundsFromPrompt(
       "july", "august", "september", "october", "november", "december"];
     const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
     if (monthMatch) {
-      // "since <month>" and "after <month>" are open-ended: everything from that month
-      // to the present. Use tomorrow as toDate so today's memories are included.
-      // Without "since"/"after", treat the month as a closed window (just that month).
+      // "since <month>" / "after <month>" — open-ended: everything from that month to now.
+      // "before <month>" — closed upper bound: everything before that month starts.
+      // Plain "<month>" — just that calendar month.
+      const monthIdx = monthNames.indexOf(monthMatch[1]);
+      const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
       const isSinceOrAfter = /\b(since|after)\b/.test(p);
+      const isBefore = /\bbefore\b/.test(p);
       if (isSinceOrAfter) {
         toDate = tomorrow;
+      } else if (isBefore) {
+        // "before <month>" means everything prior to that month.
+        // toDate = first day of that month (exclusive upper bound).
+        toDate = new Date(year, monthIdx, 1).toISOString().slice(0, 10);
       } else {
-        // Month name — compute first day of the NEXT month (exclusive upper bound).
-        const monthIdx = monthNames.indexOf(monthMatch[1]);
-        const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
+        // Closed window: first day of the NEXT month is the exclusive upper bound.
         toDate = new Date(year, monthIdx + 1, 1).toISOString().slice(0, 10);
       }
     } else {

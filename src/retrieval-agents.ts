@@ -203,12 +203,51 @@ export async function runTemporalAgent(
 
     const todayMs = Date.now();
 
-    // Parallel existence check — avoids sequential awaits that defeat latency goal.
-    // Stale index entries (deleted files) are dropped; valid paths keep their date.
+    // Extract non-temporal topic tokens for tag-based relevance boost.
+    // Purely temporal words (dates, relative time) and common stopwords are stripped
+    // so the signal reflects the subject the user is asking about (e.g. "auth" in
+    // "what changed in auth last week"), not the time window itself.
+    const TEMPORAL_STOPWORDS = new Set([
+      "today", "yesterday", "this", "last", "week", "month", "year",
+      "morning", "night", "now", "earlier", "since", "after", "before",
+      "ago", "hours", "days", "weeks", "months",
+      "january", "february", "march", "april", "may", "june",
+      "july", "august", "september", "october", "november", "december",
+      "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+      "what", "when", "where", "who", "why", "how", "the", "a", "an",
+      "and", "or", "in", "on", "at", "to", "of", "for", "with", "by",
+      "from", "changed", "happened", "was", "were", "is", "are", "did",
+      "about", "that", "have", "had", "has", "been", "any", "all",
+    ]);
+    const topicTokens = tokenize(query).filter((t) => !TEMPORAL_STOPWORDS.has(t));
+
+    // Load tag index for topical scoring, in parallel with existence checks.
+    // Fail-open: if the tag index is unavailable, topicBoost = 0 and scores
+    // degrade gracefully to recency-only ordering (existing behaviour).
     const entries = [...pathToDate.entries()];
-    const existenceResults = await Promise.all(
-      entries.map(([p]) => stat(p).then(() => true).catch(() => false)),
-    );
+    const tagIndexPromise: Promise<Map<string, string[]>> = topicTokens.length > 0
+      ? readFile(path.join(memoryDir, "state", "index_tags.json"), "utf-8")
+          .then((raw) => {
+            const parsed = JSON.parse(raw) as { tags?: Record<string, { paths?: string[] } | string[]> };
+            const result = new Map<string, string[]>();
+            for (const [tag, node] of Object.entries(parsed.tags ?? {})) {
+              const tagPaths = Array.isArray(node) ? node : (node.paths ?? []);
+              for (const tp of tagPaths) {
+                const existing = result.get(tp);
+                if (existing) existing.push(tag);
+                else result.set(tp, [tag]);
+              }
+            }
+            return result;
+          })
+          .catch(() => new Map<string, string[]>())
+      : Promise.resolve(new Map<string, string[]>());
+
+    // Parallel: existence checks + tag index read.
+    const [existenceResults, pathToTags] = await Promise.all([
+      Promise.all(entries.map(([p]) => stat(p).then(() => true).catch(() => false))),
+      tagIndexPromise,
+    ]);
 
     const results: ParallelSearchResult[] = [];
 
@@ -220,20 +259,29 @@ export async function runTemporalAgent(
       const ageDays = ageMs / 86_400_000;
       // Exponential recency decay with half-life of ~30 days.
       // score ≈ 1.0 at day 0, ≈ 0.79 at 7 days, ≈ 0.36 at 30 days, ≈ 0.13 at 60 days.
-      // Never reaches exactly zero, so ordering is always preserved across all window sizes
-      // (including "last month", "3 weeks ago", "last year").
       const recencyScore = Math.exp(-ageDays / 30);
 
-      // Memory files use opaque IDs (e.g. "a1b2c3.md"), not topic-bearing names,
-      // so filename token overlap is meaningless for relevance. Temporal agent
-      // ranks purely by recency; contextual/direct agents handle query relevance.
+      // Topical boost: fraction of non-temporal query tokens matched by this file's tags.
+      // Adds up to +30% on recency score for a perfect tag match; zero when query is
+      // purely temporal (no topic tokens) or the tag index doesn't cover the file.
+      let topicBoost = 0;
+      if (topicTokens.length > 0) {
+        const tags = pathToTags.get(p);
+        if (tags && tags.length > 0) {
+          const tagSet = new Set(tags.flatMap((t) => tokenize(t)));
+          const hits = topicTokens.filter((t) => tagSet.has(t)).length;
+          topicBoost = hits / topicTokens.length;
+        }
+      }
+      const score = recencyScore * (1 + topicBoost * 0.3);
+
       const baseName = path.basename(p, ".md");
 
       results.push({
         docid: baseName,
         path: p,
         snippet: "", // populated by augmentWithDirectAndTemporal after merge
-        score: recencyScore,
+        score,
         transport: "scoped_prefilter",
         agentSource: "temporal",
       });

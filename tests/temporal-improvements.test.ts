@@ -138,3 +138,19 @@ test("recencyWindowBoundsFromPrompt: '1 day ago' does not produce inverted windo
   const { fromDate, toDate } = recencyWindowBoundsFromPrompt("What happened 1 day ago?", now);
   assert.ok(toDate >= fromDate, "toDate must not precede fromDate");
 });
+
+test("recencyWindowBoundsFromPrompt: 'before <month>' uses named month as exclusive upper bound", () => {
+  const now = new Date("2026-03-15T12:00:00Z").getTime();
+  const { fromDate, toDate } = recencyWindowBoundsFromPrompt("what happened before March?", now);
+  // toDate = 2026-03-01 (first day of March, exclusive upper bound — nothing in March)
+  // fromDate = 730 days back from now (open lookback)
+  assert.equal(toDate, "2026-03-01", "toDate should be the first day of the named month");
+  assert.ok(fromDate < toDate, "fromDate must precede toDate");
+});
+
+test("recencyWindowBoundsFromPrompt: 'before <month> <year>' uses named month as exclusive upper bound", () => {
+  const now = new Date("2026-03-15T12:00:00Z").getTime();
+  const { fromDate, toDate } = recencyWindowBoundsFromPrompt("anything before January 2025", now);
+  assert.equal(toDate, "2025-01-01");
+  assert.ok(fromDate < toDate, "fromDate must precede toDate");
+});
