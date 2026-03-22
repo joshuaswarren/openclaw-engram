@@ -4725,24 +4725,18 @@ export class Orchestrator {
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
       // reranking doesn't affect which score the gate evaluates.
       //
-      // Use the pre-augmentation QMD top score when available. The parallel agent
-      // merge applies a contextual weight (default 0.7x), which lowers QMD scores
-      // and could cause the gate to fire even when the underlying recall was
-      // above the calibrated threshold. Taking the max of both preserves the
-      // original gate semantics regardless of whether parallel retrieval is active.
+      // Gate exclusively on the pre-augmentation QMD top score so the threshold
+      // stays on the same scale it was calibrated against (raw QMD scores, not
+      // post-merge weighted scores). This avoids two pitfalls:
+      //   1. The 0.7× contextual weight silently lowering scores below threshold.
+      //   2. A direct/temporal hit on a different scale inflating the gate score.
+      // When preAugmentTopScore is 0 (QMD returned nothing), the gate is skipped —
+      // preserving the original behaviour where empty QMD results do NOT fire the gate
+      // and the fallback embedding path remains available.
       let confidenceGateRejected = false;
-      if (this.config.recallConfidenceGateEnabled && (memoryResults.length > 0 || preAugmentTopScore > 0)) {
-        // Use the pre-augmentation QMD top score when available so that the contextual
-        // weight applied by the parallel-agent merge (default 0.7×) doesn't silently
-        // lower scores below the calibrated gate threshold.
-        //
-        // Only apply the gate when there are results or a non-zero pre-augment score.
-        // This preserves the original behaviour where empty results do NOT trigger the
-        // gate, keeping the fallback embedding path available.
-        const currentTopScore = memoryResults.length > 0 ? Math.max(...memoryResults.map((r) => r.score)) : 0;
-        const effectiveTopScore = Math.max(currentTopScore, preAugmentTopScore);
-        if (effectiveTopScore < this.config.recallConfidenceGateThreshold) {
-          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (effective top score ${effectiveTopScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
+      if (this.config.recallConfidenceGateEnabled && preAugmentTopScore > 0) {
+        if (preAugmentTopScore < this.config.recallConfidenceGateThreshold) {
+          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (pre-merge QMD top score ${preAugmentTopScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
           memoryResults = [];
           confidenceGateRejected = true;
         }
