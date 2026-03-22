@@ -154,3 +154,15 @@ test("recencyWindowBoundsFromPrompt: 'before <month> <year>' uses named month as
   assert.equal(toDate, "2025-01-01");
   assert.ok(fromDate < toDate, "fromDate must precede toDate");
 });
+
+test("recencyWindowBoundsFromPrompt: 'before <month> <year>' with explicitly past year does not produce inverted window", () => {
+  // On 2026-03-22, "before January 2024" with naive daysBack=730 would give
+  // fromDate=2024-03-22 which is AFTER toDate=2024-01-01 — inverted window.
+  // The fix anchors fromDate 730 days before the named month start instead.
+  const now = new Date("2026-03-22T12:00:00Z").getTime();
+  const { fromDate, toDate } = recencyWindowBoundsFromPrompt("before January 2024", now);
+  assert.equal(toDate, "2024-01-01", "toDate = first day of named month");
+  assert.ok(fromDate < toDate, "fromDate must precede toDate (no inverted window)");
+  // fromDate should be anchored ~730 days before 2024-01-01, not before today
+  assert.ok(fromDate < "2024-01-01", "fromDate anchored before the named month, not before today");
+});

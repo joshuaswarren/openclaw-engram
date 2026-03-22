@@ -6734,7 +6734,12 @@ export class Orchestrator {
     storage: StorageManager,
     persistedIds: string[],
   ): Promise<void> {
-    if (!this.config.queryAwareIndexingEnabled) return;
+    // Build temporal/tag indexes whenever either consumer is enabled:
+    // - queryAwareIndexingEnabled: uses indexes for query-aware prefiltering in recall
+    // - parallelRetrievalEnabled: temporal agent reads index_time.json for date-range lookup
+    // Enabling only parallelRetrievalEnabled without queryAwareIndexingEnabled would silently
+    // produce an empty temporal index, leaving the temporal agent with no data to work from.
+    if (!this.config.queryAwareIndexingEnabled && !this.config.parallelRetrievalEnabled) return;
     // Check for missing indexes BEFORE the early-return so first-time enablement
     // can bootstrap the full corpus even when this extraction turn persisted nothing.
     const needsFullRebuild = !indexesExist(this.config.memoryDir);

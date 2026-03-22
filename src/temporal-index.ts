@@ -667,7 +667,16 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
       // "before <month>" means everything prior to that month: use 2-year lookback
       // as fromDate so the window isn't unbounded. toDate is set to the month start
       // in recencyWindowBoundsFromPrompt.
+      // IMPORTANT: when an explicit year is given, anchor the lookback to the named
+      // month start (not to today). "before January 2024" should produce
+      // fromDate ≈ 2022-01 — not today-730 days, which could land after 2024-01 and
+      // invert the window for any explicitly past month within the 730-day horizon.
       if (/\bbefore\b/.test(p)) {
+        if (monthMatch[2]) {
+          // Explicit year: anchor fromDate 730 days before the named month start.
+          const monthStart = new Date(year, monthIdx, 1);
+          return new Date(monthStart.getTime() - 730 * 86_400_000).toISOString().slice(0, 10);
+        }
         daysBack = 730;
       } else {
         const monthStart = new Date(year, monthIdx, 1);
