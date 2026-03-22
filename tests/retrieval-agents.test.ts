@@ -513,7 +513,10 @@ test("augmentWithDirectAndTemporal: candidatePaths filters temporal results but 
   assert.ok(results.some((r) => r.path === memPath), "temporal result within candidatePaths should be included");
 });
 
-test("augmentWithDirectAndTemporal: caps contextual to maxPerAgent", async () => {
+test("augmentWithDirectAndTemporal: preserves contextual headroom for downstream filtering", async () => {
+  // Contextual results are NOT capped to maxPerAgent — they are passed through fully so
+  // downstream phases (graph expansion, lifecycle filtering, reranking) can drop candidates.
+  // Only the final output is capped by maxResults.
   const tmpDir = await makeTempDir();
   const contextual = Array.from({ length: 30 }, (_, i) => ({
     docid: `ctx-${i}`,
@@ -522,9 +525,10 @@ test("augmentWithDirectAndTemporal: caps contextual to maxPerAgent", async () =>
     score: 1 - i * 0.01,
     transport: "hybrid" as const,
   }));
-  // maxPerAgent=5 — contextual should be sliced to 5 before merge
   const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 5, 20);
-  // All result paths should be from the first 5 contextual items (no direct/temporal data in tmpDir)
+  // All 30 contextual items should be eligible for merge (no per-agent cap on contextual)
+  // maxResults=20 caps the output; items 0-19 should be present after weighting
   const ctxIndexes = results.map((r) => parseInt(r.path.replace("/tmp/ctx-", "").replace(".md", "")));
-  assert.ok(ctxIndexes.every((i) => i < 5), "only first 5 contextual items should appear");
+  assert.ok(results.length <= 20, "output is capped by maxResults");
+  assert.ok(ctxIndexes.some((i) => i >= 5), "contextual items beyond maxPerAgent are still eligible");
 });

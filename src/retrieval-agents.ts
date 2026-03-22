@@ -174,7 +174,25 @@ export async function runTemporalAgent(
     }
 
     const fromDate = recencyWindowFromPrompt(query);
-    const toDate = new Date().toISOString().slice(0, 10);
+    // Compute toDate to honor explicit window intent (e.g. "yesterday" → [yesterday, yesterday]).
+    // Default is today so open-ended prompts include the most recent memories.
+    const toDate = (() => {
+      const p = query.toLowerCase();
+      const now = Date.now();
+      if (/\byesterday\b/.test(p) || /\blast night\b/.test(p)) {
+        return new Date(now - 86_400_000).toISOString().slice(0, 10);
+      }
+      if (/\blast week\b/.test(p)) {
+        return new Date(now - 7 * 86_400_000).toISOString().slice(0, 10);
+      }
+      if (/\blast month\b/.test(p)) {
+        return new Date(now - 31 * 86_400_000).toISOString().slice(0, 10);
+      }
+      if (/\blast year\b/.test(p)) {
+        return `${new Date().getFullYear() - 1}-12-31`;
+      }
+      return new Date(now).toISOString().slice(0, 10);
+    })();
     const queryTokens = tokenize(query);
 
     // Build path → date map, filtering to the recency window in one pass
@@ -293,6 +311,15 @@ function mergeAgentResults(
 const SNIPPET_PREVIEW_CHARS = 200;
 const MAX_SNIPPET_READS = 8;
 
+/** Strip YAML frontmatter (---...---) and return the document body. */
+function stripFrontmatter(raw: string): string {
+  if (!raw.startsWith("---")) return raw;
+  const end = raw.indexOf("\n---", 3);
+  if (end === -1) return raw;
+  // Skip the closing "---" line and any leading blank lines
+  return raw.slice(end + 4).replace(/^\n+/, "");
+}
+
 async function populateEmptySnippets(results: QmdSearchResult[]): Promise<QmdSearchResult[]> {
   const needsSnippet = results.filter((r) => !r.snippet && r.path);
   if (needsSnippet.length === 0) return results;
@@ -304,7 +331,10 @@ async function populateEmptySnippets(results: QmdSearchResult[]): Promise<QmdSea
     toRead.map(async (r) => {
       try {
         const raw = await readFile(r.path, "utf-8");
-        const preview = raw.slice(0, SNIPPET_PREVIEW_CHARS).replace(/\s+/g, " ").trim();
+        // Memory files start with YAML frontmatter — skip it so the snippet
+        // contains actual memory content, not metadata fields.
+        const body = stripFrontmatter(raw);
+        const preview = body.slice(0, SNIPPET_PREVIEW_CHARS).replace(/\s+/g, " ").trim();
         if (preview) snippetMap.set(r.path, preview);
       } catch {
         // File unreadable — leave snippet empty
@@ -383,12 +413,11 @@ export async function augmentWithDirectAndTemporal(
     ? temporalResults.filter((r) => !r.path || candidatePaths.has(r.path))
     : temporalResults;
 
-  // Cap contextual to maxPerAgent for consistent per-source limiting across all three agents.
-  // contextualResults are already pre-filtered by the caller, so slicing is safe.
-  const contextualSlice = contextualResults.slice(0, maxPerAgent);
-
-  // Tag contextual results with their source so they can participate in weighted merge
-  const contextualTagged: ParallelSearchResult[] = contextualSlice.map((r) => ({
+  // Tag contextual results with their source so they can participate in weighted merge.
+  // We do NOT cap contextual here: contextualResults comes from fetchQmdMemoryResultsWithArtifactTopUp
+  // which intentionally over-fetches so downstream phases (graph expansion, lifecycle filtering,
+  // reranking) can drop candidates. Capping before the merge would remove that headroom.
+  const contextualTagged: ParallelSearchResult[] = contextualResults.map((r) => ({
     ...r,
     agentSource: "contextual" as const,
   }));
