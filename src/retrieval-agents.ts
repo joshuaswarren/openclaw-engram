@@ -22,7 +22,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 import type { QmdClient } from "./qmd.js";
-import { recencyWindowBoundsFromPrompt } from "./temporal-index.js";
+import { isTemporalQuery, recencyWindowBoundsFromPrompt } from "./temporal-index.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,8 +60,10 @@ export function shouldRunAgent(
       // so gating on capitalization would silently skip most real entity lookups.
       return knownEntityCount > 0 || /\b\w{2,}/.test(query);
     case "temporal":
+      // Only run temporal agent when the query actually asks about a time window.
+      // Running it for every query injects recency bias into semantic searches.
+      return isTemporalQuery(query);
     case "contextual":
-      // Temporal and contextual always run — temporal context is broadly useful and cheap (<10ms)
       return true;
     default:
       return true;
@@ -425,7 +427,6 @@ export async function augmentWithDirectAndTemporal(
 
   const knownEntityCount = (query.match(/\b[A-Z][a-z]{1,}/g) ?? []).length;
   const runDirect = shouldRunAgent("direct", query, knownEntityCount);
-  // Temporal always runs per spec (shouldRunAgent("temporal") always returns true)
   const runTemporal = shouldRunAgent("temporal", query, knownEntityCount);
 
   const startMs = Date.now();

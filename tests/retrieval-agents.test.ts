@@ -40,8 +40,14 @@ test("shouldRunAgent: contextual always runs", () => {
   assert.equal(shouldRunAgent("contextual", "anything", 0), true);
 });
 
-test("shouldRunAgent: temporal always runs", () => {
-  assert.equal(shouldRunAgent("temporal", "anything", 0), true);
+test("shouldRunAgent: temporal runs for temporal queries", () => {
+  assert.equal(shouldRunAgent("temporal", "what happened yesterday", 0), true);
+  assert.equal(shouldRunAgent("temporal", "events from last week", 0), true);
+});
+
+test("shouldRunAgent: temporal skips non-temporal queries", () => {
+  assert.equal(shouldRunAgent("temporal", "how does auth middleware work", 0), false);
+  assert.equal(shouldRunAgent("temporal", "anything", 0), false);
 });
 
 // ─── PARALLEL_AGENT_WEIGHTS ───────────────────────────────────────────────────
@@ -522,8 +528,10 @@ test("augmentWithDirectAndTemporal: candidatePaths filters temporal results but 
 
   // candidatePaths includes only the memory file, not the entity file
   const candidatePaths = new Set([memPath]);
+  // Use a temporal query covering today so the temporal index hit (dated today) is included.
+  // "today" → fromDate=today, toDate=tomorrow; the index entry dated today passes the filter.
   const results = await augmentWithDirectAndTemporal(
-    "alice",
+    "alice today",
     tmpDir,
     [],
     DEFAULT_WEIGHTS,
