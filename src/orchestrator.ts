@@ -4731,11 +4731,18 @@ export class Orchestrator {
       // above the calibrated threshold. Taking the max of both preserves the
       // original gate semantics regardless of whether parallel retrieval is active.
       let confidenceGateRejected = false;
-      if (this.config.recallConfidenceGateEnabled) {
+      if (this.config.recallConfidenceGateEnabled && (memoryResults.length > 0 || preAugmentTopScore > 0)) {
+        // Use the pre-augmentation QMD top score when available so that the contextual
+        // weight applied by the parallel-agent merge (default 0.7×) doesn't silently
+        // lower scores below the calibrated gate threshold.
+        //
+        // Only apply the gate when there are results or a non-zero pre-augment score.
+        // This preserves the original behaviour where empty results do NOT trigger the
+        // gate, keeping the fallback embedding path available.
         const currentTopScore = memoryResults.length > 0 ? Math.max(...memoryResults.map((r) => r.score)) : 0;
         const effectiveTopScore = Math.max(currentTopScore, preAugmentTopScore);
         if (effectiveTopScore < this.config.recallConfidenceGateThreshold) {
-          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score ${effectiveTopScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
+          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (effective top score ${effectiveTopScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
           memoryResults = [];
           confidenceGateRejected = true;
         }
