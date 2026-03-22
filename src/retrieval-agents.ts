@@ -345,7 +345,13 @@ export async function augmentWithDirectAndTemporal(
   weights: Record<SearchAgentSource, number>,
   maxPerAgent: number,
   maxResults: number,
+  /** Optional candidate set from query-aware prefilter (time/tag scoped). Agents' results are
+   * filtered to this set when provided so recall stays within the operator-specified scope. */
+  candidatePaths?: Set<string> | null,
 ): Promise<QmdSearchResult[]> {
+  // maxPerAgent=0 is a hard disable: skip agents entirely and return contextual unchanged
+  if (maxPerAgent === 0) return contextualResults;
+
   const knownEntityCount = (query.match(/\b[A-Z][a-z]{1,}/g) ?? []).length;
   const runDirect = shouldRunAgent("direct", query, knownEntityCount);
   // Temporal always runs per spec (shouldRunAgent("temporal") always returns true)
@@ -368,19 +374,33 @@ export async function augmentWithDirectAndTemporal(
   ]);
   const durationMs = Date.now() - startMs;
 
+  // When candidatePaths is active, filter specialized-agent results to keep only
+  // paths that are within the operator-scoped candidate set.
+  const scopedDirect = candidatePaths
+    ? directResults.filter((r) => !r.path || candidatePaths.has(r.path))
+    : directResults;
+  const scopedTemporal = candidatePaths
+    ? temporalResults.filter((r) => !r.path || candidatePaths.has(r.path))
+    : temporalResults;
+
+  // Cap contextual to maxPerAgent for consistent per-source limiting across all three agents.
+  // contextualResults are already pre-filtered by the caller, so slicing is safe.
+  const contextualSlice = contextualResults.slice(0, maxPerAgent);
+
   // Tag contextual results with their source so they can participate in weighted merge
-  const contextualTagged: ParallelSearchResult[] = contextualResults.map((r) => ({
+  const contextualTagged: ParallelSearchResult[] = contextualSlice.map((r) => ({
     ...r,
     agentSource: "contextual" as const,
   }));
 
   log.debug(
-    `augmentWithDirectAndTemporal: direct=${directResults.length} temporal=${temporalResults.length} contextual=${contextualTagged.length} agentMs=${durationMs}ms`,
+    `augmentWithDirectAndTemporal: direct=${scopedDirect.length} temporal=${scopedTemporal.length} contextual=${contextualTagged.length} agentMs=${durationMs}ms`,
   );
 
-  // Merge all three; contextual weight is applied consistently regardless of agent counts
+  // Merge all three; contextual first so its snippets are preserved when a higher-scoring
+  // direct/temporal result overrides the same path.
   const merged = mergeAgentResults(
-    [...contextualTagged, ...directResults, ...temporalResults],
+    [...contextualTagged, ...scopedDirect, ...scopedTemporal],
     weights,
     maxResults,
   );
@@ -454,9 +474,12 @@ export async function parallelRetrieval(
     `parallelRetrieval: direct=${directResults.length} temporal=${temporalResults.length} contextual=${contextualResults.length} durationMs=${durationMs}ms`,
   );
 
-  return mergeAgentResults(
-    [...directResults, ...temporalResults, ...contextualResults],
+  // Contextual results go first so their snippets are preserved when a higher-scoring
+  // direct/temporal result overrides the same path in mergeAgentResults.
+  const merged = mergeAgentResults(
+    [...contextualResults, ...directResults, ...temporalResults],
     PARALLEL_AGENT_WEIGHTS,
     maxResults,
   );
+  return populateEmptySnippets(merged);
 }

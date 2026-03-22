@@ -468,3 +468,49 @@ test("augmentWithDirectAndTemporal: respects maxResults limit", async () => {
   const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 20, 5);
   assert.ok(results.length <= 5);
 });
+
+test("augmentWithDirectAndTemporal: maxPerAgent=0 returns contextual unchanged without reweighting", async () => {
+  const tmpDir = await makeTempDir();
+  const contextual = [
+    { docid: "a", path: "/tmp/a.md", snippet: "snippet", score: 0.99, transport: "hybrid" as const },
+  ];
+  const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 0, 20);
+  assert.deepEqual(results, contextual);
+});
+
+test("augmentWithDirectAndTemporal: candidatePaths filters specialized-agent results", async () => {
+  const tmpDir = await makeTempDir();
+  await mkdir(path.join(tmpDir, "entities"), { recursive: true });
+  const allowedPath = path.join(tmpDir, "entities", "allowed.md");
+  const blockedPath = path.join(tmpDir, "entities", "blocked.md");
+  await writeFile(allowedPath, "allowed entity");
+  await writeFile(blockedPath, "blocked entity");
+
+  const candidatePaths = new Set([allowedPath]);
+  const results = await augmentWithDirectAndTemporal(
+    "allowed blocked",
+    tmpDir,
+    [],
+    DEFAULT_WEIGHTS,
+    10,
+    20,
+    candidatePaths,
+  );
+  assert.ok(!results.some((r) => r.path === blockedPath), "blocked path should be filtered out");
+});
+
+test("augmentWithDirectAndTemporal: caps contextual to maxPerAgent", async () => {
+  const tmpDir = await makeTempDir();
+  const contextual = Array.from({ length: 30 }, (_, i) => ({
+    docid: `ctx-${i}`,
+    path: `/tmp/ctx-${i}.md`,
+    snippet: `snippet ${i}`,
+    score: 1 - i * 0.01,
+    transport: "hybrid" as const,
+  }));
+  // maxPerAgent=5 — contextual should be sliced to 5 before merge
+  const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 5, 20);
+  // All result paths should be from the first 5 contextual items (no direct/temporal data in tmpDir)
+  const ctxIndexes = results.map((r) => parseInt(r.path.replace("/tmp/ctx-", "").replace(".md", "")));
+  assert.ok(ctxIndexes.every((i) => i < 5), "only first 5 contextual items should appear");
+});

@@ -4087,6 +4087,7 @@ export class Orchestrator {
             this.config.parallelAgentWeights,
             this.config.parallelMaxResultsPerAgent,
             qmdFetchLimit,
+            queryAwarePrefilter.candidatePaths,
           );
         } catch (err) {
           log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
