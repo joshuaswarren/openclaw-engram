@@ -480,8 +480,19 @@ export function indexMemoriesBatch(
 }
 
 /**
- * Async version of queryByDateRange — uses non-blocking fs.promises.readFile
- * to avoid blocking the Node.js event loop when index files are large.
+ * Return the set of memory paths whose index date falls in [fromDate, toDate).
+ *
+ * Boundary semantics (exclusive upper bound):
+ * - `fromDate` is INCLUSIVE — entries on this date ARE returned.
+ * - `toDate`   is EXCLUSIVE — entries on this date are NOT returned.
+ *   Pass `recencyWindowBoundsFromPrompt(query).toDate` to get the correct
+ *   exclusive boundary; do NOT add +1 day yourself.
+ * - Default `toDate` = tomorrow, so omitting it includes all of today.
+ *
+ * @param memoryDir - root memory directory (contains state/index_time.json)
+ * @param fromDate  - inclusive start date, YYYY-MM-DD
+ * @param toDate    - exclusive end date, YYYY-MM-DD (default: tomorrow)
+ * @returns Set of matching file paths, or null if the index is unavailable.
  */
 export async function queryByDateRangeAsync(
   memoryDir: string,
