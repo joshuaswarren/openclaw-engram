@@ -263,7 +263,15 @@ export async function runTemporalAgent(
         return new Date(now - daysBack * 86_400_000).toISOString().slice(0, 10);
       }
 
-      // Default: open-ended up to today
+      // "N hours ago" — still within today (sub-day precision not tracked)
+      if (/(\d{1,5})\s*hours?\s*ago/.test(p)) {
+        return new Date(now).toISOString().slice(0, 10);
+      }
+
+      // Default: open-ended up to today.
+      // Patterns like "on the 12th" or "spring 2025" are not parsed here because
+      // recencyWindowFromPrompt() also does not parse them — both fall back to a
+      // 7-day window ending today, which is a safe open-ended default.
       return new Date(now).toISOString().slice(0, 10);
     })();
     const today = new Date().toISOString().slice(0, 10);
@@ -304,9 +312,11 @@ export async function runTemporalAgent(
       const [p, dateStr] = entries[i];
       const ageMs = todayMs - new Date(dateStr).getTime();
       const ageDays = ageMs / 86_400_000;
-      // Recency decay: score=1.0 on day 0, ~0.5 on day 7, approaching 0 asymptotically.
-      // No hard floor so ordering is preserved among older-but-still-relevant memories.
-      const recencyScore = Math.max(0.01, 1.0 - ageDays / 14);
+      // Exponential recency decay with half-life of ~30 days.
+      // score ≈ 1.0 at day 0, ≈ 0.79 at 7 days, ≈ 0.36 at 30 days, ≈ 0.13 at 60 days.
+      // Never reaches exactly zero, so ordering is always preserved across all window sizes
+      // (including "last month", "3 weeks ago", "last year").
+      const recencyScore = Math.exp(-ageDays / 30);
 
       // Memory files use opaque IDs (e.g. "a1b2c3.md"), not topic-bearing names,
       // so filename token overlap is meaningless for relevance. Temporal agent
