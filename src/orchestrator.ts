@@ -22,7 +22,6 @@ import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
-  augmentWithDirectAndTemporal,
   mergeWithAgentResults,
   runDirectAgent,
   runTemporalAgent,
