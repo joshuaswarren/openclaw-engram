@@ -120,7 +120,7 @@ export async function runDirectAgent(
 
       // Filename tokens: split on hyphens (normalizeEntityName uses hyphens)
       const nameWithoutExt = entry.slice(0, -3);
-      const entityTokens = nameWithoutExt.split("-").filter((t) => t.length >= 2);
+      const entityTokens = nameWithoutExt.split("-").filter((t) => t.length >= 2).map((t) => t.toLowerCase());
 
       const score = overlapScore(queryTokens, entityTokens);
       if (score <= 0) continue;
@@ -220,33 +220,36 @@ export async function runTemporalAgent(
     if (pathToDate.size === 0) return [];
 
     const todayMs = Date.now();
+
+    // Parallel existence check — avoids sequential awaits that defeat latency goal.
+    // Stale index entries (deleted files) are dropped; valid paths keep their date.
+    const entries = [...pathToDate.entries()];
+    const existenceResults = await Promise.all(
+      entries.map(([p]) => stat(p).then(() => true).catch(() => false)),
+    );
+
     const results: ParallelSearchResult[] = [];
 
-    for (const [p, dateStr] of pathToDate) {
+    for (let i = 0; i < entries.length; i++) {
+      if (!existenceResults[i]) continue; // skip stale index entry
+
+      const [p, dateStr] = entries[i];
       const ageMs = todayMs - new Date(dateStr).getTime();
       const ageDays = ageMs / 86_400_000;
-      // Recency decay: score=1.0 on day 0, score=0.5 on day 7, score=0.2 floor on day 14+
-      const recencyScore = Math.max(0.2, 1.0 - ageDays / 14);
-
-      // Skip stale index entries — the file may have been deleted or not yet written.
-      // Avoids returning broken paths that downstream stages can't read.
-      try {
-        await stat(p);
-      } catch {
-        continue;
-      }
+      // Recency decay: score=1.0 on day 0, ~0.5 on day 7, approaching 0 asymptotically.
+      // No hard floor so ordering is preserved among older-but-still-relevant memories.
+      const recencyScore = Math.max(0.01, 1.0 - ageDays / 14);
 
       // Memory files use opaque IDs (e.g. "a1b2c3.md"), not topic-bearing names,
       // so filename token overlap is meaningless for relevance. Temporal agent
       // ranks purely by recency; contextual/direct agents handle query relevance.
-      const score = recencyScore;
       const baseName = path.basename(p, ".md");
 
       results.push({
         docid: baseName,
         path: p,
         snippet: "", // populated by augmentWithDirectAndTemporal after merge
-        score,
+        score: recencyScore,
         transport: "scoped_prefilter",
         agentSource: "temporal",
       });
