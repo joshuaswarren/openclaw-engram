@@ -478,17 +478,27 @@ test("augmentWithDirectAndTemporal: maxPerAgent=0 returns contextual unchanged w
   assert.deepEqual(results, contextual);
 });
 
-test("augmentWithDirectAndTemporal: candidatePaths filters specialized-agent results", async () => {
+test("augmentWithDirectAndTemporal: candidatePaths filters temporal results but not direct-agent results", async () => {
   const tmpDir = await makeTempDir();
   await mkdir(path.join(tmpDir, "entities"), { recursive: true });
-  const allowedPath = path.join(tmpDir, "entities", "allowed.md");
-  const blockedPath = path.join(tmpDir, "entities", "blocked.md");
-  await writeFile(allowedPath, "allowed entity");
-  await writeFile(blockedPath, "blocked entity");
+  await mkdir(path.join(tmpDir, "state"), { recursive: true });
 
-  const candidatePaths = new Set([allowedPath]);
+  // Entity file — returned by direct agent; NOT in any temporal/tag index
+  const entityPath = path.join(tmpDir, "entities", "alice.md");
+  await writeFile(entityPath, "# Alice");
+
+  // Memory file — returned by temporal agent; in temporal index
+  const memPath = `/tmp/mem-${Date.now()}.md`;
+  const today = new Date().toISOString().slice(0, 10);
+  await writeFile(
+    path.join(tmpDir, "state", "index_time.json"),
+    JSON.stringify({ version: 1, dates: { [today]: [memPath] } }),
+  );
+
+  // candidatePaths includes only the memory file, not the entity file
+  const candidatePaths = new Set([memPath]);
   const results = await augmentWithDirectAndTemporal(
-    "allowed blocked",
+    "alice",
     tmpDir,
     [],
     DEFAULT_WEIGHTS,
@@ -496,7 +506,11 @@ test("augmentWithDirectAndTemporal: candidatePaths filters specialized-agent res
     20,
     candidatePaths,
   );
-  assert.ok(!results.some((r) => r.path === blockedPath), "blocked path should be filtered out");
+
+  // Entity file (direct agent) should NOT be filtered out — entities bypass candidatePaths
+  assert.ok(results.some((r) => r.path === entityPath), "entity file should pass through despite not being in candidatePaths");
+  // Memory file (temporal agent) should be included — it IS in candidatePaths
+  assert.ok(results.some((r) => r.path === memPath), "temporal result within candidatePaths should be included");
 });
 
 test("augmentWithDirectAndTemporal: caps contextual to maxPerAgent", async () => {

@@ -374,11 +374,11 @@ export async function augmentWithDirectAndTemporal(
   ]);
   const durationMs = Date.now() - startMs;
 
-  // When candidatePaths is active, filter specialized-agent results to keep only
-  // paths that are within the operator-scoped candidate set.
-  const scopedDirect = candidatePaths
-    ? directResults.filter((r) => !r.path || candidatePaths.has(r.path))
-    : directResults;
+  // candidatePaths comes from temporal/tag prefilters which index memory files
+  // (facts, decisions, etc.) but NOT entity files. Direct agent results live under
+  // entities/ and would always be filtered out if we applied candidatePaths to them.
+  // Only temporal results (memory files) need scope-restriction via candidatePaths.
+  const scopedDirect = directResults; // entity files bypass candidatePaths
   const scopedTemporal = candidatePaths
     ? temporalResults.filter((r) => !r.path || candidatePaths.has(r.path))
     : temporalResults;
@@ -398,7 +398,8 @@ export async function augmentWithDirectAndTemporal(
   );
 
   // Merge all three; contextual first so its snippets are preserved when a higher-scoring
-  // direct/temporal result overrides the same path.
+  // direct/temporal result overrides the same path (see mergeAgentResults snippet logic).
+  // Note: maxPerAgent=0 is handled by the early-return guard above; we never reach here with 0.
   const merged = mergeAgentResults(
     [...contextualTagged, ...scopedDirect, ...scopedTemporal],
     weights,

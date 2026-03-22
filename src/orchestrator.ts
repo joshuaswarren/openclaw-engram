@@ -4086,8 +4086,8 @@ export class Orchestrator {
             filteredResults,
             this.config.parallelAgentWeights,
             this.config.parallelMaxResultsPerAgent,
-            qmdFetchLimit,
-            queryAwarePrefilter.candidatePaths,
+            qmdFetchLimit, // total output cap; per-source capped to parallelMaxResultsPerAgent inside
+            queryAwarePrefilter.candidatePaths, // temporal agent filtered to prefilter scope
           );
         } catch (err) {
           log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
