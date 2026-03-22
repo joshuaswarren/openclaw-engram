@@ -184,8 +184,18 @@ export async function runTemporalAgent(
     const rawToDate = (() => {
       const p = query.toLowerCase();
       const now = Date.now();
-      if (/\byesterday\b/.test(p) || /\blast night\b/.test(p)) {
+
+      // Exact-day keywords — bound to that exact day
+      if (/\btoday\b|\bthis morning\b|\bjust now\b|\bearlier today\b/.test(p)) {
+        return new Date(now).toISOString().slice(0, 10);
+      }
+      if (/\byesterday\b|\blast night\b/.test(p)) {
         return new Date(now - 86_400_000).toISOString().slice(0, 10);
+      }
+
+      // Relative week/month/year ranges — bound to the far end of the named range
+      if (/\bthis week\b/.test(p) || /\bthis month\b/.test(p) || /\bthis year\b/.test(p)) {
+        return new Date(now).toISOString().slice(0, 10); // up to today
       }
       if (/\blast week\b/.test(p)) {
         return new Date(now - 7 * 86_400_000).toISOString().slice(0, 10);
@@ -196,6 +206,64 @@ export async function runTemporalAgent(
       if (/\blast year\b/.test(p)) {
         return `${new Date().getFullYear() - 1}-12-31`;
       }
+
+      // Explicit month name: "in March 2025" → last day of March 2025
+      const monthNames = ["january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december"];
+      const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
+      if (monthMatch) {
+        const monthIdx = monthNames.indexOf(monthMatch[1]);
+        const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : new Date(now).getFullYear();
+        // Day 0 of the next month = last day of the matched month
+        const monthEnd = new Date(year, monthIdx + 1, 0);
+        return monthEnd.toISOString().slice(0, 10);
+      }
+
+      // "N weeks ago" — bound to the recent edge of that week-long window
+      const weekMatch = p.match(/(\d{1,5})\s*weeks?\s*ago/);
+      if (weekMatch) {
+        const n = Math.min(52, parseInt(weekMatch[1], 10));
+        return new Date(now - Math.max(0, n - 1) * 7 * 86_400_000).toISOString().slice(0, 10);
+      }
+
+      // "N months ago" — bound to the recent edge of that month-long window
+      const monthsAgoMatch = p.match(/(\d{1,5})\s*months?\s*ago/);
+      if (monthsAgoMatch) {
+        const n = Math.min(24, parseInt(monthsAgoMatch[1], 10));
+        return new Date(now - Math.max(0, n - 1) * 31 * 86_400_000).toISOString().slice(0, 10);
+      }
+
+      // "N days ago" — that exact day
+      const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
+      if (numMatch) {
+        const n = Math.min(365, parseInt(numMatch[1], 10));
+        return new Date(now - n * 86_400_000).toISOString().slice(0, 10);
+      }
+
+      // Explicit ISO date "2025-03-12" — that exact day
+      const isoMatch = p.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+      }
+
+      // US date "03/12/2025" — that exact day
+      const usMatch = p.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+      if (usMatch) {
+        const year = usMatch[3].length === 2 ? 2000 + parseInt(usMatch[3], 10) : parseInt(usMatch[3], 10);
+        return `${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+      }
+
+      // "last Monday/Tuesday/etc" — that exact weekday
+      const dayOfWeekMatch = p.match(/\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+      if (dayOfWeekMatch) {
+        const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+        const targetDay = dayNames.indexOf(dayOfWeekMatch[1]);
+        const currentDay = new Date(now).getDay();
+        const daysBack = ((currentDay - targetDay + 7) % 7) || 7;
+        return new Date(now - daysBack * 86_400_000).toISOString().slice(0, 10);
+      }
+
+      // Default: open-ended up to today
       return new Date(now).toISOString().slice(0, 10);
     })();
     const today = new Date().toISOString().slice(0, 10);
@@ -445,6 +513,13 @@ export async function augmentWithDirectAndTemporal(
   log.debug(
     `augmentWithDirectAndTemporal: direct=${scopedDirect.length} temporal=${temporalResults.length} contextual=${contextualTagged.length} agentMs=${durationMs}ms`,
   );
+
+  // If no specialized agents contributed anything (e.g. fresh setup without entities/ or temporal
+  // index), skip reweighting entirely — applying the contextual weight penalty with zero benefit
+  // would silently reduce every result score by ~30% compared to the non-augmented path.
+  if (scopedDirect.length === 0 && temporalResults.length === 0) {
+    return (contextualResults as QmdSearchResult[]).slice(0, maxResults);
+  }
 
   // Merge all three; contextual first so its snippets are preserved when a higher-scoring
   // direct/temporal result overrides the same path (see mergeAgentResults snippet logic).

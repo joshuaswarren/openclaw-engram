@@ -384,28 +384,29 @@ test("parallelRetrieval: direct results get higher weight than contextual (same 
 
 const DEFAULT_WEIGHTS = { direct: 1.0, contextual: 0.7, temporal: 0.85 };
 
-test("augmentWithDirectAndTemporal: returns weighted contextual-only when no agent data", async () => {
+test("augmentWithDirectAndTemporal: returns contextual unchanged when no agent data (no score penalty)", async () => {
+  // Fresh setup: no entities/ dir, no temporal index. Neither direct nor temporal agents fire.
+  // Contextual scores must NOT be reduced — applying the 0.7x weight with zero augmentation
+  // would silently penalize every result without providing any benefit.
   const tmpDir = await makeTempDir();
   const contextual = [
     { docid: "a", path: "/tmp/a.md", snippet: "a snippet", score: 1.0, transport: "hybrid" as const },
   ];
   const results = await augmentWithDirectAndTemporal("query", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
   assert.ok(results.length > 0);
-  // Score must be contextual weight applied consistently
-  assert.ok(Math.abs(results[0].score - 0.7) < 0.01);
+  // Score is preserved unchanged — no reweighting when agents return nothing
+  assert.ok(Math.abs(results[0].score - 1.0) < 0.01, "original score preserved");
 });
 
-test("augmentWithDirectAndTemporal: applies contextual weight even with no augmentation", async () => {
-  // Edge case: no entity/temporal data, just contextual results
-  // Score must always be weighted (consistent with case where agents have results)
+test("augmentWithDirectAndTemporal: no score penalty when entities dir absent and no temporal index", async () => {
   const tmpDir = await makeTempDir();
   const contextual = [
     { docid: "x", path: "/tmp/x.md", snippet: "x snippet", score: 0.8, transport: "hybrid" as const },
   ];
   const results = await augmentWithDirectAndTemporal("no entities here", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
   assert.ok(results.length > 0);
-  // Contextual weight 0.7 applied: 0.8 * 0.7 = 0.56
-  assert.ok(Math.abs(results[0].score - 0.56) < 0.01);
+  // No reweighting: direct=0, temporal=0 → early return with original scores
+  assert.ok(Math.abs(results[0].score - 0.8) < 0.01);
 });
 
 test("augmentWithDirectAndTemporal: direct agent results merge with contextual", async () => {
