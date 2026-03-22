@@ -3,6 +3,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
+import { detectSdkCapabilities, type SdkCapabilities } from "./sdk-compat.js";
 import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerLcmTools } from "./lcm/index.js";
@@ -124,7 +125,33 @@ function observeSessionHeartbeat(
   });
 }
 
-export default {
+/**
+ * Try to use the new SDK's definePluginEntry when available, otherwise return
+ * the bare plugin definition object (works on legacy runtimes).
+ */
+function tryDefinePluginEntry(def: {
+  id: string;
+  name: string;
+  description: string;
+  kind: "memory";
+  register: (api: OpenClawPluginApi) => void;
+}) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { definePluginEntry } = require("openclaw/plugin-sdk/plugin-entry") as {
+      definePluginEntry: (d: typeof def) => typeof def;
+    };
+    return definePluginEntry(def);
+  } catch {
+    // SDK module not available — legacy runtime; return bare object.
+    return def;
+  }
+}
+
+/** SDK capabilities detected at register() time — available to later tasks. */
+let sdkCaps: SdkCapabilities | undefined;
+
+const pluginDefinition = {
   id: "openclaw-engram",
   name: "Engram (Local Memory)",
   description:
@@ -134,6 +161,12 @@ export default {
   register(api: OpenClawPluginApi) {
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
+
+    // Detect SDK capabilities for dual-path hook registration.
+    sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
+    log.info(
+      `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, typedHooks=${sdkCaps.hasTypedHooks}`,
+    );
 
     // Workaround: Load config from file since gateway may not pass it
     const fileConfig = loadPluginConfigFromFile();
@@ -202,10 +235,11 @@ export default {
     (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;
 
     // ========================================================================
-    // HOOK: before_agent_start — Inject memory context
+    // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
+    const recallHookName = sdkCaps.hasBeforePromptBuild ? "before_prompt_build" : "before_agent_start";
     api.on(
-      "before_agent_start",
+      recallHookName,
       async (
         event: Record<string, unknown>,
         ctx: Record<string, unknown>,
@@ -214,9 +248,9 @@ export default {
         if (!prompt || prompt.length < 5) return;
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
-        log.debug(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+        log.debug(`${recallHookName}: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
         log.debug(
-          `before_agent_start: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+          `${recallHookName}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
         );
         if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
           const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
@@ -224,13 +258,13 @@ export default {
             return re.test(sessionKey);
           });
           log.debug(
-            `before_agent_start: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
+            `${recallHookName}: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
           );
         }
 
         if (shouldSkipRecallForSession(sessionKey, cfg)) {
           log.debug(
-            `before_agent_start: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
+            `${recallHookName}: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
           );
           return;
         }
@@ -253,7 +287,7 @@ export default {
             }
           }
           const context = await orchestrator.recall(prompt, sessionKey);
-          log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
+          log.debug(`${recallHookName}: recall returned ${context?.length ?? 0} chars`);
           if (!context) return;
 
           // Final safety cap; recall assembly also enforces this budget.
@@ -267,7 +301,7 @@ export default {
           const memoryContextPrompt =
             `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
 
-          log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
+          log.debug(`${recallHookName}: returning system prompt with ${trimmed.length} chars`);
           return {
             prependSystemContext: memoryContextPrompt,
             // Backward-compat path for gateway builds that consume prependContext.
@@ -285,13 +319,40 @@ export default {
     );
 
     // ========================================================================
+    // registerMemoryPromptSection — structured memory injection (new SDK)
+    // ========================================================================
+    if (sdkCaps.hasRegisterMemoryPromptSection && api.registerMemoryPromptSection) {
+      api.registerMemoryPromptSection({
+        id: "engram-memory",
+        label: "Engram Memory Context",
+        build: async ({ prompt, sessionKey }) => {
+          if (!prompt || prompt.length < 5) return null;
+          if (shouldSkipRecallForSession(sessionKey, cfg)) return null;
+          try {
+            const context = await orchestrator.recall(prompt, sessionKey);
+            if (!context) return null;
+            const maxChars = cfg.recallBudgetChars;
+            if (maxChars === 0) return null;
+            const trimmed = context.length > maxChars
+              ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
+              : context;
+            return `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+          } catch (err) {
+            log.error("registerMemoryPromptSection build failed", err);
+            return null;
+          }
+        },
+      });
+    }
+
+    // ========================================================================
     // HOOK: agent_end — Buffer turns and trigger extraction
     // ========================================================================
     api.on(
       "agent_end",
       async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookAgentEndEvent & Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
         if (!event.success || !Array.isArray(event.messages)) return;
         if (event.messages.length === 0) return;
@@ -481,8 +542,8 @@ export default {
     api.on(
       "before_compaction",
       async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookBeforeCompactionEvent & Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
@@ -545,8 +606,8 @@ export default {
     api.on(
       "after_compaction",
       async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookAfterCompactionEvent & Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
@@ -1024,6 +1085,8 @@ export default {
     });
   },
 };
+
+export default tryDefinePluginEntry(pluginDefinition);
 
 // ============================================================================
 // Helpers
