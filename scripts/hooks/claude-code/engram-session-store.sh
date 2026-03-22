@@ -40,8 +40,15 @@ LOCK_FILE="/tmp/engram-lock-${SESSION_ID}"
 (
   # Acquire exclusive lock to prevent overlapping observe jobs from replaying
   # the same transcript tail when Stop fires in rapid succession.
-  exec 9>"$LOCK_FILE"
-  flock -x 9
+  # Uses mkdir atomicity (POSIX-portable; flock(1) is Linux-only).
+  LOCK_DIR="${LOCK_FILE}.d"
+  ACQUIRED=0
+  for _i in $(seq 1 100); do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then ACQUIRED=1; break; fi
+    sleep 0.1
+  done
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT INT TERM
+  [ "$ACQUIRED" -eq 0 ] && exit 0
 
   LAST_COUNT=0
   [ -f "$CURSOR_FILE" ] && LAST_COUNT="$(cat "$CURSOR_FILE" 2>/dev/null || echo 0)"

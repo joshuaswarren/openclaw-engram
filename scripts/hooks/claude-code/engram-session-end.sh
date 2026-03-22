@@ -38,8 +38,15 @@ LOCK_FILE="/tmp/engram-lock-${SESSION_ID}"
 
 (
   # Acquire exclusive lock to prevent races with any in-flight Stop observe job.
-  exec 9>"$LOCK_FILE"
-  flock -x 9
+  # Uses mkdir atomicity (POSIX-portable; flock(1) is Linux-only).
+  LOCK_DIR="${LOCK_FILE}.d"
+  ACQUIRED=0
+  for _i in $(seq 1 100); do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then ACQUIRED=1; break; fi
+    sleep 0.1
+  done
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT INT TERM
+  [ "$ACQUIRED" -eq 0 ] && exit 0
 
   LAST_COUNT=0
   [ -f "$CURSOR_FILE" ] && LAST_COUNT="$(cat "$CURSOR_FILE" 2>/dev/null || echo 0)"
@@ -101,8 +108,6 @@ print(json.dumps({"sessionKey": session_id, "messages": new_messages, "__new_cou
 PYEOF
 )"
 
-  rm -f "$CURSOR_FILE"
-
   if [ -z "$PAYLOAD" ]; then
     log "session-end[$SESSION_ID]: parse failed"
     exit 0
@@ -110,6 +115,7 @@ PYEOF
 
   if echo "$PAYLOAD" | grep -q "^CURSOR:"; then
     log "session-end[$SESSION_ID]: no new messages at exit"
+    rm -f "$CURSOR_FILE"
     exit 0
   fi
 
@@ -142,6 +148,7 @@ import json, sys
 d = json.load(sys.stdin)
 print(f\"accepted={d.get('accepted','?')} lcm={d.get('lcmArchived','?')} extraction={d.get('extractionQueued','?')}\")" 2>/dev/null || echo "$RESPONSE" | head -c 80)"
     log "session-end[$SESSION_ID]: flush OK — $RESULT"
+    rm -f "$CURSOR_FILE"
   else
     log "session-end[$SESSION_ID]: flush failed (curl=$CURL_EXIT http=$HTTP_STATUS)"
   fi
