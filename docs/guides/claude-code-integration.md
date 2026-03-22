@@ -214,13 +214,108 @@ The key benefit is that memories from one project automatically surface in other
 
 This works because Engram's recall is query-based across all stored memories regardless of which project produced them.
 
+## Codex CLI Integration
+
+Codex uses the same three-phase pattern but with three hooks instead of four — Codex has no `SessionEnd` event. The `Stop` hook detects final session exit via `stop_hook_active: false` and handles cursor cleanup then.
+
+### Hook Architecture
+
+```
+SessionStart hook           UserPromptSubmit hook        Stop hook
+      │                             │                        │
+      ▼                             ▼                        ▼
+engram-session-recall.sh   engram-user-prompt-recall.sh  engram-session-store.sh
+      │                             │                        │
+      ▼                             ▼                        ▼
+POST /recall                 POST /recall              POST /observe
+(auto mode, 45s)             (minimal mode, 20s)       (incremental, bg)
+      │                             │                        │
+      ▼                             ▼                        ▼
+additionalContext            additionalContext          cursor advanced
+(before turn 1)              (before each turn)        (final: cursor cleaned up)
+```
+
+**Key differences from Claude Code:**
+
+- Three hooks only — no `SessionEnd`. The `Stop` hook detects `"stop_hook_active": false` to identify the final turn and clean up the cursor file then.
+- Default `ENGRAM_HOST` should point to your Engram server (e.g. a Tailscale IP if Codex runs on a different machine than the one hosting the gateway), rather than `127.0.0.1`.
+- Hook output uses `hookEventName` field in `hookSpecificOutput`: `{ "hookEventName": "SessionStart", "additionalContext": "..." }`.
+
+### Setup
+
+Scripts live in `~/.codex/scripts/`:
+
+```bash
+~/.codex/scripts/engram-session-recall.sh
+~/.codex/scripts/engram-user-prompt-recall.sh
+~/.codex/scripts/engram-session-store.sh
+```
+
+Make them executable:
+
+```bash
+chmod +x ~/.codex/scripts/engram-session-recall.sh \
+         ~/.codex/scripts/engram-user-prompt-recall.sh \
+         ~/.codex/scripts/engram-session-store.sh
+```
+
+Wire them in `~/.codex/hooks.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/yourname/.codex/scripts/engram-session-recall.sh",
+            "timeout": 55
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/yourname/.codex/scripts/engram-user-prompt-recall.sh",
+            "timeout": 25
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/yourname/.codex/scripts/engram-session-store.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Logs
+
+```bash
+tail -f ~/.codex/logs/engram-session-recall.log      # SessionStart recall
+tail -f ~/.codex/logs/engram-user-prompt-recall.log   # per-turn recall
+tail -f ~/.codex/logs/engram-session-store.log        # Stop store + final flush
+```
+
 ## Environment Variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `OPENCLAW_ENGRAM_ACCESS_TOKEN` | (required) | Bearer token for Engram REST API |
-| `ENGRAM_HOST` | `127.0.0.1` | Engram server hostname |
-| `ENGRAM_PORT` | `4318` | Engram server port |
+| Variable | Default (Claude Code) | Default (Codex) | Description |
+|---|---|---|---|
+| `OPENCLAW_ENGRAM_ACCESS_TOKEN` | (required) | (required) | Bearer token for Engram REST API |
+| `ENGRAM_HOST` | `127.0.0.1` | your-engram-server | Engram server hostname or IP |
+| `ENGRAM_PORT` | `4318` | `4318` | Engram server port |
 
 ## Troubleshooting
 
