@@ -4,7 +4,8 @@ import { spawn } from "node:child_process";
 import type { CompatCheckOptions, CompatCheckResult, CompatReport, CompatRunner } from "./types.js";
 import { compareVersions } from "../version-utils.js";
 
-const REQUIRED_HOOKS = ["before_agent_start", "agent_end"];
+const REQUIRED_HOOKS_LEGACY = ["before_agent_start", "agent_end"];
+const REQUIRED_HOOKS_NEW = ["before_prompt_build", "agent_end"];
 
 function isSafeCommandToken(command: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(command);
@@ -339,7 +340,10 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
     const indexRaw = await readFile(indexPath, "utf-8");
     const structuralSource = stripCommentsAndStrings(indexRaw);
     const hooks = parseHookRegistrations(indexRaw);
-    const missingHooks = REQUIRED_HOOKS.filter((hook) => !hooks.has(hook));
+    const missingLegacy = REQUIRED_HOOKS_LEGACY.filter((hook) => !hooks.has(hook));
+    const missingNew = REQUIRED_HOOKS_NEW.filter((hook) => !hooks.has(hook));
+    // Accept either the legacy or new hook set
+    const missingHooks = missingNew.length <= missingLegacy.length ? missingNew : missingLegacy;
     const hasGatewayStartHook = hooks.has("gateway_start");
     const hasServiceStart = hasServiceStartRegistration(structuralSource);
     if (missingHooks.length === 0 && (hasGatewayStartHook || hasServiceStart)) {
@@ -362,7 +366,7 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
         title: "Core hook registration",
         level: "error",
         message: `Missing expected registration(s): ${missingParts.join("; ")}`,
-        remediation: "Ensure src/index.ts registers before_agent_start and agent_end, plus either gateway_start or api.registerService({ start }).",
+        remediation: "Ensure src/index.ts registers before_prompt_build (or before_agent_start) and agent_end, plus either gateway_start or api.registerService({ start }).",
       });
     }
 

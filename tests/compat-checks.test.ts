@@ -182,3 +182,60 @@ test("compat checks support method-style service start and enforce api.on bounda
   const byId = new Map(report.checks.map((check) => [check.id, check]));
   assert.equal(byId.get("hook-registration-core")?.level, "ok");
 });
+
+test("compat checks accept before_prompt_build as alternative to before_agent_start", async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "engram-compat-new-hooks-"));
+  await writeRepoFixture(repoRoot, {
+    pluginJson: JSON.stringify({ id: "openclaw-engram", kind: "memory" }),
+    packageJson: JSON.stringify({
+      engines: { node: ">=22.12.0" },
+      openclaw: {
+        plugin: "./openclaw.plugin.json",
+        extensions: ["./dist/index.js"],
+      },
+    }),
+    indexTs: [
+      'api.on("before_prompt_build", async () => {});',
+      'api.on("agent_end", async () => {});',
+      "registerCli(api as unknown as Foo, orchestrator);",
+      "api.registerService({ id: \"openclaw-engram\", start: async () => {}, stop: () => {} });",
+    ].join("\n"),
+  });
+
+  const report = await runCompatChecks({
+    repoRoot,
+    runner: { commandExists: async () => true },
+  });
+
+  assert.equal(report.summary.error, 0);
+  assert.equal(report.summary.warn, 0);
+  const byId = new Map(report.checks.map((check) => [check.id, check]));
+  assert.equal(byId.get("hook-registration-core")?.level, "ok");
+});
+
+test("compat checks report error when neither before_prompt_build nor before_agent_start is registered", async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "engram-compat-no-recall-hook-"));
+  await writeRepoFixture(repoRoot, {
+    pluginJson: JSON.stringify({ id: "openclaw-engram", kind: "memory" }),
+    packageJson: JSON.stringify({
+      engines: { node: ">=22.12.0" },
+      openclaw: {
+        plugin: "./openclaw.plugin.json",
+        extensions: ["./dist/index.js"],
+      },
+    }),
+    indexTs: [
+      'api.on("agent_end", async () => {});',
+      "api.registerService({ id: \"openclaw-engram\", start: async () => {}, stop: () => {} });",
+    ].join("\n"),
+  });
+
+  const report = await runCompatChecks({
+    repoRoot,
+    runner: { commandExists: async () => true },
+  });
+
+  const byId = new Map(report.checks.map((check) => [check.id, check]));
+  assert.equal(byId.get("hook-registration-core")?.level, "error");
+  assert.ok(byId.get("hook-registration-core")?.remediation?.includes("before_prompt_build"));
+});
