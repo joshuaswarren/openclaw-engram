@@ -4045,6 +4045,11 @@ export class Orchestrator {
        * Used by the confidence gate so that enabling parallel retrieval doesn't
        * silently lower scores below the calibrated gate threshold. */
       preAugmentTopScore: number;
+      /** Max score from direct + temporal agents (post-weight) BEFORE merge.
+       * Included in the confidence gate so that strong specialized hits (e.g.
+       * an exact entity-name match) are not discarded just because the QMD
+       * contextual pass returned a weak result. */
+      maxSpecializedScore: number;
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
@@ -4125,9 +4130,19 @@ export class Orchestrator {
       // silently lower scores below the gate threshold even when recall is high-quality.
       const preAugmentTopScore = filteredResults[0]?.score ?? 0;
       let augmentedResults = filteredResults;
+      let maxSpecializedScore = 0;
       if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
         try {
           const [directResults, temporalResults] = await specializedAgentPromise;
+          // Capture max specialized score (post-weight) BEFORE merge so the confidence
+          // gate can include strong direct/temporal hits in the effective top score.
+          // This prevents the gate from discarding an exact entity-name match just because
+          // the QMD contextual pass returned a weak result.
+          const w = this.config.parallelAgentWeights;
+          maxSpecializedScore = Math.max(
+            directResults.length > 0 ? Math.max(...directResults.map((r) => r.score * w.direct)) : 0,
+            temporalResults.length > 0 ? Math.max(...temporalResults.map((r) => r.score * w.temporal)) : 0,
+          );
           const lifecycleHeadroom = this.config.parallelMaxResultsPerAgent * 2;
           augmentedResults = await mergeWithAgentResults(
             filteredResults,
@@ -4142,7 +4157,7 @@ export class Orchestrator {
         }
       }
 
-      return { memoryResultsLists: [augmentedResults], globalResults: [], preAugmentTopScore };
+      return { memoryResultsLists: [augmentedResults], globalResults: [], preAugmentTopScore, maxSpecializedScore };
     })();
 
     const transcriptPromise = (async (): Promise<string | null> => {
@@ -4580,7 +4595,7 @@ export class Orchestrator {
     // 2. QMD results — post-process and format
     if (qmdResult) {
       const t0 = Date.now();
-      const { memoryResultsLists, globalResults, preAugmentTopScore } = qmdResult;
+      const { memoryResultsLists, globalResults, preAugmentTopScore, maxSpecializedScore } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
       const memoryResultsRaw = mergeGraphExpandedResults(memoryResultsLists.flat(), []);
@@ -4730,13 +4745,18 @@ export class Orchestrator {
       // post-merge weighted scores). This avoids two pitfalls:
       //   1. The 0.7× contextual weight silently lowering scores below threshold.
       //   2. A direct/temporal hit on a different scale inflating the gate score.
-      // When preAugmentTopScore is 0 (QMD returned nothing), the gate is skipped —
-      // preserving the original behaviour where empty QMD results do NOT fire the gate
-      // and the fallback embedding path remains available.
+      // We also include maxSpecializedScore so that a strong direct/temporal hit (e.g.
+      // an exact entity-name match at score 1.0) is not discarded just because the QMD
+      // contextual pass returned a weak result. maxSpecializedScore is post-weight, so
+      // direct hits at weight 1.0 stay on the same 0-1 scale as QMD scores.
+      // When both preAugmentTopScore and maxSpecializedScore are 0, the gate is skipped
+      // preserving the original behaviour where empty results do NOT fire the gate and
+      // the fallback embedding path remains available.
+      const effectiveGateScore = Math.max(preAugmentTopScore, maxSpecializedScore);
       let confidenceGateRejected = false;
-      if (this.config.recallConfidenceGateEnabled && preAugmentTopScore > 0) {
-        if (preAugmentTopScore < this.config.recallConfidenceGateThreshold) {
-          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (pre-merge QMD top score ${preAugmentTopScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
+      if (this.config.recallConfidenceGateEnabled && effectiveGateScore > 0) {
+        if (effectiveGateScore < this.config.recallConfidenceGateThreshold) {
+          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (effective score ${effectiveGateScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
           memoryResults = [];
           confidenceGateRejected = true;
         }

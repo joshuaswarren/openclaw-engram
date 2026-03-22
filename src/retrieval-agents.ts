@@ -186,7 +186,9 @@ export async function runTemporalAgent(
     // not displaced by newer out-of-scope entries at the slice boundary.
     const pathToDate = new Map<string, string>();
     for (const [date, datePaths] of Object.entries(dateIndex)) {
-      if (date >= fromDate && date <= toDate) {
+      // toDate is an exclusive upper bound (the first day NOT included in the window).
+      // e.g. "3 days ago" → fromDate="2026-03-12", toDate="2026-03-13" → only includes 2026-03-12.
+      if (date >= fromDate && date < toDate) {
         for (const p of datePaths) {
           // Skip paths excluded by the query-aware prefilter scope
           if (candidatePaths && !candidatePaths.has(p)) continue;
