@@ -1,6 +1,6 @@
 # Claude Code Integration
 
-Engram integrates with Claude Code via two session hooks that automatically recall memories at session start and store session content at session end. This gives every Claude Code session (and Codex) access to the same cross-project memory that OpenClaw gateway sessions use.
+Engram integrates with Claude Code via four session hooks that automatically recall memories at session start, inject relevant context before each turn, store session content incrementally after each turn, and flush remaining content at session end. This gives every Claude Code session (and Codex) access to the same cross-project memory that OpenClaw gateway sessions use.
 
 ## How It Works
 
