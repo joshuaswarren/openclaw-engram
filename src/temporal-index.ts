@@ -838,8 +838,9 @@ export function recencyWindowBoundsFromPrompt(
   }
 
   // Guard: if toDate would precede fromDate (inverted window from conflicting keywords),
-  // fall back to today so we never produce an empty window.
-  if (toDate < fromDate) toDate = today;
+  // fall back to tomorrow (exclusive upper bound that covers today) so we never produce
+  // an empty window. Using `today` is insufficient because `date < today` excludes today.
+  if (toDate <= fromDate) toDate = tomorrow;
 
   return { fromDate, toDate };
 }
