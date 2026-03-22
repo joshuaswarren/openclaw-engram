@@ -4041,6 +4041,10 @@ export class Orchestrator {
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
       globalResults: QmdSearchResult[];
+      /** Top QMD score BEFORE contextual weight scaling from the agent merge.
+       * Used by the confidence gate so that enabling parallel retrieval doesn't
+       * silently lower scores below the calibrated gate threshold. */
+      preAugmentTopScore: number;
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
@@ -4074,7 +4078,10 @@ export class Orchestrator {
               })
               : Promise.resolve([] as ParallelSearchResult[]),
             shouldRunAgent("temporal", retrievalQuery, 0)
-              ? runTemporalAgent(retrievalQuery, profileStorage.dir, maxPerAgent, queryAwarePrefilter.candidatePaths).catch((err) => {
+              // Temporal index lives at config.memoryDir/state/index_time.json (written by
+              // updateTemporalTagIndexes). profileStorage.dir is namespace-specific and
+              // would not contain the shared index for non-default namespaces.
+              ? runTemporalAgent(retrievalQuery, this.config.memoryDir, maxPerAgent, queryAwarePrefilter.candidatePaths).catch((err) => {
                 log.debug(`TemporalAgent pre-start failed: ${err}`);
                 return [] as ParallelSearchResult[];
               })
@@ -4111,6 +4118,12 @@ export class Orchestrator {
       // concurrently with the QMD fetch above for true parallel latency. Await their
       // results now and merge, adding per-agent headroom to the cap so lifecycle
       // filtering downstream still has candidates after dropping stale specialized hits.
+      //
+      // Record the top QMD score BEFORE the merge so the confidence gate downstream
+      // can compare against the calibrated QMD-scale score. The merge applies a
+      // contextual weight (default 0.7x) to contextual results, which would otherwise
+      // silently lower scores below the gate threshold even when recall is high-quality.
+      const preAugmentTopScore = filteredResults[0]?.score ?? 0;
       let augmentedResults = filteredResults;
       if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
         try {
@@ -4129,7 +4142,7 @@ export class Orchestrator {
         }
       }
 
-      return { memoryResultsLists: [augmentedResults], globalResults: [] };
+      return { memoryResultsLists: [augmentedResults], globalResults: [], preAugmentTopScore };
     })();
 
     const transcriptPromise = (async (): Promise<string | null> => {
@@ -4567,7 +4580,7 @@ export class Orchestrator {
     // 2. QMD results — post-process and format
     if (qmdResult) {
       const t0 = Date.now();
-      const { memoryResultsLists, globalResults } = qmdResult;
+      const { memoryResultsLists, globalResults, preAugmentTopScore } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
       const memoryResultsRaw = mergeGraphExpandedResults(memoryResultsLists.flat(), []);
@@ -4711,14 +4724,21 @@ export class Orchestrator {
 
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
       // reranking doesn't affect which score the gate evaluates.
+      //
+      // Use the pre-augmentation QMD top score when available. The parallel agent
+      // merge applies a contextual weight (default 0.7x), which lowers QMD scores
+      // and could cause the gate to fire even when the underlying recall was
+      // above the calibrated threshold. Taking the max of both preserves the
+      // original gate semantics regardless of whether parallel retrieval is active.
       let confidenceGateRejected = false;
-      if (
-        this.config.recallConfidenceGateEnabled &&
-        shouldRejectLowConfidenceRecall(memoryResults, this.config.recallConfidenceGateThreshold)
-      ) {
-        log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score below ${this.config.recallConfidenceGateThreshold})`);
-        memoryResults = [];
-        confidenceGateRejected = true;
+      if (this.config.recallConfidenceGateEnabled) {
+        const currentTopScore = memoryResults.length > 0 ? Math.max(...memoryResults.map((r) => r.score)) : 0;
+        const effectiveTopScore = Math.max(currentTopScore, preAugmentTopScore);
+        if (effectiveTopScore < this.config.recallConfidenceGateThreshold) {
+          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score ${effectiveTopScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
+          memoryResults = [];
+          confidenceGateRejected = true;
+        }
       }
 
       memoryResults = memoryResults.slice(0, recallResultLimit);
