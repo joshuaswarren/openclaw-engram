@@ -55,8 +55,10 @@ export function shouldRunAgent(
 ): boolean {
   switch (agent) {
     case "direct":
-      // Skip if query has no entity-like tokens (proper nouns or count from external detection)
-      return knownEntityCount > 0 || /\b[A-Z][a-zA-Z]{1,}/.test(query);
+      // Skip only if query has no word-like tokens at all. Both capitalized and
+      // lowercase entity names are stored (normalizeEntityName lowercases them),
+      // so gating on capitalization would silently skip most real entity lookups.
+      return knownEntityCount > 0 || /\b\w{2,}/.test(query);
     case "temporal":
     case "contextual":
       // Temporal and contextual always run — temporal context is broadly useful and cheap (<10ms)
@@ -196,16 +198,10 @@ export async function runTemporalAgent(
       // Recency decay: score=1.0 on day 0, score=0.5 on day 7, score=0.2 floor on day 14+
       const recencyScore = Math.max(0.2, 1.0 - ageDays / 14);
 
-      // Query relevance via filename token overlap — prevents unrelated recent memories
-      // from ranking above query-relevant results when temporal weight is applied.
-      const baseName = path.basename(p, ".md");
-      const fileTokens = baseName.split(/[-_]/).filter((t) => t.length >= 2);
-      const relevanceScore = queryTokens.length > 0 ? overlapScore(queryTokens, fileTokens) : 0;
-
-      // Combine: 70% recency + 30% relevance (recency-primary with query grounding)
-      const score = relevanceScore > 0
-        ? recencyScore * 0.7 + relevanceScore * 0.3
-        : recencyScore * 0.8; // penalize slightly when query has no filename overlap
+      // Memory files use opaque IDs (e.g. "a1b2c3.md"), not topic-bearing names,
+      // so filename token overlap is meaningless for relevance. Temporal agent
+      // ranks purely by recency; contextual/direct agents handle query relevance.
+      const score = recencyScore;
 
       results.push({
         docid: baseName,

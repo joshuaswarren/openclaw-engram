@@ -4082,7 +4082,7 @@ export class Orchestrator {
         try {
           augmentedResults = await augmentWithDirectAndTemporal(
             retrievalQuery,
-            this.storage.dir,
+            profileStorage.dir,
             filteredResults,
             this.config.parallelAgentWeights,
             this.config.parallelMaxResultsPerAgent,

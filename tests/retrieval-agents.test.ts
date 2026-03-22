@@ -17,8 +17,15 @@ import type { QmdClient } from "../src/qmd.js";
 
 // ─── shouldRunAgent ───────────────────────────────────────────────────────────
 
-test("shouldRunAgent: direct skipped when no entity count and no proper nouns", () => {
-  assert.equal(shouldRunAgent("direct", "what did i eat yesterday", 0), false);
+test("shouldRunAgent: direct skipped when query has no word-like tokens", () => {
+  assert.equal(shouldRunAgent("direct", "", 0), false);
+  assert.equal(shouldRunAgent("direct", "! @", 0), false);
+});
+
+test("shouldRunAgent: direct runs for lowercase entity prompts", () => {
+  assert.equal(shouldRunAgent("direct", "what did i eat yesterday", 0), true);
+  assert.equal(shouldRunAgent("direct", "postgres migration notes", 0), true);
+  assert.equal(shouldRunAgent("direct", "openclaw decisions", 0), true);
 });
 
 test("shouldRunAgent: direct runs when proper nouns present", () => {
