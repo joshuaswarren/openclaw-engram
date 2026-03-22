@@ -29,7 +29,8 @@ PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 # Return immediately
 echo '{}'
 
-[ -z "$ENGRAM_TOKEN" ] || [ -z "$SESSION_ID" ] && exit 0
+[ -z "$ENGRAM_TOKEN" ] && exit 0
+[ -z "$SESSION_ID" ] && exit 0
 [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ] && exit 0
 
 CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
