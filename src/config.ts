@@ -1492,7 +1492,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     })(),
     parallelMaxResultsPerAgent:
       typeof cfg.parallelMaxResultsPerAgent === "number"
-        ? Math.max(1, Math.floor(cfg.parallelMaxResultsPerAgent))
+        ? Math.max(0, Math.floor(cfg.parallelMaxResultsPerAgent))
         : 20,
   };
 }

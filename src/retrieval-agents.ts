@@ -22,7 +22,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { log } from "./logger.js";
 import type { QmdSearchResult } from "./types.js";
 import type { QmdClient } from "./qmd.js";
-import { queryByDateRangeAsync, recencyWindowFromPrompt } from "./temporal-index.js";
+import { recencyWindowFromPrompt } from "./temporal-index.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -158,13 +158,7 @@ export async function runTemporalAgent(
   maxResults = 20,
 ): Promise<ParallelSearchResult[]> {
   try {
-    const fromDate = recencyWindowFromPrompt(query);
-    const paths = await queryByDateRangeAsync(memoryDir, fromDate);
-
-    if (!paths || paths.size === 0) return [];
-
-    // Assign recency scores by how recent the path's date bucket is.
-    // We read the index again to get per-path date info for accurate scoring.
+    // Read index_time.json once — used for both date-range filtering and recency scoring.
     let dateIndex: Record<string, string[]> = {};
     try {
       const indexPath = path.join(memoryDir, "state", "index_time.json");
@@ -172,29 +166,32 @@ export async function runTemporalAgent(
       const parsed = JSON.parse(raw) as { dates?: Record<string, string[]> };
       dateIndex = parsed.dates ?? {};
     } catch {
-      // fall back to uniform score
+      return []; // Index missing or unreadable — nothing to return
     }
 
-    // Build path → date map from the index
+    const fromDate = recencyWindowFromPrompt(query);
+    const toDate = new Date().toISOString().slice(0, 10);
+
+    // Build path → date map, filtering to the recency window in one pass
     const pathToDate = new Map<string, string>();
     for (const [date, datePaths] of Object.entries(dateIndex)) {
-      for (const p of datePaths) {
-        if (!pathToDate.has(p)) pathToDate.set(p, date);
+      if (date >= fromDate && date <= toDate) {
+        for (const p of datePaths) {
+          if (!pathToDate.has(p)) pathToDate.set(p, date);
+        }
       }
     }
+
+    if (pathToDate.size === 0) return [];
 
     const todayMs = Date.now();
     const results: ParallelSearchResult[] = [];
 
-    for (const p of paths) {
-      const dateStr = pathToDate.get(p);
-      let score = 0.7; // default uniform score
-      if (dateStr) {
-        const ageMs = todayMs - new Date(dateStr).getTime();
-        const ageDays = ageMs / 86_400_000;
-        // Linear decay: score=1.0 on day 0, score=0.5 on day 7, score=0 on day 14
-        score = Math.max(0.2, 1.0 - (ageDays / 14));
-      }
+    for (const [p, dateStr] of pathToDate) {
+      const ageMs = todayMs - new Date(dateStr).getTime();
+      const ageDays = ageMs / 86_400_000;
+      // Linear decay: score=1.0 on day 0, score=0.5 on day 7, score=0.2 floor on day 14+
+      const score = Math.max(0.2, 1.0 - ageDays / 14);
 
       results.push({
         docid: path.basename(p, ".md"),

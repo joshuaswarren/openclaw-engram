@@ -21,7 +21,7 @@ import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
-import { runDirectAgent, runTemporalAgent } from "./retrieval-agents.js";
+import { runDirectAgent, runTemporalAgent, shouldRunAgent } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
@@ -4084,15 +4084,27 @@ export class Orchestrator {
           const memDir = this.storage.dir;
           const maxPerAgent = this.config.parallelMaxResultsPerAgent;
           const agentWeights = this.config.parallelAgentWeights;
+          // Entity count for shouldRunAgent heuristic
+          const knownEntityCount = (retrievalQuery.match(/\b[A-Z][a-z]{1,}/g) ?? []).length;
+          const runDirect = shouldRunAgent("direct", retrievalQuery, knownEntityCount);
+          const runTemporal = isTemporalQuery(retrievalQuery);
           const [directResults, temporalResults] = await Promise.all([
-            runDirectAgent(retrievalQuery, memDir, maxPerAgent).catch(() => []),
-            runTemporalAgent(retrievalQuery, memDir, maxPerAgent).catch(() => []),
+            runDirect
+              ? runDirectAgent(retrievalQuery, memDir, maxPerAgent).catch(() => [])
+              : Promise.resolve([]),
+            runTemporal
+              ? runTemporalAgent(retrievalQuery, memDir, maxPerAgent).catch(() => [])
+              : Promise.resolve([]),
           ]);
           const agentDurationMs = Date.now() - agentStart;
 
           if (directResults.length > 0 || temporalResults.length > 0) {
+            // Seed map with contextual (filteredResults) at their weighted score
             const byPath = new Map<string, QmdSearchResult>(
-              filteredResults.map((r) => [r.path || r.docid, r]),
+              filteredResults.map((r) => [
+                r.path || r.docid,
+                { ...r, score: r.score * agentWeights.contextual },
+              ]),
             );
             for (const r of directResults) {
               const key = r.path || r.docid;
