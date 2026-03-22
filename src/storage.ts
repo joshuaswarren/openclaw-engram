@@ -1474,8 +1474,10 @@ export class StorageManager {
         // an explicit Updated: timestamp are not treated as freshly created on every
         // read. Using new Date() would inflate boostSearchResults recency scores for
         // every entity that lacks a timestamp.
+        // Use epoch as the last-resort fallback so that entities without a
+        // parseable timestamp don't appear as "freshly created" and inflate scores.
         const fileMtime = entity.updated
-          || await stat(filePath).then((s) => s.mtime.toISOString()).catch(() => undefined);
+          || await stat(filePath).then((s) => s.mtime.toISOString()).catch(() => new Date(0).toISOString());
         return {
           path: filePath,
           frontmatter: {
