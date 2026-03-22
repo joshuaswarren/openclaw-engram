@@ -217,89 +217,89 @@ const pluginDefinition = {
     // ========================================================================
     // When registerMemoryPromptSection is available (preferred path), skip the
     // recall hook entirely to avoid dual memory injection.
+    // Uses literal hook names so src/compat/checks.ts parseHookRegistrations()
+    // can statically detect them.
     const useMemoryPromptSection =
       sdkCaps.hasRegisterMemoryPromptSection && typeof api.registerMemoryPromptSection === "function";
-    const recallHookName = sdkCaps.hasBeforePromptBuild ? "before_prompt_build" : "before_agent_start";
-    if (!useMemoryPromptSection)
-    api.on(
-      recallHookName,
-      async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
-      ) => {
-        const prompt = event.prompt as string | undefined;
-        if (!prompt || prompt.length < 5) return;
 
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
-        log.debug(`${recallHookName}: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+    async function recallHookHandler(
+      hookLabel: string,
+      event: Record<string, unknown>,
+      ctx: Record<string, unknown>,
+    ) {
+      const prompt = event.prompt as string | undefined;
+      if (!prompt || prompt.length < 5) return;
+
+      const sessionKey = (ctx?.sessionKey as string) ?? "default";
+      log.debug(`${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+      log.debug(
+        `${hookLabel}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+      );
+      if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
+        const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
+          const re = wildcardToRegExp(pattern);
+          return re.test(sessionKey);
+        });
         log.debug(
-          `${recallHookName}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+          `${hookLabel}: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
         );
-        if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
-          const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
-            const re = wildcardToRegExp(pattern);
-            return re.test(sessionKey);
-          });
-          log.debug(
-            `${recallHookName}: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
-          );
-        }
+      }
 
-        if (shouldSkipRecallForSession(sessionKey, cfg)) {
-          log.debug(
-            `${recallHookName}: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
-          );
-          return;
-        }
+      if (shouldSkipRecallForSession(sessionKey, cfg)) {
+        log.debug(
+          `${hookLabel}: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
+        );
+        return;
+      }
 
-        try {
-          // Optional: keep bootstrap workspace files small and warn about truncation risk.
-          await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+      try {
+        await orchestrator.maybeRunFileHygiene().catch(() => undefined);
 
-          // Check for compaction and save checkpoint if needed
-          // This is a placeholder - actual compaction detection depends on OpenClaw
-          // For now, we'll just call recall with the sessionKey
-
-          // Pass per-agent workspace so compaction reset reads the right BOOT.md.
-          // Only set when compaction reset is enabled to avoid unbounded Map growth
-          // when recall is skipped (e.g., no_recall planner decision).
-          if (orchestrator.config.compactionResetEnabled) {
-            const agentWorkspace = ctx?.workspaceDir as string | undefined;
-            if (agentWorkspace) {
-              orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
-            }
+        if (orchestrator.config.compactionResetEnabled) {
+          const agentWorkspace = ctx?.workspaceDir as string | undefined;
+          if (agentWorkspace) {
+            orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
           }
-          const context = await orchestrator.recall(prompt, sessionKey);
-          log.debug(`${recallHookName}: recall returned ${context?.length ?? 0} chars`);
-          if (!context) return;
-
-          // Final safety cap; recall assembly also enforces this budget.
-          const maxChars = cfg.recallBudgetChars;
-          if (maxChars === 0) return;
-          const trimmed =
-            context.length > maxChars
-              ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
-              : context;
-
-          const memoryContextPrompt =
-            `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
-
-          log.debug(`${recallHookName}: returning system prompt with ${trimmed.length} chars`);
-          return {
-            prependSystemContext: memoryContextPrompt,
-            // Backward-compat path for gateway builds that consume prependContext.
-            prependContext: memoryContextPrompt,
-          };
-        } catch (err) {
-          log.error("recall failed", err);
-          // Clean up workspace override to prevent Map leak on exception.
-          if (orchestrator.config.compactionResetEnabled) {
-            orchestrator.clearRecallWorkspaceOverride(sessionKey);
-          }
-          return;
         }
-      },
-    );
+        const context = await orchestrator.recall(prompt, sessionKey);
+        log.debug(`${hookLabel}: recall returned ${context?.length ?? 0} chars`);
+        if (!context) return;
+
+        const maxChars = cfg.recallBudgetChars;
+        if (maxChars === 0) return;
+        const trimmed =
+          context.length > maxChars
+            ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
+            : context;
+
+        const memoryContextPrompt =
+          `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+
+        log.debug(`${hookLabel}: returning system prompt with ${trimmed.length} chars`);
+        return {
+          prependSystemContext: memoryContextPrompt,
+          prependContext: memoryContextPrompt,
+        };
+      } catch (err) {
+        log.error("recall failed", err);
+        if (orchestrator.config.compactionResetEnabled) {
+          orchestrator.clearRecallWorkspaceOverride(sessionKey);
+        }
+        return;
+      }
+    }
+
+    if (!useMemoryPromptSection) {
+      if (sdkCaps.hasBeforePromptBuild) {
+        // New SDK path — literal string for compat checker detection
+        api.on("before_prompt_build", async (event: Record<string, unknown>, ctx: Record<string, unknown>) =>
+          recallHookHandler("before_prompt_build", event, ctx));
+      } else {
+        // Legacy SDK path — literal string for compat checker detection
+        api.on("before_agent_start", async (event: Record<string, unknown>, ctx: Record<string, unknown>) =>
+          recallHookHandler("before_agent_start", event, ctx));
+      }
+    }
 
     // ========================================================================
     // registerMemoryPromptSection — structured memory injection (new SDK)
@@ -762,6 +762,8 @@ const pluginDefinition = {
     } else {
       // Legacy runtime: restore heartbeat observer for sessionObserverEnabled.
       // On new SDK, session_start/session_end hooks replace this.
+      // Two paths: registerHook for runtimes that emit event-style heartbeats,
+      // and api.on("agent_heartbeat") for pre-2026.1.29 runtimes that emit typed hooks.
       const runtimeApi = api as any;
       runtimeApi.registerHook?.(
         ["agent_heartbeat", "agent:heartbeat"],
@@ -774,6 +776,23 @@ const pluginDefinition = {
         },
         { name: "engram_agent_heartbeat_legacy", description: "Observe legacy heartbeat events for session observation." },
       );
+
+      // Typed api.on path for pre-2026.1.29 builds that route heartbeat through the hook system.
+      const runtimeVersion = runtimeApi.runtime?.version || process.env.OPENCLAW_SERVICE_VERSION || "unknown";
+      void import("./legacy-hook-compat.js").then(({ shouldRegisterTypedAgentHeartbeat }) => {
+        if (shouldRegisterTypedAgentHeartbeat(runtimeVersion)) {
+          (api.on as any)("agent_heartbeat", (_event: Record<string, unknown>, ctx: Record<string, unknown>) => {
+            if (orchestrator.config.sessionObserverEnabled !== true) return;
+            const sessionKey = (ctx?.sessionKey as string) ?? "default";
+            void orchestrator.observeSessionHeartbeat(sessionKey).catch((err: unknown) => {
+              log.debug(`agent_heartbeat typed observer failed: ${err}`);
+            });
+          });
+          log.info(`registered typed agent_heartbeat hook for OpenClaw ${runtimeVersion}`);
+        }
+      }).catch(() => {
+        // legacy-hook-compat import failed — skip typed registration
+      });
     }
 
     // ========================================================================
