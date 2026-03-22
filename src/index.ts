@@ -707,6 +707,125 @@ const pluginDefinition = {
     );
 
     // ========================================================================
+    // NEW SDK HOOKS (≥2026.3.22 only)
+    // These hooks are only available on the new SDK and provide richer
+    // lifecycle, tool, LLM, and subagent observation capabilities.
+    // ========================================================================
+    if (sdkCaps.hasBeforePromptBuild) {
+      // ---- Session lifecycle ----
+      api.on(
+        "session_start",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSessionEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          const sessionKey = event.sessionKey ?? "default";
+          log.debug(`session_start: ${sessionKey}`);
+          try {
+            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+          } catch (err) {
+            log.debug(`session_start file hygiene failed: ${err}`);
+          }
+        },
+      );
+
+      api.on(
+        "session_end",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSessionEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          const sessionKey = event.sessionKey ?? "default";
+          log.debug(`session_end: ${sessionKey}`);
+          try {
+            await orchestrator.flushPendingExtractions?.(sessionKey);
+          } catch (err) {
+            log.debug(`session_end flush failed: ${err}`);
+          }
+          if (orchestrator.config.compactionResetEnabled) {
+            orchestrator.clearRecallWorkspaceOverride(sessionKey);
+          }
+        },
+      );
+
+      // ---- Tool observation ----
+      api.on(
+        "before_tool_call",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookBeforeToolCallEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          if (event.toolName) {
+            log.debug(`before_tool_call: ${event.toolName}`);
+          }
+        },
+      );
+
+      api.on(
+        "after_tool_call",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookAfterToolCallEvent & Record<string, unknown>,
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          if (!event.toolName) return;
+          const sessionKey = (ctx?.sessionKey as string) ?? "default";
+          log.debug(`after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`);
+
+          if (orchestrator.config.hourlySummariesIncludeToolStats) {
+            try {
+              await orchestrator.transcript.appendToolUse({
+                timestamp: new Date().toISOString(),
+                sessionKey,
+                tool: event.toolName,
+              });
+            } catch (err) {
+              log.debug(`after_tool_call transcript append failed: ${err}`);
+            }
+          }
+        },
+      );
+
+      // ---- LLM observation ----
+      api.on(
+        "llm_output",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookLlmOutputEvent & Record<string, unknown>,
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          const sessionKey = (ctx?.sessionKey as string) ?? "default";
+          if (event.tokenUsage) {
+            log.debug(
+              `llm_output: model=${event.model ?? "?"}, tokens=${event.tokenUsage.input ?? 0}/${event.tokenUsage.output ?? 0}, ${event.durationMs ?? "?"}ms, session=${sessionKey}`,
+            );
+          }
+        },
+      );
+
+      // ---- Subagent lifecycle ----
+      api.on(
+        "subagent_spawning",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSubagentSpawningEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          log.debug(`subagent_spawning: ${event.subagentId ?? "?"} purpose=${event.purpose ?? "?"}`);
+        },
+      );
+
+      api.on(
+        "subagent_ended",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSubagentEndedEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          log.debug(
+            `subagent_ended: ${event.subagentId ?? "?"} success=${event.success ?? "?"} ${event.durationMs ?? "?"}ms`,
+          );
+        },
+      );
+    }
+
+    // ========================================================================
     // Helper: Auto-register hourly summary cron job
     // ========================================================================
     async function ensureHourlySummaryCron(api: OpenClawPluginApi): Promise<void> {
