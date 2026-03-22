@@ -4153,7 +4153,9 @@ export class Orchestrator {
           );
         } catch (err) {
           log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
-          // Fall back to existing filteredResults (already assigned)
+          // Fall back to existing filteredResults; reset maxSpecializedScore so the confidence
+          // gate is not influenced by agent results that were never merged into augmentedResults.
+          maxSpecializedScore = 0;
         }
       }
 
