@@ -4062,8 +4062,10 @@ export class Orchestrator {
       //   total latency ≈ max(qmd, direct, temporal), not qmd + max(direct, temporal).
       // Results are awaited after QMD completes and merged below.
       const maxPerAgent = this.config.parallelMaxResultsPerAgent;
+      // maxPerAgent=0 is a hard disable (same contract as augmentWithDirectAndTemporal).
+      // Skip agent launch entirely to avoid unnecessary filesystem I/O.
       const specializedAgentPromise: Promise<[ParallelSearchResult[], ParallelSearchResult[]]> | null =
-        this.config.parallelRetrievalEnabled
+        this.config.parallelRetrievalEnabled && maxPerAgent > 0
           ? Promise.all([
             shouldRunAgent("direct", retrievalQuery, 0)
               ? runDirectAgent(retrievalQuery, profileStorage.dir, maxPerAgent).catch((err) => {
