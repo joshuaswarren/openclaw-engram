@@ -288,6 +288,37 @@ function mergeAgentResults(
     .slice(0, maxResults);
 }
 
+/**
+ * For merged results that have an empty snippet, attempt to read the first
+ * 200 characters of the file as a fallback preview. Bounded to MAX_SNIPPET_READS
+ * to cap I/O when many specialized-agent results are present.
+ */
+const SNIPPET_PREVIEW_CHARS = 200;
+const MAX_SNIPPET_READS = 8;
+
+async function populateEmptySnippets(results: QmdSearchResult[]): Promise<QmdSearchResult[]> {
+  const needsSnippet = results.filter((r) => !r.snippet && r.path);
+  if (needsSnippet.length === 0) return results;
+
+  const toRead = needsSnippet.slice(0, MAX_SNIPPET_READS);
+  const snippetMap = new Map<string, string>();
+
+  await Promise.all(
+    toRead.map(async (r) => {
+      try {
+        const raw = await readFile(r.path, "utf-8");
+        const preview = raw.slice(0, SNIPPET_PREVIEW_CHARS).replace(/\s+/g, " ").trim();
+        if (preview) snippetMap.set(r.path, preview);
+      } catch {
+        // File unreadable — leave snippet empty
+      }
+    }),
+  );
+
+  if (snippetMap.size === 0) return results;
+  return results.map((r) => (r.path && snippetMap.has(r.path) ? { ...r, snippet: snippetMap.get(r.path)! } : r));
+}
+
 // ─── Augmentation helper (used by orchestrator) ───────────────────────────────
 
 /**
@@ -300,6 +331,11 @@ function mergeAgentResults(
  *
  * Contextual weight is always applied to `contextualResults` so scoring is
  * consistent regardless of whether direct/temporal agents return anything.
+ *
+ * Snippets: snippets from contextual results are preserved during merge. For
+ * results discovered only by direct/temporal agents (no contextual match),
+ * the first ~200 chars of the file are read as a fallback preview so downstream
+ * formatters and rerankers have content to work with, not just a path.
  *
  * v9.1 limitation: `memoryDir` is the storage root for the current namespace.
  * For multi-namespace deployments, only the active namespace's entities/ and
@@ -346,11 +382,14 @@ export async function augmentWithDirectAndTemporal(
   );
 
   // Merge all three; contextual weight is applied consistently regardless of agent counts
-  return mergeAgentResults(
+  const merged = mergeAgentResults(
     [...contextualTagged, ...directResults, ...temporalResults],
     weights,
     maxResults,
   );
+
+  // Populate snippets for results discovered only by direct/temporal (no contextual preview)
+  return populateEmptySnippets(merged);
 }
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────

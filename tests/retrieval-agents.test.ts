@@ -432,6 +432,23 @@ test("augmentWithDirectAndTemporal: deduplicates by path, keeps highest weighted
   assert.equal(sharedResults.length, 1, "deduplication: path appears only once");
 });
 
+test("augmentWithDirectAndTemporal: populates snippet from file content for specialized-agent discoveries", async () => {
+  const tmpDir = await makeTempDir();
+  await mkdir(path.join(tmpDir, "entities"), { recursive: true });
+  const entityPath = path.join(tmpDir, "entities", "alice.md");
+  await writeFile(entityPath, "# Alice Smith\n\nAlice is the lead engineer.");
+
+  // Contextual returns nothing — alice.md is only discovered by the direct agent
+  const contextual: Array<{ docid: string; path: string; snippet: string; score: number; transport: string }> = [];
+  const results = await augmentWithDirectAndTemporal("Alice project", tmpDir, contextual, DEFAULT_WEIGHTS, 10, 20);
+
+  const r = results.find((x) => x.path === entityPath);
+  assert.ok(r !== undefined, "direct agent result should be in merged results");
+  // Snippet should be populated from file content
+  assert.ok(r!.snippet.length > 0, "snippet should be populated from file content");
+  assert.ok(r!.snippet.includes("Alice"), "snippet should contain file content");
+});
+
 test("augmentWithDirectAndTemporal: respects maxResults limit", async () => {
   const tmpDir = await makeTempDir();
   const contextual = Array.from({ length: 30 }, (_, i) => ({
