@@ -4114,7 +4114,9 @@ export class Orchestrator {
       // can compare against the calibrated QMD-scale score. The merge applies a
       // contextual weight (default 0.7x) to contextual results, which would otherwise
       // silently lower scores below the gate threshold even when recall is high-quality.
-      const preAugmentTopScore = filteredResults[0]?.score ?? 0;
+      const preAugmentTopScore = filteredResults.length > 0
+        ? Math.max(...filteredResults.map((r) => r.score))
+        : 0;
       let augmentedResults = filteredResults;
       let maxSpecializedScore = 0;
       if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
