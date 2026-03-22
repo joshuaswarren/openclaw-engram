@@ -168,6 +168,12 @@ const pluginDefinition = {
       `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, typedHooks=${sdkCaps.hasTypedHooks}`,
     );
 
+    // Skip heavy initialization in setup-only mode (new SDK channel setup flows)
+    if (sdkCaps.registrationMode === "setup-only") {
+      log.info("registrationMode=setup-only — skipping full initialization");
+      return;
+    }
+
     // Workaround: Load config from file since gateway may not pass it
     const fileConfig = loadPluginConfigFromFile();
     const cfg = parseConfig({
