@@ -771,10 +771,18 @@ export function recencyWindowBoundsFromPrompt(
       "july", "august", "september", "october", "november", "december"];
     const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
     if (monthMatch) {
-      // Month name has highest priority — compute first day of the NEXT month (exclusive upper bound).
-      const monthIdx = monthNames.indexOf(monthMatch[1]);
-      const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
-      toDate = new Date(year, monthIdx + 1, 1).toISOString().slice(0, 10);
+      // "since <month>" and "after <month>" are open-ended: everything from that month
+      // to the present. Use tomorrow as toDate so today's memories are included.
+      // Without "since"/"after", treat the month as a closed window (just that month).
+      const isSinceOrAfter = /\b(since|after)\b/.test(p);
+      if (isSinceOrAfter) {
+        toDate = tomorrow;
+      } else {
+        // Month name — compute first day of the NEXT month (exclusive upper bound).
+        const monthIdx = monthNames.indexOf(monthMatch[1]);
+        const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
+        toDate = new Date(year, monthIdx + 1, 1).toISOString().slice(0, 10);
+      }
     } else {
       // Ago patterns set a working offset (recent edge of the N-ago window).
       // Same nesting order as recencyWindowFromPrompt.

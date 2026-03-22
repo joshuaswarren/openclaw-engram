@@ -4120,6 +4120,14 @@ export class Orchestrator {
       if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
         try {
           const [directResults, temporalResults] = await specializedAgentPromise;
+          // Only augment when QMD found something. When filteredResults is empty (QMD
+          // returned nothing), merging specialized results would suppress the embedding
+          // fallback — the recall path branches on memoryResults.length > 0, so
+          // heuristic-only hits (filename overlap, recency) would prevent the semantic
+          // embedding search from running on exactly the queries where hybrid search failed.
+          if (filteredResults.length === 0) {
+            // QMD found nothing; skip merge so embedding fallback remains reachable.
+          } else {
           // Capture max specialized score (post-weight) BEFORE merge so the confidence
           // gate can include strong direct/temporal hits in the effective top score.
           // This prevents the gate from discarding an exact entity-name match just because
@@ -4137,6 +4145,7 @@ export class Orchestrator {
             this.config.parallelAgentWeights,
             qmdFetchLimit + lifecycleHeadroom,
           );
+          } // end else (filteredResults.length > 0)
         } catch (err) {
           log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
           // Fall back to existing filteredResults; reset maxSpecializedScore so the confidence
