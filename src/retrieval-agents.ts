@@ -498,6 +498,8 @@ export interface ParallelRetrievalOptions {
   skipContextual?: boolean;
   /** Max results per agent (capped before merge). */
   maxResultsPerAgent?: number;
+  /** Override default agent weights. Falls back to PARALLEL_AGENT_WEIGHTS when absent. */
+  agentWeights?: Record<SearchAgentSource, number>;
 }
 
 /**
@@ -557,7 +559,7 @@ export async function parallelRetrieval(
   // direct/temporal result overrides the same path in mergeAgentResults.
   const merged = mergeAgentResults(
     [...contextualResults, ...directResults, ...temporalResults],
-    PARALLEL_AGENT_WEIGHTS,
+    options.agentWeights ?? PARALLEL_AGENT_WEIGHTS,
     maxResults,
   );
   return populateEmptySnippets(merged);

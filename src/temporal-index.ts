@@ -776,7 +776,8 @@ export function recencyWindowBoundsFromPrompt(
         } else {
           const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
           if (numMatch) {
-            toDaysBack = Math.min(365, parseInt(numMatch[1], 10));
+            // (N-1) mirrors the weeks/months ago formula: "3 days ago" → window [today-3, today-2]
+            toDaysBack = Math.max(0, Math.min(365, parseInt(numMatch[1], 10)) - 1);
           } else {
             const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
             if (hrMatch) {

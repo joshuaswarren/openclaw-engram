@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isTemporalQuery, recencyWindowFromPrompt } from "../src/temporal-index.ts";
+import { isTemporalQuery, recencyWindowBoundsFromPrompt, recencyWindowFromPrompt } from "../src/temporal-index.ts";
 
 // ── isTemporalQuery: existing patterns still work ──
 
@@ -112,4 +112,29 @@ test("recencyWindowFromPrompt handles US dates", () => {
   const now = new Date("2026-03-15T12:00:00Z").getTime();
   const result = recencyWindowFromPrompt("Meeting on 3/15/2024", now);
   assert.equal(result, "2024-03-15");
+});
+
+// ── recencyWindowBoundsFromPrompt: N-ago window consistency ──
+
+test("recencyWindowBoundsFromPrompt: 'N days ago' creates 1-day window (toDate = fromDate + 1 day)", () => {
+  const now = new Date("2026-03-15T12:00:00Z").getTime();
+  const { fromDate, toDate } = recencyWindowBoundsFromPrompt("What happened 3 days ago?", now);
+  // fromDate = 2026-03-12, toDate = 2026-03-13 (one-day window, not collapsed to single point)
+  assert.equal(fromDate, "2026-03-12");
+  assert.equal(toDate, "2026-03-13");
+  assert.ok(toDate > fromDate, "toDate must be after fromDate");
+});
+
+test("recencyWindowBoundsFromPrompt: 'N weeks ago' creates 7-day window", () => {
+  const now = new Date("2026-03-15T12:00:00Z").getTime();
+  const { fromDate, toDate } = recencyWindowBoundsFromPrompt("What happened 2 weeks ago?", now);
+  // fromDate = 2026-03-01, toDate = 2026-03-08 (one-week window)
+  assert.equal(fromDate, "2026-03-01");
+  assert.equal(toDate, "2026-03-08");
+});
+
+test("recencyWindowBoundsFromPrompt: '1 day ago' does not produce inverted window", () => {
+  const now = new Date("2026-03-15T12:00:00Z").getTime();
+  const { fromDate, toDate } = recencyWindowBoundsFromPrompt("What happened 1 day ago?", now);
+  assert.ok(toDate >= fromDate, "toDate must not precede fromDate");
 });
