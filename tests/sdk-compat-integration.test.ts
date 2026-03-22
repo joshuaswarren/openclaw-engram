@@ -282,7 +282,19 @@ test("legacy SDK api gets legacy hooks only", async () => {
 });
 
 // ============================================================================
-// Test 3: Setup-only mode skips all registration
+// Test 3: tryDefinePluginEntry fallback produces correct plugin shape
+// ============================================================================
+test("tryDefinePluginEntry: fallback produces correct plugin shape when SDK module unavailable", async () => {
+  const mod = await import("../src/index.js");
+  const plugin = mod.default;
+  assert.equal(plugin.id, "openclaw-engram");
+  assert.equal(plugin.name, "Engram (Local Memory)");
+  assert.equal(plugin.kind, "memory");
+  assert.equal(typeof plugin.register, "function");
+});
+
+// ============================================================================
+// Test 4: Setup-only mode skips all registration
 // ============================================================================
 test("setup-only mode skips all registration", async () => {
   resetGlobals();
