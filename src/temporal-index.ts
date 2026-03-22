@@ -778,7 +778,8 @@ export function recencyWindowBoundsFromPrompt(
     } else {
       // Ago patterns set a working offset (recent edge of the N-ago window).
       // Same nesting order as recencyWindowFromPrompt.
-      let toDaysBack = 0; // default: today
+      // Sentinel -1 means "no ago pattern matched" → toDate falls back to tomorrow.
+      let toDaysBack = -1;
       const weekMatch = p.match(/(\d{1,5})\s*weeks?\s*ago/);
       if (weekMatch) {
         toDaysBack = Math.max(0, Math.min(52, parseInt(weekMatch[1], 10)) - 1) * 7;
@@ -790,13 +791,14 @@ export function recencyWindowBoundsFromPrompt(
           const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
           if (numMatch) {
             // (N-1) mirrors the weeks/months ago formula: "3 days ago" → window [today-3, today-2]
+            // N=1 → toDaysBack=0 → toDate=today (exclusive) → window [yesterday, today) = 1 day. ✓
             toDaysBack = Math.max(0, Math.min(365, parseInt(numMatch[1], 10)) - 1);
           } else {
             const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
             if (hrMatch) {
-              // Sub-day precision: toDate upper bound = tomorrow so today is included.
-              // fromDate already captures yesterday (recencyWindowFromPrompt uses ceiling).
-              toDaysBack = 0;
+              // Sub-day precision: keep sentinel -1 so toDate falls back to tomorrow,
+              // which includes today. fromDate = yesterday (recencyWindowFromPrompt uses ceiling).
+              toDaysBack = -1;
             }
           }
         }
@@ -827,8 +829,10 @@ export function recencyWindowBoundsFromPrompt(
             toDate = new Date(nowMs - (daysBack - 1) * 86_400_000).toISOString().slice(0, 10);
           } else {
             // Use the ago-derived offset.
-            // toDaysBack=0 means "today / unspecified" — use tomorrow so today is included in the window.
-            toDate = toDaysBack === 0
+            // toDaysBack=-1 means no pattern matched (or hours-ago): use tomorrow so today
+            // is included in the window. toDaysBack=0 means N=1 ago (e.g. "1 day ago"):
+            // toDate = today (exclusive) correctly creates a 1-day window [yesterday, today).
+            toDate = toDaysBack < 0
               ? tomorrow
               : new Date(nowMs - toDaysBack * 86_400_000).toISOString().slice(0, 10);
           }

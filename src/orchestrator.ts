@@ -4749,10 +4749,14 @@ export class Orchestrator {
       // an exact entity-name match at score 1.0) is not discarded just because the QMD
       // contextual pass returned a weak result. maxSpecializedScore is post-weight, so
       // direct hits at weight 1.0 stay on the same 0-1 scale as QMD scores.
-      // When both preAugmentTopScore and maxSpecializedScore are 0, the gate is skipped
-      // preserving the original behaviour where empty results do NOT fire the gate and
-      // the fallback embedding path remains available.
-      const effectiveGateScore = Math.max(preAugmentTopScore, maxSpecializedScore);
+      // IMPORTANT: maxSpecializedScore is only included when QMD also found something
+      // (preAugmentTopScore > 0). When QMD returns nothing, a weak specialized hit must
+      // NOT block the embedding fallback safety net — that path exists precisely for the
+      // case where QMD finds nothing. Setting effectiveGateScore = 0 when QMD is empty
+      // preserves the original behaviour: empty QMD → gate skipped → fallback available.
+      const effectiveGateScore = preAugmentTopScore > 0
+        ? Math.max(preAugmentTopScore, maxSpecializedScore)
+        : 0;
       let confidenceGateRejected = false;
       if (this.config.recallConfidenceGateEnabled && effectiveGateScore > 0) {
         if (effectiveGateScore < this.config.recallConfidenceGateThreshold) {
