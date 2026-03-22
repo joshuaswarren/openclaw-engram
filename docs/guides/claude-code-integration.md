@@ -5,22 +5,27 @@ Engram integrates with Claude Code via two session hooks that automatically reca
 ## How It Works
 
 ```
-SessionStart hook              Stop hook
-     │                              │
-     ▼                              ▼
-engram-session-recall.sh     engram-session-store.sh
-     │                              │
-     ▼                              ▼
-POST /engram/v1/recall        POST /engram/v1/observe
-     │                              │
-     ▼                              ▼
-additionalSystemPrompt        Extraction pipeline
-(injected before turn 1)      (background, non-blocking)
+SessionStart hook           UserPromptSubmit hook        Stop hook (per turn)       SessionEnd hook
+      │                             │                           │                          │
+      ▼                             ▼                           ▼                          ▼
+engram-session-recall.sh   engram-user-prompt-recall.sh  engram-session-store.sh  engram-session-end.sh
+      │                             │                           │                          │
+      ▼                             ▼                           ▼                          ▼
+POST /recall                 POST /recall                 POST /observe             POST /observe
+(auto mode, 45s)             (minimal mode, 20s)          (incremental, bg)         (final flush, bg)
+      │                             │                           │                          │
+      ▼                             ▼                           ▼                          ▼
+additionalSystemPrompt       additionalContext             cursor advanced           cursor cleaned up
+(before turn 1)              (before each turn)            (new msgs only)           (remaining msgs)
 ```
 
-**SessionStart**: The recall hook fires when a session opens. It queries Engram with the project name and injects matched memories as `additionalSystemPrompt`. Claude sees relevant cross-project context (past bug fixes, patterns, preferences, decisions) before the first message.
+**SessionStart** (`engram-session-recall.sh`): Fires when a session opens. Queries Engram with the project name in `auto` mode, injecting matched memories as `additionalSystemPrompt`. Claude sees relevant cross-project context before the first message.
 
-**Stop**: The store hook fires when a session ends. It reads the session transcript from `transcript_path`, extracts user/assistant messages, and POSTs them to `/engram/v1/observe` in the background. The session stops immediately — observation is non-blocking. Engram's extraction pipeline then processes the transcript and writes durable memories.
+**UserPromptSubmit** (`engram-user-prompt-recall.sh`): Fires synchronously before every user message. Uses the actual prompt text as the recall query (`minimal` mode, up to 20s). Injects results as `additionalContext` so Claude has relevant memories at the moment they're needed — not just at session start. Short prompts (<4 words) are skipped.
+
+**Stop** (`engram-session-store.sh`): Fires after every assistant turn (not just on exit). Reads new messages from the transcript since the last observed cursor position and POSTs only the delta to `/engram/v1/observe` in the background. Advances the cursor on success. Never blocks Claude.
+
+**SessionEnd** (`engram-session-end.sh`): Fires when the session actually exits. Sends any messages not yet observed (since the last Stop cursor), then cleans up the cursor file.
 
 ## Setup
 
@@ -60,21 +65,29 @@ grep -i "engram.*token\|token.*engram" ~/Library/LaunchAgents/ai.openclaw.gatewa
 
 ### 3. Install the hook scripts
 
-The two scripts live in `~/.claude/scripts/`:
+All four scripts live in `~/.claude/scripts/`:
 
 ```bash
-# Recall hook (SessionStart)
+# Recall at session start
 ~/.claude/scripts/engram-session-recall.sh
 
-# Store hook (Stop)
+# Recall before each user message
+~/.claude/scripts/engram-user-prompt-recall.sh
+
+# Incremental store after each turn
 ~/.claude/scripts/engram-session-store.sh
+
+# Final flush on session exit
+~/.claude/scripts/engram-session-end.sh
 ```
 
-Both scripts are in `~/.claude/scripts/` and should be executable:
+Make them executable:
 
 ```bash
-chmod +x ~/.claude/scripts/engram-session-recall.sh
-chmod +x ~/.claude/scripts/engram-session-store.sh
+chmod +x ~/.claude/scripts/engram-session-recall.sh \
+         ~/.claude/scripts/engram-user-prompt-recall.sh \
+         ~/.claude/scripts/engram-session-store.sh \
+         ~/.claude/scripts/engram-session-end.sh
 ```
 
 ### 4. Wire the hooks in `~/.claude/settings.json`
@@ -93,6 +106,17 @@ chmod +x ~/.claude/scripts/engram-session-store.sh
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/engram-user-prompt-recall.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "*",
@@ -100,6 +124,17 @@ chmod +x ~/.claude/scripts/engram-session-store.sh
           {
             "type": "command",
             "command": "bash $HOME/.claude/scripts/engram-session-store.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/scripts/engram-session-end.sh"
           }
         ]
       }
@@ -137,29 +172,35 @@ Recall uses `auto` mode (full recall, 45s timeout) with fallback to `minimal` mo
 
 ## Logs
 
-Both scripts log to `~/.claude/logs/`:
+All scripts log to `~/.claude/logs/`:
 
 ```bash
-# Recall log
-tail -f ~/.claude/logs/engram-session-recall.log
-
-# Store log
-tail -f ~/.claude/logs/engram-session-store.log
+tail -f ~/.claude/logs/engram-session-recall.log      # SessionStart recall
+tail -f ~/.claude/logs/engram-user-prompt-recall.log   # per-turn recall
+tail -f ~/.claude/logs/engram-session-store.log        # Stop + SessionEnd store
 ```
 
-Example recall log:
+Example session-recall log:
 ```
 2026-03-22 14:01:10 session-recall fired: session=abc123 project=openclaw-engram
 2026-03-22 14:01:10 attempting full recall (auto mode)...
 2026-03-22 14:01:32 recall complete: [Engram Memory Recall — 9 memories, auto mode]
 ```
 
-Example store log:
+Example user-prompt-recall log:
 ```
-2026-03-22 16:30:55 stop hook fired: session=abc123 project=openclaw-engram transcript=/path/to/transcript.jsonl
-2026-03-22 16:30:55 background: parsing transcript (...)
-2026-03-22 16:30:55 background: observing 142 messages for session=abc123 project=openclaw-engram
-2026-03-22 16:31:10 background: observe response: accepted queued: True
+2026-03-22 14:05:22 user-prompt-recall: session=abc123 project=openclaw-engram words=12
+2026-03-22 14:05:30 recall done: 5 memories injected
+```
+
+Example session-store log (incremental per turn + final flush):
+```
+2026-03-22 16:30:55 stop[abc123]: observing 8 new messages (cursor 0→8) project=openclaw-engram
+2026-03-22 16:30:58 stop[abc123]: observe OK — accepted=8 lcm=True extraction=True
+2026-03-22 16:45:12 stop[abc123]: observing 6 new messages (cursor 8→14) project=openclaw-engram
+2026-03-22 16:45:15 stop[abc123]: observe OK — accepted=6 lcm=True extraction=True
+2026-03-22 17:02:01 session-end[abc123]: flushing 2 remaining messages (cursor 14→16)
+2026-03-22 17:02:03 session-end[abc123]: flush OK — accepted=2 lcm=True extraction=True
 ```
 
 ## Cross-Project Memory Flow
@@ -186,6 +227,8 @@ This works because Engram's recall is query-based across all stored memories reg
 **Recall returns no memories**: The project name in the query may not match stored memory content. Check the recall log to see the query used, then try manually recalling with a broader query via the MCP tools (`mcp__engram__engram_recall`).
 
 **Store hook produces no output**: Check `~/.claude/logs/engram-session-store.log`. Common causes: empty transcript (session was very short), `transcript_path` not set (older Claude Code version), or server unreachable.
+
+**Per-turn recall adding too much latency**: `UserPromptSubmit` recall uses `minimal` mode with a 20s timeout. If even that is too slow, increase the `PROMPT_WORD_COUNT` threshold in `engram-user-prompt-recall.sh` to skip more short prompts, or reduce `topK` from 8 to 4.
 
 **Recall times out every session**: The full `auto` recall involves QMD search + LLM planning and can take 20–40 seconds. If this is consistently too slow, consider switching to `minimal` mode by default (edit `engram-session-recall.sh` and change `'mode': 'auto'` to `'mode': 'minimal'`).
 
