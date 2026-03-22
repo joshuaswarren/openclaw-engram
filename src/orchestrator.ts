@@ -840,15 +840,6 @@ export function resolvePersistedMemoryRelativePath(options: {
  * Returns true if the top recall result score is below the threshold,
  * indicating retrieval is too uncertain to inject.
  */
-export function shouldRejectLowConfidenceRecall(
-  results: Array<{ score: number }>,
-  threshold: number,
-): boolean {
-  if (results.length === 0) return false;
-  const topScore = Math.max(...results.map((r) => r.score));
-  return topScore < threshold;
-}
-
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;

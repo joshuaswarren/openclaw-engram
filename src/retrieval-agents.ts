@@ -389,15 +389,25 @@ export async function mergeWithAgentResults(
   return populateEmptySnippets(merged);
 }
 
-// ─── Augmentation helper (used by orchestrator) ───────────────────────────────
+// ─── Augmentation helper (used by tests; orchestrator uses inline logic) ─────
+//
+// NOTE: This function passes the same `memoryDir` to both direct and temporal
+// agents. The orchestrator's inline implementation differs: it passes a
+// namespace-specific storage dir to runDirectAgent and the shared root to
+// runTemporalAgent. augmentWithDirectAndTemporal is intentionally simpler
+// (single-dir assumption) and is exercised by unit tests where both agents
+// operate on the same temporary directory.
 
 /**
  * Augment a set of contextual (hybridSearch) results with direct and temporal
  * agent results, returning a merged, deduplicated list.
  *
- * This is the integration point for the orchestrator: the caller already ran
- * hybridSearch as the primary contextual pass. Direct and temporal agents run
- * in parallel, then all three are merged with configurable weights.
+ * **Test helper** — production recall uses the inline orchestrator path which
+ * passes namespace-specific directories to each agent. This function uses a
+ * simplified single-directory contract suitable for unit tests.
+ *
+ * Direct and temporal agents run in parallel, then all three are merged with
+ * configurable weights.
  *
  * Contextual weight is always applied to `contextualResults` so scoring is
  * consistent regardless of whether direct/temporal agents return anything.
@@ -406,10 +416,6 @@ export async function mergeWithAgentResults(
  * results discovered only by direct/temporal agents (no contextual match),
  * the first ~200 chars of the file are read as a fallback preview so downstream
  * formatters and rerankers have content to work with, not just a path.
- *
- * v9.1 limitation: `memoryDir` is the storage root for the current namespace.
- * For multi-namespace deployments, only the active namespace's entities/ and
- * temporal index are scanned. Cross-namespace entity lookup is a future improvement.
  */
 export async function augmentWithDirectAndTemporal(
   query: string,

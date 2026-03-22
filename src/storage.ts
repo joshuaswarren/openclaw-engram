@@ -1,4 +1,4 @@
-import { access, readdir, readFile, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
+import { access, readdir, readFile, stat, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
 import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -1470,13 +1470,19 @@ export class StorageManager {
         const entity = parseEntityFile(raw);
         if (!entity.name) return null;
         const nameWithoutExt = path.basename(filePath, ".md");
+        // Fall back to file mtime rather than new Date() so that entities without
+        // an explicit Updated: timestamp are not treated as freshly created on every
+        // read. Using new Date() would inflate boostSearchResults recency scores for
+        // every entity that lacks a timestamp.
+        const fileMtime = entity.updated
+          || await stat(filePath).then((s) => s.mtime.toISOString()).catch(() => undefined);
         return {
           path: filePath,
           frontmatter: {
             id: nameWithoutExt,
             category: "entity",
-            created: entity.updated || new Date().toISOString(),
-            updated: entity.updated || new Date().toISOString(),
+            created: fileMtime,
+            updated: fileMtime,
             source: "entity_extraction",
             confidence: 0.9,
             confidenceTier: confidenceTier(0.9),
