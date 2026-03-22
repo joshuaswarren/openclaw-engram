@@ -1450,15 +1450,43 @@ export class StorageManager {
     try {
       const raw = await readFile(filePath, "utf-8");
       const parsed = parseFrontmatter(raw);
-      if (!parsed) return null;
-      return {
-        path: filePath,
-        frontmatter: normalizeFrontmatterForPath(
-          parsed.frontmatter,
-          toMemoryPathRel(this.baseDir, filePath),
-        ),
-        content: parsed.content,
-      };
+      if (parsed) {
+        return {
+          path: filePath,
+          frontmatter: normalizeFrontmatterForPath(
+            parsed.frontmatter,
+            toMemoryPathRel(this.baseDir, filePath),
+          ),
+          content: parsed.content,
+        };
+      }
+
+      // Entity files use a `# Name` + `**Type:** ...` markdown format rather than
+      // YAML frontmatter. Build a synthetic MemoryFile so entity files returned by
+      // the direct retrieval agent participate in boostSearchResults and last-recall
+      // tracking rather than being silently dropped.
+      const normalizedPath = filePath.split(path.sep).join("/");
+      if (normalizedPath.includes("/entities/") && filePath.endsWith(".md")) {
+        const entity = parseEntityFile(raw);
+        if (!entity.name) return null;
+        const nameWithoutExt = path.basename(filePath, ".md");
+        return {
+          path: filePath,
+          frontmatter: {
+            id: nameWithoutExt,
+            category: "entity",
+            created: entity.updated || new Date().toISOString(),
+            updated: entity.updated || new Date().toISOString(),
+            source: "entity_extraction",
+            confidence: 0.9,
+            confidenceTier: confidenceTier(0.9),
+            tags: entity.type ? [entity.type] : [],
+          },
+          content: raw,
+        };
+      }
+
+      return null;
     } catch {
       return null;
     }

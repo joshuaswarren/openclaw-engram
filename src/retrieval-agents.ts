@@ -96,6 +96,7 @@ function overlapScore(queryTokens: string[], candidateTokens: string[]): number 
  * QmdSearchResult[]. Zero LLM inference; pure file I/O.
  *
  * Cost: readdir on entities/ + filename scoring. Typically <5ms.
+ *
  */
 export async function runDirectAgent(
   query: string,
