@@ -35,8 +35,14 @@ echo '{}'
 [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ] && exit 0
 
 CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
+LOCK_FILE="/tmp/engram-lock-${SESSION_ID}"
 
 (
+  # Acquire exclusive lock to prevent overlapping observe jobs from replaying
+  # the same transcript tail when Stop fires in rapid succession.
+  exec 9>"$LOCK_FILE"
+  flock -x 9
+
   LAST_COUNT=0
   [ -f "$CURSOR_FILE" ] && LAST_COUNT="$(cat "$CURSOR_FILE" 2>/dev/null || echo 0)"
 
@@ -122,14 +128,18 @@ print(json.dumps(d))
 
   log "stop[$SESSION_ID]: observing $NEW_MSG_COUNT new messages (cursor $LAST_COUNT→$NEW_COUNT) project=$PROJECT_NAME"
 
-  RESPONSE="$(curl -s --max-time 120 \
+  # Append HTTP status code as final line so we can check for 4xx/5xx.
+  # curl -s exits 0 even on HTTP errors; we must check the status explicitly.
+  RAW="$(curl -s -w "\n%{http_code}" --max-time 120 \
     -X POST "$ENGRAM_URL" \
     -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$CLEAN_PAYLOAD" 2>/dev/null)"
   CURL_EXIT=$?
+  HTTP_STATUS="$(echo "$RAW" | tail -1)"
+  RESPONSE="$(echo "$RAW" | head -n -1)"
 
-  if [ $CURL_EXIT -eq 0 ] && [ -n "$RESPONSE" ]; then
+  if [ $CURL_EXIT -eq 0 ] && [[ "$HTTP_STATUS" =~ ^2 ]] && [ -n "$RESPONSE" ]; then
     RESULT="$(echo "$RESPONSE" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -137,7 +147,7 @@ print(f\"accepted={d.get('accepted','?')} lcm={d.get('lcmArchived','?')} extract
     log "stop[$SESSION_ID]: observe OK — $RESULT"
     echo "$NEW_COUNT" > "$CURSOR_FILE"
   else
-    log "stop[$SESSION_ID]: observe failed (curl exit $CURL_EXIT) — cursor not advanced"
+    log "stop[$SESSION_ID]: observe failed (curl=$CURL_EXIT http=$HTTP_STATUS) — cursor not advanced"
   fi
 ) >> "$LOG" 2>&1 &
 

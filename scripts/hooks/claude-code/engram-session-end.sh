@@ -34,8 +34,13 @@ echo '{}'
 [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ] && exit 0
 
 CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
+LOCK_FILE="/tmp/engram-lock-${SESSION_ID}"
 
 (
+  # Acquire exclusive lock to prevent races with any in-flight Stop observe job.
+  exec 9>"$LOCK_FILE"
+  flock -x 9
+
   LAST_COUNT=0
   [ -f "$CURSOR_FILE" ] && LAST_COUNT="$(cat "$CURSOR_FILE" 2>/dev/null || echo 0)"
 
@@ -122,21 +127,23 @@ print(json.dumps(d))
 
   log "session-end[$SESSION_ID]: flushing $NEW_MSG_COUNT remaining messages (cursor $LAST_COUNT→$NEW_COUNT)"
 
-  RESPONSE="$(curl -s --max-time 120 \
+  RAW="$(curl -s -w "\n%{http_code}" --max-time 120 \
     -X POST "$ENGRAM_URL" \
     -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$CLEAN_PAYLOAD" 2>/dev/null)"
   CURL_EXIT=$?
+  HTTP_STATUS="$(echo "$RAW" | tail -1)"
+  RESPONSE="$(echo "$RAW" | head -n -1)"
 
-  if [ $CURL_EXIT -eq 0 ] && [ -n "$RESPONSE" ]; then
+  if [ $CURL_EXIT -eq 0 ] && [[ "$HTTP_STATUS" =~ ^2 ]] && [ -n "$RESPONSE" ]; then
     RESULT="$(echo "$RESPONSE" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 print(f\"accepted={d.get('accepted','?')} lcm={d.get('lcmArchived','?')} extraction={d.get('extractionQueued','?')}\")" 2>/dev/null || echo "$RESPONSE" | head -c 80)"
     log "session-end[$SESSION_ID]: flush OK — $RESULT"
   else
-    log "session-end[$SESSION_ID]: flush failed (curl exit $CURL_EXIT)"
+    log "session-end[$SESSION_ID]: flush failed (curl=$CURL_EXIT http=$HTTP_STATUS)"
   fi
 ) >> "$LOG" 2>&1 &
 
