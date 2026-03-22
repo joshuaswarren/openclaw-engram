@@ -21,6 +21,13 @@ import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
+import {
+  mergeWithAgentResults,
+  runDirectAgent,
+  runTemporalAgent,
+  shouldRunAgent,
+  type ParallelSearchResult,
+} from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
@@ -826,20 +833,6 @@ export function resolvePersistedMemoryRelativePath(options: {
     return path.join("facts", day, `${options.memoryId}.md`);
   }
   return path.join("facts", `${options.memoryId}.md`);
-}
-
-/**
- * Synapse-inspired confidence gate.
- * Returns true if the top recall result score is below the threshold,
- * indicating retrieval is too uncertain to inject.
- */
-export function shouldRejectLowConfidenceRecall(
-  results: Array<{ score: number }>,
-  threshold: number,
-): boolean {
-  if (results.length === 0) return false;
-  const topScore = Math.max(...results.map((r) => r.score));
-  return topScore < threshold;
 }
 
 export class Orchestrator {
@@ -4034,6 +4027,15 @@ export class Orchestrator {
     type QmdPhaseResult = {
       memoryResultsLists: QmdSearchResult[][];
       globalResults: QmdSearchResult[];
+      /** Top QMD score BEFORE contextual weight scaling from the agent merge.
+       * Used by the confidence gate so that enabling parallel retrieval doesn't
+       * silently lower scores below the calibrated gate threshold. */
+      preAugmentTopScore: number;
+      /** Max score from direct + temporal agents (post-weight) BEFORE merge.
+       * Included in the confidence gate so that strong specialized hits (e.g.
+       * an exact entity-name match) are not discarded just because the QMD
+       * contextual pass returned a weak result. */
+      maxSpecializedScore: number;
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
@@ -4048,6 +4050,36 @@ export class Orchestrator {
       }
       const t0 = Date.now();
       const queryAwarePrefilter = await queryAwarePrefilterPromise;
+
+      // v9.1: Start DirectFact + Temporal agents NOW, before QMD fetch begins.
+      // Both agents use only local file I/O (no network), so they run concurrently
+      // with the QMD hybrid search for true parallel latency:
+      //   total latency ≈ max(qmd, direct, temporal), not qmd + max(direct, temporal).
+      // Results are awaited after QMD completes and merged below.
+      const maxPerAgent = this.config.parallelMaxResultsPerAgent;
+      // maxPerAgent=0 is a hard disable (same contract as augmentWithDirectAndTemporal).
+      // Skip agent launch entirely to avoid unnecessary filesystem I/O.
+      const specializedAgentPromise: Promise<[ParallelSearchResult[], ParallelSearchResult[]]> | null =
+        this.config.parallelRetrievalEnabled && maxPerAgent > 0
+          ? Promise.all([
+            shouldRunAgent("direct", retrievalQuery, 0)
+              ? runDirectAgent(retrievalQuery, profileStorage.dir, maxPerAgent).catch((err) => {
+                log.debug(`DirectAgent pre-start failed: ${err}`);
+                return [] as ParallelSearchResult[];
+              })
+              : Promise.resolve([] as ParallelSearchResult[]),
+            shouldRunAgent("temporal", retrievalQuery, 0)
+              // Temporal index lives at config.memoryDir/state/index_time.json (written by
+              // updateTemporalTagIndexes). profileStorage.dir is namespace-specific and
+              // would not contain the shared index for non-default namespaces.
+              ? runTemporalAgent(retrievalQuery, this.config.memoryDir, maxPerAgent, queryAwarePrefilter.candidatePaths).catch((err) => {
+                log.debug(`TemporalAgent pre-start failed: ${err}`);
+                return [] as ParallelSearchResult[];
+              })
+              : Promise.resolve([] as ParallelSearchResult[]),
+          ])
+          : null;
+
       // Hybrid search: parallel BM25 + vector, merged by path.
       // Much faster than `qmd query` (LLM expansion + reranking) which
       // takes 30-70s and causes recall timeouts.
@@ -4072,7 +4104,59 @@ export class Orchestrator {
       );
 
       timings.qmd = `${Date.now() - t0}ms`;
-      return { memoryResultsLists: [filteredResults], globalResults: [] };
+
+      // v9.1: Parallel agent augmentation — DirectFact + Temporal agents were started
+      // concurrently with the QMD fetch above for true parallel latency. Await their
+      // results now and merge, adding per-agent headroom to the cap so lifecycle
+      // filtering downstream still has candidates after dropping stale specialized hits.
+      //
+      // Record the top QMD score BEFORE the merge so the confidence gate downstream
+      // can compare against the calibrated QMD-scale score. The merge applies a
+      // contextual weight (default 0.7x) to contextual results, which would otherwise
+      // silently lower scores below the gate threshold even when recall is high-quality.
+      const preAugmentTopScore = filteredResults.length > 0
+        ? Math.max(...filteredResults.map((r) => r.score))
+        : 0;
+      let augmentedResults = filteredResults;
+      let maxSpecializedScore = 0;
+      if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
+        try {
+          const [directResults, temporalResults] = await specializedAgentPromise;
+          // Only augment when QMD found something. When filteredResults is empty (QMD
+          // returned nothing), merging specialized results would suppress the embedding
+          // fallback — the recall path branches on memoryResults.length > 0, so
+          // heuristic-only hits (filename overlap, recency) would prevent the semantic
+          // embedding search from running on exactly the queries where hybrid search failed.
+          if (filteredResults.length === 0) {
+            // QMD found nothing; skip merge so embedding fallback remains reachable.
+          } else {
+          // Capture max specialized score (post-weight) BEFORE merge so the confidence
+          // gate can include strong direct/temporal hits in the effective top score.
+          // This prevents the gate from discarding an exact entity-name match just because
+          // the QMD contextual pass returned a weak result.
+          const w = this.config.parallelAgentWeights;
+          maxSpecializedScore = Math.max(
+            directResults.length > 0 ? Math.max(...directResults.map((r) => r.score * w.direct)) : 0,
+            temporalResults.length > 0 ? Math.max(...temporalResults.map((r) => r.score * w.temporal)) : 0,
+          );
+          const lifecycleHeadroom = this.config.parallelMaxResultsPerAgent * 2;
+          augmentedResults = await mergeWithAgentResults(
+            filteredResults,
+            directResults,
+            temporalResults,
+            this.config.parallelAgentWeights,
+            qmdFetchLimit + lifecycleHeadroom,
+          );
+          } // end else (filteredResults.length > 0)
+        } catch (err) {
+          log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
+          // Fall back to existing filteredResults; reset maxSpecializedScore so the confidence
+          // gate is not influenced by agent results that were never merged into augmentedResults.
+          maxSpecializedScore = 0;
+        }
+      }
+
+      return { memoryResultsLists: [augmentedResults], globalResults: [], preAugmentTopScore, maxSpecializedScore };
     })();
 
     const transcriptPromise = (async (): Promise<string | null> => {
@@ -4510,7 +4594,7 @@ export class Orchestrator {
     // 2. QMD results — post-process and format
     if (qmdResult) {
       const t0 = Date.now();
-      const { memoryResultsLists, globalResults } = qmdResult;
+      const { memoryResultsLists, globalResults, preAugmentTopScore, maxSpecializedScore } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
       const memoryResultsRaw = mergeGraphExpandedResults(memoryResultsLists.flat(), []);
@@ -4654,14 +4738,31 @@ export class Orchestrator {
 
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
       // reranking doesn't affect which score the gate evaluates.
+      //
+      // Gate exclusively on the pre-augmentation QMD top score so the threshold
+      // stays on the same scale it was calibrated against (raw QMD scores, not
+      // post-merge weighted scores). This avoids two pitfalls:
+      //   1. The 0.7× contextual weight silently lowering scores below threshold.
+      //   2. A direct/temporal hit on a different scale inflating the gate score.
+      // We also include maxSpecializedScore so that a strong direct/temporal hit (e.g.
+      // an exact entity-name match at score 1.0) is not discarded just because the QMD
+      // contextual pass returned a weak result. maxSpecializedScore is post-weight, so
+      // direct hits at weight 1.0 stay on the same 0-1 scale as QMD scores.
+      // IMPORTANT: maxSpecializedScore is only included when QMD also found something
+      // (preAugmentTopScore > 0). When QMD returns nothing, a weak specialized hit must
+      // NOT block the embedding fallback safety net — that path exists precisely for the
+      // case where QMD finds nothing. Setting effectiveGateScore = 0 when QMD is empty
+      // preserves the original behaviour: empty QMD → gate skipped → fallback available.
+      const effectiveGateScore = preAugmentTopScore > 0
+        ? Math.max(preAugmentTopScore, maxSpecializedScore)
+        : 0;
       let confidenceGateRejected = false;
-      if (
-        this.config.recallConfidenceGateEnabled &&
-        shouldRejectLowConfidenceRecall(memoryResults, this.config.recallConfidenceGateThreshold)
-      ) {
-        log.debug(`recall: confidence gate rejected ${memoryResults.length} results (top score below ${this.config.recallConfidenceGateThreshold})`);
-        memoryResults = [];
-        confidenceGateRejected = true;
+      if (this.config.recallConfidenceGateEnabled && effectiveGateScore > 0) {
+        if (effectiveGateScore < this.config.recallConfidenceGateThreshold) {
+          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (effective score ${effectiveGateScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
+          memoryResults = [];
+          confidenceGateRejected = true;
+        }
       }
 
       memoryResults = memoryResults.slice(0, recallResultLimit);
@@ -6633,7 +6734,12 @@ export class Orchestrator {
     storage: StorageManager,
     persistedIds: string[],
   ): Promise<void> {
-    if (!this.config.queryAwareIndexingEnabled) return;
+    // Build temporal/tag indexes whenever either consumer is enabled:
+    // - queryAwareIndexingEnabled: uses indexes for query-aware prefiltering in recall
+    // - parallelRetrievalEnabled: temporal agent reads index_time.json for date-range lookup
+    // Enabling only parallelRetrievalEnabled without queryAwareIndexingEnabled would silently
+    // produce an empty temporal index, leaving the temporal agent with no data to work from.
+    if (!this.config.queryAwareIndexingEnabled && !this.config.parallelRetrievalEnabled) return;
     // Check for missing indexes BEFORE the early-return so first-time enablement
     // can bootstrap the full corpus even when this extraction turn persisted nothing.
     const needsFullRebuild = !indexesExist(this.config.memoryDir);

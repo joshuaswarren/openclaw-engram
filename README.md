@@ -207,6 +207,7 @@ Start with zero config. Enable features as your needs grow:
 | **+ Capture control** | `implicit`, `explicit`, or `hybrid` capture modes for memory write policy |
 | **+ Memory OS** | Memory boxes, graph reasoning, compounding, shared context, identity continuity |
 | **+ LCM** | Lossless Context Management — never lose conversation context to compaction |
+| **+ Parallel retrieval** | Three specialized agents (DirectFact, Contextual, Temporal) run in parallel — same latency, broader coverage |
 | **+ Advanced** | Trust zones, causal trajectories, harmonic retrieval, evaluation harness, poisoning defense |
 
 Use a preset to jump to a recommended level: `conservative`, `balanced`, `research-max`, or `local-llm-heavy`.
@@ -297,6 +298,41 @@ Enable it in your `openclaw.json`:
 ```
 
 See the [LCM Guide](docs/guides/lossless-context-management.md) for architecture details, configuration options, and how it complements native compaction.
+
+### Parallel Specialized Retrieval (opt-in)
+
+Engram's default retrieval runs a single hybrid search pass. Parallel Specialized Retrieval (inspired by [Supermemory's ASMR technique](https://blog.supermemory.ai/we-broke-the-frontier-in-agent-memory-introducing-99-sota-memory-system/)) runs three specialized agents in parallel so total latency equals `max(agents)` not `sum(agents)`.
+
+| Agent | What It Does | Cost |
+|-------|-------------|------|
+| **DirectFact** | Scans entity filenames for keyword overlap with the query | File I/O only, <5ms |
+| **Contextual** | Existing hybrid BM25+vector search (unchanged) | Same as current |
+| **Temporal** | Reads the temporal date index, returns recent memories with recency decay scoring | File I/O + math, <10ms |
+
+**Zero additional LLM cost.** The DirectFact and Temporal agents reuse existing indexes with no new embeddings or inference. The Contextual agent is the same hybrid search already running.
+
+Results from all three agents are merged by path, deduplicated, and weighted (`direct=1.0×, temporal=0.85×, contextual=0.7×`) before returning the top N results. Any agent error degrades gracefully without blocking the others.
+
+Enable it in your `openclaw.json`:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          "parallelRetrievalEnabled": true
+          // Optional tuning:
+          // "parallelMaxResultsPerAgent": 20,
+          // "parallelAgentWeights": { "direct": 1.0, "contextual": 0.7, "temporal": 0.85 }
+        }
+      }
+    }
+  }
+}
+```
+
+Set `parallelMaxResultsPerAgent: 0` to disable an individual agent's results without disabling the feature entirely.
 
 ### Advanced (opt-in)
 

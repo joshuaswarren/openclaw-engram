@@ -1,4 +1,4 @@
-import { access, readdir, readFile, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
+import { access, readdir, readFile, stat, writeFile, mkdir, unlink, rename, appendFile } from "node:fs/promises";
 import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -1450,15 +1450,51 @@ export class StorageManager {
     try {
       const raw = await readFile(filePath, "utf-8");
       const parsed = parseFrontmatter(raw);
-      if (!parsed) return null;
-      return {
-        path: filePath,
-        frontmatter: normalizeFrontmatterForPath(
-          parsed.frontmatter,
-          toMemoryPathRel(this.baseDir, filePath),
-        ),
-        content: parsed.content,
-      };
+      if (parsed) {
+        return {
+          path: filePath,
+          frontmatter: normalizeFrontmatterForPath(
+            parsed.frontmatter,
+            toMemoryPathRel(this.baseDir, filePath),
+          ),
+          content: parsed.content,
+        };
+      }
+
+      // Entity files use a `# Name` + `**Type:** ...` markdown format rather than
+      // YAML frontmatter. Build a synthetic MemoryFile so entity files returned by
+      // the direct retrieval agent participate in boostSearchResults and last-recall
+      // tracking rather than being silently dropped.
+      const normalizedPath = filePath.split(path.sep).join("/");
+      if (normalizedPath.includes("/entities/") && filePath.endsWith(".md")) {
+        const entity = parseEntityFile(raw);
+        if (!entity.name) return null;
+        const nameWithoutExt = path.basename(filePath, ".md");
+        // Fall back to file mtime rather than new Date() so that entities without
+        // an explicit Updated: timestamp are not treated as freshly created on every
+        // read. Using new Date() would inflate boostSearchResults recency scores for
+        // every entity that lacks a timestamp.
+        // Use epoch as the last-resort fallback so that entities without a
+        // parseable timestamp don't appear as "freshly created" and inflate scores.
+        const fileMtime = entity.updated
+          || await stat(filePath).then((s) => s.mtime.toISOString()).catch(() => new Date(0).toISOString());
+        return {
+          path: filePath,
+          frontmatter: {
+            id: nameWithoutExt,
+            category: "entity",
+            created: fileMtime,
+            updated: fileMtime,
+            source: "entity_extraction",
+            confidence: 0.9,
+            confidenceTier: confidenceTier(0.9),
+            tags: entity.type ? [entity.type] : [],
+          },
+          content: raw,
+        };
+      }
+
+      return null;
     } catch {
       return null;
     }

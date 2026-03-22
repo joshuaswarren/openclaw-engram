@@ -685,6 +685,14 @@ export interface PluginConfig {
   lcmRecallBudgetShare: number;
   lcmDeterministicMaxTokens: number;
   lcmArchiveRetentionDays: number;
+
+  // v9.1 Parallel Specialized Retrieval (ASMR-inspired)
+  /** Enable three-agent parallel retrieval (DirectFact + Contextual + Temporal). Default false. */
+  parallelRetrievalEnabled: boolean;
+  /** Per-agent source weights for score blending during merge. */
+  parallelAgentWeights: { direct: number; contextual: number; temporal: number };
+  /** Max results fetched per agent before merge. */
+  parallelMaxResultsPerAgent: number;
 }
 
 export interface BootstrapOptions {

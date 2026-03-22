@@ -480,8 +480,19 @@ export function indexMemoriesBatch(
 }
 
 /**
- * Async version of queryByDateRange — uses non-blocking fs.promises.readFile
- * to avoid blocking the Node.js event loop when index files are large.
+ * Return the set of memory paths whose index date falls in [fromDate, toDate).
+ *
+ * Boundary semantics (exclusive upper bound):
+ * - `fromDate` is INCLUSIVE — entries on this date ARE returned.
+ * - `toDate`   is EXCLUSIVE — entries on this date are NOT returned.
+ *   Pass `recencyWindowBoundsFromPrompt(query).toDate` to get the correct
+ *   exclusive boundary; do NOT add +1 day yourself.
+ * - Default `toDate` = tomorrow, so omitting it includes all of today.
+ *
+ * @param memoryDir - root memory directory (contains state/index_time.json)
+ * @param fromDate  - inclusive start date, YYYY-MM-DD
+ * @param toDate    - exclusive end date, YYYY-MM-DD (default: tomorrow)
+ * @returns Set of matching file paths, or null if the index is unavailable.
  */
 export async function queryByDateRangeAsync(
   memoryDir: string,
@@ -502,11 +513,12 @@ export async function queryByDateRangeAsync(
     } catch {
       tIndex = { version: INDEX_VERSION, dates: {} };
     }
-    const end = toDate ?? new Date().toISOString().slice(0, 10);
+    // toDate is exclusive (first day NOT included). Default: tomorrow so "all of today" is included.
+    const end = toDate ?? new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
     const results = new Set<string>();
     for (const [date, paths] of Object.entries(tIndex.dates)) {
-      if (date >= fromDate && date <= end) {
+      if (date >= fromDate && date < end) {
         for (const p of paths) {
           results.add(p);
         }
@@ -663,8 +675,24 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
     if (monthMatch) {
       const monthIdx = monthNames.indexOf(monthMatch[1]);
       const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
-      const monthStart = new Date(year, monthIdx, 1);
-      return monthStart.toISOString().slice(0, 10);
+      // "before <month>" means everything prior to that month: use 2-year lookback
+      // as fromDate so the window isn't unbounded. toDate is set to the month start
+      // in recencyWindowBoundsFromPrompt.
+      // IMPORTANT: when an explicit year is given, anchor the lookback to the named
+      // month start (not to today). "before January 2024" should produce
+      // fromDate ≈ 2022-01 — not today-730 days, which could land after 2024-01 and
+      // invert the window for any explicitly past month within the 730-day horizon.
+      if (/\bbefore\b/.test(p)) {
+        if (monthMatch[2]) {
+          // Explicit year: anchor fromDate 730 days before the named month start.
+          const monthStart = new Date(year, monthIdx, 1);
+          return new Date(monthStart.getTime() - 730 * 86_400_000).toISOString().slice(0, 10);
+        }
+        daysBack = 730;
+      } else {
+        const monthStart = new Date(year, monthIdx, 1);
+        return monthStart.toISOString().slice(0, 10);
+      }
     }
 
     // Try "N weeks ago"
@@ -713,4 +741,150 @@ export function recencyWindowFromPrompt(prompt: string, nowMs: number = Date.now
 
   const from = new Date(nowMs - daysBack * 24 * 60 * 60 * 1000);
   return from.toISOString().slice(0, 10);
+}
+
+/**
+ * Returns both the start and end of the temporal window implied by the prompt.
+ *
+ * `fromDate` is computed by delegating to `recencyWindowFromPrompt`, so the two
+ * functions cannot diverge on the lower bound.  `toDate` is computed independently
+ * here using the same pattern-priority ordering, because the upper-bound arithmetic
+ * differs (exclusive end vs. inclusive start) and would not be expressible as a
+ * simple wrapper.
+ *
+ * Known divergence to be aware of: for "N hours ago", `recencyWindowFromPrompt`
+ * uses `Math.max(1, Math.ceil(hours/24))` days back, so `fromDate` = yesterday for
+ * sub-24h values.  `toDate` here is always `tomorrow` when no explicit date is
+ * specified (see the `toDaysBack === 0` branch), giving a 2-day window.  This is
+ * intentional — the window must cover both yesterday and today for recent hour-level
+ * queries.  Any fix to the hours formula in `recencyWindowFromPrompt` must be
+ * manually reflected here.
+ *
+ * - `fromDate`: first day of the implied window (same as `recencyWindowFromPrompt`)
+ * - `toDate`: first day NOT in the window (exclusive upper bound), so callers
+ *   should filter with `date >= fromDate && date < toDate`.
+ */
+export function recencyWindowBoundsFromPrompt(
+  prompt: string,
+  nowMs: number = Date.now(),
+): { fromDate: string; toDate: string } {
+  const fromDate = recencyWindowFromPrompt(prompt, nowMs);
+  const p = prompt.toLowerCase();
+  const now = new Date(nowMs);
+  const today = now.toISOString().slice(0, 10);
+  const tomorrow = new Date(nowMs + 86_400_000).toISOString().slice(0, 10);
+
+  let toDate: string;
+
+  if (/\btoday\b|\bthis morning\b|\bjust now\b|\bearlier today\b/.test(p)) {
+    toDate = tomorrow; // exclusive: include all of today
+  } else if (/\byesterday\b|\blast night\b/.test(p)) {
+    toDate = today; // exclusive: include all of yesterday, stop before today
+  } else if (/\bthis week\b|\bthis month\b|\bthis year\b/.test(p)) {
+    toDate = tomorrow; // exclusive: include all of today
+  } else if (/\blast week\b/.test(p)) {
+    toDate = new Date(nowMs - 7 * 86_400_000).toISOString().slice(0, 10); // already exclusive
+  } else if (/\blast month\b/.test(p)) {
+    toDate = new Date(nowMs - 31 * 86_400_000).toISOString().slice(0, 10); // approximately exclusive
+  } else if (/\blast year\b/.test(p)) {
+    toDate = `${now.getFullYear()}-01-01`; // exclusive: stop at Jan 1 of current year
+  } else {
+    // Mirror the structure of recencyWindowFromPrompt's else branch:
+    // month name → early set (highest priority), then ago patterns set a
+    // working offset, then ISO/US/weekday patterns run AFTER ago patterns
+    // and can override them — matching the priority ordering in recencyWindowFromPrompt.
+
+    const monthNames = ["january", "february", "march", "april", "may", "june",
+      "july", "august", "september", "october", "november", "december"];
+    const monthMatch = p.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/);
+    if (monthMatch) {
+      // "since <month>" / "after <month>" — open-ended: everything from that month to now.
+      // "before <month>" — closed upper bound: everything before that month starts.
+      // Plain "<month>" — just that calendar month.
+      const monthIdx = monthNames.indexOf(monthMatch[1]);
+      const year = monthMatch[2] ? parseInt(monthMatch[2], 10) : now.getFullYear();
+      const isSinceOrAfter = /\b(since|after)\b/.test(p);
+      const isBefore = /\bbefore\b/.test(p);
+      if (isSinceOrAfter) {
+        toDate = tomorrow;
+      } else if (isBefore) {
+        // "before <month>" means everything prior to that month.
+        // toDate = first day of that month (exclusive upper bound).
+        toDate = new Date(year, monthIdx, 1).toISOString().slice(0, 10);
+      } else {
+        // Closed window: first day of the NEXT month is the exclusive upper bound.
+        toDate = new Date(year, monthIdx + 1, 1).toISOString().slice(0, 10);
+      }
+    } else {
+      // Ago patterns set a working offset (recent edge of the N-ago window).
+      // Same nesting order as recencyWindowFromPrompt.
+      // Sentinel -1 means "no ago pattern matched" → toDate falls back to tomorrow.
+      let toDaysBack = -1;
+      const weekMatch = p.match(/(\d{1,5})\s*weeks?\s*ago/);
+      if (weekMatch) {
+        toDaysBack = Math.max(0, Math.min(52, parseInt(weekMatch[1], 10)) - 1) * 7;
+      } else {
+        const monthsAgoMatch = p.match(/(\d{1,5})\s*months?\s*ago/);
+        if (monthsAgoMatch) {
+          toDaysBack = Math.max(0, Math.min(24, parseInt(monthsAgoMatch[1], 10)) - 1) * 31;
+        } else {
+          const numMatch = p.match(/(\d{1,5})\s*days?\s*ago/);
+          if (numMatch) {
+            // (N-1) mirrors the weeks/months ago formula: "3 days ago" → window [today-3, today-2]
+            // N=1 → toDaysBack=0 → toDate=today (exclusive) → window [yesterday, today) = 1 day. ✓
+            toDaysBack = Math.max(0, Math.min(365, parseInt(numMatch[1], 10)) - 1);
+          } else {
+            const hrMatch = p.match(/(\d{1,5})\s*hours?\s*ago/);
+            if (hrMatch) {
+              // Sub-day precision: keep sentinel -1 so toDate falls back to tomorrow,
+              // which includes today. fromDate = yesterday (recencyWindowFromPrompt uses ceiling).
+              toDaysBack = -1;
+            }
+          }
+        }
+      }
+
+      // Explicit date/weekday patterns run AFTER ago patterns (same as recencyWindowFromPrompt)
+      // and override the ago-derived offset when present.
+      const isoMatch = p.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        // +1 day: exclusive upper bound includes the named date
+        const d = new Date(`${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}T00:00:00Z`);
+        toDate = new Date(d.getTime() + 86_400_000).toISOString().slice(0, 10);
+      } else {
+        const usMatch = p.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+        if (usMatch) {
+          const year = usMatch[3].length === 2 ? 2000 + parseInt(usMatch[3], 10) : parseInt(usMatch[3], 10);
+          // +1 day: exclusive upper bound includes the named date
+          const d = new Date(`${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}T00:00:00Z`);
+          toDate = new Date(d.getTime() + 86_400_000).toISOString().slice(0, 10);
+        } else {
+          const dayOfWeekMatch = p.match(/\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+          if (dayOfWeekMatch) {
+            const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+            const targetDay = dayNames.indexOf(dayOfWeekMatch[1]);
+            const currentDay = now.getDay();
+            const daysBack = ((currentDay - targetDay + 7) % 7) || 7;
+            // +1 day: exclusive upper bound includes the named weekday
+            toDate = new Date(nowMs - (daysBack - 1) * 86_400_000).toISOString().slice(0, 10);
+          } else {
+            // Use the ago-derived offset.
+            // toDaysBack=-1 means no pattern matched (or hours-ago): use tomorrow so today
+            // is included in the window. toDaysBack=0 means N=1 ago (e.g. "1 day ago"):
+            // toDate = today (exclusive) correctly creates a 1-day window [yesterday, today).
+            toDate = toDaysBack < 0
+              ? tomorrow
+              : new Date(nowMs - toDaysBack * 86_400_000).toISOString().slice(0, 10);
+          }
+        }
+      }
+    }
+  }
+
+  // Guard: if toDate would precede fromDate (inverted window from conflicting keywords),
+  // fall back to tomorrow (exclusive upper bound that covers today) so we never produce
+  // an empty window. Using `today` is insufficient because `date < today` excludes today.
+  if (toDate <= fromDate) toDate = tomorrow;
+
+  return { fromDate, toDate };
 }
