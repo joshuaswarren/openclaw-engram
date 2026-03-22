@@ -835,11 +835,6 @@ export function resolvePersistedMemoryRelativePath(options: {
   return path.join("facts", `${options.memoryId}.md`);
 }
 
-/**
- * Synapse-inspired confidence gate.
- * Returns true if the top recall result score is below the threshold,
- * indicating retrieval is too uncertain to inject.
- */
 export class Orchestrator {
   readonly storage: StorageManager;
   private readonly storageRouter: NamespaceStorageRouter;
