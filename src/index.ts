@@ -671,7 +671,7 @@ const pluginDefinition = {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
           try {
-            await orchestrator.flushPendingExtractions?.(sessionKey);
+            await (orchestrator as any).flushPendingExtractions?.(sessionKey);
           } catch (err) {
             log.debug(`session_end flush failed: ${err}`);
           }
