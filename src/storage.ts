@@ -749,6 +749,26 @@ export class StorageManager {
   private static readonly allMemoriesInFlight = new Map<string, Promise<MemoryFile[]>>();
   // Tracks directories where a stale-while-revalidate background refresh is running.
   private static readonly allMemoriesRefreshInFlight = new Set<string>();
+
+  // Cache for readQuestions() — avoids serially re-reading tens of thousands of
+  // question files on every recall.  60-second TTL is intentionally short so that
+  // newly written questions surface quickly.
+  private static readonly QUESTIONS_CACHE_TTL_MS = 60_000; // 1 minute
+  private static readonly questionsCache = new Map<
+    string,
+    {
+      questions: Array<{
+        id: string;
+        question: string;
+        context: string;
+        priority: number;
+        resolved: boolean;
+        created: string;
+        filePath: string;
+      }>;
+      loadedAt: number;
+    }
+  >();
   private factHashIndex: ContentHashIndex | null = null;
   private factHashIndexLoadPromise: Promise<ContentHashIndex> | null = null;
   private factHashIndexAuthoritative: boolean | null = null;
@@ -2633,6 +2653,7 @@ export class StorageManager {
     await writeFile(filePath, content, "utf-8");
 
     log.debug(`wrote question ${id} to ${filePath}`);
+    this.invalidateQuestionsCache();
     return id;
   }
 
@@ -2649,6 +2670,13 @@ export class StorageManager {
       filePath: string;
     }>
   > {
+    const cacheKey = this.questionsDir;
+    const cached = StorageManager.questionsCache.get(cacheKey);
+    if (cached && Date.now() - cached.loadedAt < StorageManager.QUESTIONS_CACHE_TTL_MS) {
+      const all = cached.questions;
+      return opts?.unresolvedOnly ? all.filter((q) => !q.resolved) : all;
+    }
+
     try {
       const files = await readdir(this.questionsDir);
       const questions = [];
@@ -2658,14 +2686,20 @@ export class StorageManager {
         const raw = await readFile(filePath, "utf-8");
         const parsed = this.parseQuestionFile(raw, filePath);
         if (parsed) {
-          if (opts?.unresolvedOnly && parsed.resolved) continue;
           questions.push(parsed);
         }
       }
-      return questions.sort((a, b) => b.priority - a.priority);
+      const sorted = questions.sort((a, b) => b.priority - a.priority);
+      StorageManager.questionsCache.set(cacheKey, { questions: sorted, loadedAt: Date.now() });
+      return opts?.unresolvedOnly ? sorted.filter((q) => !q.resolved) : sorted;
     } catch {
       return [];
     }
+  }
+
+  /** Invalidate the questions cache (call after writing a question). */
+  invalidateQuestionsCache(): void {
+    StorageManager.questionsCache.delete(this.questionsDir);
   }
 
   private parseQuestionFile(
