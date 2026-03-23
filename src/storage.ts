@@ -1401,51 +1401,15 @@ export class StorageManager {
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {
-    // Check module-level cache first.  Multiple concurrent callers (e.g. verifiedRecall
-    // + verifiedRules running in the same recall) share one read via in-flight dedup.
-    const cached = StorageManager.allMemoriesCache.get(this.baseDir);
-    if (cached && cached.loadedAt > 0) {
-      if (Date.now() - cached.loadedAt < StorageManager.ALL_MEMORIES_CACHE_TTL_MS) {
-        // Cache is fresh — return immediately.
-        return cached.memories;
-      }
-      // Cache is stale (TTL expired but not invalidated): return stale data
-      // immediately and kick off a background refresh so the NEXT caller finds
-      // a warm cache.  This avoids blocking any recall request on the 13-60 s
-      // re-scan that would otherwise happen every 5 minutes on large memory
-      // collections (80k+ files).
-      if (!StorageManager.allMemoriesRefreshInFlight.has(this.baseDir)) {
-        StorageManager.allMemoriesRefreshInFlight.add(this.baseDir);
-        this._readAllMemoriesFromDisk()
-          .then((memories) => {
-            StorageManager.allMemoriesCache.set(this.baseDir, {
-              memories,
-              loadedAt: Date.now(),
-            });
-          })
-          .catch(() => {
-            // refresh failed — stale cache remains, next call will retry
-          })
-          .finally(() => {
-            StorageManager.allMemoriesRefreshInFlight.delete(this.baseDir);
-          });
-      }
-      return cached.memories;
-    }
-    // loadedAt === 0 means a write invalidated the cache — fall through to
-    // a blocking re-read so callers see their own writes immediately.
-
-    // No cache at all (first load or post-write invalidation): block until loaded.
-    // Deduplicate concurrent reads for the same directory.
+    // Deduplicate concurrent reads for the same directory so multiple
+    // callers in the same recall share one disk scan.
     const inFlight = StorageManager.allMemoriesInFlight.get(this.baseDir);
     if (inFlight) return inFlight;
 
     const readPromise = this._readAllMemoriesFromDisk();
     StorageManager.allMemoriesInFlight.set(this.baseDir, readPromise);
     try {
-      const memories = await readPromise;
-      StorageManager.allMemoriesCache.set(this.baseDir, { memories, loadedAt: Date.now() });
-      return memories;
+      return await readPromise;
     } finally {
       StorageManager.allMemoriesInFlight.delete(this.baseDir);
     }
@@ -1458,18 +1422,21 @@ export class StorageManager {
     this.invalidateAllMemoriesCache();
   }
 
+  /** Clear ALL static caches. Use in tests that write files directly
+   *  (bypassing StorageManager.writeMemory) to avoid stale reads. */
+  static clearAllStaticCaches(): void {
+    StorageManager.allMemoriesCache.clear();
+    StorageManager.allMemoriesInFlight.clear();
+    StorageManager.allMemoriesRefreshInFlight.clear();
+    StorageManager.questionsCache.clear();
+  }
+
   private invalidateAllMemoriesCache(): void {
-    const cached = StorageManager.allMemoriesCache.get(this.baseDir);
-    if (cached) {
-      // Mark as stale (loadedAt = 0) rather than deleting.  Deletion forces the
-      // next recall into a blocking 13-60 s cold scan; marking stale lets the
-      // stale-while-revalidate path return the existing (slightly out-of-date)
-      // entries immediately and refresh in the background instead.
-      // The just-written memory will appear after the background refresh completes.
-      StorageManager.allMemoriesCache.set(this.baseDir, { memories: cached.memories, loadedAt: 0 });
-    }
-    // If there is no cache yet, the next readAllMemories() will do a cold load
-    // (blocking) as usual — no change to that path.
+    // Delete the cache entry entirely and clear any in-flight reads so the next
+    // readAllMemories() starts a fresh blocking disk scan.  This is more expensive
+    // than stale-while-revalidate but guarantees read-your-writes consistency.
+    StorageManager.allMemoriesCache.delete(this.baseDir);
+    StorageManager.allMemoriesInFlight.delete(this.baseDir);
   }
 
   private async _readAllMemoriesFromDisk(): Promise<MemoryFile[]> {
@@ -1693,6 +1660,10 @@ export class StorageManager {
           throw err;
         }
       }
+      // Re-invalidate after the unlink — writeMemoryFileAtomic already
+      // invalidated, but a concurrent readAllMemories() may have re-populated
+      // the cache between the write and the unlink.
+      this.invalidateAllMemoriesCache();
     }
   }
 
@@ -1722,6 +1693,7 @@ export class StorageManager {
     }
 
     await this.moveMemoryToPath(memory, targetPath);
+    this.invalidateAllMemoriesCache();
     this.bumpMemoryStatusVersion();
     return { changed: true, targetPath };
   }
