@@ -1746,6 +1746,7 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      this.invalidateAllMemoriesCache();
       await this.appendGeneratedMemoryLifecycleEventFailOpen(
         "storage.archiveMemory",
         {
@@ -1860,6 +1861,7 @@ export class StorageManager {
 
     try {
       await unlink(memory.path);
+      this.invalidateAllMemoriesCache();
       this.bumpMemoryStatusVersion();
       log.debug(`invalidated memory ${id}`);
       return true;
@@ -1894,6 +1896,7 @@ export class StorageManager {
     }
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
+    this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {
       memoryId: id,
       eventType: "updated",
@@ -1989,6 +1992,7 @@ export class StorageManager {
     }
 
     if (deleted.length > 0) {
+      this.invalidateAllMemoriesCache();
       this.bumpMemoryStatusVersion();
     }
 
