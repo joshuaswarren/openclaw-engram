@@ -342,8 +342,10 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
     const hooks = parseHookRegistrations(indexRaw);
     const missingLegacy = REQUIRED_HOOKS_LEGACY.filter((hook) => !hooks.has(hook));
     const missingNew = REQUIRED_HOOKS_NEW.filter((hook) => !hooks.has(hook));
-    // registerMemoryPromptSection is a valid alternative to the recall hook
-    const hasMemoryPromptSection = indexRaw.includes("registerMemoryPromptSection");
+    // registerMemoryPromptSection is a valid alternative to the recall hook.
+    // Use the comment/string-stripped source to avoid false positives from mentions
+    // in comments or string literals.
+    const hasMemoryPromptSection = structuralSource.includes("registerMemoryPromptSection");
     const missingLegacyAdj = hasMemoryPromptSection
       ? missingLegacy.filter((h) => h !== "before_agent_start")
       : missingLegacy;
