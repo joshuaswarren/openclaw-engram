@@ -72,6 +72,33 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
   }
 }
 
+/**
+ * Read the plugin hooks policy from both the API config and the file-backed
+ * config, since the gateway may not pass the full config to the plugin.
+ */
+function readPluginHooksPolicy(apiConfig: unknown): Record<string, unknown> | undefined {
+  // Try api.config first
+  const fromApi = (apiConfig as any)?.plugins?.entries?.["openclaw-engram"]?.hooks;
+  if (fromApi && typeof fromApi === "object") return fromApi;
+
+  // Fall back to file-backed config
+  try {
+    const explicitConfigPath =
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
+      process.env.OPENCLAW_CONFIG_PATH;
+    const homeDir = process.env.HOME ?? os.homedir();
+    const configPath =
+      explicitConfigPath && explicitConfigPath.length > 0
+        ? explicitConfigPath
+        : path.join(homeDir, ".openclaw", "openclaw.json");
+    const content = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(content);
+    return config?.plugins?.entries?.["openclaw-engram"]?.hooks;
+  } catch {
+    return undefined;
+  }
+}
+
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
@@ -221,8 +248,10 @@ const pluginDefinition = {
     // can statically detect them.
     // Respect allowPromptInjection=false: the gateway only gates typed hooks,
     // NOT section builders, so we must check the policy ourselves.
-    const gatewayPluginHooks = (api.config as any)?.plugins?.entries?.["openclaw-engram"]?.hooks;
-    const promptInjectionAllowed = gatewayPluginHooks?.allowPromptInjection !== false;
+    // Read from both api.config and file-backed config for installs where
+    // the gateway doesn't pass the full config object.
+    const hooksPolicy = readPluginHooksPolicy(api.config);
+    const promptInjectionAllowed = hooksPolicy?.allowPromptInjection !== false;
 
     // True when the section builder will be registered (capability + policy).
     // Must be determined before the hook registration block below.
@@ -236,7 +265,21 @@ const pluginDefinition = {
       event: Record<string, unknown>,
       ctx: Record<string, unknown>,
     ) {
-      const prompt = event.prompt as string | undefined;
+      // Prefer event.prompt; fall back to extracting the last user message
+      // from event.messages (before_prompt_build may only provide messages).
+      let prompt = event.prompt as string | undefined;
+      if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
+        const msgs = event.messages as Array<Record<string, unknown>>;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i]?.role === "user") {
+            const content = msgs[i]?.content;
+            if (typeof content === "string" && content.length >= 5) {
+              prompt = content;
+              break;
+            }
+          }
+        }
+      }
       if (!prompt || prompt.length < 5) return;
 
       const sessionKey = (ctx?.sessionKey as string) ?? "default";
