@@ -280,6 +280,13 @@ const pluginDefinition = {
           `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
 
         log.debug(`${hookLabel}: returning system prompt with ${trimmed.length} chars`);
+        // New SDK (before_prompt_build): only prependSystemContext — gateway
+        // applies both fields separately, so returning both would duplicate.
+        // Legacy (before_agent_start): return both for backward compat with
+        // older gateways that may consume either field.
+        if (hookLabel === "before_prompt_build") {
+          return { prependSystemContext: memoryContextPrompt };
+        }
         return {
           prependSystemContext: memoryContextPrompt,
           prependContext: memoryContextPrompt,
@@ -554,7 +561,8 @@ const pluginDefinition = {
         event: import("openclaw/plugin-sdk").PluginHookAfterCompactionEvent & Record<string, unknown>,
         ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        // Fall back to event.sessionKey when ctx is empty (new SDK may provide it on the event).
+        const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
 
         try {
           // LCM: record compaction with real token counts and verify coverage
