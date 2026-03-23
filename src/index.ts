@@ -1,8 +1,10 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { createRequire } from "node:module";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
+import { detectSdkCapabilities, type SdkCapabilities } from "./sdk-compat.js";
 import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerLcmTools } from "./lcm/index.js";
@@ -11,7 +13,7 @@ import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
-import { shouldRegisterTypedAgentHeartbeat } from "./legacy-hook-compat.js";
+
 import {
   hasInlineExplicitCaptureMarkup,
   parseInlineExplicitCaptureNotes,
@@ -47,27 +49,10 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
  */
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 
-type LegacyHeartbeatHookEvent = {
-  context?: Record<string, unknown>;
-};
-
-type LegacyHeartbeatRuntimeApi = OpenClawPluginApi & {
-  registerHook?: (
-    events: string | string[],
-    handler: (event: LegacyHeartbeatHookEvent) => void,
-    opts?: {
-      name?: string;
-      description?: string;
-    },
-  ) => void;
-  runtime?: {
-    version?: string;
-  };
-};
-
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
-function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
+// Shared helper: read and parse the full plugin entry from openclaw.json.
+function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
   try {
     const explicitConfigPath =
       process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
@@ -80,12 +65,27 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    const pluginEntry = config?.plugins?.entries?.["openclaw-engram"];
-    return pluginEntry?.config;
+    return config?.plugins?.entries?.["openclaw-engram"] as Record<string, unknown> | undefined;
   } catch (err) {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
   }
+}
+
+function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
+  return loadPluginEntryFromFile()?.config as Record<string, unknown> | undefined;
+}
+
+/**
+ * Read the plugin hooks policy from both the API config and the file-backed
+ * config, since the gateway may not pass the full config to the plugin.
+ */
+function readPluginHooksPolicy(apiConfig: unknown): Record<string, unknown> | undefined {
+  // Try api.config first
+  const fromApi = (apiConfig as any)?.plugins?.entries?.["openclaw-engram"]?.hooks;
+  if (fromApi && typeof fromApi === "object") return fromApi;
+  // Fall back to file-backed config
+  return loadPluginEntryFromFile()?.hooks as Record<string, unknown> | undefined;
 }
 
 function wildcardToRegExp(pattern: string): RegExp {
@@ -113,18 +113,33 @@ function shouldSkipRecallForSession(
   });
 }
 
-function observeSessionHeartbeat(
-  orchestrator: Orchestrator,
-  ctx: Record<string, unknown> | undefined,
-): void {
-  if (orchestrator.config.sessionObserverEnabled !== true) return;
-  const sessionKey = (ctx?.sessionKey as string) ?? "default";
-  void orchestrator.observeSessionHeartbeat(sessionKey).catch((err) => {
-    log.debug(`agent_heartbeat observer failed: ${err}`);
-  });
+/**
+ * Try to use the new SDK's definePluginEntry when available, otherwise return
+ * the bare plugin definition object (works on legacy runtimes).
+ */
+function tryDefinePluginEntry(def: {
+  id: string;
+  name: string;
+  description: string;
+  kind: "memory";
+  register: (api: OpenClawPluginApi) => void;
+}) {
+  try {
+    const _require = createRequire(import.meta.url);
+    const { definePluginEntry } = _require("openclaw/plugin-sdk/plugin-entry") as {
+      definePluginEntry: (d: typeof def) => typeof def;
+    };
+    return definePluginEntry(def);
+  } catch {
+    // SDK module not available — legacy runtime; return bare object.
+    return def;
+  }
 }
 
-export default {
+/** SDK capabilities detected at register() time — available to later tasks. */
+let sdkCaps: SdkCapabilities | undefined;
+
+const pluginDefinition = {
   id: "openclaw-engram",
   name: "Engram (Local Memory)",
   description:
@@ -134,6 +149,18 @@ export default {
   register(api: OpenClawPluginApi) {
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
+
+    // Detect SDK capabilities for dual-path hook registration.
+    sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
+    log.info(
+      `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, typedHooks=${sdkCaps.hasTypedHooks}`,
+    );
+
+    // Skip heavy initialization in setup-only mode (new SDK channel setup flows)
+    if (sdkCaps.registrationMode === "setup-only") {
+      log.info("registrationMode=setup-only — skipping full initialization");
+      return;
+    }
 
     // Workaround: Load config from file since gateway may not pass it
     const fileConfig = loadPluginConfigFromFile();
@@ -202,87 +229,154 @@ export default {
     (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;
 
     // ========================================================================
-    // HOOK: before_agent_start — Inject memory context
+    // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
-    api.on(
-      "before_agent_start",
-      async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
-      ) => {
-        const prompt = event.prompt as string | undefined;
-        if (!prompt || prompt.length < 5) return;
+    // When registerMemoryPromptSection is available (preferred path), skip the
+    // recall hook entirely to avoid dual memory injection.
+    // Uses literal hook names so src/compat/checks.ts parseHookRegistrations()
+    // can statically detect them.
+    // Respect allowPromptInjection=false: the gateway only gates typed hooks,
+    // NOT section builders, so we must check the policy ourselves.
+    // Read from both api.config and file-backed config for installs where
+    // the gateway doesn't pass the full config object.
+    const hooksPolicy = readPluginHooksPolicy(api.config);
+    const promptInjectionAllowed = hooksPolicy?.allowPromptInjection !== false;
 
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
-        log.debug(`before_agent_start: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
-        log.debug(
-          `before_agent_start: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
-        );
-        if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
-          const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
-            const re = wildcardToRegExp(pattern);
-            return re.test(sessionKey);
-          });
-          log.debug(
-            `before_agent_start: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
-          );
-        }
+    // True when the section builder will be registered (capability + policy).
+    // Must be determined before the hook registration block below.
+    const useMemoryPromptSection =
+      sdkCaps.hasRegisterMemoryPromptSection &&
+      typeof api.registerMemoryPromptSection === "function" &&
+      promptInjectionAllowed;
 
-        if (shouldSkipRecallForSession(sessionKey, cfg)) {
-          log.debug(
-            `before_agent_start: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
-          );
-          return;
-        }
-
-        try {
-          // Optional: keep bootstrap workspace files small and warn about truncation risk.
-          await orchestrator.maybeRunFileHygiene().catch(() => undefined);
-
-          // Check for compaction and save checkpoint if needed
-          // This is a placeholder - actual compaction detection depends on OpenClaw
-          // For now, we'll just call recall with the sessionKey
-
-          // Pass per-agent workspace so compaction reset reads the right BOOT.md.
-          // Only set when compaction reset is enabled to avoid unbounded Map growth
-          // when recall is skipped (e.g., no_recall planner decision).
-          if (orchestrator.config.compactionResetEnabled) {
-            const agentWorkspace = ctx?.workspaceDir as string | undefined;
-            if (agentWorkspace) {
-              orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
+    async function recallHookHandler(
+      hookLabel: string,
+      event: Record<string, unknown>,
+      ctx: Record<string, unknown>,
+    ) {
+      // Prefer event.prompt; fall back to extracting the last user message
+      // from event.messages (before_prompt_build may only provide messages).
+      let prompt = event.prompt as string | undefined;
+      if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
+        const msgs = event.messages as Array<Record<string, unknown>>;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i]?.role === "user") {
+            // Handle both string and block-based content shapes
+            const text = extractTextContent(msgs[i] as Record<string, unknown>);
+            if (text.length >= 5) {
+              prompt = text;
+              break;
             }
           }
-          const context = await orchestrator.recall(prompt, sessionKey);
-          log.debug(`before_agent_start: recall returned ${context?.length ?? 0} chars`);
-          if (!context) return;
+        }
+      }
+      if (!prompt || prompt.length < 5) return;
 
-          // Final safety cap; recall assembly also enforces this budget.
-          const maxChars = cfg.recallBudgetChars;
-          if (maxChars === 0) return;
-          const trimmed =
-            context.length > maxChars
+      const sessionKey = (ctx?.sessionKey as string) ?? "default";
+      log.debug(`${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+      log.debug(
+        `${hookLabel}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+      );
+      if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
+        const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
+          const re = wildcardToRegExp(pattern);
+          return re.test(sessionKey);
+        });
+        log.debug(
+          `${hookLabel}: cron allowlist match=${matchedPattern ? "yes" : "no"} pattern=${matchedPattern ?? "none"}`,
+        );
+      }
+
+      if (shouldSkipRecallForSession(sessionKey, cfg)) {
+        log.debug(
+          `${hookLabel}: skip recall for cron session ${sessionKey} (mode=${cfg.cronRecallMode})`,
+        );
+        return;
+      }
+
+      try {
+        await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+
+        if (orchestrator.config.compactionResetEnabled) {
+          const agentWorkspace = ctx?.workspaceDir as string | undefined;
+          if (agentWorkspace) {
+            orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
+          }
+        }
+        const context = await orchestrator.recall(prompt, sessionKey);
+        log.debug(`${hookLabel}: recall returned ${context?.length ?? 0} chars`);
+        if (!context) return;
+
+        const maxChars = cfg.recallBudgetChars;
+        if (maxChars === 0) return;
+        const trimmed =
+          context.length > maxChars
+            ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
+            : context;
+
+        const memoryContextPrompt =
+          `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+
+        log.debug(`${hookLabel}: returning system prompt with ${trimmed.length} chars`);
+        // New SDK (before_prompt_build): only prependSystemContext — gateway
+        // applies both fields separately, so returning both would duplicate.
+        // Legacy (before_agent_start): return both for backward compat with
+        // older gateways that may consume either field.
+        if (hookLabel === "before_prompt_build") {
+          return { prependSystemContext: memoryContextPrompt };
+        }
+        return {
+          prependSystemContext: memoryContextPrompt,
+          prependContext: memoryContextPrompt,
+        };
+      } catch (err) {
+        log.error("recall failed", err);
+        if (orchestrator.config.compactionResetEnabled) {
+          orchestrator.clearRecallWorkspaceOverride(sessionKey);
+        }
+        return;
+      }
+    }
+
+    if (!useMemoryPromptSection) {
+      if (sdkCaps.hasBeforePromptBuild) {
+        // New SDK path — literal string for compat checker detection
+        api.on("before_prompt_build", async (event: Record<string, unknown>, ctx: Record<string, unknown>) =>
+          recallHookHandler("before_prompt_build", event, ctx));
+      } else {
+        // Legacy SDK path — literal string for compat checker detection
+        api.on("before_agent_start", async (event: Record<string, unknown>, ctx: Record<string, unknown>) =>
+          recallHookHandler("before_agent_start", event, ctx));
+      }
+    }
+
+    // ========================================================================
+    // registerMemoryPromptSection — structured memory injection (new SDK)
+    // ========================================================================
+    if (useMemoryPromptSection && api.registerMemoryPromptSection) {
+      api.registerMemoryPromptSection({
+        id: "engram-memory",
+        label: "Engram Memory Context",
+        build: async ({ prompt, sessionKey }) => {
+          if (!prompt || prompt.length < 5) return null;
+          if (shouldSkipRecallForSession(sessionKey, cfg)) return null;
+          try {
+            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+            const context = await orchestrator.recall(prompt, sessionKey);
+            if (!context) return null;
+            const maxChars = cfg.recallBudgetChars;
+            if (maxChars === 0) return null;
+            const trimmed = context.length > maxChars
               ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
               : context;
-
-          const memoryContextPrompt =
-            `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
-
-          log.debug(`before_agent_start: returning system prompt with ${trimmed.length} chars`);
-          return {
-            prependSystemContext: memoryContextPrompt,
-            // Backward-compat path for gateway builds that consume prependContext.
-            prependContext: memoryContextPrompt,
-          };
-        } catch (err) {
-          log.error("recall failed", err);
-          // Clean up workspace override to prevent Map leak on exception.
-          if (orchestrator.config.compactionResetEnabled) {
-            orchestrator.clearRecallWorkspaceOverride(sessionKey);
+            return `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+          } catch (err) {
+            log.error("registerMemoryPromptSection build failed", err);
+            return null;
           }
-          return;
-        }
-      },
-    );
+        },
+      });
+    }
 
     // ========================================================================
     // HOOK: agent_end — Buffer turns and trigger extraction
@@ -290,8 +384,8 @@ export default {
     api.on(
       "agent_end",
       async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookAgentEndEvent & Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
         if (!event.success || !Array.isArray(event.messages)) return;
         if (event.messages.length === 0) return;
@@ -305,6 +399,9 @@ export default {
           const eventTimestamp = new Date().toISOString();
 
           // Best-effort tool usage stats for extended hourly summaries.
+          // Always scan messages here (gated on success=true by the early return above).
+          // after_tool_call only logs for debug — stats are recorded here to avoid
+          // counting tools from failed/aborted turns.
           if (orchestrator.config.hourlySummariesIncludeToolStats) {
             const toolNames: string[] = [];
             for (const msg of messages) {
@@ -428,50 +525,6 @@ export default {
       },
     );
 
-    // ========================================================================
-    // HOOK: agent_heartbeat — Observe active session growth (non-blocking)
-    // ========================================================================
-    // Keep the historical heartbeat observer for older/custom runtimes without
-    // warning on current published OpenClaw builds where the typed hook is gone.
-    const runtimeApi = api as LegacyHeartbeatRuntimeApi;
-
-    runtimeApi.registerHook?.(
-      ["agent_heartbeat", "agent:heartbeat"],
-      (event: LegacyHeartbeatHookEvent) => {
-        observeSessionHeartbeat(orchestrator, event.context);
-      },
-      {
-        name: "engram_agent_heartbeat_legacy",
-        description:
-          "Observe legacy OpenClaw heartbeat events when the runtime still emits them.",
-      },
-    );
-
-    const runtimeVersion =
-      runtimeApi.runtime?.version ||
-      process.env.OPENCLAW_SERVICE_VERSION ||
-      "unknown";
-    if (shouldRegisterTypedAgentHeartbeat(runtimeVersion)) {
-      (
-        api.on as unknown as (
-          hookName: string,
-          handler: (
-            event: Record<string, unknown>,
-            ctx: Record<string, unknown>,
-          ) => void,
-        ) => void
-      )("agent_heartbeat", (_event, ctx) => {
-        observeSessionHeartbeat(orchestrator, ctx);
-      });
-      log.info(
-        `registered legacy typed agent_heartbeat hook for OpenClaw ${runtimeVersion}`,
-      );
-    } else {
-      log.debug(
-        `skipping legacy typed agent_heartbeat hook for OpenClaw ${runtimeVersion}; published builds from 2026.1.29 onward do not expose it`,
-      );
-    }
-
     // Stash pre-compaction token counts so after_compaction can record the pair.
     const lcmTokensBefore = new Map<string, number>();
 
@@ -481,8 +534,8 @@ export default {
     api.on(
       "before_compaction",
       async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookBeforeCompactionEvent & Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
@@ -545,10 +598,11 @@ export default {
     api.on(
       "after_compaction",
       async (
-        event: Record<string, unknown>,
-        ctx: Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookAfterCompactionEvent & Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        // Fall back to event.sessionKey when ctx is empty (new SDK may provide it on the event).
+        const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
 
         try {
           // LCM: record compaction with real token counts and verify coverage
@@ -644,6 +698,146 @@ export default {
         }
       },
     );
+
+    // ========================================================================
+    // NEW SDK HOOKS (≥2026.3.22 only)
+    // These hooks are only available on the new SDK and provide richer
+    // lifecycle, tool, LLM, and subagent observation capabilities.
+    // ========================================================================
+    if (sdkCaps.hasBeforePromptBuild) {
+      // ---- Session lifecycle ----
+      api.on(
+        "session_start",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSessionEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          const sessionKey = event.sessionKey ?? "default";
+          log.debug(`session_start: ${sessionKey}`);
+          try {
+            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+          } catch (err) {
+            log.debug(`session_start file hygiene failed: ${err}`);
+          }
+        },
+      );
+
+      api.on(
+        "session_end",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSessionEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          const sessionKey = event.sessionKey ?? "default";
+          log.debug(`session_end: ${sessionKey}`);
+          // Future: flush pending extractions here when Orchestrator gains a flush method.
+          if (orchestrator.config.compactionResetEnabled) {
+            orchestrator.clearRecallWorkspaceOverride(sessionKey);
+          }
+        },
+      );
+
+      // ---- Tool observation ----
+      api.on(
+        "before_tool_call",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookBeforeToolCallEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          if (event.toolName) {
+            log.debug(`before_tool_call: ${event.toolName}`);
+          }
+        },
+      );
+
+      api.on(
+        "after_tool_call",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookAfterToolCallEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          // Log tool usage for debugging. Tool stats for hourly summaries are
+          // recorded in agent_end (gated on success=true) to avoid counting
+          // tools from failed/aborted turns.
+          if (event.toolName) {
+            log.debug(`after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`);
+          }
+        },
+      );
+
+      // ---- LLM observation ----
+      api.on(
+        "llm_output",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookLlmOutputEvent & Record<string, unknown>,
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          const sessionKey = (ctx?.sessionKey as string) ?? "default";
+          if (event.tokenUsage) {
+            log.debug(
+              `llm_output: model=${event.model ?? "?"}, tokens=${event.tokenUsage.input ?? 0}/${event.tokenUsage.output ?? 0}, ${event.durationMs ?? "?"}ms, session=${sessionKey}`,
+            );
+          }
+        },
+      );
+
+      // ---- Subagent lifecycle ----
+      api.on(
+        "subagent_spawning",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSubagentSpawningEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          log.debug(`subagent_spawning: ${event.subagentId ?? "?"} purpose=${event.purpose ?? "?"}`);
+        },
+      );
+
+      api.on(
+        "subagent_ended",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookSubagentEndedEvent & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        ) => {
+          log.debug(
+            `subagent_ended: ${event.subagentId ?? "?"} success=${event.success ?? "?"} ${event.durationMs ?? "?"}ms`,
+          );
+        },
+      );
+    } else {
+      // Legacy runtime: restore heartbeat observer for sessionObserverEnabled.
+      // On new SDK, session_start/session_end hooks replace this.
+      // Two paths: registerHook for runtimes that emit event-style heartbeats,
+      // and api.on("agent_heartbeat") for pre-2026.1.29 runtimes that emit typed hooks.
+      const runtimeApi = api as any;
+      runtimeApi.registerHook?.(
+        ["agent_heartbeat", "agent:heartbeat"],
+        (event: any) => {
+          if (orchestrator.config.sessionObserverEnabled !== true) return;
+          const sessionKey = (event?.context?.sessionKey as string) ?? "default";
+          void orchestrator.observeSessionHeartbeat(sessionKey).catch((err: unknown) => {
+            log.debug(`agent_heartbeat observer failed: ${err}`);
+          });
+        },
+        { name: "engram_agent_heartbeat_legacy", description: "Observe legacy heartbeat events for session observation." },
+      );
+
+      // Typed api.on path for pre-2026.1.29 builds that route heartbeat through the hook system.
+      const runtimeVersion = runtimeApi.runtime?.version || process.env.OPENCLAW_SERVICE_VERSION || "unknown";
+      void import("./legacy-hook-compat.js").then(({ shouldRegisterTypedAgentHeartbeat }) => {
+        if (shouldRegisterTypedAgentHeartbeat(runtimeVersion)) {
+          (api.on as any)("agent_heartbeat", (_event: Record<string, unknown>, ctx: Record<string, unknown>) => {
+            if (orchestrator.config.sessionObserverEnabled !== true) return;
+            const sessionKey = (ctx?.sessionKey as string) ?? "default";
+            void orchestrator.observeSessionHeartbeat(sessionKey).catch((err: unknown) => {
+              log.debug(`agent_heartbeat typed observer failed: ${err}`);
+            });
+          });
+          log.info(`registered typed agent_heartbeat hook for OpenClaw ${runtimeVersion}`);
+        }
+      }).catch(() => {
+        // legacy-hook-compat import failed — skip typed registration
+      });
+    }
 
     // ========================================================================
     // Helper: Auto-register hourly summary cron job
@@ -1024,6 +1218,8 @@ export default {
     });
   },
 };
+
+export default tryDefinePluginEntry(pluginDefinition);
 
 // ============================================================================
 // Helpers

@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.1.0] — 2026-03-22
+
+### Added
+- **OpenClaw 2026.3.22 SDK compatibility** — full support for the new plugin SDK with runtime feature detection and backward compatibility for users on ≤2026.3.13.
+- **`before_prompt_build` hook** — replaces legacy `before_agent_start` for memory context injection on new SDK runtimes.
+- **`registerMemoryPromptSection`** — first-class memory section builder registration for gateway-managed prompt assembly.
+- **`definePluginEntry`** — new SDK plugin entry point with automatic fallback for older runtimes.
+- **Session lifecycle hooks** (`session_start`, `session_end`) — pre-warm file hygiene and flush pending extractions.
+- **Tool observation hooks** (`before_tool_call`, `after_tool_call`) — real-time tool usage tracking for transcript stats.
+- **LLM observation hook** (`llm_output`) — token usage and latency telemetry.
+- **Subagent lifecycle hooks** (`subagent_spawning`, `subagent_ended`) — multi-agent session tracking.
+- **Registration mode handling** — skip heavy initialization in `setup-only` mode.
+- **SDK capability detection** (`src/sdk-compat.ts`) — runtime probe for new API surfaces.
+- **Typed hook signatures** — all hooks use typed event/context interfaces.
+
+### Changed
+- **Compat checks** now accept either `before_prompt_build` or `before_agent_start` as the recall hook.
+
+### Removed
+- **Legacy `agent_heartbeat` hook** — dead code since OpenClaw 2026.1.29.
+
 ## [v9.0.106] — 2026-03-22
 
 ### Added
