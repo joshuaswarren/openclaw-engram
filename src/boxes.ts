@@ -10,6 +10,7 @@
  */
 
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "./logger.js";
@@ -426,9 +427,9 @@ export class BoxBuilder {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const cutoffDateStr = cutoff.toISOString().slice(0, 10); // "YYYY-MM-DD"
 
-    let topEntries: Awaited<ReturnType<typeof readdir>>;
+    let topEntries: Dirent<string>[];
     try {
-      topEntries = await readdir(this.boxBaseDir, { withFileTypes: true });
+      topEntries = await readdir(this.boxBaseDir, { withFileTypes: true, encoding: "utf-8" });
     } catch {
       return [];
     }
