@@ -718,7 +718,7 @@ const pluginDefinition = {
           ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
         ) => {
           if (!event.toolName) return;
-          const sessionKey = (ctx?.sessionKey as string) ?? "default";
+          const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
           log.debug(`after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`);
 
           if (orchestrator.config.hourlySummariesIncludeToolStats) {
