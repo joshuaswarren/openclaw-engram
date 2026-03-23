@@ -219,8 +219,17 @@ const pluginDefinition = {
     // recall hook entirely to avoid dual memory injection.
     // Uses literal hook names so src/compat/checks.ts parseHookRegistrations()
     // can statically detect them.
+    // Respect allowPromptInjection=false: the gateway only gates typed hooks,
+    // NOT section builders, so we must check the policy ourselves.
+    const gatewayPluginHooks = (api.config as any)?.plugins?.entries?.["openclaw-engram"]?.hooks;
+    const promptInjectionAllowed = gatewayPluginHooks?.allowPromptInjection !== false;
+
+    // True when the section builder will be registered (capability + policy).
+    // Must be determined before the hook registration block below.
     const useMemoryPromptSection =
-      sdkCaps.hasRegisterMemoryPromptSection && typeof api.registerMemoryPromptSection === "function";
+      sdkCaps.hasRegisterMemoryPromptSection &&
+      typeof api.registerMemoryPromptSection === "function" &&
+      promptInjectionAllowed;
 
     async function recallHookHandler(
       hookLabel: string,
@@ -311,7 +320,7 @@ const pluginDefinition = {
     // ========================================================================
     // registerMemoryPromptSection — structured memory injection (new SDK)
     // ========================================================================
-    if (sdkCaps.hasRegisterMemoryPromptSection && api.registerMemoryPromptSection) {
+    if (useMemoryPromptSection && api.registerMemoryPromptSection) {
       api.registerMemoryPromptSection({
         id: "engram-memory",
         label: "Engram Memory Context",
