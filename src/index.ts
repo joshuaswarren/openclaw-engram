@@ -212,10 +212,6 @@ const pluginDefinition = {
           });
     (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;
 
-    // Track whether after_tool_call hook was registered, so agent_end can
-    // skip its own tool scanning to avoid double-counting.
-    let registeredAfterToolCall = false;
-
     // ========================================================================
     // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
@@ -361,8 +357,10 @@ const pluginDefinition = {
           const eventTimestamp = new Date().toISOString();
 
           // Best-effort tool usage stats for extended hourly summaries.
-          // When after_tool_call hook is registered, skip message scanning to avoid double-counting.
-          if (orchestrator.config.hourlySummariesIncludeToolStats && !registeredAfterToolCall) {
+          // Always scan messages here (gated on success=true by the early return above).
+          // after_tool_call only logs for debug — stats are recorded here to avoid
+          // counting tools from failed/aborted turns.
+          if (orchestrator.config.hourlySummariesIncludeToolStats) {
             const toolNames: string[] = [];
             for (const msg of messages) {
               const role = msg.role as string | undefined;
@@ -710,27 +708,17 @@ const pluginDefinition = {
         },
       );
 
-      registeredAfterToolCall = true;
       api.on(
         "after_tool_call",
         async (
           event: import("openclaw/plugin-sdk").PluginHookAfterToolCallEvent & Record<string, unknown>,
-          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
         ) => {
-          if (!event.toolName) return;
-          const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
-          log.debug(`after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`);
-
-          if (orchestrator.config.hourlySummariesIncludeToolStats) {
-            try {
-              await orchestrator.transcript.appendToolUse({
-                timestamp: new Date().toISOString(),
-                sessionKey,
-                tool: event.toolName,
-              });
-            } catch (err) {
-              log.debug(`after_tool_call transcript append failed: ${err}`);
-            }
+          // Log tool usage for debugging. Tool stats for hourly summaries are
+          // recorded in agent_end (gated on success=true) to avoid counting
+          // tools from failed/aborted turns.
+          if (event.toolName) {
+            log.debug(`after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`);
           }
         },
       );
