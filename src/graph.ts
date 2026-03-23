@@ -274,6 +274,12 @@ export class GraphIndex {
     this.cfg = cfg;
   }
 
+  /** Clear the edge cache so the next spreadingActivation() re-reads from disk.
+   *  Call after any code path that appends edges outside of onMemoryWritten(). */
+  invalidateEdgeCache(): void {
+    this.edgeCache = null;
+  }
+
   private async loadEdgesCached(): Promise<GraphEdge[]> {
     if (
       this.edgeCache &&

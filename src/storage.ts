@@ -1085,6 +1085,7 @@ export class StorageManager {
     }
 
     await writeFile(filePath, fileContent, "utf-8");
+    this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemory", {
       memoryId: id,
       eventType: "created",

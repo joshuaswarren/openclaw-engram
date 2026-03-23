@@ -1107,7 +1107,13 @@ export class QmdClient implements SearchBackend {
       return [];
     }
 
-    // Subprocess fallback (only reached when daemon is unavailable, not just slow)
+    // If the daemon is spawned but still loading, skip subprocess — same as search().
+    if (this.daemonSession?.isLoading()) {
+      log.debug("QMD searchGlobal: daemon loading, skipping subprocess");
+      return [];
+    }
+
+    // Subprocess fallback (only reached when daemon is unavailable and not loading)
     return this.searchGlobalViaSubprocess(trimmed, n, execution?.signal);
   }
 
