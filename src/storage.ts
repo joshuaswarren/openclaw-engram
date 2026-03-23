@@ -1417,13 +1417,17 @@ export class StorageManager {
         StorageManager.allMemoriesRefreshInFlight.add(this.baseDir);
         this._readAllMemoriesFromDisk()
           .then((memories) => {
-            // Guard against race: if invalidateAllMemoriesCache() was called
-            // while the refresh was in-flight, the cache entry's loadedAt will
-            // be 0 (stale marker). Don't overwrite it — the invalidation is
-            // more recent than the data we just read.
+            // If invalidateAllMemoriesCache() was called while this refresh was
+            // in-flight (loadedAt reset to 0), the data we just read may be stale.
+            // Still publish it (better than livelock where the cache never updates),
+            // but set loadedAt to 0 so the NEXT readAllMemories() call triggers
+            // another background refresh that will capture the write.
             const current = StorageManager.allMemoriesCache.get(this.baseDir);
-            if (current && current.loadedAt === 0) return;
-            StorageManager.allMemoriesCache.set(this.baseDir, { memories, loadedAt: Date.now() });
+            const wasInvalidated = current && current.loadedAt === 0;
+            StorageManager.allMemoriesCache.set(this.baseDir, {
+              memories,
+              loadedAt: wasInvalidated ? 0 : Date.now(),
+            });
           })
           .catch(() => {
             // refresh failed — stale cache remains, next call will retry
