@@ -350,7 +350,7 @@ const pluginDefinition = {
 
           // Best-effort tool usage stats for extended hourly summaries.
           // On new SDK, after_tool_call hook handles this — skip here to avoid double-counting.
-          if (orchestrator.config.hourlySummariesIncludeToolStats && !sdkCaps!.hasBeforePromptBuild) {
+          if (orchestrator.config.hourlySummariesIncludeToolStats && !sdkCaps?.hasBeforePromptBuild) {
             const toolNames: string[] = [];
             for (const msg of messages) {
               const role = msg.role as string | undefined;
