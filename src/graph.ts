@@ -262,9 +262,32 @@ export class GraphIndex {
   private readonly memoryDir: string;
   private readonly cfg: GraphConfig;
 
+  // Cache for readAllEdges() result.  With 30k+ entity edges (6 MB JSONL) the
+  // file read + JSON parse takes 2-4 s per call.  This instance-level cache
+  // eliminates that overhead on every spreadingActivation() call; it is
+  // invalidated (set to null) in onMemoryWritten() so new edges appear promptly.
+  private edgeCache: { allEdges: GraphEdge[]; loadedAt: number } | null = null;
+  private static readonly EDGE_CACHE_TTL_MS = 300_000; // 5 minutes
+
   constructor(memoryDir: string, cfg: GraphConfig) {
     this.memoryDir = memoryDir;
     this.cfg = cfg;
+  }
+
+  private async loadEdgesCached(): Promise<GraphEdge[]> {
+    if (
+      this.edgeCache &&
+      Date.now() - this.edgeCache.loadedAt < GraphIndex.EDGE_CACHE_TTL_MS
+    ) {
+      return this.edgeCache.allEdges;
+    }
+    const allEdges = await readAllEdges(this.memoryDir, {
+      entityGraphEnabled: this.cfg.entityGraphEnabled,
+      timeGraphEnabled: this.cfg.timeGraphEnabled,
+      causalGraphEnabled: this.cfg.causalGraphEnabled,
+    });
+    this.edgeCache = { allEdges, loadedAt: Date.now() };
+    return allEdges;
   }
 
   /**
@@ -336,6 +359,8 @@ export class GraphIndex {
           });
         }
       }
+      // Invalidate edge cache so spreadingActivation() picks up the new edges.
+      this.edgeCache = null;
     } catch (err) {
       // Fail-open: graph write errors must never surface to caller
       const { log } = await import("./logger.js");
@@ -370,11 +395,7 @@ export class GraphIndex {
     const decay = this.cfg.graphActivationDecay;
 
     try {
-      const allEdges = await readAllEdges(this.memoryDir, {
-        entityGraphEnabled: this.cfg.entityGraphEnabled,
-        timeGraphEnabled: this.cfg.timeGraphEnabled,
-        causalGraphEnabled: this.cfg.causalGraphEnabled,
-      });
+      const allEdges = await this.loadEdgesCached();
 
       // Build adjacency index: from → edges, to → edges (bidirectional for entity/time, directional for causal)
       const adj = new Map<string, GraphEdge[]>();
