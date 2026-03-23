@@ -212,6 +212,10 @@ const pluginDefinition = {
           });
     (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;
 
+    // Track whether after_tool_call hook was registered, so agent_end can
+    // skip its own tool scanning to avoid double-counting.
+    let registeredAfterToolCall = false;
+
     // ========================================================================
     // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
@@ -312,6 +316,7 @@ const pluginDefinition = {
           if (!prompt || prompt.length < 5) return null;
           if (shouldSkipRecallForSession(sessionKey, cfg)) return null;
           try {
+            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
             const context = await orchestrator.recall(prompt, sessionKey);
             if (!context) return null;
             const maxChars = cfg.recallBudgetChars;
@@ -349,8 +354,8 @@ const pluginDefinition = {
           const eventTimestamp = new Date().toISOString();
 
           // Best-effort tool usage stats for extended hourly summaries.
-          // On new SDK, after_tool_call hook handles this — skip here to avoid double-counting.
-          if (orchestrator.config.hourlySummariesIncludeToolStats && !sdkCaps?.hasBeforePromptBuild) {
+          // When after_tool_call hook is registered, skip message scanning to avoid double-counting.
+          if (orchestrator.config.hourlySummariesIncludeToolStats && !registeredAfterToolCall) {
             const toolNames: string[] = [];
             for (const msg of messages) {
               const role = msg.role as string | undefined;
@@ -697,6 +702,7 @@ const pluginDefinition = {
         },
       );
 
+      registeredAfterToolCall = true;
       api.on(
         "after_tool_call",
         async (
