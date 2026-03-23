@@ -1452,6 +1452,12 @@ export class StorageManager {
   }
 
   /** Invalidate the readAllMemories() cache after writes that add/remove memories. */
+  /** Public cache invalidation for callers that need authoritative disk reads
+   *  (e.g. projection verify/rebuild). */
+  invalidateAllMemoriesCacheForDir(): void {
+    this.invalidateAllMemoriesCache();
+  }
+
   private invalidateAllMemoriesCache(): void {
     const cached = StorageManager.allMemoriesCache.get(this.baseDir);
     if (cached) {
