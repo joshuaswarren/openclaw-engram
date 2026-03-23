@@ -1928,6 +1928,7 @@ export class StorageManager {
 
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
+    this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen(
       "storage.writeMemoryFrontmatter",
       {
@@ -2764,7 +2765,6 @@ export class StorageManager {
       `resolvedAt: "${new Date().toISOString()}"\n---\n\n`,
     );
     await writeFile(q.filePath, raw, "utf-8");
-
     log.debug(`resolved question ${id}`);
     return true;
   }
