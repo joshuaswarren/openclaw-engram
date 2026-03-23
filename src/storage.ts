@@ -1404,29 +1404,23 @@ export class StorageManager {
     // Check module-level cache first.  Multiple concurrent callers (e.g. verifiedRecall
     // + verifiedRules running in the same recall) share one read via in-flight dedup.
     const cached = StorageManager.allMemoriesCache.get(this.baseDir);
-    if (cached) {
+    if (cached && cached.loadedAt > 0) {
       if (Date.now() - cached.loadedAt < StorageManager.ALL_MEMORIES_CACHE_TTL_MS) {
         // Cache is fresh — return immediately.
         return cached.memories;
       }
-      // Cache is stale: return stale data immediately and kick off a background
-      // refresh so the NEXT caller finds a warm cache.  This avoids blocking any
-      // recall request on the 13-60 s re-scan that would otherwise happen every
-      // 5 minutes on large memory collections (80k+ files).
+      // Cache is stale (TTL expired but not invalidated): return stale data
+      // immediately and kick off a background refresh so the NEXT caller finds
+      // a warm cache.  This avoids blocking any recall request on the 13-60 s
+      // re-scan that would otherwise happen every 5 minutes on large memory
+      // collections (80k+ files).
       if (!StorageManager.allMemoriesRefreshInFlight.has(this.baseDir)) {
         StorageManager.allMemoriesRefreshInFlight.add(this.baseDir);
         this._readAllMemoriesFromDisk()
           .then((memories) => {
-            // If invalidateAllMemoriesCache() was called while this refresh was
-            // in-flight (loadedAt reset to 0), the data we just read may be stale.
-            // Still publish it (better than livelock where the cache never updates),
-            // but set loadedAt to 0 so the NEXT readAllMemories() call triggers
-            // another background refresh that will capture the write.
-            const current = StorageManager.allMemoriesCache.get(this.baseDir);
-            const wasInvalidated = current && current.loadedAt === 0;
             StorageManager.allMemoriesCache.set(this.baseDir, {
               memories,
-              loadedAt: wasInvalidated ? 0 : Date.now(),
+              loadedAt: Date.now(),
             });
           })
           .catch(() => {
@@ -1438,6 +1432,8 @@ export class StorageManager {
       }
       return cached.memories;
     }
+    // loadedAt === 0 means a write invalidated the cache — fall through to
+    // a blocking re-read so callers see their own writes immediately.
 
     // No cache at all (first load or post-write invalidation): block until loaded.
     // Deduplicate concurrent reads for the same directory.
