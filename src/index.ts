@@ -51,7 +51,8 @@ const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
-function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
+// Shared helper: read and parse the full plugin entry from openclaw.json.
+function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
   try {
     const explicitConfigPath =
       process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
@@ -64,12 +65,15 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    const pluginEntry = config?.plugins?.entries?.["openclaw-engram"];
-    return pluginEntry?.config;
+    return config?.plugins?.entries?.["openclaw-engram"] as Record<string, unknown> | undefined;
   } catch (err) {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
   }
+}
+
+function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
+  return loadPluginEntryFromFile()?.config as Record<string, unknown> | undefined;
 }
 
 /**
@@ -80,23 +84,8 @@ function readPluginHooksPolicy(apiConfig: unknown): Record<string, unknown> | un
   // Try api.config first
   const fromApi = (apiConfig as any)?.plugins?.entries?.["openclaw-engram"]?.hooks;
   if (fromApi && typeof fromApi === "object") return fromApi;
-
   // Fall back to file-backed config
-  try {
-    const explicitConfigPath =
-      process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
-      process.env.OPENCLAW_CONFIG_PATH;
-    const homeDir = process.env.HOME ?? os.homedir();
-    const configPath =
-      explicitConfigPath && explicitConfigPath.length > 0
-        ? explicitConfigPath
-        : path.join(homeDir, ".openclaw", "openclaw.json");
-    const content = readFileSync(configPath, "utf-8");
-    const config = JSON.parse(content);
-    return config?.plugins?.entries?.["openclaw-engram"]?.hooks;
-  } catch {
-    return undefined;
-  }
+  return loadPluginEntryFromFile()?.hooks as Record<string, unknown> | undefined;
 }
 
 function wildcardToRegExp(pattern: string): RegExp {
