@@ -1407,7 +1407,11 @@ export class StorageManager {
     try {
       return await readPromise;
     } finally {
-      StorageManager.allMemoriesInFlight.delete(this.baseDir);
+      // Only delete if we still own the slot — invalidateAllMemoriesCache()
+      // may have already cleared it and a new read may have claimed it.
+      if (StorageManager.allMemoriesInFlight.get(this.baseDir) === readPromise) {
+        StorageManager.allMemoriesInFlight.delete(this.baseDir);
+      }
     }
   }
 

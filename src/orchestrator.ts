@@ -1418,43 +1418,19 @@ export class Orchestrator {
     // before the first recall request arrives, eliminating the cold-start penalty.
     // Also pre-warms buildKnowledgeIndex() to prime knowledgeIndexCache on the
     // base storage (avoids the 13 s readAllEntityFiles() penalty on first recall).
-    {
-      const namespacesToWarm = this.config.namespacesEnabled
-        ? [
-            this.config.defaultNamespace,
-            this.config.sharedNamespace,
-            ...this.config.namespacePolicies.map((p) => p.name),
-          ]
-        : [this.config.defaultNamespace];
-      const uniqueNs = [...new Set(namespacesToWarm)];
-      log.info(`Memory cache warmup: pre-loading readAllMemories() for ${uniqueNs.length} namespace(s) in background`);
-      const memWarmup = Promise.all(
-        uniqueNs.map(async (ns) => {
-          try {
-            const sm = await this.storageRouter.storageFor(ns);
-            const t0 = Date.now();
-            const mems = await sm.readAllMemories();
-            log.info(`Memory cache warmup: ${ns} loaded ${mems.length} memories in ${Date.now() - t0}ms`);
-          } catch (err) {
-            log.debug(`Memory cache warmup failed for namespace '${ns}' (non-fatal): ${err}`);
-          }
-        }),
-      ).catch(() => {});
-
-      // Also warm the Knowledge Index (readAllEntityFiles + scoring) on the base storage.
-      // knowledgeIndexCache is an instance-level cache — warming it here populates it
-      // before the first recall so ki=13s cold penalty doesn't hit real requests.
-      if (this.config.knowledgeIndexEnabled) {
-        memWarmup.then(async () => {
-          try {
-            const t0 = Date.now();
-            await this.storage.buildKnowledgeIndex(this.config);
-            log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
-          } catch (err) {
-            log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
-          }
-        }).catch(() => {});
-      }
+    // Warm the Knowledge Index (readAllEntityFiles + scoring) on the base storage.
+    // knowledgeIndexCache is an instance-level cache — warming it here populates it
+    // before the first recall so ki=13s cold penalty doesn't hit real requests.
+    if (this.config.knowledgeIndexEnabled) {
+      (async () => {
+        try {
+          const t0 = Date.now();
+          await this.storage.buildKnowledgeIndex(this.config);
+          log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
+        } catch (err) {
+          log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
+        }
+      })().catch(() => {});
     }
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
