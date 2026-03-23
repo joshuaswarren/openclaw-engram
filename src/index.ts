@@ -354,28 +354,33 @@ const pluginDefinition = {
     // registerMemoryPromptSection — structured memory injection (new SDK)
     // ========================================================================
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
-      api.registerMemoryPromptSection({
-        id: "engram-memory",
-        label: "Engram Memory Context",
-        build: async ({ prompt, sessionKey }) => {
-          if (!prompt || prompt.length < 5) return null;
-          if (shouldSkipRecallForSession(sessionKey, cfg)) return null;
-          try {
-            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
-            const context = await orchestrator.recall(prompt, sessionKey);
-            if (!context) return null;
-            const maxChars = cfg.recallBudgetChars;
-            if (maxChars === 0) return null;
-            const trimmed = context.length > maxChars
-              ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
-              : context;
-            return `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
-          } catch (err) {
-            log.error("registerMemoryPromptSection build failed", err);
-            return null;
-          }
-        },
-      });
+      const memoryBuildFn = async ({ prompt, sessionKey }: { prompt: string; sessionKey: string }) => {
+        if (!prompt || prompt.length < 5) return null;
+        if (shouldSkipRecallForSession(sessionKey, cfg)) return null;
+        try {
+          await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+          const context = await orchestrator.recall(prompt, sessionKey);
+          if (!context) return null;
+          const maxChars = cfg.recallBudgetChars;
+          if (maxChars === 0) return null;
+          const trimmed = context.length > maxChars
+            ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
+            : context;
+          return `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+        } catch (err) {
+          log.error("registerMemoryPromptSection build failed", err);
+          return null;
+        }
+      };
+
+      // Compat: the gateway stores whatever is passed here as `_builder`
+      // and later calls `_builder(params)`.  Pass the bare function so it
+      // works on all gateway versions (<=2026.3.22 and newer).  Attach
+      // metadata as properties so a future gateway that inspects them can
+      // still read id/label without a breaking API change.
+      (memoryBuildFn as any).id = "engram-memory";
+      (memoryBuildFn as any).label = "Engram Memory Context";
+      api.registerMemoryPromptSection(memoryBuildFn as any);
     }
 
     // ========================================================================

@@ -190,8 +190,10 @@ declare module "openclaw/plugin-sdk" {
 
     // ---- New SDK methods (may not exist on older runtimes) ----
 
-    /** Register a memory prompt section builder (new SDK >=2026.3.22) */
-    registerMemoryPromptSection?: (builder: MemoryPromptSectionBuilder) => void;
+    /** Register a memory prompt section builder (new SDK >=2026.3.22).
+     *  Gateway <=2026.3.22 expects a bare function; future versions may
+     *  accept the structured MemoryPromptSectionBuilder object. */
+    registerMemoryPromptSection?: (builder: MemoryPromptSectionBuilder | MemoryPromptSectionBuilder["build"]) => void;
 
     /** Registration mode: "full" | "setup-only" | "setup-runtime" (new SDK >=2026.3.22) */
     registrationMode?: "full" | "setup-only" | "setup-runtime";
