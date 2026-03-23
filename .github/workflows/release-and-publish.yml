@@ -171,15 +171,35 @@ jobs:
           BUMP_TYPE="${{ steps.bump.outputs.bump_type }}"
           case "${BUMP_TYPE}" in
             major)
-              NEXT_VERSION="$((MAJOR + 1)).0.0"
+              AUTO_VERSION="$((MAJOR + 1)).0.0"
               ;;
             minor)
-              NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0"
+              AUTO_VERSION="${MAJOR}.$((MINOR + 1)).0"
               ;;
             *)
-              NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              AUTO_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
               ;;
           esac
+
+          # If package.json has a higher version than auto-bump, use it.
+          # This lets PRs that intentionally set a version (e.g. 9.1.0) win
+          # over the auto-increment (e.g. 9.0.109). PRs that don't touch
+          # the version still get auto-incremented as before.
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          # Compare using node for reliable semver comparison
+          USE_PKG="$(node -e "
+            const [a, b] = ['${PKG_VERSION}', '${AUTO_VERSION}'].map(v => v.split('.').map(Number));
+            const gt = a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]) || (a[0] === b[0] && a[1] === b[1] && a[2] > b[2]);
+            console.log(gt ? 'true' : 'false');
+          ")"
+
+          if [ "${USE_PKG}" = "true" ]; then
+            NEXT_VERSION="${PKG_VERSION}"
+            echo "::notice title=Version from package.json::package.json version ${PKG_VERSION} is higher than auto-bump ${AUTO_VERSION}; using package.json version."
+          else
+            NEXT_VERSION="${AUTO_VERSION}"
+          fi
+
           {
             echo "base_tag=${LATEST_TAG}"
             echo "bump_type=${BUMP_TYPE}"
