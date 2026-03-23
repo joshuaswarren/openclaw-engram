@@ -537,7 +537,8 @@ const pluginDefinition = {
         event: import("openclaw/plugin-sdk").PluginHookBeforeCompactionEvent & Record<string, unknown>,
         ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
       ) => {
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        // Fall back to event.sessionKey when ctx is empty (new SDK may provide it on the event).
+        const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
 
         try {
           // LCM: flush pending summaries before context is lost
@@ -644,9 +645,11 @@ const pluginDefinition = {
             `compaction completed for ${sessionKey}, triggering session reset`,
           );
 
-          // Use ctx.workspaceDir (per-agent) if available, fall back to config.
+          // Use ctx.workspaceDir (per-agent) if available, fall back to event
+          // (new SDK may provide it on the event when ctx is empty), then config.
           const workspaceDir =
             (ctx?.workspaceDir as string) ||
+            (event?.workspaceDir as string) ||
             orchestrator.config.workspaceDir ||
             defaultWorkspaceDir();
 
