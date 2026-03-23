@@ -463,13 +463,16 @@ export class TranscriptManager {
     const { dir } = this.getTranscriptPath(sessionKey);
     const channelDir = path.join(this.transcriptsDir, dir);
 
-    // Build set of date strings that overlap with [start, end]
+    // Build set of date strings that overlap with [start, end].
+    // Always include end's date to handle midnight-crossing lookbacks
+    // (e.g. start=23:30 yesterday, end=00:30 today).
     const dateStrings = new Set<string>();
     const cursor = new Date(start);
     while (cursor <= end) {
       dateStrings.add(cursor.toISOString().slice(0, 10));
       cursor.setDate(cursor.getDate() + 1);
     }
+    dateStrings.add(end.toISOString().slice(0, 10));
 
     const entries: TranscriptEntry[] = [];
     let files: string[];

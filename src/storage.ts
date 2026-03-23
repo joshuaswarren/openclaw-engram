@@ -1416,6 +1416,12 @@ export class StorageManager {
         StorageManager.allMemoriesRefreshInFlight.add(this.baseDir);
         this._readAllMemoriesFromDisk()
           .then((memories) => {
+            // Guard against race: if invalidateAllMemoriesCache() was called
+            // while the refresh was in-flight, the cache entry's loadedAt will
+            // be 0 (stale marker). Don't overwrite it — the invalidation is
+            // more recent than the data we just read.
+            const current = StorageManager.allMemoriesCache.get(this.baseDir);
+            if (current && current.loadedAt === 0) return;
             StorageManager.allMemoriesCache.set(this.baseDir, { memories, loadedAt: Date.now() });
           })
           .catch(() => {

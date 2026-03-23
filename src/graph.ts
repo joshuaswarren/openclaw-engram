@@ -359,12 +359,14 @@ export class GraphIndex {
           });
         }
       }
-      // Invalidate edge cache so spreadingActivation() picks up the new edges.
-      this.edgeCache = null;
     } catch (err) {
       // Fail-open: graph write errors must never surface to caller
       const { log } = await import("./logger.js");
       log.warn(`[graph] onMemoryWritten error: ${err}`);
+    } finally {
+      // Invalidate edge cache so spreadingActivation() picks up new edges.
+      // In `finally` so the cache is cleared even on partial write failure.
+      this.edgeCache = null;
     }
   }
 
