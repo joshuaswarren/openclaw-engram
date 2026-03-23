@@ -261,9 +261,10 @@ const pluginDefinition = {
         const msgs = event.messages as Array<Record<string, unknown>>;
         for (let i = msgs.length - 1; i >= 0; i--) {
           if (msgs[i]?.role === "user") {
-            const content = msgs[i]?.content;
-            if (typeof content === "string" && content.length >= 5) {
-              prompt = content;
+            // Handle both string and block-based content shapes
+            const text = extractTextContent(msgs[i] as Record<string, unknown>);
+            if (text.length >= 5) {
+              prompt = text;
               break;
             }
           }

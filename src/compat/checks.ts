@@ -343,9 +343,10 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
     const missingLegacy = REQUIRED_HOOKS_LEGACY.filter((hook) => !hooks.has(hook));
     const missingNew = REQUIRED_HOOKS_NEW.filter((hook) => !hooks.has(hook));
     // registerMemoryPromptSection is a valid alternative to the recall hook.
-    // Use the comment/string-stripped source to avoid false positives from mentions
-    // in comments or string literals.
-    const hasMemoryPromptSection = structuralSource.includes("registerMemoryPromptSection");
+    // Use the comment/string-stripped source and look for an actual call pattern
+    // (`.registerMemoryPromptSection(`) rather than just the identifier name, to
+    // avoid false positives from typeof checks or other non-registration usage.
+    const hasMemoryPromptSection = structuralSource.includes(".registerMemoryPromptSection(");
     const missingLegacyAdj = hasMemoryPromptSection
       ? missingLegacy.filter((h) => h !== "before_agent_start")
       : missingLegacy;
