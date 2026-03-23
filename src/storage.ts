@@ -744,11 +744,7 @@ export class StorageManager {
   // TTL expiry return the stale cached data immediately and kick off a background
   // refresh.  This eliminates the 13-60 s cold-scan penalty that would otherwise
   // block recall requests every 5 minutes on large memory collections (80k+ files).
-  private static readonly ALL_MEMORIES_CACHE_TTL_MS = 300_000; // 5 minutes
-  private static readonly allMemoriesCache = new Map<string, { memories: MemoryFile[]; loadedAt: number }>();
   private static readonly allMemoriesInFlight = new Map<string, Promise<MemoryFile[]>>();
-  // Tracks directories where a stale-while-revalidate background refresh is running.
-  private static readonly allMemoriesRefreshInFlight = new Set<string>();
 
   // Cache for readQuestions() — avoids serially re-reading tens of thousands of
   // question files on every recall.  60-second TTL is intentionally short so that
@@ -1425,17 +1421,13 @@ export class StorageManager {
   /** Clear ALL static caches. Use in tests that write files directly
    *  (bypassing StorageManager.writeMemory) to avoid stale reads. */
   static clearAllStaticCaches(): void {
-    StorageManager.allMemoriesCache.clear();
     StorageManager.allMemoriesInFlight.clear();
-    StorageManager.allMemoriesRefreshInFlight.clear();
     StorageManager.questionsCache.clear();
   }
 
+  /** Cancel any in-flight concurrent read so the next readAllMemories()
+   *  starts a fresh disk scan and sees the just-written data. */
   private invalidateAllMemoriesCache(): void {
-    // Delete the cache entry entirely and clear any in-flight reads so the next
-    // readAllMemories() starts a fresh blocking disk scan.  This is more expensive
-    // than stale-while-revalidate but guarantees read-your-writes consistency.
-    StorageManager.allMemoriesCache.delete(this.baseDir);
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
   }
 
