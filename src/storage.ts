@@ -2530,6 +2530,7 @@ export class StorageManager {
 
     const filePath = path.join(this.questionsDir, `${id}.md`);
     await writeFile(filePath, content, "utf-8");
+
     log.debug(`wrote question ${id} to ${filePath}`);
     return id;
   }
@@ -2628,6 +2629,7 @@ export class StorageManager {
       `resolvedAt: "${new Date().toISOString()}"\n---\n\n`,
     );
     await writeFile(q.filePath, raw, "utf-8");
+
     log.debug(`resolved question ${id}`);
     return true;
   }
