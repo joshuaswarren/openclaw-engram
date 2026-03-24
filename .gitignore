@@ -41,3 +41,9 @@ THEORY.MD
 logs/
 *.tgz
 irc-debug.ts
+evals/results/
+scripts/debug-*
+scripts/bootstrap-calibration.ts
+scripts/eval-calibration*.ts
+scripts/test-calibration*.ts
+docs/ideas/
