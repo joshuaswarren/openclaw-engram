@@ -366,8 +366,6 @@ const pluginDefinition = {
           const trimmed = context.length > maxChars
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
-          // Return an array of prompt lines — the gateway spreads this into
-          // the system prompt and expects an iterable, not a bare string.
           return [
             "## Memory Context (Engram)",
             "",
@@ -375,7 +373,7 @@ const pluginDefinition = {
             "",
             "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
             "",
-          ];
+          ].join("\n");
         } catch (err) {
           log.error("registerMemoryPromptSection build failed", err);
           return null;
@@ -389,6 +387,7 @@ const pluginDefinition = {
       // still read id/label without a breaking API change.
       (memoryBuildFn as any).id = "engram-memory";
       (memoryBuildFn as any).label = "Engram Memory Context";
+      (memoryBuildFn as any).build = memoryBuildFn;
       api.registerMemoryPromptSection(memoryBuildFn as any);
     }
 
