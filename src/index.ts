@@ -363,12 +363,16 @@ const pluginDefinition = {
     // before_prompt_build hook (which IS async-capable) and cache the result
     // for the synchronous builder to return.
     // ========================================================================
-    let cachedMemoryLines: string[] | null = null;
+    // Per-session cache: isolates concurrent prompt builds so one session
+    // cannot clobber another's cached recall result.
+    const cachedMemoryBySession = new Map<string, string[] | null>();
 
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
       // Async pre-compute: run recall in before_prompt_build and cache result.
-      api.on("before_prompt_build", async (event: Record<string, unknown>) => {
-        cachedMemoryLines = null; // reset each turn
+      // The hook receives both event and ctx — session identity is in ctx.
+      api.on("before_prompt_build", async (event: Record<string, unknown>, ctx: Record<string, unknown>) => {
+        const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        cachedMemoryBySession.set(sessionKey, null); // reset each turn
         let prompt = event.prompt as string | undefined;
         if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
           const msgs = event.messages as Array<Record<string, unknown>>;
@@ -380,10 +384,18 @@ const pluginDefinition = {
           }
         }
         if (!prompt || prompt.length < 5) return;
-        const sessionKey = (event.sessionKey ?? "default") as string;
         if (shouldSkipRecallForSession(sessionKey, cfg)) return;
         try {
           await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+
+          // Match the workspace override logic from recallHookHandler
+          if (orchestrator.config.compactionResetEnabled) {
+            const agentWorkspace = ctx?.workspaceDir as string | undefined;
+            if (agentWorkspace) {
+              orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
+            }
+          }
+
           const context = await orchestrator.recall(prompt, sessionKey);
           if (!context) return;
           const maxChars = cfg.recallBudgetChars;
@@ -391,21 +403,29 @@ const pluginDefinition = {
           const trimmed = context.length > maxChars
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
-          cachedMemoryLines = [
+          cachedMemoryBySession.set(sessionKey, [
             "## Memory Context (Engram)",
             "",
             trimmed,
             "",
             "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
             "",
-          ];
+          ]);
         } catch (err) {
           log.error("registerMemoryPromptSection pre-compute failed", err);
+          if (orchestrator.config.compactionResetEnabled) {
+            orchestrator.clearRecallWorkspaceOverride(sessionKey);
+          }
         }
       });
 
-      // Synchronous builder: returns the pre-computed lines.
-      const memoryBuildFn = (): string[] | null => cachedMemoryLines;
+      // Synchronous builder: returns the pre-computed lines for the
+      // requesting session.  The gateway passes { prompt, sessionKey }
+      // but we only need sessionKey to look up our cache.
+      const memoryBuildFn = (params: { sessionKey?: string }): string[] | null => {
+        const key = params?.sessionKey ?? "default";
+        return cachedMemoryBySession.get(key) ?? null;
+      };
 
       (memoryBuildFn as any).id = "engram-memory";
       (memoryBuildFn as any).label = "Engram Memory Context";
