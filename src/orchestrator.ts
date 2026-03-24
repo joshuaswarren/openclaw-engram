@@ -4544,7 +4544,7 @@ export class Orchestrator {
           ["compounding", compoundingPromise],
         ] as const).map(([name, p]) =>
           (p as Promise<unknown>).then((v) => {
-            log.info(`recall phase-1 [${name}]: resolved at +${Date.now() - phase1Start}ms`);
+            log.debug(`recall phase-1 [${name}]: resolved at +${Date.now() - phase1Start}ms`);
             return v;
           }),
         ),

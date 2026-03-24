@@ -2659,8 +2659,17 @@ export class StorageManager {
     const cacheKey = this.questionsDir;
     const cached = StorageManager.questionsCache.get(cacheKey);
     if (cached && Date.now() - cached.loadedAt < StorageManager.QUESTIONS_CACHE_TTL_MS) {
-      const all = cached.questions;
-      return opts?.unresolvedOnly ? all.filter((q) => !q.resolved) : all;
+      // Check dir mtime for cross-process invalidation — if another process
+      // wrote/resolved a question, the directory mtime will be newer than loadedAt.
+      try {
+        const dirStat = await stat(this.questionsDir);
+        if (dirStat.mtimeMs <= cached.loadedAt) {
+          const all = cached.questions;
+          return opts?.unresolvedOnly ? all.filter((q) => !q.resolved) : all;
+        }
+      } catch {
+        // Dir doesn't exist — fall through to re-read
+      }
     }
 
     try {
