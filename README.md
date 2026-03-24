@@ -483,6 +483,7 @@ Contributions are welcome! Please:
 If Engram is useful to you, consider [sponsoring the project](https://github.com/sponsors/joshuaswarren). Sponsorship helps fund continued development, new integrations, and keeping Engram free and open source.
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/openclaw-engram)
 
 ## License
 
