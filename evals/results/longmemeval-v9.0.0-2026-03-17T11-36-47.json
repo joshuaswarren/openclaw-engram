@@ -1,0 +1,4943 @@
+{
+  "meta": {
+    "name": "longmemeval",
+    "version": "2.0.0",
+    "description": "Long-term memory evaluation — 500 questions across 5 memory abilities (ICLR 2025)",
+    "category": "retrieval",
+    "citation": "Wu et al. LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory. ICLR 2025."
+  },
+  "engramVersion": "9.0.0",
+  "gitSha": "7942afb",
+  "timestamp": "2026-03-17T11:36:47.444Z",
+  "adapterMode": "direct",
+  "taskCount": 230,
+  "scores": [
+    {
+      "taskId": "qgpt4_2655b836",
+      "metrics": {
+        "f1": 0.001055223355610271,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was the first issue I had with my new car after its first service?",
+        "expected": "GPS system not functioning correctly",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_4be1b6b4_2",
+          "answer_4be1b6b4_3",
+          "answer_4be1b6b4_1"
+        ],
+        "recalled_length": 32259
+      },
+      "latencyMs": 13
+    },
+    {
+      "taskId": "qgpt4_2487a7cb",
+      "metrics": {
+        "f1": 0.0026780931976432784,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event did I attend first, the 'Effective Time Management' workshop or the 'Data Analysis using Python' webinar?",
+        "expected": "'Data Analysis using Python' webinar",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_1c6b85ea_1",
+          "answer_1c6b85ea_2"
+        ],
+        "recalled_length": 23817
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qgpt4_76048e76",
+      "metrics": {
+        "f1": 0.0005151983513652757,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which vehicle did I take care of first in February, the bike or the car?",
+        "expected": "bike",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b535969f_2",
+          "answer_b535969f_1"
+        ],
+        "recalled_length": 22312
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qgpt4_2312f94c",
+      "metrics": {
+        "f1": 0.0017958695001496557,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?",
+        "expected": "Samsung Galaxy S22",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_5328c3c2_1",
+          "answer_5328c3c2_2"
+        ],
+        "recalled_length": 18741
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q0bb5a684",
+      "metrics": {
+        "f1": 0.0029296875,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days before the team meeting I was preparing for did I attend the workshop on 'Effective Communication in the Workplace'?",
+        "expected": "7 days. 8 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e936197f_1",
+          "answer_e936197f_2"
+        ],
+        "recalled_length": 26024
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "q08f4fc43",
+      "metrics": {
+        "f1": 0.0030120481927710845,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days had passed between the Sunday mass at St. Mary's Church and the Ash Wednesday service at the cathedral?",
+        "expected": "30 days. 31 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_6ea1541e_2",
+          "answer_6ea1541e_1"
+        ],
+        "recalled_length": 24985
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q2c63a862",
+      "metrics": {
+        "f1": 0.0026315789473684214,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did it take for me to find a house I loved after starting to work with Rachel?",
+        "expected": "14 days. 15 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d39b7977_1",
+          "answer_d39b7977_2"
+        ],
+        "recalled_length": 21902
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_385a5000",
+      "metrics": {
+        "f1": 0.0007432181345224824,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which seeds were started first, the tomatoes or the marigolds?",
+        "expected": "Tomatoes",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_7a4a93f1_2",
+          "answer_7a4a93f1_1"
+        ],
+        "recalled_length": 15510
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q2a1811e2",
+      "metrics": {
+        "f1": 0.00375,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days had passed between the Hindu festival of Holi and the Sunday mass at St. Mary's Church?",
+        "expected": "21 days. 22 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_1cc3cd0c_2",
+          "answer_1cc3cd0c_1"
+        ],
+        "recalled_length": 18416
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qbbf86515",
+      "metrics": {
+        "f1": 0.001199040767386091,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days before the 'Rack Fest' did I participate in the 'Turbocharged Tuesdays' event?",
+        "expected": "4 days.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b3763b6b_1",
+          "answer_b3763b6b_2"
+        ],
+        "recalled_length": 19136
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_5dcc0aab",
+      "metrics": {
+        "f1": 0.000708215297450425,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which pair of shoes did I clean last month?",
+        "expected": "white Adidas sneakers",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_099c1b6c_3",
+          "answer_099c1b6c_1",
+          "answer_099c1b6c_2",
+          "answer_099c1b6c_4",
+          "answer_099c1b6c_5"
+        ],
+        "recalled_length": 48139
+      },
+      "latencyMs": 17
+    },
+    {
+      "taskId": "qgpt4_0b2f1d21",
+      "metrics": {
+        "f1": 0.0032776138970829235,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event happened first, the purchase of the coffee maker or the malfunction of the stand mixer?",
+        "expected": "The malfunction of the stand mixer",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_c4e5d969_1",
+          "answer_c4e5d969_2"
+        ],
+        "recalled_length": 17766
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qf0853d11",
+      "metrics": {
+        "f1": 0.002768804799261652,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days had passed between the 'Walk for Hunger' event and the 'Coastal Cleanup' event?",
+        "expected": "14 days. 8 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_932ea3bf_2",
+          "answer_932ea3bf_1"
+        ],
+        "recalled_length": 27001
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_6ed717ea",
+      "metrics": {
+        "f1": 0.0020135917442738486,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which item did I purchase first, the dog bed for Max or the training pads for Luna?",
+        "expected": "Training pads for Luna",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d50a8a33_2",
+          "answer_d50a8a33_1"
+        ],
+        "recalled_length": 22759
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qgpt4_70e84552",
+      "metrics": {
+        "f1": 0.0020754064337599448,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "Which task did I complete first, fixing the fence or trimming the goats' hooves?",
+        "expected": "Fixing the fence",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b3070ec4_1",
+          "answer_b3070ec4_2"
+        ],
+        "recalled_length": 16363
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qa3838d2b",
+      "metrics": {
+        "f1": 0.00018793459875963165,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many charity events did I participate in before the 'Run for the Cure' event?",
+        "expected": "4",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 6,
+        "answer_session_ids": [
+          "answer_4ffa04a2_1",
+          "answer_4ffa04a2_6",
+          "answer_4ffa04a2_5",
+          "answer_4ffa04a2_4",
+          "answer_4ffa04a2_2",
+          "answer_4ffa04a2_3"
+        ],
+        "recalled_length": 64854
+      },
+      "latencyMs": 28
+    },
+    {
+      "taskId": "qgpt4_93159ced",
+      "metrics": {
+        "f1": 0.0037271710771524416,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long have I been working before I started my current job at NovaTech?",
+        "expected": "4 years and 9 months",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e5131a1b_1",
+          "answer_e5131a1b_2"
+        ],
+        "recalled_length": 16526
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qgpt4_2d58bcd6",
+      "metrics": {
+        "f1": 0.0018678496381041327,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?",
+        "expected": "'The Hate U Give'",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3e11e0ae_2",
+          "answer_3e11e0ae_1"
+        ],
+        "recalled_length": 25467
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_65aabe59",
+      "metrics": {
+        "f1": 0.0010007505629221916,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which device did I set up first, the smart thermostat or the mesh network system?",
+        "expected": "Smart thermostat",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_30dfe889_2",
+          "answer_30dfe889_1"
+        ],
+        "recalled_length": 22817
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "q982b5123",
+      "metrics": {
+        "f1": 0.001019367991845056,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many months ago did I book the Airbnb in San Francisco?",
+        "expected": "Five months ago",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_ab603dd5_2",
+          "answer_ab603dd5_1"
+        ],
+        "recalled_length": 22332
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qb9cfe692",
+      "metrics": {
+        "f1": 0.0013565453312231516,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long did I take to finish 'The Seven Husbands of Evelyn Hugo' and 'The Nightingale' combined?",
+        "expected": "5.5 weeks",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_5e3bb940_1",
+          "answer_5e3bb940_3",
+          "answer_5e3bb940_2"
+        ],
+        "recalled_length": 25312
+      },
+      "latencyMs": 11
+    },
+    {
+      "taskId": "qgpt4_4edbafa2",
+      "metrics": {
+        "f1": 0.0008916629514043692,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was the date on which I attended the first BBQ event in June?",
+        "expected": "June 3rd",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_0a00c163_1",
+          "answer_0a00c163_2"
+        ],
+        "recalled_length": 26072
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qc8090214",
+      "metrics": {
+        "f1": 0.00432744320230797,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days before I bought the iPhone 13 Pro did I attend the Holiday Market?",
+        "expected": "7 days. 8 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_70dc7d08_1",
+          "answer_70dc7d08_2"
+        ],
+        "recalled_length": 15496
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_483dd43c",
+      "metrics": {
+        "f1": 0.0013824884792626728,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which show did I start watching first, 'The Crown' or 'Game of Thrones'?",
+        "expected": "'Game of Thrones'",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_fb793c87_2",
+          "answer_fb793c87_1"
+        ],
+        "recalled_length": 25745
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qe4e14d04",
+      "metrics": {
+        "f1": 0.0005005005005005004,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long had I been a member of 'Book Lovers Unite' when I attended the meetup?",
+        "expected": "Two weeks",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_cf425855_2",
+          "answer_cf425855_1"
+        ],
+        "recalled_length": 24179
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qc9f37c46",
+      "metrics": {
+        "f1": 0.001140575990875392,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long had I been watching stand-up comedy specials regularly when I attended the open mic night at the local comedy club?",
+        "expected": "2 months",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_cdba3d9f_1",
+          "answer_cdba3d9f_2"
+        ],
+        "recalled_length": 20709
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qgpt4_2c50253f",
+      "metrics": {
+        "f1": 0.0010251153254741158,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What time do I wake up on Tuesdays and Thursdays?",
+        "expected": "6:45 AM",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_9af4e346_1",
+          "answer_9af4e346_2"
+        ],
+        "recalled_length": 22992
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qdcfa8644",
+      "metrics": {
+        "f1": 0.0036822724881641236,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days had passed since I bought my Adidas running shoes when I realized one of the shoelaces on my old Converse sneakers had broken?",
+        "expected": "14 days. 15 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_5e3eeb12_1",
+          "answer_5e3eeb12_2"
+        ],
+        "recalled_length": 21729
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qgpt4_b4a80587",
+      "metrics": {
+        "f1": 0.003445305770887166,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event happened first, the road trip to the coast or the arrival of the new prime lens?",
+        "expected": "The arrival of the new prime lens",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b9d9150e_2",
+          "answer_b9d9150e_1"
+        ],
+        "recalled_length": 19795
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qgpt4_9a159967",
+      "metrics": {
+        "f1": 0.0010860711376595167,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which airline did I fly with the most in March and April?",
+        "expected": "United Airlines",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_8a42fedf_1",
+          "answer_8a42fedf_3",
+          "answer_8a42fedf_2"
+        ],
+        "recalled_length": 21592
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qcc6d1ec1",
+      "metrics": {
+        "f1": 0.0005145356315924877,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long had I been bird watching when I attended the bird watching workshop?",
+        "expected": "Two months",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_be73098b_1",
+          "answer_be73098b_2"
+        ],
+        "recalled_length": 23076
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_8c8961ae",
+      "metrics": {
+        "f1": 0.0023272050267628573,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which trip did I take first, the one to Europe with family or the solo trip to Thailand?",
+        "expected": "The solo trip to Thailand",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_72d9aa58_2",
+          "answer_72d9aa58_1"
+        ],
+        "recalled_length": 25340
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_d9af6064",
+      "metrics": {
+        "f1": 0.0008707009142359599,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which device did I set up first, the smart thermostat or the new router?",
+        "expected": "new router",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_da704e79_1",
+          "answer_da704e79_2"
+        ],
+        "recalled_length": 27393
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_7de946e7",
+      "metrics": {
+        "f1": 0.0011239112110143297,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which health issue did I deal with first, the persistent cough or the skin tag removal?",
+        "expected": "Persistent cough",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_6a78e959_1",
+          "answer_6a78e959_2"
+        ],
+        "recalled_length": 21017
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qd01c6aa8",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How old was I when I moved to the United States?",
+        "expected": "27",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_991d55e5_1",
+          "answer_991d55e5_2"
+        ],
+        "recalled_length": 23790
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q993da5e2",
+      "metrics": {
+        "f1": 0.0041025641025641026,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long had I been using the new area rug when I rearranged my living room furniture?",
+        "expected": "One week. Answers ranging from 7 days to 10 days are also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_54f0d6f9_2",
+          "answer_54f0d6f9_1"
+        ],
+        "recalled_length": 16934
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qa3045048",
+      "metrics": {
+        "f1": 0.0043343653250774,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days before my best friend's birthday party did I order her gift?",
+        "expected": "7 days. 8 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_016f6bd4_1",
+          "answer_016f6bd4_2"
+        ],
+        "recalled_length": 19013
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_d31cdae3",
+      "metrics": {
+        "f1": 0.00440771349862259,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which trip did the narrator take first, the solo trip to Europe or the family road trip across the American Southwest?",
+        "expected": "The family road trip across the American Southwest",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8464304d_1",
+          "answer_8464304d_2"
+        ],
+        "recalled_length": 20761
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_cd90e484",
+      "metrics": {
+        "f1": 0.0006174745291756714,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long did I use my new binoculars before I saw the American goldfinches returning to the area?",
+        "expected": "Two weeks",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_aa930b56_2",
+          "answer_aa930b56_1"
+        ],
+        "recalled_length": 19233
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_88806d6e",
+      "metrics": {
+        "f1": 0.0006565988181221274,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Who did I meet first, Mark and Sarah or Tom?",
+        "expected": "Tom",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e60a93ff_2",
+          "answer_e60a93ff_1"
+        ],
+        "recalled_length": 17328
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qgpt4_4cd9eba1",
+      "metrics": {
+        "f1": 0.001171989452094931,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many weeks have I been accepted into the exchange program when I started attending the pre-departure orientation sessions?",
+        "expected": "one week",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_5fcca8bc_2",
+          "answer_5fcca8bc_1"
+        ],
+        "recalled_length": 21357
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_93f6379c",
+      "metrics": {
+        "f1": 0.0009438414346389806,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which group did I join first, 'Page Turners' or 'Marketing Professionals'?",
+        "expected": "Page Turners",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_544fe66c_2",
+          "answer_544fe66c_1",
+          "answer_544fe66c_3"
+        ],
+        "recalled_length": 26808
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qb29f3365",
+      "metrics": {
+        "f1": 0.001155067860236789,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long had I been taking guitar lessons when I bought the new guitar amp?",
+        "expected": "Four weeks",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_436d4309_1",
+          "answer_436d4309_2"
+        ],
+        "recalled_length": 20274
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_2f56ae70",
+      "metrics": {
+        "f1": 0.0005664117813650524,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which streaming service did I start using most recently?",
+        "expected": "Disney+",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_7a36e820_2",
+          "answer_7a36e820_1",
+          "answer_7a36e820_3"
+        ],
+        "recalled_length": 20991
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q6613b389",
+      "metrics": {
+        "f1": 0.0003637686431429611,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many months before my anniversary did Rachel get engaged?",
+        "expected": "2",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_aaf71ce2_2",
+          "answer_aaf71ce2_1",
+          "answer_aaf71ce2_3"
+        ],
+        "recalled_length": 32409
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qgpt4_78cf46a3",
+      "metrics": {
+        "f1": 0.002357795461243737,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event happened first, the narrator losing their phone charger or the narrator receiving their new phone case?",
+        "expected": "Receiving the new phone case",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_5a78688d_2",
+          "answer_5a78688d_1"
+        ],
+        "recalled_length": 19441
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_0a05b494",
+      "metrics": {
+        "f1": 0.004904966278356835,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Who did I meet first, the woman selling jam at the farmer's market or the tourist from Australia?",
+        "expected": "the woman selling jam at the farmer's market",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a68db5db_2",
+          "answer_a68db5db_1"
+        ],
+        "recalled_length": 19058
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_1a1dc16d",
+      "metrics": {
+        "f1": 0.0025864856126737797,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "Which event happened first, the meeting with Rachel or the pride parade?",
+        "expected": "The meeting with Rachel",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_faad7d7a_2",
+          "answer_faad7d7a_1"
+        ],
+        "recalled_length": 19262
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_2f584639",
+      "metrics": {
+        "f1": 0.002818886539816773,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which gift did I buy first, the necklace for my sister or the photo album for my mom?",
+        "expected": "the photo album for my mom",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_11a8f823_2",
+          "answer_11a8f823_1"
+        ],
+        "recalled_length": 24224
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_213fd887",
+      "metrics": {
+        "f1": 0.0009883864591055103,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event did I participate in first, the volleyball league or the charity 5K run to raise money for a local children's hospital?",
+        "expected": "volleyball league",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_53582e7e_1",
+          "answer_53582e7e_2"
+        ],
+        "recalled_length": 24034
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qgpt4_5438fa52",
+      "metrics": {
+        "f1": 0.0014049877063575693,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event happened first, my attendance at a cultural festival or the start of my Spanish classes?",
+        "expected": "Spanish classes",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b10f3828_2",
+          "answer_b10f3828_1"
+        ],
+        "recalled_length": 17648
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_c27434e8",
+      "metrics": {
+        "f1": 0.0021973192704900025,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which project did I start first, the Ferrari model or the Japanese Zero fighter plane model?",
+        "expected": "Japanese Zero fighter plane model",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d8e33f5c_1",
+          "answer_d8e33f5c_2"
+        ],
+        "recalled_length": 26288
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_fe651585",
+      "metrics": {
+        "f1": 0.0007648183556405354,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Who became a parent first, Rachel or Alex?",
+        "expected": "Alex",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_65600ff6_1",
+          "answer_65600ff6_2"
+        ],
+        "recalled_length": 15410
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q8c18457d",
+      "metrics": {
+        "f1": 0.005102040816326531,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days had passed between the day I bought a gift for my brother's graduation ceremony and the day I bought a birthday gift for my best friend?",
+        "expected": "7 days. 8 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_124f5dc3_2",
+          "answer_124f5dc3_1"
+        ],
+        "recalled_length": 17778
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qgpt4_70e84552_abs",
+      "metrics": {
+        "f1": 0.009286618826509076,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "Which task did I complete first, fixing the fence or purchasing three cows from Peter?",
+        "expected": "The information provided is not enough. You mentioned fixing the fence but did not mention purchasing cows from Peter.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b3070ec4_abs_1",
+          "answer_b3070ec4_abs_2"
+        ],
+        "recalled_length": 13771
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_93159ced_abs",
+      "metrics": {
+        "f1": 0.00921234454168586,
+        "contains_answer": 0,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "How long have I been working before I started my current job at Google?",
+        "expected": "The information provided is not enough. From the information provided, You haven't started working at Google yet.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e5131a1b_abs_2",
+          "answer_e5131a1b_abs_1"
+        ],
+        "recalled_length": 13282
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q982b5123_abs",
+      "metrics": {
+        "f1": 0.006508600650860064,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "When did I book the Airbnb in Sacramento?",
+        "expected": "The information provided is not enough. You only mentioned booking Airbnb in San Francisco.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_ab603dd5_abs_1",
+          "answer_ab603dd5_abs_2"
+        ],
+        "recalled_length": 12127
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qc8090214_abs",
+      "metrics": {
+        "f1": 0.012588512981904013,
+        "contains_answer": 0,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "How many days before I bought my iPad did I attend the Holiday Market?",
+        "expected": "The information provided is not enough. You mentioned getting the iPhone 13 Pro and attending the market, but you did not mention buying an iPad.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_70dc7d08_abs_2",
+          "answer_70dc7d08_abs_1"
+        ],
+        "recalled_length": 14131
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qgpt4_c27434e8_abs",
+      "metrics": {
+        "f1": 0.003977900552486187,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which project did I start first, the Ferrari model or the Porsche 991 Turbo S model?",
+        "expected": "The information provided is not enough. You did not mention starting the Porsche 991 Turbo S model.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d8e33f5c_abs_1",
+          "answer_d8e33f5c_abs_2"
+        ],
+        "recalled_length": 26038
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_fe651585_abs",
+      "metrics": {
+        "f1": 0.010856921287320668,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Who became a parent first, Tom or Alex?",
+        "expected": "The information provided is not enough. You mentioned Alex becoming a parent in January, but you didn't mention anything about Tom.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_65600ff6_abs_2",
+          "answer_65600ff6_abs_1"
+        ],
+        "recalled_length": 15111
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q0a995998",
+      "metrics": {
+        "f1": 0.0003456619426201175,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many items of clothing do I need to pick up or return from a store?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_afa9873b_2",
+          "answer_afa9873b_3",
+          "answer_afa9873b_1"
+        ],
+        "recalled_length": 31979
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "q6d550036",
+      "metrics": {
+        "f1": 0.0005120327700972862,
+        "contains_answer": 1,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "How many projects have I led or am currently leading?",
+        "expected": 2,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_ec904b3c_4",
+          "answer_ec904b3c_2",
+          "answer_ec904b3c_1",
+          "answer_ec904b3c_3"
+        ],
+        "recalled_length": 25189
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "qgpt4_59c863d7",
+      "metrics": {
+        "f1": 0.010798593671521847,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many model kits have I worked on or bought?",
+        "expected": "I have worked on or bought five model kits. The scales of the models are: Revell F-15 Eagle (scale not mentioned), Tamiya 1/48 scale Spitfire Mk.V, 1/16 scale German Tiger I tank, 1/72 scale B-29 bomber, and 1/24 scale '69 Camaro.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_593bdffd_1",
+          "answer_593bdffd_2",
+          "answer_593bdffd_3",
+          "answer_593bdffd_4"
+        ],
+        "recalled_length": 45302
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "qb5ef892d",
+      "metrics": {
+        "f1": 0.0010222335803731154,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did I spend on camping trips in the United States this year?",
+        "expected": "8 days.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_a8b4290f_2",
+          "answer_a8b4290f_3",
+          "answer_a8b4290f_1"
+        ],
+        "recalled_length": 23833
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qe831120c",
+      "metrics": {
+        "f1": 0.0015552099533437016,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?",
+        "expected": "3.5 weeks",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_86c505e7_1",
+          "answer_86c505e7_2"
+        ],
+        "recalled_length": 21444
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q3a704032",
+      "metrics": {
+        "f1": 0.00037586919751926334,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many plants did I acquire in the last month?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_c2204106_2",
+          "answer_c2204106_3",
+          "answer_c2204106_1"
+        ],
+        "recalled_length": 31196
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qgpt4_d84a3211",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much total money have I spent on bike-related expenses since the start of the year?",
+        "expected": "$185",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_2880eb6c_3",
+          "answer_2880eb6c_1",
+          "answer_2880eb6c_4",
+          "answer_2880eb6c_2"
+        ],
+        "recalled_length": 46868
+      },
+      "latencyMs": 17
+    },
+    {
+      "taskId": "qaae3761f",
+      "metrics": {
+        "f1": 0.0051403716884143935,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many hours in total did I spend driving to my three road trip destinations combined?",
+        "expected": "15 hours for getting to the three destinations (or 30 hours for the round trip)",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_526354c8_1",
+          "answer_526354c8_2",
+          "answer_526354c8_3"
+        ],
+        "recalled_length": 29691
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "qgpt4_f2262a51",
+      "metrics": {
+        "f1": 0.012549914432401598,
+        "contains_answer": 0,
+        "search_hits": 0
+      },
+      "details": {
+        "question": "How many different doctors did I visit?",
+        "expected": "I visited three different doctors: a primary care physician, an ENT specialist, and a dermatologist.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_55a6940c_3",
+          "answer_55a6940c_1",
+          "answer_55a6940c_2"
+        ],
+        "recalled_length": 10453
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qdd2973ad",
+      "metrics": {
+        "f1": 0.0011068068622025456,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What time did I go to bed on the day before I had a doctor's appointment?",
+        "expected": "2 AM",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_f9de4602_1",
+          "answer_f9de4602_2"
+        ],
+        "recalled_length": 20591
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qc4a1ceb8",
+      "metrics": {
+        "f1": 0.0002904443799012489,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different types of citrus fruits have I used in my cocktail recipes?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_56d02cab_3",
+          "answer_56d02cab_2",
+          "answer_56d02cab_1",
+          "answer_56d02cab_4"
+        ],
+        "recalled_length": 40661
+      },
+      "latencyMs": 12
+    },
+    {
+      "taskId": "qgpt4_a56e767c",
+      "metrics": {
+        "f1": 0.0022605255721955355,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "How many movie festivals that I attended?",
+        "expected": "I attended four movie festivals.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_cf9e3940_1",
+          "answer_cf9e3940_2",
+          "answer_cf9e3940_3"
+        ],
+        "recalled_length": 21849
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q6cb6f249",
+      "metrics": {
+        "f1": 0.0006253908692933084,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did I take social media breaks in total?",
+        "expected": "17 days",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a4204937_1",
+          "answer_a4204937_2"
+        ],
+        "recalled_length": 18234
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q46a3abf7",
+      "metrics": {
+        "f1": 0.00037764350453172205,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many tanks do I currently have, including the one I set up for my friend's kid?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_c65042d7_2",
+          "answer_c65042d7_1",
+          "answer_c65042d7_3"
+        ],
+        "recalled_length": 31435
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "q36b9f61e",
+      "metrics": {
+        "f1": 0.0007392348918868971,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What is the total amount I spent on luxury items in the past few months?",
+        "expected": "$2,500",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_ef74281f_2",
+          "answer_ef74281f_3",
+          "answer_ef74281f_1"
+        ],
+        "recalled_length": 33101
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "q28dc39ac",
+      "metrics": {
+        "f1": 0.0002099517111064455,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many hours have I spent playing games in total?",
+        "expected": "140 hours",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_8d015d9d_3",
+          "answer_8d015d9d_1",
+          "answer_8d015d9d_2",
+          "answer_8d015d9d_5",
+          "answer_8d015d9d_4"
+        ],
+        "recalled_length": 57677
+      },
+      "latencyMs": 18
+    },
+    {
+      "taskId": "qgpt4_2f8be40d",
+      "metrics": {
+        "f1": 0.008092125739184563,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "How many weddings have I attended in this year?",
+        "expected": "I attended three weddings. The couples were Rachel and Mike, Emily and Sarah, and Jen and Tom.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_e7b0637e_1",
+          "answer_e7b0637e_3",
+          "answer_e7b0637e_2"
+        ],
+        "recalled_length": 19063
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q2e6d26dc",
+      "metrics": {
+        "f1": 0.00031357792411414236,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many babies were born to friends and family members in the last few months?",
+        "expected": 5,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_fa526fc0_3",
+          "answer_fa526fc0_4",
+          "answer_fa526fc0_1",
+          "answer_fa526fc0_2"
+        ],
+        "recalled_length": 36305
+      },
+      "latencyMs": 15
+    },
+    {
+      "taskId": "qgpt4_15e38248",
+      "metrics": {
+        "f1": 0.0004580852038479157,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many pieces of furniture did I buy, assemble, sell, or fix in the past few months?",
+        "expected": "4",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_8858d9dc_3",
+          "answer_8858d9dc_2",
+          "answer_8858d9dc_1",
+          "answer_8858d9dc_4"
+        ],
+        "recalled_length": 25214
+      },
+      "latencyMs": 10
+    },
+    {
+      "taskId": "q88432d0a",
+      "metrics": {
+        "f1": 0.0004763038818766372,
+        "contains_answer": 1,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "How many times did I bake something in the past two weeks?",
+        "expected": 4,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_733e443a_3",
+          "answer_733e443a_1",
+          "answer_733e443a_2",
+          "answer_733e443a_4"
+        ],
+        "recalled_length": 24001
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "q80ec1f4f",
+      "metrics": {
+        "f1": 0.0004786979415988512,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different museums or galleries did I visit in the month of February?",
+        "expected": 2,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_990c8992_3",
+          "answer_990c8992_2",
+          "answer_990c8992_1"
+        ],
+        "recalled_length": 25424
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qd23cf73b",
+      "metrics": {
+        "f1": 0.00031152647975077883,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different cuisines have I learned to cook or tried out in the past few months?",
+        "expected": 4,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_5a0d28f8_4",
+          "answer_5a0d28f8_2",
+          "answer_5a0d28f8_1",
+          "answer_5a0d28f8_3"
+        ],
+        "recalled_length": 37446
+      },
+      "latencyMs": 14
+    },
+    {
+      "taskId": "qgpt4_7fce9456",
+      "metrics": {
+        "f1": 0.018284485076633505,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many properties did I view before making an offer on the townhouse in the Brookside neighborhood?",
+        "expected": "I viewed four properties before making an offer on the townhouse in the Brookside neighborhood. The reasons I didn't make an offer on them were: the kitchen of the bungalow needed serious renovation, the property in Cedar Creek was out of my budget, the noise from the highway was a deal-breaker for the 1-bedroom condo, and my offer on the 2-bedroom condo was rejected due to a higher bid.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_a679a86a_3",
+          "answer_a679a86a_1",
+          "answer_a679a86a_5",
+          "answer_a679a86a_4",
+          "answer_a679a86a_2"
+        ],
+        "recalled_length": 45423
+      },
+      "latencyMs": 18
+    },
+    {
+      "taskId": "qd682f1a2",
+      "metrics": {
+        "f1": 0.00045892611289582373,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different types of food delivery services have I used recently?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_c008e5df_3",
+          "answer_c008e5df_1",
+          "answer_c008e5df_2"
+        ],
+        "recalled_length": 26277
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "q7024f17c",
+      "metrics": {
+        "f1": 0.001168679392286716,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many hours of jogging and yoga did I do last week?",
+        "expected": "0.5 hours",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_a21f3697_3",
+          "answer_a21f3697_2",
+          "answer_a21f3697_1"
+        ],
+        "recalled_length": 29481
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "qgpt4_5501fe77",
+      "metrics": {
+        "f1": 0.0002915026963999417,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which social media platform did I gain the most followers on over the past month?",
+        "expected": "TikTok",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_203bf3fa_2",
+          "answer_203bf3fa_1",
+          "answer_203bf3fa_3"
+        ],
+        "recalled_length": 41921
+      },
+      "latencyMs": 10
+    },
+    {
+      "taskId": "qgpt4_2ba83207",
+      "metrics": {
+        "f1": 0.0006399999999999999,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which grocery store did I spend the most money at in the past month?",
+        "expected": "Thrive Market",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_6a3b5c13_2",
+          "answer_6a3b5c13_1",
+          "answer_6a3b5c13_3",
+          "answer_6a3b5c13_4"
+        ],
+        "recalled_length": 36518
+      },
+      "latencyMs": 13
+    },
+    {
+      "taskId": "q2318644b",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much more did I spend on accommodations per night in Hawaii compared to Tokyo?",
+        "expected": "$270",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_eaa8e3ef_1",
+          "answer_eaa8e3ef_2"
+        ],
+        "recalled_length": 15825
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q2ce6a0f2",
+      "metrics": {
+        "f1": 0.00027643400138217003,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different art-related events did I attend in the past month?",
+        "expected": 4,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_901a6763_3",
+          "answer_901a6763_4",
+          "answer_901a6763_1",
+          "answer_901a6763_2"
+        ],
+        "recalled_length": 43655
+      },
+      "latencyMs": 15
+    },
+    {
+      "taskId": "qgpt4_d12ceb0e",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "What is the average age of me, my parents, and my grandparents?",
+        "expected": "59.6",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_2504635e_1",
+          "answer_2504635e_2",
+          "answer_2504635e_3"
+        ],
+        "recalled_length": 20320
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q00ca467f",
+      "metrics": {
+        "f1": 0.0006140620202640466,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many doctor's appointments did I go to in March?",
+        "expected": 2,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_39900a0a_1",
+          "answer_39900a0a_2",
+          "answer_39900a0a_3"
+        ],
+        "recalled_length": 19844
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qb3c15d39",
+      "metrics": {
+        "f1": 0.004362729822374571,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did it take for me to receive the new remote shutter release after I ordered it?",
+        "expected": "5 days. 6 days (including the last day) is also acceptable.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_05d808e6_2",
+          "answer_05d808e6_1"
+        ],
+        "recalled_length": 18285
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qgpt4_31ff4165",
+      "metrics": {
+        "f1": 0.0002370510845087116,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many health-related devices do I use in a day?",
+        "expected": "4",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_02b63d04_2",
+          "answer_02b63d04_1",
+          "answer_02b63d04_5",
+          "answer_02b63d04_3",
+          "answer_02b63d04_4"
+        ],
+        "recalled_length": 50253
+      },
+      "latencyMs": 20
+    },
+    {
+      "taskId": "qeeda8a6d",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many fish are there in total in both of my aquariums?",
+        "expected": 17,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3e5fea0e_1",
+          "answer_3e5fea0e_2"
+        ],
+        "recalled_length": 23204
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q2788b940",
+      "metrics": {
+        "f1": 0.00027620494406849883,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many fitness classes do I attend in a typical week?",
+        "expected": 5,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_8f6b938d_4",
+          "answer_8f6b938d_1",
+          "answer_8f6b938d_3",
+          "answer_8f6b938d_2"
+        ],
+        "recalled_length": 43291
+      },
+      "latencyMs": 11
+    },
+    {
+      "taskId": "q60bf93ed",
+      "metrics": {
+        "f1": 0.005819592628516003,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did it take for my laptop backpack to arrive after I bought it?",
+        "expected": "5 days. 6 days (including the last day) is also acceptable.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e0956e0a_1",
+          "answer_e0956e0a_2"
+        ],
+        "recalled_length": 17851
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q9d25d4e0",
+      "metrics": {
+        "f1": 0.00034435261707988976,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many pieces of jewelry did I acquire in the last two months?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_fcff2dc4_1",
+          "answer_fcff2dc4_3",
+          "answer_fcff2dc4_2"
+        ],
+        "recalled_length": 34201
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "q129d1232",
+      "metrics": {
+        "f1": 0.0004978839930296241,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much money did I raise in total through all the charity events I participated in?",
+        "expected": "$5,850",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_1de862d6_1",
+          "answer_1de862d6_2",
+          "answer_1de862d6_3"
+        ],
+        "recalled_length": 24441
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "q60472f9c",
+      "metrics": {
+        "f1": 0.0003761519653940192,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many projects have I been working on simultaneously, excluding my thesis?",
+        "expected": 2,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_e7fe8c8b_2",
+          "answer_e7fe8c8b_1",
+          "answer_e7fe8c8b_3"
+        ],
+        "recalled_length": 33700
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "qgpt4_194be4b3",
+      "metrics": {
+        "f1": 0.016399694889397402,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "How many musical instruments do I currently own?",
+        "expected": "I currently own 4 musical instruments. I've had the Fender Stratocaster electric guitar for 5 years, the Yamaha FG800 acoustic guitar for 8 years, the 5-piece Pearl Export drum set for an unspecified amount of time, and the Korg B1 piano for 3 years.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_3826dc55_5",
+          "answer_3826dc55_3",
+          "answer_3826dc55_2",
+          "answer_3826dc55_4",
+          "answer_3826dc55_1"
+        ],
+        "recalled_length": 31082
+      },
+      "latencyMs": 12
+    },
+    {
+      "taskId": "qa9f6b44c",
+      "metrics": {
+        "f1": 0.0004914004914004913,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many bikes did I service or plan to service in March?",
+        "expected": 2,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_cc021f81_3",
+          "answer_cc021f81_2",
+          "answer_cc021f81_1"
+        ],
+        "recalled_length": 23467
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qd851d5ba",
+      "metrics": {
+        "f1": 0.00025113008538422905,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much money did I raise for charity in total?",
+        "expected": "$3,750",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_5cdf9bd2_4",
+          "answer_5cdf9bd2_1",
+          "answer_5cdf9bd2_2",
+          "answer_5cdf9bd2_3"
+        ],
+        "recalled_length": 47904
+      },
+      "latencyMs": 12
+    },
+    {
+      "taskId": "q5a7937c8",
+      "metrics": {
+        "f1": 0.000385579332947754,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did I spend participating in faith-related activities in December?",
+        "expected": "3 days.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_4cef8a3c_3",
+          "answer_4cef8a3c_2",
+          "answer_4cef8a3c_1"
+        ],
+        "recalled_length": 32900
+      },
+      "latencyMs": 10
+    },
+    {
+      "taskId": "qgpt4_ab202e7f",
+      "metrics": {
+        "f1": 0.006006006006006006,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many kitchen items did I replace or fix?",
+        "expected": "I replaced or fixed five items: the kitchen faucet, the kitchen mat, the toaster, the coffee maker, and the kitchen shelves.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_728deb4d_3",
+          "answer_728deb4d_1",
+          "answer_728deb4d_2",
+          "answer_728deb4d_5",
+          "answer_728deb4d_4"
+        ],
+        "recalled_length": 38061
+      },
+      "latencyMs": 13
+    },
+    {
+      "taskId": "qgpt4_e05b82a6",
+      "metrics": {
+        "f1": 0.000856898029134533,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many times did I ride rollercoasters across all the events I attended from July to October?",
+        "expected": "10 times",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_6350aa4f_4",
+          "answer_6350aa4f_3",
+          "answer_6350aa4f_2",
+          "answer_6350aa4f_1"
+        ],
+        "recalled_length": 27952
+      },
+      "latencyMs": 12
+    },
+    {
+      "taskId": "qgpt4_731e37d7",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much total money did I spend on attending workshops in the last four months?",
+        "expected": "$720",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_826d51da_3",
+          "answer_826d51da_4",
+          "answer_826d51da_2",
+          "answer_826d51da_1"
+        ],
+        "recalled_length": 40743
+      },
+      "latencyMs": 12
+    },
+    {
+      "taskId": "qedced276",
+      "metrics": {
+        "f1": 0.0013917884481558804,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did I spend in total traveling in Hawaii and in New York City?",
+        "expected": "15 days",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_60e8941a_2",
+          "answer_60e8941a_1"
+        ],
+        "recalled_length": 17264
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q10d9b85a",
+      "metrics": {
+        "f1": 0.0008319467554076539,
+        "contains_answer": 0,
+        "search_hits": 7
+      },
+      "details": {
+        "question": "How many days did I spend attending workshops, lectures, and conferences in April?",
+        "expected": "3 days",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e0585cb5_1",
+          "answer_e0585cb5_2"
+        ],
+        "recalled_length": 16273
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qe3038f8c",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many rare items do I have in total?",
+        "expected": 99,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_b6018747_4",
+          "answer_b6018747_2",
+          "answer_b6018747_1",
+          "answer_b6018747_3"
+        ],
+        "recalled_length": 48108
+      },
+      "latencyMs": 10
+    },
+    {
+      "taskId": "q2b8f3739",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What is the total amount of money I earned from selling my products at the markets?",
+        "expected": "$495",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_23759615_2",
+          "answer_23759615_1",
+          "answer_23759615_3"
+        ],
+        "recalled_length": 29357
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "q1a8a66a6",
+      "metrics": {
+        "f1": 0.0003957261574990107,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many magazine subscriptions do I currently have?",
+        "expected": 2,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_2bd23659_3",
+          "answer_2bd23659_1",
+          "answer_2bd23659_2",
+          "answer_2bd23659_4"
+        ],
+        "recalled_length": 30791
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "qc2ac3c61",
+      "metrics": {
+        "f1": 0.0005901445854234287,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many online courses have I completed in total?",
+        "expected": 5,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_923c0221_1",
+          "answer_923c0221_2"
+        ],
+        "recalled_length": 22878
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qbf659f65",
+      "metrics": {
+        "f1": 0.0003307972213033411,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many music albums or EPs have I purchased or downloaded?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_7726e7e9_2",
+          "answer_7726e7e9_1",
+          "answer_7726e7e9_3"
+        ],
+        "recalled_length": 36269
+      },
+      "latencyMs": 8
+    },
+    {
+      "taskId": "qgpt4_372c3eed",
+      "metrics": {
+        "f1": 0.00038639876352395666,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many years in total did I spend in formal education from high school to the completion of my Bachelor's degree?",
+        "expected": "10 years",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_35c5419d_1",
+          "answer_35c5419d_2",
+          "answer_35c5419d_3"
+        ],
+        "recalled_length": 33874
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "qgpt4_2f91af09",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many total pieces of writing have I completed since I started writing again three weeks ago, including short stories, poems, and pieces for the writing challenge?",
+        "expected": "23",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_669318cf_2",
+          "answer_669318cf_3",
+          "answer_669318cf_1"
+        ],
+        "recalled_length": 43657
+      },
+      "latencyMs": 16
+    },
+    {
+      "taskId": "q81507db6",
+      "metrics": {
+        "f1": 0.0002938151902453357,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many graduation ceremonies have I attended in the past three months?",
+        "expected": 3,
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 5,
+        "answer_session_ids": [
+          "answer_da3c1266_3",
+          "answer_da3c1266_5",
+          "answer_da3c1266_1",
+          "answer_da3c1266_2",
+          "answer_da3c1266_4"
+        ],
+        "recalled_length": 43299
+      },
+      "latencyMs": 16
+    },
+    {
+      "taskId": "q88432d0a_abs",
+      "metrics": {
+        "f1": 0.003673094582185491,
+        "contains_answer": 0,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "How many times did I bake egg tarts in the past two weeks?",
+        "expected": "The information provided is not enough. You did not mention baking egg tarts.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 4,
+        "answer_session_ids": [
+          "answer_733e443a_abs_1",
+          "answer_733e443a_abs_2",
+          "answer_733e443a_abs_4",
+          "answer_733e443a_abs_3"
+        ],
+        "recalled_length": 24834
+      },
+      "latencyMs": 11
+    },
+    {
+      "taskId": "q80ec1f4f_abs",
+      "metrics": {
+        "f1": 0.003585147247119078,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different museums or galleries did I visit in December?",
+        "expected": "0. You did not mention visitng any museum in December",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_990c8992_abs_3",
+          "answer_990c8992_abs_2",
+          "answer_990c8992_abs_1"
+        ],
+        "recalled_length": 23759
+      },
+      "latencyMs": 7
+    },
+    {
+      "taskId": "qeeda8a6d_abs",
+      "metrics": {
+        "f1": 0.006189002618424185,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many fish are there in my 30-gallon tank?",
+        "expected": "The information provided is not enough. You did not mention that you have a 30-gallon tank.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3e5fea0e_abs_2",
+          "answer_3e5fea0e_abs_1"
+        ],
+        "recalled_length": 24543
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q60bf93ed_abs",
+      "metrics": {
+        "f1": 0.006269592476489029,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "How many days did it take for my iPad case to arrive after I bought it?",
+        "expected": "The information provided is not enough. You did not mention buying an iPad case.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e0956e0a_abs_2",
+          "answer_e0956e0a_abs_1"
+        ],
+        "recalled_length": 14862
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qedced276_abs",
+      "metrics": {
+        "f1": 0.011026878015161959,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days did I spend in total traveling in Hawaii and in Seattle?",
+        "expected": "The information provided is not enough. You mentioned traveling for 10 days in Hawaii but did not mention abything about the trip to Seattle.",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_60e8941a_abs_1",
+          "answer_60e8941a_abs_2"
+        ],
+        "recalled_length": 17283
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qgpt4_372c3eed_abs",
+      "metrics": {
+        "f1": 0.014342965619067708,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many years in total did I spend in formal education from high school to the completion of my Master's degree?",
+        "expected": "The information provided is not enough. You mentioned 4 years in high school (2010-2014), 2 years at PCC (2014-2016), and 4 years at UCLA (2016-2020). But you didn't mention the number of years you spend getting the Master's degree",
+        "question_type": "multi-session",
+        "ability_category": "multi_session_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_35c5419d_abs_3",
+          "answer_35c5419d_abs_1",
+          "answer_35c5419d_abs_2"
+        ],
+        "recalled_length": 30886
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "q6a1eabeb",
+      "metrics": {
+        "f1": 0.004746366063482646,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was my personal best time in the charity 5K run?",
+        "expected": "25 minutes and 50 seconds (or 25:50)",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a25d4a91_1",
+          "answer_a25d4a91_2"
+        ],
+        "recalled_length": 20029
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q6aeb4375",
+      "metrics": {
+        "f1": 0.0007207207207207206,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many Korean restaurants have I tried in my city?",
+        "expected": "four",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3f9693b7_1",
+          "answer_3f9693b7_2"
+        ],
+        "recalled_length": 16288
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q830ce83f",
+      "metrics": {
+        "f1": 0.0021563342318059297,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where did Rachel move to after her recent relocation?",
+        "expected": "the suburbs",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_0b1a0942_1",
+          "answer_0b1a0942_2"
+        ],
+        "recalled_length": 10957
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q852ce960",
+      "metrics": {
+        "f1": 0.0018527095877721165,
+        "contains_answer": 1,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "What was the amount I was pre-approved for when I got my mortgage from Wells Fargo?",
+        "expected": "$400,000",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3a6f1e82_1",
+          "answer_3a6f1e82_2"
+        ],
+        "recalled_length": 12315
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q945e3d21",
+      "metrics": {
+        "f1": 0.0022130013831258644,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How often do I attend yoga classes to help with my anxiety?",
+        "expected": "Three times a week.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_6a4f8626_1",
+          "answer_6a4f8626_2"
+        ],
+        "recalled_length": 21661
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qd7c942c3",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Is my mom using the same grocery list method as me?",
+        "expected": "Yes.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_eecb10d9_1",
+          "answer_eecb10d9_2"
+        ],
+        "recalled_length": 14668
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q71315a70",
+      "metrics": {
+        "f1": 0.0014330069262001434,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many hours have I spent on my abstract ocean sculpture?",
+        "expected": "10-12 hours",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_c44b9df4_1",
+          "answer_c44b9df4_2"
+        ],
+        "recalled_length": 25638
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q89941a93",
+      "metrics": {
+        "f1": 0.0005396654074473825,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many bikes do I currently own?",
+        "expected": "4",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e1403127_1",
+          "answer_e1403127_2"
+        ],
+        "recalled_length": 21814
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qce6d2d27",
+      "metrics": {
+        "f1": 0.0007160759040458289,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What day of the week do I take a cocktail-making class?",
+        "expected": "Friday",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_73540165_1",
+          "answer_73540165_2"
+        ],
+        "recalled_length": 16140
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q9ea5eabc",
+      "metrics": {
+        "f1": 0.0006062443164595332,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where did I go on my most recent family trip?",
+        "expected": "Paris",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_02e66dec_1",
+          "answer_02e66dec_2"
+        ],
+        "recalled_length": 19829
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q07741c44",
+      "metrics": {
+        "f1": 0.0016483516483516481,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where do I initially keep my old sneakers?",
+        "expected": "under my bed",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_7e9ad7b4_1",
+          "answer_7e9ad7b4_2"
+        ],
+        "recalled_length": 21269
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qa1eacc2a",
+      "metrics": {
+        "f1": 0.0005245213742460005,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many short stories have I written since I started writing regularly?",
+        "expected": "seven",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_0eb23770_1",
+          "answer_0eb23770_2"
+        ],
+        "recalled_length": 22781
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q184da446",
+      "metrics": {
+        "f1": 0.000627549419516787,
+        "contains_answer": 1,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "How many pages of 'A Short History of Nearly Everything' have I read so far?",
+        "expected": "220",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e2f4f947_1",
+          "answer_e2f4f947_2"
+        ],
+        "recalled_length": 20676
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q031748ae",
+      "metrics": {
+        "f1": 0.011988011988011988,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many engineers do I lead when I just started my new role as Senior Software Engineer? How many engineers do I lead now?",
+        "expected": "When you just started your new role as Senior Software Engineer, you led 4 engineers. Now, you lead 5 engineers",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8748f791_1",
+          "answer_8748f791_2"
+        ],
+        "recalled_length": 17563
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q4d6b87c8",
+      "metrics": {
+        "f1": 0.000634719136781974,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many titles are currently on my to-watch list?",
+        "expected": "25",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_766ab8da_1",
+          "answer_766ab8da_2"
+        ],
+        "recalled_length": 18547
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q0f05491a",
+      "metrics": {
+        "f1": 0.0006108735491753207,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many stars do I need to reach the gold level on my Starbucks Rewards app?",
+        "expected": 120,
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d6d2eba8_1",
+          "answer_d6d2eba8_2"
+        ],
+        "recalled_length": 18559
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q08e075c7",
+      "metrics": {
+        "f1": 0.0014119308153900459,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long have I been using my Fitbit Charge 3?",
+        "expected": "9 months",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_cdbe2250_1",
+          "answer_cdbe2250_2"
+        ],
+        "recalled_length": 16132
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qf9e8c073",
+      "metrics": {
+        "f1": 0.0006103143118706134,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many sessions of the bereavement support group did I attend?",
+        "expected": "five",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b191df5b_1",
+          "answer_b191df5b_2"
+        ],
+        "recalled_length": 18789
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q41698283",
+      "metrics": {
+        "f1": 0.0023142791020597086,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What type of camera lens did I purchase most recently?",
+        "expected": "a 70-200mm zoom lens",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_c7ddc051_1",
+          "answer_c7ddc051_2"
+        ],
+        "recalled_length": 25351
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q2698e78f",
+      "metrics": {
+        "f1": 0.0014897579143389199,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How often do I see my therapist, Dr. Smith?",
+        "expected": "every week",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_9282283d_1",
+          "answer_9282283d_2"
+        ],
+        "recalled_length": 16232
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qb6019101",
+      "metrics": {
+        "f1": 0.0007704160246533127,
+        "contains_answer": 1,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "How many MCU films did I watch in the last 3 months?",
+        "expected": "5",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_67074b4b_1",
+          "answer_67074b4b_2"
+        ],
+        "recalled_length": 15017
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q45dc21b6",
+      "metrics": {
+        "f1": 0.0006629101756711965,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many of Emma's recipes have I tried out?",
+        "expected": "3",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_07664d43_1",
+          "answer_07664d43_2"
+        ],
+        "recalled_length": 18628
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q5a4f22c0",
+      "metrics": {
+        "f1": 0.000759301442672741,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What company is Rachel, an old colleague from my previous company, currently working at?",
+        "expected": "TechCorp",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b0f3dfff_1",
+          "answer_b0f3dfff_2"
+        ],
+        "recalled_length": 16858
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q6071bd76",
+      "metrics": {
+        "f1": 0.006449301325689717,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "For the coffee-to-water ratio in my French press, did I switch to more water per tablespoon of coffee, or less?",
+        "expected": "You switched to less water (5 ounces) per tablespoon of coffee.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_4dac77cb_1",
+          "answer_4dac77cb_2"
+        ],
+        "recalled_length": 15886
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qe493bb7c",
+      "metrics": {
+        "f1": 0.0023612750885478157,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where is the painting 'Ethereal Dreams' by Emma Taylor currently hanging?",
+        "expected": "in my bedroom",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_1a374afa_1",
+          "answer_1a374afa_2"
+        ],
+        "recalled_length": 14845
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q618f13b2",
+      "metrics": {
+        "f1": 0.000625,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many times have I worn my new black Converse Chuck Taylor All Star sneakers?",
+        "expected": "six",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_caf5b52e_1",
+          "answer_caf5b52e_2"
+        ],
+        "recalled_length": 18980
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q72e3ee87",
+      "metrics": {
+        "f1": 0.000495785820525533,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many episodes of the Science series have I completed on Crash Course?",
+        "expected": "50",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d7de9a6a_1",
+          "answer_d7de9a6a_2"
+        ],
+        "recalled_length": 24969
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qc4ea545c",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "Do I go to the gym more frequently than I did previously?",
+        "expected": "Yes",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d3bf812b_1",
+          "answer_d3bf812b_2"
+        ],
+        "recalled_length": 9819
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q01493427",
+      "metrics": {
+        "f1": 0.0005630630630630631,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many new postcards have I added to my collection since I started collecting again?",
+        "expected": "25",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a7b44747_1",
+          "answer_a7b44747_2"
+        ],
+        "recalled_length": 22401
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q6a27ffc2",
+      "metrics": {
+        "f1": 0.0005343307507347047,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many videos of Corey Schafer's Python programming series have I completed so far?",
+        "expected": "30",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_77f32504_1",
+          "answer_77f32504_2"
+        ],
+        "recalled_length": 24206
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q2133c1b5",
+      "metrics": {
+        "f1": 0.002154011847065159,
+        "contains_answer": 1,
+        "search_hits": 7
+      },
+      "details": {
+        "question": "How long have I been living in my current apartment in Harajuku?",
+        "expected": "3 months",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_52382508_1",
+          "answer_52382508_2"
+        ],
+        "recalled_length": 11251
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q18bc8abd",
+      "metrics": {
+        "f1": 0.0013866420152530623,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What brand of BBQ sauce am I currently obsessed with?",
+        "expected": "Kansas City Masterpiece",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_fff743f5_1",
+          "answer_fff743f5_2"
+        ],
+        "recalled_length": 24544
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qdb467c8c",
+      "metrics": {
+        "f1": 0.0009992505620784412,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long have my parents been staying with me in the US?",
+        "expected": "nine months",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_611b6e83_1",
+          "answer_611b6e83_2"
+        ],
+        "recalled_length": 24641
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q7a87bd0c",
+      "metrics": {
+        "f1": 0.0013845621322256835,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long have I been sticking to my daily tidying routine?",
+        "expected": "4 weeks",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d08a934d_1",
+          "answer_d08a934d_2"
+        ],
+        "recalled_length": 16270
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qe61a7584",
+      "metrics": {
+        "f1": 0.0011302627860977678,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How long have I had my cat, Luna?",
+        "expected": "9 months",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_f25c32f5_1",
+          "answer_f25c32f5_2"
+        ],
+        "recalled_length": 20689
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q1cea1afa",
+      "metrics": {
+        "f1": 0.00042034468263976466,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many Instagram followers do I currently have?",
+        "expected": "600",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_79c395a9_1",
+          "answer_79c395a9_2"
+        ],
+        "recalled_length": 27984
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qed4ddc30",
+      "metrics": {
+        "f1": 0.0005571030640668524,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many dozen eggs do we currently have stocked up in our refrigerator?",
+        "expected": "20",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_babbaccb_1",
+          "answer_babbaccb_2"
+        ],
+        "recalled_length": 19963
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q8fb83627",
+      "metrics": {
+        "f1": 0.0006633499170812605,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many issues of National Geographic have I finished reading?",
+        "expected": "Five",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_966cecbb_1",
+          "answer_966cecbb_2"
+        ],
+        "recalled_length": 19415
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qb01defab",
+      "metrics": {
+        "f1": 0.0005704506560182545,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Did I finish reading 'The Nightingale' by Kristin Hannah?",
+        "expected": "Yes",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8c0712af_1",
+          "answer_8c0712af_2"
+        ],
+        "recalled_length": 20628
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q22d2cb42",
+      "metrics": {
+        "f1": 0.003598200899550225,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where did I get my guitar serviced?",
+        "expected": "The music shop on Main St.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_bcce0b73_1",
+          "answer_bcce0b73_2"
+        ],
+        "recalled_length": 19016
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q0e4e4c46",
+      "metrics": {
+        "f1": 0.0015521924718665116,
+        "contains_answer": 1,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "What is my current highest score in Ticket to Ride?",
+        "expected": "132 points",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_f2f998c7_1",
+          "answer_f2f998c7_2"
+        ],
+        "recalled_length": 15744
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q4b24c848",
+      "metrics": {
+        "f1": 0.0009601536245799327,
+        "contains_answer": 1,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "How many tops have I bought from H&M so far?",
+        "expected": "five",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_2cec623b_1",
+          "answer_2cec623b_2"
+        ],
+        "recalled_length": 11543
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q7e974930",
+      "metrics": {
+        "f1": 0.0006006006006006006,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much did I earn at the Downtown Farmers Market on my most recent visit?",
+        "expected": "$420",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_c9f5693c_1",
+          "answer_c9f5693c_2"
+        ],
+        "recalled_length": 19505
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q603deb26",
+      "metrics": {
+        "f1": 0.0005549389567147614,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many times have I tried making a Negroni at home since my friend Emma showed me how to make it?",
+        "expected": "10",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8afdebac_1",
+          "answer_8afdebac_2"
+        ],
+        "recalled_length": 19955
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q59524333",
+      "metrics": {
+        "f1": 0.001763150161622098,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What time do I usually go to the gym?",
+        "expected": "6:00 pm",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b28f2c7a_1",
+          "answer_b28f2c7a_2"
+        ],
+        "recalled_length": 19664
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q5831f84d",
+      "metrics": {
+        "f1": 0.0006002400960384153,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many Crash Course videos have I watched in the past few weeks?",
+        "expected": "15",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8d63a897_1",
+          "answer_8d63a897_2"
+        ],
+        "recalled_length": 21474
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qeace081b",
+      "metrics": {
+        "f1": 0.0007173601147776185,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where am I planning to stay for my birthday trip to Hawaii?",
+        "expected": "Oahu",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8a791264_1",
+          "answer_8a791264_2"
+        ],
+        "recalled_length": 16363
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qaffe2881",
+      "metrics": {
+        "f1": 0.0004956629491945477,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many different species of birds have I seen in my local park?",
+        "expected": "32",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_90de9b4d_1",
+          "answer_90de9b4d_2"
+        ],
+        "recalled_length": 23879
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q50635ada",
+      "metrics": {
+        "f1": 0.0011537352177675222,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was my previous frequent flyer status on United Airlines before I got the current status?",
+        "expected": "Premier Silver",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_dcd74827_1",
+          "answer_dcd74827_2"
+        ],
+        "recalled_length": 20257
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "qe66b632c",
+      "metrics": {
+        "f1": 0.0025819777949909633,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was my previous personal best time for the charity 5K run?",
+        "expected": "27 minutes and 45 seconds",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_ac0140ce_1",
+          "answer_ac0140ce_2"
+        ],
+        "recalled_length": 21563
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q0ddfec37",
+      "metrics": {
+        "f1": 0.0007288629737609329,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many autographed baseballs have I added to my collection in the first three months of collection?",
+        "expected": "15",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a22b654d_1",
+          "answer_a22b654d_2"
+        ],
+        "recalled_length": 16953
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qf685340e",
+      "metrics": {
+        "f1": 0.012727798669366502,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How often do I play tennis with my friends at the local park previously? How often do I play now?",
+        "expected": "Previously, you play tennis with your friends at the local park every week (on Sunday). Currently, you play tennis every other week (on Sunday).",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_25df025b_1",
+          "answer_25df025b_2"
+        ],
+        "recalled_length": 19668
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qcc5ded98",
+      "metrics": {
+        "f1": 0.0016997167138810198,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much time do I dedicate to coding exercises each day?",
+        "expected": "about two hours",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a5b68517_1",
+          "answer_a5b68517_2"
+        ],
+        "recalled_length": 21981
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qdfde3500",
+      "metrics": {
+        "f1": 0.0009328358208955224,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What day of the week did I meet with my previous language exchange tutor Juan?",
+        "expected": "Wednesday",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_35d6c0be_1",
+          "answer_35d6c0be_2"
+        ],
+        "recalled_length": 12543
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q69fee5aa",
+      "metrics": {
+        "f1": 0,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many pre-1920 American coins do I have in my collection?",
+        "expected": "38",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_d6028d6e_1",
+          "answer_d6028d6e_2"
+        ],
+        "recalled_length": 24562
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q7401057b",
+      "metrics": {
+        "f1": 0.0004898359049718343,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many free night's stays can I redeem at any Hilton property with my accumulated points?",
+        "expected": "Two",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_94650bfa_1",
+          "answer_94650bfa_2"
+        ],
+        "recalled_length": 24590
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qcf22b7bf",
+      "metrics": {
+        "f1": 0.0010621348911311736,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How much weight have I lost since I started going to the gym consistently?",
+        "expected": "10 pounds",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_ae3a122b_1",
+          "answer_ae3a122b_2"
+        ],
+        "recalled_length": 21991
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qa2f3aa27",
+      "metrics": {
+        "f1": 0.0005523336095001381,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many followers do I have on Instagram now?",
+        "expected": 1300,
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_5126c02d_1",
+          "answer_5126c02d_2"
+        ],
+        "recalled_length": 22667
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qc7dc5443",
+      "metrics": {
+        "f1": 0.0010851871947911015,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What is my current record in the recreational volleyball league?",
+        "expected": "5-2",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_0cdbca92_1",
+          "answer_0cdbca92_2"
+        ],
+        "recalled_length": 22148
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q06db6396",
+      "metrics": {
+        "f1": 0.0006807351940095304,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many projects have I completed since starting painting classes?",
+        "expected": "5",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_da72b1b4_1",
+          "answer_da72b1b4_2"
+        ],
+        "recalled_length": 17551
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q3ba21379",
+      "metrics": {
+        "f1": 0.0021607605877268796,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What type of vehicle model am I currently working on?",
+        "expected": "Ford F-150 pickup truck",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_cd345582_1",
+          "answer_cd345582_2"
+        ],
+        "recalled_length": 27978
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q9bbe84a2",
+      "metrics": {
+        "f1": 0.001137656427758817,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was my previous goal for my Apex Legends level before I updated my goal?",
+        "expected": "level 100",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_c6a0c6c2_1",
+          "answer_c6a0c6c2_2"
+        ],
+        "recalled_length": 21196
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q10e09553",
+      "metrics": {
+        "f1": 0.00062015503875969,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many largemouth bass did I catch with Alex on the earlier fishing trip to Lake Michigan before the 7/22 trip?",
+        "expected": "7",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_67be2c38_1",
+          "answer_67be2c38_2"
+        ],
+        "recalled_length": 19810
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qdad224aa",
+      "metrics": {
+        "f1": 0.0018365472910927456,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What time do I wake up on Saturday mornings?",
+        "expected": "7:30 am",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_4a97ae40_1",
+          "answer_4a97ae40_2"
+        ],
+        "recalled_length": 18462
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "qba61f0b9",
+      "metrics": {
+        "f1": 0.0006934812760055479,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many women are on the team led by my former manager Rachel?",
+        "expected": "6",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_f377cda7_1",
+          "answer_f377cda7_2"
+        ],
+        "recalled_length": 19313
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q42ec0761",
+      "metrics": {
+        "f1": 0.0005524861878453039,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Do I have a spare screwdriver for opening up my laptop?",
+        "expected": "Yes",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e3892371_1",
+          "answer_e3892371_2"
+        ],
+        "recalled_length": 21638
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q5c40ec5b",
+      "metrics": {
+        "f1": 0.0033200531208499333,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many times have I met up with Alex from Germany?",
+        "expected": "We've met up twice.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_1cb52d0a_1",
+          "answer_1cb52d0a_2"
+        ],
+        "recalled_length": 17555
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "qc6853660",
+      "metrics": {
+        "f1": 0.0054525627044711015,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Did I mostly recently increase or decrease the limit on the number of cups of coffee in the morning?",
+        "expected": "You increased the limit (from one cup to two cups)",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_626e93c4_1",
+          "answer_626e93c4_2"
+        ],
+        "recalled_length": 20721
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q26bdc477",
+      "metrics": {
+        "f1": 0.0006172839506172839,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many trips have I taken my Canon EOS 80D camera on?",
+        "expected": "five",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_f762ad8d_1",
+          "answer_f762ad8d_2"
+        ],
+        "recalled_length": 19560
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q0977f2af",
+      "metrics": {
+        "f1": 0.002418379685610641,
+        "contains_answer": 1,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "What new kitchen gadget did I invest in before getting the Air Fryer?",
+        "expected": "Instant Pot",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3bf5b73b_1",
+          "answer_3bf5b73b_2"
+        ],
+        "recalled_length": 9783
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q6aeb4375_abs",
+      "metrics": {
+        "f1": 0.010554089709762533,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "How many Italian restaurants have I tried in my city?",
+        "expected": "The information provided is not enough. You mentioned trying Korean restaurants but not Italian restaurants.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_3f9693b7_abs_1",
+          "answer_3f9693b7_abs_2"
+        ],
+        "recalled_length": 10980
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q031748ae_abs",
+      "metrics": {
+        "f1": 0.009324009324009324,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many engineers do I lead when I just started my new role as Software Engineer Manager?",
+        "expected": "The information provided is not enough. You mentioned starting the role as Senior Software Engineer but not Software Engineer Manager.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_8748f791_abs_1",
+          "answer_8748f791_abs_2"
+        ],
+        "recalled_length": 17563
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "q2698e78f_abs",
+      "metrics": {
+        "f1": 0.006671608598962194,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How often do I see Dr. Johnson?",
+        "expected": "The information provided is not enough. You mentioned seeing Dr. Smith but not Dr. Johnson.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_9282283d_abs_1",
+          "answer_9282283d_abs_2"
+        ],
+        "recalled_length": 16232
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q2133c1b5_abs",
+      "metrics": {
+        "f1": 0.012121212121212123,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "How long have I been living in my current apartment in Shinjuku?",
+        "expected": "The information provided is not enough. You mentioned living in Harajuku but not Shinjuku.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_52382508_abs_1",
+          "answer_52382508_abs_2"
+        ],
+        "recalled_length": 9963
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q0ddfec37_abs",
+      "metrics": {
+        "f1": 0.005803409503083061,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many autographed football have I added to my collection in the first three months of collection?",
+        "expected": "The information provided is not enough. You mentioned collecting autographed baseball but not football.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_a22b654d_abs_1",
+          "answer_a22b654d_abs_2"
+        ],
+        "recalled_length": 16953
+      },
+      "latencyMs": 5
+    },
+    {
+      "taskId": "qf685340e_abs",
+      "metrics": {
+        "f1": 0.005802146794313895,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How often do I play table tennis with my friends at the local park?",
+        "expected": "The information provided is not enough. You mentioned playing tennis but not table tennis.",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_25df025b_abs_1",
+          "answer_25df025b_abs_2"
+        ],
+        "recalled_length": 19668
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q89941a94",
+      "metrics": {
+        "f1": 0.00253057781526782,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Before I purchased the gravel bike, do I have other bikes in addition to my mountain bike and my commuter bike?",
+        "expected": "Yes. (You have a road bike too.)",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e1403127_1",
+          "answer_e1403127_2"
+        ],
+        "recalled_length": 27377
+      },
+      "latencyMs": 6
+    },
+    {
+      "taskId": "q07741c45",
+      "metrics": {
+        "f1": 0.003841931942919868,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Where do I currently keep my old sneakers?",
+        "expected": "in a shoe rack in my closet",
+        "question_type": "knowledge-update",
+        "ability_category": "knowledge_update",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_7e9ad7b4_1",
+          "answer_7e9ad7b4_2"
+        ],
+        "recalled_length": 21269
+      },
+      "latencyMs": 4
+    },
+    {
+      "taskId": "q8a2466db",
+      "metrics": {
+        "f1": 0.04194857916102842,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "Can you recommend some resources where I can learn more about video editing?",
+        "expected": "The user would prefer responses that suggest resources specifically tailored to Adobe Premiere Pro, especially those that delve into its advanced settings. They might not prefer general video editing resources or resources related to other video editing software.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_edb03329"
+        ],
+        "recalled_length": 8461
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q06878be2",
+      "metrics": {
+        "f1": 0.029556650246305417,
+        "contains_answer": 0,
+        "search_hits": 4
+      },
+      "details": {
+        "question": "Can you suggest some accessories that would complement my current photography setup?",
+        "expected": "The user would prefer suggestions of Sony-compatible accessories or high-quality photography gear that can enhance their photography experience. They may not prefer suggestions of other brands' equipment or low-quality gear.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_555dfb94"
+        ],
+        "recalled_length": 7816
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q75832dbd",
+      "metrics": {
+        "f1": 0.047105004906771344,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "Can you recommend some recent publications or conferences that I might find interesting?",
+        "expected": "The user would prefer suggestions related to recent research papers, articles, or conferences that focus on artificial intelligence in healthcare, particularly those that involve deep learning for medical image analysis. They would not be interested in general AI topics or those unrelated to healthcare.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_d87a6ef8"
+        ],
+        "recalled_length": 6616
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q0edc2aef",
+      "metrics": {
+        "f1": 0.031746031746031744,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Can you suggest a hotel for my upcoming trip to Miami?",
+        "expected": "The user would prefer suggestions of hotels in Miami that offer great views, possibly of the ocean or the city skyline, and have unique features such as a rooftop pool or a hot tub on the balcony. They may not prefer suggestions of basic or budget hotels without these features.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_d586e9cd"
+        ],
+        "recalled_length": 13969
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q35a27287",
+      "metrics": {
+        "f1": 0.043629152206246906,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Can you recommend some interesting cultural events happening around me this weekend?",
+        "expected": "The user would prefer responses that suggest cultural events where they can practice their language skills, particularly Spanish and French. They would also appreciate if the event has a focus on language learning resources. They would not prefer events that do not provide opportunities for language practice or cultural exchange.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_9b182436"
+        ],
+        "recalled_length": 13192
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q32260d93",
+      "metrics": {
+        "f1": 0.04086265607264473,
+        "contains_answer": 0,
+        "search_hits": 4
+      },
+      "details": {
+        "question": "Can you recommend a show or movie for me to watch tonight?",
+        "expected": "The user would prefer recommendations for stand-up comedy specials on Netflix, especially those that are known for their storytelling. They may not prefer recommendations for other genres or platforms.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_0250ae1c"
+        ],
+        "recalled_length": 5525
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q195a1a1b",
+      "metrics": {
+        "f1": 0.055396370582617004,
+        "contains_answer": 0,
+        "search_hits": 3
+      },
+      "details": {
+        "question": "Can you suggest some activities that I can do in the evening?",
+        "expected": "The user would prefer suggestions that involve relaxing activities that can be done in the evening, preferably before 9:30 pm. They would not prefer suggestions that involve using their phone or watching TV, as these activities have been affecting their sleep quality.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_6dc4305e"
+        ],
+        "recalled_length": 6096
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "qafdc33df",
+      "metrics": {
+        "f1": 0.03580562659846547,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "My kitchen's becoming a bit of a mess again. Any tips for keeping it clean?",
+        "expected": "The user would prefer responses that acknowledge and build upon their existing efforts to organize their kitchen, such as utilizing their new utensil holder to keep countertops clutter-free. They would also appreciate tips that address their concern for maintaining their granite surface, particularly around the sink area. Preferred responses would provide practical and actionable steps to maintain cleanliness, leveraging the user's current tools and setup. They might not prefer generic or vague suggestions that do not take into account their specific kitchen setup or concerns.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_8549e5e0"
+        ],
+        "recalled_length": 12784
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "qcaf03d32",
+      "metrics": {
+        "f1": 0.029343629343629347,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I've been struggling with my slow cooker recipes. Any advice on getting better results?",
+        "expected": "The user would prefer responses that provide tips and advice specifically tailored to their slow cooker experiences, utilizing their recent success with beef stew and interest in making yogurt in the slow cooker. They might not prefer general slow cooker recipes or advice unrelated to their specific experiences and interests.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_2fc6aabb"
+        ],
+        "recalled_length": 14657
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q54026fce",
+      "metrics": {
+        "f1": 0.05759457933370977,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "I've been thinking about ways to stay connected with my colleagues. Any suggestions?",
+        "expected": "The user would prefer responses that acknowledge their desire for social interaction and collaboration while working remotely, utilizing their previous experiences with company initiatives and team collaborations. They might prefer suggestions of virtual team-building activities, regular check-ins, or joining interest-based groups within the company. The user may not prefer generic suggestions that do not take into account their specific work situation or previous attempts at staying connected with colleagues.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_f7b22c66"
+        ],
+        "recalled_length": 10935
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q06f04340",
+      "metrics": {
+        "f1": 0.061576354679802964,
+        "contains_answer": 0,
+        "search_hits": 1
+      },
+      "details": {
+        "question": "What should I serve for dinner this weekend with my homegrown ingredients?",
+        "expected": "The user would prefer dinner suggestions that incorporate their homegrown cherry tomatoes and herbs like basil and mint, highlighting recipes that showcase their garden produce. They might not prefer suggestions that do not utilize these specific ingredients or do not emphasize the use of homegrown elements.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_92d5f7cd"
+        ],
+        "recalled_length": 4820
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q6b7dfb22",
+      "metrics": {
+        "f1": 0.03571428571428571,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I've been feeling a bit stuck with my paintings lately. Do you have any ideas on how I can find new inspiration?",
+        "expected": "The user would prefer responses that build upon their existing sources of inspiration, such as revisiting Instagram art accounts or exploring new techniques from online tutorials. They might also appreciate suggestions that revisit previous themes they found enjoyable, like painting flowers. The user would not prefer generic or vague suggestions for finding inspiration, and would likely appreciate responses that utilize their recent 30-day painting challenge experience.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_f6502d0f"
+        ],
+        "recalled_length": 13593
+      },
+      "latencyMs": 3
+    },
+    {
+      "taskId": "q1a1907b4",
+      "metrics": {
+        "f1": 0.037861915367483304,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I've been thinking about making a cocktail for an upcoming get-together, but I'm not sure which one to choose. Any suggestions?",
+        "expected": "Considering their mixology class background, the user would prefer cocktail suggestions that build upon their existing skills and interests, such as creative variations of classic cocktails or innovative twists on familiar flavors. They might appreciate recommendations that incorporate their experience with refreshing summer drinks like Pimm's Cup. The user would not prefer overly simplistic or basic cocktail recipes, and may not be interested in suggestions that don't take into account their mixology class background.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_719502eb"
+        ],
+        "recalled_length": 14579
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q09d032c9",
+      "metrics": {
+        "f1": 0.045598480050664976,
+        "contains_answer": 0,
+        "search_hits": 6
+      },
+      "details": {
+        "question": "I've been having trouble with the battery life on my phone lately. Any tips?",
+        "expected": "The user would prefer responses that build upon their previous mention of purchasing a portable power bank, such as suggestions on how to optimize its use, like ensuring it's fully charged before use. They might also appreciate tips on utilizing battery-saving features on their phone. The user may not prefer responses that suggest alternative solutions or unrelated advice.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_b10dce5e"
+        ],
+        "recalled_length": 8990
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q38146c39",
+      "metrics": {
+        "f1": 0.027433628318584074,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I've been feeling like my chocolate chip cookies need something extra. Any advice?",
+        "expected": "The user would prefer responses that build upon their previous experimentation with turbinado sugar, suggesting ingredients or techniques that complement its richer flavor. They might not prefer generic cookie-making advice or suggestions that don't take into account their existing use of turbinado sugar.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_772472c8"
+        ],
+        "recalled_length": 13230
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "qd24813b1",
+      "metrics": {
+        "f1": 0.03246753246753247,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I'm thinking of inviting my colleagues over for a small gathering. Any tips on what to bake?",
+        "expected": "The user would prefer baking suggestions that take into account their previous success with the lemon poppyseed cake, such as variations of that recipe or other desserts that share similar qualities. They might prefer suggestions that balance impressiveness with manageability, considering their previous experience. The user may not prefer overly complex or unfamiliar recipes, or suggestions that do not build upon their existing baking experience.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_7c0ade93"
+        ],
+        "recalled_length": 11924
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q57f827a0",
+      "metrics": {
+        "f1": 0.04920913884007029,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "I was thinking about rearranging the furniture in my bedroom this weekend. Any tips?",
+        "expected": "The user would prefer responses that take into account their existing plans to replace the bedroom dresser and their interest in mid-century modern style, suggesting furniture layouts that accommodate the new dresser and incorporate elements of this design aesthetic. They might not prefer general furniture arrangement tips or suggestions that do not consider their specific design preferences.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_1bde8d3b"
+        ],
+        "recalled_length": 10128
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q95228167",
+      "metrics": {
+        "f1": 0.041644420715429786,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "I'm getting excited about my visit to the music store this weekend. Any tips on what to look for in a new guitar?",
+        "expected": "The user would prefer responses that highlight the differences between Fender Stratocaster and Gibson Les Paul electric guitars, such as the feel of the neck, weight, and sound profile. They might not prefer general tips on buying an electric guitar or suggestions that do not take into account their current guitar and desired upgrade.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_5e613445"
+        ],
+        "recalled_length": 10804
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q505af2f5",
+      "metrics": {
+        "f1": 0.04126074498567335,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "I was thinking of trying a new coffee creamer recipe. Any recommendations?",
+        "expected": "The user would prefer responses that suggest variations on their existing almond milk, vanilla extract, and honey creamer recipe or new ideas that align with their goals of reducing sugar intake and saving money. They might not prefer responses that recommend commercial creamer products or recipes that are high in sugar or expensive.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_f3164f2c"
+        ],
+        "recalled_length": 10042
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q75f70248",
+      "metrics": {
+        "f1": 0.043235704323570434,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "I've been sneezing quite a bit lately. Do you think it might be my living room?",
+        "expected": "The user would prefer responses that consider the potential impact of their cat, Luna, and her shedding on their sneezing, as well as the recent deep clean of the living room and its possible effect on stirring up dust. They might not prefer responses that fail to take into account these specific details previously mentioned, such as generic suggestions or unrelated factors.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_8ee04a2e"
+        ],
+        "recalled_length": 8028
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "qd6233ab6",
+      "metrics": {
+        "f1": 0.06270847231487658,
+        "contains_answer": 0,
+        "search_hits": 8
+      },
+      "details": {
+        "question": "I've been feeling nostalgic lately. Do you think it would be a good idea to attend my high school reunion?",
+        "expected": "The user would prefer responses that draw upon their personal experiences and memories, specifically their positive high school experiences such as being part of the debate team and taking advanced placement courses. They would prefer suggestions that highlight the potential benefits of attending the reunion, such as reconnecting with old friends and revisiting favorite subjects like history and economics. The user might not prefer generic or vague responses that do not take into account their individual experiences and interests.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_b0fac439"
+        ],
+        "recalled_length": 9584
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q1da05512",
+      "metrics": {
+        "f1": 0.037611659614480486,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I'm trying to decide whether to buy a NAS device now or wait. What do you think?",
+        "expected": "The user would prefer responses that take into account their current home network storage capacity issues and recent reliance on external hard drives, highlighting the potential benefits of a NAS device in addressing these specific needs. They might not prefer responses that ignore their current storage challenges or fail to consider their recent tech upgrades and priorities. Preferred responses would utilize the user's previous mentions of storage capacity issues and tech investments to inform their decision.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_4d3be2ab"
+        ],
+        "recalled_length": 12480
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "qfca70973",
+      "metrics": {
+        "f1": 0.09655172413793102,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "I am planning another theme park weekend; do you have any suggestions?",
+        "expected": "The user would prefer theme park suggestions that cater to their interest in both thrill rides and special events, utilizing their previous experiences at Disneyland, Knott's Berry Farm, Six Flags Magic Mountain, and Universal Studios Hollywood as a reference point. They would also appreciate recommendations that highlight unique food experiences and nighttime shows. The user might not prefer suggestions that focus solely on one aspect of theme parks, such as only thrill rides or only family-friendly attractions, and may not be interested in parks that lack special events or unique dining options.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_a1e169b1"
+        ],
+        "recalled_length": 7924
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "qb6025781",
+      "metrics": {
+        "f1": 0.05671843349088453,
+        "contains_answer": 0,
+        "search_hits": 9
+      },
+      "details": {
+        "question": "I'm planning my meal prep next week, any suggestions for new recipes?",
+        "expected": "The user would prefer responses that suggest healthy meal prep recipes, especially those that incorporate quinoa and roasted vegetables, and offer variations in protein sources. They might appreciate suggestions that build upon their existing preferences, such as new twists on chicken Caesar salads or turkey and avocado wraps. The user may not prefer responses that suggest unhealthy or high-calorie meal prep options, or those that deviate significantly from their established healthy eating habits.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_8414cc57"
+        ],
+        "recalled_length": 8536
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "qa89d7624",
+      "metrics": {
+        "f1": 0.0517799352750809,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I'm planning a trip to Denver soon. Any suggestions on what to do there?",
+        "expected": "The user would prefer responses that take into account their previous experience in Denver, specifically their interest in live music and memorable encounter with Brandon Flowers. They might appreciate suggestions that revisit or build upon this experience, such as revisiting the same bar or exploring similar music venues in the area. The user may not prefer general tourist recommendations or activities unrelated to their interest in live music.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_8f15ac24"
+        ],
+        "recalled_length": 10156
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "qb0479f84",
+      "metrics": {
+        "f1": 0.06405693950177936,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "I've got some free time tonight, any documentary recommendations?",
+        "expected": "The user would prefer documentary recommendations that are similar in style and theme to 'Our Planet', 'Free Solo', and 'Tiger King', which they have previously enjoyed. They might not prefer recommendations of documentaries that are vastly different in tone or subject matter from these titles. The preferred response utilizes the user's previously mentioned viewing history to suggest documentaries that cater to their tastes.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_30f63ddb"
+        ],
+        "recalled_length": 7092
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q1d4e3b97",
+      "metrics": {
+        "f1": 0.04656084656084656,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I noticed my bike seems to be performing even better during my Sunday group rides. Could there be a reason for this?",
+        "expected": "The user would prefer responses that reference specific details from their previous interactions, such as the replacement of the bike's chain and cassette, and the use of a new Garmin bike computer. They might prefer explanations that connect these details to the observed improvement in bike performance. The user may not prefer responses that fail to acknowledge these specific details or provide vague, general explanations for the improvement.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_e6b6353d"
+        ],
+        "recalled_length": 11072
+      },
+      "latencyMs": 2
+    },
+    {
+      "taskId": "q07b6f563",
+      "metrics": {
+        "f1": 0.06196746707978311,
+        "contains_answer": 0,
+        "search_hits": 5
+      },
+      "details": {
+        "question": "Can you suggest some useful accessories for my phone?",
+        "expected": "The user would prefer suggestions of accessories that are compatible with an iPhone 13 Pro, such as high-quality screen protectors, durable cases, portable power banks, or phone wallet cases. They may not prefer suggestions of accessories that are not compatible with Apple products or do not enhance the functionality or protection of their phone.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_d03098f9"
+        ],
+        "recalled_length": 7615
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q1c0ddc50",
+      "metrics": {
+        "f1": 0.07766990291262137,
+        "contains_answer": 0,
+        "search_hits": 3
+      },
+      "details": {
+        "question": "Can you suggest some activities I can do during my commute to work?",
+        "expected": "The user would prefer suggestions related to listening to new podcasts or audiobooks, especially the genre beyond true crime or self-improvement, such as history. They may not be interested in activities that require visual attention, such as reading or watching videos, as they are commuting. The user would not prefer general podcast topics such as true crime or self-improvement, as the user wants to explore other topics.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_8da8c7e0"
+        ],
+        "recalled_length": 6764
+      },
+      "latencyMs": 1
+    },
+    {
+      "taskId": "q0a34ad58",
+      "metrics": {
+        "f1": 0.024559967253377,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "I’m a bit anxious about getting around Tokyo. Do you have any helpful tips?",
+        "expected": "The user would prefer responses that utilize their existing resources, such as their Suica card and TripIt app, to provide personalized tips for navigating Tokyo's public transportation. They might not prefer general tips or recommendations that do not take into account their prior preparations.",
+        "question_type": "single-session-preference",
+        "ability_category": "information_extraction",
+        "num_sessions": 1,
+        "answer_session_ids": [
+          "answer_cebb7159"
+        ],
+        "recalled_length": 14648
+      },
+      "latencyMs": 2
+    }
+  ],
+  "aggregate": {
+    "f1_mean": 0.008219118603038604,
+    "f1_min": 0,
+    "f1_max": 0.09655172413793102,
+    "contains_answer_mean": 0.43478260869565216,
+    "contains_answer_min": 0,
+    "contains_answer_max": 1,
+    "search_hits_mean": 9.326086956521738,
+    "search_hits_min": 0,
+    "search_hits_max": 10,
+    "information_extraction_accuracy": 0,
+    "information_extraction_f1": 0.046972527793406944,
+    "information_extraction_count": 30,
+    "multi_session_reasoning_accuracy": 0.4032258064516129,
+    "multi_session_reasoning_f1": 0.0025062300817240623,
+    "multi_session_reasoning_count": 62,
+    "temporal_reasoning_accuracy": 0.2833333333333333,
+    "temporal_reasoning_f1": 0.0026084563122435196,
+    "temporal_reasoning_count": 60,
+    "knowledge_update_accuracy": 0.7435897435897436,
+    "knowledge_update_f1": 0.0021708692448098358,
+    "knowledge_update_count": 78,
+    "temporal-reasoning_accuracy": 0.2833333333333333,
+    "temporal-reasoning_count": 60,
+    "multi-session_accuracy": 0.4032258064516129,
+    "multi-session_count": 62,
+    "knowledge-update_accuracy": 0.7435897435897436,
+    "knowledge-update_count": 78,
+    "single-session-preference_accuracy": 0,
+    "single-session-preference_count": 30
+  },
+  "config": {
+    "limit": 230,
+    "datasetDir": "/Users/joshuawarren/src/openclaw-engram/evals/datasets/longmemeval"
+  },
+  "durationMs": 4084
+}
