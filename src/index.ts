@@ -353,40 +353,62 @@ const pluginDefinition = {
     // ========================================================================
     // registerMemoryPromptSection — structured memory injection (new SDK)
     // ========================================================================
+    //
+    // The gateway calls the builder **synchronously** during system-prompt
+    // construction and spreads the result into a string[].  This means:
+    //   1. The builder MUST be a plain function (not an object).
+    //   2. The builder MUST return string[] | null synchronously (not a Promise).
+    //
+    // Since orchestrator.recall() is async, we pre-compute the recall in the
+    // before_prompt_build hook (which IS async-capable) and cache the result
+    // for the synchronous builder to return.
+    // ========================================================================
+    let cachedMemoryLines: string[] | null = null;
+
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
-      const memoryBuildFn = async ({ prompt, sessionKey }: { prompt: string; sessionKey: string }) => {
-        if (!prompt || prompt.length < 5) return null;
-        if (shouldSkipRecallForSession(sessionKey, cfg)) return null;
+      // Async pre-compute: run recall in before_prompt_build and cache result.
+      api.on("before_prompt_build", async (event: Record<string, unknown>) => {
+        cachedMemoryLines = null; // reset each turn
+        let prompt = event.prompt as string | undefined;
+        if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
+          const msgs = event.messages as Array<Record<string, unknown>>;
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i]?.role === "user") {
+              const text = extractTextContent(msgs[i] as Record<string, unknown>);
+              if (text.length >= 5) { prompt = text; break; }
+            }
+          }
+        }
+        if (!prompt || prompt.length < 5) return;
+        const sessionKey = (event.sessionKey ?? "default") as string;
+        if (shouldSkipRecallForSession(sessionKey, cfg)) return;
         try {
           await orchestrator.maybeRunFileHygiene().catch(() => undefined);
           const context = await orchestrator.recall(prompt, sessionKey);
-          if (!context) return null;
+          if (!context) return;
           const maxChars = cfg.recallBudgetChars;
-          if (maxChars === 0) return null;
+          if (maxChars === 0) return;
           const trimmed = context.length > maxChars
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
-          return [
+          cachedMemoryLines = [
             "## Memory Context (Engram)",
             "",
             trimmed,
             "",
             "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
-          ].join("\n");
+            "",
+          ];
         } catch (err) {
-          log.error("registerMemoryPromptSection build failed", err);
-          return null;
+          log.error("registerMemoryPromptSection pre-compute failed", err);
         }
-      };
+      });
 
-      // Compat: the gateway stores whatever is passed here as `_builder`
-      // and later calls `_builder(params)`.  Pass the bare function so it
-      // works on all gateway versions (<=2026.3.22 and newer).  Attach
-      // metadata as properties so a future gateway that inspects them can
-      // still read id/label without a breaking API change.
+      // Synchronous builder: returns the pre-computed lines.
+      const memoryBuildFn = (): string[] | null => cachedMemoryLines;
+
       (memoryBuildFn as any).id = "engram-memory";
       (memoryBuildFn as any).label = "Engram Memory Context";
-      (memoryBuildFn as any).build = memoryBuildFn;
       api.registerMemoryPromptSection(memoryBuildFn as any);
     }
 
