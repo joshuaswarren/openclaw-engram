@@ -3989,6 +3989,7 @@ export class Orchestrator {
       }
 
       const VERIFIED_RECALL_TIMEOUT_MS = 15_000;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const results = await Promise.race([
         searchVerifiedEpisodes({
           memoryDir: profileStorage.dir,
@@ -3996,8 +3997,11 @@ export class Orchestrator {
           maxResults,
           boxRecallDays: this.config.boxRecallDays,
         }),
-        new Promise<[]>((resolve) => setTimeout(() => resolve([]), VERIFIED_RECALL_TIMEOUT_MS)),
+        new Promise<[]>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve([]), VERIFIED_RECALL_TIMEOUT_MS);
+        }),
       ]).catch(() => [] as VerifiedEpisodeResult[]);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
 
       const durationMs = Date.now() - t0;
       if (durationMs >= VERIFIED_RECALL_TIMEOUT_MS) {

@@ -4665,7 +4665,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           // causing the embedding fallback to load a 300 MB JSON on every cold
           // path. But by running it here (not before), the port is available
           // immediately while warmup proceeds in the background.
-          await orchestrator.initialize();
+          try {
+            await orchestrator.initialize();
+          } catch (err) {
+            console.error("[engram] orchestrator.initialize() failed (HTTP server still running):", err);
+          }
         });
 
       accessCmd
