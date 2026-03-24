@@ -366,7 +366,16 @@ const pluginDefinition = {
           const trimmed = context.length > maxChars
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
-          return `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+          // Return an array of prompt lines — the gateway spreads this into
+          // the system prompt and expects an iterable, not a bare string.
+          return [
+            "## Memory Context (Engram)",
+            "",
+            trimmed,
+            "",
+            "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
+            "",
+          ];
         } catch (err) {
           log.error("registerMemoryPromptSection build failed", err);
           return null;
