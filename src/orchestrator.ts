@@ -4027,14 +4027,18 @@ export class Orchestrator {
       }
 
       const VERIFIED_RULES_TIMEOUT_MS = 15_000;
+      let rulesTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const results = await Promise.race([
         searchVerifiedSemanticRules({
           memoryDir: this.config.memoryDir,
           query: retrievalQuery,
           maxResults,
         }),
-        new Promise<[]>((resolve) => setTimeout(() => resolve([]), VERIFIED_RULES_TIMEOUT_MS)),
+        new Promise<[]>((resolve) => {
+          rulesTimeoutHandle = setTimeout(() => resolve([]), VERIFIED_RULES_TIMEOUT_MS);
+        }),
       ]).catch(() => [] as VerifiedSemanticRuleResult[]);
+      if (rulesTimeoutHandle) clearTimeout(rulesTimeoutHandle);
 
       const durationMs = Date.now() - t0;
       if (durationMs >= VERIFIED_RULES_TIMEOUT_MS) {
