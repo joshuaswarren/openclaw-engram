@@ -4,6 +4,14 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
+import {
+  getCachedMemories,
+  setCachedMemories,
+  getCachedArchivedMemories,
+  setCachedArchivedMemories,
+  updateCacheOnWrite,
+  updateCacheOnDelete,
+} from "./memory-cache.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import type {
   AccessTrackingEntry,
@@ -1069,6 +1077,7 @@ export class StorageManager {
         log.warn(`storage.writeMemory completed but failed to update fact hash index: ${err}`);
       }
     }
+    updateCacheOnWrite(this.baseDir, { path: filePath, frontmatter: fm, content: sanitized.text });
     log.debug(`wrote memory ${id} to ${filePath}`);
     return id;
   }
@@ -1364,6 +1373,10 @@ export class StorageManager {
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {
+    const currentVersion = this.getMemoryStatusVersion();
+    const cached = getCachedMemories(this.baseDir, currentVersion);
+    if (cached) return cached;
+
     const memories: MemoryFile[] = [];
 
     const readDir = async (dir: string) => {
@@ -1399,6 +1412,7 @@ export class StorageManager {
 
     await readDir(this.factsDir);
     await readDir(this.correctionsDir);
+    setCachedMemories(this.baseDir, memories, currentVersion);
     return memories;
   }
 
@@ -1407,6 +1421,10 @@ export class StorageManager {
    * Used by long-term recall fallback when hot recall has no hits.
    */
   async readArchivedMemories(): Promise<MemoryFile[]> {
+    const currentVersion = this.getMemoryStatusVersion();
+    const cached = getCachedArchivedMemories(this.baseDir, currentVersion);
+    if (cached) return cached;
+
     const memories: MemoryFile[] = [];
     const root = this.archiveDir;
 
@@ -1442,6 +1460,7 @@ export class StorageManager {
     };
 
     await readDir(root);
+    setCachedArchivedMemories(this.baseDir, memories, currentVersion);
     return memories;
   }
 
@@ -1625,6 +1644,7 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      updateCacheOnDelete(this.baseDir, memory.path);
       await this.appendGeneratedMemoryLifecycleEventFailOpen(
         "storage.archiveMemory",
         {

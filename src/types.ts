@@ -307,6 +307,13 @@ export interface PluginConfig {
   verifiedRecallEnabled: boolean;
   semanticRulePromotionEnabled: boolean;
   semanticRuleVerificationEnabled: boolean;
+  semanticConsolidationEnabled: boolean;
+  semanticConsolidationModel: string;
+  semanticConsolidationThreshold: number;
+  semanticConsolidationMinClusterSize: number;
+  semanticConsolidationExcludeCategories: string[];
+  semanticConsolidationIntervalHours: number;
+  semanticConsolidationMaxPerRun: number;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
