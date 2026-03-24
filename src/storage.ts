@@ -733,6 +733,38 @@ export class StorageManager {
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
+
+  // Module-level cache for readAllMemories() keyed by base directory.
+  // Shared across all StorageManager instances to avoid duplicate I/O when
+  // multiple concurrent callers (e.g. verifiedRecall + verifiedRules) read the
+  // same directory simultaneously.  In-flight deduplication prevents multiple
+  // concurrent reads of the same directory.
+  //
+  // Stale-while-revalidate: once the cache has a value, subsequent reads after
+  // TTL expiry return the stale cached data immediately and kick off a background
+  // refresh.  This eliminates the 13-60 s cold-scan penalty that would otherwise
+  // block recall requests every 5 minutes on large memory collections (80k+ files).
+  private static readonly allMemoriesInFlight = new Map<string, Promise<MemoryFile[]>>();
+
+  // Cache for readQuestions() — avoids serially re-reading tens of thousands of
+  // question files on every recall.  60-second TTL is intentionally short so that
+  // newly written questions surface quickly.
+  private static readonly QUESTIONS_CACHE_TTL_MS = 60_000; // 1 minute
+  private static readonly questionsCache = new Map<
+    string,
+    {
+      questions: Array<{
+        id: string;
+        question: string;
+        context: string;
+        priority: number;
+        resolved: boolean;
+        created: string;
+        filePath: string;
+      }>;
+      loadedAt: number;
+    }
+  >();
   private factHashIndex: ContentHashIndex | null = null;
   private factHashIndexLoadPromise: Promise<ContentHashIndex> | null = null;
   private factHashIndexAuthoritative: boolean | null = null;
@@ -1049,6 +1081,7 @@ export class StorageManager {
     }
 
     await writeFile(filePath, fileContent, "utf-8");
+    this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemory", {
       memoryId: id,
       eventType: "created",
@@ -1364,41 +1397,104 @@ export class StorageManager {
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {
-    const memories: MemoryFile[] = [];
+    // Deduplicate concurrent reads for the same directory so multiple
+    // callers in the same recall share one disk scan.
+    const inFlight = StorageManager.allMemoriesInFlight.get(this.baseDir);
+    if (inFlight) return inFlight;
 
-    const readDir = async (dir: string) => {
+    const readPromise = this._readAllMemoriesFromDisk();
+    StorageManager.allMemoriesInFlight.set(this.baseDir, readPromise);
+    try {
+      return await readPromise;
+    } finally {
+      // Only delete if we still own the slot — invalidateAllMemoriesCache()
+      // may have already cleared it and a new read may have claimed it.
+      if (StorageManager.allMemoriesInFlight.get(this.baseDir) === readPromise) {
+        StorageManager.allMemoriesInFlight.delete(this.baseDir);
+      }
+    }
+  }
+
+  /** Invalidate the readAllMemories() cache after writes that add/remove memories. */
+  /** Public cache invalidation for callers that need authoritative disk reads
+   *  (e.g. projection verify/rebuild). */
+  invalidateAllMemoriesCacheForDir(): void {
+    this.invalidateAllMemoriesCache();
+  }
+
+  /** Clear ALL static caches. Use in tests that write files directly
+   *  (bypassing StorageManager.writeMemory) to avoid stale reads. */
+  static clearAllStaticCaches(): void {
+    StorageManager.allMemoriesInFlight.clear();
+    StorageManager.questionsCache.clear();
+  }
+
+  /** Cancel any in-flight concurrent read so the next readAllMemories()
+   *  starts a fresh disk scan and sees the just-written data. */
+  private invalidateAllMemoriesCache(): void {
+    StorageManager.allMemoriesInFlight.delete(this.baseDir);
+  }
+
+  private async _readAllMemoriesFromDisk(): Promise<MemoryFile[]> {
+    // Collect all .md file paths first (directory traversal is sequential but fast),
+    // then read files in parallel batches to avoid O(N) sequential I/O.
+    // With 80k+ memory files, sequential reads can take 60+ seconds under load.
+    const filePaths: string[] = [];
+
+    const collectPaths = async (dir: string) => {
       try {
         const entries = await readdir(dir, { withFileTypes: true });
+        const subdirs: string[] = [];
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            await readDir(fullPath);
+            subdirs.push(fullPath);
           } else if (entry.name.endsWith(".md")) {
-            try {
-              const raw = await readFile(fullPath, "utf-8");
-              const parsed = parseFrontmatter(raw);
-              if (parsed) {
-                memories.push({
-                  path: fullPath,
-                  frontmatter: normalizeFrontmatterForPath(
-                    parsed.frontmatter,
-                    toMemoryPathRel(this.baseDir, fullPath),
-                  ),
-                  content: parsed.content,
-                });
-              }
-            } catch {
-              // Skip unreadable files
-            }
+            filePaths.push(fullPath);
           }
+        }
+        // Recurse into subdirectories sequentially (directory tree is shallow)
+        for (const subdir of subdirs) {
+          await collectPaths(subdir);
         }
       } catch {
         // Directory doesn't exist yet
       }
     };
 
-    await readDir(this.factsDir);
-    await readDir(this.correctionsDir);
+    await collectPaths(this.factsDir);
+    await collectPaths(this.correctionsDir);
+
+    if (filePaths.length === 0) return [];
+
+    // Read all files in parallel batches of 50 to balance throughput and I/O pressure.
+    const BATCH_SIZE = 50;
+    const memories: MemoryFile[] = [];
+    for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
+      const batch = filePaths.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (fullPath) => {
+          try {
+            const raw = await readFile(fullPath, "utf-8");
+            const parsed = parseFrontmatter(raw);
+            if (!parsed) return null;
+            return {
+              path: fullPath,
+              frontmatter: normalizeFrontmatterForPath(
+                parsed.frontmatter,
+                toMemoryPathRel(this.baseDir, fullPath),
+              ),
+              content: parsed.content,
+            } satisfies MemoryFile;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      for (const m of results) {
+        if (m !== null) memories.push(m);
+      }
+    }
     return memories;
   }
 
@@ -1536,6 +1632,7 @@ export class StorageManager {
     try {
       await writeFile(tempPath, fileContent, "utf-8");
       await rename(tempPath, targetPath);
+      this.invalidateAllMemoriesCache();
     } catch (err) {
       try {
         await unlink(tempPath);
@@ -1559,6 +1656,10 @@ export class StorageManager {
           throw err;
         }
       }
+      // Re-invalidate after the unlink — writeMemoryFileAtomic already
+      // invalidated, but a concurrent readAllMemories() may have re-populated
+      // the cache between the write and the unlink.
+      this.invalidateAllMemoriesCache();
     }
   }
 
@@ -1588,6 +1689,7 @@ export class StorageManager {
     }
 
     await this.moveMemoryToPath(memory, targetPath);
+    this.invalidateAllMemoriesCache();
     this.bumpMemoryStatusVersion();
     return { changed: true, targetPath };
   }
@@ -1625,6 +1727,7 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      this.invalidateAllMemoriesCache();
       await this.appendGeneratedMemoryLifecycleEventFailOpen(
         "storage.archiveMemory",
         {
@@ -1739,6 +1842,7 @@ export class StorageManager {
 
     try {
       await unlink(memory.path);
+      this.invalidateAllMemoriesCache();
       this.bumpMemoryStatusVersion();
       log.debug(`invalidated memory ${id}`);
       return true;
@@ -1773,6 +1877,7 @@ export class StorageManager {
     }
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
+    this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {
       memoryId: id,
       eventType: "updated",
@@ -1807,6 +1912,7 @@ export class StorageManager {
 
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
+    this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen(
       "storage.writeMemoryFrontmatter",
       {
@@ -1867,6 +1973,7 @@ export class StorageManager {
     }
 
     if (deleted.length > 0) {
+      this.invalidateAllMemoriesCache();
       this.bumpMemoryStatusVersion();
     }
 
@@ -2532,6 +2639,7 @@ export class StorageManager {
     await writeFile(filePath, content, "utf-8");
 
     log.debug(`wrote question ${id} to ${filePath}`);
+    this.invalidateQuestionsCache();
     return id;
   }
 
@@ -2548,6 +2656,22 @@ export class StorageManager {
       filePath: string;
     }>
   > {
+    const cacheKey = this.questionsDir;
+    const cached = StorageManager.questionsCache.get(cacheKey);
+    if (cached && Date.now() - cached.loadedAt < StorageManager.QUESTIONS_CACHE_TTL_MS) {
+      // Check dir mtime for cross-process invalidation — if another process
+      // wrote/resolved a question, the directory mtime will be newer than loadedAt.
+      try {
+        const dirStat = await stat(this.questionsDir);
+        if (dirStat.mtimeMs <= cached.loadedAt) {
+          const all = cached.questions;
+          return opts?.unresolvedOnly ? all.filter((q) => !q.resolved) : all;
+        }
+      } catch {
+        // Dir doesn't exist — fall through to re-read
+      }
+    }
+
     try {
       const files = await readdir(this.questionsDir);
       const questions = [];
@@ -2557,14 +2681,20 @@ export class StorageManager {
         const raw = await readFile(filePath, "utf-8");
         const parsed = this.parseQuestionFile(raw, filePath);
         if (parsed) {
-          if (opts?.unresolvedOnly && parsed.resolved) continue;
           questions.push(parsed);
         }
       }
-      return questions.sort((a, b) => b.priority - a.priority);
+      const sorted = questions.sort((a, b) => b.priority - a.priority);
+      StorageManager.questionsCache.set(cacheKey, { questions: sorted, loadedAt: Date.now() });
+      return opts?.unresolvedOnly ? sorted.filter((q) => !q.resolved) : sorted;
     } catch {
       return [];
     }
+  }
+
+  /** Invalidate the questions cache (call after writing a question). */
+  invalidateQuestionsCache(): void {
+    StorageManager.questionsCache.delete(this.questionsDir);
   }
 
   private parseQuestionFile(
@@ -2629,7 +2759,6 @@ export class StorageManager {
       `resolvedAt: "${new Date().toISOString()}"\n---\n\n`,
     );
     await writeFile(q.filePath, raw, "utf-8");
-
     log.debug(`resolved question ${id}`);
     return true;
   }
@@ -2882,25 +3011,32 @@ export class StorageManager {
    * Parsing is fast (~50-100ms for ~1,800 files) since entity files are small.
    */
   async readAllEntityFiles(): Promise<EntityFile[]> {
-    const entities: EntityFile[] = [];
     try {
       const entries = await readdir(this.entitiesDir);
-      for (const entry of entries) {
-        if (!entry.endsWith(".md")) continue;
-        try {
-          const content = await readFile(
-            path.join(this.entitiesDir, entry),
-            "utf-8",
-          );
-          entities.push(parseEntityFile(content));
-        } catch {
-          // Skip unreadable files
+      const mdFiles = entries.filter((e) => e.endsWith(".md"));
+      if (mdFiles.length === 0) return [];
+
+      // Read all entity files in parallel batches to avoid O(N) sequential I/O.
+      // With 3000+ entity files, sequential reads can take 15-20s under load.
+      // Batching at 100 keeps file-descriptor pressure manageable while staying fast.
+      const BATCH_SIZE = 100;
+      const entities: EntityFile[] = [];
+      for (let i = 0; i < mdFiles.length; i += BATCH_SIZE) {
+        const batch = mdFiles.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map((entry) =>
+            readFile(path.join(this.entitiesDir, entry), "utf-8").catch(() => null),
+          ),
+        );
+        for (const content of results) {
+          if (content !== null) entities.push(parseEntityFile(content));
         }
       }
+      return entities;
     } catch {
       // Directory doesn't exist yet
+      return [];
     }
-    return entities;
   }
 
   /**

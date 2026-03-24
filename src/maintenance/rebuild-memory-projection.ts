@@ -460,6 +460,9 @@ async function loadAuthoritativeProjectionSnapshot(options: {
   };
 }> {
   const storage = new StorageManager(options.memoryDir);
+  // Force a fresh disk read — projection verify/rebuild must see the true
+  // on-disk state, not a potentially stale in-process cache.
+  storage.invalidateAllMemoriesCacheForDir();
   const allMemories = [...await storage.readAllMemories(), ...await storage.readArchivedMemories()]
     .sort((a, b) => a.frontmatter.id.localeCompare(b.frontmatter.id));
   const lifecycleEvents = await storage.readAllMemoryLifecycleEvents();
