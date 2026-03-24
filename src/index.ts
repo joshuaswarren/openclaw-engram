@@ -372,7 +372,6 @@ const pluginDefinition = {
             trimmed,
             "",
             "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
-            "",
           ].join("\n");
         } catch (err) {
           log.error("registerMemoryPromptSection build failed", err);
