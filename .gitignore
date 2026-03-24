@@ -36,3 +36,4 @@ evals/datasets/
 .worktrees/
 PR_PREFLIGHT.md
 THEORY.MD
+.pr-loop/
