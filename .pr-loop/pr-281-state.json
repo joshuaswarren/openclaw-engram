@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-03-19T16:27:31Z",
+  "repo": "joshuaswarren/openclaw-engram",
+  "pr": 281,
+  "terminal": "MERGE_READY",
+  "required_non_pass": "0",
+  "cursor": "pass",
+  "positive_verdict": 1,
+  "unresolved_cursor_threads": "0",
+  "review_decision": "none",
+  "ready": 1
+}

@@ -15,7 +15,13 @@ export interface QmdClientOptions {
 }
 
 const QMD_TIMEOUT_MS = 30_000;
-const QMD_DAEMON_TIMEOUT_MS = 60_000; // Longer timeout for daemon (first call may load models)
+// Daemon timeout for individual search calls. Keep well under RECALL_TIMEOUT_MS (75s) so a
+// slow/loading daemon fails fast and the caller can return early rather than hanging.
+// After the daemon has loaded its index (~90s for 75K files), actual searches complete in <3s.
+// During the loading window, searches will timeout/return [] quickly — this is preferable to
+// blocking the full 75s on every recall request.
+// Note: keep this ≥ 5s to allow normal searches (post-load) to complete reliably.
+const QMD_DAEMON_TIMEOUT_MS = 8_000;
 const QMD_PROBE_TIMEOUT_MS = 8_000;
 const QMD_UPDATE_BACKOFF_MS = 15 * 60 * 1000; // 15m
 const QMD_EMBED_BACKOFF_MS = 60 * 60 * 1000; // 60m
@@ -410,37 +416,62 @@ class QmdDaemonSession {
       return this.startPromise;
     }
     this.startPromise = (async () => {
-      if (this.child) {
-        this.cleanup({ killChild: true });
+      // If the process is already running but not yet initialized (e.g. it is still
+      // loading its index after a previous handshake timeout), reuse it instead of
+      // killing and re-spawning. This prevents accumulating zombie qmd-mcp processes
+      // when the daemon takes >15s to load a large collection.
+      const processAlreadyRunning = this.child != null && !this.child.killed;
+      if (!processAlreadyRunning) {
+        if (this.child) {
+          this.cleanup({ killChild: true });
+        }
+        try {
+          const child = spawn(this.qmdPath, ["mcp"], {
+            env: { ...process.env, NO_COLOR: "1" },
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          this.child = child;
+          this.buffer = "";
+
+          child.stdout?.on("data", (data: Buffer) => {
+            if (this.child !== child) return;
+            this.handleStdoutData(data);
+          });
+          child.stderr?.on("data", (data: Buffer) => {
+            if (this.child !== child) return;
+            const msg = data.toString().trim();
+            if (msg) log.debug(`QMD mcp stderr: ${stripControlChars(msg)}`);
+          });
+          child.stdin?.on("error", (err) => {
+            // Swallow EPIPE/ERR_STREAM_DESTROYED — these happen when the child
+            // process is killed (e.g. due to recall timeout) and a write arrives
+            // after the pipe is broken.  Without this handler Node.js would throw
+            // an uncaught exception and crash the process.
+            log.debug(`QMD mcp stdin error (suppressed): ${err.message}`);
+          });
+          child.on("error", (err) => {
+            if (this.child !== child) return;
+            log.debug(`QMD mcp process error: ${err.message}`);
+            this.cleanup({ child });
+          });
+          child.on("close", (code) => {
+            if (this.child !== child) return;
+            log.debug(`QMD mcp process exited (code ${code})`);
+            this.cleanup({ child });
+          });
+        } catch (err) {
+          log.debug(`QMD mcp: failed to spawn process: ${err}`);
+          this.cleanup({ killChild: true });
+          return false;
+        }
+      } else {
+        log.debug("QMD mcp: process already running, retrying handshake");
       }
+
       try {
-        const child = spawn(this.qmdPath, ["mcp"], {
-          env: { ...process.env, NO_COLOR: "1" },
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        this.child = child;
-        this.buffer = "";
-
-        child.stdout?.on("data", (data: Buffer) => {
-          if (this.child !== child) return;
-          this.handleStdoutData(data);
-        });
-        child.stderr?.on("data", (data: Buffer) => {
-          if (this.child !== child) return;
-          const msg = data.toString().trim();
-          if (msg) log.debug(`QMD mcp stderr: ${stripControlChars(msg)}`);
-        });
-        child.on("error", (err) => {
-          if (this.child !== child) return;
-          log.debug(`QMD mcp process error: ${err.message}`);
-          this.cleanup({ child });
-        });
-        child.on("close", (code) => {
-          if (this.child !== child) return;
-          log.debug(`QMD mcp process exited (code ${code})`);
-          this.cleanup({ child });
-        });
-
+        // Use a generous timeout — large collections (75K+ files) can take 60-90s
+        // to load their vector index. We keep the process alive across retries so
+        // only one mcp instance is running at a time.
         const result = await this.sendRequest(
           "initialize",
           {
@@ -448,19 +479,29 @@ class QmdDaemonSession {
             capabilities: {},
             clientInfo: { name: "openclaw-engram", version: "1.0.0" },
           },
-          15_000,
+          60_000,
         );
         if (!result) {
-          this.cleanup({ killChild: true, child });
+          // Null result (non-timeout failure) — kill and let the next probe respawn.
+          this.cleanup({ killChild: true });
           return false;
         }
         this.sendNotification("notifications/initialized");
         this.initialized = true;
-        log.debug("QMD mcp: stdio session initialized");
+        log.info("QMD mcp: stdio session initialized");
         return true;
       } catch (err) {
-        log.debug(`QMD mcp: failed to start stdio session: ${err}`);
-        this.cleanup({ killChild: true });
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/timed out/i.test(msg)) {
+          // Handshake timeout — process is still loading. Keep it alive for the
+          // next retry (daemonRecheckIntervalMs). Do NOT kill and respawn.
+          log.debug(`QMD mcp: handshake timed out — process still loading, will retry later`);
+          // Reset initialized flag but leave child running.
+          this.initialized = false;
+        } else {
+          log.debug(`QMD mcp: failed to start stdio session: ${err}`);
+          this.cleanup({ killChild: true });
+        }
         return false;
       } finally {
         this.startPromise = null;
@@ -489,6 +530,11 @@ class QmdDaemonSession {
 
   isActive(): boolean {
     return this.child !== null && !this.child.killed && this.initialized;
+  }
+
+  /** True while the process is spawned but the MCP handshake has not yet completed. */
+  isLoading(): boolean {
+    return this.child !== null && !this.child.killed && !this.initialized;
   }
 
   private sendRequest(
@@ -536,9 +582,14 @@ class QmdDaemonSession {
 
   private sendNotification(method: string, params?: Record<string, unknown>): void {
     if (!this.child || !this.child.stdin || this.child.killed) return;
+    if (this.child.stdin.destroyed) return;
     const msg: Record<string, unknown> = { jsonrpc: "2.0", method };
     if (params) msg.params = params;
-    this.child.stdin.write(JSON.stringify(msg) + "\n");
+    try {
+      this.child.stdin.write(JSON.stringify(msg) + "\n");
+    } catch {
+      // Ignore EPIPE / write-after-close
+    }
   }
 
   private handleStdoutData(data: Buffer): void {
@@ -745,9 +796,20 @@ export class QmdClient implements SearchBackend {
     this.lastDaemonCheckAtMs = Date.now();
     this.daemonSession = getSharedDaemonSession(this.qmdPath);
     try {
-      const ok = await this.daemonSession.start();
+      // Race start() against a short window: if the session is already initialized
+      // this returns instantly; if the process is still loading its index we fail
+      // fast and let the caller fall back gracefully. The underlying start() promise
+      // continues running in the background so the process is NOT killed. On the
+      // next recheck cycle (daemonRecheckIntervalMs=15s) start() returns true
+      // immediately once the handshake has completed.
+      const PROBE_QUICK_TIMEOUT_MS = 3_000;
+      const ok = await Promise.race([
+        this.daemonSession.start(),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), PROBE_QUICK_TIMEOUT_MS)),
+      ]);
       if (!ok) {
-        log.debug("QMD daemon: stdio session failed to start");
+        const loading = this.daemonSession.isLoading();
+        log.debug(`QMD daemon: stdio session not ready within ${PROBE_QUICK_TIMEOUT_MS}ms probe window${loading ? " (still loading)" : ""}`);
         this.daemonAvailable = false;
         return false;
       }
@@ -979,15 +1041,34 @@ export class QmdClient implements SearchBackend {
         }
         throw err;
       }
+      // When the daemon is available, trust its outcome and skip the subprocess.
+      // The subprocess runs `qmd query` (BM25 + LLM expansion) which hangs at
+      // 99% CPU on large collections (75K+ files) making it strictly worse than
+      // the daemon for this workload. Specifically:
+      //   results !== null → daemon succeeded (even with 0 hits) → return as-is
+      //   results === null → daemon timed-out or errored → still skip subprocess
+      //                      because subprocess will also hang or timeout
       if (results !== null) {
-        if (results.length > 0) return results;
-        // Fail-open: daemon sometimes returns zero hits while subprocess
-        // query expansion/rerank still finds relevant docs.
-        log.debug("QMD daemon search returned 0 results; falling back to subprocess query");
+        if (results.length === 0) {
+          log.debug("QMD daemon search returned 0 results; skipping subprocess");
+        }
+        return results;
       }
+      // Daemon timed out or had a transient error — skip subprocess for large
+      // collections. Return empty rather than hanging the caller.
+      log.debug("QMD daemon search timed out/failed; skipping subprocess (daemon-only mode)");
+      return [];
     }
 
-    // Subprocess fallback
+    // If the daemon process is spawned but still loading (handshake not yet complete),
+    // skip subprocess — it would add load and block under QMD_MUTEX without helping.
+    // Return empty and let the next recheck cycle pick up the daemon once ready.
+    if (this.daemonSession?.isLoading()) {
+      log.debug("QMD search: daemon loading, skipping subprocess");
+      return [];
+    }
+
+    // Subprocess fallback (only reached when daemon is unavailable and not loading)
     return this.searchViaSubprocess(trimmed, col, n, searchOptions, execution?.signal);
   }
 
@@ -1015,13 +1096,24 @@ export class QmdClient implements SearchBackend {
         }
         throw err;
       }
+      // Same rationale as search() — trust daemon outcome, skip subprocess.
       if (results !== null) {
-        if (results.length > 0) return results;
-        log.debug("QMD daemon global search returned 0 results; falling back to subprocess query");
+        if (results.length === 0) {
+          log.debug("QMD daemon global search returned 0 results; skipping subprocess");
+        }
+        return results;
       }
+      log.debug("QMD daemon global search timed out/failed; skipping subprocess (daemon-only mode)");
+      return [];
     }
 
-    // Subprocess fallback
+    // If the daemon is spawned but still loading, skip subprocess — same as search().
+    if (this.daemonSession?.isLoading()) {
+      log.debug("QMD searchGlobal: daemon loading, skipping subprocess");
+      return [];
+    }
+
+    // Subprocess fallback (only reached when daemon is unavailable and not loading)
     return this.searchGlobalViaSubprocess(trimmed, n, execution?.signal);
   }
 
@@ -1052,10 +1144,20 @@ export class QmdClient implements SearchBackend {
         }
         throw err;
       }
+      // When daemon is available, trust its outcome and skip subprocess (same
+      // rationale as search() — subprocess hangs at 99% CPU on 75K+ files).
       if (results !== null) {
-        if (results.length > 0) return results;
-        log.debug("QMD daemon bm25 returned 0 results; falling back to subprocess query");
+        if (results.length === 0) {
+          log.debug("QMD daemon bm25 returned 0 results; skipping subprocess");
+        }
+        return results;
       }
+      log.debug("QMD daemon bm25 timed out/failed; skipping subprocess (daemon-only mode)");
+      return [];
+    }
+    if (this.daemonSession?.isLoading()) {
+      log.debug("QMD bm25: daemon loading, skipping subprocess");
+      return [];
     }
     return this.bm25SearchViaSubprocess(trimmed, col, n, execution?.signal);
   }
@@ -1087,10 +1189,20 @@ export class QmdClient implements SearchBackend {
         }
         throw err;
       }
+      // When daemon is available, trust its outcome and skip subprocess (same
+      // rationale as search() — subprocess hangs at 99% CPU on 75K+ files).
       if (results !== null) {
-        if (results.length > 0) return results;
-        log.debug("QMD daemon vsearch returned 0 results; falling back to subprocess query");
+        if (results.length === 0) {
+          log.debug("QMD daemon vsearch returned 0 results; skipping subprocess");
+        }
+        return results;
       }
+      log.debug("QMD daemon vsearch timed out/failed; skipping subprocess (daemon-only mode)");
+      return [];
+    }
+    if (this.daemonSession?.isLoading()) {
+      log.debug("QMD vsearch: daemon loading, skipping subprocess");
+      return [];
     }
     return this.vsearchViaSubprocess(trimmed, col, n, execution?.signal);
   }

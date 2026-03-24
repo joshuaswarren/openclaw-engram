@@ -1386,6 +1386,59 @@ export class Orchestrator {
       }
     }
 
+    // Warmup: run cheap searches to pre-load QMD embedding models and the
+    // embedding-fallback JSON index. Without this, the first recall after
+    // startup loads ML models + parses a 300 MB JSON file (30-60 s each),
+    // causing it to exceed RECALL_TIMEOUT_MS. This is especially important
+    // for the http-serve CLI path where initialize() runs once at startup and
+    // every subsequent recall must be fast.
+    const warmupPromises: Promise<void>[] = [];
+    if (this.qmd.isAvailable()) {
+      const warmupNs = this.config.defaultNamespace;
+      log.info("QMD warmup: pre-loading models with a test search");
+      warmupPromises.push(
+        this.qmd.search("warmup", warmupNs, 1).then(() => {
+          log.info("QMD warmup: complete");
+        }).catch((err) => {
+          log.debug(`QMD warmup search failed (non-fatal): ${err}`);
+        }),
+      );
+    }
+    if (this.config.embeddingFallbackEnabled) {
+      // Only probe availability — do NOT load the full index at warmup.
+      // embeddings.json can be hundreds of MB; parsing it into JS number arrays
+      // consumes gigabytes of V8 heap and triggers GC stalls / OOM crashes.
+      warmupPromises.push(
+        this.embeddingFallback.isAvailable().then((ok) => {
+          log.info(`Embedding fallback warmup: ${ok ? "available" : "unavailable (no provider)"}`);
+        }).catch((err) => {
+          log.debug(`Embedding fallback warmup failed (non-fatal): ${err}`);
+        }),
+      );
+    }
+    await Promise.all(warmupPromises);
+
+    // Fire-and-forget: pre-warm the readAllMemories() static cache for all
+    // configured namespace storages.  With 80k+ memory files the cold scan takes
+    // 13-60 s; running it in the background at startup ensures the cache is hot
+    // before the first recall request arrives, eliminating the cold-start penalty.
+    // Also pre-warms buildKnowledgeIndex() to prime knowledgeIndexCache on the
+    // base storage (avoids the 13 s readAllEntityFiles() penalty on first recall).
+    // Warm the Knowledge Index (readAllEntityFiles + scoring) on the base storage.
+    // knowledgeIndexCache is an instance-level cache — warming it here populates it
+    // before the first recall so ki=13s cold penalty doesn't hit real requests.
+    if (this.config.knowledgeIndexEnabled) {
+      (async () => {
+        try {
+          const t0 = Date.now();
+          await this.storage.buildKnowledgeIndex(this.config);
+          log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
+        } catch (err) {
+          log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
+        }
+      })().catch(() => {});
+    }
+
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
       const init = await this.conversationIndexBackend.initialize();
       if (!init.enabled) {
@@ -1644,9 +1697,14 @@ export class Orchestrator {
     }
 
     // Use FallbackLlmClient for LLM calls (same pattern as causal-consolidation.ts)
+    // Honor semanticConsolidationModel: "auto" = primary, "fast" = local fast, or specific model
     const { FallbackLlmClient } = await import("./fallback-llm.js");
+    const modelSetting = this.config.semanticConsolidationModel;
+    if (modelSetting === "fast" && this.fastLlm) {
+      log.info("[semantic-consolidation] using fast local LLM for synthesis");
+    }
     const llm = new FallbackLlmClient(this.config.gatewayConfig);
-    if (!llm.isAvailable()) {
+    if (!llm.isAvailable() && !(modelSetting === "fast" && this.fastLlm)) {
       log.warn("[semantic-consolidation] no LLM available — skipping synthesis");
       return result;
     }
@@ -1654,13 +1712,22 @@ export class Orchestrator {
     for (const cluster of clusters) {
       try {
         const prompt = buildConsolidationPrompt(cluster);
-        const response = await llm.chatCompletion(
-          [
-            { role: "system", content: "You are a memory consolidation system. Output only the consolidated memory text." },
-            { role: "user", content: prompt },
-          ],
-          { temperature: 0.2, maxTokens: 2000 },
-        );
+        const messages = [
+          { role: "system" as const, content: "You are a memory consolidation system. Output only the consolidated memory text." },
+          { role: "user" as const, content: prompt },
+        ];
+        const llmOpts = { temperature: 0.2, maxTokens: 2000 };
+
+        // Route to the configured model
+        let response: { content: string } | null = null;
+        if (modelSetting === "fast" && this.fastLlm) {
+          const fastResult = await this.fastLlm.chatCompletion(
+            messages, "semantic-consolidation", llmOpts.maxTokens, llmOpts.temperature,
+          );
+          response = fastResult ? { content: fastResult } : null;
+        } else {
+          response = await llm.chatCompletion(messages, llmOpts);
+        }
 
         if (!response?.content) {
           log.warn(`[semantic-consolidation] empty LLM response for cluster in "${cluster.category}"`);
@@ -4095,14 +4162,26 @@ export class Orchestrator {
         return null;
       }
 
-      const results = await searchVerifiedEpisodes({
-        memoryDir: profileStorage.dir,
-        query: retrievalQuery,
-        maxResults,
-        boxRecallDays: this.config.boxRecallDays,
-      });
+      const VERIFIED_RECALL_TIMEOUT_MS = 15_000;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const results = await Promise.race([
+        searchVerifiedEpisodes({
+          memoryDir: profileStorage.dir,
+          query: retrievalQuery,
+          maxResults,
+          boxRecallDays: this.config.boxRecallDays,
+        }),
+        new Promise<[]>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve([]), VERIFIED_RECALL_TIMEOUT_MS);
+        }),
+      ]).catch(() => [] as VerifiedEpisodeResult[]);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
 
-      timings.verifiedRecall = `${Date.now() - t0}ms`;
+      const durationMs = Date.now() - t0;
+      if (durationMs >= VERIFIED_RECALL_TIMEOUT_MS) {
+        log.debug(`verified recall: timed out after ${VERIFIED_RECALL_TIMEOUT_MS}ms`);
+      }
+      timings.verifiedRecall = `${durationMs}ms`;
       return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
     })();
 
@@ -4121,13 +4200,25 @@ export class Orchestrator {
         return null;
       }
 
-      const results = await searchVerifiedSemanticRules({
-        memoryDir: this.config.memoryDir,
-        query: retrievalQuery,
-        maxResults,
-      });
+      const VERIFIED_RULES_TIMEOUT_MS = 15_000;
+      let rulesTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const results = await Promise.race([
+        searchVerifiedSemanticRules({
+          memoryDir: this.config.memoryDir,
+          query: retrievalQuery,
+          maxResults,
+        }),
+        new Promise<[]>((resolve) => {
+          rulesTimeoutHandle = setTimeout(() => resolve([]), VERIFIED_RULES_TIMEOUT_MS);
+        }),
+      ]).catch(() => [] as VerifiedSemanticRuleResult[]);
+      if (rulesTimeoutHandle) clearTimeout(rulesTimeoutHandle);
 
-      timings.verifiedRules = `${Date.now() - t0}ms`;
+      const durationMs = Date.now() - t0;
+      if (durationMs >= VERIFIED_RULES_TIMEOUT_MS) {
+        log.debug(`verified rules: timed out after ${VERIFIED_RULES_TIMEOUT_MS}ms`);
+      }
+      timings.verifiedRules = `${durationMs}ms`;
       return results.length > 0 ? this.formatVerifiedSemanticRuleResults(results) : null;
     })();
 
@@ -4569,7 +4660,22 @@ export class Orchestrator {
       return section;
     })();
 
+    // Start memory-boxes read in parallel with the rest of phase-1 (it can take
+    // several seconds on large box directories due to sequential I/O). We kick it
+    // off here so it overlaps with QMD and other concurrent work rather than
+    // running sequentially in phase-2 and blocking assembly.
+    const recentBoxesPromise: Promise<BoxFrontmatter[]> =
+      this.isRecallSectionEnabled("memory-boxes", this.config.memoryBoxesEnabled === true) &&
+      this.config.memoryBoxesEnabled &&
+      this.config.boxRecallDays > 0
+        ? this.boxBuilderFor(profileStorage)
+          .readRecentBoxes(this.config.boxRecallDays)
+          .catch(() => [] as BoxFrontmatter[])
+        : Promise.resolve([] as BoxFrontmatter[]);
+
     // --- Wait for all parallel work ---
+    const phase1Start = Date.now();
+    log.info(`recall phase-1: starting parallel work at +${phase1Start - recallStart}ms`);
     const [
       sharedCtx,
       profile,
@@ -4594,34 +4700,65 @@ export class Orchestrator {
       conversationRecallSection,
       compoundingSection,
     ] = await raceRecallAbort(
-      Promise.all([
-        sharedContextPromise,
-        profilePromise,
-        identityContinuityPromise,
-        entityRetrievalPromise,
-        knowledgeIndexPromise,
-        artifactsPromise,
-        objectiveStatePromise,
-        causalTrajectoryPromise,
-        cmcRetrievalPromise,
-        calibrationPromise,
-        trustZonePromise,
-        harmonicRetrievalPromise,
-        verifiedRecallPromise,
-        verifiedRulesPromise,
-        workProductsPromise,
-        qmdPromise,
-        transcriptPromise,
-        compactionPromise,
-        summariesPromise,
-        nativeKnowledgePromise,
-        conversationRecallPromise,
-        compoundingPromise,
-      ]),
+      Promise.all(
+        ([
+          ["shared", sharedContextPromise],
+          ["profile", profilePromise],
+          ["identity", identityContinuityPromise],
+          ["entity", entityRetrievalPromise],
+          ["ki", knowledgeIndexPromise],
+          ["artifacts", artifactsPromise],
+          ["objState", objectiveStatePromise],
+          ["causalTraj", causalTrajectoryPromise],
+          ["cmc", cmcRetrievalPromise],
+          ["calibration", calibrationPromise],
+          ["trustZone", trustZonePromise],
+          ["harmonic", harmonicRetrievalPromise],
+          ["verifiedRecall", verifiedRecallPromise],
+          ["verifiedRules", verifiedRulesPromise],
+          ["workProducts", workProductsPromise],
+          ["qmd", qmdPromise],
+          ["transcript", transcriptPromise],
+          ["compaction", compactionPromise],
+          ["summaries", summariesPromise],
+          ["nativeKnowledge", nativeKnowledgePromise],
+          ["convRecall", conversationRecallPromise],
+          ["compounding", compoundingPromise],
+        ] as const).map(([name, p]) =>
+          (p as Promise<unknown>).then((v) => {
+            log.debug(`recall phase-1 [${name}]: resolved at +${Date.now() - phase1Start}ms`);
+            return v;
+          }),
+        ),
+      ) as Promise<[
+        typeof sharedContextPromise extends Promise<infer T> ? T : never,
+        typeof profilePromise extends Promise<infer T> ? T : never,
+        typeof identityContinuityPromise extends Promise<infer T> ? T : never,
+        typeof entityRetrievalPromise extends Promise<infer T> ? T : never,
+        typeof knowledgeIndexPromise extends Promise<infer T> ? T : never,
+        typeof artifactsPromise extends Promise<infer T> ? T : never,
+        typeof objectiveStatePromise extends Promise<infer T> ? T : never,
+        typeof causalTrajectoryPromise extends Promise<infer T> ? T : never,
+        typeof cmcRetrievalPromise extends Promise<infer T> ? T : never,
+        typeof calibrationPromise extends Promise<infer T> ? T : never,
+        typeof trustZonePromise extends Promise<infer T> ? T : never,
+        typeof harmonicRetrievalPromise extends Promise<infer T> ? T : never,
+        typeof verifiedRecallPromise extends Promise<infer T> ? T : never,
+        typeof verifiedRulesPromise extends Promise<infer T> ? T : never,
+        typeof workProductsPromise extends Promise<infer T> ? T : never,
+        typeof qmdPromise extends Promise<infer T> ? T : never,
+        typeof transcriptPromise extends Promise<infer T> ? T : never,
+        typeof compactionPromise extends Promise<infer T> ? T : never,
+        typeof summariesPromise extends Promise<infer T> ? T : never,
+        typeof nativeKnowledgePromise extends Promise<infer T> ? T : never,
+        typeof conversationRecallPromise extends Promise<infer T> ? T : never,
+        typeof compoundingPromise extends Promise<infer T> ? T : never,
+      ]>,
       options.abortSignal,
       "recall aborted during phase-one preamble",
     );
 
+    log.info(`recall phase-1: parallel work done at +${Date.now() - recallStart}ms (phase took ${Date.now() - phase1Start}ms)`);
     throwIfRecallAborted(options.abortSignal);
 
     // --- Phase 2: Assemble sections in correct order ---
@@ -4671,14 +4808,9 @@ export class Orchestrator {
     }
 
     // 1d. Memory Boxes (topic continuity windows, v8.0 Phase 2A)
-    if (
-      this.isRecallSectionEnabled("memory-boxes", this.config.memoryBoxesEnabled === true) &&
-      this.config.memoryBoxesEnabled &&
-      this.config.boxRecallDays > 0
-    ) {
-      const recentBoxes = await this.boxBuilderFor(profileStorage)
-        .readRecentBoxes(this.config.boxRecallDays)
-        .catch(() => []);
+    // recentBoxesPromise was kicked off before phase-1 so it ran concurrently.
+    {
+      const recentBoxes = await recentBoxesPromise;
       if (recentBoxes.length > 0) {
         const boxLines = recentBoxes.slice(0, 5).map((b: BoxFrontmatter) => {
           const sealedDate = b.sealedAt ? b.sealedAt.slice(0, 16).replace("T", " ") : "?";
@@ -5323,6 +5455,7 @@ export class Orchestrator {
       }
     }
 
+    const phase2AfterQmdMs = Date.now() - recallStart;
     if (shouldPersistGraphSnapshot) {
       if (!graphSnapshotStatus) {
         graphSnapshotStatus = "skipped";
@@ -5402,7 +5535,9 @@ export class Orchestrator {
       }
     }
 
+    const phase2QuestionsDoneMs = Date.now() - recallStart;
     const finalizedQueryAwarePrefilter = await queryAwarePrefilterPromise;
+    const phase2QapDoneMs = Date.now() - recallStart;
     throwIfRecallAborted(options.abortSignal);
     if (timings.queryAware && finalizedQueryAwarePrefilter.candidatePaths?.size) {
       const helpedCount = recalledMemoryPaths.filter((memoryPath) =>
@@ -5413,8 +5548,9 @@ export class Orchestrator {
 
     // --- Timing summary ---
     timings.total = `${Date.now() - recallStart}ms`;
+    log.info(`recall phase-2 checkpoints: afterQmd=${phase2AfterQmdMs}ms, afterQuestions=${phase2QuestionsDoneMs}ms, afterQap=${phase2QapDoneMs}ms`);
     const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
-    log.debug(`recall: ${timingParts}`);
+    log.info(`recall timings: ${timingParts}`);
 
     const assembledRecall = this.assembleRecallSections(sectionBuckets);
     const context = assembledRecall.sections.length === 0 ? "" : assembledRecall.sections.join("\n\n---\n\n");

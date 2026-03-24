@@ -1382,8 +1382,25 @@ export class EngramAccessService {
         content: m.content,
         timestamp: new Date().toISOString(),
       }));
-      await this.orchestrator.ingestReplayBatch(turns);
-      extractionQueued = true;
+      // Fire-and-forget: queue extraction in the background so the HTTP
+      // response returns immediately.  LCM archival (above) is fast and
+      // already awaited; extraction involves LLM calls that can take
+      // minutes under load and should not block the caller.
+      //
+      // Backpressure: the orchestrator's own extraction queue already
+      // limits concurrency (one extraction at a time per session via
+      // queueBufferedExtraction). Fire-and-forget here just decouples
+      // the HTTP response from the queue drain.
+      try {
+        const extractionPromise = this.orchestrator.ingestReplayBatch(turns);
+        extractionPromise.catch((err) => {
+          log.error(`access-observe background extraction failed: ${err}`);
+        });
+        extractionQueued = true;
+      } catch (err) {
+        // Synchronous enqueue failure (e.g. orchestrator disposed)
+        log.error(`access-observe extraction enqueue failed: ${err}`);
+      }
     }
 
     log.info(

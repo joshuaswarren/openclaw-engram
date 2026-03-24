@@ -1,6 +1,6 @@
 {
   "name": "@joshuaswarren/openclaw-engram",
-  "version": "9.1.1",
+  "version": "9.1.6",
   "type": "module",
   "description": "Local-first memory plugin for OpenClaw. LLM-powered extraction, markdown storage, hybrid search via QMD.",
   "keywords": [
@@ -49,7 +49,8 @@
   "files": [
     "dist",
     "bin/engram-access.js",
-    "openclaw.plugin.json"
+    "openclaw.plugin.json",
+    "scripts/rebuild-native.mjs"
   ],
   "dependencies": {
     "@honcho-ai/sdk": "^2.0.0",
@@ -91,6 +92,7 @@
     "review:cursor": "bash scripts/cursor-prepush-review.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
+    "postinstall": "node scripts/rebuild-native.mjs",
     "prepack": "npm run build"
   },
   "publishConfig": {

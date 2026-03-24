@@ -437,11 +437,78 @@ export class TranscriptManager {
 
   /**
    * Read the last N hours of transcript.
+   *
+   * Fast path: when sessionKey is given, reads only the 1-2 daily files for that
+   * specific channel instead of scanning all 95+ transcript files across all channels.
    */
   async readRecent(hours: number, sessionKey?: string): Promise<TranscriptEntry[]> {
     const end = new Date();
     const start = new Date(end.getTime() - hours * 60 * 60 * 1000);
-    return this.readRange(start.toISOString(), end.toISOString(), sessionKey);
+
+    if (sessionKey) {
+      return this.readRecentForSession(start, end, sessionKey);
+    }
+    return this.readRange(start.toISOString(), end.toISOString(), undefined);
+  }
+
+  /**
+   * Optimized read for a specific session: only looks in that session's channel
+   * directory and only reads files whose date falls within the lookback window.
+   */
+  private async readRecentForSession(
+    start: Date,
+    end: Date,
+    sessionKey: string,
+  ): Promise<TranscriptEntry[]> {
+    const { dir } = this.getTranscriptPath(sessionKey);
+    const channelDir = path.join(this.transcriptsDir, dir);
+
+    // Build set of date strings that overlap with [start, end].
+    // Always include end's date to handle midnight-crossing lookbacks
+    // (e.g. start=23:30 yesterday, end=00:30 today).
+    const dateStrings = new Set<string>();
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      dateStrings.add(cursor.toISOString().slice(0, 10));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    dateStrings.add(end.toISOString().slice(0, 10));
+
+    const entries: TranscriptEntry[] = [];
+    let files: string[];
+    try {
+      files = (await readdir(channelDir)).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      return [];
+    }
+
+    for (const file of files) {
+      // Only read files whose date is within the window
+      const dateStr = file.slice(0, 10);
+      if (!dateStrings.has(dateStr)) continue;
+
+      try {
+        const content = await readFile(path.join(channelDir, file), "utf-8");
+        for (const line of content.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line) as TranscriptEntry;
+            const ts = new Date(entry.timestamp);
+            if (ts >= start && ts <= end && entry.sessionKey === sessionKey) {
+              entries.push(entry);
+            }
+          } catch {
+            // skip malformed line
+          }
+        }
+      } catch {
+        // skip unreadable file
+      }
+    }
+
+    entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    log.debug(`readRecentForSession: ${entries.length} entries from ${files.length} file(s) in ${dir}`);
+    return entries;
   }
 
   /**

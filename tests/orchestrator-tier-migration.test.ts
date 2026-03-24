@@ -7,6 +7,7 @@ import { parseConfig } from "../src/config.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import { StorageManager } from "../src/storage.js";
 
+
 function buildConfig(
   memoryDir: string,
   workspaceDir: string,
@@ -31,6 +32,7 @@ function buildConfig(
 }
 
 test("tier migration cycle demotes hot memory when enabled", async () => {
+  StorageManager.clearAllStaticCaches();
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-enabled-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-tier-orch-enabled-workspace-"));
   try {

@@ -1,0 +1,143 @@
+{
+  "meta": {
+    "name": "longmemeval",
+    "version": "2.0.0",
+    "description": "Long-term memory evaluation — 500 questions across 5 memory abilities (ICLR 2025)",
+    "category": "retrieval",
+    "citation": "Wu et al. LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory. ICLR 2025."
+  },
+  "engramVersion": "9.0.0",
+  "gitSha": "7942afb",
+  "timestamp": "2026-03-17T00:11:23.050Z",
+  "adapterMode": "direct",
+  "taskCount": 5,
+  "scores": [
+    {
+      "taskId": "qgpt4_2655b836",
+      "metrics": {
+        "f1": 0.0009250693802035153,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "What was the first issue I had with my new car after its first service?",
+        "expected": "GPS system not functioning correctly",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 3,
+        "answer_session_ids": [
+          "answer_4be1b6b4_2",
+          "answer_4be1b6b4_3",
+          "answer_4be1b6b4_1"
+        ],
+        "recalled_length": 37270
+      },
+      "latencyMs": 22
+    },
+    {
+      "taskId": "qgpt4_2487a7cb",
+      "metrics": {
+        "f1": 0.002322340919647004,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which event did I attend first, the 'Effective Time Management' workshop or the 'Data Analysis using Python' webinar?",
+        "expected": "'Data Analysis using Python' webinar",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_1c6b85ea_1",
+          "answer_1c6b85ea_2"
+        ],
+        "recalled_length": 27682
+      },
+      "latencyMs": 28
+    },
+    {
+      "taskId": "qgpt4_76048e76",
+      "metrics": {
+        "f1": 0.0004079135223332653,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which vehicle did I take care of first in February, the bike or the car?",
+        "expected": "bike",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_b535969f_2",
+          "answer_b535969f_1"
+        ],
+        "recalled_length": 28179
+      },
+      "latencyMs": 18
+    },
+    {
+      "taskId": "qgpt4_2312f94c",
+      "metrics": {
+        "f1": 0.0015243902439024389,
+        "contains_answer": 1,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?",
+        "expected": "Samsung Galaxy S22",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_5328c3c2_1",
+          "answer_5328c3c2_2"
+        ],
+        "recalled_length": 22493
+      },
+      "latencyMs": 9
+    },
+    {
+      "taskId": "q0bb5a684",
+      "metrics": {
+        "f1": 0.002577873254564984,
+        "contains_answer": 0,
+        "search_hits": 10
+      },
+      "details": {
+        "question": "How many days before the team meeting I was preparing for did I attend the workshop on 'Effective Communication in the Workplace'?",
+        "expected": "7 days. 8 days (including the last day) is also acceptable.",
+        "question_type": "temporal-reasoning",
+        "ability_category": "temporal_reasoning",
+        "num_sessions": 2,
+        "answer_session_ids": [
+          "answer_e936197f_1",
+          "answer_e936197f_2"
+        ],
+        "recalled_length": 29663
+      },
+      "latencyMs": 10
+    }
+  ],
+  "aggregate": {
+    "f1_mean": 0.0015515174641302415,
+    "f1_min": 0.0004079135223332653,
+    "f1_max": 0.002577873254564984,
+    "contains_answer_mean": 0.4,
+    "contains_answer_min": 0,
+    "contains_answer_max": 1,
+    "search_hits_mean": 10,
+    "search_hits_min": 10,
+    "search_hits_max": 10,
+    "temporal_reasoning_accuracy": 0.4,
+    "temporal_reasoning_f1": 0.0015515174641302415,
+    "temporal_reasoning_count": 5,
+    "temporal-reasoning_accuracy": 0.4,
+    "temporal-reasoning_count": 5
+  },
+  "config": {
+    "limit": 5,
+    "datasetDir": "/Users/joshuawarren/src/openclaw-engram/evals/datasets/longmemeval"
+  },
+  "durationMs": 286431
+}

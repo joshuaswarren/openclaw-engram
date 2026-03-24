@@ -88,6 +88,8 @@ export function findSimilarClusters(
           cluster.push(tokenized[j].memory);
           totalOverlap += score;
           comparisons++;
+          // Enforce maxPerRun within a single cluster
+          if (totalCandidates + cluster.length >= config.maxPerRun) break;
         }
       }
 

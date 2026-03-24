@@ -126,11 +126,12 @@ test("new SDK api gets all new hooks + memory section", async () => {
     const api = buildNewSdkApi("new-sdk-test");
     plugin.register(api as any);
 
-    // When registerMemoryPromptSection is available (new SDK), the recall hook
-    // should NOT be registered — registerMemoryPromptSection is the preferred path.
+    // When registerMemoryPromptSection is available (new SDK), before_prompt_build
+    // IS registered for async pre-computation (the synchronous builder reads
+    // the cached result).  The recall hook handler itself is skipped.
     assert.ok(
-      !api._registeredHooks.includes("before_prompt_build"),
-      "before_prompt_build should NOT be registered when registerMemoryPromptSection is available",
+      api._registeredHooks.includes("before_prompt_build"),
+      "before_prompt_build should be registered for async pre-compute when registerMemoryPromptSection is available",
     );
 
     // before_agent_start should NOT be registered (legacy path)

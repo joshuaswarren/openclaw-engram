@@ -6,7 +6,7 @@ import path from "node:path";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { QmdClient } from "../src/qmd.ts";
 
-test("search falls back to subprocess when daemon returns empty results", async () => {
+test("search returns empty when daemon returns empty (no subprocess fallback)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -28,12 +28,12 @@ test("search falls back to subprocess when daemon returns empty results", async 
   };
 
   const out = await client.search("heartbeat", undefined, 3);
-  assert.equal(subprocessCalls, 1);
-  assert.equal(out.length, 1);
-  assert.equal(out[0]?.docid, "fact-1");
+  // Daemon result is authoritative — subprocess is NOT called
+  assert.equal(subprocessCalls, 0);
+  assert.equal(out.length, 0);
 });
 
-test("searchGlobal falls back to subprocess when daemon returns empty results", async () => {
+test("searchGlobal returns empty when daemon returns empty (no subprocess fallback)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -55,9 +55,9 @@ test("searchGlobal falls back to subprocess when daemon returns empty results", 
   };
 
   const out = await client.searchGlobal("workspace context", 4);
-  assert.equal(subprocessCalls, 1);
-  assert.equal(out.length, 1);
-  assert.equal(out[0]?.docid, "fact-2");
+  // Daemon result is authoritative — subprocess is NOT called
+  assert.equal(subprocessCalls, 0);
+  assert.equal(out.length, 0);
 });
 
 test("hybridSearch always runs bm25+vector merge (no daemon short-circuit)", async () => {
@@ -106,7 +106,7 @@ test("hybridSearch always runs bm25+vector merge (no daemon short-circuit)", asy
   assert.equal(daemonCalls, 0);
 });
 
-test("bm25Search falls back to subprocess when daemon returns empty results", async () => {
+test("bm25Search returns empty when daemon returns empty (no subprocess fallback)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -133,12 +133,12 @@ test("bm25Search falls back to subprocess when daemon returns empty results", as
 
   const out = await client.bm25Search("needle", undefined, 3);
   assert.equal(daemonCalls, 1);
-  assert.equal(subprocessCalls, 1);
-  assert.equal(out.length, 1);
-  assert.equal(out[0]?.docid, "fact-bm25-fallback");
+  // Daemon result is authoritative — subprocess is NOT called
+  assert.equal(subprocessCalls, 0);
+  assert.equal(out.length, 0);
 });
 
-test("vectorSearch falls back to subprocess when daemon returns empty results", async () => {
+test("vectorSearch returns empty when daemon returns empty (no subprocess fallback)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -165,9 +165,9 @@ test("vectorSearch falls back to subprocess when daemon returns empty results", 
 
   const out = await client.vectorSearch("needle", undefined, 3);
   assert.equal(daemonCalls, 1);
-  assert.equal(subprocessCalls, 1);
-  assert.equal(out.length, 1);
-  assert.equal(out[0]?.docid, "fact-vsearch-fallback");
+  // Daemon result is authoritative — subprocess is NOT called
+  assert.equal(subprocessCalls, 0);
+  assert.equal(out.length, 0);
 });
 
 test("daemon parser uses path field when file is absent", async () => {
@@ -621,7 +621,7 @@ test("vectorSearch rethrows daemon cancellation without subprocess fallback", as
   assert.equal(subprocessCalls, 0);
 });
 
-test("search falls back when daemon reports cancelled text without caller abort", async () => {
+test("search returns empty when daemon error and no subprocess (daemon-only mode)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -642,14 +642,14 @@ test("search falls back when daemon reports cancelled text without caller abort"
     return [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }];
   };
 
+  // Daemon error without caller abort — returns empty, skips subprocess
+  // (subprocess hangs at 99% CPU on large collections)
   const out = await client.search("cancelled", undefined, 3);
-  assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
-  assert.equal(subprocessCalls, 1);
-  // First transient failure doesn't invalidate — daemon stays available for retry
-  assert.equal(invalidated, 0);
+  assert.deepEqual(out, []);
+  assert.equal(subprocessCalls, 0);
 });
 
-test("bm25Search falls back when daemon reports cancelled text without caller abort", async () => {
+test("bm25Search returns empty when daemon error and no subprocess (daemon-only mode)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -671,13 +671,11 @@ test("bm25Search falls back when daemon reports cancelled text without caller ab
   };
 
   const out = await client.bm25Search("cancelled", undefined, 3);
-  assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
-  assert.equal(subprocessCalls, 1);
-  // First transient failure doesn't invalidate — daemon stays available for retry
-  assert.equal(invalidated, 0);
+  assert.deepEqual(out, []);
+  assert.equal(subprocessCalls, 0);
 });
 
-test("vectorSearch falls back when daemon reports cancelled text without caller abort", async () => {
+test("vectorSearch returns empty when daemon error and no subprocess (daemon-only mode)", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
   client.daemonAvailable = true;
@@ -699,8 +697,6 @@ test("vectorSearch falls back when daemon reports cancelled text without caller 
   };
 
   const out = await client.vectorSearch("cancelled", undefined, 3);
-  assert.deepEqual(out, [{ docid: "fallback", path: "/tmp/fallback.md", snippet: "fallback", score: 0.4 }]);
-  assert.equal(subprocessCalls, 1);
-  // First transient failure doesn't invalidate — daemon stays available for retry
-  assert.equal(invalidated, 0);
+  assert.deepEqual(out, []);
+  assert.equal(subprocessCalls, 0);
 });

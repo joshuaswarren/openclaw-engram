@@ -10,6 +10,7 @@
  */
 
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "./logger.js";
@@ -423,30 +424,70 @@ export class BoxBuilder {
    * Read all sealed boxes from the last N days for recall injection.
    */
   async readRecentBoxes(days: number): Promise<BoxFrontmatter[]> {
-    const boxes: BoxFrontmatter[] = [];
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const cutoffDateStr = cutoff.toISOString().slice(0, 10); // "YYYY-MM-DD"
 
-    const walkDir = async (dir: string) => {
+    let topEntries: Dirent<string>[];
+    try {
+      topEntries = await readdir(this.boxBaseDir, { withFileTypes: true, encoding: "utf-8" });
+    } catch {
+      return [];
+    }
+
+    // Filter day directories by name (YYYY-MM-DD) — skip dirs older than cutoff
+    // without reading a single file from them.
+    const recentDirs = topEntries
+      .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name) && e.name >= cutoffDateStr)
+      .map((e) => path.join(this.boxBaseDir, e.name));
+
+    // Also include legacy flat entries at the root level (non-date dirs and .md files)
+    const legacyEntries = topEntries.filter(
+      (e) => !e.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(e.name),
+    );
+
+    // Read all files in each recent day directory in parallel (per dir)
+    const boxes: BoxFrontmatter[] = [];
+
+    const readDir = async (dir: string) => {
+      let files: string[];
       try {
-        const entries = await readdir(dir, { withFileTypes: true });
-        for (const e of entries) {
-          const full = path.join(dir, e.name);
-          if (e.isDirectory()) {
-            await walkDir(full);
-          } else if (e.name.endsWith(".md")) {
-            try {
-              const raw = await readFile(full, "utf-8");
-              const parsed = parseBoxFrontmatter(raw);
-              if (parsed && new Date(parsed.sealedAt) >= cutoff) {
-                boxes.push(parsed);
-              }
-            } catch { /* corrupt file — skip */ }
+        files = (await readdir(dir)).filter((f) => f.endsWith(".md"));
+      } catch {
+        return;
+      }
+      const results = await Promise.all(
+        files.map(async (f) => {
+          try {
+            const raw = await readFile(path.join(dir, f), "utf-8");
+            const parsed = parseBoxFrontmatter(raw);
+            return parsed && new Date(parsed.sealedAt) >= cutoff ? parsed : null;
+          } catch {
+            return null;
           }
-        }
-      } catch { /* dir not yet created */ }
+        }),
+      );
+      for (const r of results) {
+        if (r !== null) boxes.push(r);
+      }
     };
 
-    await walkDir(this.boxBaseDir);
+    // Day dirs in parallel
+    await Promise.all(recentDirs.map(readDir));
+
+    // Legacy non-date entries (walk sub-dirs sequentially but read files in parallel)
+    for (const e of legacyEntries) {
+      const full = path.join(this.boxBaseDir, e.name);
+      if (e.isDirectory()) {
+        await readDir(full);
+      } else if (e.name.endsWith(".md")) {
+        try {
+          const raw = await readFile(full, "utf-8");
+          const parsed = parseBoxFrontmatter(raw);
+          if (parsed && new Date(parsed.sealedAt) >= cutoff) boxes.push(parsed);
+        } catch { /* corrupt file — skip */ }
+      }
+    }
+
     // Sort newest-first so slice(0, N) gives the most recent boxes
     boxes.sort((a, b) => new Date(b.sealedAt).getTime() - new Date(a.sealedAt).getTime());
     return boxes;

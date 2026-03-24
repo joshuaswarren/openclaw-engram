@@ -4639,6 +4639,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const portRaw = parseInt(String(options.port ?? "4318"), 10);
           const maxBodyBytesRaw = parseInt(String(options.maxBodyBytes ?? "131072"), 10);
+          // Start the HTTP server FIRST so the port is available immediately,
+          // then initialize the orchestrator in the background.  Recall requests
+          // that arrive during warmup still work — orchestrator.recall() awaits
+          // its internal init gate (15s timeout) so callers get a correct (if
+          // slightly delayed) response rather than "connection refused".
           const status = await runAccessHttpServeCliCommand({
             service: accessService,
             enabled: true,
@@ -4654,6 +4659,13 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");
+          // Initialize the orchestrator AFTER the HTTP server is listening.
+          // Without this call the init gate Promise never resolves, so every
+          // recall waits the full 15s gate timeout — and QMD is never probed,
+          // causing the embedding fallback to load a 300 MB JSON on every cold
+          // path. But by running it here (not before), the port is available
+          // immediately while warmup proceeds in the background.
+          await orchestrator.initialize();
         });
 
       accessCmd
