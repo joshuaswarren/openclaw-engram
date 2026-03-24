@@ -422,9 +422,12 @@ const pluginDefinition = {
       // Synchronous builder: returns the pre-computed lines for the
       // requesting session.  The gateway passes { prompt, sessionKey }
       // but we only need sessionKey to look up our cache.
+      // Evict the entry after reading to avoid unbounded growth.
       const memoryBuildFn = (params: { sessionKey?: string }): string[] | null => {
         const key = params?.sessionKey ?? "default";
-        return cachedMemoryBySession.get(key) ?? null;
+        const lines = cachedMemoryBySession.get(key) ?? null;
+        cachedMemoryBySession.delete(key);
+        return lines;
       };
 
       (memoryBuildFn as any).id = "engram-memory";
