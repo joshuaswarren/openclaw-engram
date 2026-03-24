@@ -91,6 +91,7 @@
     "review:cursor": "bash scripts/cursor-prepush-review.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
+    "postinstall": "node scripts/rebuild-native.mjs",
     "prepack": "npm run build"
   },
   "publishConfig": {
