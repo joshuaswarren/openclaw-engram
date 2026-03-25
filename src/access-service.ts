@@ -1369,7 +1369,12 @@ export class EngramAccessService {
 
     let lcmArchived = false;
     if (this.orchestrator.lcmEngine && this.orchestrator.lcmEngine.enabled) {
-      await this.orchestrator.lcmEngine.observeMessages(lcmSessionKey, request.messages);
+      // Fire-and-forget: LCM archival writes to SQLite and builds summary
+      // DAGs, which can take tens of seconds for large sessions.  Don't
+      // block the HTTP response — the caller only needs acknowledgment.
+      this.orchestrator.lcmEngine.observeMessages(lcmSessionKey, request.messages).catch((err) => {
+        log.error(`access-observe LCM archival failed: ${err}`);
+      });
       lcmArchived = true;
     }
 
