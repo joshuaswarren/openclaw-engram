@@ -11,6 +11,9 @@ const hotCacheByDir = new Map<string, CacheEntry>();
 const archiveCacheByDir = new Map<string, CacheEntry>();
 
 export function getCachedMemories(baseDir: string, currentVersion: number): MemoryFile[] | null {
+  // Don't serve from cache when version tracking is unavailable (version=0).
+  // This ensures tests and fresh installs without a version file always read disk.
+  if (currentVersion === 0) return null;
   const entry = hotCacheByDir.get(baseDir);
   if (!entry || entry.version !== currentVersion) return null;
   return [...entry.memories.values()];
@@ -34,6 +37,7 @@ export function updateCacheOnDelete(baseDir: string, filePath: string): void {
 
 // Archive cache — same pattern, separate store
 export function getCachedArchivedMemories(baseDir: string, currentVersion: number): MemoryFile[] | null {
+  if (currentVersion === 0) return null;
   const entry = archiveCacheByDir.get(baseDir);
   if (!entry || entry.version !== currentVersion) return null;
   return [...entry.memories.values()];

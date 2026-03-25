@@ -4,15 +4,6 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
-import {
-  getCachedMemories,
-  setCachedMemories,
-  getCachedArchivedMemories,
-  setCachedArchivedMemories,
-  clearMemoryCache,
-  updateCacheOnWrite,
-  updateCacheOnDelete,
-} from "./memory-cache.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import type {
   AccessTrackingEntry,
@@ -1111,7 +1102,6 @@ export class StorageManager {
         log.warn(`storage.writeMemory completed but failed to update fact hash index: ${err}`);
       }
     }
-    updateCacheOnWrite(this.baseDir, { path: filePath, frontmatter: fm, content: sanitized.text });
     log.debug(`wrote memory ${id} to ${filePath}`);
     return id;
   }
@@ -1407,12 +1397,8 @@ export class StorageManager {
   }
 
   async readAllMemories(): Promise<MemoryFile[]> {
-    // Layer 1: process-level cache keyed by memoryStatusVersion
-    const currentVersion = this.getMemoryStatusVersion();
-    const cached = getCachedMemories(this.baseDir, currentVersion);
-    if (cached) return cached;
-
-    // Layer 2: deduplicate concurrent reads for the same directory
+    // Deduplicate concurrent reads for the same directory so multiple
+    // callers in the same recall share one disk scan.
     const inFlight = StorageManager.allMemoriesInFlight.get(this.baseDir);
     if (inFlight) return inFlight;
 
@@ -1441,7 +1427,6 @@ export class StorageManager {
   static clearAllStaticCaches(): void {
     StorageManager.allMemoriesInFlight.clear();
     StorageManager.questionsCache.clear();
-    clearMemoryCache();
   }
 
   /** Cancel any in-flight concurrent read so the next readAllMemories()
@@ -1510,8 +1495,6 @@ export class StorageManager {
         if (m !== null) memories.push(m);
       }
     }
-    // Populate the process-level cache
-    setCachedMemories(this.baseDir, memories, this.getMemoryStatusVersion());
     return memories;
   }
 
@@ -1520,10 +1503,6 @@ export class StorageManager {
    * Used by long-term recall fallback when hot recall has no hits.
    */
   async readArchivedMemories(): Promise<MemoryFile[]> {
-    const currentVersion = this.getMemoryStatusVersion();
-    const cached = getCachedArchivedMemories(this.baseDir, currentVersion);
-    if (cached) return cached;
-
     const memories: MemoryFile[] = [];
     const root = this.archiveDir;
 
@@ -1559,7 +1538,6 @@ export class StorageManager {
     };
 
     await readDir(root);
-    setCachedArchivedMemories(this.baseDir, memories, currentVersion);
     return memories;
   }
 
@@ -1750,8 +1728,6 @@ export class StorageManager {
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
       this.invalidateAllMemoriesCache();
-      updateCacheOnDelete(this.baseDir, memory.path);
-      this.bumpMemoryStatusVersion();
       await this.appendGeneratedMemoryLifecycleEventFailOpen(
         "storage.archiveMemory",
         {
@@ -1767,6 +1743,7 @@ export class StorageManager {
         },
         lifecycle?.ruleVersion,
       );
+      this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
       return destPath;
@@ -1901,8 +1878,6 @@ export class StorageManager {
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
-    updateCacheOnWrite(this.baseDir, { path: memory.path, frontmatter: updated, content: sanitized.text });
-    this.bumpMemoryStatusVersion();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {
       memoryId: id,
       eventType: "updated",
@@ -1938,8 +1913,6 @@ export class StorageManager {
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
-    updateCacheOnWrite(this.baseDir, { path: memory.path, frontmatter: updated, content: memory.content });
-    this.bumpMemoryStatusVersion();
     await this.appendGeneratedMemoryLifecycleEventFailOpen(
       "storage.writeMemoryFrontmatter",
       {
