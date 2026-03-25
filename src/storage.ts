@@ -9,6 +9,7 @@ import {
   setCachedMemories,
   getCachedArchivedMemories,
   setCachedArchivedMemories,
+  clearMemoryCache,
   updateCacheOnWrite,
   updateCacheOnDelete,
 } from "./memory-cache.js";
@@ -1748,7 +1749,9 @@ export class StorageManager {
       // Write to archive location first, then remove original
       await writeFile(destPath, fileContent, "utf-8");
       await unlink(memory.path);
+      this.invalidateAllMemoriesCache();
       updateCacheOnDelete(this.baseDir, memory.path);
+      this.bumpMemoryStatusVersion();
       await this.appendGeneratedMemoryLifecycleEventFailOpen(
         "storage.archiveMemory",
         {
@@ -1899,8 +1902,8 @@ export class StorageManager {
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
-    this.bumpMemoryStatusVersion();
     updateCacheOnWrite(this.baseDir, { path: memory.path, frontmatter: updated, content: sanitized.text });
+    this.bumpMemoryStatusVersion();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {
       memoryId: id,
       eventType: "updated",
@@ -1936,8 +1939,8 @@ export class StorageManager {
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
-    this.bumpMemoryStatusVersion();
     updateCacheOnWrite(this.baseDir, { path: memory.path, frontmatter: updated, content: memory.content });
+    this.bumpMemoryStatusVersion();
     await this.appendGeneratedMemoryLifecycleEventFailOpen(
       "storage.writeMemoryFrontmatter",
       {

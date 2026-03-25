@@ -868,7 +868,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 168,
     semanticConsolidationMaxPerRun:
       typeof cfg.semanticConsolidationMaxPerRun === "number"
-        ? Math.max(1, Math.floor(cfg.semanticConsolidationMaxPerRun))
+        ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
         : 100,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,

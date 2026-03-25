@@ -1721,10 +1721,12 @@ export class Orchestrator {
         // Route to the configured model
         let response: { content: string } | null = null;
         if (modelSetting === "fast" && this.fastLlm) {
-          const fastResult = await this.fastLlm.chatCompletion(
-            messages, "semantic-consolidation", llmOpts.maxTokens, llmOpts.temperature,
-          );
-          response = fastResult ? { content: fastResult } : null;
+          const fastResult = await this.fastLlm.chatCompletion(messages, {
+            operation: "semantic-consolidation",
+            maxTokens: llmOpts.maxTokens,
+            temperature: llmOpts.temperature,
+          });
+          response = fastResult ? { content: fastResult.content } : null;
         } else {
           response = await llm.chatCompletion(messages, llmOpts);
         }
