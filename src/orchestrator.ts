@@ -1645,12 +1645,13 @@ export class Orchestrator {
     dryRun?: boolean;
     thresholdOverride?: number;
   }): Promise<SemanticConsolidationResult> {
-    return this.runSemanticConsolidation(options);
+    return this.runSemanticConsolidation({ ...options, force: true });
   }
 
   private async runSemanticConsolidation(options?: {
     dryRun?: boolean;
     thresholdOverride?: number;
+    force?: boolean;
   }): Promise<SemanticConsolidationResult> {
     const result: SemanticConsolidationResult = {
       clustersFound: 0,
@@ -1660,7 +1661,7 @@ export class Orchestrator {
       clusters: [],
     };
 
-    if (!this.config.semanticConsolidationEnabled) {
+    if (!this.config.semanticConsolidationEnabled && !options?.force) {
       log.debug("[semantic-consolidation] disabled in config");
       return result;
     }
@@ -7350,10 +7351,12 @@ export class Orchestrator {
             log.info(`[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`);
             allMemories = await this.storage.readAllMemories();
           }
-          // Persist last-run timestamp
-          const stateDir = path.join(this.config.memoryDir, "state");
-          await mkdir(stateDir, { recursive: true });
-          await writeFile(stateFilePath, JSON.stringify({ lastRunAt: new Date().toISOString() }), "utf-8");
+          // Only persist last-run timestamp if the run succeeded (had no errors or made progress)
+          if (semResult.errors === 0 || semResult.memoriesArchived > 0) {
+            const stateDir = path.join(this.config.memoryDir, "state");
+            await mkdir(stateDir, { recursive: true });
+            await writeFile(stateFilePath, JSON.stringify({ lastRunAt: new Date().toISOString() }), "utf-8");
+          }
         }
       } catch (err) {
         log.warn(`[semantic-consolidation] maintenance pass failed (non-fatal): ${err}`);

@@ -1767,7 +1767,6 @@ export class StorageManager {
         },
         lifecycle?.ruleVersion,
       );
-      this.bumpMemoryStatusVersion();
 
       log.debug(`archived memory ${memory.frontmatter.id} → ${destPath}`);
       return destPath;

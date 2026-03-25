@@ -855,7 +855,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.semanticConsolidationThreshold === "number" ? cfg.semanticConsolidationThreshold : 0.8,
     semanticConsolidationMinClusterSize:
       typeof cfg.semanticConsolidationMinClusterSize === "number"
-        ? Math.max(1, Math.floor(cfg.semanticConsolidationMinClusterSize))
+        ? Math.max(2, Math.floor(cfg.semanticConsolidationMinClusterSize))
         : 3,
     semanticConsolidationExcludeCategories: Array.isArray(cfg.semanticConsolidationExcludeCategories)
       ? (cfg.semanticConsolidationExcludeCategories as unknown[]).filter(
