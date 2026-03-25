@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.1.7] — 2026-03-25
+
 ### Added
 - **Smart Memory Cache** — Process-level singleton cache for `readAllMemories()` and `readArchivedMemories()`. Uses `memoryStatusVersion` for invalidation, write-through on mutations. Reduces 15s disk scans to <100ms cache hits. Shared across all sessions, agents, and namespaces.
 - **Semantic Consolidation Engine** — Finds clusters of semantically similar memories using token overlap, synthesizes canonical versions via LLM, and archives originals with full provenance. Runs on a configurable schedule (default weekly) or manually via CLI.
