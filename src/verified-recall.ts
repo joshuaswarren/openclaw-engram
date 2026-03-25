@@ -88,15 +88,14 @@ export async function searchVerifiedEpisodes(options: {
   query: string;
   maxResults: number;
   boxRecallDays?: number;
-  /** Pre-loaded memories to avoid redundant disk scan. When provided,
-   *  skips StorageManager.readAllMemories() entirely. */
-  preloadedMemories?: MemoryFile[];
 }): Promise<VerifiedEpisodeResult[]> {
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
-  const allMemories = options.preloadedMemories
-    ?? await new StorageManager(options.memoryDir).readAllMemories();
+  // readAllMemories() goes through the process-level memory cache (keyed
+  // by baseDir).  After the first cold load, subsequent calls from any
+  // StorageManager instance return from cache in <1ms.
+  const allMemories = await new StorageManager(options.memoryDir).readAllMemories();
   const verifiedMemoryById = new Map(
     allMemories
       .filter((memory) => memory.frontmatter.status !== "archived")
