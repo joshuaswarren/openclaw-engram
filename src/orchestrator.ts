@@ -4150,6 +4150,13 @@ export class Orchestrator {
       return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
     })();
 
+    // Verified recall and semantic rules both need readAllMemories().
+    // Instead of a shared preload (which has namespace/dir mismatch issues),
+    // each subsystem calls readAllMemories() on its correct storage instance.
+    // The process-level memory cache (keyed by baseDir + memoryStatusVersion)
+    // ensures only one actual disk scan happens — subsequent calls return
+    // from cache in <1ms.
+
     const verifiedRecallPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (

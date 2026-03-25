@@ -101,8 +101,8 @@ export async function searchVerifiedSemanticRules(options: {
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
-  const storage = new StorageManager(options.memoryDir);
-  const allMemories = await storage.readAllMemories();
+  // readAllMemories() goes through the process-level memory cache.
+  const allMemories = await new StorageManager(options.memoryDir).readAllMemories();
   const memoryById = new Map(allMemories.map((memory) => [memory.frontmatter.id, memory] as const));
   const minEffectiveConfidence = options.minEffectiveConfidence ?? DEFAULT_MIN_EFFECTIVE_CONFIDENCE;
 

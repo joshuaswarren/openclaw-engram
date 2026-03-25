@@ -92,9 +92,12 @@ export async function searchVerifiedEpisodes(options: {
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
-  const storage = new StorageManager(options.memoryDir);
+  // readAllMemories() goes through the process-level memory cache (keyed
+  // by baseDir).  After the first cold load, subsequent calls from any
+  // StorageManager instance return from cache in <1ms.
+  const allMemories = await new StorageManager(options.memoryDir).readAllMemories();
   const verifiedMemoryById = new Map(
-    (await storage.readAllMemories())
+    allMemories
       .filter((memory) => memory.frontmatter.status !== "archived")
       .filter((memory) => memory.frontmatter.memoryKind === "episode")
       .map((memory) => [memory.frontmatter.id, memory] as const),
