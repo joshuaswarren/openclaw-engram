@@ -4159,7 +4159,7 @@ export class Orchestrator {
     // preloaded memories are a best-effort optimization.  If the dirs
     // differ, both functions fall back to their own disk scan internally.
     const sharedMemoriesForVerification = (this.config.verifiedRecallEnabled || this.config.semanticRuleVerificationEnabled)
-      ? this.storage.readAllMemories()
+      ? profileStorage.readAllMemories()
       : Promise.resolve([] as import("./types.js").MemoryFile[]);
 
     const verifiedRecallPromise = (async (): Promise<string | null> => {
