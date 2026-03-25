@@ -4150,17 +4150,12 @@ export class Orchestrator {
       return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
     })();
 
-    // Pre-load memories for verified recall + verified rules.  Both subsystems
-    // previously created their own StorageManager and scanned 146K files
-    // independently (15s each).  The promise is chained via .then() inside
-    // each subsystem's Promise.race so the timeout wrapper still works.
-    // Note: profileStorage.dir and this.config.memoryDir may differ in
-    // namespace setups.  Each subsystem uses its own storage dir — the
-    // preloaded memories are a best-effort optimization.  If the dirs
-    // differ, both functions fall back to their own disk scan internally.
-    const sharedMemoriesForVerification = (this.config.verifiedRecallEnabled || this.config.semanticRuleVerificationEnabled)
-      ? profileStorage.readAllMemories()
-      : Promise.resolve([] as import("./types.js").MemoryFile[]);
+    // Verified recall and semantic rules both need readAllMemories().
+    // Instead of a shared preload (which has namespace/dir mismatch issues),
+    // each subsystem calls readAllMemories() on its correct storage instance.
+    // The process-level memory cache (keyed by baseDir + memoryStatusVersion)
+    // ensures only one actual disk scan happens — subsequent calls return
+    // from cache in <1ms.
 
     const verifiedRecallPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
@@ -4180,15 +4175,12 @@ export class Orchestrator {
       const VERIFIED_RECALL_TIMEOUT_MS = 15_000;
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const results = await Promise.race([
-        sharedMemoriesForVerification.then((mems) =>
-          searchVerifiedEpisodes({
-            memoryDir: profileStorage.dir,
-            query: retrievalQuery,
-            maxResults,
-            boxRecallDays: this.config.boxRecallDays,
-            preloadedMemories: mems,
-          }),
-        ),
+        searchVerifiedEpisodes({
+          memoryDir: profileStorage.dir,
+          query: retrievalQuery,
+          maxResults,
+          boxRecallDays: this.config.boxRecallDays,
+        }),
         new Promise<[]>((resolve) => {
           timeoutHandle = setTimeout(() => resolve([]), VERIFIED_RECALL_TIMEOUT_MS);
         }),
@@ -4221,14 +4213,11 @@ export class Orchestrator {
       const VERIFIED_RULES_TIMEOUT_MS = 15_000;
       let rulesTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const results = await Promise.race([
-        sharedMemoriesForVerification.then((mems) =>
-          searchVerifiedSemanticRules({
-            memoryDir: this.config.memoryDir,
-            query: retrievalQuery,
-            maxResults,
-            preloadedMemories: mems,
-          }),
-        ),
+        searchVerifiedSemanticRules({
+          memoryDir: this.config.memoryDir,
+          query: retrievalQuery,
+          maxResults,
+        }),
         new Promise<[]>((resolve) => {
           rulesTimeoutHandle = setTimeout(() => resolve([]), VERIFIED_RULES_TIMEOUT_MS);
         }),
