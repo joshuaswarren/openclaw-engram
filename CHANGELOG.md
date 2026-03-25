@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Smart Memory Cache** — Process-level singleton cache for `readAllMemories()` and `readArchivedMemories()`. Uses `memoryStatusVersion` for invalidation, write-through on mutations. Reduces 15s disk scans to <100ms cache hits. Shared across all sessions, agents, and namespaces.
+- **Semantic Consolidation Engine** — Finds clusters of semantically similar memories using token overlap, synthesizes canonical versions via LLM, and archives originals with full provenance. Runs on a configurable schedule (default weekly) or manually via CLI.
+  - `semanticConsolidationEnabled` — Enable the feature (default `false`)
+  - `semanticConsolidationThreshold` — Token overlap threshold, 0.8=conservative, 0.6=aggressive (default `0.8`)
+  - `semanticConsolidationModel` — LLM selection: `"auto"`, `"fast"`, or specific model (default `"auto"`)
+  - `semanticConsolidationMinClusterSize` — Min cluster size before merging (default `3`)
+  - `semanticConsolidationExcludeCategories` — Categories to exclude (default `["correction", "commitment"]`)
+  - `semanticConsolidationIntervalHours` — Hours between auto-runs (default `168` = weekly)
+  - `semanticConsolidationMaxPerRun` — Max memories per run to limit LLM cost (default `100`)
+- **Archive Cache** — Same caching pattern applied to archived memories for cold recall paths.
+- **CLI: `semantic-consolidate`** — Manual semantic consolidation with `--dry-run`, `--verbose`, and `--threshold` options.
+
 ## [v9.1.0] — 2026-03-22
 
 ### Added

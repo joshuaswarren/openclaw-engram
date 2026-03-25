@@ -1836,6 +1836,42 @@
         "default": false,
         "description": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
       },
+      "semanticConsolidationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable periodic semantic consolidation of similar memories."
+      },
+      "semanticConsolidationModel": {
+        "type": "string",
+        "default": "auto",
+        "description": "LLM for consolidation synthesis: 'auto' (primary model), 'fast' (fast local model), or a specific model name."
+      },
+      "semanticConsolidationThreshold": {
+        "type": "number",
+        "default": 0.8,
+        "description": "Token overlap threshold (0-1) for grouping similar memories. 0.8=conservative, 0.6=aggressive."
+      },
+      "semanticConsolidationMinClusterSize": {
+        "type": "number",
+        "default": 3,
+        "description": "Minimum cluster size before consolidation triggers."
+      },
+      "semanticConsolidationExcludeCategories": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["correction", "commitment"],
+        "description": "Memory categories excluded from semantic consolidation."
+      },
+      "semanticConsolidationIntervalHours": {
+        "type": "number",
+        "default": 168,
+        "description": "Hours between automatic consolidation runs (168 = weekly)."
+      },
+      "semanticConsolidationMaxPerRun": {
+        "type": "number",
+        "default": 100,
+        "description": "Max memories to consolidate per run to limit LLM cost."
+      },
       "creationMemoryEnabled": {
         "type": "boolean",
         "default": false,
@@ -3347,6 +3383,41 @@
       "label": "Semantic Rule Verification",
       "advanced": true,
       "help": "Verify promoted semantic rules against their cited source episodes at recall time before surfacing them in recall."
+    },
+    "semanticConsolidationEnabled": {
+      "label": "Semantic Consolidation",
+      "advanced": true,
+      "help": "Enable periodic semantic consolidation of similar memories."
+    },
+    "semanticConsolidationModel": {
+      "label": "Semantic Consolidation Model",
+      "advanced": true,
+      "help": "LLM for consolidation synthesis: 'auto' (primary model), 'fast' (fast local model), or a specific model name."
+    },
+    "semanticConsolidationThreshold": {
+      "label": "Semantic Consolidation Threshold",
+      "advanced": true,
+      "help": "Token overlap threshold (0-1) for grouping similar memories. 0.8=conservative, 0.6=aggressive."
+    },
+    "semanticConsolidationMinClusterSize": {
+      "label": "Semantic Consolidation Min Cluster Size",
+      "advanced": true,
+      "help": "Minimum cluster size before consolidation triggers."
+    },
+    "semanticConsolidationExcludeCategories": {
+      "label": "Semantic Consolidation Exclude Categories",
+      "advanced": true,
+      "help": "Memory categories excluded from semantic consolidation."
+    },
+    "semanticConsolidationIntervalHours": {
+      "label": "Semantic Consolidation Interval (Hours)",
+      "advanced": true,
+      "help": "Hours between automatic consolidation runs (168 = weekly)."
+    },
+    "semanticConsolidationMaxPerRun": {
+      "label": "Semantic Consolidation Max Per Run",
+      "advanced": true,
+      "help": "Max memories to consolidate per run to limit LLM cost."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",

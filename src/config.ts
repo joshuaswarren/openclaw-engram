@@ -846,6 +846,30 @@ export function parseConfig(raw: unknown): PluginConfig {
     verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
     semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
     semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
+    semanticConsolidationEnabled: cfg.semanticConsolidationEnabled === true,
+    semanticConsolidationModel:
+      typeof cfg.semanticConsolidationModel === "string" && cfg.semanticConsolidationModel.length > 0
+        ? cfg.semanticConsolidationModel
+        : "auto",
+    semanticConsolidationThreshold:
+      typeof cfg.semanticConsolidationThreshold === "number" ? cfg.semanticConsolidationThreshold : 0.8,
+    semanticConsolidationMinClusterSize:
+      typeof cfg.semanticConsolidationMinClusterSize === "number"
+        ? Math.max(2, Math.floor(cfg.semanticConsolidationMinClusterSize))
+        : 3,
+    semanticConsolidationExcludeCategories: Array.isArray(cfg.semanticConsolidationExcludeCategories)
+      ? (cfg.semanticConsolidationExcludeCategories as unknown[]).filter(
+          (c): c is string => typeof c === "string" && c.length > 0,
+        )
+      : ["correction", "commitment"],
+    semanticConsolidationIntervalHours:
+      typeof cfg.semanticConsolidationIntervalHours === "number"
+        ? Math.max(1, Math.floor(cfg.semanticConsolidationIntervalHours))
+        : 168,
+    semanticConsolidationMaxPerRun:
+      typeof cfg.semanticConsolidationMaxPerRun === "number"
+        ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
+        : 100,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,

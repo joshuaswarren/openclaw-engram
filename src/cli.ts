@@ -5548,6 +5548,48 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("semantic-consolidate")
+        .description("Run semantic consolidation of similar memories")
+        .option("--dry-run", "Show what would be consolidated without making changes")
+        .option("--verbose", "Show detailed cluster information")
+        .option("--threshold <n>", "Override token overlap threshold (0-1)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const dryRun = options.dryRun === true;
+          const verbose = options.verbose === true;
+          const thresholdOverride = typeof options.threshold === "string"
+            ? parseFloat(options.threshold)
+            : undefined;
+
+          console.log(`Running semantic consolidation${dryRun ? " (dry run)" : ""}...`);
+          const result = await orchestrator.runSemanticConsolidationNow({
+            dryRun,
+            thresholdOverride,
+          });
+
+          if (verbose || dryRun) {
+            console.log(`\nClusters found: ${result.clustersFound}`);
+            for (const cluster of result.clusters) {
+              console.log(`\n  Category: ${cluster.category} (${cluster.memories.length} memories, overlap=${cluster.overlapScore.toFixed(2)})`);
+              for (const m of cluster.memories) {
+                const preview = m.content.length > 80 ? m.content.slice(0, 80) + "..." : m.content;
+                console.log(`    - ${m.frontmatter.id}: ${preview}`);
+              }
+              if (cluster.canonicalContent) {
+                const preview = cluster.canonicalContent.length > 120
+                  ? cluster.canonicalContent.slice(0, 120) + "..."
+                  : cluster.canonicalContent;
+                console.log(`    → Canonical: ${preview}`);
+              }
+            }
+          }
+
+          console.log(
+            `\nSemantic consolidation complete. clusters=${result.clustersFound}, consolidated=${result.memoriesConsolidated}, archived=${result.memoriesArchived}, errors=${result.errors}`,
+          );
+        });
+
+      cmd
         .command("questions")
         .description("List open questions from memory extraction")
         .option("-a, --all", "Show all questions including resolved")

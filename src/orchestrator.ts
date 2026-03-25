@@ -102,6 +102,12 @@ import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
 import { confidenceTier, type MemoryIntent, type MemorySummary } from "./types.js";
 import { LcmEngine } from "./lcm/index.js";
 import { shouldSkipImplicitExtraction } from "./explicit-capture.js";
+import {
+  findSimilarClusters,
+  buildConsolidationPrompt,
+  parseConsolidationResponse,
+  type SemanticConsolidationResult,
+} from "./semantic-consolidation.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
 import { writeConversationChunks } from "./conversation-index/indexer.js";
 import { cleanupConversationChunks } from "./conversation-index/cleanup.js";
@@ -1633,6 +1639,177 @@ export class Orchestrator {
 
   async runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }> {
     return this.runConsolidation();
+  }
+
+  async runSemanticConsolidationNow(options?: {
+    dryRun?: boolean;
+    thresholdOverride?: number;
+  }): Promise<SemanticConsolidationResult> {
+    return this.runSemanticConsolidation({ ...options, force: true });
+  }
+
+  private async runSemanticConsolidation(options?: {
+    dryRun?: boolean;
+    thresholdOverride?: number;
+    force?: boolean;
+  }): Promise<SemanticConsolidationResult> {
+    const result: SemanticConsolidationResult = {
+      clustersFound: 0,
+      memoriesConsolidated: 0,
+      memoriesArchived: 0,
+      errors: 0,
+      clusters: [],
+    };
+
+    if (!this.config.semanticConsolidationEnabled && !options?.force) {
+      log.debug("[semantic-consolidation] disabled in config");
+      return result;
+    }
+
+    log.info("[semantic-consolidation] starting run");
+
+    const allMemories = await this.storage.readAllMemories();
+    if (allMemories.length < 10) {
+      log.debug("[semantic-consolidation] too few memories, skipping");
+      return result;
+    }
+
+    const threshold = options?.thresholdOverride ?? this.config.semanticConsolidationThreshold;
+    const clusters = findSimilarClusters(allMemories, {
+      threshold,
+      minClusterSize: this.config.semanticConsolidationMinClusterSize,
+      excludeCategories: this.config.semanticConsolidationExcludeCategories,
+      maxPerRun: this.config.semanticConsolidationMaxPerRun,
+    });
+
+    result.clustersFound = clusters.length;
+    result.clusters = clusters;
+
+    if (clusters.length === 0) {
+      log.info("[semantic-consolidation] no clusters found");
+      return result;
+    }
+
+    log.info(`[semantic-consolidation] found ${clusters.length} cluster(s)`);
+
+    if (options?.dryRun) {
+      log.info("[semantic-consolidation] dry run — skipping LLM synthesis and archival");
+      return result;
+    }
+
+    // Use FallbackLlmClient for LLM calls (same pattern as causal-consolidation.ts)
+    // Honor semanticConsolidationModel: "auto" = primary, "fast" = local fast, or specific model
+    const { FallbackLlmClient } = await import("./fallback-llm.js");
+    const modelSetting = this.config.semanticConsolidationModel;
+    if (modelSetting === "fast" && this.fastLlm) {
+      log.info("[semantic-consolidation] using fast local LLM for synthesis");
+    }
+    const llm = new FallbackLlmClient(this.config.gatewayConfig);
+    if (!llm.isAvailable() && !(modelSetting === "fast" && this.fastLlm)) {
+      log.warn("[semantic-consolidation] no LLM available — skipping synthesis");
+      return result;
+    }
+
+    for (const cluster of clusters) {
+      try {
+        const prompt = buildConsolidationPrompt(cluster);
+        const messages = [
+          { role: "system" as const, content: "You are a memory consolidation system. Output only the consolidated memory text." },
+          { role: "user" as const, content: prompt },
+        ];
+        const llmOpts = { temperature: 0.2, maxTokens: 2000 };
+
+        // Route to the configured model
+        let response: { content: string } | null = null;
+        if (modelSetting === "fast" && this.fastLlm) {
+          const fastResult = await this.fastLlm.chatCompletion(messages, {
+            operation: "semantic-consolidation",
+            maxTokens: llmOpts.maxTokens,
+            temperature: llmOpts.temperature,
+          });
+          response = fastResult ? { content: fastResult.content } : null;
+        } else {
+          response = await llm.chatCompletion(messages, llmOpts);
+        }
+
+        if (!response?.content) {
+          log.warn(`[semantic-consolidation] empty LLM response for cluster in "${cluster.category}"`);
+          result.errors++;
+          continue;
+        }
+
+        const canonicalContent = parseConsolidationResponse(response.content);
+        cluster.canonicalContent = canonicalContent;
+
+        // Pick the most recent memory's metadata as the basis for lineage
+        const sorted = [...cluster.memories].sort(
+          (a, b) => new Date(b.frontmatter.created).getTime() - new Date(a.frontmatter.created).getTime(),
+        );
+        const newest = sorted[0];
+        const lineageIds = cluster.memories.map((m) => m.frontmatter.id);
+
+        // Write the canonical memory
+        const canonicalId = await this.storage.writeMemory(
+          newest.frontmatter.category,
+          canonicalContent,
+          {
+            actor: "semantic-consolidation",
+            confidence: newest.frontmatter.confidence,
+            tags: [...new Set(cluster.memories.flatMap((m) => m.frontmatter.tags ?? []))],
+            source: "semantic-consolidation",
+            lineage: lineageIds,
+          },
+        );
+
+        result.memoriesConsolidated++;
+
+        // Archive originals
+        for (const m of cluster.memories) {
+          const archiveResult = await this.storage.archiveMemory(m, {
+            actor: "semantic-consolidation",
+            reasonCode: "semantic-consolidation",
+            relatedMemoryIds: [canonicalId],
+          });
+          if (archiveResult) {
+            // Remove from content-hash index
+            if (this.contentHashIndex) {
+              this.contentHashIndex.remove(m.content);
+            }
+            await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
+            if (this.config.queryAwareIndexingEnabled && m.path && m.frontmatter?.created) {
+              deindexMemory(
+                this.config.memoryDir,
+                m.path,
+                m.frontmatter.created,
+                m.frontmatter.tags ?? [],
+              );
+            }
+            result.memoriesArchived++;
+          }
+        }
+
+        log.info(
+          `[semantic-consolidation] consolidated ${cluster.memories.length} memories → ${canonicalId}`,
+        );
+      } catch (err) {
+        log.warn(
+          `[semantic-consolidation] cluster processing failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        result.errors++;
+      }
+    }
+
+    // Save hash index if we modified it
+    if (result.memoriesArchived > 0 && this.contentHashIndex) {
+      await this.contentHashIndex.save().catch((err) =>
+        log.warn(`[semantic-consolidation] content-hash index save failed: ${err}`),
+      );
+    }
+
+    log.info(
+      `[semantic-consolidation] complete: clusters=${result.clustersFound}, consolidated=${result.memoriesConsolidated}, archived=${result.memoriesArchived}, errors=${result.errors}`,
+    );
+    return result;
   }
 
   async waitForExtractionIdle(timeoutMs: number = 60_000): Promise<boolean> {
@@ -7145,6 +7322,44 @@ export class Orchestrator {
       const archived = await this.runFactArchival(allMemories);
       if (archived > 0) {
         log.info(`archived ${archived} old low-importance facts`);
+      }
+    }
+
+    // Semantic consolidation pass — find similar memories, synthesize canonical versions
+    if (this.config.semanticConsolidationEnabled) {
+      try {
+        const stateFilePath = path.join(this.config.memoryDir, "state", "semantic-consolidation-last-run.json");
+        let shouldRun = true;
+        try {
+          const stateRaw = await readFile(stateFilePath, "utf-8");
+          const stateData = JSON.parse(stateRaw) as { lastRunAt?: string };
+          if (stateData.lastRunAt) {
+            const lastRunMs = new Date(stateData.lastRunAt).getTime();
+            const intervalMs = this.config.semanticConsolidationIntervalHours * 60 * 60 * 1000;
+            if (Date.now() - lastRunMs < intervalMs) {
+              shouldRun = false;
+              log.debug("[semantic-consolidation] skipping — not enough time since last run");
+            }
+          }
+        } catch {
+          // No state file yet — first run
+        }
+
+        if (shouldRun) {
+          const semResult = await this.runSemanticConsolidation();
+          if (semResult.memoriesArchived > 0) {
+            log.info(`[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`);
+            allMemories = await this.storage.readAllMemories();
+          }
+          // Only persist last-run timestamp if the run succeeded (had no errors or made progress)
+          if (semResult.errors === 0 || semResult.memoriesArchived > 0) {
+            const stateDir = path.join(this.config.memoryDir, "state");
+            await mkdir(stateDir, { recursive: true });
+            await writeFile(stateFilePath, JSON.stringify({ lastRunAt: new Date().toISOString() }), "utf-8");
+          }
+        }
+      } catch (err) {
+        log.warn(`[semantic-consolidation] maintenance pass failed (non-fatal): ${err}`);
       }
     }
 

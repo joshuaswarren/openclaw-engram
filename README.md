@@ -266,6 +266,8 @@ These capabilities can be enabled progressively:
 - **Shared Context** — Cross-agent memory sharing for multi-agent setups
 - **Identity Continuity** — Consistent agent personality across sessions
 - **Hot/Cold Tiering** — Automatic migration of aging memories to cold storage
+- **Memory Cache** — Process-level singleton cache for `readAllMemories()` — turns 15s disk scans into <100ms cache hits, shared across all sessions
+- **Semantic Consolidation** — Finds clusters of semantically similar memories, synthesizes canonical versions via LLM, archives originals to reduce bloat
 - **Native Knowledge** — Search curated markdown (workspace docs, Obsidian vaults) without extracting into memory
 - **Behavior Loop Tuning** — Runtime self-tuning of extraction and recall parameters
 
@@ -333,6 +335,45 @@ Enable it in your `openclaw.json`:
 ```
 
 Set `parallelMaxResultsPerAgent: 0` to disable an individual agent's results without disabling the feature entirely.
+
+### Semantic Consolidation (opt-in)
+
+Over time, memory stores accumulate redundant facts — the same information extracted multiple times across sessions, expressed slightly differently. Semantic consolidation finds clusters of similar memories using token overlap, synthesizes a single canonical version via LLM, and archives the originals. This reduces storage bloat, speeds up recall, and improves memory quality.
+
+- **Conservative by default** — Only merges when 80%+ token overlap is detected across 3+ memories
+- **LLM synthesis** — Uses your configured model to combine unique information from all cluster members
+- **Safe archival** — Originals are archived (not deleted) with full provenance tracking
+- **Configurable** — Adjust threshold, cluster size, excluded categories, model, and schedule
+- **Excluded categories** — Corrections and commitments are never consolidated (configurable)
+
+Enable it in your `openclaw.json`:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          "semanticConsolidationEnabled": true
+          // Optional tuning:
+          // "semanticConsolidationThreshold": 0.8,    // 0.8=conservative, 0.6=aggressive
+          // "semanticConsolidationModel": "fast",      // "auto", "fast", or specific model
+          // "semanticConsolidationIntervalHours": 168, // weekly (default)
+          // "semanticConsolidationMaxPerRun": 100
+        }
+      }
+    }
+  }
+}
+```
+
+Run manually from the CLI:
+
+```bash
+openclaw engram semantic-consolidate --dry-run    # Preview what would be merged
+openclaw engram semantic-consolidate --verbose     # Run with detailed output
+openclaw engram semantic-consolidate --threshold 0.6  # Override threshold
+```
 
 ### Advanced (opt-in)
 
@@ -417,6 +458,11 @@ openclaw engram review-disposition <id> --status rejected  # Operator review
 openclaw engram benchmark recall   # Benchmark status and validation
 openclaw engram benchmark-ci-gate  # CI gate for regressions
 
+# Memory maintenance
+openclaw engram consolidate                  # Run standard consolidation
+openclaw engram semantic-consolidate         # Run semantic dedup consolidation
+openclaw engram semantic-consolidate --dry-run  # Preview without changes
+
 # Access layer
 openclaw engram access http-serve --token "$TOKEN"  # Start HTTP API
 openclaw engram access mcp-serve   # Start stdio MCP server
@@ -441,6 +487,9 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `memoryOsPreset` | unset | Quick config: `conservative`, `balanced`, `research-max`, `local-llm-heavy` |
 | `lcmEnabled` | `false` | Enable Lossless Context Management (proactive session archive + summary DAG) |
+| `semanticConsolidationEnabled` | `false` | Enable periodic semantic dedup of similar memories |
+| `semanticConsolidationThreshold` | `0.8` | Token overlap threshold (0.8=conservative, 0.6=aggressive) |
+| `semanticConsolidationModel` | `"auto"` | LLM for synthesis: `"auto"`, `"fast"`, or specific model |
 
 **[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
