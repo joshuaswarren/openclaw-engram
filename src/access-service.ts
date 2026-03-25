@@ -1367,10 +1367,22 @@ export class EngramAccessService {
       ? `${namespace}:${request.sessionKey}`
       : request.sessionKey;
 
+    // lcmArchived in the response means "LCM archival was queued" (not
+    // "completed"), matching extractionQueued semantics.  Both run async.
     let lcmArchived = false;
     if (this.orchestrator.lcmEngine && this.orchestrator.lcmEngine.enabled) {
-      await this.orchestrator.lcmEngine.observeMessages(lcmSessionKey, request.messages);
-      lcmArchived = true;
+      // Fire-and-forget: LCM archival writes to SQLite and builds summary
+      // DAGs, which can take tens of seconds for large sessions.  Don't
+      // block the HTTP response — the caller only needs acknowledgment.
+      try {
+        const lcmPromise = this.orchestrator.lcmEngine.observeMessages(lcmSessionKey, request.messages);
+        lcmPromise.catch((err) => {
+          log.error(`access-observe LCM archival failed: ${err}`);
+        });
+        lcmArchived = true;
+      } catch (err) {
+        log.error(`access-observe LCM enqueue failed: ${err}`);
+      }
     }
 
     let extractionQueued = false;
