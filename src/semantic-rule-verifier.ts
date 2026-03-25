@@ -97,12 +97,14 @@ export async function searchVerifiedSemanticRules(options: {
   query: string;
   maxResults: number;
   minEffectiveConfidence?: number;
+  /** Pre-loaded memories to avoid redundant disk scan. */
+  preloadedMemories?: import("./types.js").MemoryFile[];
 }): Promise<VerifiedSemanticRuleResult[]> {
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
-  const storage = new StorageManager(options.memoryDir);
-  const allMemories = await storage.readAllMemories();
+  const allMemories = options.preloadedMemories
+    ?? await new StorageManager(options.memoryDir).readAllMemories();
   const memoryById = new Map(allMemories.map((memory) => [memory.frontmatter.id, memory] as const));
   const minEffectiveConfidence = options.minEffectiveConfidence ?? DEFAULT_MIN_EFFECTIVE_CONFIDENCE;
 

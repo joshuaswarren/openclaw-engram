@@ -4150,6 +4150,13 @@ export class Orchestrator {
       return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
     })();
 
+    // Pre-load memories once for verified recall + verified rules to avoid
+    // redundant 15s disk scans.  Both subsystems previously created their own
+    // StorageManager and called readAllMemories() independently.
+    const sharedMemoriesForVerification = (this.config.verifiedRecallEnabled || this.config.semanticRuleVerificationEnabled)
+      ? profileStorage.readAllMemories()
+      : Promise.resolve([] as import("./types.js").MemoryFile[]);
+
     const verifiedRecallPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
@@ -4173,6 +4180,7 @@ export class Orchestrator {
           query: retrievalQuery,
           maxResults,
           boxRecallDays: this.config.boxRecallDays,
+          preloadedMemories: await sharedMemoriesForVerification,
         }),
         new Promise<[]>((resolve) => {
           timeoutHandle = setTimeout(() => resolve([]), VERIFIED_RECALL_TIMEOUT_MS);
@@ -4210,6 +4218,7 @@ export class Orchestrator {
           memoryDir: this.config.memoryDir,
           query: retrievalQuery,
           maxResults,
+          preloadedMemories: await sharedMemoriesForVerification,
         }),
         new Promise<[]>((resolve) => {
           rulesTimeoutHandle = setTimeout(() => resolve([]), VERIFIED_RULES_TIMEOUT_MS);

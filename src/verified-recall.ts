@@ -88,13 +88,17 @@ export async function searchVerifiedEpisodes(options: {
   query: string;
   maxResults: number;
   boxRecallDays?: number;
+  /** Pre-loaded memories to avoid redundant disk scan. When provided,
+   *  skips StorageManager.readAllMemories() entirely. */
+  preloadedMemories?: MemoryFile[];
 }): Promise<VerifiedEpisodeResult[]> {
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
-  const storage = new StorageManager(options.memoryDir);
+  const allMemories = options.preloadedMemories
+    ?? await new StorageManager(options.memoryDir).readAllMemories();
   const verifiedMemoryById = new Map(
-    (await storage.readAllMemories())
+    allMemories
       .filter((memory) => memory.frontmatter.status !== "archived")
       .filter((memory) => memory.frontmatter.memoryKind === "episode")
       .map((memory) => [memory.frontmatter.id, memory] as const),
