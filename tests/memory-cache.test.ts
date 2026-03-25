@@ -5,12 +5,14 @@ import {
   setCachedMemories,
   getCachedArchivedMemories,
   setCachedArchivedMemories,
+  getCachedEntities,
+  setCachedEntities,
   updateCacheOnWrite,
   updateCacheOnDelete,
   clearMemoryCache,
   getMemoryCacheStats,
 } from "../src/memory-cache.ts";
-import type { MemoryFile } from "../src/types.ts";
+import type { EntityFile, MemoryFile } from "../src/types.ts";
 
 function makeMemory(id: string, filePath: string): MemoryFile {
   return {
@@ -168,4 +170,57 @@ test("getMemoryCacheStats returns correct sizes and versions", () => {
   assert.equal(stats.archiveSize, 1);
   assert.equal(stats.hotVersion, 7);
   assert.equal(stats.archiveVersion, 3);
+});
+
+// --- Entity cache tests ---
+
+function makeEntity(name: string): EntityFile {
+  return {
+    name,
+    type: "person",
+    updated: new Date().toISOString(),
+    facts: [`${name} is a test entity`],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  };
+}
+
+test("getCachedEntities returns null on cold cache", () => {
+  clearMemoryCache();
+  const result = getCachedEntities("/some/dir", 0);
+  assert.equal(result, null);
+});
+
+test("after setCachedEntities, getCachedEntities returns the entities", () => {
+  clearMemoryCache();
+  const dir = "/test/entity-set-get";
+  const e1 = makeEntity("Alice");
+  const e2 = makeEntity("Bob");
+  setCachedEntities(dir, [e1, e2], 5);
+  const result = getCachedEntities(dir, 5);
+  assert.ok(result);
+  assert.equal(result.length, 2);
+  const names = result.map((e) => e.name).sort();
+  assert.deepEqual(names, ["Alice", "Bob"]);
+});
+
+test("getCachedEntities returns null when version does not match", () => {
+  clearMemoryCache();
+  const dir = "/test/entity-version-mismatch";
+  const e1 = makeEntity("Alice");
+  setCachedEntities(dir, [e1], 3);
+  const result = getCachedEntities(dir, 4);
+  assert.equal(result, null);
+});
+
+test("clearMemoryCache also clears entity cache", () => {
+  clearMemoryCache();
+  const dir = "/test/entity-clear";
+  setCachedEntities(dir, [makeEntity("Alice")], 1);
+  assert.ok(getCachedEntities(dir, 1));
+
+  clearMemoryCache();
+
+  assert.equal(getCachedEntities(dir, 1), null);
 });

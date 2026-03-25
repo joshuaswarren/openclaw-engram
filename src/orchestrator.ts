@@ -1439,6 +1439,11 @@ export class Orchestrator {
       })().catch(() => {});
     }
 
+    // Pre-warm memory and entity caches in background so first recall
+    // doesn't pay the cold load penalty
+    this.storage.readAllMemories().catch(() => {});
+    this.storage.readAllEntityFiles().catch(() => {});
+
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
       const init = await this.conversationIndexBackend.initialize();
       if (!init.enabled) {

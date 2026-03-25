@@ -1,4 +1,4 @@
-import type { MemoryFile } from "./types.js";
+import type { EntityFile, MemoryFile } from "./types.js";
 
 interface CacheEntry {
   memories: Map<string, MemoryFile>; // keyed by file path
@@ -49,13 +49,29 @@ export function setCachedArchivedMemories(baseDir: string, memories: MemoryFile[
   archiveCacheByDir.set(baseDir, { memories: map, version, loadedAt: Date.now() });
 }
 
+// Entity cache — same pattern as memory cache
+const entityCacheByDir = new Map<string, { entities: EntityFile[]; version: number; loadedAt: number }>();
+
+export function getCachedEntities(baseDir: string, currentVersion: number): EntityFile[] | null {
+  if (currentVersion === 0) return null;
+  const entry = entityCacheByDir.get(baseDir);
+  if (!entry || entry.version !== currentVersion) return null;
+  return entry.entities;
+}
+
+export function setCachedEntities(baseDir: string, entities: EntityFile[], version: number): void {
+  entityCacheByDir.set(baseDir, { entities, version, loadedAt: Date.now() });
+}
+
 export function clearMemoryCache(baseDir?: string): void {
   if (baseDir) {
     hotCacheByDir.delete(baseDir);
     archiveCacheByDir.delete(baseDir);
+    entityCacheByDir.delete(baseDir);
   } else {
     hotCacheByDir.clear();
     archiveCacheByDir.clear();
+    entityCacheByDir.clear();
   }
 }
 

@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
+import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import type {
@@ -3011,6 +3012,10 @@ export class StorageManager {
    * Parsing is fast (~50-100ms for ~1,800 files) since entity files are small.
    */
   async readAllEntityFiles(): Promise<EntityFile[]> {
+    const currentVersion = this.getMemoryStatusVersion();
+    const cached = getCachedEntities(this.baseDir, currentVersion);
+    if (cached) return cached;
+
     try {
       const entries = await readdir(this.entitiesDir);
       const mdFiles = entries.filter((e) => e.endsWith(".md"));
@@ -3032,6 +3037,8 @@ export class StorageManager {
           if (content !== null) entities.push(parseEntityFile(content));
         }
       }
+
+      setCachedEntities(this.baseDir, entities, currentVersion);
       return entities;
     } catch {
       // Directory doesn't exist yet
