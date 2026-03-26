@@ -1,4 +1,5 @@
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
+import { getCachedEpisodeMap, setCachedEpisodeMap } from "./memory-cache.js";
 import { StorageManager } from "./storage.js";
 import type { MemoryFile } from "./types.js";
 import { countRecallTokenOverlap, normalizeRecallTokens } from "./recall-tokenization.js";
@@ -92,16 +93,15 @@ export async function searchVerifiedEpisodes(options: {
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
-  // readAllMemories() goes through the process-level memory cache (keyed
-  // by baseDir).  After the first cold load, subsequent calls from any
-  // StorageManager instance return from cache in <1ms.
-  const allMemories = await new StorageManager(options.memoryDir).readAllMemories();
-  const verifiedMemoryById = new Map(
-    allMemories
-      .filter((memory) => memory.frontmatter.status !== "archived")
-      .filter((memory) => memory.frontmatter.memoryKind === "episode")
-      .map((memory) => [memory.frontmatter.id, memory] as const),
-  );
+  const storage = new StorageManager(options.memoryDir);
+  const version = storage.getMemoryStatusVersion();
+
+  // Use derived episode cache to avoid O(146K) filter+map on every call.
+  let verifiedMemoryById = getCachedEpisodeMap(storage.dir, version);
+  if (!verifiedMemoryById) {
+    const allMemories = await storage.readAllMemories();
+    verifiedMemoryById = setCachedEpisodeMap(storage.dir, allMemories, version);
+  }
   const boxes = await createReadOnlyBoxBuilder(options.memoryDir)
     .readRecentBoxes(Math.max(1, Math.floor(options.boxRecallDays ?? 3)))
     .catch(() => [] as BoxFrontmatter[]);

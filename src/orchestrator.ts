@@ -913,6 +913,7 @@ export class Orchestrator {
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
   private lastQmdEmbedAtMs = 0;
+  private lastQmdReprobeAtMs = 0;
   private tierMigrationInFlight = false;
   private lastTierMigrationRunAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
@@ -1438,6 +1439,11 @@ export class Orchestrator {
         }
       })().catch(() => {});
     }
+
+    // Pre-warm memory and entity caches in background so first recall
+    // doesn't pay the cold load penalty
+    this.storage.readAllMemories().catch(() => {});
+    this.storage.readAllEntityFiles().catch(() => {});
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
       const init = await this.conversationIndexBackend.initialize();
@@ -4305,9 +4311,23 @@ export class Orchestrator {
         return null;
       }
       if (!this.qmd.isAvailable()) {
-        timings.qmd = "skip";
-        log.debug(`Search skip: ${this.qmd.debugStatus()}`);
-        return null;
+        // Lazy re-probe: the initial probe may have failed because the
+        // event loop was blocked during gateway startup (skill scanning).
+        // Rate-limit to once per 60s to avoid hammering the subprocess.
+        const now = Date.now();
+        const QMD_REPROBE_COOLDOWN_MS = 60_000;
+        if (this.lastQmdReprobeAtMs && now - this.lastQmdReprobeAtMs < QMD_REPROBE_COOLDOWN_MS) {
+          timings.qmd = "skip(reprobe-cooldown)";
+          return null;
+        }
+        this.lastQmdReprobeAtMs = now;
+        const reprobed = await this.qmd.probe();
+        if (!reprobed) {
+          timings.qmd = "skip";
+          log.debug(`Search skip (re-probe failed): ${this.qmd.debugStatus()}`);
+          return null;
+        }
+        log.info(`QMD re-probe succeeded: ${this.qmd.debugStatus()}`);
       }
       const t0 = Date.now();
       const queryAwarePrefilter = await queryAwarePrefilterPromise;

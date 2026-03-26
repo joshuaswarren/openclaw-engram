@@ -1,4 +1,4 @@
-import type { MemoryFile } from "./types.js";
+import type { EntityFile, MemoryFile } from "./types.js";
 
 interface CacheEntry {
   memories: Map<string, MemoryFile>; // keyed by file path
@@ -49,13 +49,117 @@ export function setCachedArchivedMemories(baseDir: string, memories: MemoryFile[
   archiveCacheByDir.set(baseDir, { memories: map, version, loadedAt: Date.now() });
 }
 
+// Entity cache — same pattern as memory cache
+const entityCacheByDir = new Map<string, { entities: EntityFile[]; version: number; loadedAt: number }>();
+
+export function getCachedEntities(baseDir: string, currentVersion: number): EntityFile[] | null {
+  if (currentVersion === 0) return null;
+  const entry = entityCacheByDir.get(baseDir);
+  if (!entry || entry.version !== currentVersion) return null;
+  return entry.entities;
+}
+
+export function setCachedEntities(baseDir: string, entities: EntityFile[], version: number): void {
+  entityCacheByDir.set(baseDir, { entities, version, loadedAt: Date.now() });
+}
+
+// Derived caches — pre-filtered views invalidated alongside the main cache.
+// These avoid O(146K) filter+map on every verified recall/rules call.
+interface DerivedCacheEntry<T> {
+  data: T;
+  sourceVersion: number; // matches the hot cache version it was derived from
+}
+
+const episodeMapByDir = new Map<string, DerivedCacheEntry<Map<string, MemoryFile>>>();
+const ruleMemoriesByDir = new Map<string, DerivedCacheEntry<{ all: MemoryFile[]; byId: Map<string, MemoryFile> }>>();
+
+/** Get a pre-filtered Map of episode memories (keyed by ID). Derived from hot cache. */
+export function getCachedEpisodeMap(baseDir: string, currentVersion: number): Map<string, MemoryFile> | null {
+  if (currentVersion === 0) return null;
+  const entry = episodeMapByDir.get(baseDir);
+  if (!entry || entry.sourceVersion !== currentVersion) return null;
+  return entry.data;
+}
+
+/** Build and cache the episode memory map from the full memory list. */
+export function setCachedEpisodeMap(baseDir: string, memories: MemoryFile[], version: number): Map<string, MemoryFile> {
+  const map = new Map<string, MemoryFile>();
+  for (const m of memories) {
+    if (m.frontmatter.status === "archived") continue;
+    if (m.frontmatter.memoryKind !== "episode") continue;
+    map.set(m.frontmatter.id, m);
+  }
+  episodeMapByDir.set(baseDir, { data: map, sourceVersion: version });
+  return map;
+}
+
+/** Get pre-filtered rule memories. Derived from hot cache. */
+export function getCachedRuleMemories(baseDir: string, currentVersion: number): { all: MemoryFile[]; byId: Map<string, MemoryFile> } | null {
+  if (currentVersion === 0) return null;
+  const entry = ruleMemoriesByDir.get(baseDir);
+  if (!entry || entry.sourceVersion !== currentVersion) return null;
+  return entry.data;
+}
+
+/** Build and cache the rule memories from the full memory list. */
+export function setCachedRuleMemories(baseDir: string, memories: MemoryFile[], version: number): { all: MemoryFile[]; byId: Map<string, MemoryFile> } {
+  const byId = new Map<string, MemoryFile>();
+  const all: MemoryFile[] = [];
+  for (const m of memories) {
+    byId.set(m.frontmatter.id, m);
+    if (m.frontmatter.category === "rule" && m.frontmatter.status !== "archived") {
+      all.push(m);
+    }
+  }
+  const result = { all, byId };
+  ruleMemoriesByDir.set(baseDir, { data: result, sourceVersion: version });
+  return result;
+}
+
+// QMD search result cache — short-lived (60s TTL) to avoid stale results
+// while reducing redundant daemon calls for repeated/similar queries.
+interface QmdCacheEntry {
+  results: unknown[];
+  cachedAt: number;
+}
+const QMD_CACHE_TTL_MS = 60_000;
+const qmdSearchCache = new Map<string, QmdCacheEntry>();
+
+export function getCachedQmdSearch(cacheKey: string): unknown[] | null {
+  const entry = qmdSearchCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > QMD_CACHE_TTL_MS) {
+    qmdSearchCache.delete(cacheKey);
+    return null;
+  }
+  return entry.results;
+}
+
+export function setCachedQmdSearch(cacheKey: string, results: unknown[]): void {
+  qmdSearchCache.set(cacheKey, { results, cachedAt: Date.now() });
+  // Evict old entries to prevent unbounded growth
+  if (qmdSearchCache.size > 200) {
+    const now = Date.now();
+    for (const [key, entry] of qmdSearchCache) {
+      if (now - entry.cachedAt > QMD_CACHE_TTL_MS) qmdSearchCache.delete(key);
+    }
+  }
+}
+
 export function clearMemoryCache(baseDir?: string): void {
   if (baseDir) {
     hotCacheByDir.delete(baseDir);
     archiveCacheByDir.delete(baseDir);
+    entityCacheByDir.delete(baseDir);
+    episodeMapByDir.delete(baseDir);
+    ruleMemoriesByDir.delete(baseDir);
   } else {
     hotCacheByDir.clear();
     archiveCacheByDir.clear();
+    entityCacheByDir.clear();
+    episodeMapByDir.clear();
+    ruleMemoriesByDir.clear();
+    qmdSearchCache.clear();
   }
 }
 
