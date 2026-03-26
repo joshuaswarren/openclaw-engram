@@ -96,3 +96,43 @@ test("qmd recall cache key reflects all defined search options", () => {
 
   assert.notEqual(left, right);
 });
+
+test("qmd recall cache returns cloned values so callers cannot mutate cached entries", () => {
+  clearQmdRecallCache();
+  const key = buildQmdRecallCacheKey({
+    query: "api rate limit",
+    namespaces: ["a", "b"],
+    recallMode: "minimal",
+    maxResults: 4,
+    memoryDir: "/tmp/engram-a",
+  });
+
+  const original = {
+    memoryResultsLists: [[{ id: "r1", score: 0.8 }]],
+    globalResults: [],
+    preAugmentTopScore: 0.8,
+    maxSpecializedScore: 0,
+  };
+  setCachedQmdRecall(key, original, { maxEntries: 8 });
+
+  const originalFirstHit = original.memoryResultsLists[0]?.[0];
+  if (!originalFirstHit) throw new Error("expected original hit");
+  originalFirstHit.score = 0.1;
+
+  const fresh = getCachedQmdRecall<typeof original>(key, {
+    freshTtlMs: 250,
+    staleTtlMs: 500,
+  });
+  assert.equal(fresh?.value.memoryResultsLists[0]?.[0]?.score, 0.8);
+
+  if (!fresh) throw new Error("expected cached entry");
+  const cachedFirstHit = fresh.value.memoryResultsLists[0]?.[0];
+  if (!cachedFirstHit) throw new Error("expected cached hit");
+  cachedFirstHit.score = 0.3;
+
+  const again = getCachedQmdRecall<typeof original>(key, {
+    freshTtlMs: 250,
+    staleTtlMs: 500,
+  });
+  assert.equal(again?.value.memoryResultsLists[0]?.[0]?.score, 0.8);
+});

@@ -62,7 +62,6 @@ export class LcmWorkQueue {
     const existing = this.pending.get(sessionId);
     if (existing) {
       existing.messages.push(...messages.map((message) => ({ ...message })));
-      existing.enqueuedAt = now;
     } else {
       this.pending.set(sessionId, {
         sessionId,

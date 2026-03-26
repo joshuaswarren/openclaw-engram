@@ -26,6 +26,10 @@ export interface QmdRecallCacheKeyOptions {
 
 const qmdRecallCache = new Map<string, QmdRecallCacheEntry>();
 
+function cloneCacheValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
 function normalizeQuery(query: string): string {
   return query.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -68,10 +72,10 @@ export function getCachedQmdRecall<T>(
 
   const ageMs = Date.now() - entry.cachedAtMs;
   if (ageMs <= options.freshTtlMs) {
-    return { value: entry.value as T, source: "fresh", ageMs };
+    return { value: cloneCacheValue(entry.value as T), source: "fresh", ageMs };
   }
   if (ageMs <= options.staleTtlMs) {
-    return { value: entry.value as T, source: "stale", ageMs };
+    return { value: cloneCacheValue(entry.value as T), source: "stale", ageMs };
   }
 
   qmdRecallCache.delete(cacheKey);
@@ -85,7 +89,7 @@ export function setCachedQmdRecall<T>(
 ): void {
   qmdRecallCache.delete(cacheKey);
   qmdRecallCache.set(cacheKey, {
-    value,
+    value: cloneCacheValue(value),
     cachedAtMs: Date.now(),
   });
 
