@@ -19,6 +19,7 @@ export interface QmdRecallCacheKeyOptions {
   namespaces: string[];
   recallMode: RecallPlanMode;
   maxResults: number;
+  memoryDir?: string;
   collection?: string;
   searchOptions?: SearchQueryOptions;
 }
@@ -29,12 +30,18 @@ function normalizeQuery(query: string): string {
   return query.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function normalizePathScope(pathValue: string | undefined): string {
+  if (typeof pathValue !== "string") return "";
+  return pathValue.trim().replace(/\\/g, "/");
+}
+
 export function buildQmdRecallCacheKey(options: QmdRecallCacheKeyOptions): string {
   return JSON.stringify({
     query: normalizeQuery(options.query),
     namespaces: [...options.namespaces].sort(),
     recallMode: options.recallMode,
     maxResults: options.maxResults,
+    memoryDir: normalizePathScope(options.memoryDir),
     collection: options.collection ?? "",
     intent: options.searchOptions?.intent?.trim().toLowerCase() ?? "",
     explain: options.searchOptions?.explain === true,

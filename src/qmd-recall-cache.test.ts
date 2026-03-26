@@ -15,6 +15,7 @@ test("qmd recall cache returns fresh and then stale entries within TTL windows",
     namespaces: ["work", "default"],
     recallMode: "full",
     maxResults: 8,
+    memoryDir: "/tmp/engram-a",
     searchOptions: { intent: "debug", explain: true },
   });
 
@@ -43,13 +44,34 @@ test("qmd recall cache key normalizes query and namespace ordering", () => {
     namespaces: ["b", "a"],
     recallMode: "minimal",
     maxResults: 4,
+    memoryDir: "/tmp/engram-a",
   });
   const right = buildQmdRecallCacheKey({
     query: "api rate limit",
     namespaces: ["a", "b"],
     recallMode: "minimal",
     maxResults: 4,
+    memoryDir: "/tmp/engram-a",
   });
 
   assert.equal(left, right);
+});
+
+test("qmd recall cache key scopes entries by memory root", () => {
+  const left = buildQmdRecallCacheKey({
+    query: "api rate limit",
+    namespaces: ["a", "b"],
+    recallMode: "minimal",
+    maxResults: 4,
+    memoryDir: "/tmp/engram-a",
+  });
+  const right = buildQmdRecallCacheKey({
+    query: "api rate limit",
+    namespaces: ["a", "b"],
+    recallMode: "minimal",
+    maxResults: 4,
+    memoryDir: "/tmp/engram-b",
+  });
+
+  assert.notEqual(left, right);
 });

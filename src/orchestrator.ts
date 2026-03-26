@@ -4634,6 +4634,7 @@ export class Orchestrator {
         namespaces: recallNamespaces,
         recallMode,
         maxResults: qmdFetchLimit,
+        memoryDir: this.config.memoryDir,
         searchOptions: qmdSearchOptions,
       });
       const cachedQmd = getCachedQmdRecall<Exclude<QmdPhaseResult, null>>(qmdCacheKey, {
