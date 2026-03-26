@@ -48,6 +48,7 @@ import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { parseQmdExplain } from "./qmd.js";
+import { buildQmdRecallCacheKey, getCachedQmdRecall, setCachedQmdRecall } from "./qmd-recall-cache.js";
 import {
   buildEntityRecallSection,
   entityRecentTranscriptLookbackHours,
@@ -68,6 +69,7 @@ import {
   refineCompressionGuidelineCandidateSemantically,
   renderCompressionGuidelinesMarkdown,
 } from "./compression-optimizer.js";
+import { createRecallSectionMetricRecorder } from "./recall-qos.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
@@ -1100,7 +1102,11 @@ export class Orchestrator {
               { role: "system", content: systemPrompt },
               { role: "user", content: text.slice(0, 12000) },
             ],
-            { maxTokens: targetTokens * 2, operation: "lcm-summarize" },
+            {
+              maxTokens: targetTokens * 2,
+              operation: "lcm-summarize",
+              priority: "background",
+            },
           );
           return result?.content ?? null;
         } catch {
@@ -2709,7 +2715,7 @@ export class Orchestrator {
 
     // Keep outer recall timeout above worst-case serialized hybrid search:
     // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
-    const RECALL_TIMEOUT_MS = 75_000;
+    const RECALL_TIMEOUT_MS = this.config.recallOuterTimeoutMs ?? 75_000;
     let timeoutHandle: NodeJS.Timeout | null = null;
     const timeoutPromise = new Promise<string>((_, reject) => {
       timeoutHandle = setTimeout(() => {
@@ -3019,7 +3025,7 @@ export class Orchestrator {
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
     const maxFetchLimit = Math.min(320, Math.max(fetchLimit, qmdFetchLimit * 5));
     const MAX_ATTEMPTS = 2;
-    const QMD_RECALL_BUDGET_MS = 25_000;
+    const QMD_RECALL_BUDGET_MS = this.config.recallEnrichmentDeadlineMs ?? 25_000;
     const startedAtMs = Date.now();
     let lastPrimaryResultCount = 0;
     let lastHybridResultCount = 0;
@@ -3596,6 +3602,12 @@ export class Orchestrator {
   ): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
+    const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
+    const enrichmentSectionDeadlineMs = this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    const recordRecallSectionMetric = createRecallSectionMetricRecorder({
+      timings,
+      logger: log,
+    });
     const promptHash = createHash("sha256").update(prompt).digest("hex");
     const traceId = createHash("sha256")
       .update(`${sessionKey ?? "default"}:${recallStart}:${promptHash}`)
@@ -3873,7 +3885,14 @@ export class Orchestrator {
         .join("\n\n");
 
       const trimmed = combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
-      timings.sharedCtx = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "sharedCtx",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return trimmed.trim().length > 0 ? trimmed : null;
     })();
 
@@ -3882,7 +3901,14 @@ export class Orchestrator {
       if (!this.isRecallSectionEnabled("profile")) return null;
       const t0 = Date.now();
       const profile = await profileStorage.readProfile();
-      timings.profile = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "profile",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return profile || null;
     })();
 
@@ -3895,7 +3921,14 @@ export class Orchestrator {
         recallMode,
         prompt: retrievalQuery,
       });
-      timings.identityContinuity = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "identityContinuity",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -3911,7 +3944,15 @@ export class Orchestrator {
       const recentTurns =
         this.getRecallSectionNumber("entity-retrieval", "recentTurns") ?? this.config.entityRetrievalRecentTurns;
       if (maxChars === 0 || maxHints === 0 || maxSupportingFacts === 0) {
-        timings.entityRetrieval = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "entityRetrieval",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
       const t0 = Date.now();
@@ -3936,7 +3977,14 @@ export class Orchestrator {
         log.warn(`entity retrieval build failed: ${err}`);
         return null;
       });
-      timings.entityRetrieval = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "entityRetrieval",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -3950,10 +3998,26 @@ export class Orchestrator {
           maxEntities: this.getRecallSectionNumber("knowledge-index", "maxEntities"),
           maxChars: this.getRecallSectionNumber("knowledge-index", "maxChars"),
         });
-        timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
+        recordRecallSectionMetric({
+          section: "ki",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: ki.cached ? "stale" : "fresh",
+          success: true,
+          timing: `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`,
+        });
         return ki.result ? ki : null;
       } catch (err) {
-        timings.ki = `${Date.now() - t0}ms (err)`;
+        recordRecallSectionMetric({
+          section: "ki",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: false,
+          timing: `${Date.now() - t0}ms (err)`,
+        });
         log.warn(`Knowledge Index build failed: ${err}`);
         return null;
       }
@@ -3970,7 +4034,15 @@ export class Orchestrator {
         this.config.verbatimArtifactsMaxRecall,
       );
       if (targetCount <= 0) {
-        timings.artifacts = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "artifacts",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return [];
       }
       const results = await this.recallArtifactsAcrossNamespaces(
@@ -3979,7 +4051,14 @@ export class Orchestrator {
         targetCount,
       );
 
-      timings.artifacts = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "artifacts",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results;
     })();
 
@@ -3990,12 +4069,28 @@ export class Orchestrator {
         !this.config.objectiveStateRecallEnabled ||
         !this.isRecallSectionEnabled("objective-state", this.config.objectiveStateRecallEnabled === true)
       ) {
-        timings.objectiveState = "skip";
+        recordRecallSectionMetric({
+          section: "objectiveState",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("objective-state", "maxResults") ?? 4;
       if (maxResults <= 0) {
-        timings.objectiveState = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "objectiveState",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4007,7 +4102,14 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.objectiveState = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "objectiveState",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatObjectiveStateResults(results) : null;
     })();
 
@@ -4018,12 +4120,28 @@ export class Orchestrator {
         !this.config.causalTrajectoryRecallEnabled ||
         !this.isRecallSectionEnabled("causal-trajectories", this.config.causalTrajectoryRecallEnabled === true)
       ) {
-        timings.causalTrajectories = "skip";
+        recordRecallSectionMetric({
+          section: "causalTrajectories",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("causal-trajectories", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.causalTrajectories = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "causalTrajectories",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4035,7 +4153,14 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.causalTrajectories = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "causalTrajectories",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatCausalTrajectoryResults(results) : null;
     })();
 
@@ -4045,7 +4170,15 @@ export class Orchestrator {
         !this.config.cmcRetrievalEnabled ||
         !this.isRecallSectionEnabled("cmc-causal-chains", this.config.cmcRetrievalEnabled === true)
       ) {
-        timings.cmcCausalChains = "skip";
+        recordRecallSectionMetric({
+          section: "cmcCausalChains",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       try {
@@ -4061,11 +4194,26 @@ export class Orchestrator {
             counterfactualBoost: this.config.cmcRetrievalCounterfactualBoost,
           },
         });
-        timings.cmcCausalChains = `${Date.now() - t0}ms`;
+        recordRecallSectionMetric({
+          section: "cmcCausalChains",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
         return section;
       } catch (err) {
         log.warn("[cmc] causal retrieval failed (non-fatal)", err);
-        timings.cmcCausalChains = "error";
+        recordRecallSectionMetric({
+          section: "cmcCausalChains",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: false,
+          timing: "error",
+        });
         return null;
       }
     })();
@@ -4076,14 +4224,30 @@ export class Orchestrator {
         !this.config.calibrationEnabled ||
         !this.isRecallSectionEnabled("calibration-rules", this.config.calibrationEnabled === true)
       ) {
-        timings.calibrationRules = "skip";
+        recordRecallSectionMetric({
+          section: "calibrationRules",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       try {
         const { getCalibrationRulesForRecall, buildCalibrationRecallSection } = await import("./calibration.js");
         const rules = await getCalibrationRulesForRecall(this.config.memoryDir);
         if (rules.length === 0) {
-          timings.calibrationRules = "skip(no-rules)";
+          recordRecallSectionMetric({
+            section: "calibrationRules",
+            priority: "core",
+            durationMs: Date.now() - t0,
+            deadlineMs: recallSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(no-rules)",
+          });
           return null;
         }
         const section = buildCalibrationRecallSection(
@@ -4091,11 +4255,26 @@ export class Orchestrator {
           retrievalQuery,
           this.config.calibrationMaxChars,
         );
-        timings.calibrationRules = `${Date.now() - t0}ms`;
+        recordRecallSectionMetric({
+          section: "calibrationRules",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
         return section;
       } catch (err) {
         log.warn("[calibration] recall section failed (non-fatal)", err);
-        timings.calibrationRules = "error";
+        recordRecallSectionMetric({
+          section: "calibrationRules",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: false,
+          timing: "error",
+        });
         return null;
       }
     })();
@@ -4107,12 +4286,28 @@ export class Orchestrator {
         !this.config.trustZoneRecallEnabled ||
         !this.isRecallSectionEnabled("trust-zones", this.config.trustZoneRecallEnabled === true)
       ) {
-        timings.trustZones = "skip";
+        recordRecallSectionMetric({
+          section: "trustZones",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("trust-zones", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.trustZones = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "trustZones",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4124,7 +4319,14 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.trustZones = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "trustZones",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatTrustZoneResults(results) : null;
     })();
 
@@ -4134,12 +4336,28 @@ export class Orchestrator {
         !this.config.harmonicRetrievalEnabled ||
         !this.isRecallSectionEnabled("harmonic-retrieval", this.config.harmonicRetrievalEnabled === true)
       ) {
-        timings.harmonicRetrieval = "skip";
+        recordRecallSectionMetric({
+          section: "harmonicRetrieval",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("harmonic-retrieval", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.harmonicRetrieval = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "harmonicRetrieval",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4152,7 +4370,14 @@ export class Orchestrator {
         anchorsEnabled: this.config.abstractionAnchorsEnabled,
       });
 
-      timings.harmonicRetrieval = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "harmonicRetrieval",
+        priority: "enrichment",
+        durationMs: Date.now() - t0,
+        deadlineMs: enrichmentSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
     })();
 
@@ -4169,12 +4394,28 @@ export class Orchestrator {
         !this.config.verifiedRecallEnabled ||
         !this.isRecallSectionEnabled("verified-episodes", this.config.verifiedRecallEnabled === true)
       ) {
-        timings.verifiedRecall = "skip";
+        recordRecallSectionMetric({
+          section: "verifiedRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("verified-episodes", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.verifiedRecall = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "verifiedRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4197,7 +4438,14 @@ export class Orchestrator {
       if (durationMs >= VERIFIED_RECALL_TIMEOUT_MS) {
         log.debug(`verified recall: timed out after ${VERIFIED_RECALL_TIMEOUT_MS}ms`);
       }
-      timings.verifiedRecall = `${durationMs}ms`;
+      recordRecallSectionMetric({
+        section: "verifiedRecall",
+        priority: "core",
+        durationMs,
+        deadlineMs: VERIFIED_RECALL_TIMEOUT_MS,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
     })();
 
@@ -4207,12 +4455,28 @@ export class Orchestrator {
         !this.config.semanticRuleVerificationEnabled ||
         !this.isRecallSectionEnabled("verified-rules", this.config.semanticRuleVerificationEnabled === true)
       ) {
-        timings.verifiedRules = "skip";
+        recordRecallSectionMetric({
+          section: "verifiedRules",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("verified-rules", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.verifiedRules = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "verifiedRules",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4234,7 +4498,14 @@ export class Orchestrator {
       if (durationMs >= VERIFIED_RULES_TIMEOUT_MS) {
         log.debug(`verified rules: timed out after ${VERIFIED_RULES_TIMEOUT_MS}ms`);
       }
-      timings.verifiedRules = `${durationMs}ms`;
+      recordRecallSectionMetric({
+        section: "verifiedRules",
+        priority: "core",
+        durationMs,
+        deadlineMs: VERIFIED_RULES_TIMEOUT_MS,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatVerifiedSemanticRuleResults(results) : null;
     })();
 
@@ -4245,12 +4516,28 @@ export class Orchestrator {
         !this.config.workProductRecallEnabled ||
         !this.isRecallSectionEnabled("work-products", this.config.workProductRecallEnabled === true)
       ) {
-        timings.workProducts = "skip";
+        recordRecallSectionMetric({
+          section: "workProducts",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxResults = this.getRecallSectionNumber("work-products", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.workProducts = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "workProducts",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4262,14 +4549,29 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.workProducts = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "workProducts",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatWorkProductResults(results) : null;
     })();
 
     const queryAwarePrefilterPromise = (async (): Promise<QueryAwarePrefilter> => {
       const t0 = Date.now();
       if (!this.config.queryAwareIndexingEnabled || !prompt.trim()) {
-        timings.queryAware = "skip";
+        recordRecallSectionMetric({
+          section: "queryAware",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return {
           candidatePaths: null,
           temporalFromDate: null,
@@ -4285,8 +4587,15 @@ export class Orchestrator {
       const temporalLabel = prefilter.temporalFromDate ?? "-";
       const tagLabel = prefilter.expandedTags.length > 0 ? prefilter.expandedTags.join("|") : "-";
       const fallbackLabel = prefilter.filteredToFullSearch ? "/full-search" : "";
-      timings.queryAware =
-        `${Date.now() - t0}ms(${prefilter.combination}${fallbackLabel};count=${candidateCount};time=${temporalLabel};tags=${tagLabel})`;
+      recordRecallSectionMetric({
+        section: "queryAware",
+        priority: "enrichment",
+        durationMs: Date.now() - t0,
+        deadlineMs: enrichmentSectionDeadlineMs,
+        source: prefilter.filteredToFullSearch ? "stale" : "fresh",
+        success: true,
+        timing: `${Date.now() - t0}ms(${prefilter.combination}${fallbackLabel};count=${candidateCount};time=${temporalLabel};tags=${tagLabel})`,
+      });
       return prefilter;
     })();
 
@@ -4306,40 +4615,80 @@ export class Orchestrator {
     } | null;
 
     const qmdPromise = (async (): Promise<QmdPhaseResult> => {
+      const t0 = Date.now();
       if (recallResultLimit <= 0) {
-        timings.qmd = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "qmd",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
+
+      const qmdCacheKey = buildQmdRecallCacheKey({
+        query: retrievalQuery,
+        namespaces: recallNamespaces,
+        recallMode,
+        maxResults: qmdFetchLimit,
+        searchOptions: qmdSearchOptions,
+      });
+      const cachedQmd = getCachedQmdRecall<Exclude<QmdPhaseResult, null>>(qmdCacheKey, {
+        freshTtlMs: this.config.qmdRecallCacheTtlMs ?? 60_000,
+        staleTtlMs: this.config.qmdRecallCacheStaleTtlMs ?? 10 * 60_000,
+      });
+      const staleQmdFallback = cachedQmd?.source === "stale" ? cachedQmd : null;
+      if (cachedQmd?.source === "fresh") {
+        recordRecallSectionMetric({
+          section: "qmd",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: cachedQmd.source,
+          success: true,
+          timing: `${Math.max(0, Math.round(cachedQmd.ageMs))}ms-cache`,
+        });
+        return cachedQmd.value;
+      }
+
       if (!this.qmd.isAvailable()) {
-        // Lazy re-probe: the initial probe may have failed because the
-        // event loop was blocked during gateway startup (skill scanning).
-        // Rate-limit to once per 60s to avoid hammering the subprocess.
         const now = Date.now();
         const QMD_REPROBE_COOLDOWN_MS = 60_000;
         if (this.lastQmdReprobeAtMs && now - this.lastQmdReprobeAtMs < QMD_REPROBE_COOLDOWN_MS) {
-          timings.qmd = "skip(reprobe-cooldown)";
+          recordRecallSectionMetric({
+            section: "qmd",
+            priority: "enrichment",
+            durationMs: Date.now() - t0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(reprobe-cooldown)",
+          });
           return null;
         }
         this.lastQmdReprobeAtMs = now;
         const reprobed = await this.qmd.probe();
         if (!reprobed) {
-          timings.qmd = "skip";
+          recordRecallSectionMetric({
+            section: "qmd",
+            priority: "enrichment",
+            durationMs: Date.now() - t0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip",
+          });
           log.debug(`Search skip (re-probe failed): ${this.qmd.debugStatus()}`);
           return null;
         }
         log.info(`QMD re-probe succeeded: ${this.qmd.debugStatus()}`);
       }
-      const t0 = Date.now();
-      const queryAwarePrefilter = await queryAwarePrefilterPromise;
 
-      // v9.1: Start DirectFact + Temporal agents NOW, before QMD fetch begins.
-      // Both agents use only local file I/O (no network), so they run concurrently
-      // with the QMD hybrid search for true parallel latency:
-      //   total latency ≈ max(qmd, direct, temporal), not qmd + max(direct, temporal).
-      // Results are awaited after QMD completes and merged below.
+      const queryAwarePrefilter = await queryAwarePrefilterPromise;
       const maxPerAgent = this.config.parallelMaxResultsPerAgent;
-      // maxPerAgent=0 is a hard disable (same contract as augmentWithDirectAndTemporal).
-      // Skip agent launch entirely to avoid unnecessary filesystem I/O.
       const specializedAgentPromise: Promise<[ParallelSearchResult[], ParallelSearchResult[]]> | null =
         this.config.parallelRetrievalEnabled && maxPerAgent > 0
           ? Promise.all([
@@ -4350,10 +4699,12 @@ export class Orchestrator {
               })
               : Promise.resolve([] as ParallelSearchResult[]),
             shouldRunAgent("temporal", retrievalQuery, 0)
-              // Temporal index lives at config.memoryDir/state/index_time.json (written by
-              // updateTemporalTagIndexes). profileStorage.dir is namespace-specific and
-              // would not contain the shared index for non-default namespaces.
-              ? runTemporalAgent(retrievalQuery, this.config.memoryDir, maxPerAgent, queryAwarePrefilter.candidatePaths).catch((err) => {
+              ? runTemporalAgent(
+                retrievalQuery,
+                this.config.memoryDir,
+                maxPerAgent,
+                queryAwarePrefilter.candidatePaths,
+              ).catch((err) => {
                 log.debug(`TemporalAgent pre-start failed: ${err}`);
                 return [] as ParallelSearchResult[];
               })
@@ -4361,89 +4712,103 @@ export class Orchestrator {
           ])
           : null;
 
-      // Hybrid search: parallel BM25 + vector, merged by path.
-      // Much faster than `qmd query` (LLM expansion + reranking) which
-      // takes 30-70s and causes recall timeouts.
-      const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
-        retrievalQuery,
-        qmdFetchLimit,
-        qmdHybridFetchLimit,
-        {
-          namespacesEnabled: this.config.namespacesEnabled,
-          recallNamespaces,
-          resolveNamespace: (p) => this.namespaceFromPath(p),
-          queryAwarePrefilter,
-          searchOptions: qmdSearchOptions,
-          abortSignal: options.abortSignal,
-          onDebugSnapshot: async (snapshot) => {
-            await this.recordLastQmdRecallSnapshot({
-              storage: profileStorage,
-              snapshot,
-            });
+      try {
+        const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
+          retrievalQuery,
+          qmdFetchLimit,
+          qmdHybridFetchLimit,
+          {
+            namespacesEnabled: this.config.namespacesEnabled,
+            recallNamespaces,
+            resolveNamespace: (p) => this.namespaceFromPath(p),
+            queryAwarePrefilter,
+            searchOptions: qmdSearchOptions,
+            abortSignal: options.abortSignal,
+            onDebugSnapshot: async (snapshot) => {
+              await this.recordLastQmdRecallSnapshot({
+                storage: profileStorage,
+                snapshot,
+              });
+            },
           },
-        },
-      );
+        );
 
-      timings.qmd = `${Date.now() - t0}ms`;
-
-      // v9.1: Parallel agent augmentation — DirectFact + Temporal agents were started
-      // concurrently with the QMD fetch above for true parallel latency. Await their
-      // results now and merge, adding per-agent headroom to the cap so lifecycle
-      // filtering downstream still has candidates after dropping stale specialized hits.
-      //
-      // Record the top QMD score BEFORE the merge so the confidence gate downstream
-      // can compare against the calibrated QMD-scale score. The merge applies a
-      // contextual weight (default 0.7x) to contextual results, which would otherwise
-      // silently lower scores below the gate threshold even when recall is high-quality.
-      const preAugmentTopScore = filteredResults.length > 0
-        ? Math.max(...filteredResults.map((r) => r.score))
-        : 0;
-      let augmentedResults = filteredResults;
-      let maxSpecializedScore = 0;
-      if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
-        try {
-          const [directResults, temporalResults] = await specializedAgentPromise;
-          // Only augment when QMD found something. When filteredResults is empty (QMD
-          // returned nothing), merging specialized results would suppress the embedding
-          // fallback — the recall path branches on memoryResults.length > 0, so
-          // heuristic-only hits (filename overlap, recency) would prevent the semantic
-          // embedding search from running on exactly the queries where hybrid search failed.
-          if (filteredResults.length === 0) {
-            // QMD found nothing; skip merge so embedding fallback remains reachable.
-          } else {
-          // Capture max specialized score (post-weight) BEFORE merge so the confidence
-          // gate can include strong direct/temporal hits in the effective top score.
-          // This prevents the gate from discarding an exact entity-name match just because
-          // the QMD contextual pass returned a weak result.
-          const w = this.config.parallelAgentWeights;
-          maxSpecializedScore = Math.max(
-            directResults.length > 0 ? Math.max(...directResults.map((r) => r.score * w.direct)) : 0,
-            temporalResults.length > 0 ? Math.max(...temporalResults.map((r) => r.score * w.temporal)) : 0,
-          );
-          const lifecycleHeadroom = this.config.parallelMaxResultsPerAgent * 2;
-          augmentedResults = await mergeWithAgentResults(
-            filteredResults,
-            directResults,
-            temporalResults,
-            this.config.parallelAgentWeights,
-            qmdFetchLimit + lifecycleHeadroom,
-          );
-          } // end else (filteredResults.length > 0)
-        } catch (err) {
-          log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
-          // Fall back to existing filteredResults; reset maxSpecializedScore so the confidence
-          // gate is not influenced by agent results that were never merged into augmentedResults.
-          maxSpecializedScore = 0;
+        const preAugmentTopScore = filteredResults.length > 0
+          ? Math.max(...filteredResults.map((r) => r.score))
+          : 0;
+        let augmentedResults = filteredResults;
+        let maxSpecializedScore = 0;
+        if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
+          try {
+            const [directResults, temporalResults] = await specializedAgentPromise;
+            if (filteredResults.length > 0) {
+              const w = this.config.parallelAgentWeights;
+              maxSpecializedScore = Math.max(
+                directResults.length > 0 ? Math.max(...directResults.map((r) => r.score * w.direct)) : 0,
+                temporalResults.length > 0 ? Math.max(...temporalResults.map((r) => r.score * w.temporal)) : 0,
+              );
+              const lifecycleHeadroom = this.config.parallelMaxResultsPerAgent * 2;
+              augmentedResults = await mergeWithAgentResults(
+                filteredResults,
+                directResults,
+                temporalResults,
+                this.config.parallelAgentWeights,
+                qmdFetchLimit + lifecycleHeadroom,
+              );
+            }
+          } catch (err) {
+            log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
+            maxSpecializedScore = 0;
+          }
         }
-      }
 
-      return { memoryResultsLists: [augmentedResults], globalResults: [], preAugmentTopScore, maxSpecializedScore };
+        const result = {
+          memoryResultsLists: [augmentedResults],
+          globalResults: [],
+          preAugmentTopScore,
+          maxSpecializedScore,
+        };
+        setCachedQmdRecall(qmdCacheKey, result, {
+          maxEntries: this.config.qmdRecallCacheMaxEntries ?? 128,
+        });
+        recordRecallSectionMetric({
+          section: "qmd",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
+        return result;
+      } catch (err) {
+        if (staleQmdFallback) {
+          recordRecallSectionMetric({
+            section: "qmd",
+            priority: "enrichment",
+            durationMs: Date.now() - t0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "stale",
+            success: true,
+            timing: `stale-cache(${err instanceof Error ? err.message : String(err)})`,
+          });
+          return staleQmdFallback.value;
+        }
+        throw err;
+      }
     })();
 
     const transcriptPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (!this.config.transcriptEnabled || !this.isRecallSectionEnabled("transcript", true)) {
-        timings.transcript = "skip";
+        recordRecallSectionMetric({
+          section: "transcript",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const transcriptMaxTokens = this.getRecallSectionNumber("transcript", "maxTokens")
@@ -4453,7 +4818,15 @@ export class Orchestrator {
       const transcriptLookbackHours = this.getRecallSectionNumber("transcript", "lookbackHours")
         ?? this.config.transcriptRecallHours;
       if (transcriptMaxTokens === 0 || transcriptMaxTurns === 0 || transcriptLookbackHours === 0) {
-        timings.transcript = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "transcript",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4487,7 +4860,14 @@ export class Orchestrator {
         }
       }
 
-      timings.transcript = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "transcript",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -4564,7 +4944,15 @@ export class Orchestrator {
     const summariesPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (!this.config.hourlySummariesEnabled || !sessionKey || !this.isRecallSectionEnabled("summaries", true)) {
-        timings.summaries = "skip";
+        recordRecallSectionMetric({
+          section: "summaries",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const summariesLookbackHours = this.getRecallSectionNumber("summaries", "lookbackHours")
@@ -4572,7 +4960,15 @@ export class Orchestrator {
       const summariesMaxCount = this.getRecallSectionNumber("summaries", "maxCount")
         ?? this.config.maxSummaryCount;
       if (summariesLookbackHours <= 0 || summariesMaxCount <= 0) {
-        timings.summaries = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "summaries",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4582,7 +4978,14 @@ export class Orchestrator {
         cappedSummaries.length > 0
           ? this.summarizer.formatForRecall(cappedSummaries, summariesMaxCount)
           : null;
-      timings.summaries = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "summaries",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -4592,11 +4995,27 @@ export class Orchestrator {
         !this.config.nativeKnowledge?.enabled ||
         !this.isRecallSectionEnabled("native-knowledge", this.config.nativeKnowledge.enabled)
       ) {
-        timings.nativeKnowledge = "skip";
+        recordRecallSectionMetric({
+          section: "nativeKnowledge",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       if (this.config.nativeKnowledge.maxResults === 0 || this.config.nativeKnowledge.maxChars === 0) {
-        timings.nativeKnowledge = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "nativeKnowledge",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4620,7 +5039,14 @@ export class Orchestrator {
           this.getRecallSectionNumber("native-knowledge", "maxChars")
             ?? this.config.nativeKnowledge.maxChars,
       });
-      timings.nativeKnowledge = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "nativeKnowledge",
+        priority: "enrichment",
+        durationMs: Date.now() - t0,
+        deadlineMs: enrichmentSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -4631,13 +5057,29 @@ export class Orchestrator {
         queryPolicy.skipConversationRecall ||
         !this.isRecallSectionEnabled("conversation-recall", true)
       ) {
-        timings.convRecall = "skip";
+        recordRecallSectionMetric({
+          section: "convRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
 
       const topKOverride = this.getRecallSectionNumber("conversation-recall", "topK");
       if (topKOverride === 0) {
-        timings.convRecall = "skip(topK=0)";
+        recordRecallSectionMetric({
+          section: "convRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(topK=0)",
+        });
         return null;
       }
 
@@ -4669,24 +5111,54 @@ export class Orchestrator {
       }
 
       const section = this.formatConversationRecallSection(results, maxChars);
-      timings.convRecall = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "convRecall",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: timeoutMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
     const compoundingPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (!this.compounding || !this.config.compoundingInjectEnabled || !this.isRecallSectionEnabled("compounding", true)) {
-        timings.compounding = "skip";
+        recordRecallSectionMetric({
+          section: "compounding",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       const maxPatterns = this.getRecallSectionNumber("compounding", "maxPatterns") ?? 40;
       const maxRubrics = this.getRecallSectionNumber("compounding", "maxRubrics") ?? 4;
       if (maxPatterns === 0 && maxRubrics === 0) {
-        timings.compounding = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "compounding",
+          priority: "enrichment",
+          durationMs: 0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
       const section = await this.compounding.buildRecallSection(retrievalQuery, { maxPatterns, maxRubrics });
-      timings.compounding = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "compounding",
+        priority: "enrichment",
+        durationMs: Date.now() - t0,
+        deadlineMs: enrichmentSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -4703,7 +5175,7 @@ export class Orchestrator {
           .catch(() => [] as BoxFrontmatter[])
         : Promise.resolve([] as BoxFrontmatter[]);
 
-    // --- Wait for all parallel work ---
+    // --- Wait for core sections first, then bounded enrichment ---
     const phase1Start = Date.now();
     log.info(`recall phase-1: starting parallel work at +${phase1Start - recallStart}ms`);
     const [
@@ -4718,17 +5190,13 @@ export class Orchestrator {
       cmcCausalChainsSection,
       calibrationSection,
       trustZoneSection,
-      harmonicRetrievalSection,
       verifiedRecallSection,
       verifiedRulesSection,
       workProductsSection,
-      qmdResult,
       transcriptSection,
       compactionSection,
       summariesSection,
-      nativeKnowledgeSection,
       conversationRecallSection,
-      compoundingSection,
     ] = await raceRecallAbort(
       Promise.all(
         ([
@@ -4743,20 +5211,16 @@ export class Orchestrator {
           ["cmc", cmcRetrievalPromise],
           ["calibration", calibrationPromise],
           ["trustZone", trustZonePromise],
-          ["harmonic", harmonicRetrievalPromise],
           ["verifiedRecall", verifiedRecallPromise],
           ["verifiedRules", verifiedRulesPromise],
           ["workProducts", workProductsPromise],
-          ["qmd", qmdPromise],
           ["transcript", transcriptPromise],
           ["compaction", compactionPromise],
           ["summaries", summariesPromise],
-          ["nativeKnowledge", nativeKnowledgePromise],
           ["convRecall", conversationRecallPromise],
-          ["compounding", compoundingPromise],
         ] as const).map(([name, p]) =>
           (p as Promise<unknown>).then((v) => {
-            log.debug(`recall phase-1 [${name}]: resolved at +${Date.now() - phase1Start}ms`);
+            log.debug(`recall phase-1 core [${name}]: resolved at +${Date.now() - phase1Start}ms`);
             return v;
           }),
         ),
@@ -4772,24 +5236,40 @@ export class Orchestrator {
         typeof cmcRetrievalPromise extends Promise<infer T> ? T : never,
         typeof calibrationPromise extends Promise<infer T> ? T : never,
         typeof trustZonePromise extends Promise<infer T> ? T : never,
-        typeof harmonicRetrievalPromise extends Promise<infer T> ? T : never,
         typeof verifiedRecallPromise extends Promise<infer T> ? T : never,
         typeof verifiedRulesPromise extends Promise<infer T> ? T : never,
         typeof workProductsPromise extends Promise<infer T> ? T : never,
-        typeof qmdPromise extends Promise<infer T> ? T : never,
         typeof transcriptPromise extends Promise<infer T> ? T : never,
         typeof compactionPromise extends Promise<infer T> ? T : never,
         typeof summariesPromise extends Promise<infer T> ? T : never,
-        typeof nativeKnowledgePromise extends Promise<infer T> ? T : never,
         typeof conversationRecallPromise extends Promise<infer T> ? T : never,
-        typeof compoundingPromise extends Promise<infer T> ? T : never,
       ]>,
       options.abortSignal,
       "recall aborted during phase-one preamble",
     );
 
-    log.info(`recall phase-1: parallel work done at +${Date.now() - recallStart}ms (phase took ${Date.now() - phase1Start}ms)`);
+    log.info(`recall phase-1: core work done at +${Date.now() - recallStart}ms (phase took ${Date.now() - phase1Start}ms)`);
     throwIfRecallAborted(options.abortSignal);
+
+    log.info(`recall phase-1: core work done at +${Date.now() - recallStart}ms; continuing with incremental enrichment assembly`);
+
+    const awaitEnrichmentSection = async <T>(
+      name: string,
+      promise: Promise<T>,
+    ): Promise<T | null> => {
+      try {
+        const value = await promise;
+        log.debug(`recall phase-1 enrichment [${name}]: resolved at +${Date.now() - phase1Start}ms`);
+        return value;
+      } catch (err) {
+        if (options.abortSignal?.aborted) {
+          log.debug(`recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`);
+          return null;
+        }
+        log.warn(`recall phase-1 enrichment [${name}] failed open: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      }
+    };
 
     // --- Phase 2: Assemble sections in correct order ---
 
@@ -4822,6 +5302,7 @@ export class Orchestrator {
       log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
     }
 
+    const nativeKnowledgeSection = await awaitEnrichmentSection("nativeKnowledge", nativeKnowledgePromise);
     if (nativeKnowledgeSection) {
       this.appendRecallSection(sectionBuckets, "native-knowledge", nativeKnowledgeSection);
     }
@@ -4897,6 +5378,7 @@ export class Orchestrator {
       this.appendRecallSection(sectionBuckets, "trust-zones", trustZoneSection);
     }
 
+    const harmonicRetrievalSection = await awaitEnrichmentSection("harmonic", harmonicRetrievalPromise);
     if (harmonicRetrievalSection) {
       this.appendRecallSection(sectionBuckets, "harmonic-retrieval", harmonicRetrievalSection);
     }
@@ -4914,6 +5396,7 @@ export class Orchestrator {
     }
 
     // 2. QMD results — post-process and format
+    const qmdResult = await awaitEnrichmentSection("qmd", qmdPromise);
     if (qmdResult) {
       const t0 = Date.now();
       const { memoryResultsLists, globalResults, preAugmentTopScore, maxSpecializedScore } = qmdResult;
@@ -4995,10 +5478,18 @@ export class Orchestrator {
               recallResultLimit,
             );
             graphSnapshotShadowComparison = comparison;
-            timings.graphShadow =
-              `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
-              `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
-              `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`;
+            recordRecallSectionMetric({
+              section: "graphShadow",
+              priority: "enrichment",
+              durationMs: Date.now() - t0,
+              deadlineMs: enrichmentSectionDeadlineMs,
+              source: "fresh",
+              success: true,
+              timing:
+                `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
+                `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
+                `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`,
+            });
           }
           } catch (err) {
             graphSnapshotStatus = "aborted";
@@ -5238,7 +5729,14 @@ export class Orchestrator {
         );
       }
 
-      timings.qmdPost = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "qmdPost",
+        priority: "enrichment",
+        durationMs: Date.now() - t0,
+        deadlineMs: enrichmentSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
 
       // If the user is pushing back ("that's not right", "why did you say that"),
       // gently suggest an explicit workflow to inspect what was recalled and record feedback.
@@ -5545,6 +6043,7 @@ export class Orchestrator {
     if (conversationRecallSection) {
       this.appendRecallSection(sectionBuckets, "conversation-recall", conversationRecallSection);
     }
+    const compoundingSection = await awaitEnrichmentSection("compounding", compoundingPromise);
     if (compoundingSection) {
       this.appendRecallSection(sectionBuckets, "compounding", compoundingSection);
     }

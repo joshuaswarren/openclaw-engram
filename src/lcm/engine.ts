@@ -1,9 +1,10 @@
 import type Database from "better-sqlite3";
 import { openLcmDatabase, ensureLcmStateDir } from "./schema.js";
-import { LcmArchive, estimateTokens } from "./archive.js";
+import { LcmArchive } from "./archive.js";
 import { LcmDag } from "./dag.js";
-import { LcmSummarizer, type LcmSummarizerConfig, type SummarizeFn } from "./summarizer.js";
+import { LcmSummarizer, type SummarizeFn } from "./summarizer.js";
 import { assembleCompressedHistory, type LcmRecallConfig } from "./recall.js";
+import { LcmWorkQueue, type LcmObserveMessage } from "./queue.js";
 import type { PluginConfig } from "../types.js";
 import { log } from "../logger.js";
 
@@ -36,6 +37,7 @@ export class LcmEngine {
   private archive: LcmArchive | null = null;
   private dag: LcmDag | null = null;
   private summarizer: LcmSummarizer | null = null;
+  private observeQueue: LcmWorkQueue | null = null;
   private readonly config: LcmEngineConfig;
   private readonly memoryDir: string;
   private initPromise: Promise<void> | null = null;
@@ -78,19 +80,72 @@ export class LcmEngine {
       maxDepth: this.config.maxDepth,
       deterministicMaxTokens: this.config.deterministicMaxTokens,
     });
+    this.observeQueue = new LcmWorkQueue({
+      concurrency: 1,
+      worker: async (sessionId, messages) => {
+        await this.processObserveMessages(sessionId, messages);
+      },
+      hooks: {
+        onJobStart: ({ sessionId, depth, inFlight, waitMs }) => {
+          log.debug(
+            `LCM observe queue start: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms`,
+          );
+        },
+        onJobFinish: ({ sessionId, depth, inFlight, waitMs, runMs, totalMs, error }) => {
+          if (error) {
+            log.debug(
+              `LCM observe queue failure: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms, run=${runMs}ms, total=${totalMs}ms, error=${error}`,
+            );
+            return;
+          }
+
+          log.debug(
+            `LCM observe queue finish: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms, run=${runMs}ms, total=${totalMs}ms`,
+          );
+        },
+      },
+    });
     log.info("LCM engine initialized");
   }
 
   /**
-   * Observe messages from agent_end hook.
-   * Indexes new messages and triggers incremental summarization.
+   * Enqueue messages from agent_end hook.
+   * The queue worker performs the archive append and incremental summarization.
    */
   async observeMessages(
     sessionId: string,
     messages: Array<{ role: string; content: string }>,
   ): Promise<void> {
+    this.enqueueObserveMessages(sessionId, messages);
+  }
+
+  /** Enqueue an observe job without waiting for worker completion. */
+  enqueueObserveMessages(
+    sessionId: string,
+    messages: Array<{ role: string; content: string }>,
+  ): void {
     if (!this.config.enabled) return;
+    if (messages.length === 0) return;
+
+    void this.ensureInitialized()
+      .then(() => {
+        this.observeQueue!.enqueue(sessionId, messages);
+        log.debug(
+          `LCM observe enqueued: session=${sessionId}, depth=${this.observeQueue!.depth}, inFlight=${this.observeQueue!.inFlightCount}`,
+        );
+      })
+      .catch((err) => {
+        log.debug(`LCM observe enqueue initialization error: ${err}`);
+      });
+  }
+
+  private async processObserveMessages(
+    sessionId: string,
+    messages: LcmObserveMessage[],
+  ): Promise<void> {
     await this.ensureInitialized();
+
+    if (messages.length === 0) return;
 
     const currentMax = this.archive!.getMaxTurnIndex(sessionId);
     const newMessages = messages.map((m, i) => ({
@@ -99,16 +154,28 @@ export class LcmEngine {
       content: m.content,
     }));
 
-    if (newMessages.length === 0) return;
-
     this.archive!.appendMessages(sessionId, newMessages);
 
-    // Trigger incremental summarization (best effort)
+    // Trigger incremental summarization inside the worker, after append.
     try {
       await this.summarizer!.summarizeIncremental(sessionId);
     } catch (err) {
       log.debug(`LCM incremental summarization error: ${err}`);
     }
+  }
+
+  get observeQueueDepth(): number {
+    return this.observeQueue?.depth ?? 0;
+  }
+
+  get observeQueueInFlightCount(): number {
+    return this.observeQueue?.inFlightCount ?? 0;
+  }
+
+  async waitForObserveQueueIdle(): Promise<void> {
+    if (!this.config.enabled) return;
+    await this.ensureInitialized();
+    await this.observeQueue?.whenIdle();
   }
 
   /** Build the compressed history recall section for a session. */

@@ -570,7 +570,7 @@ const pluginDefinition = {
                 })
                 .filter((m) => m.content.length > 0);
               if (lcmMessages.length > 0) {
-                await orchestrator.lcmEngine.observeMessages(sessionKey, lcmMessages);
+                orchestrator.lcmEngine.enqueueObserveMessages(sessionKey, lcmMessages);
               }
             } catch (lcmErr) {
               log.debug(`LCM agent_end indexing error: ${lcmErr}`);

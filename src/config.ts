@@ -1153,7 +1153,25 @@ export function parseConfig(raw: unknown): PluginConfig {
     entityRetrievalRecentTurns:
       typeof cfg.entityRetrievalRecentTurns === "number" ? cfg.entityRetrievalRecentTurns : 6,
     recallBudgetChars: recallPipelineConfig.recallBudgetChars,
+    recallOuterTimeoutMs:
+      typeof cfg.recallOuterTimeoutMs === "number" ? Math.max(1_000, Math.floor(cfg.recallOuterTimeoutMs)) : 75_000,
+    recallCoreDeadlineMs:
+      typeof cfg.recallCoreDeadlineMs === "number" ? Math.max(500, Math.floor(cfg.recallCoreDeadlineMs)) : 75_000,
+    recallEnrichmentDeadlineMs:
+      typeof cfg.recallEnrichmentDeadlineMs === "number"
+        ? Math.max(250, Math.floor(cfg.recallEnrichmentDeadlineMs))
+        : 25_000,
     recallPipeline: recallPipelineConfig.pipeline,
+    qmdRecallCacheTtlMs:
+      typeof cfg.qmdRecallCacheTtlMs === "number" ? Math.max(0, Math.floor(cfg.qmdRecallCacheTtlMs)) : 60_000,
+    qmdRecallCacheStaleTtlMs:
+      typeof cfg.qmdRecallCacheStaleTtlMs === "number"
+        ? Math.max(0, Math.floor(cfg.qmdRecallCacheStaleTtlMs))
+        : 10 * 60_000,
+    qmdRecallCacheMaxEntries:
+      typeof cfg.qmdRecallCacheMaxEntries === "number"
+        ? Math.max(1, Math.floor(cfg.qmdRecallCacheMaxEntries))
+        : 128,
     entityRelationshipsEnabled: cfg.entityRelationshipsEnabled !== false,
     entityActivityLogEnabled: cfg.entityActivityLogEnabled !== false,
     entityActivityLogMaxEntries:
