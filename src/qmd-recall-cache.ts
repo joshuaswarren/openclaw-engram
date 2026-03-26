@@ -35,6 +35,15 @@ function normalizePathScope(pathValue: string | undefined): string {
   return pathValue.trim().replace(/\\/g, "/");
 }
 
+function normalizeSearchOptions(options: SearchQueryOptions | undefined): Record<string, unknown> {
+  if (!options) return {};
+  return Object.fromEntries(
+    Object.entries(options)
+      .filter(([, value]) => value !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
 export function buildQmdRecallCacheKey(options: QmdRecallCacheKeyOptions): string {
   return JSON.stringify({
     query: normalizeQuery(options.query),
@@ -43,8 +52,7 @@ export function buildQmdRecallCacheKey(options: QmdRecallCacheKeyOptions): strin
     maxResults: options.maxResults,
     memoryDir: normalizePathScope(options.memoryDir),
     collection: options.collection ?? "",
-    intent: options.searchOptions?.intent?.trim().toLowerCase() ?? "",
-    explain: options.searchOptions?.explain === true,
+    searchOptions: normalizeSearchOptions(options.searchOptions),
   });
 }
 

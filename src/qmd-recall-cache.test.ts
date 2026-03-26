@@ -75,3 +75,24 @@ test("qmd recall cache key scopes entries by memory root", () => {
 
   assert.notEqual(left, right);
 });
+
+test("qmd recall cache key reflects all defined search options", () => {
+  const left = buildQmdRecallCacheKey({
+    query: "api rate limit",
+    namespaces: ["a", "b"],
+    recallMode: "minimal",
+    maxResults: 4,
+    memoryDir: "/tmp/engram-a",
+    searchOptions: { intent: "debug", explain: true },
+  });
+  const right = buildQmdRecallCacheKey({
+    query: "api rate limit",
+    namespaces: ["a", "b"],
+    recallMode: "minimal",
+    maxResults: 4,
+    memoryDir: "/tmp/engram-a",
+    searchOptions: { intent: "debug", explain: false },
+  });
+
+  assert.notEqual(left, right);
+});

@@ -183,3 +183,51 @@ test("LocalLlmClient logs queue wait time by priority", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LocalLlmClient skips queued work once a cooldown is activated", async () => {
+  const client = new LocalLlmClient(createConfig());
+  const executionOrder: string[] = [];
+
+  (client as any).runChatCompletionRequest = async (
+    messages: Array<{ role: string; content: string }>,
+    options: { operation?: string },
+  ) => {
+    executionOrder.push(options.operation ?? "unspecified");
+    if (messages[0]?.content === "trip") {
+      (client as any).cooldownUntilMs = Date.now() + 60_000;
+    }
+    return {
+      content: messages[0]?.content ?? "",
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    };
+  };
+
+  const firstPromise = client.chatCompletion(
+    [{ role: "user", content: "trip" }],
+    { operation: "trip-op", priority: "recall-critical" },
+  );
+  const secondPromise = client.chatCompletion(
+    [{ role: "user", content: "queued" }],
+    { operation: "queued-op", priority: "background" },
+  );
+
+  const [firstResult, secondResult] = await Promise.all([firstPromise, secondPromise]);
+  assert.equal(firstResult?.content, "trip");
+  assert.equal(secondResult, null);
+  assert.deepEqual(executionOrder, ["trip-op"]);
+});
+
+test("LocalLlmClient resolves queued work to null when request execution throws", async () => {
+  const client = new LocalLlmClient(createConfig());
+
+  (client as any).runChatCompletionRequest = async () => {
+    throw new Error("unexpected local llm failure");
+  };
+
+  const result = await client.chatCompletion(
+    [{ role: "user", content: "queued" }],
+    { operation: "queued-op", priority: "background" },
+  );
+
+  assert.equal(result, null);
+});

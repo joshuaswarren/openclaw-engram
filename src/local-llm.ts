@@ -537,6 +537,10 @@ export class LocalLlmClient {
     log.debug("LMS CLI: context cache cleared");
   }
 
+  private remainingCooldownMs(now: number = Date.now()): number {
+    return Math.max(0, this.cooldownUntilMs - now);
+  }
+
   private scheduleQueueDrain(): void {
     if (this.queueDrainScheduled) return;
     this.queueDrainScheduled = true;
@@ -574,10 +578,22 @@ export class LocalLlmClient {
         const next = this.selectNextQueuedRequest();
         if (!next) break;
 
-        const result = await this.runChatCompletionRequest(next.messages, next.options, {
-          priority: next.priority,
-          enqueuedAtMs: next.enqueuedAtMs,
-        });
+        const remainingCooldownMs = this.remainingCooldownMs();
+        if (remainingCooldownMs > 0) {
+          log.debug(`local LLM: cooldown active (${remainingCooldownMs}ms remaining), skipping queued request`);
+          next.resolve(null);
+          continue;
+        }
+
+        let result: LocalLlmChatCompletionResult | null = null;
+        try {
+          result = await this.runChatCompletionRequest(next.messages, next.options, {
+            priority: next.priority,
+            enqueuedAtMs: next.enqueuedAtMs,
+          });
+        } catch (err) {
+          log.warn(`local LLM queue drain failed open: ${err instanceof Error ? err.message : String(err)}`);
+        }
         next.resolve(result);
       }
     } finally {
@@ -991,9 +1007,8 @@ export class LocalLlmClient {
       return null;
     }
 
-    const now = Date.now();
-    if (this.cooldownUntilMs > now) {
-      const remainingMs = this.cooldownUntilMs - now;
+    const remainingMs = this.remainingCooldownMs();
+    if (remainingMs > 0) {
       log.debug(`local LLM: cooldown active (${remainingMs}ms remaining), skipping request`);
       return null;
     }

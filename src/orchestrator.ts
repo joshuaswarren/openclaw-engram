@@ -4659,6 +4659,18 @@ export class Orchestrator {
         const now = Date.now();
         const QMD_REPROBE_COOLDOWN_MS = 60_000;
         if (this.lastQmdReprobeAtMs && now - this.lastQmdReprobeAtMs < QMD_REPROBE_COOLDOWN_MS) {
+          if (staleQmdFallback) {
+            recordRecallSectionMetric({
+              section: "qmd",
+              priority: "enrichment",
+              durationMs: Date.now() - t0,
+              deadlineMs: enrichmentSectionDeadlineMs,
+              source: "stale",
+              success: true,
+              timing: `stale-cache(reprobe-cooldown:${Math.max(0, Math.round(staleQmdFallback.ageMs))}ms)`,
+            });
+            return staleQmdFallback.value;
+          }
           recordRecallSectionMetric({
             section: "qmd",
             priority: "enrichment",
@@ -4673,6 +4685,18 @@ export class Orchestrator {
         this.lastQmdReprobeAtMs = now;
         const reprobed = await this.qmd.probe();
         if (!reprobed) {
+          if (staleQmdFallback) {
+            recordRecallSectionMetric({
+              section: "qmd",
+              priority: "enrichment",
+              durationMs: Date.now() - t0,
+              deadlineMs: enrichmentSectionDeadlineMs,
+              source: "stale",
+              success: true,
+              timing: `stale-cache(reprobe-failed:${Math.max(0, Math.round(staleQmdFallback.ageMs))}ms)`,
+            });
+            return staleQmdFallback.value;
+          }
           recordRecallSectionMetric({
             section: "qmd",
             priority: "enrichment",
@@ -5256,10 +5280,11 @@ export class Orchestrator {
       "recall aborted during phase-one preamble",
     );
 
-    log.info(`recall phase-1: core work done at +${Date.now() - recallStart}ms (phase took ${Date.now() - phase1Start}ms)`);
+    log.info(
+      `recall phase-1: core work done at +${Date.now() - recallStart}ms ` +
+      `(phase took ${Date.now() - phase1Start}ms); continuing with incremental enrichment assembly`,
+    );
     throwIfRecallAborted(options.abortSignal);
-
-    log.info(`recall phase-1: core work done at +${Date.now() - recallStart}ms; continuing with incremental enrichment assembly`);
 
     const awaitEnrichmentSection = async <T>(
       name: string,

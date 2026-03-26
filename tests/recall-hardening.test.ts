@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { Orchestrator } from "../src/orchestrator.js";
 import { parseConfig } from "../src/config.js";
+import { buildQmdRecallCacheKey, clearQmdRecallCache, setCachedQmdRecall } from "../src/qmd-recall-cache.js";
 
 async function makeOrchestrator(
   prefix: string,
@@ -314,4 +315,53 @@ test("recallInternal fails open when qmd enrichment rejects before phase-two ass
   const context = await recallPromise;
   assert.match(context, /stable shared priorities/);
   assert.doesNotMatch(context, /Relevant Memories/);
+});
+
+test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active", async () => {
+  clearQmdRecallCache();
+  const orchestrator = await makeOrchestrator("engram-recall-qmd-stale-cache-", {
+    qmdEnabled: true,
+    qmdRecallCacheTtlMs: 0,
+    qmdRecallCacheStaleTtlMs: 60_000,
+  });
+
+  const memoryId = await (orchestrator as any).storage.writeMemory("fact", "stale cache memory");
+  const memory = await (orchestrator as any).storage.getMemoryById(memoryId);
+  assert.ok(memory);
+
+  const cacheKey = buildQmdRecallCacheKey({
+    query: "Summarize the current project state.",
+    namespaces: ["default"],
+    recallMode: "full",
+    maxResults: (orchestrator as any).config.qmdResults,
+    memoryDir: (orchestrator as any).config.memoryDir,
+  });
+  setCachedQmdRecall(cacheKey, {
+    memoryResultsLists: [[{
+      docid: memory.frontmatter.id,
+      path: memory.path,
+      snippet: "stale cache memory",
+      score: 0.91,
+    }]],
+    globalResults: [],
+    preAugmentTopScore: 0.91,
+    maxSpecializedScore: 0,
+  }, { maxEntries: 8 });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  (orchestrator as any).qmd = {
+    isAvailable: () => false,
+    probe: async () => false,
+    debugStatus: () => "qmd unavailable",
+  };
+  (orchestrator as any).lastQmdReprobeAtMs = Date.now();
+
+  const context = await (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:qmd-stale-cache",
+    { mode: "full" },
+  );
+
+  assert.match(context, /stale cache memory/);
 });
