@@ -5734,7 +5734,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
-        .command("access")
+        .command("access-stats")
         .description("Show memory access statistics")
         .option("-n, --top <number>", "Show top N most accessed", "20")
         .action(async (...args: unknown[]) => {
