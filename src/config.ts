@@ -1170,7 +1170,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 10 * 60_000,
     qmdRecallCacheMaxEntries:
       typeof cfg.qmdRecallCacheMaxEntries === "number"
-        ? Math.max(1, Math.floor(cfg.qmdRecallCacheMaxEntries))
+        ? Math.max(0, Math.floor(cfg.qmdRecallCacheMaxEntries))
         : 128,
     entityRelationshipsEnabled: cfg.entityRelationshipsEnabled !== false,
     entityActivityLogEnabled: cfg.entityActivityLogEnabled !== false,

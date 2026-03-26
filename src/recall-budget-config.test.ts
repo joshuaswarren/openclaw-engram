@@ -31,3 +31,11 @@ test("parseConfig respects explicit recall timeout and qmd recall cache settings
   assert.equal(config.qmdRecallCacheStaleTtlMs, 45_000);
   assert.equal(config.qmdRecallCacheMaxEntries, 32);
 });
+
+test("parseConfig preserves zero qmd recall cache entries to disable caching", () => {
+  const config = parseConfig({
+    qmdRecallCacheMaxEntries: 0,
+  });
+
+  assert.equal(config.qmdRecallCacheMaxEntries, 0);
+});

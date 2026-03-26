@@ -4796,7 +4796,14 @@ export class Orchestrator {
         }
         throw err;
       }
-    })();
+    })().catch((err): QmdPhaseResult => {
+      if (options.abortSignal?.aborted) {
+        log.debug(`recall phase-1 enrichment [qmd]: skipped after abort at +${Date.now() - phase1Start}ms`);
+        return null;
+      }
+      log.warn(`recall phase-1 enrichment [qmd] failed open: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
 
     const transcriptPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();

@@ -277,3 +277,41 @@ test("recallInternal does not launch phase-one preamble work for an already-abor
 
   assert.equal(sharedReadStarted, false);
 });
+
+test("recallInternal fails open when qmd enrichment rejects before phase-two assembly", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-qmd-fail-open-", {
+    qmdEnabled: true,
+  });
+
+  let releaseSharedRead: (() => void) | null = null;
+  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context" || id === "qmd";
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      await new Promise<void>((resolve) => {
+        releaseSharedRead = resolve;
+      });
+      return "stable shared priorities";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+  };
+  (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async () => {
+    throw new Error("qmd fetch exploded");
+  };
+
+  const recallPromise = (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:qmd-fail-open",
+    { mode: "full" },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseSharedRead?.();
+
+  const context = await recallPromise;
+  assert.match(context, /stable shared priorities/);
+  assert.doesNotMatch(context, /Relevant Memories/);
+});
