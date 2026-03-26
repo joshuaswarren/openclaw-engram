@@ -116,6 +116,36 @@ export function setCachedRuleMemories(baseDir: string, memories: MemoryFile[], v
   return result;
 }
 
+// QMD search result cache — short-lived (60s TTL) to avoid stale results
+// while reducing redundant daemon calls for repeated/similar queries.
+interface QmdCacheEntry {
+  results: unknown[];
+  cachedAt: number;
+}
+const QMD_CACHE_TTL_MS = 60_000;
+const qmdSearchCache = new Map<string, QmdCacheEntry>();
+
+export function getCachedQmdSearch(cacheKey: string): unknown[] | null {
+  const entry = qmdSearchCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > QMD_CACHE_TTL_MS) {
+    qmdSearchCache.delete(cacheKey);
+    return null;
+  }
+  return entry.results;
+}
+
+export function setCachedQmdSearch(cacheKey: string, results: unknown[]): void {
+  qmdSearchCache.set(cacheKey, { results, cachedAt: Date.now() });
+  // Evict old entries to prevent unbounded growth
+  if (qmdSearchCache.size > 200) {
+    const now = Date.now();
+    for (const [key, entry] of qmdSearchCache) {
+      if (now - entry.cachedAt > QMD_CACHE_TTL_MS) qmdSearchCache.delete(key);
+    }
+  }
+}
+
 export function clearMemoryCache(baseDir?: string): void {
   if (baseDir) {
     hotCacheByDir.delete(baseDir);
@@ -129,6 +159,7 @@ export function clearMemoryCache(baseDir?: string): void {
     entityCacheByDir.clear();
     episodeMapByDir.clear();
     ruleMemoriesByDir.clear();
+    qmdSearchCache.clear();
   }
 }
 

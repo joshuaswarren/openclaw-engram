@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
+import { getCachedQmdSearch, setCachedQmdSearch } from "./memory-cache.js";
 import type { QmdSearchExplain, QmdSearchResult } from "./types.js";
 import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "./search/port.js";
 
@@ -1029,6 +1031,16 @@ export class QmdClient implements SearchBackend {
     const n = maxResults ?? this.maxResults;
     const searchOptions = this.resolveSearchOptions(options);
 
+    // Short-lived search result cache — avoids redundant daemon calls for
+    // repeated queries within the same recall cycle (e.g., primary + hybrid
+    // top-up, or conversation recall using the same collection).
+    const cacheKey = createHash("sha256").update(`${col}:${n}:${trimmed}`).digest("hex");
+    const cached = getCachedQmdSearch(cacheKey);
+    if (cached) {
+      log.debug(`QMD search cache hit (${cached.length} results)`);
+      return cached as QmdSearchResult[];
+    }
+
     // Try daemon first (bypasses QMD_MUTEX — daemon handles its own concurrency)
     await this.maybeProbeDaemon();
     if (this.daemonAvailable) {
@@ -1052,6 +1064,7 @@ export class QmdClient implements SearchBackend {
         if (results.length === 0) {
           log.debug("QMD daemon search returned 0 results; skipping subprocess");
         }
+        setCachedQmdSearch(cacheKey, results);
         return results;
       }
       // Daemon timed out or had a transient error — skip subprocess for large
@@ -1069,7 +1082,9 @@ export class QmdClient implements SearchBackend {
     }
 
     // Subprocess fallback (only reached when daemon is unavailable and not loading)
-    return this.searchViaSubprocess(trimmed, col, n, searchOptions, execution?.signal);
+    const subprocessResults = await this.searchViaSubprocess(trimmed, col, n, searchOptions, execution?.signal);
+    setCachedQmdSearch(cacheKey, subprocessResults);
+    return subprocessResults;
   }
 
   async searchGlobal(
