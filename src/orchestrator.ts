@@ -4303,9 +4303,16 @@ export class Orchestrator {
         return null;
       }
       if (!this.qmd.isAvailable()) {
-        timings.qmd = "skip";
-        log.debug(`Search skip: ${this.qmd.debugStatus()}`);
-        return null;
+        // Lazy re-probe: the initial probe may have failed because the
+        // event loop was blocked during gateway startup (skill scanning).
+        // Try once more before giving up for this recall.
+        const reprobed = await this.qmd.probe();
+        if (!reprobed) {
+          timings.qmd = "skip";
+          log.debug(`Search skip (re-probe failed): ${this.qmd.debugStatus()}`);
+          return null;
+        }
+        log.info(`QMD re-probe succeeded: ${this.qmd.debugStatus()}`);
       }
       const t0 = Date.now();
       const queryAwarePrefilter = await queryAwarePrefilterPromise;

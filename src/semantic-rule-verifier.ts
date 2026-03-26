@@ -1,3 +1,4 @@
+import { getCachedRuleMemories, setCachedRuleMemories } from "./memory-cache.js";
 import { StorageManager } from "./storage.js";
 import type { MemoryFile } from "./types.js";
 import { countRecallTokenOverlap, normalizeRecallTokens } from "./recall-tokenization.js";
@@ -102,14 +103,20 @@ export async function searchVerifiedSemanticRules(options: {
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
   const storage = new StorageManager(options.memoryDir);
-  const allMemories = await storage.readAllMemories();
-  const memoryById = new Map(allMemories.map((memory) => [memory.frontmatter.id, memory] as const));
+  const version = storage.getMemoryStatusVersion();
+
+  // Use derived rule cache to avoid O(146K) iteration on every call.
+  let cachedRules = getCachedRuleMemories(storage.dir, version);
+  if (!cachedRules) {
+    const allMems = await storage.readAllMemories();
+    cachedRules = setCachedRuleMemories(storage.dir, allMems, version);
+  }
+  const { all: ruleMemories, byId: memoryById } = cachedRules;
   const minEffectiveConfidence = options.minEffectiveConfidence ?? DEFAULT_MIN_EFFECTIVE_CONFIDENCE;
 
   const candidates: VerifiedSemanticRuleResult[] = [];
-  for (const memory of allMemories) {
-    if (memory.frontmatter.category !== "rule") continue;
-    if (memory.frontmatter.status === "archived") continue;
+  // ruleMemories is pre-filtered to category=rule, status!=archived
+  for (const memory of ruleMemories) {
     if (memory.frontmatter.source !== "semantic-rule-promotion") continue;
     const sourceMemoryId = memory.frontmatter.sourceMemoryId;
     if (!sourceMemoryId) continue;

@@ -63,15 +63,72 @@ export function setCachedEntities(baseDir: string, entities: EntityFile[], versi
   entityCacheByDir.set(baseDir, { entities, version, loadedAt: Date.now() });
 }
 
+// Derived caches — pre-filtered views invalidated alongside the main cache.
+// These avoid O(146K) filter+map on every verified recall/rules call.
+interface DerivedCacheEntry<T> {
+  data: T;
+  sourceVersion: number; // matches the hot cache version it was derived from
+}
+
+const episodeMapByDir = new Map<string, DerivedCacheEntry<Map<string, MemoryFile>>>();
+const ruleMemoriesByDir = new Map<string, DerivedCacheEntry<{ all: MemoryFile[]; byId: Map<string, MemoryFile> }>>();
+
+/** Get a pre-filtered Map of episode memories (keyed by ID). Derived from hot cache. */
+export function getCachedEpisodeMap(baseDir: string, currentVersion: number): Map<string, MemoryFile> | null {
+  if (currentVersion === 0) return null;
+  const entry = episodeMapByDir.get(baseDir);
+  if (!entry || entry.sourceVersion !== currentVersion) return null;
+  return entry.data;
+}
+
+/** Build and cache the episode memory map from the full memory list. */
+export function setCachedEpisodeMap(baseDir: string, memories: MemoryFile[], version: number): Map<string, MemoryFile> {
+  const map = new Map<string, MemoryFile>();
+  for (const m of memories) {
+    if (m.frontmatter.status === "archived") continue;
+    if (m.frontmatter.memoryKind !== "episode") continue;
+    map.set(m.frontmatter.id, m);
+  }
+  episodeMapByDir.set(baseDir, { data: map, sourceVersion: version });
+  return map;
+}
+
+/** Get pre-filtered rule memories. Derived from hot cache. */
+export function getCachedRuleMemories(baseDir: string, currentVersion: number): { all: MemoryFile[]; byId: Map<string, MemoryFile> } | null {
+  if (currentVersion === 0) return null;
+  const entry = ruleMemoriesByDir.get(baseDir);
+  if (!entry || entry.sourceVersion !== currentVersion) return null;
+  return entry.data;
+}
+
+/** Build and cache the rule memories from the full memory list. */
+export function setCachedRuleMemories(baseDir: string, memories: MemoryFile[], version: number): { all: MemoryFile[]; byId: Map<string, MemoryFile> } {
+  const byId = new Map<string, MemoryFile>();
+  const all: MemoryFile[] = [];
+  for (const m of memories) {
+    byId.set(m.frontmatter.id, m);
+    if (m.frontmatter.category === "rule" && m.frontmatter.status !== "archived") {
+      all.push(m);
+    }
+  }
+  const result = { all, byId };
+  ruleMemoriesByDir.set(baseDir, { data: result, sourceVersion: version });
+  return result;
+}
+
 export function clearMemoryCache(baseDir?: string): void {
   if (baseDir) {
     hotCacheByDir.delete(baseDir);
     archiveCacheByDir.delete(baseDir);
     entityCacheByDir.delete(baseDir);
+    episodeMapByDir.delete(baseDir);
+    ruleMemoriesByDir.delete(baseDir);
   } else {
     hotCacheByDir.clear();
     archiveCacheByDir.clear();
     entityCacheByDir.clear();
+    episodeMapByDir.clear();
+    ruleMemoriesByDir.clear();
   }
 }
 
