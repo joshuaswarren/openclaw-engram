@@ -1299,6 +1299,7 @@ export class StorageManager {
 
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
     this.invalidateKnowledgeIndexCache();
+    this.bumpMemoryStatusVersion(); // invalidate entity cache
     log.debug(`wrote entity ${normalized}`);
     return normalized;
   }
@@ -3001,6 +3002,7 @@ export class StorageManager {
     entity.updated = new Date().toISOString();
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
     this.invalidateKnowledgeIndexCache();
+    this.bumpMemoryStatusVersion(); // invalidate entity cache
   }
 
   // ---------------------------------------------------------------------------

@@ -1034,7 +1034,8 @@ export class QmdClient implements SearchBackend {
     // Short-lived search result cache — avoids redundant daemon calls for
     // repeated queries within the same recall cycle (e.g., primary + hybrid
     // top-up, or conversation recall using the same collection).
-    const cacheKey = createHash("sha256").update(`${col}:${n}:${trimmed}`).digest("hex");
+    const optionsFingerprint = searchOptions ? JSON.stringify(searchOptions) : "";
+    const cacheKey = createHash("sha256").update(`${col}:${n}:${optionsFingerprint}:${trimmed}`).digest("hex");
     const cached = getCachedQmdSearch(cacheKey);
     if (cached) {
       log.debug(`QMD search cache hit (${cached.length} results)`);
