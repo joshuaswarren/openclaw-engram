@@ -913,6 +913,7 @@ export class Orchestrator {
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
   private lastQmdEmbedAtMs = 0;
+  private lastQmdReprobeAtMs = 0;
   private tierMigrationInFlight = false;
   private lastTierMigrationRunAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
@@ -4305,7 +4306,14 @@ export class Orchestrator {
       if (!this.qmd.isAvailable()) {
         // Lazy re-probe: the initial probe may have failed because the
         // event loop was blocked during gateway startup (skill scanning).
-        // Try once more before giving up for this recall.
+        // Rate-limit to once per 60s to avoid hammering the subprocess.
+        const now = Date.now();
+        const QMD_REPROBE_COOLDOWN_MS = 60_000;
+        if (this.lastQmdReprobeAtMs && now - this.lastQmdReprobeAtMs < QMD_REPROBE_COOLDOWN_MS) {
+          timings.qmd = "skip(reprobe-cooldown)";
+          return null;
+        }
+        this.lastQmdReprobeAtMs = now;
         const reprobed = await this.qmd.probe();
         if (!reprobed) {
           timings.qmd = "skip";
