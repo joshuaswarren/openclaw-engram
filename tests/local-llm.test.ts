@@ -191,7 +191,7 @@ test("LocalLlmClient probes immediately after zero-duration backend trip", async
   }
 });
 
-test("LocalLlmClient shares backend circuit state across models on the same endpoint", () => {
+test("LocalLlmClient shares backend circuit state across models on equivalent endpoint URLs", () => {
   initLogger(
     {
       info() {},
@@ -202,8 +202,12 @@ test("LocalLlmClient shares backend circuit state across models on the same endp
     true,
   );
 
-  const primary = new LocalLlmClient(buildConfig({ localLlmModel: "primary-model" }));
-  const fast = new LocalLlmClient(buildConfig({ localLlmModel: "fast-model" }));
+  const primary = new LocalLlmClient(
+    buildConfig({ localLlmModel: "primary-model", localLlmUrl: "http://127.0.0.1:1234/v1" }),
+  );
+  const fast = new LocalLlmClient(
+    buildConfig({ localLlmModel: "fast-model", localLlmUrl: "http://127.0.0.1:1234" }),
+  );
 
   (primary as any).markBackendUnavailable("Failed to load model", 25);
 
