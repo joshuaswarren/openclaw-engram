@@ -4168,13 +4168,38 @@ export class Orchestrator {
     type ObservedDeferredEnrichmentPromise<T> =
       Promise<DeferredEnrichmentOutcome<T>> & {
         getSettledOutcome: () => DeferredEnrichmentOutcome<T> | undefined;
+        cancel: () => void;
       };
+    const createEnrichmentAbortHandle = (parentSignal?: AbortSignal) => {
+      const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      if (parentSignal?.aborted) {
+        controller.abort();
+      } else if (parentSignal) {
+        parentSignal.addEventListener("abort", onAbort, { once: true });
+      }
+      let disposed = false;
+      const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        parentSignal?.removeEventListener("abort", onAbort);
+      };
+      return {
+        signal: controller.signal,
+        cancel: () => {
+          controller.abort();
+          dispose();
+        },
+        dispose,
+      };
+    };
     const observeEnrichmentPromise = <T>(
       promise: Promise<T>,
+      cancel: () => void = () => {},
     ): ObservedDeferredEnrichmentPromise<T> => {
       let settledOutcome: DeferredEnrichmentOutcome<T> | undefined;
       const observed = promise
-        .then<DeferredEnrichmentOutcome<T>, DeferredEnrichmentOutcome<T>>( 
+        .then<DeferredEnrichmentOutcome<T>, DeferredEnrichmentOutcome<T>>(
           (value) => ({ status: "resolved", value }),
           (error) => ({ status: "rejected", error }),
         )
@@ -4183,6 +4208,7 @@ export class Orchestrator {
           return outcome;
         }) as ObservedDeferredEnrichmentPromise<T>;
       observed.getSettledOutcome = () => settledOutcome;
+      observed.cancel = cancel;
       return observed;
     };
     const recordRecallSectionMetric = createRecallSectionMetricRecorder({
@@ -5039,6 +5065,9 @@ export class Orchestrator {
       return results.length > 0 ? this.formatTrustZoneResults(results) : null;
     })();
 
+    const harmonicRetrievalAbort = createEnrichmentAbortHandle(
+      options.abortSignal,
+    );
     const harmonicRetrievalPromise = observeEnrichmentPromise(
       (async (): Promise<string | null> => {
         const t0 = Date.now();
@@ -5082,6 +5111,7 @@ export class Orchestrator {
           maxResults,
           sessionKey,
           anchorsEnabled: this.config.abstractionAnchorsEnabled,
+          abortSignal: harmonicRetrievalAbort.signal,
         });
 
         recordRecallSectionMetric({
@@ -5095,7 +5125,8 @@ export class Orchestrator {
         return results.length > 0
           ? this.formatHarmonicRetrievalResults(results)
           : null;
-      })(),
+      })().finally(() => harmonicRetrievalAbort.dispose()),
+      () => harmonicRetrievalAbort.cancel(),
     );
 
     // Verified recall and semantic rules both need readAllMemories().
@@ -5366,6 +5397,7 @@ export class Orchestrator {
       maxSpecializedScore: number;
     } | null;
 
+    const qmdEnrichmentAbort = createEnrichmentAbortHandle(options.abortSignal);
     const qmdPromise = observeEnrichmentPromise(
       (async (): Promise<QmdPhaseResult> => {
         const t0 = Date.now();
@@ -5517,7 +5549,7 @@ export class Orchestrator {
                 resolveNamespace: (p) => this.namespaceFromPath(p),
                 queryAwarePrefilter,
                 searchOptions: qmdSearchOptions,
-                abortSignal: options.abortSignal,
+                abortSignal: qmdEnrichmentAbort.signal,
                 onDebugSnapshot: async (snapshot) => {
                   await this.recordLastQmdRecallSnapshot({
                     storage: profileStorage,
@@ -5600,18 +5632,21 @@ export class Orchestrator {
           }
           throw err;
         }
-      })().catch((err): QmdPhaseResult => {
-        if (options.abortSignal?.aborted) {
-          log.debug(
-            `recall phase-1 enrichment [qmd]: skipped after abort at +${Date.now() - phase1Start}ms`,
+      })()
+        .catch((err): QmdPhaseResult => {
+          if (options.abortSignal?.aborted) {
+            log.debug(
+              `recall phase-1 enrichment [qmd]: skipped after abort at +${Date.now() - phase1Start}ms`,
+            );
+            return null;
+          }
+          log.warn(
+            `recall phase-1 enrichment [qmd] failed open: ${err instanceof Error ? err.message : String(err)}`,
           );
           return null;
-        }
-        log.warn(
-          `recall phase-1 enrichment [qmd] failed open: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return null;
-      }),
+        })
+        .finally(() => qmdEnrichmentAbort.dispose()),
+      () => qmdEnrichmentAbort.cancel(),
     );
 
     const transcriptPromise = (async (): Promise<string | null> => {
@@ -5847,6 +5882,9 @@ export class Orchestrator {
       return section;
     })();
 
+    const nativeKnowledgeAbort = createEnrichmentAbortHandle(
+      options.abortSignal,
+    );
     const nativeKnowledgePromise = observeEnrichmentPromise(
       (async (): Promise<string | null> => {
         const t0 = Date.now();
@@ -5892,6 +5930,7 @@ export class Orchestrator {
             ? recallNamespaces
             : undefined,
           defaultNamespace: this.config.defaultNamespace,
+          abortSignal: nativeKnowledgeAbort.signal,
         }).catch(() => []);
         const results = searchNativeKnowledge({
           query: retrievalQuery,
@@ -5915,7 +5954,8 @@ export class Orchestrator {
           success: true,
         });
         return section;
-      })(),
+      })().finally(() => nativeKnowledgeAbort.dispose()),
+      () => nativeKnowledgeAbort.cancel(),
     );
 
     const conversationRecallPromise = (async (): Promise<string | null> => {
@@ -6183,6 +6223,7 @@ export class Orchestrator {
       };
 
       if (options.abortSignal?.aborted) {
+        promise.cancel();
         log.debug(
           `recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`,
         );
@@ -6207,6 +6248,7 @@ export class Orchestrator {
           `recall phase-1 enrichment [${name}]: skipped after shared ${enrichmentSectionDeadlineMs}ms budget expired ` +
             `at +${Date.now() - phase1Start}ms`,
         );
+        promise.cancel();
         return null;
       }
 
@@ -6228,6 +6270,7 @@ export class Orchestrator {
           `recall phase-1 enrichment [${name}]: timed out within shared ${enrichmentSectionDeadlineMs}ms budget ` +
             `at +${Date.now() - phase1Start}ms`,
         );
+        promise.cancel();
         return null;
       }
 

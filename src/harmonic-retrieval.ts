@@ -143,7 +143,9 @@ export async function searchHarmonicRetrieval(options: {
   maxResults: number;
   sessionKey?: string;
   anchorsEnabled: boolean;
+  abortSignal?: AbortSignal;
 }): Promise<HarmonicRetrievalResult[]> {
+  throwIfAborted(options.abortSignal);
   const queryTokens = new Set(normalizeRecallTokens(options.query, ["what", "which"]));
   if (queryTokens.size === 0 || options.maxResults <= 0) return [];
 
@@ -151,6 +153,7 @@ export async function searchHarmonicRetrieval(options: {
   const candidates = new Map<string, HarmonicCandidate>();
 
   for (const node of nodes) {
+    throwIfAborted(options.abortSignal);
     const { score, matchedFields } = scoreNode(node, queryTokens);
     if (score <= 0) continue;
     candidates.set(node.nodeId, {
@@ -163,9 +166,11 @@ export async function searchHarmonicRetrieval(options: {
   }
 
   if (options.anchorsEnabled) {
+    throwIfAborted(options.abortSignal);
     const anchors = await readCueAnchors(options);
     const nodeIndex = new Map(nodes.map((node) => [node.nodeId, node]));
     for (const anchor of anchors) {
+      throwIfAborted(options.abortSignal);
       const { score, matchedFields } = scoreAnchor(anchor, queryTokens);
       if (score <= 0) continue;
       for (const nodeRef of anchor.nodeRefs) {
@@ -214,4 +219,11 @@ export async function searchHarmonicRetrieval(options: {
         || right.node.recordedAt.localeCompare(left.node.recordedAt),
     )
     .slice(0, options.maxResults);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const err = new Error("harmonic retrieval aborted");
+  Object.defineProperty(err, "name", { value: "AbortError" });
+  throw err;
 }

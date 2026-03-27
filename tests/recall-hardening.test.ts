@@ -543,6 +543,8 @@ test("recallInternal times out hung enrichment work without blocking assembly", 
     {
       compoundingInjectEnabled: true,
       recallEnrichmentDeadlineMs: 5,
+      queryAwareIndexingEnabled: false,
+      parallelRetrievalEnabled: false,
     },
   );
 
@@ -625,6 +627,84 @@ test("recallInternal fails open when a deferred enrichment promise rejects befor
   assert.doesNotMatch(context, /compounding/i);
 });
 
+test("recallInternal cancels timed-out qmd enrichment work", async () => {
+  clearQmdRecallCache();
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-qmd-timeout-cancel-",
+    {
+      qmdEnabled: true,
+      recallEnrichmentDeadlineMs: 80,
+      queryAwareIndexingEnabled: false,
+      parallelRetrievalEnabled: false,
+    },
+  );
+
+  let releaseSharedRead: (() => void) | null = null;
+  let observedAbortSignal: AbortSignal | undefined;
+  let qmdAborted = false;
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context" || id === "memories";
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      await new Promise<void>((resolve) => {
+        releaseSharedRead = resolve;
+      });
+      return "stable shared priorities";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+  };
+  (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async (
+    _query: string,
+    _maxResults: number,
+    _hybridFetchLimit: number,
+    options: { abortSignal?: AbortSignal } = {},
+  ) => {
+    observedAbortSignal = options.abortSignal;
+    if (options.abortSignal?.aborted) {
+      qmdAborted = true;
+      const err = new Error("qmd enrichment aborted");
+      Object.defineProperty(err, "name", { value: "AbortError" });
+      throw err;
+    }
+    await new Promise<never>((_resolve, reject) => {
+      options.abortSignal?.addEventListener(
+        "abort",
+        () => {
+          qmdAborted = true;
+          const err = new Error("qmd enrichment aborted");
+          Object.defineProperty(err, "name", { value: "AbortError" });
+          reject(err);
+        },
+        { once: true },
+      );
+    });
+  };
+
+  const recallPromise = (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:qmd-timeout-cancel",
+    { mode: "full" },
+  );
+
+  for (let attempt = 0; attempt < 100 && !observedAbortSignal; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(observedAbortSignal, "expected qmd enrichment to start");
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  releaseSharedRead?.();
+
+  const context = await recallPromise;
+  assert.match(context, /stable shared priorities/);
+  assert.doesNotMatch(context, /Relevant Memories/);
+  assert.ok(observedAbortSignal);
+  assert.equal(observedAbortSignal?.aborted, true);
+  assert.equal(qmdAborted, true);
+});
+
 test("recallInternal shares one enrichment timeout budget across sequential enrichment awaits", async () => {
   clearQmdRecallCache();
   const orchestrator = await makeOrchestrator(
@@ -632,13 +712,16 @@ test("recallInternal shares one enrichment timeout budget across sequential enri
     {
       qmdEnabled: true,
       compoundingInjectEnabled: true,
-      recallEnrichmentDeadlineMs: 15,
+      recallEnrichmentDeadlineMs: 120,
+      queryAwareIndexingEnabled: false,
+      parallelRetrievalEnabled: false,
     },
   );
 
   let releaseSharedRead: (() => void) | null = null;
+  let releaseQmd: (() => void) | null = null;
   (orchestrator as any).isRecallSectionEnabled = (id: string) =>
-    id === "shared-context" || id === "qmd-memory" || id === "compounding";
+    id === "shared-context" || id === "memories" || id === "compounding";
   (orchestrator as any).sharedContext = {
     readPriorities: async () => {
       await new Promise<void>((resolve) => {
@@ -653,7 +736,11 @@ test("recallInternal shares one enrichment timeout budget across sequential enri
     isAvailable: () => true,
   };
   (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async () =>
-    await new Promise<never>(() => {});
+    await new Promise<[]>((
+      resolve,
+    ) => {
+      releaseQmd = () => resolve([]);
+    });
   (orchestrator as any).compounding = {
     buildRecallSection: async () => await new Promise<string | null>(() => {}),
   };
@@ -667,14 +754,17 @@ test("recallInternal shares one enrichment timeout budget across sequential enri
 
   await new Promise((resolve) => setTimeout(resolve, 10));
   releaseSharedRead?.();
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  releaseQmd?.();
 
   const context = await recallPromise;
   const elapsedMs = Date.now() - startedAt;
 
   assert.match(context, /stable shared priorities/);
   assert.doesNotMatch(context, /compounding/i);
+  assert.doesNotMatch(context, /Relevant Memories/);
   assert.ok(
-    elapsedMs < 60,
-    `expected shared enrichment timeouts, saw ${elapsedMs}ms`,
+    elapsedMs < 170,
+    `expected compounding to share the remaining enrichment budget, saw ${elapsedMs}ms`,
   );
 });

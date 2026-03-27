@@ -1,4 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { HourlySummary } from "./types.js";
@@ -23,12 +31,22 @@ const SummarySnapshotSchema = z.object({
 type SummarySnapshot = z.infer<typeof SummarySnapshotSchema>;
 
 const summarySnapshotUpserts = new Map<string, Promise<void>>();
+const summarySnapshotLockTimeoutMs = 5_000;
+const summarySnapshotLockStaleMs = 30_000;
+const summarySnapshotLockHeartbeatMs = Math.max(
+  1_000,
+  Math.floor(summarySnapshotLockStaleMs / 3),
+);
 
 export function summarySnapshotPath(
   memoryDir: string,
   sessionKey: string,
 ): string {
   return path.join(memoryDir, "state", "summaries", `${sessionKey}.json`);
+}
+
+function summarySnapshotLockPath(memoryDir: string, sessionKey: string): string {
+  return path.join(memoryDir, "state", "summaries", `${sessionKey}.lock`);
 }
 
 export async function readSummarySnapshot(
@@ -71,6 +89,7 @@ export async function writeSummarySnapshot(
 }
 
 async function withSummarySnapshotLock<T>(
+  memoryDir: string,
   sessionKey: string,
   work: () => Promise<T>,
 ): Promise<T> {
@@ -84,7 +103,10 @@ async function withSummarySnapshotLock<T>(
 
   await previous;
   try {
-    return await work();
+    return await withExclusiveSummarySnapshotFileLock(
+      summarySnapshotLockPath(memoryDir, sessionKey),
+      work,
+    );
   } finally {
     release();
     if (summarySnapshotUpserts.get(sessionKey) === chained) {
@@ -97,7 +119,7 @@ export async function upsertSummarySnapshot(
   memoryDir: string,
   summary: HourlySummary,
 ): Promise<void> {
-  await withSummarySnapshotLock(summary.sessionKey, async () => {
+  await withSummarySnapshotLock(memoryDir, summary.sessionKey, async () => {
     const existing = await readSummarySnapshot(memoryDir, summary.sessionKey);
     const byHour = new Map<string, HourlySummary>();
     for (const item of existing ?? []) {
@@ -113,4 +135,55 @@ export async function upsertSummarySnapshot(
     );
     await writeSummarySnapshot(memoryDir, summary.sessionKey, next);
   });
+}
+
+async function withExclusiveSummarySnapshotFileLock<T>(
+  lockPath: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  const startedAt = Date.now();
+
+  while (true) {
+    try {
+      const handle = await open(lockPath, "wx");
+      let heartbeat: NodeJS.Timeout | null = null;
+      if (summarySnapshotLockHeartbeatMs > 0) {
+        heartbeat = setInterval(() => {
+          void utimes(lockPath, new Date(), new Date()).catch(() => undefined);
+        }, summarySnapshotLockHeartbeatMs);
+        heartbeat.unref?.();
+      }
+      try {
+        return await callback();
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        await handle.close().catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      try {
+        const lockStat = await stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > summarySnapshotLockStaleMs) {
+          await unlink(lockPath).catch(() => undefined);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() - startedAt > summarySnapshotLockTimeoutMs) {
+        throw new Error("timed out acquiring summary snapshot lock");
+      }
+      await sleep(10);
+    }
+  }
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

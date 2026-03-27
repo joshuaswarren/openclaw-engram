@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, unlink, writeFile } from "node:fs/promises";
 import { HourlySummarizer } from "./summarizer.js";
 import {
   readSummarySnapshot,
+  upsertSummarySnapshot,
   summarySnapshotPath,
   writeSummarySnapshot,
 } from "./summary-snapshot.js";
@@ -155,5 +156,61 @@ test("readRecent backfills a summary snapshot from the full parsed markdown hist
   assert.deepEqual(
     widerRecent.map((summary) => summary.bullets),
     [["newer markdown bullet"], ["older markdown bullet"]],
+  );
+});
+
+test("upsertSummarySnapshot waits for an inter-process lock before merging new summaries", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-summary-lock-"),
+  );
+  const sessionKey = "session-lock";
+  const existingSummary = {
+    hour: "2026-03-26T08:00:00.000Z",
+    sessionKey,
+    bullets: ["existing bullet"],
+    turnCount: 2,
+    generatedAt: "2026-03-26T08:15:00.000Z",
+  };
+  const externalSummary = {
+    hour: "2026-03-26T12:00:00.000Z",
+    sessionKey,
+    bullets: ["external bullet"],
+    turnCount: 3,
+    generatedAt: "2026-03-26T12:15:00.000Z",
+  };
+  const newSummary = {
+    hour: "2026-03-26T16:00:00.000Z",
+    sessionKey,
+    bullets: ["new bullet"],
+    turnCount: 4,
+    generatedAt: "2026-03-26T16:15:00.000Z",
+  };
+
+  await writeSummarySnapshot(memoryDir, sessionKey, [existingSummary]);
+
+  const lockPath = path.join(
+    memoryDir,
+    "state",
+    "summaries",
+    `${sessionKey}.lock`,
+  );
+  const lockHandle = await open(lockPath, "wx");
+
+  const pendingUpsert = upsertSummarySnapshot(memoryDir, newSummary);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  await writeSummarySnapshot(memoryDir, sessionKey, [
+    externalSummary,
+    existingSummary,
+  ]);
+  await lockHandle.close();
+  await unlink(lockPath);
+
+  await pendingUpsert;
+
+  const snapshot = await readSummarySnapshot(memoryDir, sessionKey);
+  assert.deepEqual(
+    snapshot?.map((summary) => summary.bullets),
+    [["new bullet"], ["external bullet"], ["existing bullet"]],
   );
 });
