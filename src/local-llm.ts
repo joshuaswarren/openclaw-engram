@@ -245,7 +245,7 @@ export class LocalLlmClient {
     url: string,
     timeoutMs: number = 2000,
     headers?: Record<string, string>,
-  ): Promise<{ ok: boolean; data: unknown }> {
+  ): Promise<{ ok: boolean; data: unknown; status: number | null }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -257,18 +257,18 @@ export class LocalLlmClient {
       clearTimeout(timeout);
 
       if (!response.ok) {
-        return { ok: false, data: null };
+        return { ok: false, data: null, status: response.status };
       }
 
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
-        return { ok: true, data: await response.json() };
+        return { ok: true, data: await response.json(), status: response.status };
       } else {
-        return { ok: true, data: await response.text() };
+        return { ok: true, data: await response.text(), status: response.status };
       }
     } catch (err) {
       clearTimeout(timeout);
-      return { ok: false, data: null };
+      return { ok: false, data: null, status: null };
     }
   }
 
@@ -296,6 +296,7 @@ export class LocalLlmClient {
     const baseUrl = this.config.localLlmUrl
       .replace("localhost", "127.0.0.1")
       .replace(/\/+$/, "");
+    let sawUnauthorizedProbe = false;
 
     // Try to detect which server type is running
     for (const serverConfig of LOCAL_SERVERS) {
@@ -310,6 +311,9 @@ export class LocalLlmClient {
         log.info(`detected ${serverConfig.type} at ${baseUrl}`);
         return true;
       }
+      if (result.status === 401 || result.status === 403) {
+        sawUnauthorizedProbe = true;
+      }
     }
 
     // Generic check if specific detection failed
@@ -323,6 +327,9 @@ export class LocalLlmClient {
         log.info(`detected generic OpenAI-compatible server at ${baseUrl}`);
         return true;
       }
+      if (result.status === 401 || result.status === 403) {
+        sawUnauthorizedProbe = true;
+      }
     } catch {
       // Fall through to unavailable
     }
@@ -330,6 +337,11 @@ export class LocalLlmClient {
     this.isAvailable = false;
     this.detectedType = null;
     this.lastHealthCheck = now;
+    if (sawUnauthorizedProbe) {
+      log.warn(
+        `local LLM availability probe was unauthorized at ${baseUrl}; verify localLlmApiKey and localLlmAuthHeader settings`,
+      );
+    }
     log.debug("local LLM not available at", baseUrl);
     return false;
   }
@@ -999,6 +1011,11 @@ export class LocalLlmClient {
     try {
       const result = await this.fetchWithTimeout(modelsUrl, 3000);
       if (!result.ok) {
+        if (result.status === 401 || result.status === 403) {
+          log.warn(
+            `Local LLM: unauthorized while fetching models from ${modelsUrl}; verify localLlmApiKey and localLlmAuthHeader settings`,
+          );
+        }
         log.warn(`Local LLM: Failed to fetch models from ${modelsUrl} - server returned error`);
         return null;
       }
