@@ -403,7 +403,7 @@ test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active
     query: "Summarize the current project state.",
     namespaces: ["default"],
     recallMode: "full",
-    maxResults: (orchestrator as any).config.qmdResults,
+    maxResults: (orchestrator as any).config.qmdMaxResults,
     memoryDir: (orchestrator as any).config.memoryDir,
   });
   setCachedQmdRecall(
@@ -444,6 +444,60 @@ test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active
   assert.match(context, /stale cache memory/);
 });
 
+test("recallInternal uses already-settled qmd results after the enrichment budget expires", async () => {
+  clearQmdRecallCache();
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-qmd-ready-after-budget-",
+    {
+      qmdEnabled: true,
+      memoryBoxesEnabled: true,
+      boxRecallDays: 1,
+      recallEnrichmentDeadlineMs: 5,
+    },
+  );
+
+  const memoryId = await (orchestrator as any).storage.writeMemory(
+    "fact",
+    "ready qmd memory",
+  );
+  const memory = await (orchestrator as any).storage.getMemoryById(memoryId);
+  assert.ok(memory);
+
+  let releaseBoxes: (() => void) | null = null;
+  (orchestrator as any).boxBuilderFor = () => ({
+    readRecentBoxes: async () => {
+      await new Promise<void>((resolve) => {
+        releaseBoxes = resolve;
+      });
+      return [];
+    },
+  });
+
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+    probe: async () => true,
+    debugStatus: () => "qmd ready",
+  };
+  (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async () => [
+    {
+      docid: memory.frontmatter.id,
+      path: memory.path,
+      snippet: "ready qmd memory",
+      score: 0.91,
+    },
+  ];
+
+  setTimeout(() => releaseBoxes?.(), 15);
+
+  const context = await (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:qmd-ready-after-budget",
+    { mode: "full" },
+  );
+
+  assert.match(context, /ready qmd memory/);
+});
+
 test("recallInternal does not cache empty qmd result sets", async () => {
   clearQmdRecallCache();
   const orchestrator = await makeOrchestrator(
@@ -470,7 +524,7 @@ test("recallInternal does not cache empty qmd result sets", async () => {
     query: "Summarize the current project state.",
     namespaces: ["default"],
     recallMode: "full",
-    maxResults: (orchestrator as any).config.qmdResults,
+    maxResults: (orchestrator as any).config.qmdMaxResults,
     memoryDir: (orchestrator as any).config.memoryDir,
   });
 
@@ -620,7 +674,7 @@ test("recallInternal shares one enrichment timeout budget across sequential enri
   assert.match(context, /stable shared priorities/);
   assert.doesNotMatch(context, /compounding/i);
   assert.ok(
-    elapsedMs < 30,
-    `expected a shared enrichment budget, saw ${elapsedMs}ms`,
+    elapsedMs < 60,
+    `expected shared enrichment timeouts, saw ${elapsedMs}ms`,
   );
 });

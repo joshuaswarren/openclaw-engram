@@ -4165,13 +4165,26 @@ export class Orchestrator {
     type DeferredEnrichmentOutcome<T> =
       | { status: "resolved"; value: T }
       | { status: "rejected"; error: unknown };
+    type ObservedDeferredEnrichmentPromise<T> =
+      Promise<DeferredEnrichmentOutcome<T>> & {
+        getSettledOutcome: () => DeferredEnrichmentOutcome<T> | undefined;
+      };
     const observeEnrichmentPromise = <T>(
       promise: Promise<T>,
-    ): Promise<DeferredEnrichmentOutcome<T>> =>
-      promise.then(
-        (value) => ({ status: "resolved", value }),
-        (error) => ({ status: "rejected", error }),
-      );
+    ): ObservedDeferredEnrichmentPromise<T> => {
+      let settledOutcome: DeferredEnrichmentOutcome<T> | undefined;
+      const observed = promise
+        .then<DeferredEnrichmentOutcome<T>, DeferredEnrichmentOutcome<T>>( 
+          (value) => ({ status: "resolved", value }),
+          (error) => ({ status: "rejected", error }),
+        )
+        .then((outcome) => {
+          settledOutcome = outcome;
+          return outcome;
+        }) as ObservedDeferredEnrichmentPromise<T>;
+      observed.getSettledOutcome = () => settledOutcome;
+      return observed;
+    };
     const recordRecallSectionMetric = createRecallSectionMetricRecorder({
       timings,
       logger: log,
@@ -6144,8 +6157,31 @@ export class Orchestrator {
 
     const awaitEnrichmentSection = async <T>(
       name: string,
-      promise: Promise<DeferredEnrichmentOutcome<T>>,
+      promise: ObservedDeferredEnrichmentPromise<T>,
     ): Promise<T | null> => {
+      const finalizeEnrichmentOutcome = (
+        outcome: DeferredEnrichmentOutcome<T>,
+      ): T | null => {
+        if (outcome.status === "resolved") {
+          log.debug(
+            `recall phase-1 enrichment [${name}]: resolved at +${Date.now() - phase1Start}ms`,
+          );
+          return outcome.value;
+        }
+
+        if (options.abortSignal?.aborted) {
+          log.debug(
+            `recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`,
+          );
+          return null;
+        }
+        log.warn(
+          `recall phase-1 enrichment [${name}] failed open: ` +
+            `${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`,
+        );
+        return null;
+      };
+
       if (options.abortSignal?.aborted) {
         log.debug(
           `recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`,
@@ -6159,6 +6195,14 @@ export class Orchestrator {
           ? null
           : Math.max(0, enrichmentAssemblyDeadlineAtMs - Date.now());
       if (timeoutMs === 0) {
+        const settledOutcome = promise.getSettledOutcome();
+        if (settledOutcome) {
+          log.debug(
+            `recall phase-1 enrichment [${name}]: consumed already-settled result after shared ${enrichmentSectionDeadlineMs}ms budget expired ` +
+              `at +${Date.now() - phase1Start}ms`,
+          );
+          return finalizeEnrichmentOutcome(settledOutcome);
+        }
         log.debug(
           `recall phase-1 enrichment [${name}]: skipped after shared ${enrichmentSectionDeadlineMs}ms budget expired ` +
             `at +${Date.now() - phase1Start}ms`,
@@ -6187,24 +6231,7 @@ export class Orchestrator {
         return null;
       }
 
-      if (outcome.status === "resolved") {
-        log.debug(
-          `recall phase-1 enrichment [${name}]: resolved at +${Date.now() - phase1Start}ms`,
-        );
-        return outcome.value;
-      }
-
-      if (options.abortSignal?.aborted) {
-        log.debug(
-          `recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`,
-        );
-        return null;
-      }
-      log.warn(
-        `recall phase-1 enrichment [${name}] failed open: ` +
-          `${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`,
-      );
-      return null;
+      return finalizeEnrichmentOutcome(outcome);
     };
 
     // --- Phase 2: Assemble sections in correct order ---
