@@ -107,7 +107,7 @@ test("readRecent prefers the materialized summary snapshot over markdown fallbac
   );
 });
 
-test("readRecent backfills a summary snapshot from markdown summaries", async () => {
+test("readRecent backfills a summary snapshot from the full parsed markdown history", async () => {
   const memoryDir = await mkdtemp(
     path.join(os.tmpdir(), "engram-summary-backfill-"),
   );
@@ -115,8 +115,7 @@ test("readRecent backfills a summary snapshot from markdown summaries", async ()
   await summarizer.initialize();
 
   const sessionKey = "session-backfill";
-  const now = new Date();
-  const dateStr = utcDateString(now);
+  const dateStr = "2026-03-24";
   const mdDir = path.join(memoryDir, "summaries", "hourly", sessionKey);
   await mkdir(mdDir, { recursive: true });
 
@@ -129,8 +128,13 @@ test("readRecent backfills a summary snapshot from markdown summaries", async ()
       "",
       "## 09:00",
       "",
-      "- markdown bullet",
+      "- older markdown bullet",
       "  *(2 turns)*",
+      "",
+      "## 14:00",
+      "",
+      "- newer markdown bullet",
+      "  *(4 turns)*",
       "",
     ].join("\n"),
     "utf-8",
@@ -138,10 +142,18 @@ test("readRecent backfills a summary snapshot from markdown summaries", async ()
 
   assert.equal(await readSummarySnapshot(memoryDir, sessionKey), null);
 
-  const recent = await summarizer.readRecent(sessionKey, 48);
-  assert.equal(recent.length, 1);
-  assert.deepEqual(recent[0]?.bullets, ["markdown bullet"]);
+  const recent = await summarizer.readRecent(sessionKey, 0);
+  assert.equal(recent.length, 0);
 
   const snapshot = await readSummarySnapshot(memoryDir, sessionKey);
-  assert.deepEqual(snapshot, recent);
+  assert.deepEqual(
+    snapshot?.map((summary) => summary.bullets),
+    [["newer markdown bullet"], ["older markdown bullet"]],
+  );
+
+  const widerRecent = await summarizer.readRecent(sessionKey, 9999);
+  assert.deepEqual(
+    widerRecent.map((summary) => summary.bullets),
+    [["newer markdown bullet"], ["older markdown bullet"]],
+  );
 });

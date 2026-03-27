@@ -186,6 +186,48 @@ test("observeMessages resolves before summarize finishes and background worker p
   }
 });
 
+test("waitForSessionObserveIdle waits for deferred enqueue registration", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-engine-init-gap-"),
+  );
+  const summarizeStarted = deferred<void>();
+  const releaseSummarize = deferred<void>();
+
+  try {
+    const engine = new LcmEngine(createPluginConfig(memoryDir), async () => {
+      summarizeStarted.resolve();
+      await releaseSummarize.promise;
+      return "summary";
+    });
+
+    await engine.ensureInitialized();
+
+    engine.enqueueObserveMessages("session-1", [
+      { role: "user", content: "queued after init" },
+    ]);
+
+    let sessionIdleResolved = false;
+    const sessionIdlePromise = engine
+      .waitForSessionObserveIdle("session-1")
+      .then(() => {
+        sessionIdleResolved = true;
+      });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await summarizeStarted.promise;
+
+    assert.equal(sessionIdleResolved, false);
+
+    releaseSummarize.resolve();
+    await sessionIdlePromise;
+    assert.equal(sessionIdleResolved, true);
+  } finally {
+    releaseSummarize.resolve();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("waitForSessionObserveIdle resolves once the target session drains even if other work remains", async () => {
   const memoryDir = await mkdtemp(
     path.join(os.tmpdir(), "engram-lcm-engine-session-idle-"),

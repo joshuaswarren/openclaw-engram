@@ -41,6 +41,9 @@ export class LcmEngine {
   private readonly config: LcmEngineConfig;
   private readonly memoryDir: string;
   private initPromise: Promise<void> | null = null;
+  private readonly pendingObserveInitCounts = new Map<string, number>();
+  private readonly pendingObserveInitWaiters = new Map<string, Array<() => void>>();
+  private readonly pendingObserveInitIdleWaiters: Array<() => void> = [];
 
   constructor(
     pluginConfig: PluginConfig,
@@ -140,6 +143,8 @@ export class LcmEngine {
     if (!this.config.enabled) return;
     if (messages.length === 0) return;
 
+    this.reservePendingObserveInit(sessionId);
+
     void this.ensureInitialized()
       .then(() => {
         this.observeQueue!.enqueue(sessionId, messages);
@@ -149,6 +154,9 @@ export class LcmEngine {
       })
       .catch((err) => {
         log.debug(`LCM observe enqueue initialization error: ${err}`);
+      })
+      .finally(() => {
+        this.releasePendingObserveInit(sessionId);
       });
   }
 
@@ -188,13 +196,59 @@ export class LcmEngine {
   async waitForObserveQueueIdle(): Promise<void> {
     if (!this.config.enabled) return;
     await this.ensureInitialized();
+    await this.waitForPendingObserveInitIdle();
     await this.observeQueue?.whenIdle();
   }
 
   async waitForSessionObserveIdle(sessionId: string): Promise<void> {
     if (!this.config.enabled) return;
     await this.ensureInitialized();
+    await this.waitForPendingObserveInitIdle(sessionId);
     await this.observeQueue?.whenSessionIdle(sessionId);
+  }
+
+  private reservePendingObserveInit(sessionId: string): void {
+    const count = this.pendingObserveInitCounts.get(sessionId) ?? 0;
+    this.pendingObserveInitCounts.set(sessionId, count + 1);
+  }
+
+  private releasePendingObserveInit(sessionId: string): void {
+    const count = this.pendingObserveInitCounts.get(sessionId);
+    if (!count) return;
+
+    if (count === 1) {
+      this.pendingObserveInitCounts.delete(sessionId);
+      const waiters = this.pendingObserveInitWaiters.get(sessionId) ?? [];
+      this.pendingObserveInitWaiters.delete(sessionId);
+      for (const resolve of waiters) resolve();
+      if (this.pendingObserveInitCounts.size === 0) {
+        const idleWaiters = this.pendingObserveInitIdleWaiters.splice(
+          0,
+          this.pendingObserveInitIdleWaiters.length,
+        );
+        for (const resolve of idleWaiters) resolve();
+      }
+      return;
+    }
+
+    this.pendingObserveInitCounts.set(sessionId, count - 1);
+  }
+
+  private async waitForPendingObserveInitIdle(sessionId?: string): Promise<void> {
+    if (sessionId) {
+      if (!this.pendingObserveInitCounts.has(sessionId)) return;
+      await new Promise<void>((resolve) => {
+        const waiters = this.pendingObserveInitWaiters.get(sessionId) ?? [];
+        waiters.push(resolve);
+        this.pendingObserveInitWaiters.set(sessionId, waiters);
+      });
+      return;
+    }
+
+    if (this.pendingObserveInitCounts.size === 0) return;
+    await new Promise<void>((resolve) => {
+      this.pendingObserveInitIdleWaiters.push(resolve);
+    });
   }
 
   /** Build the compressed history recall section for a session. */

@@ -475,13 +475,21 @@ Respond with valid JSON matching this schema:
         summaries.push(...parsed);
       }
 
-      // Filter to recent hours and sort by hour descending
-      const recent = summaries
-        .filter((s) => new Date(s.hour).getTime() >= cutoffTime)
-        .sort((a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime());
+      const sortedSummaries = summaries.sort(
+        (a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime(),
+      );
 
-      if (recent.length > 0) {
-        await writeSummarySnapshot(this.config.memoryDir, sessionKey, recent);
+      // Filter to recent hours while materializing the full parsed history.
+      const recent = sortedSummaries.filter(
+        (s) => new Date(s.hour).getTime() >= cutoffTime,
+      );
+
+      if (sortedSummaries.length > 0) {
+        await writeSummarySnapshot(
+          this.config.memoryDir,
+          sessionKey,
+          sortedSummaries,
+        );
       }
 
       return recent;
