@@ -1,7 +1,7 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
@@ -56,37 +56,53 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 const ENGRAM_NATIVE_DEPENDENCIES_CHECKED = "__openclawEngramNativeDependenciesChecked";
 
+function forwardNativeDependencyOutput(
+  stream: NodeJS.ReadableStream | null | undefined,
+  logLine: (line: string) => void,
+): void {
+  if (!stream) return;
+  stream.setEncoding("utf8");
+  let buffer = "";
+  stream.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed) logLine(trimmed);
+    }
+  });
+  stream.on("end", () => {
+    const trimmed = buffer.trim();
+    if (trimmed) logLine(trimmed);
+  });
+}
+
 function ensureNativeDependenciesReady(): void {
   if ((globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED]) return;
   (globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED] = true;
 
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const scriptPath = path.join(rootDir, "scripts", "rebuild-native.mjs");
-  const result = spawnSync(process.execPath, [scriptPath], {
+  const child = spawn(process.execPath, [scriptPath], {
     cwd: rootDir,
     env: process.env,
-    encoding: "utf-8",
-    timeout: 180_000,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-
-  const stdout = result.stdout?.trim();
-  const stderr = result.stderr?.trim();
-  if (stdout) {
-    for (const line of stdout.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed) log.info(trimmed);
+  forwardNativeDependencyOutput(child.stdout, (line) => log.info(line));
+  forwardNativeDependencyOutput(child.stderr, (line) => log.warn(line));
+  child.on("error", (error) => {
+    log.warn(`better-sqlite3 native dependency check failed to start: ${error.message}`);
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      log.warn(`better-sqlite3 native dependency check terminated by signal ${signal}`);
+      return;
     }
-  }
-  if (result.error) {
-    log.warn(`better-sqlite3 native dependency check failed: ${result.error.message}`);
-    if (stderr) log.warn(stderr);
-    return;
-  }
-  if (result.status !== 0) {
-    log.warn(
-      `better-sqlite3 native dependency check exited ${result.status}${stderr ? `: ${stderr}` : ""}`,
-    );
-  }
+    if ((code ?? 0) !== 0) {
+      log.warn(`better-sqlite3 native dependency check exited ${code ?? "unknown"}`);
+    }
+  });
 }
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
@@ -216,6 +232,8 @@ const pluginDefinition = {
       log.info("registrationMode=setup-only — skipping full initialization");
       return;
     }
+
+    ensureNativeDependenciesReady();
 
     // Workaround: Load config from file since gateway may not pass it
     const fileConfig = loadPluginConfigFromFile();

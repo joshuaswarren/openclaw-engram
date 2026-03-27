@@ -112,3 +112,81 @@ test("LocalLlmClient abort exhaustion returns null without marking unavailable",
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LocalLlmClient trips plain-text backend failures using configured cooldown", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlm400CooldownMs: 25 }));
+  (client as any).isAvailable = true;
+  (client as any).lastHealthCheck = Date.now();
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("Failed to load model", {
+      status: 503,
+      headers: { "content-type": "text/plain" },
+    })) as typeof fetch;
+
+  try {
+    const out = await client.chatCompletion([{ role: "user", content: "hello" }], {
+      operation: "entity_summary",
+    });
+    assert.equal(out, null);
+    const state = (client as any).getGlobalBackendState().get((client as any).getBackendKey());
+    assert.ok(state);
+    assert.match(state.reason, /Failed to load model/i);
+    assert.ok(state.untilMs > Date.now());
+  } finally {
+    (client as any).getGlobalBackendState().delete((client as any).getBackendKey());
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LocalLlmClient probes immediately after zero-duration backend trip", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlm400CooldownMs: 0 }));
+  (client as any).isAvailable = false;
+  (client as any).lastHealthCheck = Date.now();
+  (client as any).markBackendUnavailable("Failed to load model", 0);
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    return new Response(
+      JSON.stringify({
+        data: [{ id: "local-test-model" }],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const available = await client.checkAvailability();
+    assert.equal(available, true);
+    assert.ok(fetchCalls > 0, "expected an immediate availability probe after circuit expiry");
+  } finally {
+    (client as any).getGlobalBackendState().delete((client as any).getBackendKey());
+    globalThis.fetch = originalFetch;
+  }
+});
