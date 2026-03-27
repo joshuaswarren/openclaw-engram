@@ -22,11 +22,19 @@ const SummarySnapshotSchema = z.object({
 
 type SummarySnapshot = z.infer<typeof SummarySnapshotSchema>;
 
-export function summarySnapshotPath(memoryDir: string, sessionKey: string): string {
+const summarySnapshotUpserts = new Map<string, Promise<void>>();
+
+export function summarySnapshotPath(
+  memoryDir: string,
+  sessionKey: string,
+): string {
   return path.join(memoryDir, "state", "summaries", `${sessionKey}.json`);
 }
 
-export async function readSummarySnapshot(memoryDir: string, sessionKey: string): Promise<HourlySummary[] | null> {
+export async function readSummarySnapshot(
+  memoryDir: string,
+  sessionKey: string,
+): Promise<HourlySummary[] | null> {
   try {
     const filePath = summarySnapshotPath(memoryDir, sessionKey);
     const raw = await readFile(filePath, "utf-8");
@@ -38,7 +46,11 @@ export async function readSummarySnapshot(memoryDir: string, sessionKey: string)
   }
 }
 
-export async function writeSummarySnapshot(memoryDir: string, sessionKey: string, summaries: HourlySummary[]): Promise<void> {
+export async function writeSummarySnapshot(
+  memoryDir: string,
+  sessionKey: string,
+  summaries: HourlySummary[],
+): Promise<void> {
   const filePath = summarySnapshotPath(memoryDir, sessionKey);
   await mkdir(path.dirname(filePath), { recursive: true });
   const payload: SummarySnapshot = {
@@ -58,15 +70,47 @@ export async function writeSummarySnapshot(memoryDir: string, sessionKey: string
   await writeFile(filePath, JSON.stringify(payload, null, 2), "utf-8");
 }
 
-export async function upsertSummarySnapshot(memoryDir: string, summary: HourlySummary): Promise<void> {
-  const existing = await readSummarySnapshot(memoryDir, summary.sessionKey);
-  const byHour = new Map<string, HourlySummary>();
-  for (const item of existing ?? []) {
-    byHour.set(item.hour, { ...item, generatedAt: item.generatedAt || new Date().toISOString(), sessionKey: summary.sessionKey });
+async function withSummarySnapshotLock<T>(
+  sessionKey: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const previous = summarySnapshotUpserts.get(sessionKey) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(() => current);
+  summarySnapshotUpserts.set(sessionKey, chained);
+
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+    if (summarySnapshotUpserts.get(sessionKey) === chained) {
+      summarySnapshotUpserts.delete(sessionKey);
+    }
   }
-  byHour.set(summary.hour, summary);
-  const next = Array.from(byHour.values()).sort(
-    (a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime(),
-  );
-  await writeSummarySnapshot(memoryDir, summary.sessionKey, next);
+}
+
+export async function upsertSummarySnapshot(
+  memoryDir: string,
+  summary: HourlySummary,
+): Promise<void> {
+  await withSummarySnapshotLock(summary.sessionKey, async () => {
+    const existing = await readSummarySnapshot(memoryDir, summary.sessionKey);
+    const byHour = new Map<string, HourlySummary>();
+    for (const item of existing ?? []) {
+      byHour.set(item.hour, {
+        ...item,
+        generatedAt: item.generatedAt || new Date().toISOString(),
+        sessionKey: summary.sessionKey,
+      });
+    }
+    byHour.set(summary.hour, summary);
+    const next = Array.from(byHour.values()).sort(
+      (a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime(),
+    );
+    await writeSummarySnapshot(memoryDir, summary.sessionKey, next);
+  });
 }

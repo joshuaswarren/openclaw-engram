@@ -42,11 +42,16 @@ interface PendingJob {
  */
 export class LcmWorkQueue {
   private readonly concurrency: number;
-  private readonly worker: (sessionId: string, messages: LcmObserveMessage[]) => Promise<void>;
+  private readonly worker: (
+    sessionId: string,
+    messages: LcmObserveMessage[],
+  ) => Promise<void>;
   private readonly hooks: LcmWorkQueueHooks;
   private readonly pending = new Map<string, PendingJob>();
+  private readonly inFlightSessions = new Set<string>();
   private inFlight = 0;
   private readonly idleWaiters: Array<() => void> = [];
+  private readonly sessionIdleWaiters = new Map<string, Array<() => void>>();
   private drainScheduled = false;
 
   constructor(options: LcmWorkQueueOptions) {
@@ -88,6 +93,16 @@ export class LcmWorkQueue {
     });
   }
 
+  async whenSessionIdle(sessionId: string): Promise<void> {
+    if (!this.pending.has(sessionId) && !this.inFlightSessions.has(sessionId))
+      return;
+    await new Promise<void>((resolve) => {
+      const waiters = this.sessionIdleWaiters.get(sessionId) ?? [];
+      waiters.push(resolve);
+      this.sessionIdleWaiters.set(sessionId, waiters);
+    });
+  }
+
   private startAvailableJobs(): void {
     while (this.inFlight < this.concurrency && this.pending.size > 0) {
       const next = this.pending.entries().next();
@@ -96,6 +111,7 @@ export class LcmWorkQueue {
       const [sessionId, job] = next.value;
       this.pending.delete(sessionId);
       this.inFlight++;
+      this.inFlightSessions.add(sessionId);
 
       const startedAt = Date.now();
       const waitMs = startedAt - job.enqueuedAt;
@@ -122,7 +138,11 @@ export class LcmWorkQueue {
     });
   }
 
-  private async runJob(job: PendingJob, startedAt: number, waitMs: number): Promise<void> {
+  private async runJob(
+    job: PendingJob,
+    startedAt: number,
+    waitMs: number,
+  ): Promise<void> {
     let error: unknown;
 
     try {
@@ -135,6 +155,7 @@ export class LcmWorkQueue {
       const totalMs = finishedAt - job.enqueuedAt;
 
       this.inFlight--;
+      this.inFlightSessions.delete(job.sessionId);
       this.hooks.onJobFinish?.({
         sessionId: job.sessionId,
         depth: this.depth,
@@ -150,6 +171,7 @@ export class LcmWorkQueue {
       } else {
         this.resolveIdleWaitersIfNeeded();
       }
+      this.resolveSessionIdleWaitersIfNeeded(job.sessionId);
     }
   }
 
@@ -157,6 +179,17 @@ export class LcmWorkQueue {
     if (this.depth !== 0 || this.inFlight !== 0) return;
 
     const waiters = this.idleWaiters.splice(0, this.idleWaiters.length);
+    for (const resolve of waiters) resolve();
+  }
+
+  private resolveSessionIdleWaitersIfNeeded(sessionId: string): void {
+    if (this.pending.has(sessionId) || this.inFlightSessions.has(sessionId))
+      return;
+
+    const waiters = this.sessionIdleWaiters.get(sessionId);
+    if (!waiters || waiters.length === 0) return;
+
+    this.sessionIdleWaiters.delete(sessionId);
     for (const resolve of waiters) resolve();
   }
 }

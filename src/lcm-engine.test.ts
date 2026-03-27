@@ -143,15 +143,24 @@ test("observeMessages resolves before summarize finishes and background worker p
       },
     );
 
-    const observePromise = engine.observeMessages("session-1", [{ role: "user", content: "hello queued world" }]);
+    const observePromise = engine.observeMessages("session-1", [
+      { role: "user", content: "hello queued world" },
+    ]);
     await observePromise;
 
     await summarizeStarted.promise;
     assert.equal(engine.observeQueueInFlightCount, 1);
 
-    const beforeRelease = await engine.searchContextFull("hello", 10, "session-1");
+    const beforeRelease = await engine.searchContextFull(
+      "hello",
+      10,
+      "session-1",
+    );
     assert.equal(beforeRelease.length, 1);
-    assert.equal(beforeRelease[0]?.content.includes("hello queued world"), true);
+    assert.equal(
+      beforeRelease[0]?.content.includes("hello queued world"),
+      true,
+    );
 
     releaseSummarize.resolve();
     await engine.waitForObserveQueueIdle();
@@ -160,13 +169,67 @@ test("observeMessages resolves before summarize finishes and background worker p
     assert.equal(engine.observeQueueInFlightCount, 0);
     assert.equal(engine.observeQueueDepth, 0);
 
-    const afterRelease = await engine.searchContextFull("queued", 10, "session-1");
+    const afterRelease = await engine.searchContextFull(
+      "queued",
+      10,
+      "session-1",
+    );
     assert.equal(afterRelease.length, 1);
 
     const summary = await engine.describeContext("session-1", 0, 0);
     assert.equal(summary?.summary.startsWith("summary:"), true);
     assert.equal(summary?.turn_count, 1);
     assert.equal(summary?.depth, 0);
+  } finally {
+    releaseSummarize.resolve();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("waitForSessionObserveIdle resolves once the target session drains even if other work remains", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-engine-session-idle-"),
+  );
+  const summarizeStarted = deferred<void>();
+  const releaseSummarize = deferred<void>();
+  let firstSession = true;
+
+  try {
+    const engine = new LcmEngine(createPluginConfig(memoryDir), async () => {
+      if (firstSession) {
+        firstSession = false;
+        summarizeStarted.resolve();
+        await releaseSummarize.promise;
+      }
+      return "summary";
+    });
+
+    await engine.observeMessages("session-1", [
+      { role: "user", content: "first" },
+    ]);
+    await summarizeStarted.promise;
+    await engine.observeMessages("session-2", [
+      { role: "user", content: "second" },
+    ]);
+
+    let sessionOneIdle = false;
+    const sessionOneIdlePromise = engine
+      .waitForSessionObserveIdle("session-1")
+      .then(() => {
+        sessionOneIdle = true;
+      });
+
+    await Promise.resolve();
+    assert.equal(sessionOneIdle, false);
+
+    releaseSummarize.resolve();
+    await sessionOneIdlePromise;
+
+    assert.equal(sessionOneIdle, true);
+    assert.ok(
+      engine.observeQueueInFlightCount > 0 || engine.observeQueueDepth > 0,
+    );
+    await engine.waitForObserveQueueIdle();
   } finally {
     releaseSummarize.resolve();
     await rm(memoryDir, { recursive: true, force: true });

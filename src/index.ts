@@ -5,7 +5,11 @@ import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
 import { detectSdkCapabilities, type SdkCapabilities } from "./sdk-compat.js";
-import { Orchestrator, sanitizeSessionKeyForFilename, defaultWorkspaceDir } from "./orchestrator.js";
+import {
+  Orchestrator,
+  sanitizeSessionKeyForFilename,
+  defaultWorkspaceDir,
+} from "./orchestrator.js";
 import { registerTools } from "./tools.js";
 import { registerLcmTools } from "./lcm/index.js";
 import { estimateTokens as estimateLcmTokens } from "./lcm/archive.js";
@@ -65,7 +69,9 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    return config?.plugins?.entries?.["openclaw-engram"] as Record<string, unknown> | undefined;
+    return config?.plugins?.entries?.["openclaw-engram"] as
+      | Record<string, unknown>
+      | undefined;
   } catch (err) {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
@@ -73,19 +79,26 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
 }
 
 function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
-  return loadPluginEntryFromFile()?.config as Record<string, unknown> | undefined;
+  return loadPluginEntryFromFile()?.config as
+    | Record<string, unknown>
+    | undefined;
 }
 
 /**
  * Read the plugin hooks policy from both the API config and the file-backed
  * config, since the gateway may not pass the full config to the plugin.
  */
-function readPluginHooksPolicy(apiConfig: unknown): Record<string, unknown> | undefined {
+function readPluginHooksPolicy(
+  apiConfig: unknown,
+): Record<string, unknown> | undefined {
   // Try api.config first
-  const fromApi = (apiConfig as any)?.plugins?.entries?.["openclaw-engram"]?.hooks;
+  const fromApi = (apiConfig as any)?.plugins?.entries?.["openclaw-engram"]
+    ?.hooks;
   if (fromApi && typeof fromApi === "object") return fromApi;
   // Fall back to file-backed config
-  return loadPluginEntryFromFile()?.hooks as Record<string, unknown> | undefined;
+  return loadPluginEntryFromFile()?.hooks as
+    | Record<string, unknown>
+    | undefined;
 }
 
 function wildcardToRegExp(pattern: string): RegExp {
@@ -95,7 +108,10 @@ function wildcardToRegExp(pattern: string): RegExp {
 
 function shouldSkipRecallForSession(
   sessionKey: string,
-  cfg: { cronRecallMode: "all" | "none" | "allowlist"; cronRecallAllowlist: string[] },
+  cfg: {
+    cronRecallMode: "all" | "none" | "allowlist";
+    cronRecallAllowlist: string[];
+  },
 ): boolean {
   const isCron = sessionKey.includes(":cron:");
   if (!isCron) return false;
@@ -126,7 +142,9 @@ function tryDefinePluginEntry(def: {
 }) {
   try {
     const _require = createRequire(import.meta.url);
-    const { definePluginEntry } = _require("openclaw/plugin-sdk/plugin-entry") as {
+    const { definePluginEntry } = _require(
+      "openclaw/plugin-sdk/plugin-entry",
+    ) as {
       definePluginEntry: (d: typeof def) => typeof def;
     };
     return definePluginEntry(def);
@@ -179,7 +197,9 @@ const pluginDefinition = {
     // different plugin registry). Reuse the orchestrator (heavy object) but always
     // re-register hooks — each api.on() call binds to the caller's registry, so
     // skipping registration leaves later registries with zero hooks.
-    const existing = (globalThis as any).__openclawEngramOrchestrator as Orchestrator | undefined;
+    const existing = (globalThis as any).__openclawEngramOrchestrator as
+      | Orchestrator
+      | undefined;
     const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
     const isFirstRegistration = !(globalThis as any)[ENGRAM_REGISTERED_GUARD];
     (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
@@ -187,15 +207,20 @@ const pluginDefinition = {
     // Per-api hook deduplication: if the same api object calls register() twice
     // (e.g., during reload edge cases), skip re-binding hooks to avoid double-
     // fired handlers (double recall, double extraction, double reset).
-    const hookApis: WeakSet<object> = ((globalThis as any)[ENGRAM_HOOK_APIS] ??= new WeakSet());
+    const hookApis: WeakSet<object> = ((globalThis as any)[ENGRAM_HOOK_APIS] ??=
+      new WeakSet());
     if (hookApis.has(api)) {
-      log.debug("register: this api already has hooks bound — skipping duplicate hook registration");
+      log.debug(
+        "register: this api already has hooks bound — skipping duplicate hook registration",
+      );
       return;
     }
     hookApis.add(api);
 
     if (!isFirstRegistration) {
-      log.debug("register called again (new registry); re-registering hooks with shared orchestrator");
+      log.debug(
+        "register called again (new registry); re-registering hooks with shared orchestrator",
+      );
     }
 
     // Expose for inter-plugin discovery (e.g., langsmith tracing)
@@ -205,18 +230,21 @@ const pluginDefinition = {
       (globalThis as any).__openclawEngramTrace = undefined;
     }
 
-    const existingAccessService =
-      (globalThis as any)[ENGRAM_ACCESS_SERVICE] as EngramAccessService | undefined;
+    const existingAccessService = (globalThis as any)[ENGRAM_ACCESS_SERVICE] as
+      | EngramAccessService
+      | undefined;
     const accessService =
       existingAccessService && (existingAccessService as EngramAccessService)
         ? existingAccessService
         : new EngramAccessService(orchestrator);
     (globalThis as any)[ENGRAM_ACCESS_SERVICE] = accessService;
 
-    const existingAccessHttpServer =
-      (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] as EngramAccessHttpServer | undefined;
+    const existingAccessHttpServer = (globalThis as any)[
+      ENGRAM_ACCESS_HTTP_SERVER
+    ] as EngramAccessHttpServer | undefined;
     const accessHttpServer =
-      existingAccessHttpServer && (existingAccessHttpServer as EngramAccessHttpServer)
+      existingAccessHttpServer &&
+      (existingAccessHttpServer as EngramAccessHttpServer)
         ? existingAccessHttpServer
         : new EngramAccessHttpServer({
             service: accessService,
@@ -273,7 +301,9 @@ const pluginDefinition = {
       if (!prompt || prompt.length < 5) return;
 
       const sessionKey = (ctx?.sessionKey as string) ?? "default";
-      log.debug(`${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`);
+      log.debug(
+        `${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`,
+      );
       log.debug(
         `${hookLabel}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
       );
@@ -304,7 +334,9 @@ const pluginDefinition = {
           }
         }
         const context = await orchestrator.recall(prompt, sessionKey);
-        log.debug(`${hookLabel}: recall returned ${context?.length ?? 0} chars`);
+        log.debug(
+          `${hookLabel}: recall returned ${context?.length ?? 0} chars`,
+        );
         if (!context) return;
 
         const maxChars = cfg.recallBudgetChars;
@@ -314,10 +346,11 @@ const pluginDefinition = {
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
 
-        const memoryContextPrompt =
-          `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+        const memoryContextPrompt = `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
 
-        log.debug(`${hookLabel}: returning system prompt with ${trimmed.length} chars`);
+        log.debug(
+          `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
+        );
         // New SDK (before_prompt_build): only prependSystemContext — gateway
         // applies both fields separately, so returning both would duplicate.
         // Legacy (before_agent_start): return both for backward compat with
@@ -341,12 +374,22 @@ const pluginDefinition = {
     if (!useMemoryPromptSection) {
       if (sdkCaps.hasBeforePromptBuild) {
         // New SDK path — literal string for compat checker detection
-        api.on("before_prompt_build", async (event: Record<string, unknown>, ctx: Record<string, unknown>) =>
-          recallHookHandler("before_prompt_build", event, ctx));
+        api.on(
+          "before_prompt_build",
+          async (
+            event: Record<string, unknown>,
+            ctx: Record<string, unknown>,
+          ) => recallHookHandler("before_prompt_build", event, ctx),
+        );
       } else {
         // Legacy SDK path — literal string for compat checker detection
-        api.on("before_agent_start", async (event: Record<string, unknown>, ctx: Record<string, unknown>) =>
-          recallHookHandler("before_agent_start", event, ctx));
+        api.on(
+          "before_agent_start",
+          async (
+            event: Record<string, unknown>,
+            ctx: Record<string, unknown>,
+          ) => recallHookHandler("before_agent_start", event, ctx),
+        );
       }
     }
 
@@ -370,60 +413,77 @@ const pluginDefinition = {
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
       // Async pre-compute: run recall in before_prompt_build and cache result.
       // The hook receives both event and ctx — session identity is in ctx.
-      api.on("before_prompt_build", async (event: Record<string, unknown>, ctx: Record<string, unknown>) => {
-        const sessionKey = (ctx?.sessionKey as string) ?? "default";
-        cachedMemoryBySession.set(sessionKey, null); // reset each turn
-        let prompt = event.prompt as string | undefined;
-        if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
-          const msgs = event.messages as Array<Record<string, unknown>>;
-          for (let i = msgs.length - 1; i >= 0; i--) {
-            if (msgs[i]?.role === "user") {
-              const text = extractTextContent(msgs[i] as Record<string, unknown>);
-              if (text.length >= 5) { prompt = text; break; }
+      api.on(
+        "before_prompt_build",
+        async (
+          event: Record<string, unknown>,
+          ctx: Record<string, unknown>,
+        ) => {
+          const sessionKey = (ctx?.sessionKey as string) ?? "default";
+          cachedMemoryBySession.set(sessionKey, null); // reset each turn
+          let prompt = event.prompt as string | undefined;
+          if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
+            const msgs = event.messages as Array<Record<string, unknown>>;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i]?.role === "user") {
+                const text = extractTextContent(
+                  msgs[i] as Record<string, unknown>,
+                );
+                if (text.length >= 5) {
+                  prompt = text;
+                  break;
+                }
+              }
             }
           }
-        }
-        if (!prompt || prompt.length < 5) return;
-        if (shouldSkipRecallForSession(sessionKey, cfg)) return;
-        try {
-          await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+          if (!prompt || prompt.length < 5) return;
+          if (shouldSkipRecallForSession(sessionKey, cfg)) return;
+          try {
+            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
 
-          // Match the workspace override logic from recallHookHandler
-          if (orchestrator.config.compactionResetEnabled) {
-            const agentWorkspace = ctx?.workspaceDir as string | undefined;
-            if (agentWorkspace) {
-              orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
+            // Match the workspace override logic from recallHookHandler
+            if (orchestrator.config.compactionResetEnabled) {
+              const agentWorkspace = ctx?.workspaceDir as string | undefined;
+              if (agentWorkspace) {
+                orchestrator.setRecallWorkspaceOverride(
+                  sessionKey,
+                  agentWorkspace,
+                );
+              }
+            }
+
+            const context = await orchestrator.recall(prompt, sessionKey);
+            if (!context) return;
+            const maxChars = cfg.recallBudgetChars;
+            if (maxChars === 0) return;
+            const trimmed =
+              context.length > maxChars
+                ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
+                : context;
+            cachedMemoryBySession.set(sessionKey, [
+              "## Memory Context (Engram)",
+              "",
+              trimmed,
+              "",
+              "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
+              "",
+            ]);
+          } catch (err) {
+            log.error("registerMemoryPromptSection pre-compute failed", err);
+            if (orchestrator.config.compactionResetEnabled) {
+              orchestrator.clearRecallWorkspaceOverride(sessionKey);
             }
           }
-
-          const context = await orchestrator.recall(prompt, sessionKey);
-          if (!context) return;
-          const maxChars = cfg.recallBudgetChars;
-          if (maxChars === 0) return;
-          const trimmed = context.length > maxChars
-            ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
-            : context;
-          cachedMemoryBySession.set(sessionKey, [
-            "## Memory Context (Engram)",
-            "",
-            trimmed,
-            "",
-            "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
-            "",
-          ]);
-        } catch (err) {
-          log.error("registerMemoryPromptSection pre-compute failed", err);
-          if (orchestrator.config.compactionResetEnabled) {
-            orchestrator.clearRecallWorkspaceOverride(sessionKey);
-          }
-        }
-      });
+        },
+      );
 
       // Synchronous builder: returns the pre-computed lines for the
       // requesting session.  The gateway passes { prompt, sessionKey }
       // but we only need sessionKey to look up our cache.
       // Evict the entry after reading to avoid unbounded growth.
-      const memoryBuildFn = (params: { sessionKey?: string }): string[] | null => {
+      const memoryBuildFn = (params: {
+        sessionKey?: string;
+      }): string[] | null => {
         const key = params?.sessionKey ?? "default";
         const lines = cachedMemoryBySession.get(key) ?? null;
         cachedMemoryBySession.delete(key);
@@ -441,8 +501,10 @@ const pluginDefinition = {
     api.on(
       "agent_end",
       async (
-        event: import("openclaw/plugin-sdk").PluginHookAgentEndEvent & Record<string, unknown>,
-        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookAgentEndEvent &
+          Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+          Record<string, unknown>,
       ) => {
         if (!event.success || !Array.isArray(event.messages)) return;
         if (event.messages.length === 0) return;
@@ -464,36 +526,51 @@ const pluginDefinition = {
             for (const msg of messages) {
               const role = msg.role as string | undefined;
               if (role === "tool") {
-                const name = (msg as any).name ?? (msg as any).toolName ?? (msg as any).tool;
-                if (typeof name === "string" && name.length > 0) toolNames.push(name);
+                const name =
+                  (msg as any).name ??
+                  (msg as any).toolName ??
+                  (msg as any).tool;
+                if (typeof name === "string" && name.length > 0)
+                  toolNames.push(name);
               }
               if (role === "assistant") {
-                const toolCalls = (msg as any).tool_calls ?? (msg as any).toolCalls;
+                const toolCalls =
+                  (msg as any).tool_calls ?? (msg as any).toolCalls;
                 if (Array.isArray(toolCalls)) {
                   for (const tc of toolCalls) {
                     const fnName = tc?.function?.name ?? tc?.name;
-                    if (typeof fnName === "string" && fnName.length > 0) toolNames.push(fnName);
+                    if (typeof fnName === "string" && fnName.length > 0)
+                      toolNames.push(fnName);
                   }
                 }
               }
             }
             for (const tool of toolNames) {
-              await orchestrator.transcript.appendToolUse({ timestamp: eventTimestamp, sessionKey, tool });
+              await orchestrator.transcript.appendToolUse({
+                timestamp: eventTimestamp,
+                sessionKey,
+                tool,
+              });
             }
           }
 
           try {
             await recordObjectiveStateSnapshotsFromAgentMessages({
               memoryDir: orchestrator.config.memoryDir,
-              objectiveStateStoreDir: orchestrator.config.objectiveStateStoreDir,
-              objectiveStateMemoryEnabled: orchestrator.config.objectiveStateMemoryEnabled,
-              objectiveStateSnapshotWritesEnabled: orchestrator.config.objectiveStateSnapshotWritesEnabled,
+              objectiveStateStoreDir:
+                orchestrator.config.objectiveStateStoreDir,
+              objectiveStateMemoryEnabled:
+                orchestrator.config.objectiveStateMemoryEnabled,
+              objectiveStateSnapshotWritesEnabled:
+                orchestrator.config.objectiveStateSnapshotWritesEnabled,
               sessionKey,
               recordedAt: eventTimestamp,
               messages,
             });
           } catch (error) {
-            log.debug(`agent_end objective-state writer skipped due to error: ${error}`);
+            log.debug(
+              `agent_end objective-state writer skipped due to error: ${error}`,
+            );
           }
 
           for (const msg of lastTurn) {
@@ -509,13 +586,16 @@ const pluginDefinition = {
             // Clean system metadata from user messages
             const cleaned =
               role === "user" ? cleanUserMessage(content) : content;
-            const inlineCaptureEnabled = shouldProcessInlineExplicitCapture(orchestrator.config);
+            const inlineCaptureEnabled = shouldProcessInlineExplicitCapture(
+              orchestrator.config,
+            );
             const explicitNotes = inlineCaptureEnabled
               ? parseInlineExplicitCaptureNotes(cleaned)
               : [];
-            const stripped = inlineCaptureEnabled && hasInlineExplicitCaptureMarkup(cleaned)
-              ? stripInlineExplicitCaptureNotes(cleaned)
-              : cleaned;
+            const stripped =
+              inlineCaptureEnabled && hasInlineExplicitCaptureMarkup(cleaned)
+                ? stripInlineExplicitCaptureNotes(cleaned)
+                : cleaned;
 
             for (const note of explicitNotes) {
               try {
@@ -533,12 +613,16 @@ const pluginDefinition = {
                     "inline",
                     error,
                   );
-                  orchestrator.requestQmdMaintenanceForTool("inline.memory_note.review");
+                  orchestrator.requestQmdMaintenanceForTool(
+                    "inline.memory_note.review",
+                  );
                   log.warn(
                     `explicit inline capture queued for review: ${queued.id}${queued.duplicateOf ? ` (duplicate of ${queued.duplicateOf})` : ""}`,
                   );
                 } catch (queueError) {
-                  log.warn(`explicit inline capture rejected: ${error}; review queue fallback failed: ${queueError}`);
+                  log.warn(
+                    `explicit inline capture rejected: ${error}; review queue fallback failed: ${queueError}`,
+                  );
                 }
               }
             }
@@ -570,7 +654,10 @@ const pluginDefinition = {
                 })
                 .filter((m) => m.content.length > 0);
               if (lcmMessages.length > 0) {
-                orchestrator.lcmEngine.enqueueObserveMessages(sessionKey, lcmMessages);
+                orchestrator.lcmEngine.enqueueObserveMessages(
+                  sessionKey,
+                  lcmMessages,
+                );
               }
             } catch (lcmErr) {
               log.debug(`LCM agent_end indexing error: ${lcmErr}`);
@@ -591,11 +678,16 @@ const pluginDefinition = {
     api.on(
       "before_compaction",
       async (
-        event: import("openclaw/plugin-sdk").PluginHookBeforeCompactionEvent & Record<string, unknown>,
-        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookBeforeCompactionEvent &
+          Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+          Record<string, unknown>,
       ) => {
         // Fall back to event.sessionKey when ctx is empty (new SDK may provide it on the event).
-        const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
+        const sessionKey =
+          (ctx?.sessionKey as string) ??
+          (event?.sessionKey as string) ??
+          "default";
 
         try {
           // LCM: flush pending summaries before context is lost
@@ -608,19 +700,29 @@ const pluginDefinition = {
                 tokensBefore = event.tokenCount;
               } else if (Array.isArray(event.messages)) {
                 // Auto-compaction path: estimate from messages array
-                for (const msg of event.messages as Array<{ content?: unknown }>) {
+                for (const msg of event.messages as Array<{
+                  content?: unknown;
+                }>) {
                   if (typeof msg.content === "string") {
                     tokensBefore += estimateLcmTokens(msg.content);
                   } else if (Array.isArray(msg.content)) {
                     for (const block of msg.content) {
-                      if (typeof block === "string") tokensBefore += estimateLcmTokens(block);
-                      else if (block && typeof block === "object" && typeof (block as any).text === "string")
+                      if (typeof block === "string")
+                        tokensBefore += estimateLcmTokens(block);
+                      else if (
+                        block &&
+                        typeof block === "object" &&
+                        typeof (block as any).text === "string"
+                      )
                         tokensBefore += estimateLcmTokens((block as any).text);
                     }
                   }
                 }
               }
               lcmTokensBefore.set(sessionKey, tokensBefore);
+              await orchestrator.lcmEngine.waitForSessionObserveIdle(
+                sessionKey,
+              );
               await orchestrator.lcmEngine.preCompactionFlush(sessionKey);
             } catch (lcmErr) {
               log.debug(`LCM before_compaction error: ${lcmErr}`);
@@ -632,8 +734,13 @@ const pluginDefinition = {
           }
 
           // Get recent turns from transcript
-          const entries = await orchestrator.transcript.readRecent(1, sessionKey);
-          const checkpointTurns = entries.slice(-orchestrator.config.checkpointTurns);
+          const entries = await orchestrator.transcript.readRecent(
+            1,
+            sessionKey,
+          );
+          const checkpointTurns = entries.slice(
+            -orchestrator.config.checkpointTurns,
+          );
 
           if (checkpointTurns.length > 0) {
             await orchestrator.transcript.saveCheckpoint({
@@ -656,11 +763,16 @@ const pluginDefinition = {
     api.on(
       "after_compaction",
       async (
-        event: import("openclaw/plugin-sdk").PluginHookAfterCompactionEvent & Record<string, unknown>,
-        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+        event: import("openclaw/plugin-sdk").PluginHookAfterCompactionEvent &
+          Record<string, unknown>,
+        ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+          Record<string, unknown>,
       ) => {
         // Fall back to event.sessionKey when ctx is empty (new SDK may provide it on the event).
-        const sessionKey = (ctx?.sessionKey as string) ?? (event?.sessionKey as string) ?? "default";
+        const sessionKey =
+          (ctx?.sessionKey as string) ??
+          (event?.sessionKey as string) ??
+          "default";
 
         try {
           // LCM: record compaction with real token counts and verify coverage
@@ -674,17 +786,29 @@ const pluginDefinition = {
                 // Auto-compaction path: no token count available.
                 // Estimate from messageCount ratio if we have tokensBefore.
                 const storedBefore = lcmTokensBefore.get(sessionKey) ?? 0;
-                const msgCountAfter = typeof event.messageCount === "number" ? event.messageCount : 0;
-                const compacted = typeof event.compactedCount === "number" ? event.compactedCount : 0;
+                const msgCountAfter =
+                  typeof event.messageCount === "number"
+                    ? event.messageCount
+                    : 0;
+                const compacted =
+                  typeof event.compactedCount === "number"
+                    ? event.compactedCount
+                    : 0;
                 const msgCountBefore = msgCountAfter + compacted;
                 if (storedBefore > 0 && msgCountBefore > 0) {
                   // Rough estimate: tokens scale proportionally to message count
-                  tokensAfter = Math.round(storedBefore * (msgCountAfter / msgCountBefore));
+                  tokensAfter = Math.round(
+                    storedBefore * (msgCountAfter / msgCountBefore),
+                  );
                 }
               }
               const tokensBefore = lcmTokensBefore.get(sessionKey) ?? 0;
               lcmTokensBefore.delete(sessionKey);
-              await orchestrator.lcmEngine.recordCompaction(sessionKey, tokensBefore, tokensAfter);
+              await orchestrator.lcmEngine.recordCompaction(
+                sessionKey,
+                tokensBefore,
+                tokensAfter,
+              );
               await orchestrator.lcmEngine.verifyPostCompaction(sessionKey);
             } catch (lcmErr) {
               log.debug(`LCM after_compaction error: ${lcmErr}`);
@@ -741,7 +865,9 @@ const pluginDefinition = {
             } else {
               const errorDetail =
                 result && typeof result === "object" && "error" in result
-                  ? String((result as { error?: unknown }).error ?? "unknown error")
+                  ? String(
+                      (result as { error?: unknown }).error ?? "unknown error",
+                    )
                   : `invalid result: ${JSON.stringify(result)}`;
               log.error(
                 `api.resetSession failed for ${sessionKey}: ${errorDetail}`,
@@ -750,7 +876,7 @@ const pluginDefinition = {
           } else {
             log.error(
               `api.resetSession not available — compaction reset requires OC fork with PR #29985. ` +
-              `Session ${sessionKey} will continue without reset.`,
+                `Session ${sessionKey} will continue without reset.`,
             );
           }
         } catch (err) {
@@ -769,8 +895,10 @@ const pluginDefinition = {
       api.on(
         "session_start",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookSessionEvent & Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookSessionEvent &
+            Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_start: ${sessionKey}`);
@@ -785,8 +913,10 @@ const pluginDefinition = {
       api.on(
         "session_end",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookSessionEvent & Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookSessionEvent &
+            Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
@@ -801,8 +931,10 @@ const pluginDefinition = {
       api.on(
         "before_tool_call",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookBeforeToolCallEvent & Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookBeforeToolCallEvent &
+            Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
           if (event.toolName) {
             log.debug(`before_tool_call: ${event.toolName}`);
@@ -813,14 +945,18 @@ const pluginDefinition = {
       api.on(
         "after_tool_call",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookAfterToolCallEvent & Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookAfterToolCallEvent &
+            Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
           // Log tool usage for debugging. Tool stats for hourly summaries are
           // recorded in agent_end (gated on success=true) to avoid counting
           // tools from failed/aborted turns.
           if (event.toolName) {
-            log.debug(`after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`);
+            log.debug(
+              `after_tool_call: ${event.toolName} (${event.durationMs ?? "?"}ms)`,
+            );
           }
         },
       );
@@ -829,8 +965,10 @@ const pluginDefinition = {
       api.on(
         "llm_output",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookLlmOutputEvent & Record<string, unknown>,
-          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookLlmOutputEvent &
+            Record<string, unknown>,
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
           const sessionKey = (ctx?.sessionKey as string) ?? "default";
           if (event.tokenUsage) {
@@ -845,18 +983,24 @@ const pluginDefinition = {
       api.on(
         "subagent_spawning",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookSubagentSpawningEvent & Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookSubagentSpawningEvent &
+            Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
-          log.debug(`subagent_spawning: ${event.subagentId ?? "?"} purpose=${event.purpose ?? "?"}`);
+          log.debug(
+            `subagent_spawning: ${event.subagentId ?? "?"} purpose=${event.purpose ?? "?"}`,
+          );
         },
       );
 
       api.on(
         "subagent_ended",
         async (
-          event: import("openclaw/plugin-sdk").PluginHookSubagentEndedEvent & Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext & Record<string, unknown>,
+          event: import("openclaw/plugin-sdk").PluginHookSubagentEndedEvent &
+            Record<string, unknown>,
+          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
         ) => {
           log.debug(
             `subagent_ended: ${event.subagentId ?? "?"} success=${event.success ?? "?"} ${event.durationMs ?? "?"}ms`,
@@ -873,42 +1017,74 @@ const pluginDefinition = {
         ["agent_heartbeat", "agent:heartbeat"],
         (event: any) => {
           if (orchestrator.config.sessionObserverEnabled !== true) return;
-          const sessionKey = (event?.context?.sessionKey as string) ?? "default";
-          void orchestrator.observeSessionHeartbeat(sessionKey).catch((err: unknown) => {
-            log.debug(`agent_heartbeat observer failed: ${err}`);
-          });
+          const sessionKey =
+            (event?.context?.sessionKey as string) ?? "default";
+          void orchestrator
+            .observeSessionHeartbeat(sessionKey)
+            .catch((err: unknown) => {
+              log.debug(`agent_heartbeat observer failed: ${err}`);
+            });
         },
-        { name: "engram_agent_heartbeat_legacy", description: "Observe legacy heartbeat events for session observation." },
+        {
+          name: "engram_agent_heartbeat_legacy",
+          description:
+            "Observe legacy heartbeat events for session observation.",
+        },
       );
 
       // Typed api.on path for pre-2026.1.29 builds that route heartbeat through the hook system.
-      const runtimeVersion = runtimeApi.runtime?.version || process.env.OPENCLAW_SERVICE_VERSION || "unknown";
-      void import("./legacy-hook-compat.js").then(({ shouldRegisterTypedAgentHeartbeat }) => {
-        if (shouldRegisterTypedAgentHeartbeat(runtimeVersion)) {
-          (api.on as any)("agent_heartbeat", (_event: Record<string, unknown>, ctx: Record<string, unknown>) => {
-            if (orchestrator.config.sessionObserverEnabled !== true) return;
-            const sessionKey = (ctx?.sessionKey as string) ?? "default";
-            void orchestrator.observeSessionHeartbeat(sessionKey).catch((err: unknown) => {
-              log.debug(`agent_heartbeat typed observer failed: ${err}`);
-            });
-          });
-          log.info(`registered typed agent_heartbeat hook for OpenClaw ${runtimeVersion}`);
-        }
-      }).catch(() => {
-        // legacy-hook-compat import failed — skip typed registration
-      });
+      const runtimeVersion =
+        runtimeApi.runtime?.version ||
+        process.env.OPENCLAW_SERVICE_VERSION ||
+        "unknown";
+      void import("./legacy-hook-compat.js")
+        .then(({ shouldRegisterTypedAgentHeartbeat }) => {
+          if (shouldRegisterTypedAgentHeartbeat(runtimeVersion)) {
+            (api.on as any)(
+              "agent_heartbeat",
+              (
+                _event: Record<string, unknown>,
+                ctx: Record<string, unknown>,
+              ) => {
+                if (orchestrator.config.sessionObserverEnabled !== true) return;
+                const sessionKey = (ctx?.sessionKey as string) ?? "default";
+                void orchestrator
+                  .observeSessionHeartbeat(sessionKey)
+                  .catch((err: unknown) => {
+                    log.debug(`agent_heartbeat typed observer failed: ${err}`);
+                  });
+              },
+            );
+            log.info(
+              `registered typed agent_heartbeat hook for OpenClaw ${runtimeVersion}`,
+            );
+          }
+        })
+        .catch(() => {
+          // legacy-hook-compat import failed — skip typed registration
+        });
     }
 
     // ========================================================================
     // Helper: Auto-register hourly summary cron job
     // ========================================================================
-    async function ensureHourlySummaryCron(api: OpenClawPluginApi): Promise<void> {
+    async function ensureHourlySummaryCron(
+      api: OpenClawPluginApi,
+    ): Promise<void> {
       const jobId = "engram-hourly-summary";
-      const cronFilePath = path.join(os.homedir(), ".openclaw", "cron", "jobs.json");
+      const cronFilePath = path.join(
+        os.homedir(),
+        ".openclaw",
+        "cron",
+        "jobs.json",
+      );
 
       try {
         // Read existing jobs
-        let jobsData: { version: number; jobs: Array<{ id: string }> } = { version: 1, jobs: [] };
+        let jobsData: { version: number; jobs: Array<{ id: string }> } = {
+          version: 1,
+          jobs: [],
+        };
         try {
           const content = await readFile(cronFilePath, "utf-8");
           jobsData = JSON.parse(content);
@@ -972,7 +1148,11 @@ const pluginDefinition = {
         jobsData.jobs.push(newJob);
 
         // Write back
-        await writeFile(cronFilePath, JSON.stringify(jobsData, null, 2), "utf-8");
+        await writeFile(
+          cronFilePath,
+          JSON.stringify(jobsData, null, 2),
+          "utf-8",
+        );
         log.info("auto-registered hourly summary cron job");
       } catch (err) {
         log.error("failed to auto-register hourly summary cron job:", err);
@@ -992,14 +1172,23 @@ const pluginDefinition = {
     // CLI commands, by contrast, live in the central plugin registry (not in
     // per-registry api state), so registering them more than once would create
     // duplicate engram command trees. CLI registration stays behind the guard.
-    registerTools(api as unknown as Parameters<typeof registerTools>[0], orchestrator);
+    registerTools(
+      api as unknown as Parameters<typeof registerTools>[0],
+      orchestrator,
+    );
     // Register LCM tools when enabled
     if (orchestrator.lcmEngine?.enabled) {
-      registerLcmTools(api as unknown as Parameters<typeof registerLcmTools>[0], orchestrator.lcmEngine);
+      registerLcmTools(
+        api as unknown as Parameters<typeof registerLcmTools>[0],
+        orchestrator.lcmEngine,
+      );
     }
 
     if (isFirstRegistration) {
-      registerCli(api as unknown as Parameters<typeof registerCli>[0], orchestrator);
+      registerCli(
+        api as unknown as Parameters<typeof registerCli>[0],
+        orchestrator,
+      );
     }
 
     // ========================================================================
@@ -1013,7 +1202,8 @@ const pluginDefinition = {
     // Duplicate start() calls are safe: the ENGRAM_SERVICE_STARTED guard inside
     // start() makes initialize() idempotent within a process lifetime. stop()
     // clears the flag so restart cycles reinitialize correctly.
-    let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null = null;
+    let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null =
+      null;
     // Whether this specific registry's start() claimed a slot in ACTIVE_REGISTRIES.
     // Ensures stop() only decrements the count for registries whose start() ran
     // (not secondary registries whose start() was a no-op, nor registries whose
@@ -1065,7 +1255,9 @@ const pluginDefinition = {
           }
           // No in-flight init — check if already fully initialized.
           if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
-            log.debug("openclaw-engram: service.start() called again — skipping duplicate init");
+            log.debug(
+              "openclaw-engram: service.start() called again — skipping duplicate init",
+            );
             return;
           }
           // Defensive re-check before claiming ownership. In practice (single-threaded
@@ -1099,7 +1291,9 @@ const pluginDefinition = {
 
             // Cleanup old transcripts
             if (orchestrator.config.transcriptEnabled) {
-              await orchestrator.transcript.cleanup(orchestrator.config.transcriptRetentionDays);
+              await orchestrator.transcript.cleanup(
+                orchestrator.config.transcriptRetentionDays,
+              );
               // Abort if stop() was called during transcript cleanup.
               if (!didCountStart) return;
             }
@@ -1107,14 +1301,17 @@ const pluginDefinition = {
             // Cron integration guard:
             // - Hourly summaries are supported, but auto-registering cron is a footgun across installs.
             // - Only auto-register when explicitly enabled by config.
-            if (orchestrator.config.hourlySummariesEnabled && orchestrator.config.hourlySummaryCronAutoRegister) {
+            if (
+              orchestrator.config.hourlySummariesEnabled &&
+              orchestrator.config.hourlySummaryCronAutoRegister
+            ) {
               await ensureHourlySummaryCron(api);
               // Abort if stop() was called during cron registration.
               if (!didCountStart) return;
             } else if (orchestrator.config.hourlySummariesEnabled) {
               log.info(
                 "hourly summaries enabled; cron auto-register is disabled. " +
-                "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
+                  "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
               );
             }
 
@@ -1123,7 +1320,9 @@ const pluginDefinition = {
               if (!didCountStart) return;
               try {
                 const status = await accessHttpServer.start();
-                log.info(`engram access HTTP ready at http://${status.host}:${status.port}`);
+                log.info(
+                  `engram access HTTP ready at http://${status.host}:${status.port}`,
+                );
               } catch (err) {
                 log.error("failed to start engram access HTTP server", err);
               }
@@ -1150,7 +1349,9 @@ const pluginDefinition = {
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
             // a retry from another registry doesn't accumulate multiple subscribers.
-            try { activeOpikExporter?.unsubscribe(); } catch {}
+            try {
+              activeOpikExporter?.unsubscribe();
+            } catch {}
             activeOpikExporter = null;
             // Roll back ownership so the next registry's start() can retry.
             // SERVICE_STARTED was not set yet (only set on success above), but
@@ -1223,7 +1424,9 @@ const pluginDefinition = {
         //   unregister CLI commands. Clearing GUARD here would allow a
         //   subsequent register() to register CLI again on top of the
         //   still-live registration, duplicating the CLI command tree.
-        const currentInitPromise = (globalThis as any)[ENGRAM_INIT_PROMISE] as Promise<void> | null;
+        const currentInitPromise = (globalThis as any)[
+          ENGRAM_INIT_PROMISE
+        ] as Promise<void> | null;
         // Track whether a secondary completed init during stop()'s await window.
         // Used below to guard the SERVICE_STARTED=false assignment.
         let secondaryTookOver = false;
@@ -1238,7 +1441,9 @@ const pluginDefinition = {
           //
           // Await the in-flight init (didCountStart=false signals it to abort at
           // its next checkpoint). Ignore errors — we only care about settlement.
-          try { await currentInitPromise; } catch {}
+          try {
+            await currentInitPromise;
+          } catch {}
           // One queueMicrotask tick: any secondary whose .then() on
           // currentInitPromise runs after stop()'s `await` continuation will
           // execute here and synchronously set its own INIT_PROMISE.

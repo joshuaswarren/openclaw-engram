@@ -5,7 +5,12 @@ import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { Orchestrator } from "../src/orchestrator.js";
 import { parseConfig } from "../src/config.js";
-import { buildQmdRecallCacheKey, clearQmdRecallCache, getCachedQmdRecall, setCachedQmdRecall } from "../src/qmd-recall-cache.js";
+import {
+  buildQmdRecallCacheKey,
+  clearQmdRecallCache,
+  getCachedQmdRecall,
+  setCachedQmdRecall,
+} from "../src/qmd-recall-cache.js";
 
 async function makeOrchestrator(
   prefix: string,
@@ -51,7 +56,9 @@ test("assembleRecallSections preserves memories within the recall budget", async
     "## Relevant Memories\n\n- Shared incident context survived the assembly budget.",
   );
 
-  const assembled = (orchestrator as any).assembleRecallSections(sectionBuckets);
+  const assembled = (orchestrator as any).assembleRecallSections(
+    sectionBuckets,
+  );
   const context = assembled.sections.join("\n\n---\n\n");
 
   assert.equal(assembled.includedIds.includes("memories"), true);
@@ -70,10 +77,20 @@ test("assembleRecallSections does not omit earlier sections when protected secti
   });
 
   const sectionBuckets = new Map<string, string[]>();
-  (orchestrator as any).appendRecallSection(sectionBuckets, "profile", "P".repeat(50));
-  (orchestrator as any).appendRecallSection(sectionBuckets, "memories", "M".repeat(50));
+  (orchestrator as any).appendRecallSection(
+    sectionBuckets,
+    "profile",
+    "P".repeat(50),
+  );
+  (orchestrator as any).appendRecallSection(
+    sectionBuckets,
+    "memories",
+    "M".repeat(50),
+  );
 
-  const assembled = (orchestrator as any).assembleRecallSections(sectionBuckets);
+  const assembled = (orchestrator as any).assembleRecallSections(
+    sectionBuckets,
+  );
   const context = assembled.sections.join("\n\n---\n\n");
 
   assert.deepEqual(assembled.includedIds, ["profile", "memories"]);
@@ -106,13 +123,25 @@ test("recall aborts the in-flight pipeline when the outer timeout fires", async 
     });
 
   const originalSetTimeout = global.setTimeout;
-  global.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: any[]) =>
-    originalSetTimeout(handler, timeout === 75_000 ? 5 : timeout, ...args)) as typeof setTimeout;
+  global.setTimeout = ((
+    handler: TimerHandler,
+    timeout?: number,
+    ...args: any[]
+  ) =>
+    originalSetTimeout(
+      handler,
+      timeout === 75_000 ? 5 : timeout,
+      ...args,
+    )) as typeof setTimeout;
 
   try {
-    const result = await orchestrator.recall("timeout test", "agent:test:timeout", {
-      abortSignal: callerAbortController.signal,
-    });
+    const result = await orchestrator.recall(
+      "timeout test",
+      "agent:test:timeout",
+      {
+        abortSignal: callerAbortController.signal,
+      },
+    );
     assert.equal(result, "");
     assert.ok(observedAbortSignal);
     assert.notEqual(observedAbortSignal, callerAbortController.signal);
@@ -139,9 +168,13 @@ test("recall propagates an already-aborted external signal to the inner controll
     throw new Error("should not reach active recall work");
   };
 
-  const result = await orchestrator.recall("pre-aborted test", "agent:test:preaborted", {
-    abortSignal: callerAbortController.signal,
-  });
+  const result = await orchestrator.recall(
+    "pre-aborted test",
+    "agent:test:preaborted",
+    {
+      abortSignal: callerAbortController.signal,
+    },
+  );
 
   assert.equal(result, "");
   assert.ok(observedAbortSignal);
@@ -160,14 +193,26 @@ test("recall aborts while waiting on the init gate", async () => {
   };
 
   const originalSetTimeout = global.setTimeout;
-  global.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: any[]) =>
-    originalSetTimeout(handler, timeout === 15_000 ? 100 : timeout, ...args)) as typeof setTimeout;
+  global.setTimeout = ((
+    handler: TimerHandler,
+    timeout?: number,
+    ...args: any[]
+  ) =>
+    originalSetTimeout(
+      handler,
+      timeout === 15_000 ? 100 : timeout,
+      ...args,
+    )) as typeof setTimeout;
 
   try {
     const startedAt = Date.now();
-    const recallPromise = orchestrator.recall("init gate abort test", "agent:test:init-gate", {
-      abortSignal: callerAbortController.signal,
-    });
+    const recallPromise = orchestrator.recall(
+      "init gate abort test",
+      "agent:test:init-gate",
+      {
+        abortSignal: callerAbortController.signal,
+      },
+    );
     setTimeout(() => callerAbortController.abort(), 5);
 
     const result = await recallPromise;
@@ -175,7 +220,10 @@ test("recall aborts while waiting on the init gate", async () => {
 
     assert.equal(result, "");
     assert.equal(recallInternalCalled, false);
-    assert.ok(elapsedMs < 80, `expected init gate abort before timeout fallback, saw ${elapsedMs}ms`);
+    assert.ok(
+      elapsedMs < 80,
+      `expected init gate abort before timeout fallback, saw ${elapsedMs}ms`,
+    );
   } finally {
     global.setTimeout = originalSetTimeout;
   }
@@ -213,7 +261,8 @@ test("cold fallback abort stops before archive scanning", async () => {
 test("recallInternal aborts while phase-one preamble promises are still pending", async () => {
   const orchestrator = await makeOrchestrator("engram-recall-phase-one-abort-");
   const callerAbortController = new AbortController();
-  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context";
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context";
   let releaseSharedRead: (() => void) | null = null;
   let sharedReadStarted = false;
   (orchestrator as any).sharedContext = {
@@ -229,10 +278,14 @@ test("recallInternal aborts while phase-one preamble promises are still pending"
   };
 
   const startedAt = Date.now();
-  const recallPromise = (orchestrator as any).recallInternal("phase one abort test", "agent:test:phase-one", {
-    mode: "full",
-    abortSignal: callerAbortController.signal,
-  });
+  const recallPromise = (orchestrator as any).recallInternal(
+    "phase one abort test",
+    "agent:test:phase-one",
+    {
+      mode: "full",
+      abortSignal: callerAbortController.signal,
+    },
+  );
 
   const waitForStartDeadline = Date.now() + 100;
   while (!sharedReadStarted && Date.now() < waitForStartDeadline) {
@@ -249,15 +302,21 @@ test("recallInternal aborts while phase-one preamble promises are still pending"
   releaseSharedRead?.();
 
   assert.equal(sharedReadStarted, true);
-  assert.ok(elapsedMs < 80, `expected phase-one abort before slow shared-context read completed, saw ${elapsedMs}ms`);
+  assert.ok(
+    elapsedMs < 80,
+    `expected phase-one abort before slow shared-context read completed, saw ${elapsedMs}ms`,
+  );
 });
 
 test("recallInternal does not launch phase-one preamble work for an already-aborted signal", async () => {
-  const orchestrator = await makeOrchestrator("engram-recall-phase-one-preaborted-");
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-phase-one-preaborted-",
+  );
   const callerAbortController = new AbortController();
   callerAbortController.abort();
 
-  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context";
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context";
   let sharedReadStarted = false;
   (orchestrator as any).sharedContext = {
     readPriorities: async () => {
@@ -269,10 +328,14 @@ test("recallInternal does not launch phase-one preamble work for an already-abor
   };
 
   await assert.rejects(
-    (orchestrator as any).recallInternal("phase one pre-aborted test", "agent:test:phase-one-preaborted", {
-      mode: "full",
-      abortSignal: callerAbortController.signal,
-    }),
+    (orchestrator as any).recallInternal(
+      "phase one pre-aborted test",
+      "agent:test:phase-one-preaborted",
+      {
+        mode: "full",
+        abortSignal: callerAbortController.signal,
+      },
+    ),
     (err: unknown) => err instanceof Error && err.name === "AbortError",
   );
 
@@ -285,7 +348,8 @@ test("recallInternal fails open when qmd enrichment rejects before phase-two ass
   });
 
   let releaseSharedRead: (() => void) | null = null;
-  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context" || id === "qmd";
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context" || id === "qmd";
   (orchestrator as any).sharedContext = {
     readPriorities: async () => {
       await new Promise<void>((resolve) => {
@@ -319,13 +383,19 @@ test("recallInternal fails open when qmd enrichment rejects before phase-two ass
 
 test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active", async () => {
   clearQmdRecallCache();
-  const orchestrator = await makeOrchestrator("engram-recall-qmd-stale-cache-", {
-    qmdEnabled: true,
-    qmdRecallCacheTtlMs: 0,
-    qmdRecallCacheStaleTtlMs: 60_000,
-  });
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-qmd-stale-cache-",
+    {
+      qmdEnabled: true,
+      qmdRecallCacheTtlMs: 0,
+      qmdRecallCacheStaleTtlMs: 60_000,
+    },
+  );
 
-  const memoryId = await (orchestrator as any).storage.writeMemory("fact", "stale cache memory");
+  const memoryId = await (orchestrator as any).storage.writeMemory(
+    "fact",
+    "stale cache memory",
+  );
   const memory = await (orchestrator as any).storage.getMemoryById(memoryId);
   assert.ok(memory);
 
@@ -336,17 +406,25 @@ test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active
     maxResults: (orchestrator as any).config.qmdResults,
     memoryDir: (orchestrator as any).config.memoryDir,
   });
-  setCachedQmdRecall(cacheKey, {
-    memoryResultsLists: [[{
-      docid: memory.frontmatter.id,
-      path: memory.path,
-      snippet: "stale cache memory",
-      score: 0.91,
-    }]],
-    globalResults: [],
-    preAugmentTopScore: 0.91,
-    maxSpecializedScore: 0,
-  }, { maxEntries: 8 });
+  setCachedQmdRecall(
+    cacheKey,
+    {
+      memoryResultsLists: [
+        [
+          {
+            docid: memory.frontmatter.id,
+            path: memory.path,
+            snippet: "stale cache memory",
+            score: 0.91,
+          },
+        ],
+      ],
+      globalResults: [],
+      preAugmentTopScore: 0.91,
+      maxSpecializedScore: 0,
+    },
+    { maxEntries: 8 },
+  );
 
   await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -368,11 +446,14 @@ test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active
 
 test("recallInternal does not cache empty qmd result sets", async () => {
   clearQmdRecallCache();
-  const orchestrator = await makeOrchestrator("engram-recall-qmd-empty-cache-", {
-    qmdEnabled: true,
-    qmdRecallCacheTtlMs: 60_000,
-    qmdRecallCacheStaleTtlMs: 60_000,
-  });
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-qmd-empty-cache-",
+    {
+      qmdEnabled: true,
+      qmdRecallCacheTtlMs: 60_000,
+      qmdRecallCacheStaleTtlMs: 60_000,
+    },
+  );
 
   (orchestrator as any).qmd = {
     isAvailable: () => true,
@@ -403,13 +484,17 @@ test("recallInternal does not cache empty qmd result sets", async () => {
 });
 
 test("recallInternal times out hung enrichment work without blocking assembly", async () => {
-  const orchestrator = await makeOrchestrator("engram-recall-hung-enrichment-", {
-    compoundingInjectEnabled: true,
-    recallEnrichmentDeadlineMs: 5,
-  });
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-hung-enrichment-",
+    {
+      compoundingInjectEnabled: true,
+      recallEnrichmentDeadlineMs: 5,
+    },
+  );
 
   let releaseSharedRead: (() => void) | null = null;
-  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context" || id === "compounding";
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context" || id === "compounding";
   (orchestrator as any).sharedContext = {
     readPriorities: async () => {
       await new Promise<void>((resolve) => {
@@ -439,16 +524,23 @@ test("recallInternal times out hung enrichment work without blocking assembly", 
 
   assert.match(context, /stable shared priorities/);
   assert.doesNotMatch(context, /compounding/i);
-  assert.ok(elapsedMs < 100, `expected enrichment timeout to avoid long assembly stalls, saw ${elapsedMs}ms`);
+  assert.ok(
+    elapsedMs < 100,
+    `expected enrichment timeout to avoid long assembly stalls, saw ${elapsedMs}ms`,
+  );
 });
 
 test("recallInternal fails open when a deferred enrichment promise rejects before assembly", async () => {
-  const orchestrator = await makeOrchestrator("engram-recall-enrichment-fail-open-", {
-    compoundingInjectEnabled: true,
-  });
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-enrichment-fail-open-",
+    {
+      compoundingInjectEnabled: true,
+    },
+  );
 
   let releaseSharedRead: (() => void) | null = null;
-  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context" || id === "compounding";
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context" || id === "compounding";
   (orchestrator as any).sharedContext = {
     readPriorities: async () => {
       await new Promise<void>((resolve) => {
@@ -477,4 +569,58 @@ test("recallInternal fails open when a deferred enrichment promise rejects befor
   const context = await recallPromise;
   assert.match(context, /stable shared priorities/);
   assert.doesNotMatch(context, /compounding/i);
+});
+
+test("recallInternal shares one enrichment timeout budget across sequential enrichment awaits", async () => {
+  clearQmdRecallCache();
+  const orchestrator = await makeOrchestrator(
+    "engram-recall-shared-enrichment-budget-",
+    {
+      qmdEnabled: true,
+      compoundingInjectEnabled: true,
+      recallEnrichmentDeadlineMs: 15,
+    },
+  );
+
+  let releaseSharedRead: (() => void) | null = null;
+  (orchestrator as any).isRecallSectionEnabled = (id: string) =>
+    id === "shared-context" || id === "qmd-memory" || id === "compounding";
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      await new Promise<void>((resolve) => {
+        releaseSharedRead = resolve;
+      });
+      return "stable shared priorities";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+  };
+  (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async () =>
+    await new Promise<never>(() => {});
+  (orchestrator as any).compounding = {
+    buildRecallSection: async () => await new Promise<string | null>(() => {}),
+  };
+
+  const startedAt = Date.now();
+  const recallPromise = (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:shared-enrichment-budget",
+    { mode: "full" },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseSharedRead?.();
+
+  const context = await recallPromise;
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.match(context, /stable shared priorities/);
+  assert.doesNotMatch(context, /compounding/i);
+  assert.ok(
+    elapsedMs < 30,
+    `expected a shared enrichment budget, saw ${elapsedMs}ms`,
+  );
 });

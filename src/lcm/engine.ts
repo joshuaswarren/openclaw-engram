@@ -74,12 +74,17 @@ export class LcmEngine {
     this.db = openLcmDatabase(this.memoryDir);
     this.archive = new LcmArchive(this.db);
     this.dag = new LcmDag(this.db);
-    this.summarizer = new LcmSummarizer(this.archive, this.dag, this.summarizeFn, {
-      leafBatchSize: this.config.leafBatchSize,
-      rollupFanIn: this.config.rollupFanIn,
-      maxDepth: this.config.maxDepth,
-      deterministicMaxTokens: this.config.deterministicMaxTokens,
-    });
+    this.summarizer = new LcmSummarizer(
+      this.archive,
+      this.dag,
+      this.summarizeFn,
+      {
+        leafBatchSize: this.config.leafBatchSize,
+        rollupFanIn: this.config.rollupFanIn,
+        maxDepth: this.config.maxDepth,
+        deterministicMaxTokens: this.config.deterministicMaxTokens,
+      },
+    );
     this.observeQueue = new LcmWorkQueue({
       concurrency: 1,
       worker: async (sessionId, messages) => {
@@ -91,7 +96,15 @@ export class LcmEngine {
             `LCM observe queue start: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms`,
           );
         },
-        onJobFinish: ({ sessionId, depth, inFlight, waitMs, runMs, totalMs, error }) => {
+        onJobFinish: ({
+          sessionId,
+          depth,
+          inFlight,
+          waitMs,
+          runMs,
+          totalMs,
+          error,
+        }) => {
           if (error) {
             log.debug(
               `LCM observe queue failure: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms, run=${runMs}ms, total=${totalMs}ms, error=${error}`,
@@ -178,12 +191,23 @@ export class LcmEngine {
     await this.observeQueue?.whenIdle();
   }
 
+  async waitForSessionObserveIdle(sessionId: string): Promise<void> {
+    if (!this.config.enabled) return;
+    await this.ensureInitialized();
+    await this.observeQueue?.whenSessionIdle(sessionId);
+  }
+
   /** Build the compressed history recall section for a session. */
-  async assembleRecall(sessionId: string, budgetChars: number): Promise<string> {
+  async assembleRecall(
+    sessionId: string,
+    budgetChars: number,
+  ): Promise<string> {
     if (!this.config.enabled) return "";
     await this.ensureInitialized();
 
-    const effectiveBudget = Math.ceil(budgetChars * this.config.recallBudgetShare);
+    const effectiveBudget = Math.ceil(
+      budgetChars * this.config.recallBudgetShare,
+    );
     if (effectiveBudget <= 0) return "";
 
     return assembleCompressedHistory(this.dag!, this.archive!, sessionId, {
@@ -240,7 +264,14 @@ export class LcmEngine {
     query: string,
     limit: number,
     sessionId?: string,
-  ): Promise<Array<{ turn_index: number; role: string; snippet: string; session_id: string }>> {
+  ): Promise<
+    Array<{
+      turn_index: number;
+      role: string;
+      snippet: string;
+      session_id: string;
+    }>
+  > {
     if (!this.config.enabled) return [];
     await this.ensureInitialized();
     return this.archive!.search(query, limit, sessionId);
@@ -251,7 +282,16 @@ export class LcmEngine {
     query: string,
     limit: number,
     sessionId?: string,
-  ): Promise<Array<{ id: number; turn_index: number; role: string; content: string; session_id: string; score: number }>> {
+  ): Promise<
+    Array<{
+      id: number;
+      turn_index: number;
+      role: string;
+      content: string;
+      session_id: string;
+      score: number;
+    }>
+  > {
     if (!this.config.enabled) return [];
     await this.ensureInitialized();
     return this.archive!.searchWithContent(query, limit, sessionId);
@@ -318,12 +358,16 @@ export class LcmEngine {
     }
 
     // Keep first and last messages, truncate from middle
-    const result: Array<{ turn_index: number; role: string; content: string }> = [];
+    const result: Array<{ turn_index: number; role: string; content: string }> =
+      [];
     let budget = maxChars;
 
     // Reserve space for the last message
     const lastMsg = messages[messages.length - 1];
-    const lastMsgChars = Math.min(lastMsg.content.length, Math.floor(maxChars * 0.3));
+    const lastMsgChars = Math.min(
+      lastMsg.content.length,
+      Math.floor(maxChars * 0.3),
+    );
     budget -= lastMsgChars;
 
     // Add messages from the beginning
@@ -331,7 +375,11 @@ export class LcmEngine {
       if (budget <= 0) break;
       const m = messages[i];
       const truncated = m.content.slice(0, budget);
-      result.push({ turn_index: m.turn_index, role: m.role, content: truncated });
+      result.push({
+        turn_index: m.turn_index,
+        role: m.role,
+        content: truncated,
+      });
       budget -= truncated.length;
     }
 
@@ -351,7 +399,8 @@ export class LcmEngine {
     totalSummaryNodes: number;
     maxDepth: number;
   }> {
-    if (!this.config.enabled) return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: -1 };
+    if (!this.config.enabled)
+      return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: -1 };
     await this.ensureInitialized();
 
     if (sessionId) {
@@ -374,8 +423,12 @@ export class LcmEngine {
     if (!this.config.enabled) return { messagesPruned: 0, nodesPruned: 0 };
     await this.ensureInitialized();
 
-    const messagesPruned = this.archive!.pruneOldMessages(this.config.archiveRetentionDays);
-    const nodesPruned = this.dag!.pruneOldNodes(this.config.archiveRetentionDays);
+    const messagesPruned = this.archive!.pruneOldMessages(
+      this.config.archiveRetentionDays,
+    );
+    const nodesPruned = this.dag!.pruneOldNodes(
+      this.config.archiveRetentionDays,
+    );
     return { messagesPruned, nodesPruned };
   }
 

@@ -39,7 +39,9 @@ function normalizePathScope(pathValue: string | undefined): string {
   return pathValue.trim().replace(/\\/g, "/");
 }
 
-function normalizeSearchOptions(options: SearchQueryOptions | undefined): Record<string, unknown> {
+function normalizeSearchOptions(
+  options: SearchQueryOptions | undefined,
+): Record<string, unknown> {
   if (!options) return {};
   return Object.fromEntries(
     Object.entries(options)
@@ -48,7 +50,9 @@ function normalizeSearchOptions(options: SearchQueryOptions | undefined): Record
   );
 }
 
-export function buildQmdRecallCacheKey(options: QmdRecallCacheKeyOptions): string {
+export function buildQmdRecallCacheKey(
+  options: QmdRecallCacheKeyOptions,
+): string {
   return JSON.stringify({
     query: normalizeQuery(options.query),
     namespaces: [...options.namespaces].sort(),
@@ -88,6 +92,8 @@ export function setCachedQmdRecall<T>(
   options: { maxEntries: number },
 ): void {
   qmdRecallCache.delete(cacheKey);
+  if (options.maxEntries <= 0) return;
+
   qmdRecallCache.set(cacheKey, {
     value: cloneCacheValue(value),
     cachedAtMs: Date.now(),

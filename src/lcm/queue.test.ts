@@ -105,3 +105,34 @@ test("LcmWorkQueue preserves first enqueue time when pending jobs coalesce", asy
     Date.now = realNow;
   }
 });
+
+test("LcmWorkQueue waits for a specific session without waiting for unrelated idle work", async () => {
+  const blocker = deferred();
+  let sessionIdleResolved = false;
+
+  const queue = new LcmWorkQueue({
+    concurrency: 1,
+    worker: async (sessionId) => {
+      if (sessionId === "blocked") {
+        await blocker.promise;
+      }
+    },
+  });
+
+  queue.enqueue("blocked", [{ role: "user", content: "hold" }]);
+  queue.enqueue("session-a", [{ role: "assistant", content: "queued" }]);
+
+  await Promise.resolve();
+  const sessionIdlePromise = queue.whenSessionIdle("session-a").then(() => {
+    sessionIdleResolved = true;
+  });
+
+  await Promise.resolve();
+  assert.equal(sessionIdleResolved, false);
+
+  blocker.resolve();
+  await sessionIdlePromise;
+
+  assert.equal(sessionIdleResolved, true);
+  await queue.whenIdle();
+});

@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { HourlySummarizer } from "./summarizer.js";
-import { readSummarySnapshot, summarySnapshotPath, writeSummarySnapshot } from "./summary-snapshot.js";
+import {
+  readSummarySnapshot,
+  summarySnapshotPath,
+  writeSummarySnapshot,
+} from "./summary-snapshot.js";
 import type { PluginConfig } from "./types.js";
 
 function makeConfig(memoryDir: string): PluginConfig {
@@ -25,7 +29,9 @@ function utcDateString(date: Date): string {
 }
 
 test("summary snapshot helpers round-trip summaries in descending hour order", async () => {
-  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-summary-snapshot-"));
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-summary-snapshot-"),
+  );
   const sessionKey = "session-snapshot";
   const summaries = [
     {
@@ -46,14 +52,19 @@ test("summary snapshot helpers round-trip summaries in descending hour order", a
 
   await writeSummarySnapshot(memoryDir, sessionKey, summaries);
 
-  assert.equal(summarySnapshotPath(memoryDir, sessionKey), path.join(memoryDir, "state", "summaries", `${sessionKey}.json`));
+  assert.equal(
+    summarySnapshotPath(memoryDir, sessionKey),
+    path.join(memoryDir, "state", "summaries", `${sessionKey}.json`),
+  );
 
   const loaded = await readSummarySnapshot(memoryDir, sessionKey);
   assert.deepEqual(loaded, [summaries[1], summaries[0]]);
 });
 
 test("readRecent prefers the materialized summary snapshot over markdown fallback", async () => {
-  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-summary-prefers-snapshot-"));
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-summary-prefers-snapshot-"),
+  );
   const summarizer = new HourlySummarizer(makeConfig(memoryDir));
   await summarizer.initialize();
 
@@ -90,11 +101,16 @@ test("readRecent prefers the materialized summary snapshot over markdown fallbac
   );
 
   const recent = await summarizer.readRecent(sessionKey, 48);
-  assert.deepEqual(recent.map((summary) => summary.bullets), [["snapshot bullet"]]);
+  assert.deepEqual(
+    recent.map((summary) => summary.bullets),
+    [["snapshot bullet"]],
+  );
 });
 
 test("readRecent backfills a summary snapshot from markdown summaries", async () => {
-  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-summary-backfill-"));
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-summary-backfill-"),
+  );
   const summarizer = new HourlySummarizer(makeConfig(memoryDir));
   await summarizer.initialize();
 
