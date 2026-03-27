@@ -9293,7 +9293,12 @@ export class Orchestrator {
                 },
                 { role: "user", content: prompt },
               ],
-              { temperature: 0.3, maxTokens: 100, operation: "entity_summary" },
+              {
+                temperature: 0.3,
+                maxTokens: 100,
+                operation: "entity_summary",
+                priority: "background",
+              },
             );
             if (response?.content) {
               const summary = response.content
@@ -9540,6 +9545,7 @@ export class Orchestrator {
                 temperature: 0.3,
                 maxTokens: this.config.tmtSummaryMaxTokens,
                 operation: "tmt_summary",
+                priority: "background",
               },
             );
             return response?.content?.trim() || texts.slice(0, 3).join(" ");

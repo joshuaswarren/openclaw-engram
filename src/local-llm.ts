@@ -564,6 +564,18 @@ export class LocalLlmClient {
     return next ?? null;
   }
 
+  private failOpenQueuedRequestsForCooldown(): number {
+    let dropped = 0;
+    for (const priority of ["recall-critical", "background"] as const) {
+      while (this.requestQueues[priority].length > 0) {
+        const queued = this.requestQueues[priority].shift();
+        queued?.resolve(null);
+        dropped += 1;
+      }
+    }
+    return dropped;
+  }
+
   private startAvailableQueuedRequests(): void {
     if (!this.queueProcessing.has("recall-critical")) {
       const nextCritical = this.dequeueQueuedRequest("recall-critical");
@@ -586,7 +598,10 @@ export class LocalLlmClient {
     try {
       const remainingCooldownMs = this.remainingCooldownMs();
       if (remainingCooldownMs > 0) {
-        log.debug(`local LLM: cooldown active (${remainingCooldownMs}ms remaining), skipping queued request`);
+        const additionalDropped = this.failOpenQueuedRequestsForCooldown();
+        log.warn(
+          `local LLM: cooldown active (${remainingCooldownMs}ms remaining), dropping ${additionalDropped + 1} queued request(s) fail-open`,
+        );
         next.resolve(null);
         return;
       }

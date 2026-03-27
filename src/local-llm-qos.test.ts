@@ -221,6 +221,72 @@ test("LocalLlmClient skips queued work once a cooldown is activated", async () =
   assert.deepEqual(executionOrder, ["trip-op"]);
 });
 
+test("LocalLlmClient batch-drains queued work with a warning when cooldown activates mid-lane", async () => {
+  const logs: string[] = [];
+  initLogger(
+    {
+      info(msg: string) {
+        logs.push(`info:${msg}`);
+      },
+      warn(msg: string) {
+        logs.push(`warn:${msg}`);
+      },
+      error(msg: string) {
+        logs.push(`error:${msg}`);
+      },
+      debug(msg: string) {
+        logs.push(`debug:${msg}`);
+      },
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(createConfig());
+  const executionOrder: string[] = [];
+
+  (client as any).runChatCompletionRequest = async (
+    messages: Array<{ role: string; content: string }>,
+    options: { operation?: string },
+  ) => {
+    executionOrder.push(options.operation ?? "unspecified");
+    if (messages[0]?.content === "trip") {
+      (client as any).cooldownUntilMs = Date.now() + 60_000;
+    }
+    return {
+      content: messages[0]?.content ?? "",
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    };
+  };
+
+  const firstPromise = client.chatCompletion(
+    [{ role: "user", content: "trip" }],
+    { operation: "trip-op", priority: "background" },
+  );
+  const secondPromise = client.chatCompletion(
+    [{ role: "user", content: "queued-one" }],
+    { operation: "queued-one-op", priority: "background" },
+  );
+  const thirdPromise = client.chatCompletion(
+    [{ role: "user", content: "queued-two" }],
+    { operation: "queued-two-op", priority: "background" },
+  );
+
+  const [firstResult, secondResult, thirdResult] = await Promise.all([
+    firstPromise,
+    secondPromise,
+    thirdPromise,
+  ]);
+
+  assert.equal(firstResult?.content, "trip");
+  assert.equal(secondResult, null);
+  assert.equal(thirdResult, null);
+  assert.deepEqual(executionOrder, ["trip-op"]);
+  assert.match(
+    logs.join("\n"),
+    /cooldown active \(\d+ms remaining\), dropping 2 queued request\(s\) fail-open/,
+  );
+});
+
 test("LocalLlmClient resolves queued work to null when request execution throws", async () => {
   const client = new LocalLlmClient(createConfig());
 
