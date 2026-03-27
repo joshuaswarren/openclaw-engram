@@ -56,28 +56,6 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 const ENGRAM_NATIVE_DEPENDENCIES_CHECKED = "__openclawEngramNativeDependenciesChecked";
 
-function forwardNativeDependencyOutput(
-  stream: NodeJS.ReadableStream | null | undefined,
-  logLine: (line: string) => void,
-): void {
-  if (!stream) return;
-  stream.setEncoding("utf8");
-  let buffer = "";
-  stream.on("data", (chunk: string) => {
-    buffer += chunk;
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed) logLine(trimmed);
-    }
-  });
-  stream.on("end", () => {
-    const trimmed = buffer.trim();
-    if (trimmed) logLine(trimmed);
-  });
-}
-
 function ensureNativeDependenciesReady(): void {
   if ((globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED]) return;
   (globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED] = true;
@@ -87,10 +65,9 @@ function ensureNativeDependenciesReady(): void {
   const child = spawn(process.execPath, [scriptPath], {
     cwd: rootDir,
     env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: "ignore",
   });
-  forwardNativeDependencyOutput(child.stdout, (line) => log.info(line));
-  forwardNativeDependencyOutput(child.stderr, (line) => log.warn(line));
+  child.unref();
   child.on("error", (error) => {
     log.warn(`better-sqlite3 native dependency check failed to start: ${error.message}`);
   });

@@ -190,3 +190,91 @@ test("LocalLlmClient probes immediately after zero-duration backend trip", async
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LocalLlmClient shares backend circuit state across models on the same endpoint", () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const primary = new LocalLlmClient(buildConfig({ localLlmModel: "primary-model" }));
+  const fast = new LocalLlmClient(buildConfig({ localLlmModel: "fast-model" }));
+
+  (primary as any).markBackendUnavailable("Failed to load model", 25);
+
+  try {
+    assert.equal((primary as any).getBackendKey(), (fast as any).getBackendKey());
+    const sharedState = (fast as any).getTrippedBackendState(Date.now());
+    assert.ok(sharedState);
+    assert.equal(sharedState.reason, "Failed to load model");
+  } finally {
+    (primary as any).getGlobalBackendState().delete((primary as any).getBackendKey());
+  }
+});
+
+test("LocalLlmClient stores a matched backend failure reason instead of raw error text", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlm400CooldownMs: 25 }));
+  (client as any).isAvailable = true;
+  (client as any).lastHealthCheck = Date.now();
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("Internal error while loading backend. Failed to load model due to Team IDs mismatch.", {
+      status: 503,
+      headers: { "content-type": "text/plain" },
+    })) as typeof fetch;
+
+  try {
+    const out = await client.chatCompletion([{ role: "user", content: "hello" }], {
+      operation: "entity_summary",
+    });
+    assert.equal(out, null);
+    const state = (client as any).getGlobalBackendState().get((client as any).getBackendKey());
+    assert.ok(state);
+    assert.equal(state.reason, "Failed to load model");
+  } finally {
+    (client as any).getGlobalBackendState().delete((client as any).getBackendKey());
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LocalLlmClient clears peer health cache while a shared backend circuit is open", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const primary = new LocalLlmClient(buildConfig({ localLlmModel: "primary-model" }));
+  const peer = new LocalLlmClient(buildConfig({ localLlmModel: "peer-model" }));
+  (peer as any).isAvailable = false;
+  (peer as any).lastHealthCheck = Date.now();
+  (primary as any).markBackendUnavailable("Failed to load model", 25);
+
+  try {
+    const available = await peer.checkAvailability();
+    assert.equal(available, false);
+    assert.equal((peer as any).lastHealthCheck, 0);
+  } finally {
+    (primary as any).getGlobalBackendState().delete((primary as any).getBackendKey());
+  }
+});

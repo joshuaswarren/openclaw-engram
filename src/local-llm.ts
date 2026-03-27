@@ -271,6 +271,7 @@ export class LocalLlmClient {
     const trippedState = this.getTrippedBackendState(now);
     if (trippedState) {
       this.isAvailable = false;
+      this.lastHealthCheck = 0;
       log.info(
         `local LLM availability: backend circuit open for ${Math.max(0, trippedState.untilMs - now)}ms (${trippedState.reason})`,
       );
