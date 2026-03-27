@@ -39,3 +39,15 @@ test("parseConfig preserves zero qmd recall cache entries to disable caching", (
 
   assert.equal(config.qmdRecallCacheMaxEntries, 0);
 });
+
+test("parseConfig preserves zero recall timeout settings to disable those limits", () => {
+  const config = parseConfig({
+    recallOuterTimeoutMs: 0,
+    recallCoreDeadlineMs: 0,
+    recallEnrichmentDeadlineMs: 0,
+  });
+
+  assert.equal(config.recallOuterTimeoutMs, 0);
+  assert.equal(config.recallCoreDeadlineMs, 0);
+  assert.equal(config.recallEnrichmentDeadlineMs, 0);
+});

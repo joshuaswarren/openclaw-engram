@@ -2715,27 +2715,33 @@ export class Orchestrator {
 
     // Keep outer recall timeout above worst-case serialized hybrid search:
     // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
-    const RECALL_TIMEOUT_MS = this.config.recallOuterTimeoutMs ?? 75_000;
-    let timeoutHandle: NodeJS.Timeout | null = null;
-    const timeoutPromise = new Promise<string>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        abortController.abort();
-        reject(new Error("recall timeout"));
-      }, RECALL_TIMEOUT_MS);
-    });
     try {
-      return await Promise.race([
-        this.recallInternal(prompt, sessionKey, {
-          ...options,
-          abortSignal: abortController.signal,
-        }),
-        timeoutPromise,
-      ]);
+      const recallPromise = this.recallInternal(prompt, sessionKey, {
+        ...options,
+        abortSignal: abortController.signal,
+      });
+      const RECALL_TIMEOUT_MS = this.config.recallOuterTimeoutMs ?? 75_000;
+      if (RECALL_TIMEOUT_MS <= 0) {
+        return await recallPromise;
+      }
+
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const timeoutPromise = new Promise<string>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          abortController.abort();
+          reject(new Error("recall timeout"));
+        }, RECALL_TIMEOUT_MS);
+      });
+
+      try {
+        return await Promise.race([recallPromise, timeoutPromise]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
     } catch (err) {
       this.logRecallFailure(err);
       return ""; // Return empty context on timeout/error
     } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
       options.abortSignal?.removeEventListener("abort", onAbort);
     }
   }
@@ -3025,7 +3031,8 @@ export class Orchestrator {
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
     const maxFetchLimit = Math.min(320, Math.max(fetchLimit, qmdFetchLimit * 5));
     const MAX_ATTEMPTS = 2;
-    const QMD_RECALL_BUDGET_MS = this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    const qmdRecallBudgetMs = this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    const qmdRecallBudgetEnabled = qmdRecallBudgetMs > 0;
     const startedAtMs = Date.now();
     let lastPrimaryResultCount = 0;
     let lastHybridResultCount = 0;
@@ -3079,7 +3086,7 @@ export class Orchestrator {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       throwIfRecallAborted(options.abortSignal);
-      if (Date.now() - startedAtMs >= QMD_RECALL_BUDGET_MS) {
+      if (qmdRecallBudgetEnabled && Date.now() - startedAtMs >= qmdRecallBudgetMs) {
         break;
       }
 
@@ -3106,7 +3113,7 @@ export class Orchestrator {
       // Backfill with hybrid results only when primary retrieval underfills.
       if (
         primaryResults.length < qmdFetchLimit &&
-        Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
+        (!qmdRecallBudgetEnabled || Date.now() - startedAtMs < qmdRecallBudgetMs)
       ) {
         if (debugSearchOptions?.intent) {
           lastHybridTopUpSkippedReason = "intent_hint_active";
@@ -3604,6 +3611,14 @@ export class Orchestrator {
     const timings: Record<string, string> = {};
     const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
     const enrichmentSectionDeadlineMs = this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    type DeferredEnrichmentOutcome<T> =
+      | { status: "resolved"; value: T }
+      | { status: "rejected"; error: unknown };
+    const observeEnrichmentPromise = <T>(promise: Promise<T>): Promise<DeferredEnrichmentOutcome<T>> =>
+      promise.then(
+        (value) => ({ status: "resolved", value }),
+        (error) => ({ status: "rejected", error }),
+      );
     const recordRecallSectionMetric = createRecallSectionMetricRecorder({
       timings,
       logger: log,
@@ -4330,7 +4345,7 @@ export class Orchestrator {
       return results.length > 0 ? this.formatTrustZoneResults(results) : null;
     })();
 
-    const harmonicRetrievalPromise = (async (): Promise<string | null> => {
+    const harmonicRetrievalPromise = observeEnrichmentPromise((async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
         !this.config.harmonicRetrievalEnabled ||
@@ -4379,7 +4394,7 @@ export class Orchestrator {
         success: true,
       });
       return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
-    })();
+    })());
 
     // Verified recall and semantic rules both need readAllMemories().
     // Instead of a shared preload (which has namespace/dir mismatch issues),
@@ -4614,7 +4629,7 @@ export class Orchestrator {
       maxSpecializedScore: number;
     } | null;
 
-    const qmdPromise = (async (): Promise<QmdPhaseResult> => {
+    const qmdPromise = observeEnrichmentPromise((async (): Promise<QmdPhaseResult> => {
       const t0 = Date.now();
       if (recallResultLimit <= 0) {
         recordRecallSectionMetric({
@@ -4793,9 +4808,11 @@ export class Orchestrator {
           preAugmentTopScore,
           maxSpecializedScore,
         };
-        setCachedQmdRecall(qmdCacheKey, result, {
-          maxEntries: this.config.qmdRecallCacheMaxEntries ?? 128,
-        });
+        if (augmentedResults.length > 0 || result.globalResults.length > 0) {
+          setCachedQmdRecall(qmdCacheKey, result, {
+            maxEntries: this.config.qmdRecallCacheMaxEntries ?? 128,
+          });
+        }
         recordRecallSectionMetric({
           section: "qmd",
           priority: "enrichment",
@@ -4827,7 +4844,7 @@ export class Orchestrator {
       }
       log.warn(`recall phase-1 enrichment [qmd] failed open: ${err instanceof Error ? err.message : String(err)}`);
       return null;
-    });
+    }));
 
     const transcriptPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
@@ -5021,7 +5038,7 @@ export class Orchestrator {
       return section;
     })();
 
-    const nativeKnowledgePromise = (async (): Promise<string | null> => {
+    const nativeKnowledgePromise = observeEnrichmentPromise((async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
         !this.config.nativeKnowledge?.enabled ||
@@ -5080,7 +5097,7 @@ export class Orchestrator {
         success: true,
       });
       return section;
-    })();
+    })());
 
     const conversationRecallPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
@@ -5154,7 +5171,7 @@ export class Orchestrator {
       return section;
     })();
 
-    const compoundingPromise = (async (): Promise<string | null> => {
+    const compoundingPromise = observeEnrichmentPromise((async (): Promise<string | null> => {
       const t0 = Date.now();
       if (!this.compounding || !this.config.compoundingInjectEnabled || !this.isRecallSectionEnabled("compounding", true)) {
         recordRecallSectionMetric({
@@ -5192,7 +5209,7 @@ export class Orchestrator {
         success: true,
       });
       return section;
-    })();
+    })());
 
     // Start memory-boxes read in parallel with the rest of phase-1 (it can take
     // several seconds on large box directories due to sequential I/O). We kick it
@@ -5288,20 +5305,45 @@ export class Orchestrator {
 
     const awaitEnrichmentSection = async <T>(
       name: string,
-      promise: Promise<T>,
+      promise: Promise<DeferredEnrichmentOutcome<T>>,
     ): Promise<T | null> => {
-      try {
-        const value = await promise;
-        log.debug(`recall phase-1 enrichment [${name}]: resolved at +${Date.now() - phase1Start}ms`);
-        return value;
-      } catch (err) {
-        if (options.abortSignal?.aborted) {
-          log.debug(`recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`);
-          return null;
-        }
-        log.warn(`recall phase-1 enrichment [${name}] failed open: ${err instanceof Error ? err.message : String(err)}`);
+      let timeoutHandle: NodeJS.Timeout | undefined;
+      const outcome = await (
+        enrichmentSectionDeadlineMs > 0
+          ? Promise.race<
+            DeferredEnrichmentOutcome<T> | { status: "timed_out" }
+          >([
+            promise,
+            new Promise<{ status: "timed_out" }>((resolve) => {
+              timeoutHandle = setTimeout(() => resolve({ status: "timed_out" }), enrichmentSectionDeadlineMs);
+            }),
+          ])
+          : promise
+      );
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+
+      if (outcome.status === "timed_out") {
+        log.debug(
+          `recall phase-1 enrichment [${name}]: timed out after ${enrichmentSectionDeadlineMs}ms ` +
+          `at +${Date.now() - phase1Start}ms`,
+        );
         return null;
       }
+
+      if (outcome.status === "resolved") {
+        log.debug(`recall phase-1 enrichment [${name}]: resolved at +${Date.now() - phase1Start}ms`);
+        return outcome.value;
+      }
+
+      if (options.abortSignal?.aborted) {
+        log.debug(`recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`);
+        return null;
+      }
+      log.warn(
+        `recall phase-1 enrichment [${name}] failed open: ` +
+        `${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`,
+      );
+      return null;
     };
 
     // --- Phase 2: Assemble sections in correct order ---

@@ -5,7 +5,7 @@ import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { Orchestrator } from "../src/orchestrator.js";
 import { parseConfig } from "../src/config.js";
-import { buildQmdRecallCacheKey, clearQmdRecallCache, setCachedQmdRecall } from "../src/qmd-recall-cache.js";
+import { buildQmdRecallCacheKey, clearQmdRecallCache, getCachedQmdRecall, setCachedQmdRecall } from "../src/qmd-recall-cache.js";
 
 async function makeOrchestrator(
   prefix: string,
@@ -364,4 +364,117 @@ test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active
   );
 
   assert.match(context, /stale cache memory/);
+});
+
+test("recallInternal does not cache empty qmd result sets", async () => {
+  clearQmdRecallCache();
+  const orchestrator = await makeOrchestrator("engram-recall-qmd-empty-cache-", {
+    qmdEnabled: true,
+    qmdRecallCacheTtlMs: 60_000,
+    qmdRecallCacheStaleTtlMs: 60_000,
+  });
+
+  (orchestrator as any).qmd = {
+    isAvailable: () => true,
+  };
+  (orchestrator as any).fetchQmdMemoryResultsWithArtifactTopUp = async () => [];
+
+  await (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:qmd-empty-cache",
+    { mode: "full" },
+  );
+
+  const cacheKey = buildQmdRecallCacheKey({
+    query: "Summarize the current project state.",
+    namespaces: ["default"],
+    recallMode: "full",
+    maxResults: (orchestrator as any).config.qmdResults,
+    memoryDir: (orchestrator as any).config.memoryDir,
+  });
+
+  assert.equal(
+    getCachedQmdRecall(cacheKey, {
+      freshTtlMs: 60_000,
+      staleTtlMs: 60_000,
+    }),
+    null,
+  );
+});
+
+test("recallInternal times out hung enrichment work without blocking assembly", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-hung-enrichment-", {
+    compoundingInjectEnabled: true,
+    recallEnrichmentDeadlineMs: 5,
+  });
+
+  let releaseSharedRead: (() => void) | null = null;
+  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context" || id === "compounding";
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      await new Promise<void>((resolve) => {
+        releaseSharedRead = resolve;
+      });
+      return "stable shared priorities";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+  (orchestrator as any).compounding = {
+    buildRecallSection: async () => await new Promise<string | null>(() => {}),
+  };
+
+  const startedAt = Date.now();
+  const recallPromise = (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:hung-enrichment",
+    { mode: "full" },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseSharedRead?.();
+
+  const context = await recallPromise;
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.match(context, /stable shared priorities/);
+  assert.doesNotMatch(context, /compounding/i);
+  assert.ok(elapsedMs < 100, `expected enrichment timeout to avoid long assembly stalls, saw ${elapsedMs}ms`);
+});
+
+test("recallInternal fails open when a deferred enrichment promise rejects before assembly", async () => {
+  const orchestrator = await makeOrchestrator("engram-recall-enrichment-fail-open-", {
+    compoundingInjectEnabled: true,
+  });
+
+  let releaseSharedRead: (() => void) | null = null;
+  (orchestrator as any).isRecallSectionEnabled = (id: string) => id === "shared-context" || id === "compounding";
+  (orchestrator as any).sharedContext = {
+    readPriorities: async () => {
+      await new Promise<void>((resolve) => {
+        releaseSharedRead = resolve;
+      });
+      return "stable shared priorities";
+    },
+    readLatestRoundtable: async () => null,
+    readLatestCrossSignals: async () => null,
+  };
+  (orchestrator as any).compounding = {
+    buildRecallSection: async () => {
+      throw new Error("compounding exploded");
+    },
+  };
+
+  const recallPromise = (orchestrator as any).recallInternal(
+    "Summarize the current project state.",
+    "agent:test:enrichment-fail-open",
+    { mode: "full" },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseSharedRead?.();
+
+  const context = await recallPromise;
+  assert.match(context, /stable shared priorities/);
+  assert.doesNotMatch(context, /compounding/i);
 });

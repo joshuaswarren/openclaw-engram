@@ -1154,12 +1154,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.entityRetrievalRecentTurns === "number" ? cfg.entityRetrievalRecentTurns : 6,
     recallBudgetChars: recallPipelineConfig.recallBudgetChars,
     recallOuterTimeoutMs:
-      typeof cfg.recallOuterTimeoutMs === "number" ? Math.max(1_000, Math.floor(cfg.recallOuterTimeoutMs)) : 75_000,
+      typeof cfg.recallOuterTimeoutMs === "number" ? Math.max(0, Math.floor(cfg.recallOuterTimeoutMs)) : 75_000,
     recallCoreDeadlineMs:
-      typeof cfg.recallCoreDeadlineMs === "number" ? Math.max(500, Math.floor(cfg.recallCoreDeadlineMs)) : 75_000,
+      typeof cfg.recallCoreDeadlineMs === "number" ? Math.max(0, Math.floor(cfg.recallCoreDeadlineMs)) : 75_000,
     recallEnrichmentDeadlineMs:
       typeof cfg.recallEnrichmentDeadlineMs === "number"
-        ? Math.max(250, Math.floor(cfg.recallEnrichmentDeadlineMs))
+        ? Math.max(0, Math.floor(cfg.recallEnrichmentDeadlineMs))
         : 25_000,
     recallPipeline: recallPipelineConfig.pipeline,
     qmdRecallCacheTtlMs:
