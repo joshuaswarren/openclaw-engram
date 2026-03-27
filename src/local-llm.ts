@@ -83,7 +83,6 @@ interface LocalLlmQueuedRequest {
   options: LocalLlmChatCompletionOptions;
   priority: LocalLlmRequestPriority;
   enqueuedAtMs: number;
-  sequence: number;
   resolve: (value: LocalLlmChatCompletionResult | null) => void;
 }
 
@@ -104,10 +103,12 @@ export class LocalLlmClient {
   private cooldownUntilMs: number = 0;
   private modelRegistry?: ModelRegistry;
   private _disableThinking: boolean = false;
-  private readonly requestQueue: LocalLlmQueuedRequest[] = [];
-  private queueProcessing: boolean = false;
+  private readonly requestQueues: Record<LocalLlmRequestPriority, LocalLlmQueuedRequest[]> = {
+    "recall-critical": [],
+    background: [],
+  };
+  private readonly queueProcessing = new Set<LocalLlmRequestPriority>();
   private queueDrainScheduled: boolean = false;
-  private queuedRequestSequence: number = 0;
   private static readonly HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
   private static readonly LMS_CACHE_INTERVAL_MS = 30000; // 30 seconds
 
@@ -547,58 +548,62 @@ export class LocalLlmClient {
 
     queueMicrotask(() => {
       this.queueDrainScheduled = false;
-      void this.drainQueue();
+      this.startAvailableQueuedRequests();
     });
   }
 
-  private selectNextQueuedRequest(): LocalLlmQueuedRequest | null {
-    if (this.requestQueue.length === 0) return null;
+  private hasQueuedRequests(): boolean {
+    return (
+      this.requestQueues["recall-critical"].length > 0 ||
+      this.requestQueues.background.length > 0
+    );
+  }
 
-    let nextIndex = 0;
-    for (let index = 1; index < this.requestQueue.length; index += 1) {
-      const left = this.requestQueue[index];
-      const right = this.requestQueue[nextIndex];
-      const leftRank = left.priority === "recall-critical" ? 0 : 1;
-      const rightRank = right.priority === "recall-critical" ? 0 : 1;
-      if (leftRank < rightRank || (leftRank === rightRank && left.sequence < right.sequence)) {
-        nextIndex = index;
-      }
-    }
-
-    const [next] = this.requestQueue.splice(nextIndex, 1);
+  private dequeueQueuedRequest(priority: LocalLlmRequestPriority): LocalLlmQueuedRequest | null {
+    const next = this.requestQueues[priority].shift();
     return next ?? null;
   }
 
-  private async drainQueue(): Promise<void> {
-    if (this.queueProcessing) return;
-    this.queueProcessing = true;
-
-    try {
-      while (true) {
-        const next = this.selectNextQueuedRequest();
-        if (!next) break;
-
-        const remainingCooldownMs = this.remainingCooldownMs();
-        if (remainingCooldownMs > 0) {
-          log.debug(`local LLM: cooldown active (${remainingCooldownMs}ms remaining), skipping queued request`);
-          next.resolve(null);
-          continue;
-        }
-
-        let result: LocalLlmChatCompletionResult | null = null;
-        try {
-          result = await this.runChatCompletionRequest(next.messages, next.options, {
-            priority: next.priority,
-            enqueuedAtMs: next.enqueuedAtMs,
-          });
-        } catch (err) {
-          log.warn(`local LLM queue drain failed open: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        next.resolve(result);
+  private startAvailableQueuedRequests(): void {
+    if (!this.queueProcessing.has("recall-critical")) {
+      const nextCritical = this.dequeueQueuedRequest("recall-critical");
+      if (nextCritical) {
+        this.queueProcessing.add("recall-critical");
+        void this.runQueuedRequest(nextCritical);
       }
+    }
+
+    if (!this.queueProcessing.has("background")) {
+      const nextBackground = this.dequeueQueuedRequest("background");
+      if (nextBackground) {
+        this.queueProcessing.add("background");
+        void this.runQueuedRequest(nextBackground);
+      }
+    }
+  }
+
+  private async runQueuedRequest(next: LocalLlmQueuedRequest): Promise<void> {
+    try {
+      const remainingCooldownMs = this.remainingCooldownMs();
+      if (remainingCooldownMs > 0) {
+        log.debug(`local LLM: cooldown active (${remainingCooldownMs}ms remaining), skipping queued request`);
+        next.resolve(null);
+        return;
+      }
+
+      let result: LocalLlmChatCompletionResult | null = null;
+      try {
+        result = await this.runChatCompletionRequest(next.messages, next.options, {
+          priority: next.priority,
+          enqueuedAtMs: next.enqueuedAtMs,
+        });
+      } catch (err) {
+        log.warn(`local LLM queue drain failed open: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      next.resolve(result);
     } finally {
-      this.queueProcessing = false;
-      if (this.requestQueue.length > 0) {
+      this.queueProcessing.delete(next.priority);
+      if (this.hasQueuedRequests()) {
         this.scheduleQueueDrain();
       }
     }
@@ -1015,12 +1020,11 @@ export class LocalLlmClient {
     if (options.priority) {
       const priority = options.priority;
       return await new Promise<LocalLlmChatCompletionResult | null>((resolve) => {
-        this.requestQueue.push({
+        this.requestQueues[priority].push({
           messages,
           options,
           priority,
           enqueuedAtMs: Date.now(),
-          sequence: this.queuedRequestSequence += 1,
           resolve,
         });
         this.scheduleQueueDrain();

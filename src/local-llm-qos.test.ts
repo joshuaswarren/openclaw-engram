@@ -99,7 +99,7 @@ test("LocalLlmClient keeps default chatCompletion behavior for untagged requests
   assert.deepEqual(executionOrder, ["untagged-op"]);
 });
 
-test("LocalLlmClient logs queue wait time by priority", async () => {
+test("LocalLlmClient allows recall-critical work to run while background work is still in flight", async () => {
   const logs: string[] = [];
   initLogger(
     {
@@ -124,7 +124,7 @@ test("LocalLlmClient logs queue wait time by priority", async () => {
   (client as any).lastHealthCheck = Date.now();
 
   const fetchOrder: string[] = [];
-  const pendingResolvers: Array<(response: Response) => void> = [];
+  const pendingResolvers = new Map<string, (response: Response) => void>();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_url, init) => {
     const body = JSON.parse(String((init as { body?: unknown } | undefined)?.body ?? "{}")) as {
@@ -133,7 +133,7 @@ test("LocalLlmClient logs queue wait time by priority", async () => {
     const label = body.messages?.[0]?.content ?? "unknown";
     fetchOrder.push(label);
     return await new Promise<Response>((resolve) => {
-      pendingResolvers.push((response) => resolve(response));
+      pendingResolvers.set(label, resolve);
     });
   }) as typeof fetch;
 
@@ -142,39 +142,43 @@ test("LocalLlmClient logs queue wait time by priority", async () => {
       [{ role: "user", content: "background" }],
       { operation: "background-op", priority: "background" },
     );
+
+    await tick();
+    assert.deepEqual(fetchOrder, ["background"]);
+
     const criticalPromise = client.chatCompletion(
       [{ role: "user", content: "critical" }],
       { operation: "critical-op", priority: "recall-critical" },
     );
 
     await tick();
-    assert.deepEqual(fetchOrder, ["critical"]);
+    assert.deepEqual(fetchOrder, ["background", "critical"]);
+    assert.match(
+      logs.join("\n"),
+      /local LLM queue start: priority=background waitMs=\d+ op=background-op/,
+    );
     assert.match(
       logs.join("\n"),
       /local LLM queue start: priority=recall-critical waitMs=\d+ op=critical-op/,
     );
 
-    const firstResolve = pendingResolvers.shift();
-    assert.ok(firstResolve);
-    firstResolve!(okResponse("critical"));
+    const resolveCritical = pendingResolvers.get("critical");
+    assert.ok(resolveCritical);
+    resolveCritical!(okResponse("critical"));
 
-    await tick();
-    assert.deepEqual(fetchOrder, ["critical", "background"]);
+    const criticalResult = await criticalPromise;
+    assert.equal(criticalResult?.content, "critical");
     assert.match(
       logs.join("\n"),
-      /local LLM queue start: priority=background waitMs=\d+ op=background-op/,
+      /local LLM queue finish: priority=recall-critical waitMs=\d+ runMs=\d+ totalMs=\d+ op=critical-op/,
     );
 
-    const secondResolve = pendingResolvers.shift();
-    assert.ok(secondResolve);
-    secondResolve!(okResponse("background"));
+    const resolveBackground = pendingResolvers.get("background");
+    assert.ok(resolveBackground);
+    resolveBackground!(okResponse("background"));
 
-    const [backgroundResult, criticalResult] = await Promise.all([
-      backgroundPromise,
-      criticalPromise,
-    ]);
+    const backgroundResult = await backgroundPromise;
     assert.equal(backgroundResult?.content, "background");
-    assert.equal(criticalResult?.content, "critical");
     assert.match(
       logs.join("\n"),
       /local LLM queue finish: priority=background waitMs=\d+ runMs=\d+ totalMs=\d+ op=background-op/,
