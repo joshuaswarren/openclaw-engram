@@ -113,6 +113,38 @@ test("LocalLlmClient abort exhaustion returns null without marking unavailable",
   }
 });
 
+test("LocalLlmClient checkAvailability sends auth headers to health probes", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlmApiKey: "top-secret" }));
+  const originalFetch = globalThis.fetch;
+  const authHeaders: string[] = [];
+  globalThis.fetch = (async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    authHeaders.push(headers.get("authorization") ?? "");
+    return new Response("Ollama", {
+      status: 200,
+      headers: { "content-type": "text/plain" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const available = await client.checkAvailability();
+    assert.equal(available, true);
+    assert.deepEqual(authHeaders, ["Bearer top-secret"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("LocalLlmClient trips plain-text backend failures using configured cooldown", async () => {
   initLogger(
     {
@@ -146,6 +178,40 @@ test("LocalLlmClient trips plain-text backend failures using configured cooldown
     assert.ok(state.untilMs > Date.now());
   } finally {
     (client as any).getGlobalBackendState().delete((client as any).getBackendKey());
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LocalLlmClient warns when authenticated availability probes are unauthorized", async () => {
+  const warns: string[] = [];
+  initLogger(
+    {
+      info() {},
+      warn(msg: string) {
+        warns.push(msg);
+      },
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlmApiKey: "wrong-key" }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("Unauthorized", {
+      status: 401,
+      headers: { "content-type": "text/plain" },
+    })) as typeof fetch;
+
+  try {
+    const available = await client.checkAvailability();
+    assert.equal(available, false);
+    assert.ok(
+      warns.some((msg) => msg.includes("availability probe was unauthorized")),
+      "expected unauthorized health probe warning",
+    );
+  } finally {
     globalThis.fetch = originalFetch;
   }
 });
@@ -321,5 +387,42 @@ test("LocalLlmClient clears peer health cache while a shared backend circuit is 
     assert.equal((peer as any).lastHealthCheck, 0);
   } finally {
     (primary as any).getGlobalBackendState().delete((primary as any).getBackendKey());
+  }
+});
+
+test("LocalLlmClient getLoadedModelInfo sends auth headers to models probe", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlmApiKey: "top-secret" }));
+  const originalFetch = globalThis.fetch;
+  let authHeader = "";
+  globalThis.fetch = (async (_input, init) => {
+    authHeader = new Headers(init?.headers).get("authorization") ?? "";
+    return new Response(
+      JSON.stringify({
+        data: [{ id: "local-test-model", max_context_length: 32768 }],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const modelInfo = await client.getLoadedModelInfo();
+    assert.ok(modelInfo);
+    assert.equal(modelInfo.id, "local-test-model");
+    assert.equal(authHeader, "Bearer top-secret");
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
