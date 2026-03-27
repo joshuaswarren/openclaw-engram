@@ -11,7 +11,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { HourlySummary } from "./types.js";
 
-export const summarySnapshotSchemaVersion = 1;
+const summarySnapshotSchemaVersion = 1;
 
 const SummarySnapshotItemSchema = z.object({
   hour: z.string(),

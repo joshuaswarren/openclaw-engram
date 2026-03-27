@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, open, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { HourlySummarizer } from "./summarizer.js";
 import {
   readSummarySnapshot,
@@ -251,5 +251,77 @@ test("upsertSummarySnapshot waits for an inter-process lock before merging new s
   assert.deepEqual(
     snapshot?.map((summary) => summary.bullets),
     [["new bullet"], ["external bullet"], ["existing bullet"]],
+  );
+});
+
+test("runHourly keeps processing later sessions when snapshot upsert fails after markdown save", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-summary-run-hourly-fail-open-"),
+  );
+  const summarizer = new HourlySummarizer(makeConfig(memoryDir));
+  await summarizer.initialize();
+
+  const failingSession = "session-fail-open-a";
+  const succeedingSession = "session-fail-open-b";
+  const previousHour = new Date(Date.now() - 60 * 60 * 1000);
+  previousHour.setMinutes(0, 0, 0);
+  const dateStr = utcDateString(previousHour);
+
+  await mkdir(summarySnapshotPath(memoryDir, failingSession), {
+    recursive: true,
+  });
+
+  const fakeEntries = [
+    {
+      role: "user",
+      content: "summarize this",
+      timestamp: new Date().toISOString(),
+      sessionKey: failingSession,
+    },
+  ] as any[];
+
+  (summarizer as any).getActiveSessions = async () => [
+    failingSession,
+    succeedingSession,
+  ];
+  (summarizer as any).getTranscriptEntries = async () => fakeEntries;
+  (summarizer as any).generateSummary = async (
+    sessionKey: string,
+    hourStart: Date,
+  ) => ({
+    hour: hourStart.toISOString(),
+    sessionKey,
+    bullets: [`summary for ${sessionKey}`],
+    turnCount: 1,
+    generatedAt: new Date().toISOString(),
+  });
+
+  await summarizer.runHourly();
+
+  const failingSummaryPath = path.join(
+    memoryDir,
+    "summaries",
+    "hourly",
+    failingSession,
+    `${dateStr}.md`,
+  );
+  const succeedingSummaryPath = path.join(
+    memoryDir,
+    "summaries",
+    "hourly",
+    succeedingSession,
+    `${dateStr}.md`,
+  );
+
+  const failingMarkdown = await readFile(failingSummaryPath, "utf-8");
+  const succeedingMarkdown = await readFile(succeedingSummaryPath, "utf-8");
+  assert.match(failingMarkdown, new RegExp(`summary for ${failingSession}`));
+  assert.match(succeedingMarkdown, new RegExp(`summary for ${succeedingSession}`));
+
+  assert.deepEqual(
+    (await readSummarySnapshot(memoryDir, succeedingSession))?.map(
+      (summary) => summary.bullets,
+    ),
+    [[`summary for ${succeedingSession}`]],
   );
 });

@@ -402,7 +402,13 @@ Respond with valid JSON matching this schema:
       }
       log.debug(`saved hourly summary for ${summary.sessionKey} at ${hourStr}:00`);
     }
-    await upsertSummarySnapshot(this.config.memoryDir, summary);
+    try {
+      await upsertSummarySnapshot(this.config.memoryDir, summary);
+    } catch (error) {
+      log.warn(
+        `hourly summarizer: failed to update summary snapshot for ${summary.sessionKey} (fail-open): ${String(error)}`,
+      );
+    }
   }
 
   private formatHourSection(summary: HourlySummary, hourHeader: string): string {
