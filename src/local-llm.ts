@@ -91,6 +91,12 @@ interface LocalLlmChatCompletionResult {
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
+const LOCAL_LLM_GLOBAL_BACKEND_STATE = "__openclawEngramLocalLlmBackendState";
+
+type LocalLlmBackendState = {
+  untilMs: number;
+  reason: string;
+};
 export class LocalLlmClient {
   private config: PluginConfig;
   private isAvailable: boolean | null = null;
@@ -165,6 +171,62 @@ export class LocalLlmClient {
     return this.detectedType;
   }
 
+  private getBackendKey(): string {
+    return this.config.localLlmUrl
+      .replace("localhost", "127.0.0.1")
+      .replace(/\/+$/, "")
+      .replace(/\/v1$/, "");
+  }
+
+  private getGlobalBackendState(): Map<string, LocalLlmBackendState> {
+    const globalAny = globalThis as typeof globalThis & {
+      [LOCAL_LLM_GLOBAL_BACKEND_STATE]?: Map<string, LocalLlmBackendState>;
+    };
+    if (!globalAny[LOCAL_LLM_GLOBAL_BACKEND_STATE]) {
+      globalAny[LOCAL_LLM_GLOBAL_BACKEND_STATE] = new Map();
+    }
+    return globalAny[LOCAL_LLM_GLOBAL_BACKEND_STATE];
+  }
+
+  private getTrippedBackendState(now: number): LocalLlmBackendState | null {
+    const state = this.getGlobalBackendState().get(this.getBackendKey()) ?? null;
+    if (!state) return null;
+    if (state.untilMs <= now) {
+      this.getGlobalBackendState().delete(this.getBackendKey());
+      this.lastHealthCheck = 0;
+      return null;
+    }
+    return state;
+  }
+
+  private markBackendUnavailable(reason: string, durationMs: number): void {
+    const normalizedReason = this.normalizeBackendTripReason(reason);
+    if (durationMs > 0) {
+      const untilMs = Date.now() + durationMs;
+      this.getGlobalBackendState().set(this.getBackendKey(), { untilMs, reason: normalizedReason });
+    } else {
+      this.getGlobalBackendState().delete(this.getBackendKey());
+    }
+    this.isAvailable = false;
+    this.lastHealthCheck = 0;
+    log.warn(
+      `local LLM backend unavailable for ${durationMs}ms: model=${this.config.localLlmModel} reason=${normalizedReason}`,
+    );
+  }
+
+  private extractNonRecoverableBackendReason(reason: string): string | null {
+    const match = reason.match(
+      /Failed to load model|Library not loaded|different Team IDs|code signature|llm_engine_mlx_amphibian/i,
+    );
+    return match?.[0] ?? null;
+  }
+
+  private normalizeBackendTripReason(reason: string): string {
+    const cleaned = reason.replace(/\s+/g, " ").replace(/^[-:–—\s]+/, "").trim();
+    if (!cleaned) return "unknown local backend failure";
+    return cleaned.length > 160 ? `${cleaned.slice(0, 157)}...` : cleaned;
+  }
+
   /**
    * Fetch with timeout for health checks
    */
@@ -206,6 +268,15 @@ export class LocalLlmClient {
   async checkAvailability(): Promise<boolean> {
     // Cache health check results for 1 minute
     const now = Date.now();
+    const trippedState = this.getTrippedBackendState(now);
+    if (trippedState) {
+      this.isAvailable = false;
+      this.lastHealthCheck = now;
+      log.info(
+        `local LLM availability: backend circuit open for ${Math.max(0, trippedState.untilMs - now)}ms (${trippedState.reason})`,
+      );
+      return false;
+    }
     if (this.isAvailable !== null && now - this.lastHealthCheck < LocalLlmClient.HEALTH_CHECK_INTERVAL_MS) {
       return this.isAvailable;
     }
@@ -761,8 +832,9 @@ export class LocalLlmClient {
 
       if (!response.ok) {
         let reason = "";
+        let errorText = "";
         try {
-          const errorText = await response.text();
+          errorText = await response.text();
           // Try to extract a stable error message without logging content.
           try {
             const parsed = JSON.parse(errorText) as { error?: { message?: string } };
@@ -778,6 +850,17 @@ export class LocalLlmClient {
           `local LLM request failed: ${response.status} ${response.statusText}${reason} ` +
           `(op=${operation}, model=${this.config.localLlmModel}, url=${chatUrl}, promptChars=${promptChars}, maxTokens=${requestBody.max_tokens as number})`,
         );
+        const nonRecoverableReason =
+          this.extractNonRecoverableBackendReason(reason) ??
+          this.extractNonRecoverableBackendReason(errorText);
+        if (nonRecoverableReason) {
+          this.markBackendUnavailable(
+            nonRecoverableReason,
+            this.config.localLlm400CooldownMs,
+          );
+          this.consecutive400s = 0;
+          return null;
+        }
         if (response.status === 400) {
           this.consecutive400s += 1;
           if (this.consecutive400s >= this.config.localLlm400TripThreshold) {
@@ -851,6 +934,13 @@ export class LocalLlmClient {
       }
       log.warn(`local LLM request error: op=${operation} error=${errMsg}`);
       this.isAvailable = false; // Mark as unavailable on non-abort errors
+      const nonRecoverableReason = this.extractNonRecoverableBackendReason(errMsg);
+      if (nonRecoverableReason) {
+        this.markBackendUnavailable(
+          nonRecoverableReason,
+          this.config.localLlm400CooldownMs,
+        );
+      }
       return null;
     } finally {
       if (queueMeta) {

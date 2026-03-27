@@ -1,6 +1,7 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
@@ -31,6 +32,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { createOpikExporter } from "./opik-exporter.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
@@ -52,6 +54,40 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
  * Set to null after init completes (success or failure) and cleared on stop().
  */
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
+const ENGRAM_NATIVE_DEPENDENCIES_CHECKED = "__openclawEngramNativeDependenciesChecked";
+
+function ensureNativeDependenciesReady(): void {
+  if ((globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED]) return;
+  (globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED] = true;
+
+  const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const scriptPath = path.join(rootDir, "scripts", "rebuild-native.mjs");
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: rootDir,
+    env: process.env,
+    encoding: "utf-8",
+    timeout: 180_000,
+  });
+
+  const stdout = result.stdout?.trim();
+  const stderr = result.stderr?.trim();
+  if (stdout) {
+    for (const line of stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed) log.info(trimmed);
+    }
+  }
+  if (result.error) {
+    log.warn(`better-sqlite3 native dependency check failed: ${result.error.message}`);
+    if (stderr) log.warn(stderr);
+    return;
+  }
+  if (result.status !== 0) {
+    log.warn(
+      `better-sqlite3 native dependency check exited ${result.status}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+}
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
@@ -167,6 +203,7 @@ const pluginDefinition = {
   register(api: OpenClawPluginApi) {
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
+    ensureNativeDependenciesReady();
 
     // Detect SDK capabilities for dual-path hook registration.
     sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
