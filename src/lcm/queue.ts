@@ -105,10 +105,12 @@ export class LcmWorkQueue {
 
   private startAvailableJobs(): void {
     while (this.inFlight < this.concurrency && this.pending.size > 0) {
-      const next = this.pending.entries().next();
-      if (next.done) break;
+      const next = Array.from(this.pending.entries()).find(
+        ([sessionId]) => !this.inFlightSessions.has(sessionId),
+      );
+      if (!next) break;
 
-      const [sessionId, job] = next.value;
+      const [sessionId, job] = next;
       this.pending.delete(sessionId);
       this.inFlight++;
       this.inFlightSessions.add(sessionId);

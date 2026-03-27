@@ -109,7 +109,7 @@ export class LcmEngine {
           error,
         }) => {
           if (error) {
-            log.debug(
+            log.error(
               `LCM observe queue failure: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms, run=${runMs}ms, total=${totalMs}ms, error=${error}`,
             );
             return;
@@ -153,7 +153,7 @@ export class LcmEngine {
         );
       })
       .catch((err) => {
-        log.debug(`LCM observe enqueue initialization error: ${err}`);
+        log.error(`LCM observe enqueue initialization error: ${err}`);
       })
       .finally(() => {
         this.releasePendingObserveInit(sessionId);

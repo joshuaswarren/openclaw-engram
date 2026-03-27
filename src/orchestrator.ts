@@ -5560,11 +5560,9 @@ export class Orchestrator {
             preAugmentTopScore,
             maxSpecializedScore,
           };
-          if (augmentedResults.length > 0 || result.globalResults.length > 0) {
-            setCachedQmdRecall(qmdCacheKey, result, {
-              maxEntries: this.config.qmdRecallCacheMaxEntries ?? 128,
-            });
-          }
+          setCachedQmdRecall(qmdCacheKey, result, {
+            maxEntries: this.config.qmdRecallCacheMaxEntries ?? 128,
+          });
           recordRecallSectionMetric({
             section: "qmd",
             priority: "enrichment",

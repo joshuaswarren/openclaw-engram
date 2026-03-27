@@ -106,6 +106,46 @@ test("LcmWorkQueue preserves first enqueue time when pending jobs coalesce", asy
   }
 });
 
+test("LcmWorkQueue does not start a second job for a session already in flight", async () => {
+  const blocker = deferred();
+  const started: string[] = [];
+  let concurrentSameSession = false;
+  const activeSessions = new Set<string>();
+
+  const queue = new LcmWorkQueue({
+    concurrency: 2,
+    worker: async (sessionId) => {
+      if (activeSessions.has(sessionId)) {
+        concurrentSameSession = true;
+      }
+      activeSessions.add(sessionId);
+      started.push(sessionId);
+      if (sessionId === "session-a") {
+        await blocker.promise;
+      }
+      activeSessions.delete(sessionId);
+    },
+  });
+
+  queue.enqueue("session-a", [{ role: "user", content: "first" }]);
+  await Promise.resolve();
+  queue.enqueue("session-a", [{ role: "assistant", content: "second" }]);
+  queue.enqueue("session-b", [{ role: "user", content: "other" }]);
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(concurrentSameSession, false);
+  assert.deepEqual(started, ["session-a", "session-b"]);
+  assert.equal(queue.depth, 1);
+
+  blocker.resolve();
+  await queue.whenIdle();
+
+  assert.equal(concurrentSameSession, false);
+  assert.deepEqual(started, ["session-a", "session-b", "session-a"]);
+});
+
 test("LcmWorkQueue waits for a specific session without waiting for unrelated idle work", async () => {
   const blocker = deferred();
   let sessionIdleResolved = false;
