@@ -8,6 +8,7 @@ import { ModelRegistry } from "./model-registry.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import type { HourlySummary, TranscriptEntry, PluginConfig, GatewayConfig } from "./types.js";
 import type { TranscriptManager } from "./transcript.js";
+import { readSummarySnapshot, upsertSummarySnapshot, writeSummarySnapshot } from "./summary-snapshot.js";
 
 // Schema for LLM summary output
 const HourlySummarySchema = z.object({
@@ -227,7 +228,12 @@ Respond with valid JSON matching this schema:
             { role: "system", content: "Output valid JSON only." },
             { role: "user", content: sys + "\n\n" + truncated },
           ],
-          { temperature: 0.2, maxTokens: contextSizes.maxOutputTokens, operation: "hourly_summary_extended" },
+          {
+            temperature: 0.2,
+            maxTokens: contextSizes.maxOutputTokens,
+            operation: "hourly_summary_extended",
+            priority: "background",
+          },
         );
         if (response?.content) {
           const content = response.content.trim();
@@ -309,7 +315,12 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are a conversation summarization system. Output valid JSON only." },
         { role: "user", content: fullPrompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "hourly_summary" },
+      {
+        temperature: 0.3,
+        maxTokens: contextSizes.maxOutputTokens,
+        operation: "hourly_summary",
+        priority: "background",
+      },
     );
 
     if (!response?.content) {
@@ -391,6 +402,13 @@ Respond with valid JSON matching this schema:
       }
       log.debug(`saved hourly summary for ${summary.sessionKey} at ${hourStr}:00`);
     }
+    try {
+      await upsertSummarySnapshot(this.config.memoryDir, summary);
+    } catch (error) {
+      log.warn(
+        `hourly summarizer: failed to update summary snapshot for ${summary.sessionKey} (fail-open): ${String(error)}`,
+      );
+    }
   }
 
   private formatHourSection(summary: HourlySummary, hourHeader: string): string {
@@ -438,14 +456,21 @@ Respond with valid JSON matching this schema:
 
   // Read recent summaries for recall injection
   async readRecent(sessionKey: string, hours: number): Promise<HourlySummary[]> {
-    const sessionDir = path.join(this.summariesDir, sessionKey);
-
     try {
+      const cutoffTime = Date.now() - hours * 60 * 60 * 1000;
+
+      const snapshot = await readSummarySnapshot(this.config.memoryDir, sessionKey);
+      if (snapshot) {
+        return snapshot
+          .filter((s) => new Date(s.hour).getTime() >= cutoffTime)
+          .sort((a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime());
+      }
+
+      const sessionDir = path.join(this.summariesDir, sessionKey);
       const files = await readdir(sessionDir);
       const mdFiles = files.filter((f) => f.endsWith(".md"));
 
       const summaries: HourlySummary[] = [];
-      const cutoffTime = Date.now() - hours * 60 * 60 * 1000;
 
       for (const file of mdFiles) {
         const filePath = path.join(sessionDir, file);
@@ -456,10 +481,30 @@ Respond with valid JSON matching this schema:
         summaries.push(...parsed);
       }
 
-      // Filter to recent hours and sort by hour descending
-      return summaries
-        .filter((s) => new Date(s.hour).getTime() >= cutoffTime)
-        .sort((a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime());
+      const sortedSummaries = summaries.sort(
+        (a, b) => new Date(b.hour).getTime() - new Date(a.hour).getTime(),
+      );
+
+      // Filter to recent hours while materializing the full parsed history.
+      const recent = sortedSummaries.filter(
+        (s) => new Date(s.hour).getTime() >= cutoffTime,
+      );
+
+      if (sortedSummaries.length > 0) {
+        try {
+          await writeSummarySnapshot(
+            this.config.memoryDir,
+            sessionKey,
+            sortedSummaries,
+          );
+        } catch (error) {
+          log.warn(
+            `hourly summarizer: failed to materialize summary snapshot for ${sessionKey} (fail-open): ${String(error)}`,
+          );
+        }
+      }
+
+      return recent;
     } catch {
       // Directory doesn't exist or error reading
       return [];

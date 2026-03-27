@@ -1,9 +1,10 @@
 import type Database from "better-sqlite3";
 import { openLcmDatabase, ensureLcmStateDir } from "./schema.js";
-import { LcmArchive, estimateTokens } from "./archive.js";
+import { LcmArchive } from "./archive.js";
 import { LcmDag } from "./dag.js";
-import { LcmSummarizer, type LcmSummarizerConfig, type SummarizeFn } from "./summarizer.js";
+import { LcmSummarizer, type SummarizeFn } from "./summarizer.js";
 import { assembleCompressedHistory, type LcmRecallConfig } from "./recall.js";
+import { LcmWorkQueue, type LcmObserveMessage } from "./queue.js";
 import type { PluginConfig } from "../types.js";
 import { log } from "../logger.js";
 
@@ -36,9 +37,14 @@ export class LcmEngine {
   private archive: LcmArchive | null = null;
   private dag: LcmDag | null = null;
   private summarizer: LcmSummarizer | null = null;
+  private observeQueue: LcmWorkQueue | null = null;
+  private closed = false;
   private readonly config: LcmEngineConfig;
   private readonly memoryDir: string;
   private initPromise: Promise<void> | null = null;
+  private readonly pendingObserveInitCounts = new Map<string, number>();
+  private readonly pendingObserveInitWaiters = new Map<string, Array<() => void>>();
+  private readonly pendingObserveInitIdleWaiters: Array<() => void> = [];
 
   constructor(
     pluginConfig: PluginConfig,
@@ -54,6 +60,7 @@ export class LcmEngine {
 
   /** Lazy init — open database on first use. */
   async ensureInitialized(): Promise<void> {
+    if (this.closed) return;
     if (this.db) return;
     if (this.initPromise) {
       await this.initPromise;
@@ -69,54 +76,211 @@ export class LcmEngine {
 
   private async doInit(): Promise<void> {
     await ensureLcmStateDir(this.memoryDir);
-    this.db = openLcmDatabase(this.memoryDir);
-    this.archive = new LcmArchive(this.db);
-    this.dag = new LcmDag(this.db);
-    this.summarizer = new LcmSummarizer(this.archive, this.dag, this.summarizeFn, {
-      leafBatchSize: this.config.leafBatchSize,
-      rollupFanIn: this.config.rollupFanIn,
-      maxDepth: this.config.maxDepth,
-      deterministicMaxTokens: this.config.deterministicMaxTokens,
+    const db = openLcmDatabase(this.memoryDir);
+    const archive = new LcmArchive(db);
+    const dag = new LcmDag(db);
+    const summarizer = new LcmSummarizer(
+      archive,
+      dag,
+      this.summarizeFn,
+      {
+        leafBatchSize: this.config.leafBatchSize,
+        rollupFanIn: this.config.rollupFanIn,
+        maxDepth: this.config.maxDepth,
+        deterministicMaxTokens: this.config.deterministicMaxTokens,
+      },
+    );
+    const observeQueue = new LcmWorkQueue({
+      concurrency: 1,
+      worker: async (sessionId, messages) => {
+        await this.processObserveMessages(sessionId, messages);
+      },
+      hooks: {
+        onJobStart: ({ sessionId, depth, inFlight, waitMs }) => {
+          log.debug(
+            `LCM observe queue start: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms`,
+          );
+        },
+        onJobFinish: ({
+          sessionId,
+          depth,
+          inFlight,
+          waitMs,
+          runMs,
+          totalMs,
+          error,
+        }) => {
+          if (error) {
+            log.error(
+              `LCM observe queue failure: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms, run=${runMs}ms, total=${totalMs}ms, error=${error}`,
+            );
+            return;
+          }
+
+          log.debug(
+            `LCM observe queue finish: session=${sessionId}, depth=${depth}, inFlight=${inFlight}, wait=${waitMs}ms, run=${runMs}ms, total=${totalMs}ms`,
+          );
+        },
+      },
     });
+
+    if (this.closed) {
+      db.close();
+      return;
+    }
+
+    this.db = db;
+    this.archive = archive;
+    this.dag = dag;
+    this.summarizer = summarizer;
+    this.observeQueue = observeQueue;
     log.info("LCM engine initialized");
   }
 
   /**
-   * Observe messages from agent_end hook.
-   * Indexes new messages and triggers incremental summarization.
+   * Enqueue messages from agent_end hook.
+   * The queue worker performs the archive append and incremental summarization.
    */
   async observeMessages(
     sessionId: string,
     messages: Array<{ role: string; content: string }>,
   ): Promise<void> {
-    if (!this.config.enabled) return;
-    await this.ensureInitialized();
+    this.enqueueObserveMessages(sessionId, messages);
+  }
 
-    const currentMax = this.archive!.getMaxTurnIndex(sessionId);
+  /** Enqueue an observe job without waiting for worker completion. */
+  enqueueObserveMessages(
+    sessionId: string,
+    messages: Array<{ role: string; content: string }>,
+  ): void {
+    if (!this.config.enabled || this.closed) return;
+    if (messages.length === 0) return;
+
+    this.reservePendingObserveInit(sessionId);
+
+    void this.ensureInitialized()
+      .then(() => {
+        if (this.closed || !this.observeQueue) return;
+        this.observeQueue.enqueue(sessionId, messages);
+        log.debug(
+          `LCM observe enqueued: session=${sessionId}, depth=${this.observeQueue.depth}, inFlight=${this.observeQueue.inFlightCount}`,
+        );
+      })
+      .catch((err) => {
+        if (this.closed) return;
+        log.error(`LCM observe enqueue initialization error: ${err}`);
+      })
+      .finally(() => {
+        this.releasePendingObserveInit(sessionId);
+      });
+  }
+
+  private async processObserveMessages(
+    sessionId: string,
+    messages: LcmObserveMessage[],
+  ): Promise<void> {
+    if (this.closed) return;
+    await this.ensureInitialized();
+    if (this.closed || !this.archive || !this.summarizer) return;
+
+    if (messages.length === 0) return;
+
+    const currentMax = this.archive.getMaxTurnIndex(sessionId);
     const newMessages = messages.map((m, i) => ({
       turnIndex: currentMax + 1 + i,
       role: m.role,
       content: m.content,
     }));
 
-    if (newMessages.length === 0) return;
+    this.archive.appendMessages(sessionId, newMessages);
 
-    this.archive!.appendMessages(sessionId, newMessages);
-
-    // Trigger incremental summarization (best effort)
+    // Trigger incremental summarization inside the worker, after append.
     try {
-      await this.summarizer!.summarizeIncremental(sessionId);
+      await this.summarizer.summarizeIncremental(sessionId);
     } catch (err) {
       log.debug(`LCM incremental summarization error: ${err}`);
     }
   }
 
+  get observeQueueDepth(): number {
+    return this.observeQueue?.depth ?? 0;
+  }
+
+  get observeQueueInFlightCount(): number {
+    return this.observeQueue?.inFlightCount ?? 0;
+  }
+
+  async waitForObserveQueueIdle(): Promise<void> {
+    if (!this.config.enabled || this.closed) return;
+    await this.ensureInitialized();
+    if (this.closed) return;
+    await this.waitForPendingObserveInitIdle();
+    await this.observeQueue?.whenIdle();
+  }
+
+  async waitForSessionObserveIdle(sessionId: string): Promise<void> {
+    if (!this.config.enabled || this.closed) return;
+    await this.ensureInitialized();
+    if (this.closed) return;
+    await this.waitForPendingObserveInitIdle(sessionId);
+    await this.observeQueue?.whenSessionIdle(sessionId);
+  }
+
+  private reservePendingObserveInit(sessionId: string): void {
+    const count = this.pendingObserveInitCounts.get(sessionId) ?? 0;
+    this.pendingObserveInitCounts.set(sessionId, count + 1);
+  }
+
+  private releasePendingObserveInit(sessionId: string): void {
+    const count = this.pendingObserveInitCounts.get(sessionId);
+    if (!count) return;
+
+    if (count === 1) {
+      this.pendingObserveInitCounts.delete(sessionId);
+      const waiters = this.pendingObserveInitWaiters.get(sessionId) ?? [];
+      this.pendingObserveInitWaiters.delete(sessionId);
+      for (const resolve of waiters) resolve();
+      if (this.pendingObserveInitCounts.size === 0) {
+        const idleWaiters = this.pendingObserveInitIdleWaiters.splice(
+          0,
+          this.pendingObserveInitIdleWaiters.length,
+        );
+        for (const resolve of idleWaiters) resolve();
+      }
+      return;
+    }
+
+    this.pendingObserveInitCounts.set(sessionId, count - 1);
+  }
+
+  private async waitForPendingObserveInitIdle(sessionId?: string): Promise<void> {
+    if (sessionId) {
+      if (!this.pendingObserveInitCounts.has(sessionId)) return;
+      await new Promise<void>((resolve) => {
+        const waiters = this.pendingObserveInitWaiters.get(sessionId) ?? [];
+        waiters.push(resolve);
+        this.pendingObserveInitWaiters.set(sessionId, waiters);
+      });
+      return;
+    }
+
+    if (this.pendingObserveInitCounts.size === 0) return;
+    await new Promise<void>((resolve) => {
+      this.pendingObserveInitIdleWaiters.push(resolve);
+    });
+  }
+
   /** Build the compressed history recall section for a session. */
-  async assembleRecall(sessionId: string, budgetChars: number): Promise<string> {
+  async assembleRecall(
+    sessionId: string,
+    budgetChars: number,
+  ): Promise<string> {
     if (!this.config.enabled) return "";
     await this.ensureInitialized();
 
-    const effectiveBudget = Math.ceil(budgetChars * this.config.recallBudgetShare);
+    const effectiveBudget = Math.ceil(
+      budgetChars * this.config.recallBudgetShare,
+    );
     if (effectiveBudget <= 0) return "";
 
     return assembleCompressedHistory(this.dag!, this.archive!, sessionId, {
@@ -173,7 +337,14 @@ export class LcmEngine {
     query: string,
     limit: number,
     sessionId?: string,
-  ): Promise<Array<{ turn_index: number; role: string; snippet: string; session_id: string }>> {
+  ): Promise<
+    Array<{
+      turn_index: number;
+      role: string;
+      snippet: string;
+      session_id: string;
+    }>
+  > {
     if (!this.config.enabled) return [];
     await this.ensureInitialized();
     return this.archive!.search(query, limit, sessionId);
@@ -184,7 +355,16 @@ export class LcmEngine {
     query: string,
     limit: number,
     sessionId?: string,
-  ): Promise<Array<{ id: number; turn_index: number; role: string; content: string; session_id: string; score: number }>> {
+  ): Promise<
+    Array<{
+      id: number;
+      turn_index: number;
+      role: string;
+      content: string;
+      session_id: string;
+      score: number;
+    }>
+  > {
     if (!this.config.enabled) return [];
     await this.ensureInitialized();
     return this.archive!.searchWithContent(query, limit, sessionId);
@@ -251,12 +431,16 @@ export class LcmEngine {
     }
 
     // Keep first and last messages, truncate from middle
-    const result: Array<{ turn_index: number; role: string; content: string }> = [];
+    const result: Array<{ turn_index: number; role: string; content: string }> =
+      [];
     let budget = maxChars;
 
     // Reserve space for the last message
     const lastMsg = messages[messages.length - 1];
-    const lastMsgChars = Math.min(lastMsg.content.length, Math.floor(maxChars * 0.3));
+    const lastMsgChars = Math.min(
+      lastMsg.content.length,
+      Math.floor(maxChars * 0.3),
+    );
     budget -= lastMsgChars;
 
     // Add messages from the beginning
@@ -264,7 +448,11 @@ export class LcmEngine {
       if (budget <= 0) break;
       const m = messages[i];
       const truncated = m.content.slice(0, budget);
-      result.push({ turn_index: m.turn_index, role: m.role, content: truncated });
+      result.push({
+        turn_index: m.turn_index,
+        role: m.role,
+        content: truncated,
+      });
       budget -= truncated.length;
     }
 
@@ -284,7 +472,8 @@ export class LcmEngine {
     totalSummaryNodes: number;
     maxDepth: number;
   }> {
-    if (!this.config.enabled) return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: -1 };
+    if (!this.config.enabled)
+      return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: -1 };
     await this.ensureInitialized();
 
     if (sessionId) {
@@ -307,20 +496,26 @@ export class LcmEngine {
     if (!this.config.enabled) return { messagesPruned: 0, nodesPruned: 0 };
     await this.ensureInitialized();
 
-    const messagesPruned = this.archive!.pruneOldMessages(this.config.archiveRetentionDays);
-    const nodesPruned = this.dag!.pruneOldNodes(this.config.archiveRetentionDays);
+    const messagesPruned = this.archive!.pruneOldMessages(
+      this.config.archiveRetentionDays,
+    );
+    const nodesPruned = this.dag!.pruneOldNodes(
+      this.config.archiveRetentionDays,
+    );
     return { messagesPruned, nodesPruned };
   }
 
   /** Close the database connection. */
   close(): void {
+    this.closed = true;
     if (this.db) {
       this.db.close();
-      this.db = null;
-      this.archive = null;
-      this.dag = null;
-      this.summarizer = null;
-      this.initPromise = null;
     }
+    this.db = null;
+    this.archive = null;
+    this.dag = null;
+    this.summarizer = null;
+    this.observeQueue = null;
+    this.initPromise = null;
   }
 }

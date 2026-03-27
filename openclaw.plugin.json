@@ -2583,6 +2583,21 @@
         "type": "number",
         "description": "Hard character cap for total recall injection. Defaults to maxMemoryTokens * 4."
       },
+      "recallOuterTimeoutMs": {
+        "type": "number",
+        "default": 75000,
+        "description": "Outer timeout in ms for the full recall pipeline."
+      },
+      "recallCoreDeadlineMs": {
+        "type": "number",
+        "default": 75000,
+        "description": "Default deadline in ms recorded for core recall sections."
+      },
+      "recallEnrichmentDeadlineMs": {
+        "type": "number",
+        "default": 25000,
+        "description": "Default deadline in ms recorded for enrichment recall sections."
+      },
       "recallPipeline": {
         "type": "array",
         "description": "Ordered recall sections with per-section budgets and feature knobs.",
@@ -2640,6 +2655,21 @@
             "id"
           ]
         }
+      },
+      "qmdRecallCacheTtlMs": {
+        "type": "number",
+        "default": 60000,
+        "description": "Fresh TTL in ms for rendered QMD recall enrichment cache entries."
+      },
+      "qmdRecallCacheStaleTtlMs": {
+        "type": "number",
+        "default": 600000,
+        "description": "Maximum stale TTL in ms for rendered QMD recall cache fallbacks."
+      },
+      "qmdRecallCacheMaxEntries": {
+        "type": "number",
+        "default": 128,
+        "description": "Maximum in-memory rendered QMD recall cache entries before oldest eviction."
       },
       "lcmEnabled": {
         "type": "boolean",

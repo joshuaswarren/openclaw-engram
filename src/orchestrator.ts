@@ -3,17 +3,35 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { formatDaySummaryMemories } from "./day-summary.js";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { scoreImportance } from "./importance.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
-import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "./search/port.js";
-import { createSearchBackend, createConversationIndexRuntime } from "./search/factory.js";
+import type {
+  SearchBackend,
+  SearchExecutionOptions,
+  SearchQueryOptions,
+} from "./search/port.js";
+import {
+  createSearchBackend,
+  createConversationIndexRuntime,
+} from "./search/factory.js";
 import { NoopSearchBackend } from "./search/noop-backend.js";
-import { StorageManager, ContentHashIndex, normalizeEntityName } from "./storage.js";
+import {
+  StorageManager,
+  ContentHashIndex,
+  normalizeEntityName,
+} from "./storage.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
@@ -41,13 +59,21 @@ import {
   type TierMigrationCycleSummary,
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
-import { recordEvalShadowRecall, type EvalShadowRecallRecord } from "./evals.js";
+import {
+  recordEvalShadowRecall,
+  type EvalShadowRecallRecord,
+} from "./evals.js";
 import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { parseQmdExplain } from "./qmd.js";
+import {
+  buildQmdRecallCacheKey,
+  getCachedQmdRecall,
+  setCachedQmdRecall,
+} from "./qmd-recall-cache.js";
 import {
   buildEntityRecallSection,
   entityRecentTranscriptLookbackHours,
@@ -68,10 +94,15 @@ import {
   refineCompressionGuidelineCandidateSemantically,
   renderCompressionGuidelinesMarkdown,
 } from "./compression-optimizer.js";
+import { createRecallSectionMetricRecorder } from "./recall-qos.js";
 import { BoxBuilder, type BoxFrontmatter } from "./boxes.js";
 import { classifyMemoryKind } from "./himem.js";
 import { TmtBuilder } from "./tmt.js";
-import { decideLifecycleTransition, resolveLifecycleState, type LifecycleSignals } from "./lifecycle.js";
+import {
+  decideLifecycleTransition,
+  resolveLifecycleState,
+  type LifecycleSignals,
+} from "./lifecycle.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -85,21 +116,46 @@ import {
   resolvePromptTagPrefilterAsync,
 } from "./temporal-index.js";
 import { GraphIndex } from "./graph.js";
-import { searchCausalTrajectories, type CausalTrajectorySearchResult } from "./causal-trajectory.js";
-import { searchObjectiveStateSnapshots, type ObjectiveStateSearchResult } from "./objective-state.js";
-import { searchTrustZoneRecords, type TrustZoneSearchResult } from "./trust-zones.js";
-import { searchHarmonicRetrieval, type HarmonicRetrievalResult } from "./harmonic-retrieval.js";
-import { searchVerifiedEpisodes, type VerifiedEpisodeResult } from "./verified-recall.js";
-import { searchVerifiedSemanticRules, type VerifiedSemanticRuleResult } from "./semantic-rule-verifier.js";
+import {
+  searchCausalTrajectories,
+  type CausalTrajectorySearchResult,
+} from "./causal-trajectory.js";
+import {
+  searchObjectiveStateSnapshots,
+  type ObjectiveStateSearchResult,
+} from "./objective-state.js";
+import {
+  searchTrustZoneRecords,
+  type TrustZoneSearchResult,
+} from "./trust-zones.js";
+import {
+  searchHarmonicRetrieval,
+  type HarmonicRetrievalResult,
+} from "./harmonic-retrieval.js";
+import {
+  searchVerifiedEpisodes,
+  type VerifiedEpisodeResult,
+} from "./verified-recall.js";
+import {
+  searchVerifiedSemanticRules,
+  type VerifiedSemanticRuleResult,
+} from "./semantic-rule-verifier.js";
 import { applyCommitmentLedgerLifecycle } from "./commitment-ledger.js";
-import { searchWorkProductLedgerEntries, type WorkProductLedgerSearchResult } from "./work-product-ledger.js";
+import {
+  searchWorkProductLedgerEntries,
+  type WorkProductLedgerSearchResult,
+} from "./work-product-ledger.js";
 import {
   collectNativeKnowledgeChunks,
   formatNativeKnowledgeSection,
   searchNativeKnowledge,
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
-import { confidenceTier, type MemoryIntent, type MemorySummary } from "./types.js";
+import {
+  confidenceTier,
+  type MemoryIntent,
+  type MemorySummary,
+} from "./types.js";
 import { LcmEngine } from "./lcm/index.js";
 import { shouldSkipImplicitExtraction } from "./explicit-capture.js";
 import {
@@ -134,9 +190,16 @@ import {
 // import { consolidatePreferences, buildQueryAwarePreferenceSection, synthesizePreferencesFromLcm } from "./compounding/preference-consolidator.js";
 import { TierMigrationExecutor } from "./tier-migration.js";
 import { decideTierTransition, type MemoryTier } from "./tier-routing.js";
-import { selectRouteRule, type RouteRule, type RoutingEngineOptions } from "./routing/engine.js";
+import {
+  selectRouteRule,
+  type RouteRule,
+  type RoutingEngineOptions,
+} from "./routing/engine.js";
 import { RoutingRulesStore } from "./routing/store.js";
-import { PolicyRuntimeManager, type RuntimePolicyValues } from "./policy-runtime.js";
+import {
+  PolicyRuntimeManager,
+  type RuntimePolicyValues,
+} from "./policy-runtime.js";
 import {
   applyUtilityPromotionRuntimePolicy,
   applyUtilityRankingRuntimeDelta,
@@ -274,7 +337,10 @@ function abortRecallError(message: string): Error {
   return err;
 }
 
-function throwIfRecallAborted(signal?: AbortSignal, message = "recall aborted"): void {
+function throwIfRecallAborted(
+  signal?: AbortSignal,
+  message = "recall aborted",
+): void {
   if (signal?.aborted) {
     throw abortRecallError(message);
   }
@@ -325,7 +391,10 @@ export function defaultWorkspaceDir(): string {
  */
 export function sanitizeSessionKeyForFilename(sessionKey: string): string {
   const readable = sessionKey.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const hash = createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
+  const hash = createHash("sha256")
+    .update(sessionKey)
+    .digest("hex")
+    .slice(0, 12);
   return `${readable}-${hash}`;
 }
 
@@ -357,9 +426,14 @@ export function buildCompressionGuidelinesMarkdown(
   return buildCompressionGuidelinesMarkdownV2(events, generatedAtIso);
 }
 
-export function formatCompressionGuidelinesForRecall(raw: string, maxLines: number = 5): string | null {
+export function formatCompressionGuidelinesForRecall(
+  raw: string,
+  maxLines: number = 5,
+): string | null {
   if (typeof raw !== "string" || raw.trim().length === 0) return null;
-  const sectionMatch = raw.match(/## Suggested Guidelines\s*\n([\s\S]*?)(?:\n##\s+|\s*$)/i);
+  const sectionMatch = raw.match(
+    /## Suggested Guidelines\s*\n([\s\S]*?)(?:\n##\s+|\s*$)/i,
+  );
   if (!sectionMatch) return null;
 
   const lines = sectionMatch[1]
@@ -382,7 +456,9 @@ export function filterRecallCandidates(
   },
 ): QmdSearchResult[] {
   const scopedByNamespace = options.namespacesEnabled
-    ? candidates.filter((r) => options.recallNamespaces.includes(options.resolveNamespace(r.path)))
+    ? candidates.filter((r) =>
+        options.recallNamespaces.includes(options.resolveNamespace(r.path)),
+      )
     : candidates;
   return scopedByNamespace
     .filter((r) => !isArtifactMemoryPath(r.path))
@@ -394,7 +470,9 @@ function applyQueryAwareCandidateFilter(
   candidatePaths: Set<string> | null,
 ): QmdSearchResult[] {
   if (!candidatePaths || candidatePaths.size === 0) return candidates;
-  const filtered = candidates.filter((candidate) => candidatePaths.has(candidate.path));
+  const filtered = candidates.filter((candidate) =>
+    candidatePaths.has(candidate.path),
+  );
   return filtered.length > 0 ? filtered : candidates;
 }
 
@@ -424,7 +502,8 @@ export function shouldFilterLifecycleRecallCandidate(
     lifecycleFilterStaleEnabled: boolean;
   },
 ): boolean {
-  if (!options.lifecyclePolicyEnabled || !options.lifecycleFilterStaleEnabled) return false;
+  if (!options.lifecyclePolicyEnabled || !options.lifecycleFilterStaleEnabled)
+    return false;
   if (!hasLifecycleMetadata(frontmatter)) return false;
   const lifecycleState = resolveLifecycleState(frontmatter);
   return lifecycleState === "stale" || lifecycleState === "archived";
@@ -502,10 +581,7 @@ export function resolveRecallModeDecision(options: {
     options.plannerEnabled &&
     options.graphExpandedIntentEnabled === true &&
     hasBroadGraphIntent(options.prompt);
-  if (
-    plannedMode !== "graph_mode" &&
-    graphExpandedIntentDetected
-  ) {
+  if (plannedMode !== "graph_mode" && graphExpandedIntentDetected) {
     plannedMode = "graph_mode";
   }
   if (
@@ -541,7 +617,10 @@ export function resolveEffectiveIdentityInjectionMode(options: {
   recallMode: RecallPlanMode;
   prompt: string;
 }): { mode: IdentityInjectionMode; shouldInject: boolean } {
-  if (options.configuredMode === "recovery_only" && !hasIdentityRecoveryIntent(options.prompt)) {
+  if (
+    options.configuredMode === "recovery_only" &&
+    !hasIdentityRecoveryIntent(options.prompt)
+  ) {
     return { mode: "recovery_only", shouldInject: false };
   }
   if (options.recallMode === "minimal" && options.configuredMode === "full") {
@@ -550,7 +629,9 @@ export function resolveEffectiveIdentityInjectionMode(options: {
   return { mode: options.configuredMode, shouldInject: true };
 }
 
-export function computeArtifactCandidateFetchLimit(targetCount: number): number {
+export function computeArtifactCandidateFetchLimit(
+  targetCount: number,
+): number {
   const cappedTarget = Math.max(0, targetCount);
   if (cappedTarget === 0) return 0;
   const headroom = Math.max(8, cappedTarget * 4);
@@ -589,7 +670,10 @@ export function mergeGraphExpandedResults(
   return Array.from(mergedByPath.values());
 }
 
-export function graphPathRelativeToStorage(storageDir: string, candidatePath: string): string | null {
+export function graphPathRelativeToStorage(
+  storageDir: string,
+  candidatePath: string,
+): string | null {
   const absolutePath = path.isAbsolute(candidatePath)
     ? candidatePath
     : path.resolve(storageDir, candidatePath);
@@ -620,7 +704,7 @@ export function blendGraphExpandedRecallScore(options: {
   const rawMax = Math.min(1, Math.max(0, options.blendMax));
   const minBound = Math.min(rawMin, rawMax);
   const maxBound = Math.max(rawMin, rawMax);
-  const blended = (graphNorm * weight) + (seedScore * (1 - weight));
+  const blended = graphNorm * weight + seedScore * (1 - weight);
   return Math.max(minBound, Math.min(maxBound, blended));
 }
 
@@ -638,7 +722,9 @@ export function summarizeGraphShadowComparison(
   const limit = Math.max(0, Math.floor(topN));
   const baselineTop = limit > 0 ? baseline.slice(0, limit) : [];
   const graphTop = limit > 0 ? merged.slice(0, limit) : [];
-  const baselineByPath = new Map(baselineTop.map((item) => [item.path, item.score]));
+  const baselineByPath = new Map(
+    baselineTop.map((item) => [item.path, item.score]),
+  );
   const graphByPath = new Map(graphTop.map((item) => [item.path, item.score]));
 
   let overlapCount = 0;
@@ -660,19 +746,27 @@ export function summarizeGraphShadowComparison(
   };
 }
 
-function parseGraphRecallRankedResults(value: unknown): GraphRecallRankedResult[] {
+function parseGraphRecallRankedResults(
+  value: unknown,
+): GraphRecallRankedResult[] {
   if (!Array.isArray(value)) return [];
   const parsed: GraphRecallRankedResult[] = [];
   for (const entry of value) {
     if (!entry || typeof entry !== "object") continue;
     const candidate = entry as Partial<GraphRecallRankedResult>;
-    if (typeof candidate.path !== "string" || typeof candidate.score !== "number") continue;
+    if (
+      typeof candidate.path !== "string" ||
+      typeof candidate.score !== "number"
+    )
+      continue;
     parsed.push({
       path: candidate.path,
       score: candidate.score,
       docid: typeof candidate.docid === "string" ? candidate.docid : undefined,
       sourceLabels: Array.isArray(candidate.sourceLabels)
-        ? candidate.sourceLabels.filter((item): item is string => typeof item === "string")
+        ? candidate.sourceLabels.filter(
+            (item): item is string => typeof item === "string",
+          )
         : [],
     });
   }
@@ -680,14 +774,18 @@ function parseGraphRecallRankedResults(value: unknown): GraphRecallRankedResult[
 }
 
 function parseMemoryIntentSnapshot(value: unknown): MemoryIntent {
-  const candidate = value && typeof value === "object"
-    ? value as Partial<MemoryIntent>
-    : {};
+  const candidate =
+    value && typeof value === "object" ? (value as Partial<MemoryIntent>) : {};
   return {
     goal: typeof candidate.goal === "string" ? candidate.goal : "unknown",
-    actionType: typeof candidate.actionType === "string" ? candidate.actionType : "unknown",
+    actionType:
+      typeof candidate.actionType === "string"
+        ? candidate.actionType
+        : "unknown",
     entityTypes: Array.isArray(candidate.entityTypes)
-      ? candidate.entityTypes.filter((item): item is string => typeof item === "string")
+      ? candidate.entityTypes.filter(
+          (item): item is string => typeof item === "string",
+        )
       : [],
   };
 }
@@ -712,7 +810,11 @@ function parseQmdRecallResults(value: unknown): QmdSearchResult[] {
   for (const entry of value) {
     if (!entry || typeof entry !== "object") continue;
     const candidate = entry as Partial<QmdSearchResult>;
-    if (typeof candidate.path !== "string" || typeof candidate.score !== "number") continue;
+    if (
+      typeof candidate.path !== "string" ||
+      typeof candidate.score !== "number"
+    )
+      continue;
     parsed.push({
       docid: typeof candidate.docid === "string" ? candidate.docid : "",
       path: candidate.path,
@@ -721,9 +823,9 @@ function parseQmdRecallResults(value: unknown): QmdSearchResult[] {
       explain: parseQmdExplain(candidate.explain),
       transport:
         candidate.transport === "daemon" ||
-          candidate.transport === "subprocess" ||
-          candidate.transport === "hybrid" ||
-          candidate.transport === "scoped_prefilter"
+        candidate.transport === "subprocess" ||
+        candidate.transport === "hybrid" ||
+        candidate.transport === "scoped_prefilter"
           ? candidate.transport
           : undefined,
     });
@@ -769,7 +871,9 @@ export function resolveRecentThreadMemoryPaths(options: {
 }): string[] {
   const maxRecent = Math.max(0, options.maxRecent);
   if (options.threadEpisodeIds.length === 0 || maxRecent === 0) return [];
-  const pathById = options.pathById ?? buildMemoryPathById(options.allMemsForGraph, options.storageDir);
+  const pathById =
+    options.pathById ??
+    buildMemoryPathById(options.allMemsForGraph, options.storageDir);
   if (pathById.size === 0) return [];
 
   return options.threadEpisodeIds
@@ -847,7 +951,9 @@ export class Orchestrator {
   private readonly namespaceSearchRouter: NamespaceSearchRouter;
   qmd: SearchBackend;
   private readonly conversationQmd?: ConversationQmdRuntime;
-  private readonly conversationFaiss?: ReturnType<typeof createConversationIndexRuntime>["faiss"];
+  private readonly conversationFaiss?: ReturnType<
+    typeof createConversationIndexRuntime
+  >["faiss"];
   private readonly conversationIndexBackend?: ConversationIndexBackend;
   readonly sharedContext?: SharedContextManager;
   readonly compounding?: CompoundingEngine;
@@ -897,8 +1003,10 @@ export class Orchestrator {
 
   // Access tracking buffer (Phase 1A)
   // Maps memoryId -> {count, lastAccessed} for batched updates
-  private accessTrackingBuffer: Map<string, { count: number; lastAccessed: string }> =
-    new Map();
+  private accessTrackingBuffer: Map<
+    string,
+    { count: number; lastAccessed: string }
+  > = new Map();
 
   // Background serial queue for extractions (agent_end optimization)
   // Queue stores promises that resolve when extraction should run
@@ -945,27 +1053,37 @@ export class Orchestrator {
   }
 
   resolveSelfNamespace(sessionKey?: string): string {
-    return defaultNamespaceForPrincipal(this.resolvePrincipal(sessionKey), this.config);
+    return defaultNamespaceForPrincipal(
+      this.resolvePrincipal(sessionKey),
+      this.config,
+    );
   }
 
   async getStorageForNamespace(namespace?: string): Promise<StorageManager> {
-    const ns = typeof namespace === "string" && namespace.trim().length > 0
-      ? namespace.trim()
-      : this.config.defaultNamespace;
+    const ns =
+      typeof namespace === "string" && namespace.trim().length > 0
+        ? namespace.trim()
+        : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
   }
 
   private configuredNamespaces(): string[] {
     return Array.from(
-      new Set([
-        this.config.defaultNamespace,
-        this.config.sharedNamespace,
-        ...this.config.namespacePolicies.map((policy) => policy.name),
-      ].map((value) => value.trim()).filter(Boolean)),
+      new Set(
+        [
+          this.config.defaultNamespace,
+          this.config.sharedNamespace,
+          ...this.config.namespacePolicies.map((policy) => policy.name),
+        ]
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
     );
   }
 
-  private buildConfiguredQmdSearchOptions(queryText: string): SearchQueryOptions | undefined {
+  private buildConfiguredQmdSearchOptions(
+    queryText: string,
+  ): SearchQueryOptions | undefined {
     const intentHint = this.config.qmdIntentHintsEnabled
       ? buildQmdIntentHint(inferIntentFromText(queryText))
       : undefined;
@@ -990,22 +1108,40 @@ export class Orchestrator {
   }): Promise<QmdSearchResult[]> {
     const namespaces = this.config.namespacesEnabled
       ? Array.from(
-        new Set(
-          (options.namespaces?.length ? options.namespaces : this.configuredNamespaces())
-            .map((value) => value.trim())
-            .filter(Boolean),
-        ),
-      )
+          new Set(
+            (options.namespaces?.length
+              ? options.namespaces
+              : this.configuredNamespaces()
+            )
+              .map((value) => value.trim())
+              .filter(Boolean),
+          ),
+        )
       : [this.config.defaultNamespace];
 
     if (!this.config.namespacesEnabled) {
       switch (options.mode) {
         case "hybrid":
-          return await this.qmd.hybridSearch(options.query, undefined, options.maxResults, options.execution);
+          return await this.qmd.hybridSearch(
+            options.query,
+            undefined,
+            options.maxResults,
+            options.execution,
+          );
         case "bm25":
-          return await this.qmd.bm25Search(options.query, undefined, options.maxResults, options.execution);
+          return await this.qmd.bm25Search(
+            options.query,
+            undefined,
+            options.maxResults,
+            options.execution,
+          );
         case "vector":
-          return await this.qmd.vectorSearch(options.query, undefined, options.maxResults, options.execution);
+          return await this.qmd.vectorSearch(
+            options.query,
+            undefined,
+            options.maxResults,
+            options.execution,
+          );
         default:
           return await this.qmd.search(
             options.query,
@@ -1035,7 +1171,10 @@ export class Orchestrator {
   constructor(config: PluginConfig) {
     this.config = config;
     this.storageRouter = new NamespaceStorageRouter(config);
-    this.namespaceSearchRouter = new NamespaceSearchRouter(config, this.storageRouter);
+    this.namespaceSearchRouter = new NamespaceSearchRouter(
+      config,
+      this.storageRouter,
+    );
     this.storage = new StorageManager(config.memoryDir);
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
@@ -1045,11 +1184,19 @@ export class Orchestrator {
     this.conversationQmd = conversationIndexRuntime.qmd;
     this.conversationFaiss = conversationIndexRuntime.faiss;
     this.conversationIndexBackend = conversationIndexRuntime.backend;
-    this.sharedContext = config.sharedContextEnabled ? new SharedContextManager(config) : undefined;
-    this.compounding = config.compoundingEnabled ? new CompoundingEngine(config) : undefined;
+    this.sharedContext = config.sharedContextEnabled
+      ? new SharedContextManager(config)
+      : undefined;
+    this.compounding = config.compoundingEnabled
+      ? new CompoundingEngine(config)
+      : undefined;
     this.buffer = new SmartBuffer(config, this.storage);
     this.transcript = new TranscriptManager(config);
-    this.conversationIndexDir = path.join(config.memoryDir, "conversation-index", "chunks");
+    this.conversationIndexDir = path.join(
+      config.memoryDir,
+      "conversation-index",
+      "chunks",
+    );
     this.modelRegistry = new ModelRegistry(config.memoryDir);
     this.relevance = new RelevanceStore(config.memoryDir);
     this.negatives = new NegativeExampleStore(config.memoryDir);
@@ -1062,19 +1209,34 @@ export class Orchestrator {
     });
     this.embeddingFallback = new EmbeddingFallback(config);
     this.policyRuntime = new PolicyRuntimeManager(config.memoryDir, config);
-    this.summarizer = new HourlySummarizer(config, config.gatewayConfig, this.modelRegistry, this.transcript);
+    this.summarizer = new HourlySummarizer(
+      config,
+      config.gatewayConfig,
+      this.modelRegistry,
+      this.transcript,
+    );
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.fastLlm = config.localLlmFastEnabled
       ? (() => {
           const client = new LocalLlmClient(
-            { ...config, localLlmModel: config.localLlmFastModel || config.localLlmModel, localLlmUrl: config.localLlmFastUrl, localLlmTimeoutMs: config.localLlmFastTimeoutMs },
+            {
+              ...config,
+              localLlmModel: config.localLlmFastModel || config.localLlmModel,
+              localLlmUrl: config.localLlmFastUrl,
+              localLlmTimeoutMs: config.localLlmFastTimeoutMs,
+            },
             this.modelRegistry,
           );
           client.disableThinking = true;
           return client;
         })()
       : this.localLlm;
-    this.extraction = new ExtractionEngine(config, this.localLlm, config.gatewayConfig, this.modelRegistry);
+    this.extraction = new ExtractionEngine(
+      config,
+      this.localLlm,
+      config.gatewayConfig,
+      this.modelRegistry,
+    );
     this.threading = new ThreadingManager(
       path.join(config.memoryDir, "threads"),
       config.threadingGapMinutes,
@@ -1090,7 +1252,11 @@ export class Orchestrator {
 
     // Lossless Context Management (LCM) — proactive session archive + DAG summarization
     if (config.lcmEnabled) {
-      const summarizeFn = async (text: string, targetTokens: number, aggressive: boolean) => {
+      const summarizeFn = async (
+        text: string,
+        targetTokens: number,
+        aggressive: boolean,
+      ) => {
         const systemPrompt = aggressive
           ? `Compress the following into bullet points. One bullet per distinct fact or decision. Maximum ${targetTokens} tokens total. No prose.`
           : `Compress the following conversation segment into a dense summary. Preserve: decisions made, code artifacts mentioned, errors encountered, open questions, and any commitments or next-steps. Omit: pleasantries, restatements, and anything the agent would not need to recall later. Output a single paragraph, maximum ${targetTokens} tokens.`;
@@ -1100,7 +1266,11 @@ export class Orchestrator {
               { role: "system", content: systemPrompt },
               { role: "user", content: text.slice(0, 12000) },
             ],
-            { maxTokens: targetTokens * 2, operation: "lcm-summarize" },
+            {
+              maxTokens: targetTokens * 2,
+              operation: "lcm-summarize",
+              priority: "background",
+            },
           );
           return result?.content ?? null;
         } catch {
@@ -1120,15 +1290,18 @@ export class Orchestrator {
   private boxBuilderFor(storage: StorageManager): BoxBuilder {
     const dir = storage.dir;
     if (!this.boxBuilders.has(dir)) {
-      this.boxBuilders.set(dir, new BoxBuilder(dir, {
-        memoryBoxesEnabled: this.config.memoryBoxesEnabled,
-        traceWeaverEnabled: this.config.traceWeaverEnabled,
-        boxTopicShiftThreshold: this.config.boxTopicShiftThreshold,
-        boxTimeGapMs: this.config.boxTimeGapMs,
-        boxMaxMemories: this.config.boxMaxMemories,
-        traceWeaverLookbackDays: this.config.traceWeaverLookbackDays,
-        traceWeaverOverlapThreshold: this.config.traceWeaverOverlapThreshold,
-      }));
+      this.boxBuilders.set(
+        dir,
+        new BoxBuilder(dir, {
+          memoryBoxesEnabled: this.config.memoryBoxesEnabled,
+          traceWeaverEnabled: this.config.traceWeaverEnabled,
+          boxTopicShiftThreshold: this.config.boxTopicShiftThreshold,
+          boxTimeGapMs: this.config.boxTimeGapMs,
+          boxMaxMemories: this.config.boxMaxMemories,
+          traceWeaverLookbackDays: this.config.traceWeaverLookbackDays,
+          traceWeaverOverlapThreshold: this.config.traceWeaverOverlapThreshold,
+        }),
+      );
     }
     return this.boxBuilders.get(dir)!;
   }
@@ -1141,8 +1314,10 @@ export class Orchestrator {
   }
 
   private effectiveCronRecallInstructionHeavyTokenCap(): number {
-    return this.runtimePolicyValues?.cronRecallInstructionHeavyTokenCap ??
-      this.config.cronRecallInstructionHeavyTokenCap;
+    return (
+      this.runtimePolicyValues?.cronRecallInstructionHeavyTokenCap ??
+      this.config.cronRecallInstructionHeavyTokenCap
+    );
   }
 
   private currentPolicyVersion(): string {
@@ -1151,11 +1326,16 @@ export class Orchestrator {
       recencyWeight: this.effectiveRecencyWeight(),
       lifecyclePromoteHeatThreshold: thresholds.promoteHeatThreshold,
       lifecycleStaleDecayThreshold: thresholds.staleDecayThreshold,
-      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
-      utilityRankingBoostMultiplier: this.utilityRuntimeValues?.rankingBoostMultiplier ?? 1,
-      utilityRankingSuppressMultiplier: this.utilityRuntimeValues?.rankingSuppressMultiplier ?? 1,
-      utilityPromoteThresholdDelta: this.utilityRuntimeValues?.promoteThresholdDelta ?? 0,
-      utilityDemoteThresholdDelta: this.utilityRuntimeValues?.demoteThresholdDelta ?? 0,
+      cronRecallInstructionHeavyTokenCap:
+        this.effectiveCronRecallInstructionHeavyTokenCap(),
+      utilityRankingBoostMultiplier:
+        this.utilityRuntimeValues?.rankingBoostMultiplier ?? 1,
+      utilityRankingSuppressMultiplier:
+        this.utilityRuntimeValues?.rankingSuppressMultiplier ?? 1,
+      utilityPromoteThresholdDelta:
+        this.utilityRuntimeValues?.promoteThresholdDelta ?? 0,
+      utilityDemoteThresholdDelta:
+        this.utilityRuntimeValues?.demoteThresholdDelta ?? 0,
     };
     return createHash("sha256")
       .update(JSON.stringify(payload))
@@ -1211,7 +1391,9 @@ export class Orchestrator {
     try {
       return await this.getRoutingRulesStore().read(this.routeEngineOptions());
     } catch (err) {
-      log.warn(`routing rules unavailable; fail-open to default writes: ${err}`);
+      log.warn(
+        `routing rules unavailable; fail-open to default writes: ${err}`,
+      );
       return [];
     }
   }
@@ -1225,12 +1407,16 @@ export class Orchestrator {
     let snapshot = cached;
     const isFresh =
       snapshot !== undefined &&
-      Date.now() - snapshot.loadedAtMs <= Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS &&
+      Date.now() - snapshot.loadedAtMs <=
+        Orchestrator.ARTIFACT_STATUS_CACHE_TTL_MS &&
       snapshot.statusVersion === currentStatusVersion;
 
     const rebuildSnapshot = async () => {
       const MAX_STABLE_READ_ATTEMPTS = 3;
-      let latestStatuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
+      let latestStatuses = new Map<
+        string,
+        "active" | "superseded" | "archived" | "missing"
+      >();
       let latestVersionAfter = storage.getMemoryStatusVersion();
 
       for (let attempt = 0; attempt < MAX_STABLE_READ_ATTEMPTS; attempt += 1) {
@@ -1241,7 +1427,11 @@ export class Orchestrator {
         latestStatuses = new Map(
           allMemories.map((m) => [
             m.frontmatter.id,
-            (m.frontmatter.status ?? "active") as "active" | "superseded" | "archived" | "missing",
+            (m.frontmatter.status ?? "active") as
+              | "active"
+              | "superseded"
+              | "archived"
+              | "missing",
           ]),
         );
 
@@ -1269,7 +1459,9 @@ export class Orchestrator {
     } else {
       // Warm cache may miss brand-new sourceMemoryId values created after snapshot build.
       // Refresh once on-demand when unseen IDs are requested.
-      const hasUnknownSourceIds = sourceIds.some((id) => !snapshot?.statuses.has(id));
+      const hasUnknownSourceIds = sourceIds.some(
+        (id) => !snapshot?.statuses.has(id),
+      );
       if (hasUnknownSourceIds) {
         snapshot = await rebuildSnapshot();
       }
@@ -1283,7 +1475,10 @@ export class Orchestrator {
       }
     }
 
-    const statuses = new Map<string, "active" | "superseded" | "archived" | "missing">();
+    const statuses = new Map<
+      string,
+      "active" | "superseded" | "archived" | "missing"
+    >();
     for (const id of sourceIds) {
       const status = snapshot?.statuses.get(id);
       if (status) {
@@ -1327,7 +1522,9 @@ export class Orchestrator {
       const stateDir = path.join(this.config.memoryDir, "state");
       this.contentHashIndex = new ContentHashIndex(stateDir);
       await this.contentHashIndex.load();
-      log.info(`content-hash dedup: loaded ${this.contentHashIndex.size} hashes`);
+      log.info(
+        `content-hash dedup: loaded ${this.contentHashIndex.size} hashes`,
+      );
     }
     await this.transcript.initialize();
     await this.summarizer.initialize();
@@ -1359,25 +1556,36 @@ export class Orchestrator {
           namespaces.map(async (namespace) => ({
             namespace,
             state: this.config.namespacesEnabled
-              ? await this.namespaceSearchRouter.ensureNamespaceCollection(namespace)
+              ? await this.namespaceSearchRouter.ensureNamespaceCollection(
+                  namespace,
+                )
               : await this.qmd.ensureCollection(this.config.memoryDir),
           })),
         );
-        const defaultState = states.find((entry) => entry.namespace === this.config.defaultNamespace)?.state ?? "unknown";
+        const defaultState =
+          states.find(
+            (entry) => entry.namespace === this.config.defaultNamespace,
+          )?.state ?? "unknown";
         if (defaultState === "missing") {
           this.qmd = new NoopSearchBackend();
           log.warn(
             "Search collection missing for Engram memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
           );
         } else if (defaultState === "unknown") {
-          log.warn("Search collection check unavailable; keeping search retrieval enabled for fail-open behavior");
+          log.warn(
+            "Search collection check unavailable; keeping search retrieval enabled for fail-open behavior",
+          );
         } else if (defaultState === "skipped") {
-          log.debug("Search collection check skipped (remote or daemon-only mode)");
+          log.debug(
+            "Search collection check skipped (remote or daemon-only mode)",
+          );
         }
         for (const entry of states) {
           if (entry.namespace === this.config.defaultNamespace) continue;
           if (entry.state === "missing") {
-            log.warn(`Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`);
+            log.warn(
+              `Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`,
+            );
           }
         }
       } else if (this.qmd instanceof NoopSearchBackend) {
@@ -1398,11 +1606,14 @@ export class Orchestrator {
       const warmupNs = this.config.defaultNamespace;
       log.info("QMD warmup: pre-loading models with a test search");
       warmupPromises.push(
-        this.qmd.search("warmup", warmupNs, 1).then(() => {
-          log.info("QMD warmup: complete");
-        }).catch((err) => {
-          log.debug(`QMD warmup search failed (non-fatal): ${err}`);
-        }),
+        this.qmd
+          .search("warmup", warmupNs, 1)
+          .then(() => {
+            log.info("QMD warmup: complete");
+          })
+          .catch((err) => {
+            log.debug(`QMD warmup search failed (non-fatal): ${err}`);
+          }),
       );
     }
     if (this.config.embeddingFallbackEnabled) {
@@ -1410,11 +1621,16 @@ export class Orchestrator {
       // embeddings.json can be hundreds of MB; parsing it into JS number arrays
       // consumes gigabytes of V8 heap and triggers GC stalls / OOM crashes.
       warmupPromises.push(
-        this.embeddingFallback.isAvailable().then((ok) => {
-          log.info(`Embedding fallback warmup: ${ok ? "available" : "unavailable (no provider)"}`);
-        }).catch((err) => {
-          log.debug(`Embedding fallback warmup failed (non-fatal): ${err}`);
-        }),
+        this.embeddingFallback
+          .isAvailable()
+          .then((ok) => {
+            log.info(
+              `Embedding fallback warmup: ${ok ? "available" : "unavailable (no provider)"}`,
+            );
+          })
+          .catch((err) => {
+            log.debug(`Embedding fallback warmup failed (non-fatal): ${err}`);
+          }),
       );
     }
     await Promise.all(warmupPromises);
@@ -1512,7 +1728,9 @@ export class Orchestrator {
 
     try {
       if (!existsSync(jobsPath)) {
-        log.debug("day-summary cron: jobs.json not found, skipping auto-register");
+        log.debug(
+          "day-summary cron: jobs.json not found, skipping auto-register",
+        );
         return;
       }
 
@@ -1521,10 +1739,16 @@ export class Orchestrator {
 
       // jobs.json may be { version, jobs: [...] } or a plain array
       const jobsArray: Array<{ id?: string; [key: string]: unknown }> =
-        Array.isArray(parsed) ? parsed : Array.isArray(parsed?.jobs) ? parsed.jobs : null as any;
+        Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.jobs)
+            ? parsed.jobs
+            : (null as any);
 
       if (!jobsArray) {
-        log.debug("day-summary cron: jobs.json has unexpected structure, skipping auto-register");
+        log.debug(
+          "day-summary cron: jobs.json has unexpected structure, skipping auto-register",
+        );
         return;
       }
 
@@ -1538,7 +1762,11 @@ export class Orchestrator {
         agentId: "main",
         name: "Engram Day Summary (auto)",
         enabled: true,
-        schedule: { kind: "cron", expr: "47 23 * * *", tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        schedule: {
+          kind: "cron",
+          expr: "47 23 * * *",
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
         sessionTarget: "isolated",
         wakeMode: "now",
         payload: {
@@ -1552,9 +1780,17 @@ export class Orchestrator {
       });
 
       // Write back preserving the original shape
-      const output = Array.isArray(parsed) ? jobsArray : { ...parsed, jobs: jobsArray };
-      await writeFile(jobsPath, JSON.stringify(output, null, 2) + "\n", "utf-8");
-      log.info(`day-summary cron auto-registered (engram-day-summary, 23:47 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
+      const output = Array.isArray(parsed)
+        ? jobsArray
+        : { ...parsed, jobs: jobsArray };
+      await writeFile(
+        jobsPath,
+        JSON.stringify(output, null, 2) + "\n",
+        "utf-8",
+      );
+      log.info(
+        `day-summary cron auto-registered (engram-day-summary, 23:47 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+      );
     } catch (err) {
       log.debug(`day-summary cron auto-register error: ${err}`);
     }
@@ -1562,7 +1798,12 @@ export class Orchestrator {
 
   async applyBehaviorRuntimePolicy(
     state: BehaviorLoopPolicyState,
-  ): Promise<{ applied: boolean; rolledBack: boolean; values: RuntimePolicyValues | null; reason: string }> {
+  ): Promise<{
+    applied: boolean;
+    rolledBack: boolean;
+    values: RuntimePolicyValues | null;
+    reason: string;
+  }> {
     const result = await this.policyRuntime.applyFromBehaviorState(state);
     this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
     return result;
@@ -1585,14 +1826,22 @@ export class Orchestrator {
     // Rotation first (keeps bootstrap files small).
     if (hygiene.rotateEnabled) {
       for (const rel of hygiene.rotatePaths) {
-        const abs = path.isAbsolute(rel) ? rel : path.join(this.config.workspaceDir, rel);
+        const abs = path.isAbsolute(rel)
+          ? rel
+          : path.join(this.config.workspaceDir, rel);
         try {
           const raw = await readFile(abs, "utf-8");
           if (raw.length > hygiene.rotateMaxBytes) {
-            const archiveDir = path.join(this.config.workspaceDir, hygiene.archiveDir);
+            const archiveDir = path.join(
+              this.config.workspaceDir,
+              hygiene.archiveDir,
+            );
             const base = path.basename(abs);
             const prefix =
-              base.toUpperCase().replace(/\.MD$/i, "").replace(/[^A-Z0-9]+/g, "-") || "FILE";
+              base
+                .toUpperCase()
+                .replace(/\.MD$/i, "")
+                .replace(/[^A-Z0-9]+/g, "-") || "FILE";
             const { newContent } = await rotateMarkdownFileToArchive({
               filePath: abs,
               archiveDir,
@@ -1643,7 +1892,11 @@ export class Orchestrator {
     return engine.run(options);
   }
 
-  async runConsolidationNow(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }> {
+  async runConsolidationNow(): Promise<{
+    memoriesProcessed: number;
+    merged: number;
+    invalidated: number;
+  }> {
     return this.runConsolidation();
   }
 
@@ -1680,7 +1933,8 @@ export class Orchestrator {
       return result;
     }
 
-    const threshold = options?.thresholdOverride ?? this.config.semanticConsolidationThreshold;
+    const threshold =
+      options?.thresholdOverride ?? this.config.semanticConsolidationThreshold;
     const clusters = findSimilarClusters(allMemories, {
       threshold,
       minClusterSize: this.config.semanticConsolidationMinClusterSize,
@@ -1699,7 +1953,9 @@ export class Orchestrator {
     log.info(`[semantic-consolidation] found ${clusters.length} cluster(s)`);
 
     if (options?.dryRun) {
-      log.info("[semantic-consolidation] dry run — skipping LLM synthesis and archival");
+      log.info(
+        "[semantic-consolidation] dry run — skipping LLM synthesis and archival",
+      );
       return result;
     }
 
@@ -1712,7 +1968,9 @@ export class Orchestrator {
     }
     const llm = new FallbackLlmClient(this.config.gatewayConfig);
     if (!llm.isAvailable() && !(modelSetting === "fast" && this.fastLlm)) {
-      log.warn("[semantic-consolidation] no LLM available — skipping synthesis");
+      log.warn(
+        "[semantic-consolidation] no LLM available — skipping synthesis",
+      );
       return result;
     }
 
@@ -1720,7 +1978,11 @@ export class Orchestrator {
       try {
         const prompt = buildConsolidationPrompt(cluster);
         const messages = [
-          { role: "system" as const, content: "You are a memory consolidation system. Output only the consolidated memory text." },
+          {
+            role: "system" as const,
+            content:
+              "You are a memory consolidation system. Output only the consolidated memory text.",
+          },
           { role: "user" as const, content: prompt },
         ];
         const llmOpts = { temperature: 0.2, maxTokens: 2000 };
@@ -1732,6 +1994,7 @@ export class Orchestrator {
             operation: "semantic-consolidation",
             maxTokens: llmOpts.maxTokens,
             temperature: llmOpts.temperature,
+            priority: "background",
           });
           response = fastResult ? { content: fastResult.content } : null;
         } else {
@@ -1739,7 +2002,9 @@ export class Orchestrator {
         }
 
         if (!response?.content) {
-          log.warn(`[semantic-consolidation] empty LLM response for cluster in "${cluster.category}"`);
+          log.warn(
+            `[semantic-consolidation] empty LLM response for cluster in "${cluster.category}"`,
+          );
           result.errors++;
           continue;
         }
@@ -1749,7 +2014,9 @@ export class Orchestrator {
 
         // Pick the most recent memory's metadata as the basis for lineage
         const sorted = [...cluster.memories].sort(
-          (a, b) => new Date(b.frontmatter.created).getTime() - new Date(a.frontmatter.created).getTime(),
+          (a, b) =>
+            new Date(b.frontmatter.created).getTime() -
+            new Date(a.frontmatter.created).getTime(),
         );
         const newest = sorted[0];
         const lineageIds = cluster.memories.map((m) => m.frontmatter.id);
@@ -1761,7 +2028,11 @@ export class Orchestrator {
           {
             actor: "semantic-consolidation",
             confidence: newest.frontmatter.confidence,
-            tags: [...new Set(cluster.memories.flatMap((m) => m.frontmatter.tags ?? []))],
+            tags: [
+              ...new Set(
+                cluster.memories.flatMap((m) => m.frontmatter.tags ?? []),
+              ),
+            ],
             source: "semantic-consolidation",
             lineage: lineageIds,
           },
@@ -1782,7 +2053,11 @@ export class Orchestrator {
               this.contentHashIndex.remove(m.content);
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
-            if (this.config.queryAwareIndexingEnabled && m.path && m.frontmatter?.created) {
+            if (
+              this.config.queryAwareIndexingEnabled &&
+              m.path &&
+              m.frontmatter?.created
+            ) {
               deindexMemory(
                 this.config.memoryDir,
                 m.path,
@@ -1807,9 +2082,13 @@ export class Orchestrator {
 
     // Save hash index if we modified it
     if (result.memoriesArchived > 0 && this.contentHashIndex) {
-      await this.contentHashIndex.save().catch((err) =>
-        log.warn(`[semantic-consolidation] content-hash index save failed: ${err}`),
-      );
+      await this.contentHashIndex
+        .save()
+        .catch((err) =>
+          log.warn(
+            `[semantic-consolidation] content-hash index save failed: ${err}`,
+          ),
+        );
     }
 
     log.info(
@@ -1843,11 +2122,16 @@ export class Orchestrator {
   }
 
   async getStorage(namespace?: string): Promise<StorageManager> {
-    const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
+    const ns =
+      namespace && namespace.length > 0
+        ? namespace
+        : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
   }
 
-  async generateDaySummary(memories: string | MemoryFile[]): Promise<DaySummaryResult | null> {
+  async generateDaySummary(
+    memories: string | MemoryFile[],
+  ): Promise<DaySummaryResult | null> {
     if (this.initPromise) {
       let initGateTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -1868,7 +2152,9 @@ export class Orchestrator {
    * Auto-gather today's facts and hourly summaries from storage, then generate a day summary.
    * Returns null if no facts are found for today.
    */
-  async generateDaySummaryAuto(namespace?: string): Promise<DaySummaryResult | null> {
+  async generateDaySummaryAuto(
+    namespace?: string,
+  ): Promise<DaySummaryResult | null> {
     const gathered = await this.gatherTodayFacts(namespace);
     if (!gathered || !gathered.trim()) {
       log.warn("generateDaySummaryAuto: no facts found for today, skipping");
@@ -1882,7 +2168,10 @@ export class Orchestrator {
    * as a formatted string suitable for generateDaySummary().
    */
   async gatherTodayFacts(namespace?: string): Promise<string> {
-    const ns = namespace && namespace.length > 0 ? namespace : this.config.defaultNamespace;
+    const ns =
+      namespace && namespace.length > 0
+        ? namespace
+        : this.config.defaultNamespace;
     const storage = await this.storageRouter.storageFor(ns);
     // Facts are stored under UTC dates, but a local calendar day can span
     // two UTC dates (e.g. 23:47 local in UTC-6 is 05:47 UTC the next day). To capture
@@ -1890,8 +2179,12 @@ export class Orchestrator {
     // yesterday's UTC date (which covers the local day's morning hours).
     const now = new Date();
     const utcToday = now.toISOString().slice(0, 10);
-    const yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
-    const datesToScan = [yesterday, utcToday].filter((v, i, a) => a.indexOf(v) === i);
+    const yesterday = new Date(now.getTime() - 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const datesToScan = [yesterday, utcToday].filter(
+      (v, i, a) => a.indexOf(v) === i,
+    );
     const factsBaseDir = path.join(storage.dir, "facts");
     const MAX_CHARS = 100_000;
 
@@ -1914,7 +2207,9 @@ export class Orchestrator {
             for (const line of fmBlock.split("\n")) {
               const colonIdx = line.indexOf(":");
               if (colonIdx === -1) continue;
-              fm[line.slice(0, colonIdx).trim()] = line.slice(colonIdx + 1).trim();
+              fm[line.slice(0, colonIdx).trim()] = line
+                .slice(colonIdx + 1)
+                .trim();
             }
             facts.push({
               path: fullPath,
@@ -1940,7 +2235,9 @@ export class Orchestrator {
     }
 
     // Sort facts by created timestamp (most recent last) so truncation keeps newest
-    facts.sort((a, b) => (a.frontmatter.created < b.frontmatter.created ? -1 : 1));
+    facts.sort((a, b) =>
+      a.frontmatter.created < b.frontmatter.created ? -1 : 1,
+    );
 
     // --- Read hourly summaries for the scanned dates ---
     const hourlySummaries: string[] = [];
@@ -1968,7 +2265,9 @@ export class Orchestrator {
     // --- Format and truncate ---
     let formatted = formatDaySummaryMemories(facts);
     if (hourlySummaries.length > 0) {
-      formatted += "\n\n---\n## Hourly Summaries\n\n" + hourlySummaries.join("\n\n---\n\n");
+      formatted +=
+        "\n\n---\n## Hourly Summaries\n\n" +
+        hourlySummaries.join("\n\n---\n\n");
     }
 
     // Truncate intelligently if over budget: drop oldest facts first
@@ -1978,7 +2277,9 @@ export class Orchestrator {
         facts.shift(); // drop oldest
         formatted = formatDaySummaryMemories(facts);
         if (hourlySummaries.length > 0) {
-          formatted += "\n\n---\n## Hourly Summaries\n\n" + hourlySummaries.join("\n\n---\n\n");
+          formatted +=
+            "\n\n---\n## Hourly Summaries\n\n" +
+            hourlySummaries.join("\n\n---\n\n");
         }
       }
       // If still over, hard truncate
@@ -2001,7 +2302,9 @@ export class Orchestrator {
       typeof event.namespace === "string" && event.namespace.length > 0
         ? event.namespace
         : this.config.defaultNamespace;
-    const eligibility = parseMemoryActionEligibilityContext(event.policyEligibility);
+    const eligibility = parseMemoryActionEligibilityContext(
+      event.policyEligibility,
+    );
     const policy = evaluateMemoryActionPolicy({
       action: event.action,
       eligibility,
@@ -2012,18 +2315,18 @@ export class Orchestrator {
     });
     const dryRun = event.dryRun === true;
 
-    const normalizedOutcome =
-      dryRun
-        ? event.outcome === "failed"
-          ? "failed"
-          : "skipped"
-        : policy.decision === "allow"
+    const normalizedOutcome = dryRun
+      ? event.outcome === "failed"
+        ? "failed"
+        : "skipped"
+      : policy.decision === "allow"
         ? event.outcome
         : event.outcome === "failed"
           ? "failed"
           : "skipped";
     const sourceSessionKey =
-      typeof event.sourceSessionKey === "string" && event.sourceSessionKey.length > 0
+      typeof event.sourceSessionKey === "string" &&
+      event.sourceSessionKey.length > 0
         ? event.sourceSessionKey
         : typeof event.sessionKey === "string" && event.sessionKey.length > 0
           ? event.sessionKey
@@ -2032,13 +2335,18 @@ export class Orchestrator {
       ? Array.from(
           new Set(
             event.outputMemoryIds.filter(
-              (value): value is string => typeof value === "string" && value.length > 0,
+              (value): value is string =>
+                typeof value === "string" && value.length > 0,
             ),
           ),
         )
       : [];
 
-    const reasonParts = [event.reason, `policy:${policy.decision}`, policy.rationale].filter(
+    const reasonParts = [
+      event.reason,
+      `policy:${policy.decision}`,
+      policy.rationale,
+    ].filter(
       (part): part is string => typeof part === "string" && part.length > 0,
     );
 
@@ -2058,7 +2366,9 @@ export class Orchestrator {
             ? "applied"
             : "rejected"),
       actor:
-        typeof event.actor === "string" && event.actor.length > 0 ? event.actor : "engram",
+        typeof event.actor === "string" && event.actor.length > 0
+          ? event.actor
+          : "engram",
       subsystem:
         typeof event.subsystem === "string" && event.subsystem.length > 0
           ? event.subsystem
@@ -2074,7 +2384,8 @@ export class Orchestrator {
       outputMemoryIds,
       dryRun,
       policyVersion:
-        typeof event.policyVersion === "string" && event.policyVersion.length > 0
+        typeof event.policyVersion === "string" &&
+        event.policyVersion.length > 0
           ? event.policyVersion
           : "memory-action-policy.v1",
       timestamp:
@@ -2101,29 +2412,40 @@ export class Orchestrator {
     }
   }
 
-  async getLastGraphRecallSnapshot(namespace?: string): Promise<GraphRecallSnapshot | null> {
+  async getLastGraphRecallSnapshot(
+    namespace?: string,
+  ): Promise<GraphRecallSnapshot | null> {
     const storage = await this.getStorage(namespace);
-    const snapshotPath = path.join(storage.dir, "state", "last_graph_recall.json");
+    const snapshotPath = path.join(
+      storage.dir,
+      "state",
+      "last_graph_recall.json",
+    );
     try {
       const raw = await readFile(snapshotPath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<GraphRecallSnapshot>;
       if (!parsed || typeof parsed !== "object") return null;
       return {
-        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        recordedAt:
+          typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
         mode: typeof parsed.mode === "string" ? parsed.mode : "full",
         queryHash: typeof parsed.queryHash === "string" ? parsed.queryHash : "",
-        queryLength: typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
+        queryLength:
+          typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
         namespaces: Array.isArray(parsed.namespaces)
           ? parsed.namespaces.filter((v): v is string => typeof v === "string")
           : [],
         seedCount: typeof parsed.seedCount === "number" ? parsed.seedCount : 0,
-        expandedCount: typeof parsed.expandedCount === "number" ? parsed.expandedCount : 0,
+        expandedCount:
+          typeof parsed.expandedCount === "number" ? parsed.expandedCount : 0,
         seeds: Array.isArray(parsed.seeds)
           ? parsed.seeds.filter((v): v is string => typeof v === "string")
           : [],
         expanded: clampGraphRecallExpandedEntries(parsed.expanded, 64),
         status:
-          parsed.status === "completed" || parsed.status === "skipped" || parsed.status === "aborted"
+          parsed.status === "completed" ||
+          parsed.status === "skipped" ||
+          parsed.status === "aborted"
             ? parsed.status
             : undefined,
         reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
@@ -2134,27 +2456,28 @@ export class Orchestrator {
         shadowComparison:
           parsed.shadowComparison && typeof parsed.shadowComparison === "object"
             ? {
-              baselineCount:
-                typeof parsed.shadowComparison.baselineCount === "number"
-                  ? parsed.shadowComparison.baselineCount
-                  : 0,
-              graphCount:
-                typeof parsed.shadowComparison.graphCount === "number"
-                  ? parsed.shadowComparison.graphCount
-                  : 0,
-              overlapCount:
-                typeof parsed.shadowComparison.overlapCount === "number"
-                  ? parsed.shadowComparison.overlapCount
-                  : 0,
-              overlapRatio:
-                typeof parsed.shadowComparison.overlapRatio === "number"
-                  ? parsed.shadowComparison.overlapRatio
-                  : 0,
-              averageOverlapDelta:
-                typeof parsed.shadowComparison.averageOverlapDelta === "number"
-                  ? parsed.shadowComparison.averageOverlapDelta
-                  : 0,
-            }
+                baselineCount:
+                  typeof parsed.shadowComparison.baselineCount === "number"
+                    ? parsed.shadowComparison.baselineCount
+                    : 0,
+                graphCount:
+                  typeof parsed.shadowComparison.graphCount === "number"
+                    ? parsed.shadowComparison.graphCount
+                    : 0,
+                overlapCount:
+                  typeof parsed.shadowComparison.overlapCount === "number"
+                    ? parsed.shadowComparison.overlapCount
+                    : 0,
+                overlapRatio:
+                  typeof parsed.shadowComparison.overlapRatio === "number"
+                    ? parsed.shadowComparison.overlapRatio
+                    : 0,
+                averageOverlapDelta:
+                  typeof parsed.shadowComparison.averageOverlapDelta ===
+                  "number"
+                    ? parsed.shadowComparison.averageOverlapDelta
+                    : 0,
+              }
             : undefined,
       };
     } catch {
@@ -2162,55 +2485,72 @@ export class Orchestrator {
     }
   }
 
-  async getLastIntentSnapshot(namespace?: string): Promise<IntentDebugSnapshot | null> {
+  async getLastIntentSnapshot(
+    namespace?: string,
+  ): Promise<IntentDebugSnapshot | null> {
     const storage = await this.getStorage(namespace);
     const snapshotPath = path.join(storage.dir, "state", "last_intent.json");
     try {
       const raw = await readFile(snapshotPath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<IntentDebugSnapshot>;
       if (!parsed || typeof parsed !== "object") return null;
-      const graphDecision = parsed.graphDecision && typeof parsed.graphDecision === "object"
-        ? parsed.graphDecision
-        : undefined;
+      const graphDecision =
+        parsed.graphDecision && typeof parsed.graphDecision === "object"
+          ? parsed.graphDecision
+          : undefined;
       return {
-        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
-        promptHash: typeof parsed.promptHash === "string" ? parsed.promptHash : "",
-        promptLength: typeof parsed.promptLength === "number" ? parsed.promptLength : 0,
+        recordedAt:
+          typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        promptHash:
+          typeof parsed.promptHash === "string" ? parsed.promptHash : "",
+        promptLength:
+          typeof parsed.promptLength === "number" ? parsed.promptLength : 0,
         retrievalQueryHash:
-          typeof parsed.retrievalQueryHash === "string" ? parsed.retrievalQueryHash : "",
+          typeof parsed.retrievalQueryHash === "string"
+            ? parsed.retrievalQueryHash
+            : "",
         retrievalQueryLength:
-          typeof parsed.retrievalQueryLength === "number" ? parsed.retrievalQueryLength : 0,
+          typeof parsed.retrievalQueryLength === "number"
+            ? parsed.retrievalQueryLength
+            : 0,
         plannerEnabled: parsed.plannerEnabled !== false,
         plannedMode:
           parsed.plannedMode === "no_recall" ||
-            parsed.plannedMode === "minimal" ||
-            parsed.plannedMode === "full" ||
-            parsed.plannedMode === "graph_mode"
+          parsed.plannedMode === "minimal" ||
+          parsed.plannedMode === "full" ||
+          parsed.plannedMode === "graph_mode"
             ? parsed.plannedMode
             : "full",
         effectiveMode:
           parsed.effectiveMode === "no_recall" ||
-            parsed.effectiveMode === "minimal" ||
-            parsed.effectiveMode === "full" ||
-            parsed.effectiveMode === "graph_mode"
+          parsed.effectiveMode === "minimal" ||
+          parsed.effectiveMode === "full" ||
+          parsed.effectiveMode === "graph_mode"
             ? parsed.effectiveMode
             : "full",
         recallResultLimit:
-          typeof parsed.recallResultLimit === "number" ? parsed.recallResultLimit : 0,
+          typeof parsed.recallResultLimit === "number"
+            ? parsed.recallResultLimit
+            : 0,
         queryIntent: parseMemoryIntentSnapshot(parsed.queryIntent),
-        graphExpandedIntentDetected: parsed.graphExpandedIntentDetected === true,
+        graphExpandedIntentDetected:
+          parsed.graphExpandedIntentDetected === true,
         graphDecision: {
           status:
             graphDecision?.status === "skipped" ||
-              graphDecision?.status === "completed" ||
-              graphDecision?.status === "aborted"
+            graphDecision?.status === "completed" ||
+            graphDecision?.status === "aborted"
               ? graphDecision.status
               : "not_requested",
-          reason: typeof graphDecision?.reason === "string" ? graphDecision.reason : undefined,
+          reason:
+            typeof graphDecision?.reason === "string"
+              ? graphDecision.reason
+              : undefined,
           shadowMode: graphDecision?.shadowMode === true,
           qmdAvailable: graphDecision?.qmdAvailable !== false,
           graphRecallEnabled: graphDecision?.graphRecallEnabled !== false,
-          multiGraphMemoryEnabled: graphDecision?.multiGraphMemoryEnabled !== false,
+          multiGraphMemoryEnabled:
+            graphDecision?.multiGraphMemoryEnabled !== false,
         },
       };
     } catch {
@@ -2218,30 +2558,50 @@ export class Orchestrator {
     }
   }
 
-  async getLastQmdRecallSnapshot(namespace?: string): Promise<QmdRecallSnapshot | null> {
+  async getLastQmdRecallSnapshot(
+    namespace?: string,
+  ): Promise<QmdRecallSnapshot | null> {
     const storage = await this.getStorage(namespace);
-    const snapshotPath = path.join(storage.dir, "state", "last_qmd_recall.json");
+    const snapshotPath = path.join(
+      storage.dir,
+      "state",
+      "last_qmd_recall.json",
+    );
     try {
       const raw = await readFile(snapshotPath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<QmdRecallSnapshot>;
       if (!parsed || typeof parsed !== "object") return null;
       return {
-        recordedAt: typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
+        recordedAt:
+          typeof parsed.recordedAt === "string" ? parsed.recordedAt : "",
         queryHash: typeof parsed.queryHash === "string" ? parsed.queryHash : "",
-        queryLength: typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
-        collection: typeof parsed.collection === "string" ? parsed.collection : undefined,
+        queryLength:
+          typeof parsed.queryLength === "number" ? parsed.queryLength : 0,
+        collection:
+          typeof parsed.collection === "string" ? parsed.collection : undefined,
         namespaces: Array.isArray(parsed.namespaces)
-          ? parsed.namespaces.filter((value): value is string => typeof value === "string")
+          ? parsed.namespaces.filter(
+              (value): value is string => typeof value === "string",
+            )
           : [],
-        fetchLimit: typeof parsed.fetchLimit === "number" ? parsed.fetchLimit : 0,
+        fetchLimit:
+          typeof parsed.fetchLimit === "number" ? parsed.fetchLimit : 0,
         primaryResultCount:
-          typeof parsed.primaryResultCount === "number" ? parsed.primaryResultCount : 0,
+          typeof parsed.primaryResultCount === "number"
+            ? parsed.primaryResultCount
+            : 0,
         hybridResultCount:
-          typeof parsed.hybridResultCount === "number" ? parsed.hybridResultCount : 0,
+          typeof parsed.hybridResultCount === "number"
+            ? parsed.hybridResultCount
+            : 0,
         queryAwareSeedCount:
-          typeof parsed.queryAwareSeedCount === "number" ? parsed.queryAwareSeedCount : 0,
-        resultCount: typeof parsed.resultCount === "number" ? parsed.resultCount : 0,
-        intentHint: typeof parsed.intentHint === "string" ? parsed.intentHint : undefined,
+          typeof parsed.queryAwareSeedCount === "number"
+            ? parsed.queryAwareSeedCount
+            : 0,
+        resultCount:
+          typeof parsed.resultCount === "number" ? parsed.resultCount : 0,
+        intentHint:
+          typeof parsed.intentHint === "string" ? parsed.intentHint : undefined,
         explainEnabled: parsed.explainEnabled === true,
         hybridTopUpUsed: parsed.hybridTopUpUsed === true,
         hybridTopUpSkippedReason:
@@ -2299,8 +2659,8 @@ export class Orchestrator {
       ),
       ...(snapshot.shadowComparison
         ? [
-          `Shadow comparison: baseline=${snapshot.shadowComparison.baselineCount}, graph=${snapshot.shadowComparison.graphCount}, overlap=${snapshot.shadowComparison.overlapCount} (${snapshot.shadowComparison.overlapRatio.toFixed(2)}), avgDelta=${snapshot.shadowComparison.averageOverlapDelta.toFixed(3)}`,
-        ]
+            `Shadow comparison: baseline=${snapshot.shadowComparison.baselineCount}, graph=${snapshot.shadowComparison.graphCount}, overlap=${snapshot.shadowComparison.overlapCount} (${snapshot.shadowComparison.overlapRatio.toFixed(2)}), avgDelta=${snapshot.shadowComparison.averageOverlapDelta.toFixed(3)}`,
+          ]
         : []),
     ].join("\n");
   }
@@ -2324,7 +2684,10 @@ export class Orchestrator {
     ].join("\n");
   }
 
-  async explainLastQmdRecall(options?: { namespace?: string; maxResults?: number }): Promise<string> {
+  async explainLastQmdRecall(options?: {
+    namespace?: string;
+    maxResults?: number;
+  }): Promise<string> {
     const snapshot = await this.getLastQmdRecallSnapshot(options?.namespace);
     if (!snapshot) return "No QMD recall snapshot found yet.";
     const maxResults = Math.max(1, Math.min(25, options?.maxResults ?? 10));
@@ -2358,7 +2721,8 @@ export class Orchestrator {
             ? `rrf=${result.explain.rrf.toFixed(3)}`
             : null,
         ].filter((entry): entry is string => Boolean(entry));
-        const explainText = explainParts.length > 0 ? `, explain=${explainParts.join("/")}` : "";
+        const explainText =
+          explainParts.length > 0 ? `, explain=${explainParts.join("/")}` : "";
         return `- ${result.path} (score=${result.score.toFixed(3)}, transport=${result.transport ?? "unknown"}${explainText})`;
       }),
     ].join("\n");
@@ -2449,9 +2813,15 @@ export class Orchestrator {
       };
     };
   }> {
-    const chunkDocCount = await this.countConversationChunkDocs(this.conversationIndexDir);
-    const lastUpdateAtMs = Math.max(0, ...this.conversationIndexLastUpdateAtMs.values());
-    const lastUpdateAt = lastUpdateAtMs > 0 ? new Date(lastUpdateAtMs).toISOString() : null;
+    const chunkDocCount = await this.countConversationChunkDocs(
+      this.conversationIndexDir,
+    );
+    const lastUpdateAtMs = Math.max(
+      0,
+      ...this.conversationIndexLastUpdateAtMs.values(),
+    );
+    const lastUpdateAt =
+      lastUpdateAtMs > 0 ? new Date(lastUpdateAtMs).toISOString() : null;
 
     if (!this.config.conversationIndexEnabled) {
       return {
@@ -2476,14 +2846,22 @@ export class Orchestrator {
     };
   }
 
-  async inspectConversationIndex(): Promise<ConversationIndexBackendInspection & {
-    enabled: boolean;
-    chunkDocCount: number;
-    lastUpdateAt: string | null;
-  }> {
-    const chunkDocCount = await this.countConversationChunkDocs(this.conversationIndexDir);
-    const lastUpdateAtMs = Math.max(0, ...this.conversationIndexLastUpdateAtMs.values());
-    const lastUpdateAt = lastUpdateAtMs > 0 ? new Date(lastUpdateAtMs).toISOString() : null;
+  async inspectConversationIndex(): Promise<
+    ConversationIndexBackendInspection & {
+      enabled: boolean;
+      chunkDocCount: number;
+      lastUpdateAt: string | null;
+    }
+  > {
+    const chunkDocCount = await this.countConversationChunkDocs(
+      this.conversationIndexDir,
+    );
+    const lastUpdateAtMs = Math.max(
+      0,
+      ...this.conversationIndexLastUpdateAtMs.values(),
+    );
+    const lastUpdateAt =
+      lastUpdateAtMs > 0 ? new Date(lastUpdateAtMs).toISOString() : null;
 
     if (!this.config.conversationIndexEnabled) {
       return {
@@ -2540,13 +2918,22 @@ export class Orchestrator {
     sessionKey: string,
     hours: number = 24,
     opts?: { embed?: boolean; enforceMinInterval?: boolean },
-  ): Promise<{ chunks: number; skipped: boolean; reason?: string; retryAfterMs?: number; embedded?: boolean }> {
+  ): Promise<{
+    chunks: number;
+    skipped: boolean;
+    reason?: string;
+    retryAfterMs?: number;
+    embedded?: boolean;
+  }> {
     if (!this.config.conversationIndexEnabled) {
       return { chunks: 0, skipped: true, reason: "disabled", embedded: false };
     }
     const enforceMinInterval = opts?.enforceMinInterval !== false;
     if (enforceMinInterval) {
-      const minIntervalMs = Math.max(0, this.config.conversationIndexMinUpdateIntervalMs);
+      const minIntervalMs = Math.max(
+        0,
+        this.config.conversationIndexMinUpdateIntervalMs,
+      );
       const now = Date.now();
       const last = this.conversationIndexLastUpdateAtMs.get(sessionKey) ?? 0;
       const elapsed = now - last;
@@ -2566,11 +2953,14 @@ export class Orchestrator {
       this.conversationIndexDir,
       this.config.conversationIndexRetentionDays,
     );
-    const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
+    const shouldEmbed =
+      opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
     let embedded = false;
 
     if (this.conversationIndexBackend) {
-      const result = await this.conversationIndexBackend.update(chunks, { embed: shouldEmbed });
+      const result = await this.conversationIndexBackend.update(chunks, {
+        embed: shouldEmbed,
+      });
       embedded = result.embedded;
     }
 
@@ -2582,9 +2972,21 @@ export class Orchestrator {
     sessionKey?: string,
     hours: number = 24,
     opts?: { embed?: boolean },
-  ): Promise<{ chunks: number; skipped: boolean; reason?: string; embedded?: boolean; rebuilt?: boolean }> {
+  ): Promise<{
+    chunks: number;
+    skipped: boolean;
+    reason?: string;
+    embedded?: boolean;
+    rebuilt?: boolean;
+  }> {
     if (!this.config.conversationIndexEnabled) {
-      return { chunks: 0, skipped: true, reason: "disabled", embedded: false, rebuilt: false };
+      return {
+        chunks: 0,
+        skipped: true,
+        reason: "disabled",
+        embedded: false,
+        rebuilt: false,
+      };
     }
 
     const chunks = await this.buildConversationIndexChunks(sessionKey, hours);
@@ -2594,11 +2996,14 @@ export class Orchestrator {
       this.config.conversationIndexRetentionDays,
     );
 
-    const shouldEmbed = opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
+    const shouldEmbed =
+      opts?.embed ?? this.config.conversationIndexEmbedOnUpdate;
     let embedded = false;
     let rebuilt = false;
     if (this.conversationIndexBackend) {
-      const result = await this.conversationIndexBackend.rebuild(chunks, { embed: shouldEmbed });
+      const result = await this.conversationIndexBackend.rebuild(chunks, {
+        embed: shouldEmbed,
+      });
       embedded = result.embedded;
       rebuilt = result.rebuilt;
     }
@@ -2621,10 +3026,12 @@ export class Orchestrator {
     try {
       const modelInfo = await this.localLlm.getLoadedModelInfo();
       if (!modelInfo) {
-        log.warn("Local LLM validation: Could not query model info from server");
+        log.warn(
+          "Local LLM validation: Could not query model info from server",
+        );
         log.warn(
           "Local LLM validation: Could not query model info. " +
-          "Ensure LM Studio/Ollama is running with the model loaded."
+            "Ensure LM Studio/Ollama is running with the model loaded.",
         );
         return;
       }
@@ -2634,27 +3041,33 @@ export class Orchestrator {
 
       if (modelInfo.contextWindow) {
         log.info(
-          `Local LLM: ${modelInfo.id} loaded with ${modelInfo.contextWindow.toLocaleString()} token context window`
+          `Local LLM: ${modelInfo.id} loaded with ${modelInfo.contextWindow.toLocaleString()} token context window`,
         );
 
-        if (configuredMaxContext && configuredMaxContext > modelInfo.contextWindow) {
+        if (
+          configuredMaxContext &&
+          configuredMaxContext > modelInfo.contextWindow
+        ) {
           log.warn(
             `Local LLM context mismatch: engram configured for ${configuredMaxContext.toLocaleString()} tokens, ` +
-            `but ${modelInfo.id} only supports ${modelInfo.contextWindow.toLocaleString()}. ` +
-            `Reducing to ${modelInfo.contextWindow.toLocaleString()} to avoid errors.`
+              `but ${modelInfo.id} only supports ${modelInfo.contextWindow.toLocaleString()}. ` +
+              `Reducing to ${modelInfo.contextWindow.toLocaleString()} to avoid errors.`,
           );
           // Update the config in-memory to match actual capability
           // (This is a temporary fix - user should update their config)
-          (this.config as { localLlmMaxContext?: number }).localLlmMaxContext = modelInfo.contextWindow;
+          (this.config as { localLlmMaxContext?: number }).localLlmMaxContext =
+            modelInfo.contextWindow;
         }
       } else {
-        log.info(`Local LLM: ${modelInfo.id} loaded (context window not reported by server)`);
+        log.info(
+          `Local LLM: ${modelInfo.id} loaded (context window not reported by server)`,
+        );
 
         if (!configuredMaxContext) {
           log.warn(
             "Local LLM: Server did not report context window. " +
-            "If you get 'context length exceeded' errors, set localLlmMaxContext in your config. " +
-            "Common defaults: LM Studio (32K), Ollama (2K-128K depending on model)."
+              "If you get 'context length exceeded' errors, set localLlmMaxContext in your config. " +
+              "Common defaults: LM Studio (32K), Ollama (2K-128K depending on model).",
           );
         }
       }
@@ -2687,17 +3100,25 @@ export class Orchestrator {
       const gateResult = await Promise.race([
         this.initPromise.then(() => "ok" as const),
         new Promise<"timeout">((resolve) => {
-          initGateTimeoutHandle = setTimeout(() => resolve("timeout"), INIT_GATE_TIMEOUT_MS);
+          initGateTimeoutHandle = setTimeout(
+            () => resolve("timeout"),
+            INIT_GATE_TIMEOUT_MS,
+          );
         }),
         abortController.signal.aborted
           ? Promise.resolve("aborted" as const)
           : new Promise<"aborted">((resolve) => {
-            onInitGateAbort = () => resolve("aborted");
-            abortController.signal.addEventListener("abort", onInitGateAbort, { once: true });
-          }),
+              onInitGateAbort = () => resolve("aborted");
+              abortController.signal.addEventListener(
+                "abort",
+                onInitGateAbort,
+                { once: true },
+              );
+            }),
       ]);
       if (initGateTimeoutHandle) clearTimeout(initGateTimeoutHandle);
-      if (onInitGateAbort) abortController.signal.removeEventListener("abort", onInitGateAbort);
+      if (onInitGateAbort)
+        abortController.signal.removeEventListener("abort", onInitGateAbort);
       if (gateResult === "aborted") {
         this.logRecallFailure(abortRecallError("recall aborted before init"));
         return "";
@@ -2709,27 +3130,33 @@ export class Orchestrator {
 
     // Keep outer recall timeout above worst-case serialized hybrid search:
     // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
-    const RECALL_TIMEOUT_MS = 75_000;
-    let timeoutHandle: NodeJS.Timeout | null = null;
-    const timeoutPromise = new Promise<string>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        abortController.abort();
-        reject(new Error("recall timeout"));
-      }, RECALL_TIMEOUT_MS);
-    });
     try {
-      return await Promise.race([
-        this.recallInternal(prompt, sessionKey, {
-          ...options,
-          abortSignal: abortController.signal,
-        }),
-        timeoutPromise,
-      ]);
+      const recallPromise = this.recallInternal(prompt, sessionKey, {
+        ...options,
+        abortSignal: abortController.signal,
+      });
+      const RECALL_TIMEOUT_MS = this.config.recallOuterTimeoutMs ?? 75_000;
+      if (RECALL_TIMEOUT_MS <= 0) {
+        return await recallPromise;
+      }
+
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const timeoutPromise = new Promise<string>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          abortController.abort();
+          reject(new Error("recall timeout"));
+        }, RECALL_TIMEOUT_MS);
+      });
+
+      try {
+        return await Promise.race([recallPromise, timeoutPromise]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
     } catch (err) {
       this.logRecallFailure(err);
       return ""; // Return empty context on timeout/error
     } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
       options.abortSignal?.removeEventListener("abort", onAbort);
     }
   }
@@ -2759,7 +3186,16 @@ export class Orchestrator {
     log.debug(`recall timed out or failed (suppressed): ${errorMsg}`);
   }
 
-  private artifactTypeForCategory(category: string): "decision" | "constraint" | "todo" | "definition" | "commitment" | "correction" | "fact" {
+  private artifactTypeForCategory(
+    category: string,
+  ):
+    | "decision"
+    | "constraint"
+    | "todo"
+    | "definition"
+    | "commitment"
+    | "correction"
+    | "fact" {
     if (category === "decision") return "decision";
     if (category === "commitment") return "commitment";
     if (category === "correction") return "correction";
@@ -2789,7 +3225,9 @@ export class Orchestrator {
         new Set(
           rawResults
             .map((a) => a.frontmatter.sourceMemoryId)
-            .filter((id): id is string => typeof id === "string" && id.length > 0),
+            .filter(
+              (id): id is string => typeof id === "string" && id.length > 0,
+            ),
         ),
       );
       const sourceStatus =
@@ -2816,7 +3254,8 @@ export class Orchestrator {
         bestFiltered = filtered;
       }
       if (rawResults.length === 0) return filtered;
-      if (rawResults.length < fetchLimit && filtered.length > 0) return filtered;
+      if (rawResults.length < fetchLimit && filtered.length > 0)
+        return filtered;
       if (fetchLimit >= maxFetchLimit) return filtered;
 
       const growth = Math.max(targetCount * 2, 12);
@@ -2834,7 +3273,9 @@ export class Orchestrator {
     if (targetCount <= 0) return [];
     const namespaces = Array.from(new Set(recallNamespaces));
     const filteredByNamespace = await Promise.all(
-      namespaces.map((namespace) => this.fetchActiveArtifactsForNamespace(namespace, prompt, targetCount)),
+      namespaces.map((namespace) =>
+        this.fetchActiveArtifactsForNamespace(namespace, prompt, targetCount),
+      ),
     );
 
     return mergeArtifactRecallCandidates(filteredByNamespace, targetCount);
@@ -2881,15 +3322,23 @@ export class Orchestrator {
       temporalFromDate
         ? queryByDateRangeAsync(this.config.memoryDir, temporalFromDate)
         : Promise.resolve<Set<string> | null>(null),
-      resolvePromptTagPrefilterAsync(this.config.memoryDir, prompt).catch(() => ({
-        matchedTags: extractTagsFromPrompt(prompt),
-        expandedTags: extractTagsFromPrompt(prompt),
-        paths: null,
-      })),
+      resolvePromptTagPrefilterAsync(this.config.memoryDir, prompt).catch(
+        () => ({
+          matchedTags: extractTagsFromPrompt(prompt),
+          expandedTags: extractTagsFromPrompt(prompt),
+          paths: null,
+        }),
+      ),
     ]);
 
-    const temporalCandidates = this.scopeQueryAwarePaths(rawTemporal, recallNamespaces);
-    const tagCandidates = this.scopeQueryAwarePaths(tagSignals.paths, recallNamespaces);
+    const temporalCandidates = this.scopeQueryAwarePaths(
+      rawTemporal,
+      recallNamespaces,
+    );
+    const tagCandidates = this.scopeQueryAwarePaths(
+      tagSignals.paths,
+      recallNamespaces,
+    );
     const maxCandidates = this.config.queryAwareIndexingMaxCandidates;
 
     let candidatePaths: Set<string> | null = null;
@@ -2898,7 +3347,9 @@ export class Orchestrator {
 
     if (temporalCandidates && tagCandidates) {
       const intersection = new Set(
-        Array.from(temporalCandidates).filter((memoryPath) => tagCandidates.has(memoryPath)),
+        Array.from(temporalCandidates).filter((memoryPath) =>
+          tagCandidates.has(memoryPath),
+        ),
       );
       if (intersection.size > 0) {
         candidatePaths = intersection;
@@ -2915,7 +3366,11 @@ export class Orchestrator {
       combination = "tag";
     }
 
-    if (candidatePaths && maxCandidates > 0 && candidatePaths.size > maxCandidates) {
+    if (
+      candidatePaths &&
+      maxCandidates > 0 &&
+      candidatePaths.size > maxCandidates
+    ) {
       filteredToFullSearch = true;
       candidatePaths = null;
     }
@@ -2970,9 +3425,7 @@ export class Orchestrator {
       for (const token of tokens) {
         if (haystack.includes(token)) hits += 1;
       }
-      const score = tokens.length > 0
-        ? hits / tokens.length
-        : 0.01;
+      const score = tokens.length > 0 ? hits / tokens.length : 0.01;
       if (tokens.length > 0 && hits === 0) continue;
 
       results.push({
@@ -2984,9 +3437,7 @@ export class Orchestrator {
       });
     }
 
-    return results
-      .sort((a, b) => b.score - a.score)
-      .slice(0, cappedLimit);
+    return results.sort((a, b) => b.score - a.score).slice(0, cappedLimit);
   }
 
   private async fetchQmdMemoryResultsWithArtifactTopUp(
@@ -3005,31 +3456,41 @@ export class Orchestrator {
     },
   ): Promise<QmdSearchResult[]> {
     throwIfRecallAborted(options.abortSignal);
-    const queryAwarePrefilter = options.queryAwarePrefilter
-      ?? await this.buildQueryAwarePrefilter(prompt, options.recallNamespaces);
+    const queryAwarePrefilter =
+      options.queryAwarePrefilter ??
+      (await this.buildQueryAwarePrefilter(prompt, options.recallNamespaces));
     const scopedSeedResults = queryAwarePrefilter.candidatePaths?.size
       ? await this.searchScopedMemoryCandidates(
-        queryAwarePrefilter.candidatePaths,
-        prompt,
-        qmdFetchLimit,
-        { allowArchived: options.collection !== undefined },
-      )
+          queryAwarePrefilter.candidatePaths,
+          prompt,
+          qmdFetchLimit,
+          { allowArchived: options.collection !== undefined },
+        )
       : [];
 
     let fetchLimit = Math.max(qmdFetchLimit, qmdHybridFetchLimit);
-    const maxFetchLimit = Math.min(320, Math.max(fetchLimit, qmdFetchLimit * 5));
+    const maxFetchLimit = Math.min(
+      320,
+      Math.max(fetchLimit, qmdFetchLimit * 5),
+    );
     const MAX_ATTEMPTS = 2;
-    const QMD_RECALL_BUDGET_MS = 25_000;
+    const qmdRecallBudgetMs = this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    const qmdRecallBudgetEnabled = qmdRecallBudgetMs > 0;
     const startedAtMs = Date.now();
     let lastPrimaryResultCount = 0;
     let lastHybridResultCount = 0;
     let lastHybridTopUpUsed = false;
     let lastHybridTopUpSkippedReason: string | undefined;
-    const backendHonorsQmdSearchSignals = (this.config.searchBackend ?? "qmd") === "qmd";
+    const backendHonorsQmdSearchSignals =
+      (this.config.searchBackend ?? "qmd") === "qmd";
     const resolvedSearchOptions = (() => {
-      const resolver = (this.qmd as {
-        resolveSupportedSearchOptions?: (options?: SearchQueryOptions) => SearchQueryOptions | undefined;
-      }).resolveSupportedSearchOptions;
+      const resolver = (
+        this.qmd as {
+          resolveSupportedSearchOptions?: (
+            options?: SearchQueryOptions,
+          ) => SearchQueryOptions | undefined;
+        }
+      ).resolveSupportedSearchOptions;
       if (typeof resolver === "function") {
         return resolver.call(this.qmd, options.searchOptions);
       }
@@ -3047,7 +3508,10 @@ export class Orchestrator {
       resolveNamespace: options.resolveNamespace,
       limit: qmdFetchLimit,
     });
-    const emitDebugSnapshot = async (results: QmdSearchResult[], currentFetchLimit: number) => {
+    const emitDebugSnapshot = async (
+      results: QmdSearchResult[],
+      currentFetchLimit: number,
+    ) => {
       if (!options.onDebugSnapshot) return;
       await options.onDebugSnapshot({
         recordedAt: new Date().toISOString(),
@@ -3073,24 +3537,40 @@ export class Orchestrator {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       throwIfRecallAborted(options.abortSignal);
-      if (Date.now() - startedAtMs >= QMD_RECALL_BUDGET_MS) {
+      if (
+        qmdRecallBudgetEnabled &&
+        Date.now() - startedAtMs >= qmdRecallBudgetMs
+      ) {
         break;
       }
 
       const primaryResults = options.collection
         ? options.abortSignal
-          ? await this.qmd.search(prompt, options.collection, fetchLimit, primarySearchOptions, {
-            signal: options.abortSignal,
-          })
-          : await this.qmd.search(prompt, options.collection, fetchLimit, primarySearchOptions)
+          ? await this.qmd.search(
+              prompt,
+              options.collection,
+              fetchLimit,
+              primarySearchOptions,
+              {
+                signal: options.abortSignal,
+              },
+            )
+          : await this.qmd.search(
+              prompt,
+              options.collection,
+              fetchLimit,
+              primarySearchOptions,
+            )
         : await this.searchAcrossNamespaces({
-          query: prompt,
-          namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
-          maxResults: fetchLimit,
-          mode: "search",
-          searchOptions: primarySearchOptions,
-          execution: { signal: options.abortSignal },
-        });
+            query: prompt,
+            namespaces: options.namespacesEnabled
+              ? options.recallNamespaces
+              : undefined,
+            maxResults: fetchLimit,
+            mode: "search",
+            searchOptions: primarySearchOptions,
+            execution: { signal: options.abortSignal },
+          });
       lastPrimaryResultCount = primaryResults.length;
       lastHybridResultCount = 0;
       lastHybridTopUpUsed = false;
@@ -3100,22 +3580,30 @@ export class Orchestrator {
       // Backfill with hybrid results only when primary retrieval underfills.
       if (
         primaryResults.length < qmdFetchLimit &&
-        Date.now() - startedAtMs < QMD_RECALL_BUDGET_MS
+        (!qmdRecallBudgetEnabled ||
+          Date.now() - startedAtMs < qmdRecallBudgetMs)
       ) {
         if (debugSearchOptions?.intent) {
           lastHybridTopUpSkippedReason = "intent_hint_active";
         } else {
           const hybridResults = options.collection
-            ? await this.qmd.hybridSearch(prompt, options.collection, fetchLimit, {
-              signal: options.abortSignal,
-            })
+            ? await this.qmd.hybridSearch(
+                prompt,
+                options.collection,
+                fetchLimit,
+                {
+                  signal: options.abortSignal,
+                },
+              )
             : await this.searchAcrossNamespaces({
-              query: prompt,
-              namespaces: options.namespacesEnabled ? options.recallNamespaces : undefined,
-              maxResults: fetchLimit,
-              mode: "hybrid",
-              execution: { signal: options.abortSignal },
-            });
+                query: prompt,
+                namespaces: options.namespacesEnabled
+                  ? options.recallNamespaces
+                  : undefined,
+                maxResults: fetchLimit,
+                mode: "hybrid",
+                execution: { signal: options.abortSignal },
+              });
           lastHybridResultCount = hybridResults.length;
           lastHybridTopUpUsed = hybridResults.length > 0;
           if (hybridResults.length > 0) {
@@ -3226,11 +3714,19 @@ export class Orchestrator {
       seedResults.push(...seedCandidates);
       const seedRelativePaths = seedCandidates
         .map((result) => graphPathRelativeToStorage(storage.dir, result.path))
-        .filter((value): value is string => typeof value === "string" && value.length > 0);
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && value.length > 0,
+        );
       if (seedRelativePaths.length === 0) continue;
 
-      const seedRecallScore = seedCandidates.reduce((max, item) => Math.max(max, item.score), 0);
-      seedPaths.push(...seedRelativePaths.map((rel) => path.join(storage.dir, rel)));
+      const seedRecallScore = seedCandidates.reduce(
+        (max, item) => Math.max(max, item.score),
+        0,
+      );
+      seedPaths.push(
+        ...seedRelativePaths.map((rel) => path.join(storage.dir, rel)),
+      );
       const seedSet = new Set(seedRelativePaths);
       const expanded = await this.graphIndexFor(storage).spreadingActivation(
         seedRelativePaths,
@@ -3244,7 +3740,8 @@ export class Orchestrator {
         const memory = await storage.readMemoryByPath(memoryPath);
         if (!memory) continue;
         if (isArtifactMemoryPath(memory.path)) continue;
-        if (memory.frontmatter.status && memory.frontmatter.status !== "active") continue;
+        if (memory.frontmatter.status && memory.frontmatter.status !== "active")
+          continue;
 
         const snippet = memory.content.slice(0, 400);
         const score = blendGraphExpandedRecallScore({
@@ -3296,13 +3793,20 @@ export class Orchestrator {
     shadowComparison?: GraphRecallShadowComparison;
   }): Promise<void> {
     try {
-      const snapshotPath = path.join(options.storage.dir, "state", "last_graph_recall.json");
+      const snapshotPath = path.join(
+        options.storage.dir,
+        "state",
+        "last_graph_recall.json",
+      );
       await mkdir(path.dirname(snapshotPath), { recursive: true });
       const now = new Date().toISOString();
       const totalSeedCount = options.seedPaths.length;
       const totalExpandedCount = options.expandedPaths.length;
       const seeds = options.seedPaths.slice(0, 64);
-      const expanded = clampGraphRecallExpandedEntries(options.expandedPaths, 64);
+      const expanded = clampGraphRecallExpandedEntries(
+        options.expandedPaths,
+        64,
+      );
       const payload = {
         recordedAt: now,
         mode: options.recallMode,
@@ -3332,9 +3836,17 @@ export class Orchestrator {
     snapshot: IntentDebugSnapshot;
   }): Promise<void> {
     try {
-      const snapshotPath = path.join(options.storage.dir, "state", "last_intent.json");
+      const snapshotPath = path.join(
+        options.storage.dir,
+        "state",
+        "last_intent.json",
+      );
       await mkdir(path.dirname(snapshotPath), { recursive: true });
-      await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
+      await writeFile(
+        snapshotPath,
+        JSON.stringify(options.snapshot, null, 2),
+        "utf-8",
+      );
     } catch (err) {
       log.debug(`last intent write failed: ${err}`);
     }
@@ -3345,9 +3857,17 @@ export class Orchestrator {
     snapshot: QmdRecallSnapshot;
   }): Promise<void> {
     try {
-      const snapshotPath = path.join(options.storage.dir, "state", "last_qmd_recall.json");
+      const snapshotPath = path.join(
+        options.storage.dir,
+        "state",
+        "last_qmd_recall.json",
+      );
       await mkdir(path.dirname(snapshotPath), { recursive: true });
-      await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
+      await writeFile(
+        snapshotPath,
+        JSON.stringify(options.snapshot, null, 2),
+        "utf-8",
+      );
     } catch (err) {
       log.debug(`last qmd recall write failed: ${err}`);
     }
@@ -3358,23 +3878,35 @@ export class Orchestrator {
     snapshot: IntentDebugSnapshot;
   }): Promise<void> {
     try {
-      const stateDir = await this.resolveStateDirForNamespace(options.namespace);
+      const stateDir = await this.resolveStateDirForNamespace(
+        options.namespace,
+      );
       const snapshotPath = path.join(stateDir, "last_intent.json");
       await mkdir(path.dirname(snapshotPath), { recursive: true });
-      await writeFile(snapshotPath, JSON.stringify(options.snapshot, null, 2), "utf-8");
+      await writeFile(
+        snapshotPath,
+        JSON.stringify(options.snapshot, null, 2),
+        "utf-8",
+      );
     } catch (err) {
       log.debug(`last intent write failed: ${err}`);
     }
   }
 
-  private async resolveStateDirForNamespace(namespace: string): Promise<string> {
+  private async resolveStateDirForNamespace(
+    namespace: string,
+  ): Promise<string> {
     if (!this.config.namespacesEnabled) {
       return path.join(this.config.memoryDir, "state");
     }
     if (namespace !== this.config.defaultNamespace) {
       return path.join(this.config.memoryDir, "namespaces", namespace, "state");
     }
-    const candidate = path.join(this.config.memoryDir, "namespaces", this.config.defaultNamespace);
+    const candidate = path.join(
+      this.config.memoryDir,
+      "namespaces",
+      this.config.defaultNamespace,
+    );
     try {
       const candidateStat = await stat(candidate);
       if (candidateStat.isDirectory()) {
@@ -3399,20 +3931,27 @@ export class Orchestrator {
     }));
   }
 
-  private getRecallSectionEntry(sectionId: string): RecallSectionConfig | undefined {
+  private getRecallSectionEntry(
+    sectionId: string,
+  ): RecallSectionConfig | undefined {
     const pipeline = Array.isArray(this.config.recallPipeline)
       ? this.config.recallPipeline
       : [];
     return pipeline.find((entry) => entry.id === sectionId);
   }
 
-  private isRecallSectionEnabled(sectionId: string, defaultEnabled: boolean = true): boolean {
+  private isRecallSectionEnabled(
+    sectionId: string,
+    defaultEnabled: boolean = true,
+  ): boolean {
     const entry = this.getRecallSectionEntry(sectionId);
     if (!entry) return defaultEnabled;
     return entry.enabled !== false;
   }
 
-  private getRecallSectionMaxChars(sectionId: string): number | null | undefined {
+  private getRecallSectionMaxChars(
+    sectionId: string,
+  ): number | null | undefined {
     const entry = this.getRecallSectionEntry(sectionId);
     if (!entry) return undefined;
     if (entry.maxChars === null) return null;
@@ -3420,7 +3959,10 @@ export class Orchestrator {
     return Math.max(0, Math.floor(entry.maxChars));
   }
 
-  private getRecallSectionNumber(sectionId: string, key: keyof RecallSectionConfig): number | undefined {
+  private getRecallSectionNumber(
+    sectionId: string,
+    key: keyof RecallSectionConfig,
+  ): number | undefined {
     const entry = this.getRecallSectionEntry(sectionId);
     if (!entry) return undefined;
     const value = entry[key];
@@ -3449,7 +3991,10 @@ export class Orchestrator {
     sectionBuckets.set(sectionId, existing);
   }
 
-  private truncateRecallSectionToBudget(content: string, maxChars: number): string {
+  private truncateRecallSectionToBudget(
+    content: string,
+    maxChars: number,
+  ): string {
     if (maxChars <= 0) return "";
     if (content.length <= maxChars) return content;
     const suffix = "\n\n...(memory context trimmed)";
@@ -3459,7 +4004,9 @@ export class Orchestrator {
     return `${content.slice(0, maxChars - suffix.length)}${suffix}`;
   }
 
-  private protectedRecallSectionIds(sectionBuckets: Map<string, string[]>): Set<string> {
+  private protectedRecallSectionIds(
+    sectionBuckets: Map<string, string[]>,
+  ): Set<string> {
     const protectedIds = new Set<string>();
     if ((sectionBuckets.get("memories")?.length ?? 0) > 0) {
       protectedIds.add("memories");
@@ -3469,7 +4016,8 @@ export class Orchestrator {
 
   private protectedRecallReservationChars(content: string): number {
     const headingBoundary = content.indexOf("\n\n");
-    const headingChars = headingBoundary >= 0 ? headingBoundary + 2 : Math.min(content.length, 24);
+    const headingChars =
+      headingBoundary >= 0 ? headingBoundary + 2 : Math.min(content.length, 24);
     return Math.min(content.length, Math.max(headingChars, 24));
   }
 
@@ -3496,11 +4044,19 @@ export class Orchestrator {
 
   private getRecallBudgetChars(): number {
     const configuredBudget = this.config.recallBudgetChars;
-    if (typeof configuredBudget === "number" && Number.isFinite(configuredBudget) && configuredBudget >= 0) {
+    if (
+      typeof configuredBudget === "number" &&
+      Number.isFinite(configuredBudget) &&
+      configuredBudget >= 0
+    ) {
       return Math.floor(configuredBudget);
     }
     const tokenBudget = this.config.maxMemoryTokens;
-    if (typeof tokenBudget === "number" && Number.isFinite(tokenBudget) && tokenBudget >= 0) {
+    if (
+      typeof tokenBudget === "number" &&
+      Number.isFinite(tokenBudget) &&
+      tokenBudget >= 0
+    ) {
       return Math.floor(tokenBudget * 4);
     }
     return 0;
@@ -3559,14 +4115,22 @@ export class Orchestrator {
       const separatorChars = sections.length > 0 ? separator.length : 0;
       const reserve = protectedIds.has(entry.id)
         ? 0
-        : this.estimateReservedRecallBudget(orderedEntries, index + 1, protectedIds, sections.length + 1);
+        : this.estimateReservedRecallBudget(
+            orderedEntries,
+            index + 1,
+            protectedIds,
+            sections.length + 1,
+          );
       const availableForEntry = budget - usedChars - separatorChars - reserve;
       if (availableForEntry <= 0) {
         omittedIds.push(entry.id);
         truncated = true;
         continue;
       }
-      const finalContent = this.truncateRecallSectionToBudget(entry.content, availableForEntry);
+      const finalContent = this.truncateRecallSectionToBudget(
+        entry.content,
+        availableForEntry,
+      );
       if (!finalContent) {
         omittedIds.push(entry.id);
         truncated = true;
@@ -3596,6 +4160,62 @@ export class Orchestrator {
   ): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
+    const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
+    const enrichmentSectionDeadlineMs =
+      this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    type DeferredEnrichmentOutcome<T> =
+      | { status: "resolved"; value: T }
+      | { status: "rejected"; error: unknown };
+    type ObservedDeferredEnrichmentPromise<T> =
+      Promise<DeferredEnrichmentOutcome<T>> & {
+        getSettledOutcome: () => DeferredEnrichmentOutcome<T> | undefined;
+        cancel: () => void;
+      };
+    const createEnrichmentAbortHandle = (parentSignal?: AbortSignal) => {
+      const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      if (parentSignal?.aborted) {
+        controller.abort();
+      } else if (parentSignal) {
+        parentSignal.addEventListener("abort", onAbort, { once: true });
+      }
+      let disposed = false;
+      const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        parentSignal?.removeEventListener("abort", onAbort);
+      };
+      return {
+        signal: controller.signal,
+        cancel: () => {
+          controller.abort();
+          dispose();
+        },
+        dispose,
+      };
+    };
+    const observeEnrichmentPromise = <T>(
+      promise: Promise<T>,
+      cancel: () => void = () => {},
+    ): ObservedDeferredEnrichmentPromise<T> => {
+      let settledOutcome: DeferredEnrichmentOutcome<T> | undefined;
+      const observed = promise
+        .then<DeferredEnrichmentOutcome<T>, DeferredEnrichmentOutcome<T>>(
+          (value) => ({ status: "resolved", value }),
+          (error) => ({ status: "rejected", error }),
+        )
+        .then((outcome) => {
+          settledOutcome = outcome;
+          return outcome;
+        }) as ObservedDeferredEnrichmentPromise<T>;
+      observed.getSettledOutcome = () => settledOutcome;
+      observed.cancel = cancel;
+      return observed;
+    };
+    const recordRecallSectionMetric = createRecallSectionMetricRecorder({
+      timings,
+      logger: log,
+    });
     const promptHash = createHash("sha256").update(prompt).digest("hex");
     const traceId = createHash("sha256")
       .update(`${sessionKey ?? "default"}:${recallStart}:${promptHash}`)
@@ -3604,15 +4224,24 @@ export class Orchestrator {
     const sectionBuckets = new Map<string, string[]>();
     const queryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
       cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
-      cronRecallNormalizedQueryMaxChars: this.config.cronRecallNormalizedQueryMaxChars,
-      cronRecallInstructionHeavyTokenCap: this.effectiveCronRecallInstructionHeavyTokenCap(),
+      cronRecallNormalizedQueryMaxChars:
+        this.config.cronRecallNormalizedQueryMaxChars,
+      cronRecallInstructionHeavyTokenCap:
+        this.effectiveCronRecallInstructionHeavyTokenCap(),
       cronConversationRecallMode: this.config.cronConversationRecallMode,
     });
     const retrievalQuery = queryPolicy.retrievalQuery || prompt;
-    const retrievalQueryHash = createHash("sha256").update(retrievalQuery).digest("hex");
+    const retrievalQueryHash = createHash("sha256")
+      .update(retrievalQuery)
+      .digest("hex");
     const policyVersion = this.currentPolicyVersion();
     let impressionRecorded = false;
-    let recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan" = "none";
+    let recallSource:
+      | "none"
+      | "hot_qmd"
+      | "hot_embedding"
+      | "cold_fallback"
+      | "recent_scan" = "none";
     let recalledMemoryCount = 0;
     let recalledMemoryIds: string[] = [];
     let recalledMemoryPaths: string[] = [];
@@ -3624,51 +4253,72 @@ export class Orchestrator {
       plannerEnabled: this.config.recallPlannerEnabled,
       graphRecallEnabled: this.config.graphRecallEnabled,
       multiGraphMemoryEnabled: this.config.multiGraphMemoryEnabled,
-      graphExpandedIntentEnabled: this.config.graphExpandedIntentEnabled === true,
+      graphExpandedIntentEnabled:
+        this.config.graphExpandedIntentEnabled === true,
       prompt,
     });
     const requestedMode = options.mode;
-    const recallMode: RecallPlanMode = requestedMode
-      ?? recallDecision.effectiveMode;
+    const recallMode: RecallPlanMode =
+      requestedMode ?? recallDecision.effectiveMode;
     const queryIntent = inferIntentFromText(retrievalQuery);
-    const qmdSearchOptions = this.buildConfiguredQmdSearchOptions(retrievalQuery);
+    const qmdSearchOptions =
+      this.buildConfiguredQmdSearchOptions(retrievalQuery);
     timings.recallPlan = recallMode;
-    const plannerRecallResultLimit = recallMode === "no_recall"
-      ? 0
-      : recallMode === "minimal"
-      ? Math.max(0, Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal))
-      : this.config.qmdMaxResults;
+    const plannerRecallResultLimit =
+      recallMode === "no_recall"
+        ? 0
+        : recallMode === "minimal"
+          ? Math.max(
+              0,
+              Math.min(
+                this.config.qmdMaxResults,
+                this.config.recallPlannerMaxQmdResultsMinimal,
+              ),
+            )
+          : this.config.qmdMaxResults;
     const policyMinimalLimit = Math.max(
       0,
-      Math.min(this.config.qmdMaxResults, this.config.recallPlannerMaxQmdResultsMinimal),
+      Math.min(
+        this.config.qmdMaxResults,
+        this.config.recallPlannerMaxQmdResultsMinimal,
+      ),
     );
     const baseRecallResultLimit =
-      recallMode !== "no_recall" && queryPolicy.retrievalBudgetMode === "minimal"
+      recallMode !== "no_recall" &&
+      queryPolicy.retrievalBudgetMode === "minimal"
         ? Math.min(plannerRecallResultLimit, policyMinimalLimit)
         : plannerRecallResultLimit;
     const memoriesSectionEnabled = this.isRecallSectionEnabled("memories");
-    const memorySectionMaxResults = this.getRecallSectionNumber("memories", "maxResults");
-    const requestedTopK = typeof options.topK === "number" && Number.isFinite(options.topK)
-      ? Math.max(0, Math.min(200, Math.floor(options.topK)))
-      : undefined;
+    const memorySectionMaxResults = this.getRecallSectionNumber(
+      "memories",
+      "maxResults",
+    );
+    const requestedTopK =
+      typeof options.topK === "number" && Number.isFinite(options.topK)
+        ? Math.max(0, Math.min(200, Math.floor(options.topK)))
+        : undefined;
     const recallResultLimit = memoriesSectionEnabled
       ? (() => {
-        let limit = baseRecallResultLimit;
-        if (memorySectionMaxResults !== undefined) {
-          limit = Math.min(limit, memorySectionMaxResults);
-        }
-        if (requestedTopK !== undefined) {
-          limit = Math.min(limit, requestedTopK);
-        }
-        return limit;
-      })()
+          let limit = baseRecallResultLimit;
+          if (memorySectionMaxResults !== undefined) {
+            limit = Math.min(limit, memorySectionMaxResults);
+          }
+          if (requestedTopK !== undefined) {
+            limit = Math.min(limit, requestedTopK);
+          }
+          return limit;
+        })()
       : 0;
     const recallHeadroom = this.config.verbatimArtifactsEnabled
       ? Math.max(12, this.config.verbatimArtifactsMaxRecall * 4)
       : 12;
-    const computedFetchLimit = recallResultLimit === 0
-      ? 0
-      : Math.max(recallResultLimit, Math.min(200, recallResultLimit + recallHeadroom));
+    const computedFetchLimit =
+      recallResultLimit === 0
+        ? 0
+        : Math.max(
+            recallResultLimit,
+            Math.min(200, recallResultLimit + recallHeadroom),
+          );
     const qmdFetchLimit = computedFetchLimit;
     const qmdHybridFetchLimit = computeQmdHybridFetchLimit(
       qmdFetchLimit,
@@ -3678,24 +4328,32 @@ export class Orchestrator {
     const embeddingFetchLimit = computedFetchLimit;
     const principal = resolvePrincipal(sessionKey, this.config);
     const namespaceOverride = options.namespace?.trim() || undefined;
-    const readableRecallNamespaces = recallNamespacesForPrincipal(principal, this.config);
-    if (namespaceOverride && !canReadNamespace(principal, namespaceOverride, this.config)) {
-      throw new Error(`namespace override is not readable: ${namespaceOverride}`);
+    const readableRecallNamespaces = recallNamespacesForPrincipal(
+      principal,
+      this.config,
+    );
+    if (
+      namespaceOverride &&
+      !canReadNamespace(principal, namespaceOverride, this.config)
+    ) {
+      throw new Error(
+        `namespace override is not readable: ${namespaceOverride}`,
+      );
     }
-    const selfNamespace = namespaceOverride ?? defaultNamespaceForPrincipal(principal, this.config);
+    const selfNamespace =
+      namespaceOverride ?? defaultNamespaceForPrincipal(principal, this.config);
     const recallNamespaces = namespaceOverride
       ? [namespaceOverride]
       : readableRecallNamespaces;
     const qmdAvailable = this.qmd.isAvailable();
-    let graphDecisionStatus: IntentDebugSnapshot["graphDecision"]["status"] = recallDecision.plannedMode === "graph_mode"
-      ? "skipped"
-      : "not_requested";
+    let graphDecisionStatus: IntentDebugSnapshot["graphDecision"]["status"] =
+      recallDecision.plannedMode === "graph_mode" ? "skipped" : "not_requested";
     let graphDecisionReason = recallDecision.graphReason;
     let graphDecisionShadowMode = false;
-    let shouldPersistGraphSnapshot = recallDecision.plannedMode === "graph_mode";
-    let graphSnapshotStatus: GraphRecallSnapshot["status"] | undefined = recallDecision.plannedMode === "graph_mode"
-      ? "skipped"
-      : undefined;
+    let shouldPersistGraphSnapshot =
+      recallDecision.plannedMode === "graph_mode";
+    let graphSnapshotStatus: GraphRecallSnapshot["status"] | undefined =
+      recallDecision.plannedMode === "graph_mode" ? "skipped" : undefined;
     let graphSnapshotReason = recallDecision.graphReason;
     let graphSnapshotSeedPaths: string[] = [];
     let graphSnapshotExpandedPaths: GraphRecallExpandedEntry[] = [];
@@ -3707,10 +4365,12 @@ export class Orchestrator {
     const graphSourceLabelsForPath = (resultPath: string): string[] => {
       const labels: string[] = [];
       const normalizedPath = resultPath.split(path.sep).join("/");
-      const isEntityPath = normalizedPath.startsWith("entities/")
-        || normalizedPath.includes("/entities/");
+      const isEntityPath =
+        normalizedPath.startsWith("entities/") ||
+        normalizedPath.includes("/entities/");
       if (graphBaselinePaths.has(resultPath)) labels.push("baseline");
-      if (graphExpandedResultPaths.has(resultPath)) labels.push("graph_expanded");
+      if (graphExpandedResultPaths.has(resultPath))
+        labels.push("graph_expanded");
       if (isEntityPath) labels.push("reconstructed_entity");
       return labels.length > 0 ? labels : ["baseline"];
     };
@@ -3836,7 +4496,13 @@ export class Orchestrator {
 
     // 0. Shared context (v4.0, optional)
     const sharedContextPromise = (async (): Promise<string | null> => {
-      if (!this.isRecallSectionEnabled("shared-context", this.config.sharedContextEnabled === true)) return null;
+      if (
+        !this.isRecallSectionEnabled(
+          "shared-context",
+          this.config.sharedContextEnabled === true,
+        )
+      )
+        return null;
       if (!this.sharedContext) return null;
       const t0 = Date.now();
       const [priorities, roundtable, crossSignals] = await Promise.all([
@@ -3845,25 +4511,41 @@ export class Orchestrator {
         this.sharedContext.readLatestCrossSignals(),
       ]);
       const max = Math.max(500, this.config.sharedContextMaxInjectChars);
-      const capSection = (label: string, body: string | null, limit: number): string => {
+      const capSection = (
+        label: string,
+        body: string | null,
+        limit: number,
+      ): string => {
         const trimmedBody = body?.trim();
         if (!trimmedBody) return "";
         const safeLimit = Math.max(120, limit);
         const section = `${label}\n\n${trimmedBody}`;
-        return section.length > safeLimit ? `${section.slice(0, safeLimit)}\n\n...(trimmed)\n` : section;
+        return section.length > safeLimit
+          ? `${section.slice(0, safeLimit)}\n\n...(trimmed)\n`
+          : section;
       };
 
-      const prioritiesSection = capSection("### Priorities", priorities, Math.floor(max * 0.35));
+      const prioritiesSection = capSection(
+        "### Priorities",
+        priorities,
+        Math.floor(max * 0.35),
+      );
       const crossSignalsSection = capSection(
         "### Latest Cross-Signals",
         crossSignals,
         Math.floor(max * 0.35),
       );
-      const fixedSections = [prioritiesSection, crossSignalsSection].filter((section) => section.trim().length > 0);
+      const fixedSections = [prioritiesSection, crossSignalsSection].filter(
+        (section) => section.trim().length > 0,
+      );
       const fixedPrefix = ["## Shared Context", ...fixedSections].join("\n\n");
       const reserved = fixedPrefix.length + "\n\n".length;
       const roundtableBudget = Math.max(160, max - reserved);
-      const roundtableSection = capSection("### Latest Roundtable", roundtable, roundtableBudget);
+      const roundtableSection = capSection(
+        "### Latest Roundtable",
+        roundtable,
+        roundtableBudget,
+      );
       const combined = [
         "## Shared Context",
         ...fixedSections,
@@ -3872,8 +4554,18 @@ export class Orchestrator {
         .filter((s) => s.trim().length > 0)
         .join("\n\n");
 
-      const trimmed = combined.length > max ? combined.slice(0, max) + "\n\n...(trimmed)\n" : combined;
-      timings.sharedCtx = `${Date.now() - t0}ms`;
+      const trimmed =
+        combined.length > max
+          ? combined.slice(0, max) + "\n\n...(trimmed)\n"
+          : combined;
+      recordRecallSectionMetric({
+        section: "sharedCtx",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return trimmed.trim().length > 0 ? trimmed : null;
     })();
 
@@ -3882,42 +4574,86 @@ export class Orchestrator {
       if (!this.isRecallSectionEnabled("profile")) return null;
       const t0 = Date.now();
       const profile = await profileStorage.readProfile();
-      timings.profile = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "profile",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return profile || null;
     })();
 
     // 1a. Identity continuity signals (v8.4)
     const identityContinuityPromise = (async () => {
-      if (!this.isRecallSectionEnabled("identity-continuity", this.config.identityContinuityEnabled === true)) return null;
+      if (
+        !this.isRecallSectionEnabled(
+          "identity-continuity",
+          this.config.identityContinuityEnabled === true,
+        )
+      )
+        return null;
       const t0 = Date.now();
       const section = await this.buildIdentityContinuitySection({
         storage: profileStorage,
         recallMode,
         prompt: retrievalQuery,
       });
-      timings.identityContinuity = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "identityContinuity",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
     const entityRetrievalPromise = (async (): Promise<string | null> => {
-      if (!this.isRecallSectionEnabled("entity-retrieval", this.config.entityRetrievalEnabled)) return null;
+      if (
+        !this.isRecallSectionEnabled(
+          "entity-retrieval",
+          this.config.entityRetrievalEnabled,
+        )
+      )
+        return null;
       if (!this.config.entityRetrievalEnabled) return null;
-      const maxChars = this.getRecallSectionMaxChars("entity-retrieval") ?? this.config.entityRetrievalMaxChars;
-      const maxHints = this.getRecallSectionNumber("entity-retrieval", "maxHints") ?? this.config.entityRetrievalMaxHints;
+      const maxChars =
+        this.getRecallSectionMaxChars("entity-retrieval") ??
+        this.config.entityRetrievalMaxChars;
+      const maxHints =
+        this.getRecallSectionNumber("entity-retrieval", "maxHints") ??
+        this.config.entityRetrievalMaxHints;
       const maxSupportingFacts =
-        this.getRecallSectionNumber("entity-retrieval", "maxSupportingFacts") ?? this.config.entityRetrievalMaxSupportingFacts;
+        this.getRecallSectionNumber("entity-retrieval", "maxSupportingFacts") ??
+        this.config.entityRetrievalMaxSupportingFacts;
       const maxRelatedEntities =
-        this.getRecallSectionNumber("entity-retrieval", "maxRelatedEntities") ?? this.config.entityRetrievalMaxRelatedEntities;
+        this.getRecallSectionNumber("entity-retrieval", "maxRelatedEntities") ??
+        this.config.entityRetrievalMaxRelatedEntities;
       const recentTurns =
-        this.getRecallSectionNumber("entity-retrieval", "recentTurns") ?? this.config.entityRetrievalRecentTurns;
+        this.getRecallSectionNumber("entity-retrieval", "recentTurns") ??
+        this.config.entityRetrievalRecentTurns;
       if (maxChars === 0 || maxHints === 0 || maxSupportingFacts === 0) {
-        timings.entityRetrieval = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "entityRetrieval",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
       const t0 = Date.now();
       const transcriptEntries = sessionKey
         ? await readRecentEntityTranscriptEntries(
-            this.transcript.readRecent(entityRecentTranscriptLookbackHours, sessionKey),
+            this.transcript.readRecent(
+              entityRecentTranscriptLookbackHours,
+              sessionKey,
+            ),
             recentTurns,
           )
         : [];
@@ -3936,24 +4672,59 @@ export class Orchestrator {
         log.warn(`entity retrieval build failed: ${err}`);
         return null;
       });
-      timings.entityRetrieval = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "entityRetrieval",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
     // 1b. Knowledge Index (v7.0)
-    const knowledgeIndexPromise = (async (): Promise<{ result: string; cached: boolean } | null> => {
-      if (!this.isRecallSectionEnabled("knowledge-index", this.config.knowledgeIndexEnabled)) return null;
+    const knowledgeIndexPromise = (async (): Promise<{
+      result: string;
+      cached: boolean;
+    } | null> => {
+      if (
+        !this.isRecallSectionEnabled(
+          "knowledge-index",
+          this.config.knowledgeIndexEnabled,
+        )
+      )
+        return null;
       if (!this.config.knowledgeIndexEnabled) return null;
       const t0 = Date.now();
       try {
         const ki = await this.storage.buildKnowledgeIndex(this.config, {
-          maxEntities: this.getRecallSectionNumber("knowledge-index", "maxEntities"),
+          maxEntities: this.getRecallSectionNumber(
+            "knowledge-index",
+            "maxEntities",
+          ),
           maxChars: this.getRecallSectionNumber("knowledge-index", "maxChars"),
         });
-        timings.ki = `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`;
+        recordRecallSectionMetric({
+          section: "ki",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: ki.cached ? "stale" : "fresh",
+          success: true,
+          timing: `${Date.now() - t0}ms${ki.cached ? " (cached)" : ""}`,
+        });
         return ki.result ? ki : null;
       } catch (err) {
-        timings.ki = `${Date.now() - t0}ms (err)`;
+        recordRecallSectionMetric({
+          section: "ki",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: false,
+          timing: `${Date.now() - t0}ms (err)`,
+        });
         log.warn(`Knowledge Index build failed: ${err}`);
         return null;
       }
@@ -3961,7 +4732,13 @@ export class Orchestrator {
 
     // 1c. Verbatim artifacts (v8.0 phase 1)
     const artifactsPromise = (async (): Promise<MemoryFile[]> => {
-      if (!this.isRecallSectionEnabled("verbatim-artifacts", this.config.verbatimArtifactsEnabled === true)) return [];
+      if (
+        !this.isRecallSectionEnabled(
+          "verbatim-artifacts",
+          this.config.verbatimArtifactsEnabled === true,
+        )
+      )
+        return [];
       if (!this.config.verbatimArtifactsEnabled) return [];
       const t0 = Date.now();
       const targetCount = computeArtifactRecallLimit(
@@ -3970,7 +4747,15 @@ export class Orchestrator {
         this.config.verbatimArtifactsMaxRecall,
       );
       if (targetCount <= 0) {
-        timings.artifacts = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "artifacts",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return [];
       }
       const results = await this.recallArtifactsAcrossNamespaces(
@@ -3979,7 +4764,14 @@ export class Orchestrator {
         targetCount,
       );
 
-      timings.artifacts = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "artifacts",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results;
     })();
 
@@ -3988,14 +4780,34 @@ export class Orchestrator {
       if (
         !this.config.objectiveStateMemoryEnabled ||
         !this.config.objectiveStateRecallEnabled ||
-        !this.isRecallSectionEnabled("objective-state", this.config.objectiveStateRecallEnabled === true)
+        !this.isRecallSectionEnabled(
+          "objective-state",
+          this.config.objectiveStateRecallEnabled === true,
+        )
       ) {
-        timings.objectiveState = "skip";
+        recordRecallSectionMetric({
+          section: "objectiveState",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const maxResults = this.getRecallSectionNumber("objective-state", "maxResults") ?? 4;
+      const maxResults =
+        this.getRecallSectionNumber("objective-state", "maxResults") ?? 4;
       if (maxResults <= 0) {
-        timings.objectiveState = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "objectiveState",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4007,8 +4819,17 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.objectiveState = `${Date.now() - t0}ms`;
-      return results.length > 0 ? this.formatObjectiveStateResults(results) : null;
+      recordRecallSectionMetric({
+        section: "objectiveState",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
+      return results.length > 0
+        ? this.formatObjectiveStateResults(results)
+        : null;
     })();
 
     const causalTrajectoryPromise = (async (): Promise<string | null> => {
@@ -4016,14 +4837,34 @@ export class Orchestrator {
       if (
         !this.config.causalTrajectoryMemoryEnabled ||
         !this.config.causalTrajectoryRecallEnabled ||
-        !this.isRecallSectionEnabled("causal-trajectories", this.config.causalTrajectoryRecallEnabled === true)
+        !this.isRecallSectionEnabled(
+          "causal-trajectories",
+          this.config.causalTrajectoryRecallEnabled === true,
+        )
       ) {
-        timings.causalTrajectories = "skip";
+        recordRecallSectionMetric({
+          section: "causalTrajectories",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const maxResults = this.getRecallSectionNumber("causal-trajectories", "maxResults") ?? 3;
+      const maxResults =
+        this.getRecallSectionNumber("causal-trajectories", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.causalTrajectories = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "causalTrajectories",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4035,17 +4876,37 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.causalTrajectories = `${Date.now() - t0}ms`;
-      return results.length > 0 ? this.formatCausalTrajectoryResults(results) : null;
+      recordRecallSectionMetric({
+        section: "causalTrajectories",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
+      return results.length > 0
+        ? this.formatCausalTrajectoryResults(results)
+        : null;
     })();
 
     const cmcRetrievalPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
         !this.config.cmcRetrievalEnabled ||
-        !this.isRecallSectionEnabled("cmc-causal-chains", this.config.cmcRetrievalEnabled === true)
+        !this.isRecallSectionEnabled(
+          "cmc-causal-chains",
+          this.config.cmcRetrievalEnabled === true,
+        )
       ) {
-        timings.cmcCausalChains = "skip";
+        recordRecallSectionMetric({
+          section: "cmcCausalChains",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       try {
@@ -4061,11 +4922,26 @@ export class Orchestrator {
             counterfactualBoost: this.config.cmcRetrievalCounterfactualBoost,
           },
         });
-        timings.cmcCausalChains = `${Date.now() - t0}ms`;
+        recordRecallSectionMetric({
+          section: "cmcCausalChains",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
         return section;
       } catch (err) {
         log.warn("[cmc] causal retrieval failed (non-fatal)", err);
-        timings.cmcCausalChains = "error";
+        recordRecallSectionMetric({
+          section: "cmcCausalChains",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: false,
+          timing: "error",
+        });
         return null;
       }
     })();
@@ -4074,16 +4950,36 @@ export class Orchestrator {
       const t0 = Date.now();
       if (
         !this.config.calibrationEnabled ||
-        !this.isRecallSectionEnabled("calibration-rules", this.config.calibrationEnabled === true)
+        !this.isRecallSectionEnabled(
+          "calibration-rules",
+          this.config.calibrationEnabled === true,
+        )
       ) {
-        timings.calibrationRules = "skip";
+        recordRecallSectionMetric({
+          section: "calibrationRules",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
       try {
-        const { getCalibrationRulesForRecall, buildCalibrationRecallSection } = await import("./calibration.js");
+        const { getCalibrationRulesForRecall, buildCalibrationRecallSection } =
+          await import("./calibration.js");
         const rules = await getCalibrationRulesForRecall(this.config.memoryDir);
         if (rules.length === 0) {
-          timings.calibrationRules = "skip(no-rules)";
+          recordRecallSectionMetric({
+            section: "calibrationRules",
+            priority: "core",
+            durationMs: Date.now() - t0,
+            deadlineMs: recallSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(no-rules)",
+          });
           return null;
         }
         const section = buildCalibrationRecallSection(
@@ -4091,11 +4987,26 @@ export class Orchestrator {
           retrievalQuery,
           this.config.calibrationMaxChars,
         );
-        timings.calibrationRules = `${Date.now() - t0}ms`;
+        recordRecallSectionMetric({
+          section: "calibrationRules",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
         return section;
       } catch (err) {
         log.warn("[calibration] recall section failed (non-fatal)", err);
-        timings.calibrationRules = "error";
+        recordRecallSectionMetric({
+          section: "calibrationRules",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: false,
+          timing: "error",
+        });
         return null;
       }
     })();
@@ -4105,14 +5016,34 @@ export class Orchestrator {
       if (
         !this.config.trustZonesEnabled ||
         !this.config.trustZoneRecallEnabled ||
-        !this.isRecallSectionEnabled("trust-zones", this.config.trustZoneRecallEnabled === true)
+        !this.isRecallSectionEnabled(
+          "trust-zones",
+          this.config.trustZoneRecallEnabled === true,
+        )
       ) {
-        timings.trustZones = "skip";
+        recordRecallSectionMetric({
+          section: "trustZones",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const maxResults = this.getRecallSectionNumber("trust-zones", "maxResults") ?? 3;
+      const maxResults =
+        this.getRecallSectionNumber("trust-zones", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.trustZones = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "trustZones",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4124,37 +5055,80 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.trustZones = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "trustZones",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatTrustZoneResults(results) : null;
     })();
 
-    const harmonicRetrievalPromise = (async (): Promise<string | null> => {
-      const t0 = Date.now();
-      if (
-        !this.config.harmonicRetrievalEnabled ||
-        !this.isRecallSectionEnabled("harmonic-retrieval", this.config.harmonicRetrievalEnabled === true)
-      ) {
-        timings.harmonicRetrieval = "skip";
-        return null;
-      }
-      const maxResults = this.getRecallSectionNumber("harmonic-retrieval", "maxResults") ?? 3;
-      if (maxResults <= 0) {
-        timings.harmonicRetrieval = "skip(limit=0)";
-        return null;
-      }
+    const harmonicRetrievalAbort = createEnrichmentAbortHandle(
+      options.abortSignal,
+    );
+    const harmonicRetrievalPromise = observeEnrichmentPromise(
+      (async (): Promise<string | null> => {
+        const t0 = Date.now();
+        if (
+          !this.config.harmonicRetrievalEnabled ||
+          !this.isRecallSectionEnabled(
+            "harmonic-retrieval",
+            this.config.harmonicRetrievalEnabled === true,
+          )
+        ) {
+          recordRecallSectionMetric({
+            section: "harmonicRetrieval",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip",
+          });
+          return null;
+        }
+        const maxResults =
+          this.getRecallSectionNumber("harmonic-retrieval", "maxResults") ?? 3;
+        if (maxResults <= 0) {
+          recordRecallSectionMetric({
+            section: "harmonicRetrieval",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(limit=0)",
+          });
+          return null;
+        }
 
-      const results = await searchHarmonicRetrieval({
-        memoryDir: this.config.memoryDir,
-        abstractionNodeStoreDir: this.config.abstractionNodeStoreDir,
-        query: retrievalQuery,
-        maxResults,
-        sessionKey,
-        anchorsEnabled: this.config.abstractionAnchorsEnabled,
-      });
+        const results = await searchHarmonicRetrieval({
+          memoryDir: this.config.memoryDir,
+          abstractionNodeStoreDir: this.config.abstractionNodeStoreDir,
+          query: retrievalQuery,
+          maxResults,
+          sessionKey,
+          anchorsEnabled: this.config.abstractionAnchorsEnabled,
+          abortSignal: harmonicRetrievalAbort.signal,
+        });
 
-      timings.harmonicRetrieval = `${Date.now() - t0}ms`;
-      return results.length > 0 ? this.formatHarmonicRetrievalResults(results) : null;
-    })();
+        recordRecallSectionMetric({
+          section: "harmonicRetrieval",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
+        return results.length > 0
+          ? this.formatHarmonicRetrievalResults(results)
+          : null;
+      })().finally(() => harmonicRetrievalAbort.dispose()),
+      () => harmonicRetrievalAbort.cancel(),
+    );
 
     // Verified recall and semantic rules both need readAllMemories().
     // Instead of a shared preload (which has namespace/dir mismatch issues),
@@ -4167,14 +5141,34 @@ export class Orchestrator {
       const t0 = Date.now();
       if (
         !this.config.verifiedRecallEnabled ||
-        !this.isRecallSectionEnabled("verified-episodes", this.config.verifiedRecallEnabled === true)
+        !this.isRecallSectionEnabled(
+          "verified-episodes",
+          this.config.verifiedRecallEnabled === true,
+        )
       ) {
-        timings.verifiedRecall = "skip";
+        recordRecallSectionMetric({
+          section: "verifiedRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const maxResults = this.getRecallSectionNumber("verified-episodes", "maxResults") ?? 3;
+      const maxResults =
+        this.getRecallSectionNumber("verified-episodes", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.verifiedRecall = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "verifiedRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4188,31 +5182,65 @@ export class Orchestrator {
           boxRecallDays: this.config.boxRecallDays,
         }),
         new Promise<[]>((resolve) => {
-          timeoutHandle = setTimeout(() => resolve([]), VERIFIED_RECALL_TIMEOUT_MS);
+          timeoutHandle = setTimeout(
+            () => resolve([]),
+            VERIFIED_RECALL_TIMEOUT_MS,
+          );
         }),
       ]).catch(() => [] as VerifiedEpisodeResult[]);
       if (timeoutHandle) clearTimeout(timeoutHandle);
 
       const durationMs = Date.now() - t0;
       if (durationMs >= VERIFIED_RECALL_TIMEOUT_MS) {
-        log.debug(`verified recall: timed out after ${VERIFIED_RECALL_TIMEOUT_MS}ms`);
+        log.debug(
+          `verified recall: timed out after ${VERIFIED_RECALL_TIMEOUT_MS}ms`,
+        );
       }
-      timings.verifiedRecall = `${durationMs}ms`;
-      return results.length > 0 ? this.formatVerifiedEpisodeResults(results) : null;
+      recordRecallSectionMetric({
+        section: "verifiedRecall",
+        priority: "core",
+        durationMs,
+        deadlineMs: VERIFIED_RECALL_TIMEOUT_MS,
+        source: "fresh",
+        success: true,
+      });
+      return results.length > 0
+        ? this.formatVerifiedEpisodeResults(results)
+        : null;
     })();
 
     const verifiedRulesPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
       if (
         !this.config.semanticRuleVerificationEnabled ||
-        !this.isRecallSectionEnabled("verified-rules", this.config.semanticRuleVerificationEnabled === true)
+        !this.isRecallSectionEnabled(
+          "verified-rules",
+          this.config.semanticRuleVerificationEnabled === true,
+        )
       ) {
-        timings.verifiedRules = "skip";
+        recordRecallSectionMetric({
+          section: "verifiedRules",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const maxResults = this.getRecallSectionNumber("verified-rules", "maxResults") ?? 3;
+      const maxResults =
+        this.getRecallSectionNumber("verified-rules", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.verifiedRules = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "verifiedRules",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4225,17 +5253,31 @@ export class Orchestrator {
           maxResults,
         }),
         new Promise<[]>((resolve) => {
-          rulesTimeoutHandle = setTimeout(() => resolve([]), VERIFIED_RULES_TIMEOUT_MS);
+          rulesTimeoutHandle = setTimeout(
+            () => resolve([]),
+            VERIFIED_RULES_TIMEOUT_MS,
+          );
         }),
       ]).catch(() => [] as VerifiedSemanticRuleResult[]);
       if (rulesTimeoutHandle) clearTimeout(rulesTimeoutHandle);
 
       const durationMs = Date.now() - t0;
       if (durationMs >= VERIFIED_RULES_TIMEOUT_MS) {
-        log.debug(`verified rules: timed out after ${VERIFIED_RULES_TIMEOUT_MS}ms`);
+        log.debug(
+          `verified rules: timed out after ${VERIFIED_RULES_TIMEOUT_MS}ms`,
+        );
       }
-      timings.verifiedRules = `${durationMs}ms`;
-      return results.length > 0 ? this.formatVerifiedSemanticRuleResults(results) : null;
+      recordRecallSectionMetric({
+        section: "verifiedRules",
+        priority: "core",
+        durationMs,
+        deadlineMs: VERIFIED_RULES_TIMEOUT_MS,
+        source: "fresh",
+        success: true,
+      });
+      return results.length > 0
+        ? this.formatVerifiedSemanticRuleResults(results)
+        : null;
     })();
 
     const workProductsPromise = (async (): Promise<string | null> => {
@@ -4243,14 +5285,34 @@ export class Orchestrator {
       if (
         !this.config.creationMemoryEnabled ||
         !this.config.workProductRecallEnabled ||
-        !this.isRecallSectionEnabled("work-products", this.config.workProductRecallEnabled === true)
+        !this.isRecallSectionEnabled(
+          "work-products",
+          this.config.workProductRecallEnabled === true,
+        )
       ) {
-        timings.workProducts = "skip";
+        recordRecallSectionMetric({
+          section: "workProducts",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const maxResults = this.getRecallSectionNumber("work-products", "maxResults") ?? 3;
+      const maxResults =
+        this.getRecallSectionNumber("work-products", "maxResults") ?? 3;
       if (maxResults <= 0) {
-        timings.workProducts = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "workProducts",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4262,33 +5324,64 @@ export class Orchestrator {
         sessionKey,
       });
 
-      timings.workProducts = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "workProducts",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return results.length > 0 ? this.formatWorkProductResults(results) : null;
     })();
 
-    const queryAwarePrefilterPromise = (async (): Promise<QueryAwarePrefilter> => {
-      const t0 = Date.now();
-      if (!this.config.queryAwareIndexingEnabled || !prompt.trim()) {
-        timings.queryAware = "skip";
-        return {
-          candidatePaths: null,
-          temporalFromDate: null,
-          matchedTags: [],
-          expandedTags: [],
-          combination: "none",
-          filteredToFullSearch: false,
-        };
-      }
+    const queryAwarePrefilterPromise =
+      (async (): Promise<QueryAwarePrefilter> => {
+        const t0 = Date.now();
+        if (!this.config.queryAwareIndexingEnabled || !prompt.trim()) {
+          recordRecallSectionMetric({
+            section: "queryAware",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip",
+          });
+          return {
+            candidatePaths: null,
+            temporalFromDate: null,
+            matchedTags: [],
+            expandedTags: [],
+            combination: "none",
+            filteredToFullSearch: false,
+          };
+        }
 
-      const prefilter = await this.buildQueryAwarePrefilter(retrievalQuery, recallNamespaces);
-      const candidateCount = prefilter.candidatePaths?.size ?? 0;
-      const temporalLabel = prefilter.temporalFromDate ?? "-";
-      const tagLabel = prefilter.expandedTags.length > 0 ? prefilter.expandedTags.join("|") : "-";
-      const fallbackLabel = prefilter.filteredToFullSearch ? "/full-search" : "";
-      timings.queryAware =
-        `${Date.now() - t0}ms(${prefilter.combination}${fallbackLabel};count=${candidateCount};time=${temporalLabel};tags=${tagLabel})`;
-      return prefilter;
-    })();
+        const prefilter = await this.buildQueryAwarePrefilter(
+          retrievalQuery,
+          recallNamespaces,
+        );
+        const candidateCount = prefilter.candidatePaths?.size ?? 0;
+        const temporalLabel = prefilter.temporalFromDate ?? "-";
+        const tagLabel =
+          prefilter.expandedTags.length > 0
+            ? prefilter.expandedTags.join("|")
+            : "-";
+        const fallbackLabel = prefilter.filteredToFullSearch
+          ? "/full-search"
+          : "";
+        recordRecallSectionMetric({
+          section: "queryAware",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: prefilter.filteredToFullSearch ? "stale" : "fresh",
+          success: true,
+          timing: `${Date.now() - t0}ms(${prefilter.combination}${fallbackLabel};count=${candidateCount};time=${temporalLabel};tags=${tagLabel})`,
+        });
+        return prefilter;
+      })();
 
     // 2. QMD search (the slow part — runs in parallel with preamble)
     type QmdPhaseResult = {
@@ -4305,155 +5398,303 @@ export class Orchestrator {
       maxSpecializedScore: number;
     } | null;
 
-    const qmdPromise = (async (): Promise<QmdPhaseResult> => {
-      if (recallResultLimit <= 0) {
-        timings.qmd = "skip(limit=0)";
-        return null;
-      }
-      if (!this.qmd.isAvailable()) {
-        // Lazy re-probe: the initial probe may have failed because the
-        // event loop was blocked during gateway startup (skill scanning).
-        // Rate-limit to once per 60s to avoid hammering the subprocess.
-        const now = Date.now();
-        const QMD_REPROBE_COOLDOWN_MS = 60_000;
-        if (this.lastQmdReprobeAtMs && now - this.lastQmdReprobeAtMs < QMD_REPROBE_COOLDOWN_MS) {
-          timings.qmd = "skip(reprobe-cooldown)";
+    const qmdEnrichmentAbort = createEnrichmentAbortHandle(options.abortSignal);
+    const qmdPromise = observeEnrichmentPromise(
+      (async (): Promise<QmdPhaseResult> => {
+        const t0 = Date.now();
+        if (recallResultLimit <= 0) {
+          recordRecallSectionMetric({
+            section: "qmd",
+            priority: "enrichment",
+            durationMs: Date.now() - t0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(limit=0)",
+          });
           return null;
         }
-        this.lastQmdReprobeAtMs = now;
-        const reprobed = await this.qmd.probe();
-        if (!reprobed) {
-          timings.qmd = "skip";
-          log.debug(`Search skip (re-probe failed): ${this.qmd.debugStatus()}`);
-          return null;
-        }
-        log.info(`QMD re-probe succeeded: ${this.qmd.debugStatus()}`);
-      }
-      const t0 = Date.now();
-      const queryAwarePrefilter = await queryAwarePrefilterPromise;
 
-      // v9.1: Start DirectFact + Temporal agents NOW, before QMD fetch begins.
-      // Both agents use only local file I/O (no network), so they run concurrently
-      // with the QMD hybrid search for true parallel latency:
-      //   total latency ≈ max(qmd, direct, temporal), not qmd + max(direct, temporal).
-      // Results are awaited after QMD completes and merged below.
-      const maxPerAgent = this.config.parallelMaxResultsPerAgent;
-      // maxPerAgent=0 is a hard disable (same contract as augmentWithDirectAndTemporal).
-      // Skip agent launch entirely to avoid unnecessary filesystem I/O.
-      const specializedAgentPromise: Promise<[ParallelSearchResult[], ParallelSearchResult[]]> | null =
-        this.config.parallelRetrievalEnabled && maxPerAgent > 0
-          ? Promise.all([
-            shouldRunAgent("direct", retrievalQuery, 0)
-              ? runDirectAgent(retrievalQuery, profileStorage.dir, maxPerAgent).catch((err) => {
-                log.debug(`DirectAgent pre-start failed: ${err}`);
-                return [] as ParallelSearchResult[];
-              })
-              : Promise.resolve([] as ParallelSearchResult[]),
-            shouldRunAgent("temporal", retrievalQuery, 0)
-              // Temporal index lives at config.memoryDir/state/index_time.json (written by
-              // updateTemporalTagIndexes). profileStorage.dir is namespace-specific and
-              // would not contain the shared index for non-default namespaces.
-              ? runTemporalAgent(retrievalQuery, this.config.memoryDir, maxPerAgent, queryAwarePrefilter.candidatePaths).catch((err) => {
-                log.debug(`TemporalAgent pre-start failed: ${err}`);
-                return [] as ParallelSearchResult[];
-              })
-              : Promise.resolve([] as ParallelSearchResult[]),
-          ])
-          : null;
-
-      // Hybrid search: parallel BM25 + vector, merged by path.
-      // Much faster than `qmd query` (LLM expansion + reranking) which
-      // takes 30-70s and causes recall timeouts.
-      const filteredResults = await this.fetchQmdMemoryResultsWithArtifactTopUp(
-        retrievalQuery,
-        qmdFetchLimit,
-        qmdHybridFetchLimit,
-        {
-          namespacesEnabled: this.config.namespacesEnabled,
-          recallNamespaces,
-          resolveNamespace: (p) => this.namespaceFromPath(p),
-          queryAwarePrefilter,
+        const qmdCacheKey = buildQmdRecallCacheKey({
+          query: retrievalQuery,
+          namespaces: recallNamespaces,
+          recallMode,
+          maxResults: qmdFetchLimit,
+          memoryDir: this.config.memoryDir,
           searchOptions: qmdSearchOptions,
-          abortSignal: options.abortSignal,
-          onDebugSnapshot: async (snapshot) => {
-            await this.recordLastQmdRecallSnapshot({
-              storage: profileStorage,
-              snapshot,
-            });
+        });
+        const cachedQmd = getCachedQmdRecall<Exclude<QmdPhaseResult, null>>(
+          qmdCacheKey,
+          {
+            freshTtlMs: this.config.qmdRecallCacheTtlMs ?? 60_000,
+            staleTtlMs: this.config.qmdRecallCacheStaleTtlMs ?? 10 * 60_000,
           },
-        },
-      );
-
-      timings.qmd = `${Date.now() - t0}ms`;
-
-      // v9.1: Parallel agent augmentation — DirectFact + Temporal agents were started
-      // concurrently with the QMD fetch above for true parallel latency. Await their
-      // results now and merge, adding per-agent headroom to the cap so lifecycle
-      // filtering downstream still has candidates after dropping stale specialized hits.
-      //
-      // Record the top QMD score BEFORE the merge so the confidence gate downstream
-      // can compare against the calibrated QMD-scale score. The merge applies a
-      // contextual weight (default 0.7x) to contextual results, which would otherwise
-      // silently lower scores below the gate threshold even when recall is high-quality.
-      const preAugmentTopScore = filteredResults.length > 0
-        ? Math.max(...filteredResults.map((r) => r.score))
-        : 0;
-      let augmentedResults = filteredResults;
-      let maxSpecializedScore = 0;
-      if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
-        try {
-          const [directResults, temporalResults] = await specializedAgentPromise;
-          // Only augment when QMD found something. When filteredResults is empty (QMD
-          // returned nothing), merging specialized results would suppress the embedding
-          // fallback — the recall path branches on memoryResults.length > 0, so
-          // heuristic-only hits (filename overlap, recency) would prevent the semantic
-          // embedding search from running on exactly the queries where hybrid search failed.
-          if (filteredResults.length === 0) {
-            // QMD found nothing; skip merge so embedding fallback remains reachable.
-          } else {
-          // Capture max specialized score (post-weight) BEFORE merge so the confidence
-          // gate can include strong direct/temporal hits in the effective top score.
-          // This prevents the gate from discarding an exact entity-name match just because
-          // the QMD contextual pass returned a weak result.
-          const w = this.config.parallelAgentWeights;
-          maxSpecializedScore = Math.max(
-            directResults.length > 0 ? Math.max(...directResults.map((r) => r.score * w.direct)) : 0,
-            temporalResults.length > 0 ? Math.max(...temporalResults.map((r) => r.score * w.temporal)) : 0,
-          );
-          const lifecycleHeadroom = this.config.parallelMaxResultsPerAgent * 2;
-          augmentedResults = await mergeWithAgentResults(
-            filteredResults,
-            directResults,
-            temporalResults,
-            this.config.parallelAgentWeights,
-            qmdFetchLimit + lifecycleHeadroom,
-          );
-          } // end else (filteredResults.length > 0)
-        } catch (err) {
-          log.debug(`parallelRetrieval augmentation failed, using base results: ${err}`);
-          // Fall back to existing filteredResults; reset maxSpecializedScore so the confidence
-          // gate is not influenced by agent results that were never merged into augmentedResults.
-          maxSpecializedScore = 0;
+        );
+        const staleQmdFallback =
+          cachedQmd?.source === "stale" ? cachedQmd : null;
+        if (cachedQmd?.source === "fresh") {
+          recordRecallSectionMetric({
+            section: "qmd",
+            priority: "enrichment",
+            durationMs: Date.now() - t0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: cachedQmd.source,
+            success: true,
+            timing: `${Math.max(0, Math.round(cachedQmd.ageMs))}ms-cache`,
+          });
+          return cachedQmd.value;
         }
-      }
 
-      return { memoryResultsLists: [augmentedResults], globalResults: [], preAugmentTopScore, maxSpecializedScore };
-    })();
+        if (!this.qmd.isAvailable()) {
+          const now = Date.now();
+          const QMD_REPROBE_COOLDOWN_MS = 60_000;
+          if (
+            this.lastQmdReprobeAtMs &&
+            now - this.lastQmdReprobeAtMs < QMD_REPROBE_COOLDOWN_MS
+          ) {
+            if (staleQmdFallback) {
+              recordRecallSectionMetric({
+                section: "qmd",
+                priority: "enrichment",
+                durationMs: Date.now() - t0,
+                deadlineMs: enrichmentSectionDeadlineMs,
+                source: "stale",
+                success: true,
+                timing: `stale-cache(reprobe-cooldown:${Math.max(0, Math.round(staleQmdFallback.ageMs))}ms)`,
+              });
+              return staleQmdFallback.value;
+            }
+            recordRecallSectionMetric({
+              section: "qmd",
+              priority: "enrichment",
+              durationMs: Date.now() - t0,
+              deadlineMs: enrichmentSectionDeadlineMs,
+              source: "skip",
+              success: true,
+              timing: "skip(reprobe-cooldown)",
+            });
+            return null;
+          }
+          this.lastQmdReprobeAtMs = now;
+          const reprobed = await this.qmd.probe();
+          if (!reprobed) {
+            if (staleQmdFallback) {
+              recordRecallSectionMetric({
+                section: "qmd",
+                priority: "enrichment",
+                durationMs: Date.now() - t0,
+                deadlineMs: enrichmentSectionDeadlineMs,
+                source: "stale",
+                success: true,
+                timing: `stale-cache(reprobe-failed:${Math.max(0, Math.round(staleQmdFallback.ageMs))}ms)`,
+              });
+              return staleQmdFallback.value;
+            }
+            recordRecallSectionMetric({
+              section: "qmd",
+              priority: "enrichment",
+              durationMs: Date.now() - t0,
+              deadlineMs: enrichmentSectionDeadlineMs,
+              source: "skip",
+              success: true,
+              timing: "skip",
+            });
+            log.debug(
+              `Search skip (re-probe failed): ${this.qmd.debugStatus()}`,
+            );
+            return null;
+          }
+          log.info(`QMD re-probe succeeded: ${this.qmd.debugStatus()}`);
+        }
+
+        const queryAwarePrefilter = await queryAwarePrefilterPromise;
+        const maxPerAgent = this.config.parallelMaxResultsPerAgent;
+        const specializedAgentPromise: Promise<
+          [ParallelSearchResult[], ParallelSearchResult[]]
+        > | null =
+          this.config.parallelRetrievalEnabled && maxPerAgent > 0
+            ? Promise.all([
+                shouldRunAgent("direct", retrievalQuery, 0)
+                  ? runDirectAgent(
+                      retrievalQuery,
+                      profileStorage.dir,
+                      maxPerAgent,
+                    ).catch((err) => {
+                      log.debug(`DirectAgent pre-start failed: ${err}`);
+                      return [] as ParallelSearchResult[];
+                    })
+                  : Promise.resolve([] as ParallelSearchResult[]),
+                shouldRunAgent("temporal", retrievalQuery, 0)
+                  ? runTemporalAgent(
+                      retrievalQuery,
+                      this.config.memoryDir,
+                      maxPerAgent,
+                      queryAwarePrefilter.candidatePaths,
+                    ).catch((err) => {
+                      log.debug(`TemporalAgent pre-start failed: ${err}`);
+                      return [] as ParallelSearchResult[];
+                    })
+                  : Promise.resolve([] as ParallelSearchResult[]),
+              ])
+            : null;
+
+        try {
+          const filteredResults =
+            await this.fetchQmdMemoryResultsWithArtifactTopUp(
+              retrievalQuery,
+              qmdFetchLimit,
+              qmdHybridFetchLimit,
+              {
+                namespacesEnabled: this.config.namespacesEnabled,
+                recallNamespaces,
+                resolveNamespace: (p) => this.namespaceFromPath(p),
+                queryAwarePrefilter,
+                searchOptions: qmdSearchOptions,
+                abortSignal: qmdEnrichmentAbort.signal,
+                onDebugSnapshot: async (snapshot) => {
+                  await this.recordLastQmdRecallSnapshot({
+                    storage: profileStorage,
+                    snapshot,
+                  });
+                },
+              },
+            );
+
+          const preAugmentTopScore =
+            filteredResults.length > 0
+              ? Math.max(...filteredResults.map((r) => r.score))
+              : 0;
+          let augmentedResults = filteredResults;
+          let maxSpecializedScore = 0;
+          if (this.config.parallelRetrievalEnabled && specializedAgentPromise) {
+            try {
+              const [directResults, temporalResults] =
+                await specializedAgentPromise;
+              if (filteredResults.length > 0) {
+                const w = this.config.parallelAgentWeights;
+                maxSpecializedScore = Math.max(
+                  directResults.length > 0
+                    ? Math.max(...directResults.map((r) => r.score * w.direct))
+                    : 0,
+                  temporalResults.length > 0
+                    ? Math.max(
+                        ...temporalResults.map((r) => r.score * w.temporal),
+                      )
+                    : 0,
+                );
+                const lifecycleHeadroom =
+                  this.config.parallelMaxResultsPerAgent * 2;
+                augmentedResults = await mergeWithAgentResults(
+                  filteredResults,
+                  directResults,
+                  temporalResults,
+                  this.config.parallelAgentWeights,
+                  qmdFetchLimit + lifecycleHeadroom,
+                );
+              }
+            } catch (err) {
+              log.debug(
+                `parallelRetrieval augmentation failed, using base results: ${err}`,
+              );
+              maxSpecializedScore = 0;
+            }
+          }
+
+          const result = {
+            memoryResultsLists: [augmentedResults],
+            globalResults: [],
+            preAugmentTopScore,
+            maxSpecializedScore,
+          };
+          if (
+            augmentedResults.length > 0 ||
+            result.globalResults.length > 0
+          ) {
+            setCachedQmdRecall(qmdCacheKey, result, {
+              maxEntries: this.config.qmdRecallCacheMaxEntries ?? 128,
+            });
+          }
+          recordRecallSectionMetric({
+            section: "qmd",
+            priority: "enrichment",
+            durationMs: Date.now() - t0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "fresh",
+            success: true,
+          });
+          return result;
+        } catch (err) {
+          if (staleQmdFallback) {
+            recordRecallSectionMetric({
+              section: "qmd",
+              priority: "enrichment",
+              durationMs: Date.now() - t0,
+              deadlineMs: enrichmentSectionDeadlineMs,
+              source: "stale",
+              success: true,
+              timing: `stale-cache(${err instanceof Error ? err.message : String(err)})`,
+            });
+            return staleQmdFallback.value;
+          }
+          throw err;
+        }
+      })()
+        .catch((err): QmdPhaseResult => {
+          if (options.abortSignal?.aborted) {
+            log.debug(
+              `recall phase-1 enrichment [qmd]: skipped after abort at +${Date.now() - phase1Start}ms`,
+            );
+            return null;
+          }
+          log.warn(
+            `recall phase-1 enrichment [qmd] failed open: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        })
+        .finally(() => qmdEnrichmentAbort.dispose()),
+      () => qmdEnrichmentAbort.cancel(),
+    );
 
     const transcriptPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
-      if (!this.config.transcriptEnabled || !this.isRecallSectionEnabled("transcript", true)) {
-        timings.transcript = "skip";
+      if (
+        !this.config.transcriptEnabled ||
+        !this.isRecallSectionEnabled("transcript", true)
+      ) {
+        recordRecallSectionMetric({
+          section: "transcript",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const transcriptMaxTokens = this.getRecallSectionNumber("transcript", "maxTokens")
-        ?? this.config.maxTranscriptTokens;
-      const transcriptMaxTurns = this.getRecallSectionNumber("transcript", "maxTurns")
-        ?? this.config.maxTranscriptTurns;
-      const transcriptLookbackHours = this.getRecallSectionNumber("transcript", "lookbackHours")
-        ?? this.config.transcriptRecallHours;
-      if (transcriptMaxTokens === 0 || transcriptMaxTurns === 0 || transcriptLookbackHours === 0) {
-        timings.transcript = "skip(limit=0)";
+      const transcriptMaxTokens =
+        this.getRecallSectionNumber("transcript", "maxTokens") ??
+        this.config.maxTranscriptTokens;
+      const transcriptMaxTurns =
+        this.getRecallSectionNumber("transcript", "maxTurns") ??
+        this.config.maxTranscriptTurns;
+      const transcriptLookbackHours =
+        this.getRecallSectionNumber("transcript", "lookbackHours") ??
+        this.config.transcriptRecallHours;
+      if (
+        transcriptMaxTokens === 0 ||
+        transcriptMaxTurns === 0 ||
+        transcriptLookbackHours === 0
+      ) {
+        recordRecallSectionMetric({
+          section: "transcript",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
@@ -4462,9 +5703,14 @@ export class Orchestrator {
       let checkpointInjected = false;
       if (this.config.checkpointEnabled) {
         const checkpoint = await this.transcript.loadCheckpoint(sessionKey);
-        log.debug(`recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`);
+        log.debug(
+          `recall: checkpoint loaded, turns=${checkpoint?.turns?.length ?? 0}`,
+        );
         if (checkpoint && checkpoint.turns.length > 0) {
-          const formatted = this.transcript.formatForRecall(checkpoint.turns, transcriptMaxTokens);
+          const formatted = this.transcript.formatForRecall(
+            checkpoint.turns,
+            transcriptMaxTokens,
+          );
           if (formatted) {
             section = `## Working Context (Recovered)\n\n${formatted}`;
             checkpointInjected = true;
@@ -4475,19 +5721,36 @@ export class Orchestrator {
       }
 
       if (!checkpointInjected) {
-        const entries = await this.transcript.readRecent(transcriptLookbackHours, sessionKey);
-        log.debug(`recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`);
+        const entries = await this.transcript.readRecent(
+          transcriptLookbackHours,
+          sessionKey,
+        );
+        log.debug(
+          `recall: read ${entries.length} transcript entries for sessionKey=${sessionKey}`,
+        );
 
         // Apply max turns cap
         const cappedEntries = entries.slice(-transcriptMaxTurns);
         if (cappedEntries.length > 0) {
-          log.debug(`recall: injecting ${cappedEntries.length} transcript entries`);
-          const formatted = this.transcript.formatForRecall(cappedEntries, transcriptMaxTokens);
+          log.debug(
+            `recall: injecting ${cappedEntries.length} transcript entries`,
+          );
+          const formatted = this.transcript.formatForRecall(
+            cappedEntries,
+            transcriptMaxTokens,
+          );
           if (formatted) section = formatted;
         }
       }
 
-      timings.transcript = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "transcript",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
@@ -4497,7 +5760,8 @@ export class Orchestrator {
       // Always clean up per-session workspace overrides, even if the feature is off,
       // to prevent the Map from accumulating stale entries on long-running gateways.
       const effectiveSessionKey = sessionKey ?? "default";
-      const compactionWorkspaceDir = this._recallWorkspaceOverrides.get(effectiveSessionKey);
+      const compactionWorkspaceDir =
+        this._recallWorkspaceOverrides.get(effectiveSessionKey);
       this._recallWorkspaceOverrides.delete(effectiveSessionKey);
 
       if (!this.config.compactionResetEnabled) return null;
@@ -4507,7 +5771,10 @@ export class Orchestrator {
         this.config.workspaceDir ||
         defaultWorkspaceDir();
       const safeSessionKey = sanitizeSessionKeyForFilename(effectiveSessionKey);
-      const signalPath = path.join(workspaceDir, `.compaction-reset-signal-${safeSessionKey}`);
+      const signalPath = path.join(
+        workspaceDir,
+        `.compaction-reset-signal-${safeSessionKey}`,
+      );
       const bootPath = path.join(workspaceDir, "BOOT.md");
 
       try {
@@ -4545,11 +5812,14 @@ export class Orchestrator {
           section += bootContent + "\n";
         } catch {
           section += "### ⚠️ BOOT.md is MISSING\n\n";
-          section += "The memory flush may not have written BOOT.md before compaction. ";
+          section +=
+            "The memory flush may not have written BOOT.md before compaction. ";
           section += "Ask the user what you were working on — do not guess.\n";
         }
 
-        log.info(`recall: injected compaction reset context for ${effectiveSessionKey}`);
+        log.info(
+          `recall: injected compaction reset context for ${effectiveSessionKey}`,
+        );
         await unlink(signalPath).catch(() => {});
         return section;
       } catch (err) {
@@ -4563,66 +5833,136 @@ export class Orchestrator {
 
     const summariesPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
-      if (!this.config.hourlySummariesEnabled || !sessionKey || !this.isRecallSectionEnabled("summaries", true)) {
-        timings.summaries = "skip";
+      if (
+        !this.config.hourlySummariesEnabled ||
+        !sessionKey ||
+        !this.isRecallSectionEnabled("summaries", true)
+      ) {
+        recordRecallSectionMetric({
+          section: "summaries",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
-      const summariesLookbackHours = this.getRecallSectionNumber("summaries", "lookbackHours")
-        ?? this.config.summaryRecallHours;
-      const summariesMaxCount = this.getRecallSectionNumber("summaries", "maxCount")
-        ?? this.config.maxSummaryCount;
+      const summariesLookbackHours =
+        this.getRecallSectionNumber("summaries", "lookbackHours") ??
+        this.config.summaryRecallHours;
+      const summariesMaxCount =
+        this.getRecallSectionNumber("summaries", "maxCount") ??
+        this.config.maxSummaryCount;
       if (summariesLookbackHours <= 0 || summariesMaxCount <= 0) {
-        timings.summaries = "skip(limit=0)";
+        recordRecallSectionMetric({
+          section: "summaries",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(limit=0)",
+        });
         return null;
       }
 
-      const summaries = await this.summarizer.readRecent(sessionKey, summariesLookbackHours);
+      const summaries = await this.summarizer.readRecent(
+        sessionKey,
+        summariesLookbackHours,
+      );
       const cappedSummaries = summaries.slice(0, summariesMaxCount);
       const section =
         cappedSummaries.length > 0
           ? this.summarizer.formatForRecall(cappedSummaries, summariesMaxCount)
           : null;
-      timings.summaries = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "summaries",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: recallSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
-    const nativeKnowledgePromise = (async (): Promise<string | null> => {
-      const t0 = Date.now();
-      if (
-        !this.config.nativeKnowledge?.enabled ||
-        !this.isRecallSectionEnabled("native-knowledge", this.config.nativeKnowledge.enabled)
-      ) {
-        timings.nativeKnowledge = "skip";
-        return null;
-      }
-      if (this.config.nativeKnowledge.maxResults === 0 || this.config.nativeKnowledge.maxChars === 0) {
-        timings.nativeKnowledge = "skip(limit=0)";
-        return null;
-      }
+    const nativeKnowledgeAbort = createEnrichmentAbortHandle(
+      options.abortSignal,
+    );
+    const nativeKnowledgePromise = observeEnrichmentPromise(
+      (async (): Promise<string | null> => {
+        const t0 = Date.now();
+        if (
+          !this.config.nativeKnowledge?.enabled ||
+          !this.isRecallSectionEnabled(
+            "native-knowledge",
+            this.config.nativeKnowledge.enabled,
+          )
+        ) {
+          recordRecallSectionMetric({
+            section: "nativeKnowledge",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip",
+          });
+          return null;
+        }
+        if (
+          this.config.nativeKnowledge.maxResults === 0 ||
+          this.config.nativeKnowledge.maxChars === 0
+        ) {
+          recordRecallSectionMetric({
+            section: "nativeKnowledge",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(limit=0)",
+          });
+          return null;
+        }
 
-      const chunks = await collectNativeKnowledgeChunks({
-        workspaceDir: this.config.workspaceDir,
-        memoryDir: this.config.memoryDir,
-        config: this.config.nativeKnowledge,
-        recallNamespaces: this.config.namespacesEnabled ? recallNamespaces : undefined,
-        defaultNamespace: this.config.defaultNamespace,
-      }).catch(() => []);
-      const results = searchNativeKnowledge({
-        query: retrievalQuery,
-        chunks,
-        maxResults:
-          this.getRecallSectionNumber("native-knowledge", "maxResults")
-            ?? this.config.nativeKnowledge.maxResults,
-      });
-      const section = formatNativeKnowledgeSection({
-        results,
-        maxChars:
-          this.getRecallSectionNumber("native-knowledge", "maxChars")
-            ?? this.config.nativeKnowledge.maxChars,
-      });
-      timings.nativeKnowledge = `${Date.now() - t0}ms`;
-      return section;
-    })();
+        const chunks = await collectNativeKnowledgeChunks({
+          workspaceDir: this.config.workspaceDir,
+          memoryDir: this.config.memoryDir,
+          config: this.config.nativeKnowledge,
+          recallNamespaces: this.config.namespacesEnabled
+            ? recallNamespaces
+            : undefined,
+          defaultNamespace: this.config.defaultNamespace,
+          abortSignal: nativeKnowledgeAbort.signal,
+        }).catch(() => []);
+        const results = searchNativeKnowledge({
+          query: retrievalQuery,
+          chunks,
+          maxResults:
+            this.getRecallSectionNumber("native-knowledge", "maxResults") ??
+            this.config.nativeKnowledge.maxResults,
+        });
+        const section = formatNativeKnowledgeSection({
+          results,
+          maxChars:
+            this.getRecallSectionNumber("native-knowledge", "maxChars") ??
+            this.config.nativeKnowledge.maxChars,
+        });
+        recordRecallSectionMetric({
+          section: "nativeKnowledge",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
+        return section;
+      })().finally(() => nativeKnowledgeAbort.dispose()),
+      () => nativeKnowledgeAbort.cancel(),
+    );
 
     const conversationRecallPromise = (async (): Promise<string | null> => {
       const t0 = Date.now();
@@ -4631,37 +5971,59 @@ export class Orchestrator {
         queryPolicy.skipConversationRecall ||
         !this.isRecallSectionEnabled("conversation-recall", true)
       ) {
-        timings.convRecall = "skip";
+        recordRecallSectionMetric({
+          section: "convRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip",
+        });
         return null;
       }
 
-      const topKOverride = this.getRecallSectionNumber("conversation-recall", "topK");
+      const topKOverride = this.getRecallSectionNumber(
+        "conversation-recall",
+        "topK",
+      );
       if (topKOverride === 0) {
-        timings.convRecall = "skip(topK=0)";
+        recordRecallSectionMetric({
+          section: "convRecall",
+          priority: "core",
+          durationMs: 0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "skip",
+          success: true,
+          timing: "skip(topK=0)",
+        });
         return null;
       }
 
       const startedAtMs = Date.now();
       const timeoutMs = Math.max(
         200,
-        this.getRecallSectionNumber("conversation-recall", "timeoutMs")
-          ?? this.config.conversationRecallTimeoutMs,
+        this.getRecallSectionNumber("conversation-recall", "timeoutMs") ??
+          this.config.conversationRecallTimeoutMs,
       );
       const topK = Math.max(
         1,
-        topKOverride
-          ?? this.config.conversationRecallTopK,
+        topKOverride ?? this.config.conversationRecallTopK,
       );
       const maxChars = Math.max(
         400,
-        this.getRecallSectionNumber("conversation-recall", "maxChars")
-          ?? this.config.conversationRecallMaxChars,
+        this.getRecallSectionNumber("conversation-recall", "maxChars") ??
+          this.config.conversationRecallMaxChars,
       );
 
       const results = (await Promise.race([
         this.searchConversationRecallResults(retrievalQuery, topK),
-        new Promise<[]>(resolve => setTimeout(() => resolve([]), timeoutMs)),
-      ]).catch(() => [])) as Array<{ path: string; snippet: string; score: number }>;
+        new Promise<[]>((resolve) => setTimeout(() => resolve([]), timeoutMs)),
+      ]).catch(() => [])) as Array<{
+        path: string;
+        snippet: string;
+        score: number;
+      }>;
 
       const durationMs = Date.now() - startedAtMs;
       if (durationMs >= timeoutMs) {
@@ -4669,43 +6031,89 @@ export class Orchestrator {
       }
 
       const section = this.formatConversationRecallSection(results, maxChars);
-      timings.convRecall = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "convRecall",
+        priority: "core",
+        durationMs: Date.now() - t0,
+        deadlineMs: timeoutMs,
+        source: "fresh",
+        success: true,
+      });
       return section;
     })();
 
-    const compoundingPromise = (async (): Promise<string | null> => {
-      const t0 = Date.now();
-      if (!this.compounding || !this.config.compoundingInjectEnabled || !this.isRecallSectionEnabled("compounding", true)) {
-        timings.compounding = "skip";
-        return null;
-      }
-      const maxPatterns = this.getRecallSectionNumber("compounding", "maxPatterns") ?? 40;
-      const maxRubrics = this.getRecallSectionNumber("compounding", "maxRubrics") ?? 4;
-      if (maxPatterns === 0 && maxRubrics === 0) {
-        timings.compounding = "skip(limit=0)";
-        return null;
-      }
-      const section = await this.compounding.buildRecallSection(retrievalQuery, { maxPatterns, maxRubrics });
-      timings.compounding = `${Date.now() - t0}ms`;
-      return section;
-    })();
+    const compoundingPromise = observeEnrichmentPromise(
+      (async (): Promise<string | null> => {
+        const t0 = Date.now();
+        if (
+          !this.compounding ||
+          !this.config.compoundingInjectEnabled ||
+          !this.isRecallSectionEnabled("compounding", true)
+        ) {
+          recordRecallSectionMetric({
+            section: "compounding",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip",
+          });
+          return null;
+        }
+        const maxPatterns =
+          this.getRecallSectionNumber("compounding", "maxPatterns") ?? 40;
+        const maxRubrics =
+          this.getRecallSectionNumber("compounding", "maxRubrics") ?? 4;
+        if (maxPatterns === 0 && maxRubrics === 0) {
+          recordRecallSectionMetric({
+            section: "compounding",
+            priority: "enrichment",
+            durationMs: 0,
+            deadlineMs: enrichmentSectionDeadlineMs,
+            source: "skip",
+            success: true,
+            timing: "skip(limit=0)",
+          });
+          return null;
+        }
+        const section = await this.compounding.buildRecallSection(
+          retrievalQuery,
+          { maxPatterns, maxRubrics },
+        );
+        recordRecallSectionMetric({
+          section: "compounding",
+          priority: "enrichment",
+          durationMs: Date.now() - t0,
+          deadlineMs: enrichmentSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
+        return section;
+      })(),
+    );
 
     // Start memory-boxes read in parallel with the rest of phase-1 (it can take
     // several seconds on large box directories due to sequential I/O). We kick it
     // off here so it overlaps with QMD and other concurrent work rather than
     // running sequentially in phase-2 and blocking assembly.
     const recentBoxesPromise: Promise<BoxFrontmatter[]> =
-      this.isRecallSectionEnabled("memory-boxes", this.config.memoryBoxesEnabled === true) &&
+      this.isRecallSectionEnabled(
+        "memory-boxes",
+        this.config.memoryBoxesEnabled === true,
+      ) &&
       this.config.memoryBoxesEnabled &&
       this.config.boxRecallDays > 0
         ? this.boxBuilderFor(profileStorage)
-          .readRecentBoxes(this.config.boxRecallDays)
-          .catch(() => [] as BoxFrontmatter[])
+            .readRecentBoxes(this.config.boxRecallDays)
+            .catch(() => [] as BoxFrontmatter[])
         : Promise.resolve([] as BoxFrontmatter[]);
 
-    // --- Wait for all parallel work ---
+    // --- Wait for core sections first, then bounded enrichment ---
     const phase1Start = Date.now();
-    log.info(`recall phase-1: starting parallel work at +${phase1Start - recallStart}ms`);
+    log.info(
+      `recall phase-1: starting parallel work at +${phase1Start - recallStart}ms`,
+    );
     const [
       sharedCtx,
       profile,
@@ -4718,123 +6126,248 @@ export class Orchestrator {
       cmcCausalChainsSection,
       calibrationSection,
       trustZoneSection,
-      harmonicRetrievalSection,
       verifiedRecallSection,
       verifiedRulesSection,
       workProductsSection,
-      qmdResult,
       transcriptSection,
       compactionSection,
       summariesSection,
-      nativeKnowledgeSection,
       conversationRecallSection,
-      compoundingSection,
     ] = await raceRecallAbort(
       Promise.all(
-        ([
-          ["shared", sharedContextPromise],
-          ["profile", profilePromise],
-          ["identity", identityContinuityPromise],
-          ["entity", entityRetrievalPromise],
-          ["ki", knowledgeIndexPromise],
-          ["artifacts", artifactsPromise],
-          ["objState", objectiveStatePromise],
-          ["causalTraj", causalTrajectoryPromise],
-          ["cmc", cmcRetrievalPromise],
-          ["calibration", calibrationPromise],
-          ["trustZone", trustZonePromise],
-          ["harmonic", harmonicRetrievalPromise],
-          ["verifiedRecall", verifiedRecallPromise],
-          ["verifiedRules", verifiedRulesPromise],
-          ["workProducts", workProductsPromise],
-          ["qmd", qmdPromise],
-          ["transcript", transcriptPromise],
-          ["compaction", compactionPromise],
-          ["summaries", summariesPromise],
-          ["nativeKnowledge", nativeKnowledgePromise],
-          ["convRecall", conversationRecallPromise],
-          ["compounding", compoundingPromise],
-        ] as const).map(([name, p]) =>
+        (
+          [
+            ["shared", sharedContextPromise],
+            ["profile", profilePromise],
+            ["identity", identityContinuityPromise],
+            ["entity", entityRetrievalPromise],
+            ["ki", knowledgeIndexPromise],
+            ["artifacts", artifactsPromise],
+            ["objState", objectiveStatePromise],
+            ["causalTraj", causalTrajectoryPromise],
+            ["cmc", cmcRetrievalPromise],
+            ["calibration", calibrationPromise],
+            ["trustZone", trustZonePromise],
+            ["verifiedRecall", verifiedRecallPromise],
+            ["verifiedRules", verifiedRulesPromise],
+            ["workProducts", workProductsPromise],
+            ["transcript", transcriptPromise],
+            ["compaction", compactionPromise],
+            ["summaries", summariesPromise],
+            ["convRecall", conversationRecallPromise],
+          ] as const
+        ).map(([name, p]) =>
           (p as Promise<unknown>).then((v) => {
-            log.debug(`recall phase-1 [${name}]: resolved at +${Date.now() - phase1Start}ms`);
+            log.debug(
+              `recall phase-1 core [${name}]: resolved at +${Date.now() - phase1Start}ms`,
+            );
             return v;
           }),
         ),
-      ) as Promise<[
-        typeof sharedContextPromise extends Promise<infer T> ? T : never,
-        typeof profilePromise extends Promise<infer T> ? T : never,
-        typeof identityContinuityPromise extends Promise<infer T> ? T : never,
-        typeof entityRetrievalPromise extends Promise<infer T> ? T : never,
-        typeof knowledgeIndexPromise extends Promise<infer T> ? T : never,
-        typeof artifactsPromise extends Promise<infer T> ? T : never,
-        typeof objectiveStatePromise extends Promise<infer T> ? T : never,
-        typeof causalTrajectoryPromise extends Promise<infer T> ? T : never,
-        typeof cmcRetrievalPromise extends Promise<infer T> ? T : never,
-        typeof calibrationPromise extends Promise<infer T> ? T : never,
-        typeof trustZonePromise extends Promise<infer T> ? T : never,
-        typeof harmonicRetrievalPromise extends Promise<infer T> ? T : never,
-        typeof verifiedRecallPromise extends Promise<infer T> ? T : never,
-        typeof verifiedRulesPromise extends Promise<infer T> ? T : never,
-        typeof workProductsPromise extends Promise<infer T> ? T : never,
-        typeof qmdPromise extends Promise<infer T> ? T : never,
-        typeof transcriptPromise extends Promise<infer T> ? T : never,
-        typeof compactionPromise extends Promise<infer T> ? T : never,
-        typeof summariesPromise extends Promise<infer T> ? T : never,
-        typeof nativeKnowledgePromise extends Promise<infer T> ? T : never,
-        typeof conversationRecallPromise extends Promise<infer T> ? T : never,
-        typeof compoundingPromise extends Promise<infer T> ? T : never,
-      ]>,
+      ) as Promise<
+        [
+          typeof sharedContextPromise extends Promise<infer T> ? T : never,
+          typeof profilePromise extends Promise<infer T> ? T : never,
+          typeof identityContinuityPromise extends Promise<infer T> ? T : never,
+          typeof entityRetrievalPromise extends Promise<infer T> ? T : never,
+          typeof knowledgeIndexPromise extends Promise<infer T> ? T : never,
+          typeof artifactsPromise extends Promise<infer T> ? T : never,
+          typeof objectiveStatePromise extends Promise<infer T> ? T : never,
+          typeof causalTrajectoryPromise extends Promise<infer T> ? T : never,
+          typeof cmcRetrievalPromise extends Promise<infer T> ? T : never,
+          typeof calibrationPromise extends Promise<infer T> ? T : never,
+          typeof trustZonePromise extends Promise<infer T> ? T : never,
+          typeof verifiedRecallPromise extends Promise<infer T> ? T : never,
+          typeof verifiedRulesPromise extends Promise<infer T> ? T : never,
+          typeof workProductsPromise extends Promise<infer T> ? T : never,
+          typeof transcriptPromise extends Promise<infer T> ? T : never,
+          typeof compactionPromise extends Promise<infer T> ? T : never,
+          typeof summariesPromise extends Promise<infer T> ? T : never,
+          typeof conversationRecallPromise extends Promise<infer T> ? T : never,
+        ]
+      >,
       options.abortSignal,
       "recall aborted during phase-one preamble",
     );
 
-    log.info(`recall phase-1: parallel work done at +${Date.now() - recallStart}ms (phase took ${Date.now() - phase1Start}ms)`);
+    log.info(
+      `recall phase-1: core work done at +${Date.now() - recallStart}ms ` +
+        `(phase took ${Date.now() - phase1Start}ms); continuing with incremental enrichment assembly`,
+    );
     throwIfRecallAborted(options.abortSignal);
+
+    const enrichmentAssemblyDeadlineAtMs =
+      enrichmentSectionDeadlineMs > 0
+        ? Date.now() + enrichmentSectionDeadlineMs
+        : null;
+
+    const awaitEnrichmentSection = async <T>(
+      name: string,
+      promise: ObservedDeferredEnrichmentPromise<T>,
+    ): Promise<T | null> => {
+      const finalizeEnrichmentOutcome = (
+        outcome: DeferredEnrichmentOutcome<T>,
+      ): T | null => {
+        if (outcome.status === "resolved") {
+          log.debug(
+            `recall phase-1 enrichment [${name}]: resolved at +${Date.now() - phase1Start}ms`,
+          );
+          return outcome.value;
+        }
+
+        if (options.abortSignal?.aborted) {
+          log.debug(
+            `recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`,
+          );
+          return null;
+        }
+        log.warn(
+          `recall phase-1 enrichment [${name}] failed open: ` +
+            `${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}`,
+        );
+        return null;
+      };
+
+      if (options.abortSignal?.aborted) {
+        promise.cancel();
+        log.debug(
+          `recall phase-1 enrichment [${name}]: skipped after abort at +${Date.now() - phase1Start}ms`,
+        );
+        return null;
+      }
+
+      let timeoutHandle: NodeJS.Timeout | undefined;
+      const timeoutMs =
+        enrichmentAssemblyDeadlineAtMs === null
+          ? null
+          : Math.max(0, enrichmentAssemblyDeadlineAtMs - Date.now());
+      if (timeoutMs === 0) {
+        const settledOutcome = promise.getSettledOutcome();
+        if (settledOutcome) {
+          log.debug(
+            `recall phase-1 enrichment [${name}]: consumed already-settled result after shared ${enrichmentSectionDeadlineMs}ms budget expired ` +
+              `at +${Date.now() - phase1Start}ms`,
+          );
+          return finalizeEnrichmentOutcome(settledOutcome);
+        }
+        log.debug(
+          `recall phase-1 enrichment [${name}]: skipped after shared ${enrichmentSectionDeadlineMs}ms budget expired ` +
+            `at +${Date.now() - phase1Start}ms`,
+        );
+        promise.cancel();
+        return null;
+      }
+
+      const outcome = await (timeoutMs !== null
+        ? Promise.race<DeferredEnrichmentOutcome<T> | { status: "timed_out" }>([
+            promise,
+            new Promise<{ status: "timed_out" }>((resolve) => {
+              timeoutHandle = setTimeout(
+                () => resolve({ status: "timed_out" }),
+                timeoutMs,
+              );
+            }),
+          ])
+        : promise);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+
+      if (outcome.status === "timed_out") {
+        log.debug(
+          `recall phase-1 enrichment [${name}]: timed out within shared ${enrichmentSectionDeadlineMs}ms budget ` +
+            `at +${Date.now() - phase1Start}ms`,
+        );
+        promise.cancel();
+        return null;
+      }
+
+      return finalizeEnrichmentOutcome(outcome);
+    };
 
     // --- Phase 2: Assemble sections in correct order ---
 
     // 0. Shared context
-    if (sharedCtx) this.appendRecallSection(sectionBuckets, "shared-context", sharedCtx);
+    if (sharedCtx)
+      this.appendRecallSection(sectionBuckets, "shared-context", sharedCtx);
 
     // 1. Profile
-    if (profile) this.appendRecallSection(sectionBuckets, "profile", `## User Profile\n\n${profile}`);
+    if (profile)
+      this.appendRecallSection(
+        sectionBuckets,
+        "profile",
+        `## User Profile\n\n${profile}`,
+      );
 
     // 1-pre. Calibration rules (injected early so model sees adjustments first)
     if (calibrationSection) {
-      this.appendRecallSection(sectionBuckets, "calibration-rules", calibrationSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "calibration-rules",
+        calibrationSection,
+      );
     }
 
     // 1a. Identity continuity
     if (identityContinuity) {
-      this.appendRecallSection(sectionBuckets, "identity-continuity", identityContinuity.section);
+      this.appendRecallSection(
+        sectionBuckets,
+        "identity-continuity",
+        identityContinuity.section,
+      );
       identityInjectionModeUsed = identityContinuity.mode;
       identityInjectedChars = identityContinuity.injectedChars;
       identityInjectionTruncated = identityContinuity.truncated;
     }
 
     if (entityRetrievalSection) {
-      this.appendRecallSection(sectionBuckets, "entity-retrieval", entityRetrievalSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "entity-retrieval",
+        entityRetrievalSection,
+      );
     }
 
     // 1b. Knowledge Index
     if (kiResult?.result) {
-      this.appendRecallSection(sectionBuckets, "knowledge-index", kiResult.result);
-      log.debug(`Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`);
+      this.appendRecallSection(
+        sectionBuckets,
+        "knowledge-index",
+        kiResult.result,
+      );
+      log.debug(
+        `Knowledge Index: ${kiResult.result.split("\n").length - 4} entities, ${kiResult.result.length} chars${kiResult.cached ? " (cached)" : ""}`,
+      );
     }
 
+    const nativeKnowledgeSection = await awaitEnrichmentSection(
+      "nativeKnowledge",
+      nativeKnowledgePromise,
+    );
     if (nativeKnowledgeSection) {
-      this.appendRecallSection(sectionBuckets, "native-knowledge", nativeKnowledgeSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "native-knowledge",
+        nativeKnowledgeSection,
+      );
     }
 
     // 1c. Verbatim artifacts (quote-first anchors)
     if (artifacts.length > 0) {
       const lines = artifacts.map((a) => {
         const artifactType = a.frontmatter.artifactType ?? "fact";
-        const createdRaw = typeof a.frontmatter.created === "string" ? a.frontmatter.created : "";
-        const created = createdRaw ? createdRaw.slice(0, 19).replace("T", " ") : "unknown-time";
+        const createdRaw =
+          typeof a.frontmatter.created === "string"
+            ? a.frontmatter.created
+            : "";
+        const created = createdRaw
+          ? createdRaw.slice(0, 19).replace("T", " ")
+          : "unknown-time";
         return `- [${artifactType}] "${this.truncateArtifactForRecall(a.content)}" (${created})`;
       });
-      this.appendRecallSection(sectionBuckets, "verbatim-artifacts", `## Verbatim Artifacts\n\n${lines.join("\n")}`);
+      this.appendRecallSection(
+        sectionBuckets,
+        "verbatim-artifacts",
+        `## Verbatim Artifacts\n\n${lines.join("\n")}`,
+      );
     }
 
     // 1d. Memory Boxes (topic continuity windows, v8.0 Phase 2A)
@@ -4843,25 +6376,41 @@ export class Orchestrator {
       const recentBoxes = await recentBoxesPromise;
       if (recentBoxes.length > 0) {
         const boxLines = recentBoxes.slice(0, 5).map((b: BoxFrontmatter) => {
-          const sealedDate = b.sealedAt ? b.sealedAt.slice(0, 16).replace("T", " ") : "?";
-          const traceNote = b.traceId ? ` [trace: ${b.traceId.slice(0, 12)}]` : "";
+          const sealedDate = b.sealedAt
+            ? b.sealedAt.slice(0, 16).replace("T", " ")
+            : "?";
+          const traceNote = b.traceId
+            ? ` [trace: ${b.traceId.slice(0, 12)}]`
+            : "";
           return `- [${sealedDate}${traceNote}] Topics: ${b.topics.join(", ")} (${b.memoryIds.length} memories)`;
         });
-        this.appendRecallSection(sectionBuckets, "memory-boxes", `## Recent Topic Windows\n\n${boxLines.join("\n")}`);
+        this.appendRecallSection(
+          sectionBuckets,
+          "memory-boxes",
+          `## Recent Topic Windows\n\n${boxLines.join("\n")}`,
+        );
       }
     }
 
     // 1e. TMT node (temporal memory tree, v8.2)
     if (
-      this.isRecallSectionEnabled("temporal-memory-tree", this.config.temporalMemoryTreeEnabled === true) &&
+      this.isRecallSectionEnabled(
+        "temporal-memory-tree",
+        this.config.temporalMemoryTreeEnabled === true,
+      ) &&
       this.config.temporalMemoryTreeEnabled &&
       recallMode !== "minimal" &&
       (recallMode as RecallPlanMode) !== "no_recall"
     ) {
       const tmtNode = await this.tmtBuilder.getMostRelevantNode();
       if (tmtNode) {
-        const levelLabel = tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
-        this.appendRecallSection(sectionBuckets, "temporal-memory-tree", `## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`);
+        const levelLabel =
+          tmtNode.level.charAt(0).toUpperCase() + tmtNode.level.slice(1);
+        this.appendRecallSection(
+          sectionBuckets,
+          "temporal-memory-tree",
+          `## Memory Timeline (${levelLabel})\n\n${tmtNode.summary}`,
+        );
       }
     }
 
@@ -4872,9 +6421,16 @@ export class Orchestrator {
       (recallMode as RecallPlanMode) !== "no_recall"
     ) {
       try {
-        const lcmSection = await this.lcmEngine.assembleRecall(sessionKey ?? "default", this.config.recallBudgetChars);
+        const lcmSection = await this.lcmEngine.assembleRecall(
+          sessionKey ?? "default",
+          this.config.recallBudgetChars,
+        );
         if (lcmSection) {
-          this.appendRecallSection(sectionBuckets, "lcm-compressed-history", lcmSection);
+          this.appendRecallSection(
+            sectionBuckets,
+            "lcm-compressed-history",
+            lcmSection,
+          );
         }
       } catch (err) {
         log.debug(`LCM recall assembly error: ${err}`);
@@ -4882,44 +6438,85 @@ export class Orchestrator {
     }
 
     if (objectiveStateSection) {
-      this.appendRecallSection(sectionBuckets, "objective-state", objectiveStateSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "objective-state",
+        objectiveStateSection,
+      );
     }
 
     if (causalTrajectorySection) {
-      this.appendRecallSection(sectionBuckets, "causal-trajectories", causalTrajectorySection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "causal-trajectories",
+        causalTrajectorySection,
+      );
     }
 
     if (cmcCausalChainsSection) {
-      this.appendRecallSection(sectionBuckets, "cmc-causal-chains", cmcCausalChainsSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "cmc-causal-chains",
+        cmcCausalChainsSection,
+      );
     }
 
     if (trustZoneSection) {
       this.appendRecallSection(sectionBuckets, "trust-zones", trustZoneSection);
     }
 
+    const harmonicRetrievalSection = await awaitEnrichmentSection(
+      "harmonic",
+      harmonicRetrievalPromise,
+    );
     if (harmonicRetrievalSection) {
-      this.appendRecallSection(sectionBuckets, "harmonic-retrieval", harmonicRetrievalSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "harmonic-retrieval",
+        harmonicRetrievalSection,
+      );
     }
 
     if (verifiedRecallSection) {
-      this.appendRecallSection(sectionBuckets, "verified-episodes", verifiedRecallSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "verified-episodes",
+        verifiedRecallSection,
+      );
     }
 
     if (verifiedRulesSection) {
-      this.appendRecallSection(sectionBuckets, "verified-rules", verifiedRulesSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "verified-rules",
+        verifiedRulesSection,
+      );
     }
 
     if (workProductsSection) {
-      this.appendRecallSection(sectionBuckets, "work-products", workProductsSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "work-products",
+        workProductsSection,
+      );
     }
 
     // 2. QMD results — post-process and format
+    const qmdResult = await awaitEnrichmentSection("qmd", qmdPromise);
     if (qmdResult) {
       const t0 = Date.now();
-      const { memoryResultsLists, globalResults, preAugmentTopScore, maxSpecializedScore } = qmdResult;
+      const {
+        memoryResultsLists,
+        globalResults,
+        preAugmentTopScore,
+        maxSpecializedScore,
+      } = qmdResult;
 
       // Merge/dedupe by path; keep the best score and first non-empty snippet.
-      const memoryResultsRaw = mergeGraphExpandedResults(memoryResultsLists.flat(), []);
+      const memoryResultsRaw = mergeGraphExpandedResults(
+        memoryResultsLists.flat(),
+        [],
+      );
 
       let memoryResults = memoryResultsRaw;
 
@@ -4930,16 +6527,18 @@ export class Orchestrator {
         );
       }
       // Artifacts are injected through dedicated verbatim recall flow only.
-      memoryResults = memoryResults.filter((r) => !isArtifactMemoryPath(r.path));
+      memoryResults = memoryResults.filter(
+        (r) => !isArtifactMemoryPath(r.path),
+      );
 
       const isFullModeGraphAssist =
         this.config.multiGraphMemoryEnabled &&
         this.config.graphAssistInFullModeEnabled !== false &&
         recallMode === "full" &&
-        memoryResults.length >= Math.max(1, this.config.graphAssistMinSeedResults ?? 3);
+        memoryResults.length >=
+          Math.max(1, this.config.graphAssistMinSeedResults ?? 3);
       const shouldRunGraphExpansion =
-        recallMode === "graph_mode" ||
-        isFullModeGraphAssist;
+        recallMode === "graph_mode" || isFullModeGraphAssist;
       const graphShadowEvalEnabled =
         isFullModeGraphAssist &&
         this.config.graphAssistShadowEvalEnabled === true;
@@ -4950,11 +6549,14 @@ export class Orchestrator {
       if (shouldRunGraphExpansion) {
         const baselineMemoryResults = memoryResults;
         graphBaselinePaths.clear();
-        baselineMemoryResults.forEach((result) => graphBaselinePaths.add(result.path));
+        baselineMemoryResults.forEach((result) =>
+          graphBaselinePaths.add(result.path),
+        );
         if (baselineMemoryResults.length === 0) {
           graphSnapshotStatus = "skipped";
           graphDecisionStatus = "skipped";
-          graphDecisionReason = "graph recall skipped because baseline retrieval produced no seed results";
+          graphDecisionReason =
+            "graph recall skipped because baseline retrieval produced no seed results";
           graphSnapshotReason = graphDecisionReason;
           graphSnapshotSeedPaths = [];
           graphSnapshotSeedResults = [];
@@ -4962,44 +6564,56 @@ export class Orchestrator {
           graphExpandedResultPaths.clear();
         } else {
           try {
-          const {
-            merged,
-            seedPaths,
-            expandedPaths,
-            seedResults = baselineMemoryResults,
-          } = await this.expandResultsViaGraph({
-            memoryResults,
-            recallNamespaces,
-            recallResultLimit,
-          });
-          graphSnapshotStatus = "completed";
-          graphDecisionStatus = "completed";
-          graphDecisionReason = graphShadowEvalEnabled
-            ? "graph shadow evaluation completed without altering injected context"
-            : "graph expansion merged into recall ranking";
-          graphSnapshotReason = graphDecisionReason;
-          graphSnapshotSeedPaths = seedPaths;
-          graphSnapshotExpandedPaths = expandedPaths;
-          graphSnapshotSeedResults = this.buildGraphRecallRankedResults(
-            seedResults,
-            () => ["baseline"],
-          );
-          graphExpandedResultPaths.clear();
-          expandedPaths.forEach((entry) => graphExpandedResultPaths.add(entry.path));
-          memoryResults = graphShadowEvalEnabled ? baselineMemoryResults : merged;
-
-          if (graphShadowEvalEnabled) {
-            const comparison = summarizeGraphShadowComparison(
-              baselineMemoryResults,
+            const {
               merged,
+              seedPaths,
+              expandedPaths,
+              seedResults = baselineMemoryResults,
+            } = await this.expandResultsViaGraph({
+              memoryResults,
+              recallNamespaces,
               recallResultLimit,
+            });
+            graphSnapshotStatus = "completed";
+            graphDecisionStatus = "completed";
+            graphDecisionReason = graphShadowEvalEnabled
+              ? "graph shadow evaluation completed without altering injected context"
+              : "graph expansion merged into recall ranking";
+            graphSnapshotReason = graphDecisionReason;
+            graphSnapshotSeedPaths = seedPaths;
+            graphSnapshotExpandedPaths = expandedPaths;
+            graphSnapshotSeedResults = this.buildGraphRecallRankedResults(
+              seedResults,
+              () => ["baseline"],
             );
-            graphSnapshotShadowComparison = comparison;
-            timings.graphShadow =
-              `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
-              `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
-              `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`;
-          }
+            graphExpandedResultPaths.clear();
+            expandedPaths.forEach((entry) =>
+              graphExpandedResultPaths.add(entry.path),
+            );
+            memoryResults = graphShadowEvalEnabled
+              ? baselineMemoryResults
+              : merged;
+
+            if (graphShadowEvalEnabled) {
+              const comparison = summarizeGraphShadowComparison(
+                baselineMemoryResults,
+                merged,
+                recallResultLimit,
+              );
+              graphSnapshotShadowComparison = comparison;
+              recordRecallSectionMetric({
+                section: "graphShadow",
+                priority: "enrichment",
+                durationMs: Date.now() - t0,
+                deadlineMs: enrichmentSectionDeadlineMs,
+                source: "fresh",
+                success: true,
+                timing:
+                  `on b=${comparison.baselineCount} g=${comparison.graphCount} ` +
+                  `ov=${comparison.overlapCount} (${comparison.overlapRatio.toFixed(2)}) ` +
+                  `avgDelta=${comparison.averageOverlapDelta.toFixed(3)}`,
+              });
+            }
           } catch (err) {
             graphSnapshotStatus = "aborted";
             graphDecisionStatus = "aborted";
@@ -5021,16 +6635,22 @@ export class Orchestrator {
       }
 
       // Apply recency and access count boosting
-      memoryResults = await this.boostSearchResults(memoryResults, recallNamespaces, retrievalQuery);
+      memoryResults = await this.boostSearchResults(
+        memoryResults,
+        recallNamespaces,
+        retrievalQuery,
+      );
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
       if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
         const ranked = await rerankLocalOrNoop({
           query: retrievalQuery,
-          candidates: memoryResults.slice(0, this.config.rerankMaxCandidates).map((r) => ({
-            id: r.path,
-            snippet: r.snippet || r.path,
-          })),
+          candidates: memoryResults
+            .slice(0, this.config.rerankMaxCandidates)
+            .map((r) => ({
+              id: r.path,
+              snippet: r.snippet || r.path,
+            })),
           local: this.fastLlm,
           enabled: true,
           timeoutMs: this.config.rerankTimeoutMs,
@@ -5055,7 +6675,9 @@ export class Orchestrator {
         }
       }
       if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
-        log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
+        log.debug(
+          "rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank",
+        );
       }
 
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
@@ -5075,13 +6697,16 @@ export class Orchestrator {
       // NOT block the embedding fallback safety net — that path exists precisely for the
       // case where QMD finds nothing. Setting effectiveGateScore = 0 when QMD is empty
       // preserves the original behaviour: empty QMD → gate skipped → fallback available.
-      const effectiveGateScore = preAugmentTopScore > 0
-        ? Math.max(preAugmentTopScore, maxSpecializedScore)
-        : 0;
+      const effectiveGateScore =
+        preAugmentTopScore > 0
+          ? Math.max(preAugmentTopScore, maxSpecializedScore)
+          : 0;
       let confidenceGateRejected = false;
       if (this.config.recallConfidenceGateEnabled && effectiveGateScore > 0) {
         if (effectiveGateScore < this.config.recallConfidenceGateThreshold) {
-          log.debug(`recall: confidence gate rejected ${memoryResults.length} results (effective score ${effectiveGateScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`);
+          log.debug(
+            `recall: confidence gate rejected ${memoryResults.length} results (effective score ${effectiveGateScore.toFixed(3)} below ${this.config.recallConfidenceGateThreshold})`,
+          );
           memoryResults = [];
           confidenceGateRejected = true;
         }
@@ -5099,7 +6724,11 @@ export class Orchestrator {
             .filter((p) => p.startsWith("entities/"))
             .map((p) => p.replace(/^entities\//, "").replace(/\.md$/, ""));
           const knownEntities = await profileStorage.listEntityNames();
-          const missing = findUnresolvedEntityRefs(snippets, coveredRefs, knownEntities);
+          const missing = findUnresolvedEntityRefs(
+            snippets,
+            coveredRefs,
+            knownEntities,
+          );
           if (missing.length > 0) {
             // Allow up to maxExpansions successful entity expansions
             const budget = this.config.memoryReconstructionMaxExpansions;
@@ -5108,7 +6737,8 @@ export class Orchestrator {
               if (expanded >= budget) break;
               const raw = await profileStorage.readEntity(entityName);
               if (raw && raw.length > 0) {
-                const snippet = raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
+                const snippet =
+                  raw.length > 300 ? raw.slice(0, 300) + "…" : raw;
                 memoryResults.push({
                   docid: `entity:${entityName}`,
                   path: `entities/${entityName}.md`,
@@ -5149,28 +6779,39 @@ export class Orchestrator {
           },
         });
         recalledMemoryIds = this.extractMemoryIdsFromResults(memoryResults);
-        recalledMemoryPaths = memoryResults.map((result) => result.path).filter(Boolean);
+        recalledMemoryPaths = memoryResults
+          .map((result) => result.path)
+          .filter(Boolean);
         impressionRecorded = true;
       } else if (!confidenceGateRejected) {
         // Only attempt fallback paths if the confidence gate did NOT fire.
         // When the gate rejects, all recall pathways are skipped to prevent
         // low-relevance results from polluting context.
         const queryAwarePrefilter = await queryAwarePrefilterPromise;
-        const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
+        const embeddingResults = await this.searchEmbeddingFallback(
+          retrievalQuery,
+          embeddingFetchLimit,
+        );
         const prefilteredEmbeddingResults = applyQueryAwareCandidateFilter(
           embeddingResults,
           queryAwarePrefilter.candidatePaths,
         );
-        const scopedCandidates = filterRecallCandidates(prefilteredEmbeddingResults, {
-          namespacesEnabled: this.config.namespacesEnabled,
-          recallNamespaces,
-          resolveNamespace: (p) => this.namespaceFromPath(p),
-          limit: embeddingFetchLimit,
-        });
-        const scoped = (await this.boostSearchResults(scopedCandidates, recallNamespaces, retrievalQuery)).slice(
-          0,
-          recallResultLimit,
+        const scopedCandidates = filterRecallCandidates(
+          prefilteredEmbeddingResults,
+          {
+            namespacesEnabled: this.config.namespacesEnabled,
+            recallNamespaces,
+            resolveNamespace: (p) => this.namespaceFromPath(p),
+            limit: embeddingFetchLimit,
+          },
         );
+        const scoped = (
+          await this.boostSearchResults(
+            scopedCandidates,
+            recallNamespaces,
+            retrievalQuery,
+          )
+        ).slice(0, recallResultLimit);
         if (scoped.length > 0) {
           if (shouldPersistGraphSnapshot) {
             graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
@@ -5193,7 +6834,9 @@ export class Orchestrator {
             },
           });
           recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
-          recalledMemoryPaths = scoped.map((result) => result.path).filter(Boolean);
+          recalledMemoryPaths = scoped
+            .map((result) => result.path)
+            .filter(Boolean);
           impressionRecorded = true;
         } else {
           const longTerm = await this.applyColdFallbackPipeline({
@@ -5226,25 +6869,38 @@ export class Orchestrator {
               },
             });
             recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
-            recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
+            recalledMemoryPaths = longTerm
+              .map((result) => result.path)
+              .filter(Boolean);
             impressionRecorded = true;
           }
         }
       }
 
       if (globalResults.length > 0) {
-        this.appendRecallSection(sectionBuckets, "workspace-context",
+        this.appendRecallSection(
+          sectionBuckets,
+          "workspace-context",
           this.formatQmdResults("Workspace Context", globalResults),
         );
       }
 
-      timings.qmdPost = `${Date.now() - t0}ms`;
+      recordRecallSectionMetric({
+        section: "qmdPost",
+        priority: "enrichment",
+        durationMs: Date.now() - t0,
+        deadlineMs: enrichmentSectionDeadlineMs,
+        source: "fresh",
+        success: true,
+      });
 
       // If the user is pushing back ("that's not right", "why did you say that"),
       // gently suggest an explicit workflow to inspect what was recalled and record feedback.
       // IMPORTANT: this is suggestion-only; never auto-mark negatives.
       if (isDisagreementPrompt(prompt)) {
-        this.appendRecallSection(sectionBuckets, "memories",
+        this.appendRecallSection(
+          sectionBuckets,
+          "memories",
           [
             "## Retrieval Feedback Helper",
             "",
@@ -5260,22 +6916,30 @@ export class Orchestrator {
     } else if (recallResultLimit > 0 && !this.qmd.isAvailable()) {
       // Fallback: embeddings first, then recency-only.
       const queryAwarePrefilter = await queryAwarePrefilterPromise;
-      const embeddingResults = await this.searchEmbeddingFallback(retrievalQuery, embeddingFetchLimit);
+      const embeddingResults = await this.searchEmbeddingFallback(
+        retrievalQuery,
+        embeddingFetchLimit,
+      );
       const prefilteredEmbeddingResults = applyQueryAwareCandidateFilter(
         embeddingResults,
         queryAwarePrefilter.candidatePaths,
       );
-      const scopedCandidates = filterRecallCandidates(prefilteredEmbeddingResults, {
-        namespacesEnabled: this.config.namespacesEnabled,
-        recallNamespaces,
-        resolveNamespace: (p) => this.namespaceFromPath(p),
-        limit: embeddingFetchLimit,
-      });
-      const scoped = (await this.boostSearchResults(
-        scopedCandidates,
-        recallNamespaces,
-        retrievalQuery,
-      )).slice(0, recallResultLimit);
+      const scopedCandidates = filterRecallCandidates(
+        prefilteredEmbeddingResults,
+        {
+          namespacesEnabled: this.config.namespacesEnabled,
+          recallNamespaces,
+          resolveNamespace: (p) => this.namespaceFromPath(p),
+          limit: embeddingFetchLimit,
+        },
+      );
+      const scoped = (
+        await this.boostSearchResults(
+          scopedCandidates,
+          recallNamespaces,
+          retrievalQuery,
+        )
+      ).slice(0, recallResultLimit);
       if (scoped.length > 0) {
         if (shouldPersistGraphSnapshot) {
           graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
@@ -5298,10 +6962,13 @@ export class Orchestrator {
           },
         });
         recalledMemoryIds = this.extractMemoryIdsFromResults(scoped);
-        recalledMemoryPaths = scoped.map((result) => result.path).filter(Boolean);
+        recalledMemoryPaths = scoped
+          .map((result) => result.path)
+          .filter(Boolean);
         impressionRecorded = true;
       } else {
-        const memories = await this.readAllMemoriesForNamespaces(recallNamespaces);
+        const memories =
+          await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
           // Filter out non-active memories
           const activeMemories = memories.filter(
@@ -5316,9 +6983,14 @@ export class Orchestrator {
           // Pass a pre-populated memoryByPath so boostSearchResults skips redundant
           // disk reads for files already loaded by readAllMemoriesForNamespaces.
           const queryAwareScopedMemories = queryAwarePrefilter.candidatePaths
-            ? activeMemories.filter((memory) => queryAwarePrefilter.candidatePaths?.has(memory.path))
+            ? activeMemories.filter((memory) =>
+                queryAwarePrefilter.candidatePaths?.has(memory.path),
+              )
             : activeMemories;
-          if (queryAwarePrefilter.candidatePaths && queryAwareScopedMemories.length === 0) {
+          if (
+            queryAwarePrefilter.candidatePaths &&
+            queryAwareScopedMemories.length === 0
+          ) {
             const longTerm = await this.applyColdFallbackPipeline({
               prompt: retrievalQuery,
               recallNamespaces,
@@ -5343,31 +7015,38 @@ export class Orchestrator {
                 },
               });
               recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
-              recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
+              recalledMemoryPaths = longTerm
+                .map((result) => result.path)
+                .filter(Boolean);
               impressionRecorded = true;
             }
           } else {
-            const recentSorted = queryAwareScopedMemories
-              .sort(
-                (a, b) =>
-                  new Date(b.frontmatter.updated).getTime() -
-                  new Date(a.frontmatter.updated).getTime(),
-              );
-            const preloadedMap = new Map<string, MemoryFile>(
-              queryAwareScopedMemories.filter((m) => m.path).map((m) => [m.path, m]),
+            const recentSorted = queryAwareScopedMemories.sort(
+              (a, b) =>
+                new Date(b.frontmatter.updated).getTime() -
+                new Date(a.frontmatter.updated).getTime(),
             );
-            const recentAsResults: QmdSearchResult[] = recentSorted.map((m, i) => ({
-              docid: m.frontmatter.id,
-              path: m.path,
-              snippet: m.content,
-              score: 1.0 - i / Math.max(recentSorted.length, 1),
-            }));
-            const recent = (await this.boostSearchResults(
-              recentAsResults,
-              recallNamespaces,
-              retrievalQuery,
-              preloadedMap,
-            ))
+            const preloadedMap = new Map<string, MemoryFile>(
+              queryAwareScopedMemories
+                .filter((m) => m.path)
+                .map((m) => [m.path, m]),
+            );
+            const recentAsResults: QmdSearchResult[] = recentSorted.map(
+              (m, i) => ({
+                docid: m.frontmatter.id,
+                path: m.path,
+                snippet: m.content,
+                score: 1.0 - i / Math.max(recentSorted.length, 1),
+              }),
+            );
+            const recent = (
+              await this.boostSearchResults(
+                recentAsResults,
+                recallNamespaces,
+                retrievalQuery,
+                preloadedMap,
+              )
+            )
               .sort((a, b) => b.score - a.score)
               .slice(0, recallResultLimit);
 
@@ -5393,7 +7072,9 @@ export class Orchestrator {
                 },
               });
               recalledMemoryIds = this.extractMemoryIdsFromResults(recent);
-              recalledMemoryPaths = recent.map((result) => result.path).filter(Boolean);
+              recalledMemoryPaths = recent
+                .map((result) => result.path)
+                .filter(Boolean);
               impressionRecorded = true;
             } else {
               const longTerm = await this.applyColdFallbackPipeline({
@@ -5406,10 +7087,11 @@ export class Orchestrator {
               });
               if (longTerm.length > 0) {
                 if (shouldPersistGraphSnapshot) {
-                  graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
-                    longTerm,
-                    graphSourceLabelsForPath,
-                  );
+                  graphSnapshotFinalResults =
+                    this.buildGraphRecallRankedResults(
+                      longTerm,
+                      graphSourceLabelsForPath,
+                    );
                 }
                 recallSource = "cold_fallback";
                 recalledMemoryCount = longTerm.length;
@@ -5426,7 +7108,9 @@ export class Orchestrator {
                   },
                 });
                 recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
-                recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
+                recalledMemoryPaths = longTerm
+                  .map((result) => result.path)
+                  .filter(Boolean);
                 impressionRecorded = true;
               }
             }
@@ -5462,14 +7146,18 @@ export class Orchestrator {
               },
             });
             recalledMemoryIds = this.extractMemoryIdsFromResults(longTerm);
-            recalledMemoryPaths = longTerm.map((result) => result.path).filter(Boolean);
+            recalledMemoryPaths = longTerm
+              .map((result) => result.path)
+              .filter(Boolean);
             impressionRecorded = true;
           }
         }
       }
 
       if (isDisagreementPrompt(prompt)) {
-        this.appendRecallSection(sectionBuckets, "memories",
+        this.appendRecallSection(
+          sectionBuckets,
+          "memories",
           [
             "## Retrieval Feedback Helper",
             "",
@@ -5523,10 +7211,20 @@ export class Orchestrator {
     });
 
     // 2.5. Compression guideline recall section (v8.11 Task 5)
-    if (this.isRecallSectionEnabled("compression-guidelines", this.config.compressionGuidelineLearningEnabled === true)) {
-      const compressionGuidelineSection = await this.buildCompressionGuidelineRecallSection();
+    if (
+      this.isRecallSectionEnabled(
+        "compression-guidelines",
+        this.config.compressionGuidelineLearningEnabled === true,
+      )
+    ) {
+      const compressionGuidelineSection =
+        await this.buildCompressionGuidelineRecallSection();
       if (compressionGuidelineSection) {
-        this.appendRecallSection(sectionBuckets, "compression-guidelines", compressionGuidelineSection);
+        this.appendRecallSection(
+          sectionBuckets,
+          "compression-guidelines",
+          compressionGuidelineSection,
+        );
       }
     }
 
@@ -5537,21 +7235,42 @@ export class Orchestrator {
     }
     // Compaction reset context — independent section so it works even when transcript is disabled.
     if (compactionSection) {
-      this.appendRecallSection(sectionBuckets, "compaction-reset", compactionSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "compaction-reset",
+        compactionSection,
+      );
     }
     if (summariesSection) {
       this.appendRecallSection(sectionBuckets, "summaries", summariesSection);
     }
     if (conversationRecallSection) {
-      this.appendRecallSection(sectionBuckets, "conversation-recall", conversationRecallSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "conversation-recall",
+        conversationRecallSection,
+      );
     }
+    const compoundingSection = await awaitEnrichmentSection(
+      "compounding",
+      compoundingPromise,
+    );
     if (compoundingSection) {
-      this.appendRecallSection(sectionBuckets, "compounding", compoundingSection);
+      this.appendRecallSection(
+        sectionBuckets,
+        "compounding",
+        compoundingSection,
+      );
     }
 
     // 5. Inject most relevant question (if enabled) (existing)
-    if (this.config.injectQuestions && this.isRecallSectionEnabled("questions", true)) {
-      const questions = await profileStorage.readQuestions({ unresolvedOnly: true });
+    if (
+      this.config.injectQuestions &&
+      this.isRecallSectionEnabled("questions", true)
+    ) {
+      const questions = await profileStorage.readQuestions({
+        unresolvedOnly: true,
+      });
       if (questions.length > 0) {
         // Find the most relevant question to the current prompt
         // Simple approach: use the highest-priority unresolved question
@@ -5569,22 +7288,35 @@ export class Orchestrator {
     const finalizedQueryAwarePrefilter = await queryAwarePrefilterPromise;
     const phase2QapDoneMs = Date.now() - recallStart;
     throwIfRecallAborted(options.abortSignal);
-    if (timings.queryAware && finalizedQueryAwarePrefilter.candidatePaths?.size) {
+    if (
+      timings.queryAware &&
+      finalizedQueryAwarePrefilter.candidatePaths?.size
+    ) {
       const helpedCount = recalledMemoryPaths.filter((memoryPath) =>
-        finalizedQueryAwarePrefilter.candidatePaths?.has(memoryPath)
+        finalizedQueryAwarePrefilter.candidatePaths?.has(memoryPath),
       ).length;
       timings.queryAware = `${timings.queryAware};helped=${helpedCount}`;
     }
 
     // --- Timing summary ---
     timings.total = `${Date.now() - recallStart}ms`;
-    log.info(`recall phase-2 checkpoints: afterQmd=${phase2AfterQmdMs}ms, afterQuestions=${phase2QuestionsDoneMs}ms, afterQap=${phase2QapDoneMs}ms`);
-    const timingParts = Object.entries(timings).map(([k, v]) => `${k}=${v}`).join(", ");
+    log.info(
+      `recall phase-2 checkpoints: afterQmd=${phase2AfterQmdMs}ms, afterQuestions=${phase2QuestionsDoneMs}ms, afterQap=${phase2QapDoneMs}ms`,
+    );
+    const timingParts = Object.entries(timings)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
     log.info(`recall timings: ${timingParts}`);
 
     const assembledRecall = this.assembleRecallSections(sectionBuckets);
-    const context = assembledRecall.sections.length === 0 ? "" : assembledRecall.sections.join("\n\n---\n\n");
-    const sourcesUsed = this.collectLastRecallSources(sectionBuckets, recallSource);
+    const context =
+      assembledRecall.sections.length === 0
+        ? ""
+        : assembledRecall.sections.join("\n\n---\n\n");
+    const sourcesUsed = this.collectLastRecallSources(
+      sectionBuckets,
+      recallSource,
+    );
     const budgetsApplied = this.buildLastRecallBudgetSummary({
       requestedTopK,
       recallResultLimit,
@@ -5673,7 +7405,10 @@ export class Orchestrator {
       identityInjectionTruncated,
       durationMs: Date.now() - recallStart,
       timings: { ...timings },
-      recalledContent: this.config.traceRecallContent && context.length > 0 ? context : undefined,
+      recalledContent:
+        this.config.traceRecallContent && context.length > 0
+          ? context
+          : undefined,
     });
 
     return context;
@@ -5689,7 +7424,9 @@ export class Orchestrator {
       return;
     }
     if (shouldSkipImplicitExtraction(this.config)) {
-      log.debug("processTurn: skipping implicit extraction because captureMode=explicit");
+      log.debug(
+        "processTurn: skipping implicit extraction because captureMode=explicit",
+      );
       return;
     }
 
@@ -5712,7 +7449,9 @@ export class Orchestrator {
   ): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) return;
     if (shouldSkipImplicitExtraction(this.config)) {
-      log.debug("ingestReplayBatch: skipping implicit extraction because captureMode=explicit");
+      log.debug(
+        "ingestReplayBatch: skipping implicit extraction because captureMode=explicit",
+      );
       return;
     }
 
@@ -5748,7 +7487,8 @@ export class Orchestrator {
     if (replayTasks.length > 0) {
       const settled = await Promise.allSettled(replayTasks);
       const firstRejected = settled.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
       );
       if (firstRejected) {
         throw firstRejected.reason;
@@ -5760,22 +7500,30 @@ export class Orchestrator {
     if (this.config.sessionObserverEnabled !== true) return;
     if (!sessionKey || sessionKey.length === 0) return;
 
-    const previous = this.heartbeatObserverChains.get(sessionKey) ?? Promise.resolve();
+    const previous =
+      this.heartbeatObserverChains.get(sessionKey) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
         const turns = this.buffer.getTurns();
         if (turns.length === 0) return;
-        const mixedSessionTurns = turns.some((turn) => turn.sessionKey !== sessionKey);
+        const mixedSessionTurns = turns.some(
+          (turn) => turn.sessionKey !== sessionKey,
+        );
         if (mixedSessionTurns) {
-          log.debug(`heartbeat observer skipped: mixed session buffer for ${sessionKey}`);
+          log.debug(
+            `heartbeat observer skipped: mixed session buffer for ${sessionKey}`,
+          );
           return;
         }
         if (!this.shouldQueueExtraction(turns, { commit: false })) {
-          log.debug(`heartbeat observer skipped: extraction dedupe for ${sessionKey}`);
+          log.debug(
+            `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,
+          );
           return;
         }
-        const footprint = await this.transcript.estimateSessionFootprint(sessionKey);
+        const footprint =
+          await this.transcript.estimateSessionFootprint(sessionKey);
         const decision = await this.sessionObserver.observe({
           sessionKey,
           totalBytes: footprint.bytes,
@@ -5809,7 +7557,10 @@ export class Orchestrator {
       onTaskSettled?: (error?: unknown) => void;
     } = {},
   ): Promise<void> {
-    if (!options.skipDedupeCheck && !this.shouldQueueExtraction(turnsToExtract)) {
+    if (
+      !options.skipDedupeCheck &&
+      !this.shouldQueueExtraction(turnsToExtract)
+    ) {
       log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
       options.onTaskSettled?.();
       return;
@@ -5818,7 +7569,8 @@ export class Orchestrator {
     this.extractionQueue.push(async () => {
       try {
         await this.runExtraction(turnsToExtract, {
-          clearBufferAfterExtraction: options.clearBufferAfterExtraction ?? true,
+          clearBufferAfterExtraction:
+            options.clearBufferAfterExtraction ?? true,
           skipCharThreshold: options.skipCharThreshold ?? false,
           deadlineMs: options.extractionDeadlineMs,
         });
@@ -5831,7 +7583,7 @@ export class Orchestrator {
 
     if (!this.queueProcessing) {
       this.queueProcessing = true;
-      this.processQueue().catch(err => {
+      this.processQueue().catch((err) => {
         log.error("background extraction queue processor failed", err);
         this.queueProcessing = false;
       });
@@ -5849,7 +7601,10 @@ export class Orchestrator {
     // Fingerprint only user/assistant text; tool/system noise should not produce unique runs.
     const normalized = turns
       .filter((t) => t.role === "user" || t.role === "assistant")
-      .map((t) => `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`)
+      .map(
+        (t) =>
+          `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`,
+      )
       .join("\n");
     if (!normalized) return false;
 
@@ -5865,10 +7620,13 @@ export class Orchestrator {
       this.recentExtractionFingerprints.set(fingerprint, now);
     }
     // Keep this cache bounded to avoid unbounded growth.
-    if (options.commit !== false && this.recentExtractionFingerprints.size > 200) {
-      const entries = Array.from(this.recentExtractionFingerprints.entries()).sort(
-        (a, b) => a[1] - b[1],
-      );
+    if (
+      options.commit !== false &&
+      this.recentExtractionFingerprints.size > 200
+    ) {
+      const entries = Array.from(
+        this.recentExtractionFingerprints.entries(),
+      ).sort((a, b) => a[1] - b[1]);
       for (const [key] of entries.slice(0, entries.length - 200)) {
         this.recentExtractionFingerprints.delete(key);
       }
@@ -5906,10 +7664,12 @@ export class Orchestrator {
     } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
-    const clearBufferAfterExtraction = options.clearBufferAfterExtraction ?? true;
+    const clearBufferAfterExtraction =
+      options.clearBufferAfterExtraction ?? true;
     const skipCharThreshold = options.skipCharThreshold ?? false;
     const deadlineMs =
-      typeof options.deadlineMs === "number" && Number.isFinite(options.deadlineMs)
+      typeof options.deadlineMs === "number" &&
+      Number.isFinite(options.deadlineMs)
         ? options.deadlineMs
         : undefined;
     const throwIfDeadlineExceeded = (stage: string): void => {
@@ -5932,7 +7692,11 @@ export class Orchestrator {
     }
 
     const normalizedTurns = turns
-      .filter((t) => (t.role === "user" || t.role === "assistant") && typeof t.content === "string")
+      .filter(
+        (t) =>
+          (t.role === "user" || t.role === "assistant") &&
+          typeof t.content === "string",
+      )
       .map((t) => ({
         ...t,
         content: t.content.trim().slice(0, this.config.extractionMaxTurnChars),
@@ -5941,9 +7705,13 @@ export class Orchestrator {
     throwIfDeadlineExceeded("before_extract");
 
     const userTurns = normalizedTurns.filter((t) => t.role === "user");
-    const totalChars = normalizedTurns.reduce((sum, t) => sum + t.content.length, 0);
+    const totalChars = normalizedTurns.reduce(
+      (sum, t) => sum + t.content.length,
+      0,
+    );
     const belowCharThreshold = totalChars < this.config.extractionMinChars;
-    const belowUserTurnThreshold = userTurns.length < this.config.extractionMinUserTurns;
+    const belowUserTurnThreshold =
+      userTurns.length < this.config.extractionMinUserTurns;
     if ((!skipCharThreshold && belowCharThreshold) || belowUserTurnThreshold) {
       log.debug(
         `skipping extraction: below threshold (totalChars=${totalChars}, userTurns=${userTurns.length})`,
@@ -5958,7 +7726,10 @@ export class Orchestrator {
 
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await storage.listEntityNames();
-    const result = await this.extraction.extract(normalizedTurns, existingEntities);
+    const result = await this.extraction.extract(
+      normalizedTurns,
+      existingEntities,
+    );
     throwIfDeadlineExceeded("before_persist");
 
     // Defensive: validate extraction result before processing
@@ -5968,7 +7739,10 @@ export class Orchestrator {
       return;
     }
     if (!Array.isArray(result.facts)) {
-      log.warn("runExtraction: extraction returned invalid facts (not an array)", { factsType: typeof result.facts, resultKeys: Object.keys(result) });
+      log.warn(
+        "runExtraction: extraction returned invalid facts (not an array)",
+        { factsType: typeof result.facts, resultKeys: Object.keys(result) },
+      );
       await clearBuffer();
       return;
     }
@@ -5978,7 +7752,9 @@ export class Orchestrator {
       result.questions.length === 0 &&
       result.profileUpdates.length === 0
     ) {
-      log.debug("runExtraction: extraction produced no durable outputs; skipping persistence");
+      log.debug(
+        "runExtraction: extraction produced no durable outputs; skipping persistence",
+      );
       await clearBuffer();
       return;
     }
@@ -5990,11 +7766,18 @@ export class Orchestrator {
         threadIdForExtraction = await this.threading.processTurn(lastTurn, []);
       } catch (err) {
         // Fail-open: threading errors must not block memory persistence.
-        log.warn("[threading] processTurn failed before persistence (non-fatal)", err);
+        log.warn(
+          "[threading] processTurn failed before persistence (non-fatal)",
+          err,
+        );
       }
     }
 
-    const persistedIds = await this.persistExtraction(result, storage, threadIdForExtraction);
+    const persistedIds = await this.persistExtraction(
+      result,
+      storage,
+      threadIdForExtraction,
+    );
     await clearBuffer();
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -6005,7 +7788,8 @@ export class Orchestrator {
       const extractionTopics = deriveTopicsFromExtraction(result);
       // Derive episodic metadata from buffer turns (REMem-inspired)
       const firstUserTurn = turns.find((t) => t.role === "user");
-      const boxGoal = firstUserTurn?.content?.slice(0, 100)?.trim() || undefined;
+      const boxGoal =
+        firstUserTurn?.content?.slice(0, 100)?.trim() || undefined;
       await this.boxBuilderFor(storage)
         .onExtraction({
           topics: extractionTopics,
@@ -6013,7 +7797,9 @@ export class Orchestrator {
           timestamp: new Date().toISOString(),
           goal: boxGoal,
         })
-        .catch((err) => log.warn("[boxes] onExtraction failed (non-fatal)", err));
+        .catch((err) =>
+          log.warn("[boxes] onExtraction failed (non-fatal)", err),
+        );
     }
 
     // Batch-append persisted IDs so non-fact memories (entities/questions) are
@@ -6024,16 +7810,25 @@ export class Orchestrator {
       persistedIds.length > 0
     ) {
       try {
-        await this.threading.appendEpisodeIds(threadIdForExtraction, persistedIds);
+        await this.threading.appendEpisodeIds(
+          threadIdForExtraction,
+          persistedIds,
+        );
       } catch (err) {
-        log.warn("[threading] appendEpisodeIds failed after persistence (non-fatal)", err);
+        log.warn(
+          "[threading] appendEpisodeIds failed after persistence (non-fatal)",
+          err,
+        );
       }
     }
 
     // Thread title update for the already-established thread context.
     if (this.config.threadingEnabled && threadIdForExtraction) {
       const conversationContent = turns.map((t) => t.content).join(" ");
-      await this.threading.updateThreadTitle(threadIdForExtraction, conversationContent);
+      await this.threading.updateThreadTitle(
+        threadIdForExtraction,
+        conversationContent,
+      );
     }
 
     // Check if consolidation is needed (debounced + non-zero gated).
@@ -6049,8 +7844,12 @@ export class Orchestrator {
     const meta = await storage.loadMeta();
     meta.extractionCount += 1;
     meta.lastExtractionAt = new Date().toISOString();
-    meta.totalMemories += Array.isArray(result?.facts) ? result.facts.length : 0;
-    meta.totalEntities += Array.isArray(result?.entities) ? result.entities.length : 0;
+    meta.totalMemories += Array.isArray(result?.facts)
+      ? result.facts.length
+      : 0;
+    meta.totalEntities += Array.isArray(result?.entities)
+      ? result.entities.length
+      : 0;
     await storage.saveMeta(meta);
 
     this.requestQmdMaintenance();
@@ -6082,7 +7881,11 @@ export class Orchestrator {
       if (persistSkipped) await this.tierMigrationStatus.recordCycle(skipped);
       return skipped;
     }
-    if (trigger === "maintenance" && !this.config.qmdTierAutoBackfillEnabled && options?.force !== true) {
+    if (
+      trigger === "maintenance" &&
+      !this.config.qmdTierAutoBackfillEnabled &&
+      options?.force !== true
+    ) {
       const skipped: TierMigrationCycleSummary = {
         trigger,
         scanned: 0,
@@ -6112,13 +7915,18 @@ export class Orchestrator {
     }
 
     const budgetTrigger = trigger === "manual" ? "maintenance" : trigger;
-    const budget = this.compounding?.tierMigrationCycleBudget(budgetTrigger)
-      ?? defaultTierMigrationCycleBudget(this.config, budgetTrigger);
-    const limit = options?.limitOverride !== undefined
-      ? Math.max(0, Math.floor(options.limitOverride))
-      : budget.limit;
+    const budget =
+      this.compounding?.tierMigrationCycleBudget(budgetTrigger) ??
+      defaultTierMigrationCycleBudget(this.config, budgetTrigger);
+    const limit =
+      options?.limitOverride !== undefined
+        ? Math.max(0, Math.floor(options.limitOverride))
+        : budget.limit;
     const nowMs = Date.now();
-    if (options?.force !== true && nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs) {
+    if (
+      options?.force !== true &&
+      nowMs - this.lastTierMigrationRunAtMs < budget.minIntervalMs
+    ) {
       const skipped: TierMigrationCycleSummary = {
         trigger,
         scanned: 0,
@@ -6133,12 +7941,15 @@ export class Orchestrator {
       return skipped;
     }
 
-    const policy = applyUtilityPromotionRuntimePolicy({
-      enabled: this.config.qmdTierMigrationEnabled,
-      demotionMinAgeDays: this.config.qmdTierDemotionMinAgeDays,
-      demotionValueThreshold: this.config.qmdTierDemotionValueThreshold,
-      promotionValueThreshold: this.config.qmdTierPromotionValueThreshold,
-    }, this.utilityRuntimeValues);
+    const policy = applyUtilityPromotionRuntimePolicy(
+      {
+        enabled: this.config.qmdTierMigrationEnabled,
+        demotionMinAgeDays: this.config.qmdTierDemotionMinAgeDays,
+        demotionValueThreshold: this.config.qmdTierDemotionValueThreshold,
+        promotionValueThreshold: this.config.qmdTierPromotionValueThreshold,
+      },
+      this.utilityRuntimeValues,
+    );
 
     this.tierMigrationInFlight = true;
     try {
@@ -6149,8 +7960,14 @@ export class Orchestrator {
       ]);
       const now = new Date();
       const scanLimit = Math.max(0, Math.floor(budget.scanLimit));
-      const hotScanLimit = Math.min(hotMemories.length, Math.ceil(scanLimit * 0.75));
-      const coldScanLimit = Math.min(coldMemories.length, Math.max(0, scanLimit - hotScanLimit));
+      const hotScanLimit = Math.min(
+        hotMemories.length,
+        Math.ceil(scanLimit * 0.75),
+      );
+      const coldScanLimit = Math.min(
+        coldMemories.length,
+        Math.max(0, scanLimit - hotScanLimit),
+      );
       const toTimestamp = (memory: MemoryFile): number =>
         Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);
       const hotCandidates = hotMemories
@@ -6167,7 +7984,8 @@ export class Orchestrator {
         storage,
         qmd: this.qmd,
         hotCollection: this.config.qmdCollection,
-        coldCollection: this.config.qmdColdCollection ?? `${this.config.qmdCollection}-cold`,
+        coldCollection:
+          this.config.qmdColdCollection ?? `${this.config.qmdCollection}-cold`,
         autoEmbed: this.config.qmdAutoEmbedEnabled,
       });
 
@@ -6176,7 +7994,12 @@ export class Orchestrator {
       let demoted = 0;
       for (const candidate of candidates) {
         if (migrated >= limit) break;
-        const decision = decideTierTransition(candidate.memory, candidate.tier, policy, now);
+        const decision = decideTierTransition(
+          candidate.memory,
+          candidate.tier,
+          policy,
+          now,
+        );
         if (!decision.changed) continue;
 
         if (!dryRun) {
@@ -6207,7 +8030,8 @@ export class Orchestrator {
         dryRun,
       };
       const shouldPersistCycle = trigger === "manual" || migrated > 0;
-      if (shouldPersistCycle) await this.tierMigrationStatus.recordCycle(summary);
+      if (shouldPersistCycle)
+        await this.tierMigrationStatus.recordCycle(summary);
       return summary;
     } catch (err) {
       this.lastTierMigrationRunAtMs = Date.now();
@@ -6245,11 +8069,19 @@ export class Orchestrator {
   }
 
   private maybeScheduleConsolidation(nonZeroExtraction: boolean): void {
-    if (this.config.consolidationRequireNonZeroExtraction && !nonZeroExtraction) return;
-    if (this.nonZeroExtractionsSinceConsolidation < this.config.consolidateEveryN) return;
+    if (this.config.consolidationRequireNonZeroExtraction && !nonZeroExtraction)
+      return;
+    if (
+      this.nonZeroExtractionsSinceConsolidation < this.config.consolidateEveryN
+    )
+      return;
 
     const now = Date.now();
-    if (now - this.lastConsolidationRunAtMs < this.config.consolidationMinIntervalMs) return;
+    if (
+      now - this.lastConsolidationRunAtMs <
+      this.config.consolidationMinIntervalMs
+    )
+      return;
     if (this.consolidationInFlight) return;
 
     this.consolidationInFlight = true;
@@ -6298,7 +8130,9 @@ export class Orchestrator {
 
     try {
       if (this.config.namespacesEnabled) {
-        await this.namespaceSearchRouter.updateNamespaces(this.configuredNamespaces());
+        await this.namespaceSearchRouter.updateNamespaces(
+          this.configuredNamespaces(),
+        );
       } else {
         await this.qmd.update();
       }
@@ -6308,7 +8142,9 @@ export class Orchestrator {
         now - this.lastQmdEmbedAtMs >= this.config.qmdEmbedMinIntervalMs
       ) {
         if (this.config.namespacesEnabled) {
-          await this.namespaceSearchRouter.embedNamespaces(this.configuredNamespaces());
+          await this.namespaceSearchRouter.embedNamespaces(
+            this.configuredNamespaces(),
+          );
         } else {
           await this.qmd.embed();
         }
@@ -6328,7 +8164,10 @@ export class Orchestrator {
     threadIdForExtraction?: string | null,
   ): Promise<string[]> {
     const persistedIds: string[] = [];
-    const persistedIdsByStorage = new Map<string, { storage: StorageManager; ids: string[] }>();
+    const persistedIdsByStorage = new Map<
+      string,
+      { storage: StorageManager; ids: string[] }
+    >();
     const trackPersistedId = (
       targetStorage: StorageManager,
       id: string,
@@ -6346,8 +8185,14 @@ export class Orchestrator {
       persistedIdsByStorage.set(key, { storage: targetStorage, ids: [id] });
     };
     let dedupedCount = 0;
-    const behaviorSignalsByStorage = new Map<string, { storage: StorageManager; events: BehaviorSignalEvent[] }>();
-    const trackBehaviorSignals = (targetStorage: StorageManager, events: BehaviorSignalEvent[]): void => {
+    const behaviorSignalsByStorage = new Map<
+      string,
+      { storage: StorageManager; events: BehaviorSignalEvent[] }
+    >();
+    const trackBehaviorSignals = (
+      targetStorage: StorageManager,
+      events: BehaviorSignalEvent[],
+    ): void => {
       if (events.length === 0) return;
       const key = targetStorage.dir;
       const existing = behaviorSignalsByStorage.get(key);
@@ -6355,20 +8200,39 @@ export class Orchestrator {
         existing.events.push(...events);
         return;
       }
-      behaviorSignalsByStorage.set(key, { storage: targetStorage, events: [...events] });
+      behaviorSignalsByStorage.set(key, {
+        storage: targetStorage,
+        events: [...events],
+      });
     };
-    const confidenceTierOrder = ["explicit", "implied", "inferred", "speculative"] as const;
+    const confidenceTierOrder = [
+      "explicit",
+      "implied",
+      "inferred",
+      "speculative",
+    ] as const;
     const shouldPromoteToShared = (
       targetStorage: StorageManager,
       category: string,
       confidence: number,
     ): boolean => {
-      if (!this.config.namespacesEnabled || !this.config.autoPromoteToSharedEnabled) return false;
-      if (this.namespaceFromStorageDir(targetStorage.dir) === this.config.sharedNamespace) return false;
-      if (!this.config.autoPromoteToSharedCategories.includes(category as any)) return false;
+      if (
+        !this.config.namespacesEnabled ||
+        !this.config.autoPromoteToSharedEnabled
+      )
+        return false;
+      if (
+        this.namespaceFromStorageDir(targetStorage.dir) ===
+        this.config.sharedNamespace
+      )
+        return false;
+      if (!this.config.autoPromoteToSharedCategories.includes(category as any))
+        return false;
       const actualTier = confidenceTier(confidence);
       const actualRank = confidenceTierOrder.indexOf(actualTier);
-      const minimumRank = confidenceTierOrder.indexOf(this.config.autoPromoteMinConfidenceTier);
+      const minimumRank = confidenceTierOrder.indexOf(
+        this.config.autoPromoteMinConfidenceTier,
+      );
       if (actualRank === -1 || minimumRank === -1) return false;
       return actualRank <= minimumRank;
     };
@@ -6387,26 +8251,44 @@ export class Orchestrator {
       memoryKind?: MemoryFrontmatter["memoryKind"];
       source: string;
     }): Promise<void> => {
-      if (!shouldPromoteToShared(options.sourceStorage, options.category, options.confidence)) return;
+      if (
+        !shouldPromoteToShared(
+          options.sourceStorage,
+          options.category,
+          options.confidence,
+        )
+      )
+        return;
       try {
-        const sharedStorage = await this.storageRouter.storageFor(this.config.sharedNamespace);
-        if (options.category === "fact" && await sharedStorage.hasFactContentHash(options.content)) {
+        const sharedStorage = await this.storageRouter.storageFor(
+          this.config.sharedNamespace,
+        );
+        if (
+          options.category === "fact" &&
+          (await sharedStorage.hasFactContentHash(options.content))
+        ) {
           return;
         }
-        const promotedId = await sharedStorage.writeMemory(options.category as any, options.content, {
-          confidence: options.confidence,
-          tags: [...options.tags, "shared-promotion"],
-          entityRef: options.entityRef,
-          source: `${options.source}-shared-promotion`,
-          importance: options.importance,
-          lineage: [options.sourceMemoryId],
-          sourceMemoryId: options.sourceMemoryId,
-          intentGoal: options.intentGoal,
-          intentActionType: options.intentActionType,
-          intentEntityTypes: options.intentEntityTypes,
-          memoryKind: options.memoryKind,
+        const promotedId = await sharedStorage.writeMemory(
+          options.category as any,
+          options.content,
+          {
+            confidence: options.confidence,
+            tags: [...options.tags, "shared-promotion"],
+            entityRef: options.entityRef,
+            source: `${options.source}-shared-promotion`,
+            importance: options.importance,
+            lineage: [options.sourceMemoryId],
+            sourceMemoryId: options.sourceMemoryId,
+            intentGoal: options.intentGoal,
+            intentActionType: options.intentActionType,
+            intentEntityTypes: options.intentEntityTypes,
+            memoryKind: options.memoryKind,
+          },
+        );
+        trackPersistedId(sharedStorage, promotedId, {
+          includeReturnedIds: false,
         });
-        trackPersistedId(sharedStorage, promotedId, { includeReturnedIds: false });
         await this.indexPersistedMemory(sharedStorage, promotedId);
         trackBehaviorSignals(
           sharedStorage,
@@ -6420,13 +8302,18 @@ export class Orchestrator {
           }),
         );
       } catch (err) {
-        log.warn(`persistExtraction: shared promotion failed open for ${options.sourceMemoryId}: ${err}`);
+        log.warn(
+          `persistExtraction: shared promotion failed open for ${options.sourceMemoryId}: ${err}`,
+        );
       }
     };
 
     // Defensive: validate result and facts array
     if (!result || !Array.isArray(result.facts)) {
-      log.warn("persistExtraction: result or result.facts is invalid, skipping", { resultType: typeof result, factsType: typeof result?.facts });
+      log.warn(
+        "persistExtraction: result or result.facts is invalid, skipping",
+        { resultType: typeof result, factsType: typeof result?.facts },
+      );
       return persistedIds;
     }
 
@@ -6437,15 +8324,25 @@ export class Orchestrator {
       overlapSentences: this.config.chunkingOverlapSentences,
     };
 
-    const rawEntities = Array.isArray((result as any).entities) ? (result as any).entities : [];
-    const rawQuestions = Array.isArray((result as any).questions) ? (result as any).questions : [];
+    const rawEntities = Array.isArray((result as any).entities)
+      ? (result as any).entities
+      : [];
+    const rawQuestions = Array.isArray((result as any).questions)
+      ? (result as any).questions
+      : [];
     const rawProfileUpdates = Array.isArray((result as any).profileUpdates)
       ? (result as any).profileUpdates
       : [];
 
     const facts = result.facts.slice(0, this.config.extractionMaxFactsPerRun);
-    const entities = rawEntities.slice(0, this.config.extractionMaxEntitiesPerRun);
-    const questions = rawQuestions.slice(0, this.config.extractionMaxQuestionsPerRun);
+    const entities = rawEntities.slice(
+      0,
+      this.config.extractionMaxEntitiesPerRun,
+    );
+    const questions = rawQuestions.slice(
+      0,
+      this.config.extractionMaxQuestionsPerRun,
+    );
     const profileUpdates = rawProfileUpdates.slice(
       0,
       this.config.extractionMaxProfileUpdatesPerRun,
@@ -6466,12 +8363,16 @@ export class Orchestrator {
 
     // v8.2: pre-load all memories once for entity-sibling graph edges (avoids per-fact disk scan)
     type GraphStorageContext = {
-      allMemsForGraph: Awaited<ReturnType<typeof storage.readAllMemories>> | null;
+      allMemsForGraph: Awaited<
+        ReturnType<typeof storage.readAllMemories>
+      > | null;
       memoryPathById: Map<string, string>;
       previousPersistedRelPath?: string;
     };
     const graphContextByStorageDir = new Map<string, GraphStorageContext>();
-    const ensureGraphContext = async (targetStorage: StorageManager): Promise<GraphStorageContext> => {
+    const ensureGraphContext = async (
+      targetStorage: StorageManager,
+    ): Promise<GraphStorageContext> => {
       const existing = graphContextByStorageDir.get(targetStorage.dir);
       if (existing) return existing;
       const created: GraphStorageContext = {
@@ -6481,10 +8382,15 @@ export class Orchestrator {
       if (this.config.multiGraphMemoryEnabled) {
         try {
           created.allMemsForGraph = await targetStorage.readAllMemories();
-          for (const [id, relPath] of buildMemoryPathById(created.allMemsForGraph, targetStorage.dir)) {
+          for (const [id, relPath] of buildMemoryPathById(
+            created.allMemsForGraph,
+            targetStorage.dir,
+          )) {
             created.memoryPathById.set(id, relPath);
           }
-        } catch { /* fail-open */ }
+        } catch {
+          /* fail-open */
+        }
       }
       graphContextByStorageDir.set(targetStorage.dir, created);
       return created;
@@ -6493,28 +8399,43 @@ export class Orchestrator {
     if (this.config.multiGraphMemoryEnabled && threadIdForExtraction) {
       try {
         const thread = await this.threading.loadThread(threadIdForExtraction);
-        threadEpisodeIdsForGraph = thread?.episodeIds ? [...thread.episodeIds] : [];
-      } catch { /* fail-open */ }
+        threadEpisodeIdsForGraph = thread?.episodeIds
+          ? [...thread.episodeIds]
+          : [];
+      } catch {
+        /* fail-open */
+      }
     }
     const routeRules = await this.loadRoutingRules();
     const routeOptions = this.routeEngineOptions();
 
     for (const fact of facts) {
-      if (!fact || typeof (fact as any).content !== "string" || !(fact as any).content.trim()) {
+      if (
+        !fact ||
+        typeof (fact as any).content !== "string" ||
+        !(fact as any).content.trim()
+      ) {
         continue;
       }
-      if (typeof (fact as any).category !== "string" || !(fact as any).category.trim()) {
+      if (
+        typeof (fact as any).category !== "string" ||
+        !(fact as any).category.trim()
+      ) {
         continue;
       }
       (fact as any).tags = Array.isArray((fact as any).tags)
         ? (fact as any).tags.filter((t: any) => typeof t === "string")
         : [];
       (fact as any).confidence =
-        typeof (fact as any).confidence === "number" ? (fact as any).confidence : 0.7;
+        typeof (fact as any).confidence === "number"
+          ? (fact as any).confidence
+          : 0.7;
 
       // Content-hash dedup check (v6.0)
       if (this.contentHashIndex && this.contentHashIndex.has(fact.content)) {
-        log.debug(`dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`);
+        log.debug(
+          `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
+        );
         dedupedCount++;
         continue;
       }
@@ -6533,20 +8454,31 @@ export class Orchestrator {
               writeCategory = selected.target.category;
             }
             if (selected.target.namespace) {
-              targetStorage = await this.storageRouter.storageFor(selected.target.namespace);
+              targetStorage = await this.storageRouter.storageFor(
+                selected.target.namespace,
+              );
             }
           }
         } catch (err) {
-          log.warn(`routing evaluation failed; fail-open to extracted category/namespace: ${err}`);
+          log.warn(
+            `routing evaluation failed; fail-open to extracted category/namespace: ${err}`,
+          );
         }
       }
-      const importance = scoreImportance(fact.content, writeCategory, fact.tags);
+      const importance = scoreImportance(
+        fact.content,
+        writeCategory,
+        fact.tags,
+      );
       const inferredIntent = this.config.intentRoutingEnabled
-        ? inferIntentFromText(`${writeCategory} ${fact.tags.join(" ")} ${fact.content}`)
+        ? inferIntentFromText(
+            `${writeCategory} ${fact.tags.join(" ")} ${fact.content}`,
+          )
         : null;
-      const extractionWriteSource = (fact as any).source === "proactive"
-        ? "extraction-proactive"
-        : "extraction";
+      const extractionWriteSource =
+        (fact as any).source === "proactive"
+          ? "extraction-proactive"
+          : "extraction";
 
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
@@ -6559,26 +8491,35 @@ export class Orchestrator {
             : undefined;
 
           // Write the parent memory first (with full content for reference)
-          const parentId = await targetStorage.writeMemory(writeCategory, fact.content, {
-            confidence: fact.confidence,
-            tags: [...fact.tags, "chunked"],
-            entityRef: fact.entityRef,
-            source: extractionWriteSource,
-            importance,
-            intentGoal: inferredIntent?.goal,
-            intentActionType: inferredIntent?.actionType,
-            intentEntityTypes: inferredIntent?.entityTypes,
-            memoryKind,
-            structuredAttributes: fact.structuredAttributes,
-          });
+          const parentId = await targetStorage.writeMemory(
+            writeCategory,
+            fact.content,
+            {
+              confidence: fact.confidence,
+              tags: [...fact.tags, "chunked"],
+              entityRef: fact.entityRef,
+              source: extractionWriteSource,
+              importance,
+              intentGoal: inferredIntent?.goal,
+              intentActionType: inferredIntent?.actionType,
+              intentEntityTypes: inferredIntent?.entityTypes,
+              memoryKind,
+              structuredAttributes: fact.structuredAttributes,
+            },
+          );
 
           // Write individual chunks with parent reference
           for (const chunk of chunkResult.chunks) {
             // Score each chunk's importance separately
-            const chunkImportance = scoreImportance(chunk.content, writeCategory, fact.tags);
-            const chunkWriteSource = (fact as any).source === "proactive"
-              ? "chunking-proactive"
-              : "chunking";
+            const chunkImportance = scoreImportance(
+              chunk.content,
+              writeCategory,
+              fact.tags,
+            );
+            const chunkWriteSource =
+              (fact as any).source === "proactive"
+                ? "chunking-proactive"
+                : "chunking";
 
             await targetStorage.writeChunk(
               parentId,
@@ -6605,9 +8546,14 @@ export class Orchestrator {
               `routing applied for chunked memory ${parentId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
             );
           }
-          log.debug(`chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`);
+          log.debug(
+            `chunked memory ${parentId} into ${chunkResult.chunks.length} chunks`,
+          );
           trackPersistedId(targetStorage, parentId);
-          if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(parentId)) {
+          if (
+            threadEpisodeIdsForGraph &&
+            !threadEpisodeIdsForGraph.includes(parentId)
+          ) {
             threadEpisodeIdsForGraph.push(parentId);
           }
           await this.indexPersistedMemory(targetStorage, parentId);
@@ -6659,7 +8605,9 @@ export class Orchestrator {
             try {
               const graphContext = await ensureGraphContext(targetStorage);
               const entityRef =
-                typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+                typeof (fact as any).entityRef === "string"
+                  ? (fact as any).entityRef
+                  : undefined;
               const parentRelPath = resolvePersistedMemoryRelativePath({
                 memoryId: parentId,
                 pathById: graphContext.memoryPathById,
@@ -6688,7 +8636,9 @@ export class Orchestrator {
                 graphContext.previousPersistedRelPath,
               );
               graphContext.previousPersistedRelPath = parentRelPath;
-            } catch { /* fail-open */ }
+            } catch {
+              /* fail-open */
+            }
           }
           trackBehaviorSignals(
             targetStorage,
@@ -6726,7 +8676,10 @@ export class Orchestrator {
           });
           // Deindex the superseded memory so stale paths don't remain in
           // index_time.json / index_tags.json after the incremental update.
-          if (this.config.queryAwareIndexingEnabled && contradiction.supersededPath) {
+          if (
+            this.config.queryAwareIndexingEnabled &&
+            contradiction.supersededPath
+          ) {
             deindexMemory(
               this.config.memoryDir,
               contradiction.supersededPath,
@@ -6756,20 +8709,27 @@ export class Orchestrator {
         : undefined;
 
       // Normal write (no chunking)
-      const memoryId = await targetStorage.writeMemory(writeCategory, fact.content, {
-        confidence: fact.confidence,
-        tags: fact.tags,
-        entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
-        source: extractionWriteSource,
-        importance,
-        supersedes,
-        links: links.length > 0 ? links : undefined,
-        intentGoal: inferredIntent?.goal,
-        intentActionType: inferredIntent?.actionType,
-        intentEntityTypes: inferredIntent?.entityTypes,
-        memoryKind,
-        structuredAttributes: fact.structuredAttributes,
-      });
+      const memoryId = await targetStorage.writeMemory(
+        writeCategory,
+        fact.content,
+        {
+          confidence: fact.confidence,
+          tags: fact.tags,
+          entityRef:
+            typeof (fact as any).entityRef === "string"
+              ? (fact as any).entityRef
+              : undefined,
+          source: extractionWriteSource,
+          importance,
+          supersedes,
+          links: links.length > 0 ? links : undefined,
+          intentGoal: inferredIntent?.goal,
+          intentActionType: inferredIntent?.actionType,
+          intentEntityTypes: inferredIntent?.entityTypes,
+          memoryKind,
+          structuredAttributes: fact.structuredAttributes,
+        },
+      );
       if (routedRuleId) {
         log.debug(
           `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
@@ -6787,7 +8747,10 @@ export class Orchestrator {
         }),
       );
       trackPersistedId(targetStorage, memoryId);
-      if (threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph.includes(memoryId)) {
+      if (
+        threadEpisodeIdsForGraph &&
+        !threadEpisodeIdsForGraph.includes(memoryId)
+      ) {
         threadEpisodeIdsForGraph.push(memoryId);
       }
       await this.indexPersistedMemory(targetStorage, memoryId);
@@ -6797,7 +8760,10 @@ export class Orchestrator {
         content: fact.content,
         confidence: fact.confidence,
         tags: fact.tags,
-        entityRef: typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined,
+        entityRef:
+          typeof (fact as any).entityRef === "string"
+            ? (fact as any).entityRef
+            : undefined,
         sourceMemoryId: memoryId,
         importance,
         intentGoal: inferredIntent?.goal,
@@ -6811,7 +8777,9 @@ export class Orchestrator {
         try {
           const graphContext = await ensureGraphContext(targetStorage);
           const entityRef =
-            typeof (fact as any).entityRef === "string" ? (fact as any).entityRef : undefined;
+            typeof (fact as any).entityRef === "string"
+              ? (fact as any).entityRef
+              : undefined;
           const memoryRelPath = resolvePersistedMemoryRelativePath({
             memoryId,
             pathById: graphContext.memoryPathById,
@@ -6840,7 +8808,9 @@ export class Orchestrator {
             graphContext.previousPersistedRelPath,
           );
           graphContext.previousPersistedRelPath = memoryRelPath;
-        } catch { /* fail-open */ }
+        } catch {
+          /* fail-open */
+        }
       }
       if (
         this.config.verbatimArtifactsEnabled &&
@@ -6867,7 +8837,12 @@ export class Orchestrator {
       try {
         const name = (entity as any)?.name;
         const type = (entity as any)?.type;
-        if (typeof name !== "string" || !name.trim() || typeof type !== "string" || !type.trim()) {
+        if (
+          typeof name !== "string" ||
+          !name.trim() ||
+          typeof type !== "string" ||
+          !type.trim()
+        ) {
           continue;
         }
         const safeFacts = Array.isArray((entity as any)?.facts)
@@ -6881,13 +8856,22 @@ export class Orchestrator {
     }
 
     // Persist entity relationships (v7.0)
-    if (this.config.entityRelationshipsEnabled && Array.isArray(result.relationships)) {
+    if (
+      this.config.entityRelationshipsEnabled &&
+      Array.isArray(result.relationships)
+    ) {
       for (const rel of result.relationships.slice(0, 5)) {
         if (!rel.source || !rel.target || !rel.label) continue;
         try {
           // Add bidirectional relationship
-          await storage.addEntityRelationship(rel.source, { target: rel.target, label: rel.label });
-          await storage.addEntityRelationship(rel.target, { target: rel.source, label: `${rel.label} (reverse)` });
+          await storage.addEntityRelationship(rel.source, {
+            target: rel.target,
+            label: rel.label,
+          });
+          await storage.addEntityRelationship(rel.target, {
+            target: rel.source,
+            label: `${rel.label} (reverse)`,
+          });
         } catch (err) {
           log.debug(`relationship persist failed: ${err}`);
         }
@@ -6935,17 +8919,22 @@ export class Orchestrator {
 
     // Save content-hash index after batch
     if (this.contentHashIndex) {
-      await this.contentHashIndex.save().catch((err) =>
-        log.warn(`content-hash index save failed: ${err}`),
-      );
+      await this.contentHashIndex
+        .save()
+        .catch((err) => log.warn(`content-hash index save failed: ${err}`));
     }
 
-    for (const { storage: targetStorage, events } of behaviorSignalsByStorage.values()) {
+    for (const {
+      storage: targetStorage,
+      events,
+    } of behaviorSignalsByStorage.values()) {
       const dedupedSignals = dedupeBehaviorSignalsByMemoryAndHash(events);
       if (dedupedSignals.length === 0) continue;
       await targetStorage
         .appendBehaviorSignals(dedupedSignals)
-        .catch((err) => log.warn(`appendBehaviorSignals failed (non-fatal): ${err}`));
+        .catch((err) =>
+          log.warn(`appendBehaviorSignals failed (non-fatal): ${err}`),
+        );
     }
 
     const dedupSuffix = dedupedCount > 0 ? ` (${dedupedCount} deduped)` : "";
@@ -6962,18 +8951,27 @@ export class Orchestrator {
       for (const entry of persistedIdsByStorage.values()) {
         await this.updateTemporalTagIndexes(entry.storage, entry.ids);
       }
-    })().catch((err) => log.debug(`temporal-index update error (non-fatal): ${err}`));
+    })().catch((err) =>
+      log.debug(`temporal-index update error (non-fatal): ${err}`),
+    );
 
     // Return the persisted fact IDs for threading
     return persistedIds;
   }
 
-  private async indexPersistedMemory(storage: StorageManager, memoryId: string): Promise<void> {
+  private async indexPersistedMemory(
+    storage: StorageManager,
+    memoryId: string,
+  ): Promise<void> {
     if (!this.config.embeddingFallbackEnabled) return;
     if (!(await this.embeddingFallback.isAvailable())) return;
     const memory = await storage.getMemoryById(memoryId);
     if (!memory) return;
-    await this.embeddingFallback.indexFile(memoryId, memory.content, memory.path);
+    await this.embeddingFallback.indexFile(
+      memoryId,
+      memory.content,
+      memory.path,
+    );
   }
 
   /**
@@ -7004,21 +9002,27 @@ export class Orchestrator {
             if (rel !== memoryRelPath) entitySiblings.push(rel);
           }
         }
-      } catch { /* fail-open */ }
+      } catch {
+        /* fail-open */
+      }
     }
     // Recent thread memories for time graph
     const recentInThread: string[] = [];
     if (threadIdForEdge && threadEpisodeIdsForGraph?.length) {
       try {
-        recentInThread.push(...resolveRecentThreadMemoryPaths({
-          threadEpisodeIds: threadEpisodeIdsForGraph,
-          currentMemoryId: memoryId,
-          allMemsForGraph,
-          pathById: memoryPathById,
-          storageDir: storage.dir,
-          maxRecent: 3,
-        }));
-      } catch { /* fail-open */ }
+        recentInThread.push(
+          ...resolveRecentThreadMemoryPaths({
+            threadEpisodeIds: threadEpisodeIdsForGraph,
+            currentMemoryId: memoryId,
+            allMemsForGraph,
+            pathById: memoryPathById,
+            storageDir: storage.dir,
+            maxRecent: 3,
+          }),
+        );
+      } catch {
+        /* fail-open */
+      }
     }
     if (
       recentInThread.length === 0 &&
@@ -7028,7 +9032,8 @@ export class Orchestrator {
     ) {
       recentInThread.push(fallbackCausalPredecessor);
     }
-    const causalPredecessor = recentInThread[recentInThread.length - 1] ?? fallbackCausalPredecessor;
+    const causalPredecessor =
+      recentInThread[recentInThread.length - 1] ?? fallbackCausalPredecessor;
     await this.graphIndexFor(storage).onMemoryWritten({
       memoryPath: memoryRelPath,
       entityRef,
@@ -7065,7 +9070,11 @@ export class Orchestrator {
     // - parallelRetrievalEnabled: temporal agent reads index_time.json for date-range lookup
     // Enabling only parallelRetrievalEnabled without queryAwareIndexingEnabled would silently
     // produce an empty temporal index, leaving the temporal agent with no data to work from.
-    if (!this.config.queryAwareIndexingEnabled && !this.config.parallelRetrievalEnabled) return;
+    if (
+      !this.config.queryAwareIndexingEnabled &&
+      !this.config.parallelRetrievalEnabled
+    )
+      return;
     // Check for missing indexes BEFORE the early-return so first-time enablement
     // can bootstrap the full corpus even when this extraction turn persisted nothing.
     const needsFullRebuild = !indexesExist(this.config.memoryDir);
@@ -7074,15 +9083,18 @@ export class Orchestrator {
       // Read the corpus once to avoid N separate full-corpus scans.
       // On full rebuild with namespaces enabled, span all configured namespaces so
       // memories written to other namespaces before the index existed are also captured.
-      const allMemories = needsFullRebuild && this.config.namespacesEnabled
-        ? await this.readAllMemoriesForNamespaces(
-            Array.from(new Set<string>([
-              this.config.defaultNamespace,
-              this.config.sharedNamespace,
-              ...this.config.namespacePolicies.map((p) => p.name),
-            ])),
-          )
-        : await storage.readAllMemories();
+      const allMemories =
+        needsFullRebuild && this.config.namespacesEnabled
+          ? await this.readAllMemoriesForNamespaces(
+              Array.from(
+                new Set<string>([
+                  this.config.defaultNamespace,
+                  this.config.sharedNamespace,
+                  ...this.config.namespacePolicies.map((p) => p.name),
+                ]),
+              ),
+            )
+          : await storage.readAllMemories();
 
       // Bootstrap: index only active (non-archived, non-superseded) memories.
       // Incremental: index only the newly persisted IDs.
@@ -7095,7 +9107,11 @@ export class Orchestrator {
             return allMemories.filter((m) => idSet.has(m.frontmatter.id));
           })();
 
-      const entries: Array<{ path: string; createdAt: string; tags: string[] }> = [];
+      const entries: Array<{
+        path: string;
+        createdAt: string;
+        tags: string[];
+      }> = [];
       for (const mem of pool) {
         if (mem.path && mem.frontmatter?.created) {
           entries.push({
@@ -7114,7 +9130,9 @@ export class Orchestrator {
         if (entries.length > 0) {
           indexMemoriesBatch(this.config.memoryDir, entries);
         }
-        log.info(`temporal-index: bootstrapped from ${entries.length} active memories`);
+        log.info(
+          `temporal-index: bootstrapped from ${entries.length} active memories`,
+        );
       } else if (entries.length > 0) {
         indexMemoriesBatch(this.config.memoryDir, entries);
       }
@@ -7126,7 +9144,11 @@ export class Orchestrator {
   /** IDs of facts persisted in the last extraction */
   private lastPersistedIds: string[] = [];
 
-  private async runConsolidation(): Promise<{ memoriesProcessed: number; merged: number; invalidated: number }> {
+  private async runConsolidation(): Promise<{
+    memoriesProcessed: number;
+    merged: number;
+    invalidated: number;
+  }> {
     log.info("running consolidation pass");
     let merged = 0;
     let invalidated = 0;
@@ -7149,12 +9171,11 @@ export class Orchestrator {
       )
       .slice(0, 20);
 
-    const older = allMemories
-      .sort(
-        (a, b) =>
-          new Date(a.frontmatter.created).getTime() -
-          new Date(b.frontmatter.created).getTime(),
-      );
+    const older = allMemories.sort(
+      (a, b) =>
+        new Date(a.frontmatter.created).getTime() -
+        new Date(b.frontmatter.created).getTime(),
+    );
 
     const profile = await this.storage.readProfile();
     const result = await this.extraction.consolidate(recent, older, profile);
@@ -7188,9 +9209,13 @@ export class Orchestrator {
         }
         case "UPDATE":
           if (item.updatedContent) {
-            await this.storage.updateMemory(item.existingId, item.updatedContent, {
-              lineage: [item.existingId],
-            });
+            await this.storage.updateMemory(
+              item.existingId,
+              item.updatedContent,
+              {
+                lineage: [item.existingId],
+              },
+            );
             await this.indexPersistedMemory(this.storage, item.existingId);
             // updateMemory() only changes content/updated/lineage — path, created, and tags
             // are preserved, so the temporal/tag index entry is already correct; no reindex needed.
@@ -7198,10 +9223,14 @@ export class Orchestrator {
           break;
         case "MERGE":
           if (item.updatedContent && item.mergeWith) {
-            await this.storage.updateMemory(item.existingId, item.updatedContent, {
-              supersedes: item.mergeWith,
-              lineage: [item.existingId, item.mergeWith],
-            });
+            await this.storage.updateMemory(
+              item.existingId,
+              item.updatedContent,
+              {
+                supersedes: item.mergeWith,
+                lineage: [item.existingId, item.mergeWith],
+              },
+            );
             await this.indexPersistedMemory(this.storage, item.existingId);
             // updateMemory() only changes content/updated/supersedes/lineage — path, created, and tags
             // are preserved, so the temporal/tag index entry for the survivor is already correct.
@@ -7213,7 +9242,10 @@ export class Orchestrator {
               invalidated += 1;
               merged += 1;
               await this.embeddingFallback.removeFromIndex(item.mergeWith);
-              if (toMergeInvalidate?.path && toMergeInvalidate.frontmatter?.created) {
+              if (
+                toMergeInvalidate?.path &&
+                toMergeInvalidate.frontmatter?.created
+              ) {
                 deindexMemory(
                   this.config.memoryDir,
                   toMergeInvalidate.path,
@@ -7259,21 +9291,37 @@ export class Orchestrator {
             const prompt = `Summarize this entity in one sentence. Entity: ${entity.name} (${entity.type}). Facts: ${factsText}`;
             const response = await this.fastLlm.chatCompletion(
               [
-                { role: "system", content: "Respond with a single concise sentence summarizing the entity. No JSON, just plain text." },
+                {
+                  role: "system",
+                  content:
+                    "Respond with a single concise sentence summarizing the entity. No JSON, just plain text.",
+                },
                 { role: "user", content: prompt },
               ],
-              { temperature: 0.3, maxTokens: 100, operation: "entity_summary" },
+              {
+                temperature: 0.3,
+                maxTokens: 100,
+                operation: "entity_summary",
+                priority: "background",
+              },
             );
             if (response?.content) {
-              const summary = response.content.trim().replace(/^["']|["']$/g, "");
+              const summary = response.content
+                .trim()
+                .replace(/^["']|["']$/g, "");
               if (summary.length > 10 && summary.length < 500) {
-                const entityFileName = normalizeEntityName(entity.name, entity.type);
+                const entityFileName = normalizeEntityName(
+                  entity.name,
+                  entity.type,
+                );
                 await this.storage.updateEntitySummary(entityFileName, summary);
                 summarized++;
               }
             }
           } catch (err) {
-            log.debug(`entity summary generation failed for ${entity.name}: ${err}`);
+            log.debug(
+              `entity summary generation failed for ${entity.name}: ${err}`,
+            );
           }
         }
         if (summarized > 0) {
@@ -7285,12 +9333,19 @@ export class Orchestrator {
     }
 
     // Clean expired commitments
-    const deletedCommitments = await this.storage.cleanExpiredCommitments(this.config.commitmentDecayDays);
+    const deletedCommitments = await this.storage.cleanExpiredCommitments(
+      this.config.commitmentDecayDays,
+    );
     if (deletedCommitments.length > 0) {
       log.info(`cleaned ${deletedCommitments.length} expired commitments`);
       if (this.config.queryAwareIndexingEnabled) {
         for (const m of deletedCommitments) {
-          deindexMemory(this.config.memoryDir, m.path, m.frontmatter.created, m.frontmatter.tags ?? []);
+          deindexMemory(
+            this.config.memoryDir,
+            m.path,
+            m.frontmatter.created,
+            m.frontmatter.tags ?? [],
+          );
         }
       }
     }
@@ -7307,7 +9362,10 @@ export class Orchestrator {
           enabled: true,
           decayDays: this.config.commitmentDecayDays,
         });
-        if (lifecycle.transitionedToExpired.length > 0 || lifecycle.deletedResolved.length > 0) {
+        if (
+          lifecycle.transitionedToExpired.length > 0 ||
+          lifecycle.deletedResolved.length > 0
+        ) {
           log.info(
             `commitment ledger lifecycle: expired ${lifecycle.transitionedToExpired.length}, cleaned ${lifecycle.deletedResolved.length}`,
           );
@@ -7323,7 +9381,12 @@ export class Orchestrator {
       log.info(`cleaned ${deletedTTL.length} TTL-expired memories`);
       if (this.config.queryAwareIndexingEnabled) {
         for (const m of deletedTTL) {
-          deindexMemory(this.config.memoryDir, m.path, m.frontmatter.created, m.frontmatter.tags ?? []);
+          deindexMemory(
+            this.config.memoryDir,
+            m.path,
+            m.frontmatter.created,
+            m.frontmatter.tags ?? [],
+          );
         }
       }
     }
@@ -7355,17 +9418,24 @@ export class Orchestrator {
     // Semantic consolidation pass — find similar memories, synthesize canonical versions
     if (this.config.semanticConsolidationEnabled) {
       try {
-        const stateFilePath = path.join(this.config.memoryDir, "state", "semantic-consolidation-last-run.json");
+        const stateFilePath = path.join(
+          this.config.memoryDir,
+          "state",
+          "semantic-consolidation-last-run.json",
+        );
         let shouldRun = true;
         try {
           const stateRaw = await readFile(stateFilePath, "utf-8");
           const stateData = JSON.parse(stateRaw) as { lastRunAt?: string };
           if (stateData.lastRunAt) {
             const lastRunMs = new Date(stateData.lastRunAt).getTime();
-            const intervalMs = this.config.semanticConsolidationIntervalHours * 60 * 60 * 1000;
+            const intervalMs =
+              this.config.semanticConsolidationIntervalHours * 60 * 60 * 1000;
             if (Date.now() - lastRunMs < intervalMs) {
               shouldRun = false;
-              log.debug("[semantic-consolidation] skipping — not enough time since last run");
+              log.debug(
+                "[semantic-consolidation] skipping — not enough time since last run",
+              );
             }
           }
         } catch {
@@ -7375,18 +9445,26 @@ export class Orchestrator {
         if (shouldRun) {
           const semResult = await this.runSemanticConsolidation();
           if (semResult.memoriesArchived > 0) {
-            log.info(`[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`);
+            log.info(
+              `[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`,
+            );
             allMemories = await this.storage.readAllMemories();
           }
           // Only persist last-run timestamp if the run succeeded (had no errors or made progress)
           if (semResult.errors === 0 || semResult.memoriesArchived > 0) {
             const stateDir = path.join(this.config.memoryDir, "state");
             await mkdir(stateDir, { recursive: true });
-            await writeFile(stateFilePath, JSON.stringify({ lastRunAt: new Date().toISOString() }), "utf-8");
+            await writeFile(
+              stateFilePath,
+              JSON.stringify({ lastRunAt: new Date().toISOString() }),
+              "utf-8",
+            );
           }
         }
       } catch (err) {
-        log.warn(`[semantic-consolidation] maintenance pass failed (non-fatal): ${err}`);
+        log.warn(
+          `[semantic-consolidation] maintenance pass failed (non-fatal): ${err}`,
+        );
       }
     }
 
@@ -7405,7 +9483,11 @@ export class Orchestrator {
       typeof profileSection?.consolidateTargetLines === "number"
         ? Math.max(0, Math.floor(profileSection.consolidateTargetLines))
         : 50;
-    if (await this.storage.profileNeedsConsolidation(profileConsolidationTriggerLines)) {
+    if (
+      await this.storage.profileNeedsConsolidation(
+        profileConsolidationTriggerLines,
+      )
+    ) {
       log.info("profile.md exceeds max lines — running smart consolidation");
       const currentProfile = await this.storage.readProfile();
       if (currentProfile) {
@@ -7415,7 +9497,9 @@ export class Orchestrator {
         );
         if (profileResult) {
           await this.storage.writeProfile(profileResult.consolidatedProfile);
-          log.info(`profile.md consolidated: removed ${profileResult.removedCount} items — ${profileResult.summary}`);
+          log.info(
+            `profile.md consolidated: removed ${profileResult.removedCount} items — ${profileResult.summary}`,
+          );
         }
       }
     }
@@ -7438,28 +9522,40 @@ export class Orchestrator {
     if (this.config.temporalMemoryTreeEnabled) {
       try {
         const tmtEntries = allMemories
-          .filter((m) => m.frontmatter.status !== "superseded" && m.frontmatter.status !== "archived")
+          .filter(
+            (m) =>
+              m.frontmatter.status !== "superseded" &&
+              m.frontmatter.status !== "archived",
+          )
           .map((m) => ({
             path: m.path,
             id: m.frontmatter.id,
             created: m.frontmatter.created,
             content: m.content,
           }));
-        await this.tmtBuilder.maybeRebuildNodes(tmtEntries, async (texts, level) => {
-          const prompt = `You are a memory archivist. Summarize the following ${level}-level memories into 3–5 sentences, preserving key facts, decisions, and preferences.\n\n${texts.map((t, i) => `[${i + 1}] ${t}`).join("\n\n")}`;
-          const response = await this.fastLlm.chatCompletion(
-            [
-              { role: "system", content: "Respond with a 3–5 sentence narrative summary. No JSON, just plain prose." },
-              { role: "user", content: prompt },
-            ],
-            {
-              temperature: 0.3,
-              maxTokens: this.config.tmtSummaryMaxTokens,
-              operation: "tmt_summary",
-            },
-          );
-          return response?.content?.trim() || texts.slice(0, 3).join(" ");
-        });
+        await this.tmtBuilder.maybeRebuildNodes(
+          tmtEntries,
+          async (texts, level) => {
+            const prompt = `You are a memory archivist. Summarize the following ${level}-level memories into 3–5 sentences, preserving key facts, decisions, and preferences.\n\n${texts.map((t, i) => `[${i + 1}] ${t}`).join("\n\n")}`;
+            const response = await this.fastLlm.chatCompletion(
+              [
+                {
+                  role: "system",
+                  content:
+                    "Respond with a 3–5 sentence narrative summary. No JSON, just plain prose.",
+                },
+                { role: "user", content: prompt },
+              ],
+              {
+                temperature: 0.3,
+                maxTokens: this.config.tmtSummaryMaxTokens,
+                operation: "tmt_summary",
+                priority: "background",
+              },
+            );
+            return response?.content?.trim() || texts.slice(0, 3).join(" ");
+          },
+        );
       } catch (err) {
         log.warn(`tmt: consolidation hook failed (ignored): ${err}`);
       }
@@ -7518,7 +9614,10 @@ export class Orchestrator {
     if (eventLimit > 0) {
       let effectiveEvents = events.filter((event) => event.dryRun !== true);
       let fetchLimit = eventLimit;
-      while (effectiveEvents.length < eventLimit && events.length === fetchLimit) {
+      while (
+        effectiveEvents.length < eventLimit &&
+        events.length === fetchLimit
+      ) {
         fetchLimit = Math.min(fetchLimit * 2, fetchLimit + 1000);
         if (fetchLimit <= events.length) break;
         events = await this.storage.readMemoryActionEvents(fetchLimit);
@@ -7544,44 +9643,54 @@ export class Orchestrator {
         draftContentHash: null,
       };
     }
-    const refinedCandidate = await refineCompressionGuidelineCandidateSemantically(candidate, {
-      enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
-      timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
-      runRefinement: async (baseline) => {
-        const prompt = [
-          "You refine compression policy suggestions conservatively.",
-          "Return JSON only in this shape:",
-          '{"updates":[{"action":"summarize_node","delta":0.02,"confidence":"medium","note":"..."}]}',
-          "Constraints:",
-          "- Keep updates sparse and conservative.",
-          "- delta must stay between -0.15 and 0.15.",
-          "- Only include actions present in the input.",
-          "Input candidate:",
-          JSON.stringify(baseline),
-        ].join("\n");
+    const refinedCandidate =
+      await refineCompressionGuidelineCandidateSemantically(candidate, {
+        enabled: this.config.compressionGuidelineSemanticRefinementEnabled,
+        timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+        runRefinement: async (baseline) => {
+          const prompt = [
+            "You refine compression policy suggestions conservatively.",
+            "Return JSON only in this shape:",
+            '{"updates":[{"action":"summarize_node","delta":0.02,"confidence":"medium","note":"..."}]}',
+            "Constraints:",
+            "- Keep updates sparse and conservative.",
+            "- delta must stay between -0.15 and 0.15.",
+            "- Only include actions present in the input.",
+            "Input candidate:",
+            JSON.stringify(baseline),
+          ].join("\n");
 
-        const response = await this.fastLlm.chatCompletion(
-          [
-            { role: "system", content: "Respond with strict JSON only. No markdown." },
-            { role: "user", content: prompt },
-          ],
-          {
-            temperature: 0.1,
-            maxTokens: 400,
-            timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
-            operation: "compression_guideline_semantic_refinement",
-          },
-        );
+          const response = await this.fastLlm.chatCompletion(
+            [
+              {
+                role: "system",
+                content: "Respond with strict JSON only. No markdown.",
+              },
+              { role: "user", content: prompt },
+            ],
+            {
+              temperature: 0.1,
+              maxTokens: 400,
+              timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
+              operation: "compression_guideline_semantic_refinement",
+              priority: "background",
+            },
+          );
 
-        return this.parseCompressionSemanticRefinement(response?.content ?? "");
-      },
-    });
+          return this.parseCompressionSemanticRefinement(
+            response?.content ?? "",
+          );
+        },
+      });
 
     const content = renderCompressionGuidelinesMarkdown(refinedCandidate);
     const contentHash = createHash("sha256").update(content).digest("hex");
     const semanticRefinementApplied =
-      JSON.stringify(refinedCandidate.ruleUpdates) !== JSON.stringify(candidate.ruleUpdates);
-    const changedRules = refinedCandidate.ruleUpdates.filter((rule) => rule.delta !== 0).length;
+      JSON.stringify(refinedCandidate.ruleUpdates) !==
+      JSON.stringify(candidate.ruleUpdates);
+    const changedRules = refinedCandidate.ruleUpdates.filter(
+      (rule) => rule.delta !== 0,
+    ).length;
 
     if (!dryRun) {
       await this.storage.writeCompressionGuidelineDraft(content);
@@ -7683,7 +9792,9 @@ export class Orchestrator {
 
     const activated = await this.storage.activateCompressionGuidelineDraft({
       ...(expectedContentHash ? { expectedContentHash } : {}),
-      ...(typeof expectedGuidelineVersion === "number" ? { expectedGuidelineVersion } : {}),
+      ...(typeof expectedGuidelineVersion === "number"
+        ? { expectedGuidelineVersion }
+        : {}),
     });
     return {
       enabled: true,
@@ -7696,21 +9807,32 @@ export class Orchestrator {
   private async runCompressionGuidelineLearningPass(): Promise<void> {
     if (!this.config.compressionGuidelineLearningEnabled) return;
     try {
-      const result = await this.optimizeCompressionGuidelines({ dryRun: false, eventLimit: 500 });
-      log.info(`compression guideline learning updated (${result.eventCount} events)`);
+      const result = await this.optimizeCompressionGuidelines({
+        dryRun: false,
+        eventLimit: 500,
+      });
+      log.info(
+        `compression guideline learning updated (${result.eventCount} events)`,
+      );
     } catch (err) {
       log.warn(`compression guideline learning failed (ignored): ${err}`);
     }
   }
 
-  private async buildCompressionGuidelineRecallSection(): Promise<string | null> {
+  private async buildCompressionGuidelineRecallSection(): Promise<
+    string | null
+  > {
     if (!this.config.contextCompressionActionsEnabled) return null;
     if (!this.config.compressionGuidelineLearningEnabled) return null;
 
-    const state = await this.storage.readCompressionGuidelineOptimizerState().catch(() => null);
+    const state = await this.storage
+      .readCompressionGuidelineOptimizerState()
+      .catch(() => null);
     if (!state || state.guidelineVersion <= 0) return null;
 
-    const raw = await this.storage.readCompressionGuidelines().catch(() => null);
+    const raw = await this.storage
+      .readCompressionGuidelines()
+      .catch(() => null);
     const summary = raw ? formatCompressionGuidelinesForRecall(raw, 5) : null;
     if (!summary) return null;
 
@@ -7724,9 +9846,7 @@ export class Orchestrator {
     ].join("\n");
   }
 
-  private parseCompressionSemanticRefinement(
-    raw: string,
-  ): {
+  private parseCompressionSemanticRefinement(raw: string): {
     updates: Array<{
       action: MemoryActionType;
       delta?: number;
@@ -7742,7 +9862,12 @@ export class Orchestrator {
 
     try {
       const parsed = JSON.parse(trimmed.slice(start, end + 1)) as {
-        updates?: Array<{ action?: unknown; delta?: unknown; confidence?: unknown; note?: unknown }>;
+        updates?: Array<{
+          action?: unknown;
+          delta?: unknown;
+          confidence?: unknown;
+          note?: unknown;
+        }>;
       };
       if (!Array.isArray(parsed?.updates)) return null;
 
@@ -7757,15 +9882,25 @@ export class Orchestrator {
       ]);
 
       const updates = parsed.updates
-        .filter((item) => item && typeof item.action === "string" && validActions.has(item.action as MemoryActionType))
+        .filter(
+          (item) =>
+            item &&
+            typeof item.action === "string" &&
+            validActions.has(item.action as MemoryActionType),
+        )
         .map((item) => {
           const confidence: "low" | "medium" | "high" | undefined =
-            item.confidence === "low" || item.confidence === "medium" || item.confidence === "high"
+            item.confidence === "low" ||
+            item.confidence === "medium" ||
+            item.confidence === "high"
               ? item.confidence
               : undefined;
           return {
             action: item.action as MemoryActionType,
-            delta: typeof item.delta === "number" && Number.isFinite(item.delta) ? item.delta : undefined,
+            delta:
+              typeof item.delta === "number" && Number.isFinite(item.delta)
+                ? item.delta
+                : undefined,
             confidence,
             note: typeof item.note === "string" ? item.note : undefined,
           };
@@ -7806,10 +9941,17 @@ export class Orchestrator {
 
     const nowMs = Date.now();
     const windowMs = 14 * 24 * 60 * 60 * 1000;
-    const byMemory = new Map<string, Array<{ weightedDelta: number; weight: number }>>();
+    const byMemory = new Map<
+      string,
+      Array<{ weightedDelta: number; weight: number }>
+    >();
 
     for (const event of events) {
-      if (typeof event.memoryId !== "string" || event.memoryId.trim().length === 0) continue;
+      if (
+        typeof event.memoryId !== "string" ||
+        event.memoryId.trim().length === 0
+      )
+        continue;
       const ts = Date.parse(event.timestamp);
       if (!Number.isFinite(ts)) continue;
       const ageMs = nowMs - ts;
@@ -7821,14 +9963,20 @@ export class Orchestrator {
       const recencyWeight = Math.max(0.2, 1 - ageMs / windowMs);
       const list = byMemory.get(event.memoryId) ?? [];
       if (list.length >= 8) list.shift();
-      list.push({ weightedDelta: delta * recencyWeight, weight: recencyWeight });
+      list.push({
+        weightedDelta: delta * recencyWeight,
+        weight: recencyWeight,
+      });
       byMemory.set(event.memoryId, list);
     }
 
     const out = new Map<string, number>();
     for (const [memoryId, deltas] of byMemory.entries()) {
       if (deltas.length === 0) continue;
-      const weightedSum = deltas.reduce((sum, item) => sum + item.weightedDelta, 0);
+      const weightedSum = deltas.reduce(
+        (sum, item) => sum + item.weightedDelta,
+        0,
+      );
       const weightTotal = deltas.reduce((sum, item) => sum + item.weight, 0);
       if (weightTotal <= 0) continue;
       const score = weightedSum / weightTotal;
@@ -7837,7 +9985,9 @@ export class Orchestrator {
     return out;
   }
 
-  private async runLifecyclePolicyPass(allMemories: MemoryFile[]): Promise<void> {
+  private async runLifecyclePolicyPass(
+    allMemories: MemoryFile[],
+  ): Promise<void> {
     const now = new Date();
     const nowIso = now.toISOString();
     const countsByState: Record<LifecycleState, number> = {
@@ -7869,13 +10019,15 @@ export class Orchestrator {
       const currentState = resolveLifecycleState(memory.frontmatter);
       const actionPriorScore = actionPriors.get(memory.frontmatter.id);
       const signals: LifecycleSignals | undefined =
-        typeof actionPriorScore === "number" && Number.isFinite(actionPriorScore)
+        typeof actionPriorScore === "number" &&
+        Number.isFinite(actionPriorScore)
           ? { actionPriorScore }
           : undefined;
       const decision = decideLifecycleTransition(memory, policy, now, signals);
-      const nextState: LifecycleState = memory.frontmatter.status === "archived"
-        ? "archived"
-        : decision.nextState;
+      const nextState: LifecycleState =
+        memory.frontmatter.status === "archived"
+          ? "archived"
+          : decision.nextState;
 
       countsByState[nextState] += 1;
       if (memory.frontmatter.verificationState === "disputed") {
@@ -7927,7 +10079,11 @@ export class Orchestrator {
         protectedCategories: this.config.lifecycleProtectedCategories,
       },
     };
-    const metricsPath = path.join(this.storage.dir, "state", "lifecycle-metrics.json");
+    const metricsPath = path.join(
+      this.storage.dir,
+      "state",
+      "lifecycle-metrics.json",
+    );
     await mkdir(path.dirname(metricsPath), { recursive: true });
     await writeFile(metricsPath, JSON.stringify(metrics, null, 2), "utf-8");
   }
@@ -7937,10 +10093,14 @@ export class Orchestrator {
    * Moves eligible facts from facts/ to archive/YYYY-MM-DD/.
    * Returns the number of archived facts.
    */
-  private async runFactArchival(allMemories: import("./types.js").MemoryFile[]): Promise<number> {
+  private async runFactArchival(
+    allMemories: import("./types.js").MemoryFile[],
+  ): Promise<number> {
     const now = Date.now();
     const ageCutoffMs = this.config.factArchivalAgeDays * 24 * 60 * 60 * 1000;
-    const protectedCategories = new Set(this.config.factArchivalProtectedCategories);
+    const protectedCategories = new Set(
+      this.config.factArchivalProtectedCategories,
+    );
     let archivedCount = 0;
 
     for (const memory of allMemories) {
@@ -7975,7 +10135,11 @@ export class Orchestrator {
           this.contentHashIndex.remove(memory.content);
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
-        if (this.config.queryAwareIndexingEnabled && memory.path && memory.frontmatter?.created) {
+        if (
+          this.config.queryAwareIndexingEnabled &&
+          memory.path &&
+          memory.frontmatter?.created
+        ) {
           deindexMemory(
             this.config.memoryDir,
             memory.path,
@@ -7989,9 +10153,11 @@ export class Orchestrator {
 
     // Save hash index if we removed any entries
     if (archivedCount > 0 && this.contentHashIndex) {
-      await this.contentHashIndex.save().catch((err) =>
-        log.warn(`content-hash index save failed during archival: ${err}`),
-      );
+      await this.contentHashIndex
+        .save()
+        .catch((err) =>
+          log.warn(`content-hash index save failed during archival: ${err}`),
+        );
     }
 
     return archivedCount;
@@ -8000,7 +10166,9 @@ export class Orchestrator {
   /**
    * Run memory summarization if memory count exceeds threshold (Phase 4A).
    */
-  private async runSummarization(allMemories: import("./types.js").MemoryFile[]): Promise<void> {
+  private async runSummarization(
+    allMemories: import("./types.js").MemoryFile[],
+  ): Promise<void> {
     // Only active memories count toward the threshold
     const activeMemories = allMemories.filter(
       (m) => !m.frontmatter.status || m.frontmatter.status === "active",
@@ -8010,7 +10178,9 @@ export class Orchestrator {
       return;
     }
 
-    log.info(`memory count (${activeMemories.length}) exceeds threshold (${this.config.summarizationTriggerCount}) — running summarization`);
+    log.info(
+      `memory count (${activeMemories.length}) exceeds threshold (${this.config.summarizationTriggerCount}) — running summarization`,
+    );
 
     // Sort by creation date, oldest first
     const sorted = activeMemories.sort(
@@ -8030,17 +10200,21 @@ export class Orchestrator {
 
       // Skip if protected by tag
       const protectedTags = this.config.summarizationProtectedTags;
-      if (m.frontmatter.tags.some((t) => protectedTags.includes(t))) return false;
+      if (m.frontmatter.tags.some((t) => protectedTags.includes(t)))
+        return false;
 
       // Skip if importance is above threshold
       const importance = m.frontmatter.importance?.score ?? 0.5;
-      if (importance >= this.config.summarizationImportanceThreshold) return false;
+      if (importance >= this.config.summarizationImportanceThreshold)
+        return false;
 
       return true;
     });
 
     if (candidates.length < 50) {
-      log.debug(`only ${candidates.length} candidates for summarization — skipping`);
+      log.debug(
+        `only ${candidates.length} candidates for summarization — skipping`,
+      );
       return;
     }
 
@@ -8078,14 +10252,18 @@ export class Orchestrator {
         summary.id,
       );
 
-      log.info(`created summary ${summary.id} from ${batch.length} memories, archived ${archived}`);
+      log.info(
+        `created summary ${summary.id} from ${batch.length} memories, archived ${archived}`,
+      );
     }
   }
 
   /**
    * Run topic extraction on all memories (Phase 4B).
    */
-  private async runTopicExtraction(allMemories: import("./types.js").MemoryFile[]): Promise<void> {
+  private async runTopicExtraction(
+    allMemories: import("./types.js").MemoryFile[],
+  ): Promise<void> {
     // Only extract from active memories
     const activeMemories = allMemories.filter(
       (m) => !m.frontmatter.status || m.frontmatter.status === "active",
@@ -8093,10 +10271,15 @@ export class Orchestrator {
 
     if (activeMemories.length === 0) return;
 
-    const topics = extractTopics(activeMemories, this.config.topicExtractionTopN);
+    const topics = extractTopics(
+      activeMemories,
+      this.config.topicExtractionTopN,
+    );
     await this.storage.saveTopics(topics);
 
-    log.debug(`extracted ${topics.length} topics from ${activeMemories.length} memories`);
+    log.debug(
+      `extracted ${topics.length} topics from ${activeMemories.length} memories`,
+    );
   }
 
   /** Threshold (bytes) at which IDENTITY.md reflections get auto-consolidated */
@@ -8110,32 +10293,49 @@ export class Orchestrator {
     for (const namespace of namespaces) {
       const storage = await this.storageRouter.storageFor(namespace);
       const identityNamespace =
-        this.config.namespacesEnabled && namespace !== this.config.defaultNamespace
+        this.config.namespacesEnabled &&
+        namespace !== this.config.defaultNamespace
           ? namespace
           : undefined;
-      const reflectionsContent = (await storage.readIdentityReflections()) ?? "";
+      const reflectionsContent =
+        (await storage.readIdentityReflections()) ?? "";
 
-      const existingIdentity = await storage.readIdentity(this.config.workspaceDir, identityNamespace);
+      const existingIdentity = await storage.readIdentity(
+        this.config.workspaceDir,
+        identityNamespace,
+      );
       const headerEnd =
         existingIdentity.indexOf("## Learned Patterns") !== -1
           ? existingIdentity.indexOf("## Learned Patterns")
           : existingIdentity.indexOf("## Reflection");
       const staticHeader =
-        (headerEnd !== -1 ? existingIdentity.slice(0, headerEnd) : existingIdentity).trimEnd() ||
-        "# IDENTITY";
+        (headerEnd !== -1
+          ? existingIdentity.slice(0, headerEnd)
+          : existingIdentity
+        ).trimEnd() || "# IDENTITY";
       const identityContent = `${staticHeader}\n\n${reflectionsContent.trim()}\n`;
-      if (identityContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD) continue;
+      if (identityContent.length < Orchestrator.IDENTITY_CONSOLIDATE_THRESHOLD)
+        continue;
 
-      log.info(`IDENTITY(${namespace}) is ${identityContent.length} chars — auto-consolidating reflections`);
-      const result = await this.extraction.consolidateIdentity(identityContent, "## Reflection");
+      log.info(
+        `IDENTITY(${namespace}) is ${identityContent.length} chars — auto-consolidating reflections`,
+      );
+      const result = await this.extraction.consolidateIdentity(
+        identityContent,
+        "## Reflection",
+      );
 
       if (!result || result.learnedPatterns.length === 0) {
-        log.warn(`identity consolidation produced no patterns for namespace=${namespace}`);
+        log.warn(
+          `identity consolidation produced no patterns for namespace=${namespace}`,
+        );
         continue;
       }
 
       const patternsSection = [
-        "## Learned Patterns (consolidated from reflections, " + new Date().toISOString().slice(0, 10) + ")",
+        "## Learned Patterns (consolidated from reflections, " +
+          new Date().toISOString().slice(0, 10) +
+          ")",
         "",
         ...result.learnedPatterns.map((p) => `- ${p}`),
         "",
@@ -8143,7 +10343,11 @@ export class Orchestrator {
 
       const newContent = staticHeader + "\n\n" + patternsSection + "\n";
 
-      await storage.writeIdentity(this.config.workspaceDir, newContent, identityNamespace);
+      await storage.writeIdentity(
+        this.config.workspaceDir,
+        newContent,
+        identityNamespace,
+      );
       await storage.writeIdentityReflections("");
       log.info(
         `IDENTITY(${namespace}) consolidated: ${identityContent.length} → ${newContent.length} chars, ${result.learnedPatterns.length} patterns`,
@@ -8151,10 +10355,7 @@ export class Orchestrator {
     }
   }
 
-  private formatQmdResults(
-    title: string,
-    results: QmdSearchResult[],
-  ): string {
+  private formatQmdResults(title: string, results: QmdSearchResult[]): string {
     const lines = results.map((r, i) => {
       const snippet = r.snippet
         ? r.snippet.slice(0, 500).replace(/\n/g, " ")
@@ -8164,7 +10365,9 @@ export class Orchestrator {
     return `## ${title}\n\n${lines.join("\n\n")}`;
   }
 
-  private formatObjectiveStateResults(results: ObjectiveStateSearchResult[]): string {
+  private formatObjectiveStateResults(
+    results: ObjectiveStateSearchResult[],
+  ): string {
     const lines = results.map(({ snapshot }, index) => {
       const parts = [
         snapshot.recordedAt.replace("T", " ").slice(0, 16),
@@ -8174,13 +10377,16 @@ export class Orchestrator {
       const header = `[${index + 1}] ${parts.join(" | ")} | ${snapshot.scope}`;
       const detailParts = [snapshot.summary];
       if (snapshot.command) detailParts.push(`command: ${snapshot.command}`);
-      else if (snapshot.toolName) detailParts.push(`tool: ${snapshot.toolName}`);
+      else if (snapshot.toolName)
+        detailParts.push(`tool: ${snapshot.toolName}`);
       return `${header}\n${detailParts.join(" | ")}`;
     });
     return `## Objective State\n\n${lines.join("\n\n")}`;
   }
 
-  private formatCausalTrajectoryResults(results: CausalTrajectorySearchResult[]): string {
+  private formatCausalTrajectoryResults(
+    results: CausalTrajectorySearchResult[],
+  ): string {
     const lines = results.map(({ record, matchedFields }, index) => {
       const header = [
         `[${index + 1}] ${record.recordedAt.replace("T", " ").slice(0, 16)}`,
@@ -8192,8 +10398,10 @@ export class Orchestrator {
         `observation: ${record.observationSummary}`,
         `outcome: ${record.outcomeSummary}`,
       ];
-      if (record.followUpSummary) details.push(`follow-up: ${record.followUpSummary}`);
-      if (matchedFields.length > 0) details.push(`matched: ${matchedFields.join(", ")}`);
+      if (record.followUpSummary)
+        details.push(`follow-up: ${record.followUpSummary}`);
+      if (matchedFields.length > 0)
+        details.push(`matched: ${matchedFields.join(", ")}`);
       return `${header}\n${details.join("\n")}`;
     });
 
@@ -8226,31 +10434,42 @@ export class Orchestrator {
     return `## Trust Zones\n\n${lines.join("\n\n")}`;
   }
 
-  private formatHarmonicRetrievalResults(results: HarmonicRetrievalResult[]): string {
-    const lines = results.map(({ node, matchedAnchors, matchedFields, nodeScore, anchorScore }, index) => {
-      const header = [
-        `[${index + 1}] ${node.recordedAt.replace("T", " ").slice(0, 16)}`,
-        `${node.kind}/${node.abstractionLevel}`,
-        node.sessionKey,
-      ].join(" | ");
-      const details = [
-        node.title,
-        node.summary,
-        `scores: node=${nodeScore.toFixed(1)} anchor=${anchorScore.toFixed(1)}`,
-      ];
-      if (matchedAnchors.length > 0) {
-        details.push(`anchors: ${matchedAnchors.map((anchor) => `${anchor.anchorType}:${anchor.anchorValue}`).join("; ")}`);
-      }
-      if (matchedFields.length > 0) {
-        details.push(`matched: ${matchedFields.join(", ")}`);
-      }
-      return `${header}\n${details.join("\n")}`;
-    });
+  private formatHarmonicRetrievalResults(
+    results: HarmonicRetrievalResult[],
+  ): string {
+    const lines = results.map(
+      (
+        { node, matchedAnchors, matchedFields, nodeScore, anchorScore },
+        index,
+      ) => {
+        const header = [
+          `[${index + 1}] ${node.recordedAt.replace("T", " ").slice(0, 16)}`,
+          `${node.kind}/${node.abstractionLevel}`,
+          node.sessionKey,
+        ].join(" | ");
+        const details = [
+          node.title,
+          node.summary,
+          `scores: node=${nodeScore.toFixed(1)} anchor=${anchorScore.toFixed(1)}`,
+        ];
+        if (matchedAnchors.length > 0) {
+          details.push(
+            `anchors: ${matchedAnchors.map((anchor) => `${anchor.anchorType}:${anchor.anchorValue}`).join("; ")}`,
+          );
+        }
+        if (matchedFields.length > 0) {
+          details.push(`matched: ${matchedFields.join(", ")}`);
+        }
+        return `${header}\n${details.join("\n")}`;
+      },
+    );
 
     return `## Harmonic Retrieval\n\n${lines.join("\n\n")}`;
   }
 
-  private formatWorkProductResults(results: WorkProductLedgerSearchResult[]): string {
+  private formatWorkProductResults(
+    results: WorkProductLedgerSearchResult[],
+  ): string {
     const lines = results.map(({ entry, matchedFields }, index) => {
       const header = [
         `[${index + 1}] ${entry.recordedAt.replace("T", " ").slice(0, 16)}`,
@@ -8259,57 +10478,77 @@ export class Orchestrator {
       ].join(" | ");
       const details = [entry.summary, `scope: ${entry.scope}`];
       if (entry.artifactPath) details.push(`artifact: ${entry.artifactPath}`);
-      if (entry.tags && entry.tags.length > 0) details.push(`tags: ${entry.tags.join(", ")}`);
-      if (matchedFields.length > 0) details.push(`matched: ${matchedFields.join(", ")}`);
+      if (entry.tags && entry.tags.length > 0)
+        details.push(`tags: ${entry.tags.join(", ")}`);
+      if (matchedFields.length > 0)
+        details.push(`matched: ${matchedFields.join(", ")}`);
       return `${header}\n${details.join("\n")}`;
     });
 
     return `## Work Products\n\n${lines.join("\n\n")}`;
   }
 
-  private formatVerifiedEpisodeResults(results: VerifiedEpisodeResult[]): string {
-    const lines = results.map(({ box, verifiedEpisodeCount, matchedFields }, index) => {
-      const header = [
-        `[${index + 1}] ${box.sealedAt.replace("T", " ").slice(0, 16)}`,
-        box.traceId ? `trace:${box.traceId.slice(0, 12)}` : "trace:none",
-      ].join(" | ");
-      const details = [
-        box.goal ?? `topics: ${box.topics.join(", ")}`,
-        `verified episodes: ${verifiedEpisodeCount}`,
-      ];
-      if (box.toolsUsed && box.toolsUsed.length > 0) {
-        details.push(`tools: ${box.toolsUsed.join(", ")}`);
-      }
-      if (matchedFields.length > 0) {
-        details.push(`matched: ${matchedFields.join(", ")}`);
-      }
-      return `${header}\n${details.join("\n")}`;
-    });
+  private formatVerifiedEpisodeResults(
+    results: VerifiedEpisodeResult[],
+  ): string {
+    const lines = results.map(
+      ({ box, verifiedEpisodeCount, matchedFields }, index) => {
+        const header = [
+          `[${index + 1}] ${box.sealedAt.replace("T", " ").slice(0, 16)}`,
+          box.traceId ? `trace:${box.traceId.slice(0, 12)}` : "trace:none",
+        ].join(" | ");
+        const details = [
+          box.goal ?? `topics: ${box.topics.join(", ")}`,
+          `verified episodes: ${verifiedEpisodeCount}`,
+        ];
+        if (box.toolsUsed && box.toolsUsed.length > 0) {
+          details.push(`tools: ${box.toolsUsed.join(", ")}`);
+        }
+        if (matchedFields.length > 0) {
+          details.push(`matched: ${matchedFields.join(", ")}`);
+        }
+        return `${header}\n${details.join("\n")}`;
+      },
+    );
 
     return `## Verified Episodes\n\n${lines.join("\n\n")}`;
   }
 
-  private formatVerifiedSemanticRuleResults(results: VerifiedSemanticRuleResult[]): string {
-    const lines = results.map(({ rule, sourceMemoryId, verificationStatus, effectiveConfidence, matchedFields }, index) => {
-      const header = [
-        `[${index + 1}] ${rule.frontmatter.updated.replace("T", " ").slice(0, 16)}`,
-        verificationStatus,
-        `confidence:${effectiveConfidence.toFixed(2)}`,
-      ].join(" | ");
-      const details = [
-        rule.content,
-        `source memory: ${sourceMemoryId}`,
-      ];
-      if (matchedFields.length > 0) {
-        details.push(`matched: ${matchedFields.join(", ")}`);
-      }
-      return `${header}\n${details.join("\n")}`;
-    });
+  private formatVerifiedSemanticRuleResults(
+    results: VerifiedSemanticRuleResult[],
+  ): string {
+    const lines = results.map(
+      (
+        {
+          rule,
+          sourceMemoryId,
+          verificationStatus,
+          effectiveConfidence,
+          matchedFields,
+        },
+        index,
+      ) => {
+        const header = [
+          `[${index + 1}] ${rule.frontmatter.updated.replace("T", " ").slice(0, 16)}`,
+          verificationStatus,
+          `confidence:${effectiveConfidence.toFixed(2)}`,
+        ].join(" | ");
+        const details = [rule.content, `source memory: ${sourceMemoryId}`];
+        if (matchedFields.length > 0) {
+          details.push(`matched: ${matchedFields.join(", ")}`);
+        }
+        return `${header}\n${details.join("\n")}`;
+      },
+    );
 
     return `## Verified Rules\n\n${lines.join("\n\n")}`;
   }
 
-  private summarizeIdentityText(raw: string, maxLines: number, maxChars: number): string {
+  private summarizeIdentityText(
+    raw: string,
+    maxLines: number,
+    maxChars: number,
+  ): string {
     const lines = raw
       .replace(/\r/g, "")
       .split("\n")
@@ -8320,16 +10559,24 @@ export class Orchestrator {
     return `${compact.slice(0, Math.max(0, maxChars - 1))}…`;
   }
 
-  private formatOpenIncidentLine(incident: ContinuityIncidentRecord, includeDetails: boolean): string {
+  private formatOpenIncidentLine(
+    incident: ContinuityIncidentRecord,
+    includeDetails: boolean,
+  ): string {
     const base = `[${incident.id}] ${incident.symptom.trim()}`;
     if (!includeDetails) return `- ${base}`;
     const parts = [base];
-    if (incident.suspectedCause) parts.push(`cause: ${incident.suspectedCause.trim()}`);
-    if (incident.triggerWindow) parts.push(`window: ${incident.triggerWindow.trim()}`);
+    if (incident.suspectedCause)
+      parts.push(`cause: ${incident.suspectedCause.trim()}`);
+    if (incident.triggerWindow)
+      parts.push(`window: ${incident.triggerWindow.trim()}`);
     return `- ${parts.join(" | ")}`;
   }
 
-  private trimIdentitySection(content: string, maxChars: number): { text: string; truncated: boolean } {
+  private trimIdentitySection(
+    content: string,
+    maxChars: number,
+  ): { text: string; truncated: boolean } {
     if (maxChars <= 0) return { text: "", truncated: false };
     if (content.length <= maxChars) return { text: content, truncated: false };
     const suffix = "\n\n...(identity continuity trimmed)";
@@ -8344,7 +10591,12 @@ export class Orchestrator {
     storage: StorageManager;
     recallMode: RecallPlanMode;
     prompt: string;
-  }): Promise<{ section: string; mode: IdentityInjectionMode; injectedChars: number; truncated: boolean } | null> {
+  }): Promise<{
+    section: string;
+    mode: IdentityInjectionMode;
+    injectedChars: number;
+    truncated: boolean;
+  } | null> {
     if (!this.config.identityContinuityEnabled) return null;
     if (this.config.identityMaxInjectChars <= 0) return null;
 
@@ -8360,7 +10612,9 @@ export class Orchestrator {
       options.storage.readIdentityImprovementLoops(),
       options.storage.readContinuityIncidents(200),
     ]);
-    const openIncidents = incidents.filter((incident) => incident.state === "open");
+    const openIncidents = incidents.filter(
+      (incident) => incident.state === "open",
+    );
 
     const lines: string[] = [];
     if (resolved.mode === "full") {
@@ -8376,12 +10630,18 @@ export class Orchestrator {
         lines.push("- none");
       } else {
         lines.push(
-          ...openIncidents.slice(0, 5).map((incident) => this.formatOpenIncidentLine(incident, true)),
+          ...openIncidents
+            .slice(0, 5)
+            .map((incident) => this.formatOpenIncidentLine(incident, true)),
         );
       }
     } else {
-      const anchorSummary = anchorRaw ? this.summarizeIdentityText(anchorRaw, 3, 320) : "";
-      const loopsSummary = loopsRaw ? this.summarizeIdentityText(loopsRaw, 2, 240) : "";
+      const anchorSummary = anchorRaw
+        ? this.summarizeIdentityText(anchorRaw, 3, 320)
+        : "";
+      const loopsSummary = loopsRaw
+        ? this.summarizeIdentityText(loopsRaw, 2, 240)
+        : "";
       lines.push("## Identity Continuity Signals", "");
       if (anchorSummary) lines.push(`- anchor: ${anchorSummary}`);
       if (loopsSummary) lines.push(`- loops: ${loopsSummary}`);
@@ -8389,14 +10649,21 @@ export class Orchestrator {
         lines.push("- incidents: 0 open");
       } else {
         lines.push(`- incidents: ${openIncidents.length} open`);
-        lines.push(...openIncidents.slice(0, 2).map((incident) => this.formatOpenIncidentLine(incident, false)));
+        lines.push(
+          ...openIncidents
+            .slice(0, 2)
+            .map((incident) => this.formatOpenIncidentLine(incident, false)),
+        );
       }
     }
 
     const body = lines.join("\n").trim();
     if (!body) return null;
 
-    const { text, truncated } = this.trimIdentitySection(body, this.config.identityMaxInjectChars);
+    const { text, truncated } = this.trimIdentitySection(
+      body,
+      this.config.identityMaxInjectChars,
+    );
     if (!text) return null;
 
     return {
@@ -8419,7 +10686,8 @@ export class Orchestrator {
   private queueEvalShadowRecall(
     record: Omit<EvalShadowRecallRecord, "schemaVersion">,
   ): void {
-    if (!this.config.evalHarnessEnabled || !this.config.evalShadowModeEnabled) return;
+    if (!this.config.evalHarnessEnabled || !this.config.evalShadowModeEnabled)
+      return;
     this.evalShadowWriteChain = this.evalShadowWriteChain
       .catch(() => undefined)
       .then(async () => {
@@ -8486,7 +10754,12 @@ export class Orchestrator {
 
   private collectLastRecallSources(
     sectionBuckets: Map<string, string[]>,
-    recallSource: "none" | "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan",
+    recallSource:
+      | "none"
+      | "hot_qmd"
+      | "hot_embedding"
+      | "cold_fallback"
+      | "recent_scan",
   ): string[] {
     const used = new Set<string>();
     if (recallSource !== "none") {
@@ -8500,7 +10773,10 @@ export class Orchestrator {
     return [...used];
   }
 
-  private async searchEmbeddingFallback(query: string, limit: number): Promise<QmdSearchResult[]> {
+  private async searchEmbeddingFallback(
+    query: string,
+    limit: number,
+  ): Promise<QmdSearchResult[]> {
     if (!this.config.embeddingFallbackEnabled) return [];
     if (!(await this.embeddingFallback.isAvailable())) return [];
     const hits = await this.embeddingFallback.search(query, limit);
@@ -8508,7 +10784,9 @@ export class Orchestrator {
 
     const results: QmdSearchResult[] = [];
     for (const hit of hits) {
-      const fullPath = path.isAbsolute(hit.path) ? hit.path : path.join(this.config.memoryDir, hit.path);
+      const fullPath = path.isAbsolute(hit.path)
+        ? hit.path
+        : path.join(this.config.memoryDir, hit.path);
       const memory = await this.storage.readMemoryByPath(fullPath);
       if (!memory) continue;
       results.push({
@@ -8538,11 +10816,11 @@ export class Orchestrator {
 
     const scopedSeedResults = queryAwarePrefilter?.candidatePaths?.size
       ? await this.searchScopedMemoryCandidates(
-        queryAwarePrefilter.candidatePaths,
-        prompt,
-        cappedLimit,
-        { allowArchived: true },
-      )
+          queryAwarePrefilter.candidatePaths,
+          prompt,
+          cappedLimit,
+          { allowArchived: true },
+        )
       : [];
     if (scopedSeedResults.length >= cappedLimit) {
       return scopedSeedResults
@@ -8554,7 +10832,8 @@ export class Orchestrator {
     if (tokens.length === 0) return scopedSeedResults;
 
     throwIfRecallAborted(abortSignal);
-    const archivedMemories = await this.readArchivedMemoriesForNamespaces(recallNamespaces);
+    const archivedMemories =
+      await this.readArchivedMemoriesForNamespaces(recallNamespaces);
     if (archivedMemories.length === 0) return scopedSeedResults;
 
     const scored: QmdSearchResult[] = [];
@@ -8608,8 +10887,10 @@ export class Orchestrator {
     abortSignal?: AbortSignal;
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
-    const coldCollection = this.config.qmdColdCollection ?? "openclaw-engram-cold";
-    const coldMaxResults = this.config.qmdColdMaxResults ?? this.config.qmdMaxResults;
+    const coldCollection =
+      this.config.qmdColdCollection ?? "openclaw-engram-cold";
+    const coldMaxResults =
+      this.config.qmdColdMaxResults ?? this.config.qmdMaxResults;
 
     let longTerm: QmdSearchResult[] = [];
     if (coldQmdEnabled && this.qmd.isAvailable()) {
@@ -8638,7 +10919,9 @@ export class Orchestrator {
           },
         );
         if (longTerm.length > 0) {
-          log.debug(`cold-tier recall source=cold-qmd collection=${coldCollection} hits=${longTerm.length}`);
+          log.debug(
+            `cold-tier recall source=cold-qmd collection=${coldCollection} hits=${longTerm.length}`,
+          );
         }
       }
     }
@@ -8696,10 +10979,12 @@ export class Orchestrator {
     if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
       const ranked = await rerankLocalOrNoop({
         query: options.prompt,
-        candidates: results.slice(0, this.config.rerankMaxCandidates).map((r) => ({
-          id: r.path,
-          snippet: r.snippet || r.path,
-        })),
+        candidates: results
+          .slice(0, this.config.rerankMaxCandidates)
+          .map((r) => ({
+            id: r.path,
+            snippet: r.snippet || r.path,
+          })),
         local: this.fastLlm,
         enabled: true,
         timeoutMs: this.config.rerankTimeoutMs,
@@ -8723,7 +11008,9 @@ export class Orchestrator {
       }
     }
     if (this.config.rerankEnabled && this.config.rerankProvider === "cloud") {
-      log.debug("rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank");
+      log.debug(
+        "rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank",
+      );
     }
 
     return results.slice(0, options.recallResultLimit);
@@ -8750,7 +11037,9 @@ export class Orchestrator {
     }
 
     // Flush if buffer exceeds max size
-    if (this.accessTrackingBuffer.size >= this.config.accessTrackingBufferMaxSize) {
+    if (
+      this.accessTrackingBuffer.size >= this.config.accessTrackingBufferMaxSize
+    ) {
       this.flushAccessTracking().catch((err) =>
         log.debug(`background access tracking flush failed: ${err}`),
       );
@@ -8828,7 +11117,9 @@ export class Orchestrator {
       : new Map();
 
     // Determine temporal/tag query params before I/O (pure computation).
-    const resultPaths = new Set(results.map((r) => r.path).filter(Boolean) as string[]);
+    const resultPaths = new Set(
+      results.map((r) => r.path).filter(Boolean) as string[],
+    );
     let temporalFromDate: string | null = null;
     let promptTags: string[] = [];
     if (this.config.queryAwareIndexingEnabled && prompt) {
@@ -8855,9 +11146,10 @@ export class Orchestrator {
         : Promise.resolve<Set<string> | null>(null),
     ]);
 
-    const queryIntent = this.config.intentRoutingEnabled && prompt
-      ? inferIntentFromText(prompt)
-      : null;
+    const queryIntent =
+      this.config.intentRoutingEnabled && prompt
+        ? inferIntentFromText(prompt)
+        : null;
 
     // v8.1: Temporal + Tag prefilter candidate set
     // Scope to result paths first so cross-namespace paths don't consume the cap.
@@ -8869,7 +11161,8 @@ export class Orchestrator {
         if (!s) return null;
         // Intersect with result paths first so out-of-scope paths don't exhaust the budget
         const scoped = new Set(Array.from(s).filter((p) => resultPaths.has(p)));
-        if (maxCandidates === 0 || scoped.size <= maxCandidates) return scoped.size > 0 ? scoped : null;
+        if (maxCandidates === 0 || scoped.size <= maxCandidates)
+          return scoped.size > 0 ? scoped : null;
         return new Set(Array.from(scoped).slice(0, maxCandidates));
       };
       if (temporalFromDate !== null) {
@@ -8892,7 +11185,8 @@ export class Orchestrator {
           options?.allowLifecycleFiltered !== true &&
           shouldFilterLifecycleRecallCandidate(memory.frontmatter, {
             lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
-            lifecycleFilterStaleEnabled: this.config.lifecycleFilterStaleEnabled,
+            lifecycleFilterStaleEnabled:
+              this.config.lifecycleFilterStaleEnabled,
           })
         ) {
           lifecycleFilteredCount += 1;
@@ -8906,14 +11200,13 @@ export class Orchestrator {
           const ageDays = ageMs / (1000 * 60 * 60 * 24);
           const halfLifeDays = 7;
           const recencyScore = Math.pow(0.5, ageDays / halfLifeDays);
-          score =
-            score * (1 - recencyWeight) +
-            recencyScore * recencyWeight;
+          score = score * (1 - recencyWeight) + recencyScore * recencyWeight;
         }
 
         // Access count boost: log scale, capped
         if (this.config.boostAccessCount && memory.frontmatter.accessCount) {
-          const accessBoost = Math.log10(memory.frontmatter.accessCount + 1) / 3;
+          const accessBoost =
+            Math.log10(memory.frontmatter.accessCount + 1) / 3;
           score += applyUtilityRankingRuntimeDelta(
             Math.min(accessBoost, 0.1),
             this.utilityRuntimeValues,
@@ -8986,17 +11279,28 @@ export class Orchestrator {
         // Results that match the detected temporal window or tag query get a small additive boost.
         if (this.config.queryAwareIndexingEnabled && r.path) {
           if (temporalCandidates?.has(r.path)) {
-            score += applyUtilityRankingRuntimeDelta(0.08, this.utilityRuntimeValues, "boost");
+            score += applyUtilityRankingRuntimeDelta(
+              0.08,
+              this.utilityRuntimeValues,
+              "boost",
+            );
           }
           if (tagCandidates?.has(r.path)) {
-            score += applyUtilityRankingRuntimeDelta(0.06, this.utilityRuntimeValues, "boost");
+            score += applyUtilityRankingRuntimeDelta(
+              0.06,
+              this.utilityRuntimeValues,
+              "boost",
+            );
           }
         }
 
         // v8.3: lifecycle retrieval weighting (fail-open on legacy memories).
-        const lifecycleDelta = lifecycleRecallScoreAdjustment(memory.frontmatter, {
-          lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
-        });
+        const lifecycleDelta = lifecycleRecallScoreAdjustment(
+          memory.frontmatter,
+          {
+            lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
+          },
+        );
         score += applyUtilityRankingRuntimeDelta(
           lifecycleDelta,
           this.utilityRuntimeValues,
@@ -9007,7 +11311,9 @@ export class Orchestrator {
       boosted.push({ ...r, score });
     }
     if (lifecycleFilteredCount > 0) {
-      log.debug(`lifecycle retrieval filter removed ${lifecycleFilteredCount} stale/archived candidates`);
+      log.debug(
+        `lifecycle retrieval filter removed ${lifecycleFilteredCount} stale/archived candidates`,
+      );
     }
 
     // Re-sort by boosted score
@@ -9036,12 +11342,19 @@ export class Orchestrator {
   // Feedback (v2.2)
   // ---------------------------------------------------------------------------
 
-  async recordMemoryFeedback(memoryId: string, vote: "up" | "down", note?: string): Promise<void> {
+  async recordMemoryFeedback(
+    memoryId: string,
+    vote: "up" | "down",
+    note?: string,
+  ): Promise<void> {
     await this.relevance.record(memoryId, vote, note);
   }
 
   // Negative Examples (v2.2)
-  async recordNotUsefulMemories(memoryIds: string[], note?: string): Promise<void> {
+  async recordNotUsefulMemories(
+    memoryIds: string[],
+    note?: string,
+  ): Promise<void> {
     await this.negatives.recordNotUseful(memoryIds, note);
   }
 
@@ -9057,7 +11370,14 @@ export class Orchestrator {
     content: string,
     category: string,
     namespaceScope: string,
-  ): Promise<{ supersededId: string; confidence: number; reason: string; supersededPath: string; supersededCreated: string; supersededTags: string[] } | null> {
+  ): Promise<{
+    supersededId: string;
+    confidence: number;
+    reason: string;
+    supersededPath: string;
+    supersededCreated: string;
+    supersededTags: string[];
+  } | null> {
     if (!this.isSearchAvailableForNamespaceRouting()) return null;
 
     // Search for similar memories
@@ -9080,7 +11400,8 @@ export class Orchestrator {
 
       const resultNamespace = this.namespaceFromPath(result.path);
       if (resultNamespace !== namespaceScope) continue;
-      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const resultStorage =
+        await this.storageRouter.storageFor(resultNamespace);
       const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
@@ -9159,14 +11480,16 @@ export class Orchestrator {
     if (results.length === 0) return [];
 
     // Get full memory details for candidates
-    const candidates: Array<{ id: string; content: string; category: string }> = [];
+    const candidates: Array<{ id: string; content: string; category: string }> =
+      [];
     for (const result of results) {
       const memoryId = this.extractMemoryIdsFromResults([result])[0];
       if (!memoryId) continue;
 
       const resultNamespace = this.namespaceFromPath(result.path);
       if (resultNamespace !== namespaceScope) continue;
-      const resultStorage = await this.storageRouter.storageFor(resultNamespace);
+      const resultStorage =
+        await this.storageRouter.storageFor(resultNamespace);
       const memory = await resultStorage.getMemoryById(memoryId);
       if (memory && memory.frontmatter.status !== "superseded") {
         candidates.push({
@@ -9206,12 +11529,15 @@ export class Orchestrator {
     if (!this.config.namespacesEnabled) return this.config.defaultNamespace;
     const resolvedStorageDir = path.resolve(storageDir);
     const resolvedMemoryDir = path.resolve(this.config.memoryDir);
-    if (resolvedStorageDir === resolvedMemoryDir) return this.config.defaultNamespace;
+    if (resolvedStorageDir === resolvedMemoryDir)
+      return this.config.defaultNamespace;
     const m = resolvedStorageDir.match(/[\\/]namespaces[\\/]([^\\/]+)$/);
     return m && m[1] ? m[1] : this.config.defaultNamespace;
   }
 
-  private async readAllMemoriesForNamespaces(namespaces: string[]): Promise<MemoryFile[]> {
+  private async readAllMemoriesForNamespaces(
+    namespaces: string[],
+  ): Promise<MemoryFile[]> {
     const uniq = Array.from(new Set(namespaces.filter(Boolean)));
     const lists = await Promise.all(
       uniq.map(async (ns) => {
@@ -9222,7 +11548,9 @@ export class Orchestrator {
     return lists.flat();
   }
 
-  private async readArchivedMemoriesForNamespaces(namespaces: string[]): Promise<MemoryFile[]> {
+  private async readArchivedMemoriesForNamespaces(
+    namespaces: string[],
+  ): Promise<MemoryFile[]> {
     const uniq = Array.from(new Set(namespaces.filter(Boolean)));
     const lists = await Promise.all(
       uniq.map(async (ns) => {

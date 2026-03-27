@@ -95,7 +95,13 @@ export async function rerankLocalOrNoop(opts: {
   local: {
     chatCompletion: (
       messages: Array<{ role: string; content: string }>,
-      options?: { maxTokens?: number; temperature?: number; timeoutMs?: number; operation?: string },
+      options?: {
+        maxTokens?: number;
+        temperature?: number;
+        timeoutMs?: number;
+        operation?: string;
+        priority?: "recall-critical" | "background";
+      },
     ) => Promise<{ content: string } | null>;
   };
   enabled: boolean;
@@ -151,6 +157,7 @@ export async function rerankLocalOrNoop(opts: {
       temperature: 0.0,
       timeoutMs: opts.timeoutMs,
       operation: "rerank",
+      priority: "recall-critical",
     },
   );
   if (!res?.content) return null;

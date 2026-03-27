@@ -1608,7 +1608,9 @@ export async function collectNativeKnowledgeChunks(options: {
   config: NativeKnowledgeConfig;
   recallNamespaces?: string[];
   defaultNamespace: string;
+  abortSignal?: AbortSignal;
 }): Promise<NativeKnowledgeChunk[]> {
+  throwIfNativeKnowledgeAborted(options.abortSignal);
   if (!options.config.enabled) return [];
 
   const chunks: NativeKnowledgeChunk[] = [];
@@ -1620,6 +1622,7 @@ export async function collectNativeKnowledgeChunks(options: {
       .map((value) => value.replace(/\\/g, "/")),
   );
   if (options.memoryDir) {
+    throwIfNativeKnowledgeAborted(options.abortSignal);
     const syncResult = await syncCuratedIncludeFiles({
       workspaceDir: options.workspaceDir,
       memoryDir: options.memoryDir,
@@ -1630,6 +1633,7 @@ export async function collectNativeKnowledgeChunks(options: {
     });
     chunks.push(...syncResult.activeChunks);
   } else {
+    throwIfNativeKnowledgeAborted(options.abortSignal);
     const candidatePaths = await resolveCandidatePaths({
       workspaceDir: options.workspaceDir,
       includeFiles: options.config.includeFiles,
@@ -1638,6 +1642,7 @@ export async function collectNativeKnowledgeChunks(options: {
       identityVariantMode: "recall",
     });
     for (const filePath of candidatePaths) {
+      throwIfNativeKnowledgeAborted(options.abortSignal);
       if (!(await readableFile(filePath))) continue;
       const content = await readFile(filePath, "utf-8").catch(() => null);
       if (!content) continue;
@@ -1662,6 +1667,7 @@ export async function collectNativeKnowledgeChunks(options: {
   }
 
   if (options.memoryDir && options.config.openclawWorkspace?.enabled) {
+    throwIfNativeKnowledgeAborted(options.abortSignal);
     const syncResult = await syncOpenClawWorkspaceArtifacts({
       workspaceDir: options.workspaceDir,
       memoryDir: options.memoryDir,
@@ -1675,6 +1681,7 @@ export async function collectNativeKnowledgeChunks(options: {
   }
 
   if (options.memoryDir && options.config.obsidianVaults.length > 0) {
+    throwIfNativeKnowledgeAborted(options.abortSignal);
     const syncResult = await syncObsidianVaults({
       memoryDir: options.memoryDir,
       config: options.config,
@@ -1687,6 +1694,13 @@ export async function collectNativeKnowledgeChunks(options: {
   }
 
   return dedupeNativeKnowledgeChunks(chunks);
+}
+
+function throwIfNativeKnowledgeAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const err = new Error("native knowledge collection aborted");
+  Object.defineProperty(err, "name", { value: "AbortError" });
+  throw err;
 }
 
 export function searchNativeKnowledge(options: {

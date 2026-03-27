@@ -437,6 +437,7 @@ export class ExtractionEngine {
             maxTokens: this.config.proactiveExtractionMaxTokens,
             timeoutMs: this.config.proactiveExtractionTimeoutMs,
             operation: "proactive_extraction",
+            priority: "background",
           },
         );
         if (localResponse?.content) {
@@ -535,6 +536,7 @@ export class ExtractionEngine {
             maxTokens: this.config.proactiveExtractionMaxTokens,
             timeoutMs: this.config.proactiveExtractionTimeoutMs,
             operation: "proactive_extraction",
+            priority: "background",
           },
         );
         if (localResponse?.content) {
@@ -964,7 +966,12 @@ ${truncatedConversation}`;
         { role: "system", content: "You are a memory extraction system. Output valid JSON only." },
         { role: "user", content: localPrompt },
       ],
-      { temperature: 0.1, maxTokens: contextSizes.maxOutputTokens, operation: "extraction" },
+      {
+        temperature: 0.1,
+        maxTokens: contextSizes.maxOutputTokens,
+        operation: "extraction",
+        priority: "background",
+      },
     );
 
     if (!response?.content) {
@@ -1495,7 +1502,12 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are a memory consolidation system. Output valid JSON only." },
         { role: "user", content: prompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "consolidation" },
+      {
+        temperature: 0.3,
+        maxTokens: contextSizes.maxOutputTokens,
+        operation: "consolidation",
+        priority: "background",
+      },
     );
 
     if (!response?.content) {
@@ -1717,7 +1729,12 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are a profile consolidation system. Output valid JSON only." },
         { role: "user", content: prompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "profile_consolidation" },
+      {
+        temperature: 0.3,
+        maxTokens: contextSizes.maxOutputTokens,
+        operation: "profile_consolidation",
+        priority: "background",
+      },
     );
 
     if (!response?.content) {
@@ -1933,7 +1950,12 @@ Respond with valid JSON matching this schema:
         { role: "system", content: "You are an identity consolidation system. Output valid JSON only." },
         { role: "user", content: prompt },
       ],
-      { temperature: 0.3, maxTokens: contextSizes.maxOutputTokens, operation: "identity_consolidation" },
+      {
+        temperature: 0.3,
+        maxTokens: contextSizes.maxOutputTokens,
+        operation: "identity_consolidation",
+        priority: "background",
+      },
     );
 
     if (!response?.content) {
@@ -2009,7 +2031,12 @@ Respond with valid JSON matching this schema:
               { role: "system", content: systemPrompt },
               { role: "user", content: input },
             ],
-            { temperature: 0.3, maxTokens: 2048, operation: "contradiction_verification" },
+            {
+              temperature: 0.3,
+              maxTokens: 2048,
+              operation: "contradiction_verification",
+              priority: "background",
+            },
           );
           const normalized = this.normalizeContradictionVerificationResult(
             this.parseJsonObject(localResponse?.content),
@@ -2132,7 +2159,12 @@ Respond with valid JSON matching this schema:
               { role: "system", content: systemPrompt },
               { role: "user", content: input },
             ],
-            { temperature: 0.3, maxTokens: 2048, operation: "link_suggestion" },
+            {
+              temperature: 0.3,
+              maxTokens: 2048,
+              operation: "link_suggestion",
+              priority: "background",
+            },
           );
           const normalized = this.normalizeSuggestedLinksResult(this.parseJsonObject(localResponse?.content));
           if (normalized) {
@@ -2220,7 +2252,12 @@ ${memoryContext}`;
 Return valid JSON only.` },
             { role: "user", content: userPrompt },
           ],
-          { temperature: 0.2, maxTokens: 2048, operation: "day_summary" },
+          {
+            temperature: 0.2,
+            maxTokens: 2048,
+            operation: "day_summary",
+            priority: "background",
+          },
         );
         const normalized = this.normalizeDaySummaryResult(this.parseJsonObject(localResponse?.content));
         if (normalized) {
@@ -2331,7 +2368,12 @@ Respond with valid JSON matching this schema:
               { role: "system", content: systemPrompt },
               { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
             ],
-            { temperature: 0.3, maxTokens: 4096, operation: "memory_summarization" },
+            {
+              temperature: 0.3,
+              maxTokens: 4096,
+              operation: "memory_summarization",
+              priority: "background",
+            },
           );
           const normalized = this.normalizeMemorySummaryResult(this.parseJsonObject(localResponse?.content));
           if (normalized) {

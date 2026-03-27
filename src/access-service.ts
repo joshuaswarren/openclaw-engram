@@ -1375,10 +1375,7 @@ export class EngramAccessService {
       // DAGs, which can take tens of seconds for large sessions.  Don't
       // block the HTTP response — the caller only needs acknowledgment.
       try {
-        const lcmPromise = this.orchestrator.lcmEngine.observeMessages(lcmSessionKey, request.messages);
-        lcmPromise.catch((err) => {
-          log.error(`access-observe LCM archival failed: ${err}`);
-        });
+        this.orchestrator.lcmEngine.enqueueObserveMessages(lcmSessionKey, request.messages);
         lcmArchived = true;
       } catch (err) {
         log.error(`access-observe LCM enqueue failed: ${err}`);
@@ -1395,8 +1392,8 @@ export class EngramAccessService {
         timestamp: new Date().toISOString(),
       }));
       // Fire-and-forget: queue extraction in the background so the HTTP
-      // response returns immediately.  LCM archival (above) is fast and
-      // already awaited; extraction involves LLM calls that can take
+      // response returns immediately. LCM archival (above) is also
+      // enqueue-only; extraction involves LLM calls that can take
       // minutes under load and should not block the caller.
       //
       // Backpressure: the orchestrator's own extraction queue already

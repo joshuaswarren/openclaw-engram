@@ -67,6 +67,30 @@ export interface LocalModelInfo {
   maxTokens?: number;
 }
 
+export type LocalLlmRequestPriority = "recall-critical" | "background";
+
+interface LocalLlmChatCompletionOptions {
+  temperature?: number;
+  maxTokens?: number;
+  responseFormat?: { type: string };
+  timeoutMs?: number;
+  operation?: string;
+  priority?: LocalLlmRequestPriority;
+}
+
+interface LocalLlmQueuedRequest {
+  messages: Array<{ role: string; content: string }>;
+  options: LocalLlmChatCompletionOptions;
+  priority: LocalLlmRequestPriority;
+  enqueuedAtMs: number;
+  resolve: (value: LocalLlmChatCompletionResult | null) => void;
+}
+
+interface LocalLlmChatCompletionResult {
+  content: string;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+}
+
 export class LocalLlmClient {
   private config: PluginConfig;
   private isAvailable: boolean | null = null;
@@ -79,6 +103,12 @@ export class LocalLlmClient {
   private cooldownUntilMs: number = 0;
   private modelRegistry?: ModelRegistry;
   private _disableThinking: boolean = false;
+  private readonly requestQueues: Record<LocalLlmRequestPriority, LocalLlmQueuedRequest[]> = {
+    "recall-critical": [],
+    background: [],
+  };
+  private readonly queueProcessing = new Set<LocalLlmRequestPriority>();
+  private queueDrainScheduled: boolean = false;
   private static readonly HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
   private static readonly LMS_CACHE_INTERVAL_MS = 30000; // 30 seconds
 
@@ -508,201 +538,119 @@ export class LocalLlmClient {
     log.debug("LMS CLI: context cache cleared");
   }
 
-  /**
-   * Query the local LLM server for loaded model information.
-   * Returns null if unavailable or if the model is not found.
-   */
-  async getLoadedModelInfo(): Promise<LocalModelInfo | null> {
-    const baseUrl = this.config.localLlmUrl
-      .replace("localhost", "127.0.0.1")
-      .replace(/\/+$/, "");
+  private remainingCooldownMs(now: number = Date.now()): number {
+    return Math.max(0, this.cooldownUntilMs - now);
+  }
 
-    // Handle URL construction - localLlmUrl may already include /v1
-    const modelsUrl = baseUrl.endsWith("/v1")
-      ? `${baseUrl}/models`
-      : `${baseUrl}/v1/models`;
-    log.info(`Fetching model info from ${modelsUrl}`);
+  private scheduleQueueDrain(): void {
+    if (this.queueDrainScheduled) return;
+    this.queueDrainScheduled = true;
 
+    queueMicrotask(() => {
+      this.queueDrainScheduled = false;
+      this.startAvailableQueuedRequests();
+    });
+  }
+
+  private hasQueuedRequests(): boolean {
+    return (
+      this.requestQueues["recall-critical"].length > 0 ||
+      this.requestQueues.background.length > 0
+    );
+  }
+
+  private dequeueQueuedRequest(priority: LocalLlmRequestPriority): LocalLlmQueuedRequest | null {
+    const next = this.requestQueues[priority].shift();
+    return next ?? null;
+  }
+
+  private failOpenQueuedRequestsForCooldown(): number {
+    let dropped = 0;
+    for (const priority of ["recall-critical", "background"] as const) {
+      while (this.requestQueues[priority].length > 0) {
+        const queued = this.requestQueues[priority].shift();
+        queued?.resolve(null);
+        dropped += 1;
+      }
+    }
+    return dropped;
+  }
+
+  private startAvailableQueuedRequests(): void {
+    if (!this.queueProcessing.has("recall-critical")) {
+      const nextCritical = this.dequeueQueuedRequest("recall-critical");
+      if (nextCritical) {
+        this.queueProcessing.add("recall-critical");
+        void this.runQueuedRequest(nextCritical);
+      }
+    }
+
+    if (!this.queueProcessing.has("background")) {
+      const nextBackground = this.dequeueQueuedRequest("background");
+      if (nextBackground) {
+        this.queueProcessing.add("background");
+        void this.runQueuedRequest(nextBackground);
+      }
+    }
+  }
+
+  private async runQueuedRequest(next: LocalLlmQueuedRequest): Promise<void> {
     try {
-      const result = await this.fetchWithTimeout(modelsUrl, 3000);
-      if (!result.ok) {
-        log.warn(`Local LLM: Failed to fetch models from ${modelsUrl} - server returned error`);
-        return null;
-      }
-      if (!result.data) {
-        log.warn(`Local LLM: No data returned from ${modelsUrl}`);
-        return null;
-      }
-
-      const data = result.data as {
-        data?: Array<{
-          id?: string;
-          object?: string;
-          owned_by?: string;
-          // LM Studio specific fields
-          max_context_length?: number;
-          max_tokens?: number;
-          // Ollama specific
-          name?: string;
-          details?: {
-            parameter_size?: string;
-            family?: string;
-          };
-        }>;
-      };
-
-      if (!Array.isArray(data.data) || data.data.length === 0) {
-        log.warn("Local LLM returned no models");
-        return null;
-      }
-
-      // Verbose model listings are noisy on every gateway restart. Keep it debug-only.
-      const modelIds = data.data.map((m) => m.id).filter(Boolean);
-      log.debug(
-        `Local LLM: Found ${modelIds.length} model(s). First 10: ${modelIds.slice(0, 10).join(", ")}`,
-      );
-
-      // Find the model matching our configured model ID
-      const configuredModel = this.config.localLlmModel;
-      let model = data.data.find((m) => m.id === configuredModel);
-
-      // If not found by exact match, try partial match (handle suffixes like @4bit)
-      if (!model) {
-        model = data.data.find((m) =>
-          configuredModel.includes(m.id || "") ||
-          (m.id || "").includes(configuredModel.replace(/@\d+bit$/, ""))
-        );
-      }
-
-      // If still not found, use the first loaded model and warn
-      if (!model) {
-        model = data.data[0];
-        const availablePreview = data.data
-          .map((m) => m.id)
-          .filter(Boolean)
-          .slice(0, 10)
-          .join(", ");
+      const remainingCooldownMs = this.remainingCooldownMs();
+      if (remainingCooldownMs > 0) {
+        const additionalDropped = this.failOpenQueuedRequestsForCooldown();
         log.warn(
-          `Configured model "${configuredModel}" not found in local LLM. ` +
-          `Using "${model.id}" instead. Available (first 10): ${availablePreview}`
+          `local LLM: cooldown active (${remainingCooldownMs}ms remaining), dropping ${additionalDropped + 1} queued request(s) fail-open`,
         );
+        next.resolve(null);
+        return;
       }
 
-      // Extract context window - try multiple field names
-      let contextWindow = model.max_context_length || model.max_tokens;
-
-      // If API doesn't report context window, try LMS CLI (LM Studio specific)
-      if (!contextWindow) {
-        log.info("Local LLM: API did not report context window, trying LMS CLI...");
-        const lmsContext = this.getCachedContextWindow(model.id || "");
-        if (lmsContext) {
-          contextWindow = lmsContext;
-        }
+      let result: LocalLlmChatCompletionResult | null = null;
+      try {
+        result = await this.runChatCompletionRequest(next.messages, next.options, {
+          priority: next.priority,
+          enqueuedAtMs: next.enqueuedAtMs,
+        });
+      } catch (err) {
+        log.warn(`local LLM queue drain failed open: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      this.cachedModelInfo = {
-        id: model.id || "unknown",
-        contextWindow: contextWindow,
-        maxTokens: model.max_tokens,
-      };
-
-      log.info(
-        `Local LLM model detected: ${this.cachedModelInfo.id}, ` +
-        `context window: ${contextWindow?.toLocaleString() || "unknown (may use default)"}`
-      );
-
-      return this.cachedModelInfo;
-    } catch (err) {
-      log.warn(`Failed to fetch model info: ${err}`);
-      return null;
+      next.resolve(result);
+    } finally {
+      this.queueProcessing.delete(next.priority);
+      if (this.hasQueuedRequests()) {
+        this.scheduleQueueDrain();
+      }
     }
   }
 
-  /**
-   * Check if the configured model is available and get its actual context window.
-   * Warns if there's a mismatch between expected and actual context.
-   */
-  async validateModelConfig(expectedContextWindow?: number): Promise<{
-    available: boolean;
-    actualContextWindow?: number;
-    warnings: string[];
-  }> {
-    const warnings: string[] = [];
-
-    const modelInfo = await this.getLoadedModelInfo();
-    if (!modelInfo) {
-      return { available: false, warnings: ["Could not query local LLM for model info"] };
-    }
-
-    // If we have expected context and the server reports one, check for mismatch
-    if (expectedContextWindow && modelInfo.contextWindow) {
-      if (modelInfo.contextWindow < expectedContextWindow) {
-        warnings.push(
-          `Context window mismatch: Model ${modelInfo.id} supports ${modelInfo.contextWindow.toLocaleString()} tokens, ` +
-          `but engram is configured for ${expectedContextWindow.toLocaleString()}. ` +
-          `Set localLlmMaxContext: ${modelInfo.contextWindow} in config to avoid errors.`
-        );
-      }
-    }
-
-    // Warn if server doesn't report context window (common with some local LLM setups)
-    if (!modelInfo.contextWindow) {
-      warnings.push(
-        `Local LLM server did not report context window for ${modelInfo.id}. ` +
-        `If you get "context length exceeded" errors, set localLlmMaxContext in config.`
-      );
-    }
-
-    return {
-      available: true,
-      actualContextWindow: modelInfo.contextWindow,
-      warnings,
-    };
-  }
-
-  /**
-   * Make a chat completion request to local LLM
-   */
-  async chatCompletion(
+  private async runChatCompletionRequest(
     messages: Array<{ role: string; content: string }>,
-    options: {
-      temperature?: number;
-      maxTokens?: number;
-      responseFormat?: { type: string };
-      timeoutMs?: number;
-      operation?: string;
-    } = {}
-  ): Promise<{
-    content: string;
-    usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
-  } | null> {
+    options: LocalLlmChatCompletionOptions,
+    queueMeta?: { priority: LocalLlmRequestPriority; enqueuedAtMs: number },
+  ): Promise<LocalLlmChatCompletionResult | null> {
     log.debug(
       `local LLM chatCompletion: localLlmEnabled=${this.config.localLlmEnabled}, model=${this.config.localLlmModel}`,
     );
-    if (!this.config.localLlmEnabled) {
-      log.debug("local LLM: disabled, returning null");
-      return null;
-    }
 
-    const now = Date.now();
-    if (this.cooldownUntilMs > now) {
-      const remainingMs = this.cooldownUntilMs - now;
-      log.debug(`local LLM: cooldown active (${remainingMs}ms remaining), skipping request`);
-      return null;
-    }
-
-    const isAvailable = await this.checkAvailability();
-    if (!isAvailable) {
-      log.debug(
-        `local LLM: checkAvailability returned false for ${this.config.localLlmUrl}`,
+    const operation = options.operation ?? "unspecified";
+    const startedAtMs = Date.now();
+    if (queueMeta) {
+      log.info(
+        `local LLM queue start: priority=${queueMeta.priority} waitMs=${startedAtMs - queueMeta.enqueuedAtMs} op=${operation}`,
       );
-      return null;
     }
 
     try {
-      const startedAtMs = Date.now();
+      const isAvailable = await this.checkAvailability();
+      if (!isAvailable) {
+        log.debug(
+          `local LLM: checkAvailability returned false for ${this.config.localLlmUrl}`,
+        );
+        return null;
+      }
+
       const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
-      const operation = options.operation ?? "unspecified";
       const requestBody: Record<string, unknown> = {
         model: this.config.localLlmModel,
         messages,
@@ -894,8 +842,7 @@ export class LocalLlmClient {
       return { content, usage };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const durationMs = Date.now() - now;
-      const operation = options.operation ?? "unspecified";
+      const durationMs = Date.now() - startedAtMs;
       if (this.isAbortError(err)) {
         log.warn(
           `local LLM request aborted: op=${operation} timeoutMs=${options.timeoutMs ?? this.config.localLlmTimeoutMs} model=${this.config.localLlmModel} durationMs=${durationMs} error=${errMsg}`,
@@ -905,7 +852,201 @@ export class LocalLlmClient {
       log.warn(`local LLM request error: op=${operation} error=${errMsg}`);
       this.isAvailable = false; // Mark as unavailable on non-abort errors
       return null;
+    } finally {
+      if (queueMeta) {
+        const finishedAtMs = Date.now();
+        const waitMs = startedAtMs - queueMeta.enqueuedAtMs;
+        log.info(
+          `local LLM queue finish: priority=${queueMeta.priority} waitMs=${waitMs} runMs=${finishedAtMs - startedAtMs} totalMs=${finishedAtMs - queueMeta.enqueuedAtMs} op=${operation}`,
+        );
+      }
     }
+  }
+
+  /**
+   * Query the local LLM server for loaded model information.
+   * Returns null if unavailable or if the model is not found.
+   */
+  async getLoadedModelInfo(): Promise<LocalModelInfo | null> {
+    const baseUrl = this.config.localLlmUrl
+      .replace("localhost", "127.0.0.1")
+      .replace(/\/+$/, "");
+
+    // Handle URL construction - localLlmUrl may already include /v1
+    const modelsUrl = baseUrl.endsWith("/v1")
+      ? `${baseUrl}/models`
+      : `${baseUrl}/v1/models`;
+    log.info(`Fetching model info from ${modelsUrl}`);
+
+    try {
+      const result = await this.fetchWithTimeout(modelsUrl, 3000);
+      if (!result.ok) {
+        log.warn(`Local LLM: Failed to fetch models from ${modelsUrl} - server returned error`);
+        return null;
+      }
+      if (!result.data) {
+        log.warn(`Local LLM: No data returned from ${modelsUrl}`);
+        return null;
+      }
+
+      const data = result.data as {
+        data?: Array<{
+          id?: string;
+          object?: string;
+          owned_by?: string;
+          // LM Studio specific fields
+          max_context_length?: number;
+          max_tokens?: number;
+          // Ollama specific
+          name?: string;
+          details?: {
+            parameter_size?: string;
+            family?: string;
+          };
+        }>;
+      };
+
+      if (!Array.isArray(data.data) || data.data.length === 0) {
+        log.warn("Local LLM returned no models");
+        return null;
+      }
+
+      // Verbose model listings are noisy on every gateway restart. Keep it debug-only.
+      const modelIds = data.data.map((m) => m.id).filter(Boolean);
+      log.debug(
+        `Local LLM: Found ${modelIds.length} model(s). First 10: ${modelIds.slice(0, 10).join(", ")}`,
+      );
+
+      // Find the model matching our configured model ID
+      const configuredModel = this.config.localLlmModel;
+      let model = data.data.find((m) => m.id === configuredModel);
+
+      // If not found by exact match, try partial match (handle suffixes like @4bit)
+      if (!model) {
+        model = data.data.find((m) =>
+          configuredModel.includes(m.id || "") ||
+          (m.id || "").includes(configuredModel.replace(/@\d+bit$/, ""))
+        );
+      }
+
+      // If still not found, use the first loaded model and warn
+      if (!model) {
+        model = data.data[0];
+        const availablePreview = data.data
+          .map((m) => m.id)
+          .filter(Boolean)
+          .slice(0, 10)
+          .join(", ");
+        log.warn(
+          `Configured model "${configuredModel}" not found in local LLM. ` +
+          `Using "${model.id}" instead. Available (first 10): ${availablePreview}`
+        );
+      }
+
+      // Extract context window - try multiple field names
+      let contextWindow = model.max_context_length || model.max_tokens;
+
+      // If API doesn't report context window, try LMS CLI (LM Studio specific)
+      if (!contextWindow) {
+        log.info("Local LLM: API did not report context window, trying LMS CLI...");
+        const lmsContext = this.getCachedContextWindow(model.id || "");
+        if (lmsContext) {
+          contextWindow = lmsContext;
+        }
+      }
+
+      this.cachedModelInfo = {
+        id: model.id || "unknown",
+        contextWindow: contextWindow,
+        maxTokens: model.max_tokens,
+      };
+
+      log.info(
+        `Local LLM model detected: ${this.cachedModelInfo.id}, ` +
+        `context window: ${contextWindow?.toLocaleString() || "unknown (may use default)"}`
+      );
+
+      return this.cachedModelInfo;
+    } catch (err) {
+      log.warn(`Failed to fetch model info: ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Check if the configured model is available and get its actual context window.
+   * Warns if there's a mismatch between expected and actual context.
+   */
+  async validateModelConfig(expectedContextWindow?: number): Promise<{
+    available: boolean;
+    actualContextWindow?: number;
+    warnings: string[];
+  }> {
+    const warnings: string[] = [];
+
+    const modelInfo = await this.getLoadedModelInfo();
+    if (!modelInfo) {
+      return { available: false, warnings: ["Could not query local LLM for model info"] };
+    }
+
+    // If we have expected context and the server reports one, check for mismatch
+    if (expectedContextWindow && modelInfo.contextWindow) {
+      if (modelInfo.contextWindow < expectedContextWindow) {
+        warnings.push(
+          `Context window mismatch: Model ${modelInfo.id} supports ${modelInfo.contextWindow.toLocaleString()} tokens, ` +
+          `but engram is configured for ${expectedContextWindow.toLocaleString()}. ` +
+          `Set localLlmMaxContext: ${modelInfo.contextWindow} in config to avoid errors.`
+        );
+      }
+    }
+
+    // Warn if server doesn't report context window (common with some local LLM setups)
+    if (!modelInfo.contextWindow) {
+      warnings.push(
+        `Local LLM server did not report context window for ${modelInfo.id}. ` +
+        `If you get "context length exceeded" errors, set localLlmMaxContext in config.`
+      );
+    }
+
+    return {
+      available: true,
+      actualContextWindow: modelInfo.contextWindow,
+      warnings,
+    };
+  }
+
+  /**
+   * Make a chat completion request to local LLM
+   */
+  async chatCompletion(
+    messages: Array<{ role: string; content: string }>,
+    options: LocalLlmChatCompletionOptions = {},
+  ): Promise<LocalLlmChatCompletionResult | null> {
+    if (!this.config.localLlmEnabled) {
+      log.debug("local LLM: disabled, returning null");
+      return null;
+    }
+
+    const remainingMs = this.remainingCooldownMs();
+    if (remainingMs > 0) {
+      log.debug(`local LLM: cooldown active (${remainingMs}ms remaining), skipping request`);
+      return null;
+    }
+    if (options.priority) {
+      const priority = options.priority;
+      return await new Promise<LocalLlmChatCompletionResult | null>((resolve) => {
+        this.requestQueues[priority].push({
+          messages,
+          options,
+          priority,
+          enqueuedAtMs: Date.now(),
+          resolve,
+        });
+        this.scheduleQueueDrain();
+      });
+    }
+
+    return await this.runChatCompletionRequest(messages, options);
   }
 
   /**

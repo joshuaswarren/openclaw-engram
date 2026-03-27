@@ -510,7 +510,13 @@ export interface PluginConfig {
   entityRetrievalRecentTurns: number;
   // Recall assembly controls
   recallBudgetChars: number;
+  recallOuterTimeoutMs: number;
+  recallCoreDeadlineMs: number;
+  recallEnrichmentDeadlineMs: number;
   recallPipeline: RecallSectionConfig[];
+  qmdRecallCacheTtlMs: number;
+  qmdRecallCacheStaleTtlMs: number;
+  qmdRecallCacheMaxEntries: number;
   entityRelationshipsEnabled: boolean;
   entityActivityLogEnabled: boolean;
   entityActivityLogMaxEntries: number;

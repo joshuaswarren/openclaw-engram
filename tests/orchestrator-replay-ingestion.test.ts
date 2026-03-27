@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("ingestReplayBatch enqueues replay slices without clearing shared buffer", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.match(
     source,
@@ -24,17 +27,23 @@ test("ingestReplayBatch enqueues replay slices without clearing shared buffer", 
 });
 
 test("queueBufferedExtraction preserves explicit false clearBufferAfterExtraction", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.match(
     source,
-    /clearBufferAfterExtraction:\s*options\.clearBufferAfterExtraction \?\? true,/m,
+    /clearBufferAfterExtraction:\s*options\.clearBufferAfterExtraction\s*\?\?\s*true,/m,
     "queue options should preserve explicit false clearBufferAfterExtraction values",
   );
 });
 
 test("runExtraction bypass only skips char threshold and still enforces user-turn threshold", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.match(
     source,
@@ -43,7 +52,7 @@ test("runExtraction bypass only skips char threshold and still enforces user-tur
   );
   assert.match(
     source,
-    /const belowCharThreshold = totalChars < this\.config\.extractionMinChars;\s*const belowUserTurnThreshold = userTurns\.length < this\.config\.extractionMinUserTurns;/m,
+    /const belowCharThreshold = totalChars < this\.config\.extractionMinChars;\s*const belowUserTurnThreshold =\s*userTurns\.length < this\.config\.extractionMinUserTurns;/m,
     "runExtraction should compute char and user-turn minimums independently",
   );
   assert.match(
@@ -54,11 +63,14 @@ test("runExtraction bypass only skips char threshold and still enforces user-tur
 });
 
 test("queueBufferedExtraction settles task callbacks on dedupe skip", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.match(
     source,
-    /if \(!options\.skipDedupeCheck && !this\.shouldQueueExtraction\(turnsToExtract\)\) \{[\s\S]*options\.onTaskSettled\?\.\(\);[\s\S]*return;/m,
+    /if \(\s*!options\.skipDedupeCheck\s*&&\s*!this\.shouldQueueExtraction\(turnsToExtract\)\s*\) \{[\s\S]*options\.onTaskSettled\?\.\(\);[\s\S]*return;/m,
     "dedupe skip path should settle any task callback to avoid hanging replay promises",
   );
 });
