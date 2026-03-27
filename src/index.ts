@@ -219,7 +219,6 @@ const pluginDefinition = {
   register(api: OpenClawPluginApi) {
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
-    ensureNativeDependenciesReady();
 
     // Detect SDK capabilities for dual-path hook registration.
     sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
