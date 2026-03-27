@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("runExtraction handles pre-persist threading errors fail-open", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.match(
     source,
@@ -14,7 +17,10 @@ test("runExtraction handles pre-persist threading errors fail-open", () => {
 });
 
 test("persistExtraction updates in-memory thread episode IDs before graph edge construction", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   const appendIdx = source.indexOf("threadEpisodeIdsForGraph.push(memoryId);");
   const buildIdx = source.search(
@@ -26,7 +32,11 @@ test("persistExtraction updates in-memory thread episode IDs before graph edge c
     -1,
     "expected in-memory threadEpisodeIdsForGraph update for non-chunked memory writes",
   );
-  assert.notEqual(buildIdx, -1, "expected buildGraphEdge call for non-chunked memory writes");
+  assert.notEqual(
+    buildIdx,
+    -1,
+    "expected buildGraphEdge call for non-chunked memory writes",
+  );
   assert.ok(
     appendIdx < buildIdx,
     "threadEpisodeIdsForGraph should update before buildGraphEdge so same-batch memories can form time/causal edges",
@@ -34,7 +44,10 @@ test("persistExtraction updates in-memory thread episode IDs before graph edge c
 });
 
 test("persistExtraction avoids per-memory thread file writes", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.doesNotMatch(
     source,
@@ -49,21 +62,27 @@ test("persistExtraction avoids per-memory thread file writes", () => {
 });
 
 test("in-memory thread episode context updates for chunked and non-chunked writes", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
   assert.match(
     source,
-    /if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(memoryId\)\) \{\s*threadEpisodeIdsForGraph\.push\(memoryId\);\s*\}/m,
+    /if \(\s*threadEpisodeIdsForGraph\s*&&\s*!threadEpisodeIdsForGraph\.includes\(memoryId\)\s*\) \{\s*threadEpisodeIdsForGraph\.push\(memoryId\);\s*\}/m,
     "memoryId should be added to in-memory thread context during persistence",
   );
   assert.match(
     source,
-    /if \(threadEpisodeIdsForGraph && !threadEpisodeIdsForGraph\.includes\(parentId\)\) \{\s*threadEpisodeIdsForGraph\.push\(parentId\);\s*\}/m,
+    /if \(\s*threadEpisodeIdsForGraph\s*&&\s*!threadEpisodeIdsForGraph\.includes\(parentId\)\s*\) \{\s*threadEpisodeIdsForGraph\.push\(parentId\);\s*\}/m,
     "parentId should be added to in-memory thread context during persistence",
   );
 });
 
 test("buildGraphEdge does not read global current thread ID", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.doesNotMatch(
     source,
@@ -73,7 +92,10 @@ test("buildGraphEdge does not read global current thread ID", () => {
 });
 
 test("buildGraphEdge does not reload thread file per memory write", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
 
   assert.doesNotMatch(
     source,
@@ -88,11 +110,17 @@ test("buildGraphEdge does not reload thread file per memory write", () => {
 });
 
 test("persisted path resolution does not call getMemoryById in per-fact write flow", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
   const helperMatch = source.match(
     /export function resolvePersistedMemoryRelativePath\([\s\S]*?\n\}\n\nexport class Orchestrator/m,
   );
-  assert.ok(helperMatch, "expected resolvePersistedMemoryRelativePath helper in orchestrator.ts");
+  assert.ok(
+    helperMatch,
+    "expected resolvePersistedMemoryRelativePath helper in orchestrator.ts",
+  );
   const helperSource = helperMatch[0];
 
   assert.match(helperSource, /pathById:\s*Map<string,\s*string>/);
@@ -100,7 +128,10 @@ test("persisted path resolution does not call getMemoryById in per-fact write fl
 });
 
 test("persisted path resolution is not short-circuited by set-before-resolve", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
   assert.doesNotMatch(
     source,
     /memoryPathById\.set\([^)]*\);\s*const (?:parentRelPath|memoryRelPath) = resolvePersistedMemoryRelativePath\(/m,
@@ -109,16 +140,22 @@ test("persisted path resolution is not short-circuited by set-before-resolve", (
 });
 
 test("buildGraphEdge forwards fallback causal predecessor when thread context is absent", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
   assert.match(
     source,
-    /const causalPredecessor = recentInThread\[recentInThread\.length - 1\] \?\? fallbackCausalPredecessor;/,
+    /const causalPredecessor =\s*recentInThread\[recentInThread\.length - 1\] \?\? fallbackCausalPredecessor;/m,
     "expected causal predecessor to fall back to same-extraction ordering when no thread history is available",
   );
 });
 
 test("persistExtraction includes written question IDs in persistedIds", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    "utf-8",
+  );
   assert.match(
     source,
     /const id = await storage\.writeQuestion\(q\.question,\s*q\.context,\s*q\.priority\);\s*if \(id\) trackPersistedId\(storage,\s*id\);/m,
