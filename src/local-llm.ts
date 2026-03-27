@@ -221,6 +221,17 @@ export class LocalLlmClient {
     return match?.[0] ?? null;
   }
 
+  private extractNonRecoverableBackendReasonFromErrorText(errorText: string): string | null {
+    const directReason = this.extractNonRecoverableBackendReason(errorText);
+    if (directReason) return directReason;
+    try {
+      const parsed = JSON.parse(errorText) as { error?: { message?: string } };
+      return this.extractNonRecoverableBackendReason(parsed?.error?.message ?? "");
+    } catch {
+      return null;
+    }
+  }
+
   private normalizeBackendTripReason(reason: string): string {
     const cleaned = reason.replace(/\s+/g, " ").replace(/^[-:–—\s]+/, "").trim();
     if (!cleaned) return "unknown local backend failure";
@@ -805,6 +816,23 @@ export class LocalLlmClient {
         }
 
         if (response.ok) break;
+        if (response.status >= 500 && attempt < maxAttempts) {
+          try {
+            const errorText = await response.clone().text();
+            const nonRecoverableReason =
+              this.extractNonRecoverableBackendReasonFromErrorText(errorText);
+            if (nonRecoverableReason) {
+              this.markBackendUnavailable(
+                nonRecoverableReason,
+                this.config.localLlm400CooldownMs,
+              );
+              this.consecutive400s = 0;
+              return null;
+            }
+          } catch (e) {
+            log.debug(`local LLM failed to inspect retryable error body: ${e}`);
+          }
+        }
         if (response.status < 500 || attempt >= maxAttempts) break;
 
         const backoffMs = this.config.localLlmRetryBackoffMs * attempt;
@@ -852,7 +880,7 @@ export class LocalLlmClient {
         );
         const nonRecoverableReason =
           this.extractNonRecoverableBackendReason(reason) ??
-          this.extractNonRecoverableBackendReason(errorText);
+          this.extractNonRecoverableBackendReasonFromErrorText(errorText);
         if (nonRecoverableReason) {
           this.markBackendUnavailable(
             nonRecoverableReason,

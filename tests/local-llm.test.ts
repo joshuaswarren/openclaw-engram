@@ -150,6 +150,47 @@ test("LocalLlmClient trips plain-text backend failures using configured cooldown
   }
 });
 
+test("LocalLlmClient does not retry non-recoverable 5xx backend failures", async () => {
+  initLogger(
+    {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    true,
+  );
+
+  const client = new LocalLlmClient(buildConfig({ localLlm400CooldownMs: 25, localLlmRetry5xxCount: 3 }));
+  (client as any).isAvailable = true;
+  (client as any).lastHealthCheck = Date.now();
+
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response("Failed to load model", {
+      status: 503,
+      headers: { "content-type": "text/plain" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const out = await client.chatCompletion([{ role: "user", content: "hello" }], {
+      operation: "entity_summary",
+    });
+    assert.equal(out, null);
+    assert.equal(calls, 1);
+    const state = (client as any).getGlobalBackendState().get((client as any).getBackendKey());
+    assert.ok(state);
+    assert.match(state.reason, /Failed to load model/i);
+    assert.ok(state.untilMs > Date.now());
+  } finally {
+    (client as any).getGlobalBackendState().delete((client as any).getBackendKey());
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("LocalLlmClient probes immediately after zero-duration backend trip", async () => {
   initLogger(
     {
