@@ -35,6 +35,46 @@ async function makeOrchestrator(
   return new Orchestrator(config);
 }
 
+function runtimeQmdFetchLimit(
+  orchestrator: Orchestrator,
+  mode: "full" | "minimal" | "no_recall" = "full",
+): number {
+  const config = (orchestrator as any).config;
+  const baseRecallResultLimit =
+    mode === "no_recall"
+      ? 0
+      : mode === "minimal"
+        ? Math.max(
+            0,
+            Math.min(
+              config.qmdMaxResults,
+              config.recallPlannerMaxQmdResultsMinimal,
+            ),
+          )
+        : config.qmdMaxResults;
+  const memoriesSectionEnabled = (orchestrator as any).isRecallSectionEnabled(
+    "memories",
+  );
+  const memorySectionMaxResults = (orchestrator as any).getRecallSectionNumber(
+    "memories",
+    "maxResults",
+  );
+  const recallResultLimit = memoriesSectionEnabled
+    ? memorySectionMaxResults !== undefined
+      ? Math.min(baseRecallResultLimit, memorySectionMaxResults)
+      : baseRecallResultLimit
+    : 0;
+  const recallHeadroom = config.verbatimArtifactsEnabled
+    ? Math.max(12, config.verbatimArtifactsMaxRecall * 4)
+    : 12;
+  return recallResultLimit === 0
+    ? 0
+    : Math.max(
+        recallResultLimit,
+        Math.min(200, recallResultLimit + recallHeadroom),
+      );
+}
+
 test("assembleRecallSections preserves memories within the recall budget", async () => {
   const orchestrator = await makeOrchestrator("engram-recall-budget-", {
     recallBudgetChars: 220,
@@ -403,7 +443,7 @@ test("recallInternal reuses stale qmd cache while qmd reprobe cooldown is active
     query: "Summarize the current project state.",
     namespaces: ["default"],
     recallMode: "full",
-    maxResults: (orchestrator as any).config.qmdMaxResults,
+    maxResults: runtimeQmdFetchLimit(orchestrator),
     memoryDir: (orchestrator as any).config.memoryDir,
   });
   setCachedQmdRecall(
@@ -524,7 +564,7 @@ test("recallInternal does not cache empty qmd result sets", async () => {
     query: "Summarize the current project state.",
     namespaces: ["default"],
     recallMode: "full",
-    maxResults: (orchestrator as any).config.qmdMaxResults,
+    maxResults: runtimeQmdFetchLimit(orchestrator),
     memoryDir: (orchestrator as any).config.memoryDir,
   });
 

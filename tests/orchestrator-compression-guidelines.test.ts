@@ -306,6 +306,53 @@ test("optimizeCompressionGuidelines increments staged guideline versions from th
   }
 });
 
+test("optimizeCompressionGuidelines tags semantic refinement calls as background work", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-guideline-priority-"));
+  try {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: memoryDir,
+      compressionGuidelineLearningEnabled: true,
+      compressionGuidelineSemanticRefinementEnabled: true,
+      compressionGuidelineSemanticTimeoutMs: 1000,
+    });
+    const orchestrator = new Orchestrator(cfg);
+    let seenPriority: string | undefined;
+    orchestrator.fastLlm = {
+      chatCompletion: async (
+        _messages: Array<{ role: string; content: string }>,
+        options?: { priority?: string },
+      ) => {
+        seenPriority = options?.priority;
+        return {
+          content: '{"updates":[]}',
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        };
+      },
+    } as any;
+
+    await orchestrator.storage.appendMemoryActionEvents([
+      {
+        timestamp: "2026-03-11T00:00:00.000Z",
+        action: "summarize_node",
+        outcome: "failed",
+        reason: "quality=poor",
+      },
+    ]);
+
+    const result = await orchestrator.optimizeCompressionGuidelines({
+      dryRun: false,
+      eventLimit: 10,
+    });
+
+    assert.equal(result.enabled, true);
+    assert.equal(seenPriority, "background");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("activateCompressionGuidelineDraft requires reviewed draft identity and rejects stale hashes", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-guideline-activate-"));
   try {
