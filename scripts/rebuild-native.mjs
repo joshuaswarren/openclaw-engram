@@ -29,12 +29,22 @@ if (!existsSync(bsqlDir)) {
   process.exit(0);
 }
 
-// Try to load the native addon.  This catches both "file missing" and
-// "binary compiled for a different Node ABI version" cases.
+function canOpenBetterSqlite() {
+  const require = createRequire(join(root, "package.json"));
+  const Database = require("better-sqlite3");
+  const db = new Database(":memory:");
+  try {
+    db.prepare("SELECT 1 AS ok").get();
+  } finally {
+    db.close();
+  }
+}
+
+// Better-sqlite3 only loads its native binding on first real Database open,
+// so a bare require() is a false positive.
 let needsRebuild = false;
 try {
-  const require = createRequire(join(root, "package.json"));
-  require("better-sqlite3");
+  canOpenBetterSqlite();
 } catch {
   needsRebuild = true;
 }
@@ -54,8 +64,7 @@ try {
 
   // Verify the rebuild worked
   try {
-    const require = createRequire(join(root, "package.json"));
-    require("better-sqlite3");
+    canOpenBetterSqlite();
     console.log("[engram] better-sqlite3 rebuilt successfully.");
   } catch {
     console.warn(

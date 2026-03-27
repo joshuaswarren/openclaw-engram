@@ -1,6 +1,7 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
@@ -31,6 +32,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { createOpikExporter } from "./opik-exporter.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
@@ -52,6 +54,33 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
  * Set to null after init completes (success or failure) and cleared on stop().
  */
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
+const ENGRAM_NATIVE_DEPENDENCIES_CHECKED = "__openclawEngramNativeDependenciesChecked";
+
+function ensureNativeDependenciesReady(): void {
+  if ((globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED]) return;
+  (globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED] = true;
+
+  const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const scriptPath = path.join(rootDir, "scripts", "rebuild-native.mjs");
+  const child = spawn(process.execPath, [scriptPath], {
+    cwd: rootDir,
+    env: process.env,
+    stdio: "ignore",
+  });
+  child.unref();
+  child.on("error", (error) => {
+    log.warn(`better-sqlite3 native dependency check failed to start: ${error.message}`);
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      log.warn(`better-sqlite3 native dependency check terminated by signal ${signal}`);
+      return;
+    }
+    if ((code ?? 0) !== 0) {
+      log.warn(`better-sqlite3 native dependency check exited ${code ?? "unknown"}`);
+    }
+  });
+}
 
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
@@ -179,6 +208,8 @@ const pluginDefinition = {
       log.info("registrationMode=setup-only — skipping full initialization");
       return;
     }
+
+    ensureNativeDependenciesReady();
 
     // Workaround: Load config from file since gateway may not pass it
     const fileConfig = loadPluginConfigFromFile();
