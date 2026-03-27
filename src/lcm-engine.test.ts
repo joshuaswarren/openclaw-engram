@@ -277,3 +277,30 @@ test("waitForSessionObserveIdle resolves once the target session drains even if 
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("close prevents deferred observe work from reinitializing the engine", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-engine-close-"),
+  );
+
+  try {
+    const engine = new LcmEngine(createPluginConfig(memoryDir), async () => {
+      return "summary";
+    });
+
+    await engine.ensureInitialized();
+    engine.close();
+
+    await (engine as any).processObserveMessages("session-1", [
+      { role: "user", content: "should not reopen" },
+    ]);
+
+    assert.equal((engine as any).db, null);
+    assert.equal((engine as any).archive, null);
+    assert.equal((engine as any).dag, null);
+    assert.equal((engine as any).summarizer, null);
+    assert.equal((engine as any).observeQueue, null);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

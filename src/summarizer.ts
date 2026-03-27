@@ -485,11 +485,17 @@ Respond with valid JSON matching this schema:
       );
 
       if (sortedSummaries.length > 0) {
-        await writeSummarySnapshot(
-          this.config.memoryDir,
-          sessionKey,
-          sortedSummaries,
-        );
+        try {
+          await writeSummarySnapshot(
+            this.config.memoryDir,
+            sessionKey,
+            sortedSummaries,
+          );
+        } catch (error) {
+          log.warn(
+            `hourly summarizer: failed to materialize summary snapshot for ${sessionKey} (fail-open): ${String(error)}`,
+          );
+        }
       }
 
       return recent;

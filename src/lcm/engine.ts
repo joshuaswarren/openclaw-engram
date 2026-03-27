@@ -38,6 +38,7 @@ export class LcmEngine {
   private dag: LcmDag | null = null;
   private summarizer: LcmSummarizer | null = null;
   private observeQueue: LcmWorkQueue | null = null;
+  private closed = false;
   private readonly config: LcmEngineConfig;
   private readonly memoryDir: string;
   private initPromise: Promise<void> | null = null;
@@ -59,6 +60,7 @@ export class LcmEngine {
 
   /** Lazy init — open database on first use. */
   async ensureInitialized(): Promise<void> {
+    if (this.closed) return;
     if (this.db) return;
     if (this.initPromise) {
       await this.initPromise;
@@ -74,12 +76,12 @@ export class LcmEngine {
 
   private async doInit(): Promise<void> {
     await ensureLcmStateDir(this.memoryDir);
-    this.db = openLcmDatabase(this.memoryDir);
-    this.archive = new LcmArchive(this.db);
-    this.dag = new LcmDag(this.db);
-    this.summarizer = new LcmSummarizer(
-      this.archive,
-      this.dag,
+    const db = openLcmDatabase(this.memoryDir);
+    const archive = new LcmArchive(db);
+    const dag = new LcmDag(db);
+    const summarizer = new LcmSummarizer(
+      archive,
+      dag,
       this.summarizeFn,
       {
         leafBatchSize: this.config.leafBatchSize,
@@ -88,7 +90,7 @@ export class LcmEngine {
         deterministicMaxTokens: this.config.deterministicMaxTokens,
       },
     );
-    this.observeQueue = new LcmWorkQueue({
+    const observeQueue = new LcmWorkQueue({
       concurrency: 1,
       worker: async (sessionId, messages) => {
         await this.processObserveMessages(sessionId, messages);
@@ -121,6 +123,17 @@ export class LcmEngine {
         },
       },
     });
+
+    if (this.closed) {
+      db.close();
+      return;
+    }
+
+    this.db = db;
+    this.archive = archive;
+    this.dag = dag;
+    this.summarizer = summarizer;
+    this.observeQueue = observeQueue;
     log.info("LCM engine initialized");
   }
 
@@ -140,19 +153,21 @@ export class LcmEngine {
     sessionId: string,
     messages: Array<{ role: string; content: string }>,
   ): void {
-    if (!this.config.enabled) return;
+    if (!this.config.enabled || this.closed) return;
     if (messages.length === 0) return;
 
     this.reservePendingObserveInit(sessionId);
 
     void this.ensureInitialized()
       .then(() => {
-        this.observeQueue!.enqueue(sessionId, messages);
+        if (this.closed || !this.observeQueue) return;
+        this.observeQueue.enqueue(sessionId, messages);
         log.debug(
-          `LCM observe enqueued: session=${sessionId}, depth=${this.observeQueue!.depth}, inFlight=${this.observeQueue!.inFlightCount}`,
+          `LCM observe enqueued: session=${sessionId}, depth=${this.observeQueue.depth}, inFlight=${this.observeQueue.inFlightCount}`,
         );
       })
       .catch((err) => {
+        if (this.closed) return;
         log.error(`LCM observe enqueue initialization error: ${err}`);
       })
       .finally(() => {
@@ -164,22 +179,24 @@ export class LcmEngine {
     sessionId: string,
     messages: LcmObserveMessage[],
   ): Promise<void> {
+    if (this.closed) return;
     await this.ensureInitialized();
+    if (this.closed || !this.archive || !this.summarizer) return;
 
     if (messages.length === 0) return;
 
-    const currentMax = this.archive!.getMaxTurnIndex(sessionId);
+    const currentMax = this.archive.getMaxTurnIndex(sessionId);
     const newMessages = messages.map((m, i) => ({
       turnIndex: currentMax + 1 + i,
       role: m.role,
       content: m.content,
     }));
 
-    this.archive!.appendMessages(sessionId, newMessages);
+    this.archive.appendMessages(sessionId, newMessages);
 
     // Trigger incremental summarization inside the worker, after append.
     try {
-      await this.summarizer!.summarizeIncremental(sessionId);
+      await this.summarizer.summarizeIncremental(sessionId);
     } catch (err) {
       log.debug(`LCM incremental summarization error: ${err}`);
     }
@@ -194,15 +211,17 @@ export class LcmEngine {
   }
 
   async waitForObserveQueueIdle(): Promise<void> {
-    if (!this.config.enabled) return;
+    if (!this.config.enabled || this.closed) return;
     await this.ensureInitialized();
+    if (this.closed) return;
     await this.waitForPendingObserveInitIdle();
     await this.observeQueue?.whenIdle();
   }
 
   async waitForSessionObserveIdle(sessionId: string): Promise<void> {
-    if (!this.config.enabled) return;
+    if (!this.config.enabled || this.closed) return;
     await this.ensureInitialized();
+    if (this.closed) return;
     await this.waitForPendingObserveInitIdle(sessionId);
     await this.observeQueue?.whenSessionIdle(sessionId);
   }
@@ -488,13 +507,15 @@ export class LcmEngine {
 
   /** Close the database connection. */
   close(): void {
+    this.closed = true;
     if (this.db) {
       this.db.close();
-      this.db = null;
-      this.archive = null;
-      this.dag = null;
-      this.summarizer = null;
-      this.initPromise = null;
     }
+    this.db = null;
+    this.archive = null;
+    this.dag = null;
+    this.summarizer = null;
+    this.observeQueue = null;
+    this.initPromise = null;
   }
 }

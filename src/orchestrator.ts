@@ -1994,6 +1994,7 @@ export class Orchestrator {
             operation: "semantic-consolidation",
             maxTokens: llmOpts.maxTokens,
             temperature: llmOpts.temperature,
+            priority: "background",
           });
           response = fastResult ? { content: fastResult.content } : null;
         } else {

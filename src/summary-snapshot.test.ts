@@ -159,6 +159,45 @@ test("readRecent backfills a summary snapshot from the full parsed markdown hist
   );
 });
 
+test("readRecent returns parsed summaries even when snapshot materialization fails", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-summary-fail-open-"),
+  );
+  const summarizer = new HourlySummarizer(makeConfig(memoryDir));
+  await summarizer.initialize();
+
+  const sessionKey = "session-snapshot-write-failure";
+  const dateStr = "2026-03-24";
+  const mdDir = path.join(memoryDir, "summaries", "hourly", sessionKey);
+  await mkdir(mdDir, { recursive: true });
+
+  await writeFile(
+    path.join(mdDir, `${dateStr}.md`),
+    [
+      `# Hourly Summaries — ${dateStr}`,
+      "",
+      `*Session: ${sessionKey}*`,
+      "",
+      "## 14:00",
+      "",
+      "- parsed markdown bullet",
+      "  *(4 turns)*",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  await mkdir(path.join(memoryDir, "state", "summaries", `${sessionKey}.json`), {
+    recursive: true,
+  });
+
+  const recent = await summarizer.readRecent(sessionKey, 9999);
+  assert.deepEqual(
+    recent.map((summary) => summary.bullets),
+    [["parsed markdown bullet"]],
+  );
+});
+
 test("upsertSummarySnapshot waits for an inter-process lock before merging new summaries", async () => {
   const memoryDir = await mkdtemp(
     path.join(os.tmpdir(), "engram-summary-lock-"),
