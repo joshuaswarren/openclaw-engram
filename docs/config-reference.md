@@ -464,6 +464,7 @@ When `modelSource` is `gateway`:
 - `localLlmEnabled` and the direct OpenAI client are bypassed — all LLM calls flow through `FallbackLlmClient` with the configured agent chain
 - The existing `openaiApiKey`, `model`, and `localLlm*` settings are ignored for LLM dispatch but retained as config for backward compatibility
 - `localLlmFast*` settings are also bypassed when `fastGatewayAgentId` is set
+- **Reranking** uses the `fastGatewayAgentId` chain (or `gatewayAgentId` if fast is unset) instead of the local LLM — this can dramatically reduce rerank latency when the fast chain points at a cloud provider
 
 ### Setup
 
