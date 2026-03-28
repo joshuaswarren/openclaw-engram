@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.1.16] — 2026-03-28
+
 ### Added
 - **Gateway Model Source** — Route all Engram LLM calls through the OpenClaw gateway's agent model chain instead of Engram's own config. Set `modelSource: "gateway"` and reference agent personas via `gatewayAgentId` and `fastGatewayAgentId`. Enables multi-tier fallback chains (e.g., Fireworks → Z.ai → Anthropic → local LLM) configured once in `openclaw.json`.
 
