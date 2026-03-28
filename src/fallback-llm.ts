@@ -272,8 +272,18 @@ export class FallbackLlmClient {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
-    // Resolve the API key from secret refs before making the call
+    // Resolve the API key from secret refs before making the call.
+    // If the raw key looks like an unresolved secret ref and resolution fails,
+    // skip this provider entirely so the chain falls through to the next.
+    const rawKey = model.providerConfig.apiKey;
+    const needsResolution = rawKey === "secretref-managed"
+      || (typeof rawKey === "object" && rawKey !== null);
     const resolvedApiKey = await this.resolveApiKey(model.providerId, model.providerConfig);
+
+    if (needsResolution && !resolvedApiKey) {
+      throw new Error(`API key for provider "${model.providerId}" could not be resolved from secret ref`);
+    }
+
     const configWithResolvedKey = resolvedApiKey
       ? { ...model.providerConfig, apiKey: resolvedApiKey }
       : model.providerConfig;

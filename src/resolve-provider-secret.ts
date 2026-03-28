@@ -1,7 +1,8 @@
 import { log } from "./logger.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 
 /**
  * Secret reference object format used by OpenClaw's models.json.
@@ -125,48 +126,38 @@ function resolveExecSecret(ref: SecretRef): string | undefined {
     return undefined;
   }
 
-  // For 1Password: `op read "op://vault/item/field"`
-  if (ref.provider === "op") {
-    const args = ref.args ?? ["read", ref.id];
-    const cmd = `${command} ${args.map((a) => `"${a}"`).join(" ")}`;
-    try {
-      const result = execSync(cmd, {
-        encoding: "utf-8",
-        timeout: 10_000,
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-      return result || undefined;
-    } catch (err) {
-      log.warn(`op exec failed: ${err instanceof Error ? err.message : String(err)}`);
-      return undefined;
-    }
+  // Use execFileSync (not execSync) to avoid shell injection —
+  // arguments are passed as an array, never interpolated into a shell string.
+  const args = ref.args ?? (ref.provider === "op" ? ["read", ref.id] : [ref.id]);
+  try {
+    const result = execFileSync(command, args, {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return result || undefined;
+  } catch (err) {
+    log.warn(`exec secret resolution failed (${command}): ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
   }
-
-  return undefined;
 }
 
 function resolveFileSecret(ref: SecretRef): string | undefined {
-  // For file provider with "op" — reads from a 1Password-managed file
-  // The id is typically a path like "/agent-models-fireworks-apiKey"
   if (ref.provider === "op") {
-    // Try reading from the secrets file path
-    const secretsDir = path.join(
-      process.env.HOME ?? "~",
-      ".openclaw",
-      "secrets",
-    );
+    // Try reading from the OpenClaw secrets directory
+    const secretsDir = path.join(os.homedir(), ".openclaw", "secrets");
     const filePath = path.join(secretsDir, ref.id.replace(/^\//, ""));
     if (existsSync(filePath)) {
       try {
         return readFileSync(filePath, "utf-8").trim() || undefined;
       } catch {
-        // Fall through to op read
+        // Fall through to op exec
       }
     }
 
-    // Fall back to `op read` if file doesn't exist
+    // Fall back to `op read` via execFileSync (no shell injection)
     try {
-      const result = execSync(`op read "${ref.id}"`, {
+      const result = execFileSync("op", ["read", ref.id], {
         encoding: "utf-8",
         timeout: 10_000,
         stdio: ["pipe", "pipe", "pipe"],
