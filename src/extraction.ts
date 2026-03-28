@@ -762,7 +762,7 @@ export class ExtractionEngine {
     const traceId = crypto.randomUUID();
     // Only emit llm_start for the direct path when a client or local LLM is configured.
     // Fallback-only deployments skip this to avoid fake spans in Opik.
-    const emittedDirectStart = !!(this.client || this.shouldUseLocalLlm);
+    const emittedDirectStart = !!(this.shouldUseDirectClient || this.shouldUseLocalLlm);
     if (emittedDirectStart) {
       this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
     }
