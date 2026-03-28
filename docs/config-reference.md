@@ -449,6 +449,79 @@ The original v8 roadmap listed several operator knobs that are now split across 
 | `qmdTierParityHiMemEnabled` | `true` | Keep HiMem episode/note handling parity between hot and cold retrieval paths. |
 | `qmdTierAutoBackfillEnabled` | `false` | Enable automated cold-tier parity backfill jobs. |
 
+## Gateway Model Source
+
+Route all Engram LLM calls through the OpenClaw gateway's agent model chain instead of Engram's own `openaiApiKey`/`localLlm*` configuration. This lets you define a single fallback chain per agent persona in `openclaw.json` and reuse the gateway's provider credentials.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `modelSource` | `plugin` | `plugin` uses Engram's own openai/localLlm config; `gateway` delegates to a gateway agent's model chain |
+| `gatewayAgentId` | `""` | Agent persona ID from `openclaw.json → agents.list[]` for primary LLM calls (extraction, consolidation, summarization). Falls back to `agents.defaults.model` if empty. |
+| `fastGatewayAgentId` | `""` | Agent persona ID for fast-tier ops (rerank, entity summaries, compression guidelines). Uses `gatewayAgentId` chain when empty. |
+
+When `modelSource` is `gateway`:
+
+- `localLlmEnabled` and the direct OpenAI client are bypassed — all LLM calls flow through `FallbackLlmClient` with the configured agent chain
+- The existing `openaiApiKey`, `model`, and `localLlm*` settings are ignored for LLM dispatch but retained as config for backward compatibility
+- `localLlmFast*` settings are also bypassed when `fastGatewayAgentId` is set
+
+### Setup
+
+1. **Define providers** in `agents/main/agent/models.json` with the endpoints and credentials you want Engram to use (e.g., `fireworks`, `zai`, `anthropic`, `lmstudio`).
+
+2. **Create agent personas** in `openclaw.json → agents.list[]`:
+
+```jsonc
+{
+  "id": "engram-llm",
+  "default": false,
+  "name": "Engram LLM Chain",
+  "model": {
+    "primary": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+    "fallbacks": [
+      "zai/glm-5",
+      "anthropic/claude-sonnet-4-6",
+      "lmstudio/qwen3.5-35b-a3b-mlx-lm"
+    ]
+  }
+},
+{
+  "id": "engram-llm-fast",
+  "default": false,
+  "name": "Engram Fast LLM Chain",
+  "model": {
+    "primary": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+    "fallbacks": [
+      "zai/glm-5-turbo",
+      "anthropic/claude-sonnet-4-6",
+      "lmstudio/qwen3.5-35b-a3b-mlx-lm"
+    ]
+  }
+}
+```
+
+Model strings use the format `provider/model-id` where `provider` matches a key in the `providers` object of your agent's `models.json`.
+
+3. **Configure Engram** in `openclaw.json → plugins.entries.openclaw-engram.config`:
+
+```jsonc
+{
+  "modelSource": "gateway",
+  "gatewayAgentId": "engram-llm",
+  "fastGatewayAgentId": "engram-llm-fast"
+}
+```
+
+4. **Restart the gateway** for changes to take effect.
+
+### How the fallback chain works
+
+When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response. Both `openai-completions` and `anthropic-messages` API formats are supported — the client auto-detects based on the provider's `api` field.
+
+### Switching back
+
+Set `modelSource` to `plugin` (or remove it) to restore the original behavior where Engram uses its own `localLlm*` and `openaiApiKey` settings.
+
 ## Local LLM / OpenAI-Compatible Endpoint
 
 | Setting | Default | Description |
