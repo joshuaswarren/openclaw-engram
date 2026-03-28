@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Rerank gateway routing** — Reranking now routes through the `fastGatewayAgentId` model chain when `modelSource` is `"gateway"`, instead of always using the local LLM. This eliminates the 7–38s local rerank bottleneck when a cloud fast-tier provider is configured.
+
 ## [v9.1.16] — 2026-03-28
 
 ### Added

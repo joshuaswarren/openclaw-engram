@@ -1525,6 +1525,26 @@ export class Orchestrator {
     return result ? { content: result.content } : null;
   }
 
+  /**
+   * Get a fast-tier LLM client compatible with the rerank interface.
+   * When gateway model source is active, routes through the gateway fast chain.
+   * Otherwise returns the local fast LLM directly.
+   */
+  get fastLlmForRerank(): {
+    chatCompletion: (
+      messages: Array<{ role: string; content: string }>,
+      options?: { maxTokens?: number; temperature?: number; timeoutMs?: number; operation?: string; priority?: "recall-critical" | "background" },
+    ) => Promise<{ content: string } | null>;
+  } {
+    if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
+      return {
+        chatCompletion: (messages, options) =>
+          this.fastChatCompletion(messages, options ?? {}),
+      };
+    }
+    return this.fastLlm;
+  }
+
   async initialize(): Promise<void> {
     await this.storage.ensureDirectories();
     await this.storage.loadAliases();
@@ -6695,7 +6715,7 @@ export class Orchestrator {
               id: r.path,
               snippet: r.snippet || r.path,
             })),
-          local: this.fastLlm,
+          local: this.fastLlmForRerank,
           enabled: true,
           timeoutMs: this.config.rerankTimeoutMs,
           maxCandidates: this.config.rerankMaxCandidates,
@@ -11028,7 +11048,7 @@ export class Orchestrator {
             id: r.path,
             snippet: r.snippet || r.path,
           })),
-        local: this.fastLlm,
+        local: this.fastLlmForRerank,
         enabled: true,
         timeoutMs: this.config.rerankTimeoutMs,
         maxCandidates: this.config.rerankMaxCandidates,

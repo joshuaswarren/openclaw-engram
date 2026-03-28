@@ -68,19 +68,26 @@ After installation, add Engram to your `openclaw.json`:
       "openclaw-engram": {
         "enabled": true,
         "config": {
-          // Use OpenAI for extraction:
+          // Option 1: Use OpenAI for extraction:
           "openaiApiKey": "${OPENAI_API_KEY}"
 
-          // OR use a local LLM (no API key needed):
+          // Option 2: Use a local LLM (no API key needed):
           // "localLlmEnabled": true,
           // "localLlmUrl": "http://localhost:1234/v1",
           // "localLlmModel": "qwen2.5-32b-instruct"
+
+          // Option 3: Use the gateway model chain (multi-provider fallback):
+          // "modelSource": "gateway",
+          // "gatewayAgentId": "engram-llm",
+          // "fastGatewayAgentId": "engram-llm-fast"
         }
       }
     }
   }
 }
 ```
+
+> **Gateway model source:** When `modelSource` is `"gateway"`, Engram routes all LLM calls (extraction, consolidation, reranking) through an OpenClaw agent persona's model chain instead of its own config. Define agent personas in `openclaw.json → agents.list[]` with a `primary` model and `fallbacks[]` array — Engram tries each in order until one succeeds. This lets you build multi-provider fallback chains like Fireworks → local LLM → cloud OpenAI. See the [Gateway Model Source](docs/config-reference.md#gateway-model-source) guide for full setup.
 
 Restart the gateway:
 
@@ -192,9 +199,9 @@ OpenClaw's built-in memory is basic — it works for getting started, but lacks 
 
 Engram uses hybrid search (BM25 + vector + reranking via [QMD](https://github.com/tobilu/qmd)) to find semantically relevant memories. It doesn't just match keywords — it understands what you're working on and surfaces the right context.
 
-### OpenAI or local LLM — your choice
+### Flexible LLM routing — OpenAI, local, or gateway model chain
 
-Use OpenAI for extraction and reranking, or run entirely offline with a local LLM via Ollama, LM Studio, or any OpenAI-compatible endpoint. The `local-llm-heavy` preset is optimized for fully local operation. See the [Local LLM Guide](docs/guides/local-llm.md).
+Use OpenAI for extraction and reranking, run entirely offline with a local LLM (Ollama, LM Studio), or route through the **gateway model chain** to use any provider with automatic fallback. The `local-llm-heavy` preset is optimized for fully local operation. See the [Local LLM Guide](docs/guides/local-llm.md) and the [Gateway Model Source](docs/config-reference.md#gateway-model-source) section for multi-provider setups.
 
 ### Progressive complexity
 
