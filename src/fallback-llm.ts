@@ -5,6 +5,7 @@ import {
   buildChatCompletionTokenLimit,
   shouldAssumeOpenAiChatCompletions,
 } from "./openai-chat-compat.js";
+import { resolveProviderApiKey } from "./resolve-provider-secret.js";
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -249,6 +250,21 @@ export class FallbackLlmClient {
   }
 
   /**
+   * Resolve the API key for a provider, handling OpenClaw secret ref formats.
+   * Results are cached per provider so exec calls only happen once.
+   */
+  private async resolveApiKey(
+    providerId: string,
+    providerConfig: ModelProviderConfig,
+  ): Promise<string | undefined> {
+    return resolveProviderApiKey(
+      providerId,
+      providerConfig.apiKey,
+      this.gatewayConfig as { auth?: { profiles?: Record<string, unknown> } } | undefined,
+    );
+  }
+
+  /**
    * Try to call a single model.
    */
   private async tryModel(
@@ -256,13 +272,19 @@ export class FallbackLlmClient {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
+    // Resolve the API key from secret refs before making the call
+    const resolvedApiKey = await this.resolveApiKey(model.providerId, model.providerConfig);
+    const configWithResolvedKey = resolvedApiKey
+      ? { ...model.providerConfig, apiKey: resolvedApiKey }
+      : model.providerConfig;
+
     switch (model.providerConfig.api) {
       case "anthropic-messages":
-        return await this.callAnthropic(model.providerConfig, model.modelId, messages, options);
+        return await this.callAnthropic(configWithResolvedKey, model.modelId, messages, options);
       case "openai-completions":
       default:
         return await this.callOpenAI(
-          model.providerConfig,
+          configWithResolvedKey,
           model.modelId,
           messages,
           options,
@@ -291,8 +313,8 @@ export class FallbackLlmClient {
       ...config.headers,
     };
 
-    // Handle auth
-    if (config.apiKey) {
+    // Handle auth — apiKey is already resolved to a string by tryModel()
+    if (config.apiKey && typeof config.apiKey === "string") {
       if (config.authHeader !== false) {
         headers["Authorization"] = `Bearer ${config.apiKey}`;
       }
@@ -365,8 +387,8 @@ export class FallbackLlmClient {
       ...config.headers,
     };
 
-    // Handle auth - Anthropic uses x-api-key header
-    if (config.apiKey) {
+    // Handle auth - Anthropic uses x-api-key header (apiKey resolved by tryModel)
+    if (config.apiKey && typeof config.apiKey === "string") {
       headers["x-api-key"] = config.apiKey;
     }
 

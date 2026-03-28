@@ -519,6 +519,17 @@ Model strings use the format `provider/model-id` where `provider` matches a key 
 
 When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response. Both `openai-completions` and `anthropic-messages` API formats are supported — the client auto-detects based on the provider's `api` field.
 
+### Secret resolution
+
+Provider API keys in `models.json` can use any of OpenClaw's secret reference formats:
+
+- **Plain strings** — used as-is (e.g., `"apiKey": "sk-..."`)
+- **SecretRef objects** — resolved via exec/file/env (e.g., `"apiKey": {"source": "file", "provider": "op", "id": "/my-key"}`)
+- **`"secretref-managed"`** — resolved from auth profiles in `openclaw.json`
+- **Environment variables** — falls back to `PROVIDER_NAME_API_KEY` env var
+
+Secret resolution happens lazily on first use and results are cached for the lifetime of the gateway process. Existing setups with plain-text API keys continue to work unchanged.
+
 ### Switching back
 
 Set `modelSource` to `plugin` (or remove it) to restore the original behavior where Engram uses its own `localLlm*` and `openaiApiKey` settings.
