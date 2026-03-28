@@ -65,7 +65,7 @@ export class HourlySummarizer {
   }
 
   private get shouldUseLocalLlm(): boolean {
-    return this.shouldUseLocalLlm && !this.useGatewayModelSource;
+    return this.config.localLlmEnabled && !this.useGatewayModelSource;
   }
 
   private withGatewayAgent(options: import("./fallback-llm.js").FallbackLlmOptions): import("./fallback-llm.js").FallbackLlmOptions {

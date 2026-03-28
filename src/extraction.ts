@@ -114,7 +114,7 @@ export class ExtractionEngine {
    * Disabled when gateway model source is active (gateway chain replaces local).
    */
   private get shouldUseLocalLlm(): boolean {
-    return this.shouldUseLocalLlm && !this.useGatewayModelSource;
+    return this.config.localLlmEnabled && !this.useGatewayModelSource;
   }
 
   /**
