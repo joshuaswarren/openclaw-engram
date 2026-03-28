@@ -85,9 +85,11 @@ async function resolveSecretRef(
   providerId: string,
   ref: SecretRef,
 ): Promise<string | undefined> {
-  const cacheKey = `ref:${ref.source}:${ref.provider ?? ""}:${ref.id}`;
-  if (resolvedCache.has(cacheKey)) {
-    return resolvedCache.get(cacheKey) ?? undefined;
+  const cacheKey = `ref:${ref.source}:${ref.provider ?? ""}:${ref.id}:${ref.command ?? ""}:${(ref.args ?? []).join(",")}`;
+  const cached = resolvedCache.get(cacheKey);
+  if (cached !== undefined) {
+    // Don't cache failures permanently — only cache successes
+    if (cached !== null) return cached;
   }
 
   let resolved: string | undefined;
@@ -110,7 +112,10 @@ async function resolveSecretRef(
     );
   }
 
-  resolvedCache.set(cacheKey, resolved ?? null);
+  // Only cache successful resolutions; failures are retried next time
+  if (resolved) {
+    resolvedCache.set(cacheKey, resolved);
+  }
 
   if (resolved) {
     log.debug(`resolved API key for provider "${providerId}" via ${ref.source}/${ref.provider ?? "default"}`);
@@ -166,6 +171,18 @@ function resolveFileSecret(ref: SecretRef): string | undefined {
     } catch {
       // Silent — op may not be available
     }
+  } else {
+    // Non-OP file provider: treat ref.id as a file path (absolute or relative to secrets dir)
+    const filePath = path.isAbsolute(ref.id)
+      ? ref.id
+      : path.join(os.homedir(), ".openclaw", "secrets", ref.id.replace(/^\//, ""));
+    if (existsSync(filePath)) {
+      try {
+        return readFileSync(filePath, "utf-8").trim() || undefined;
+      } catch {
+        // Silent
+      }
+    }
   }
 
   return undefined;
@@ -176,8 +193,9 @@ function resolveSecretRefManaged(
   gatewayConfig?: { auth?: { profiles?: Record<string, unknown> } },
 ): string | undefined {
   const cacheKey = `managed:${providerId}`;
-  if (resolvedCache.has(cacheKey)) {
-    return resolvedCache.get(cacheKey) ?? undefined;
+  const cached = resolvedCache.get(cacheKey);
+  if (cached !== undefined && cached !== null) {
+    return cached;
   }
 
   let resolved: string | undefined;
@@ -242,9 +260,9 @@ function resolveSecretRefManaged(
     }
   }
 
-  resolvedCache.set(cacheKey, resolved ?? null);
-
+  // Only cache successful resolutions; failures are retried next time
   if (resolved) {
+    resolvedCache.set(cacheKey, resolved);
     log.debug(`resolved managed API key for provider "${providerId}" via auth profile`);
   } else {
     log.debug(`could not resolve managed API key for provider "${providerId}"`);
@@ -257,9 +275,10 @@ function resolveSecretRefSync(
   providerId: string,
   ref: SecretRef,
 ): string | undefined {
-  const cacheKey = `ref:${ref.source}:${ref.provider ?? ""}:${ref.id}`;
-  if (resolvedCache.has(cacheKey)) {
-    return resolvedCache.get(cacheKey) ?? undefined;
+  const cacheKey = `ref:${ref.source}:${ref.provider ?? ""}:${ref.id}:${ref.command ?? ""}:${(ref.args ?? []).join(",")}`;
+  const cached = resolvedCache.get(cacheKey);
+  if (cached !== undefined && cached !== null) {
+    return cached;
   }
 
   let resolved: string | undefined;
@@ -282,7 +301,9 @@ function resolveSecretRefSync(
     );
   }
 
-  resolvedCache.set(cacheKey, resolved ?? null);
+  if (resolved) {
+    resolvedCache.set(cacheKey, resolved);
+  }
   return resolved;
 }
 
