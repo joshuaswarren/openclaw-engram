@@ -796,7 +796,7 @@ export class ExtractionEngine {
     }
 
     // Try direct OpenAI-compatible client (Scryr, OpenRouter, etc.)
-    if (this.client) {
+    if (this.shouldUseDirectClient) {
       try {
         const directResult = await this.extractWithDirectClient(conversation, existingEntities);
         if (directResult) {
@@ -2340,7 +2340,7 @@ Return valid JSON only.` },
     }
 
     // Direct Responses API fallback (AGENTS.md-compliant: never Chat Completions)
-    if (this.client) {
+    if (this.shouldUseDirectClient) {
       try {
         const response = await (this.client as any).responses.create({
           model: this.config.model,

@@ -1510,14 +1510,14 @@ export class Orchestrator {
    */
   private async fastChatCompletion(
     messages: Array<{ role: string; content: string }>,
-    options: { temperature?: number; maxTokens?: number; operation?: string; priority?: "background" | "recall-critical" },
+    options: { temperature?: number; maxTokens?: number; timeoutMs?: number; operation?: string; priority?: "background" | "recall-critical" },
   ): Promise<{ content: string } | null> {
     if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
       const agentId =
         this.config.fastGatewayAgentId || this.config.gatewayAgentId || undefined;
       const result = await this.fastGatewayLlm.chatCompletion(
         messages as Array<{ role: "system" | "user" | "assistant"; content: string }>,
-        { temperature: options.temperature, maxTokens: options.maxTokens, agentId },
+        { temperature: options.temperature, maxTokens: options.maxTokens, timeoutMs: options.timeoutMs, agentId },
       );
       return result ? { content: result.content } : null;
     }
