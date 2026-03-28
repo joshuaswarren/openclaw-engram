@@ -93,6 +93,45 @@ export class ExtractionEngine {
     this.localLlm = localLlm ?? new LocalLlmClient(config, modelRegistry);
     this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
     this.modelRegistry = modelRegistry ?? new ModelRegistry(config.memoryDir);
+    if (config.modelSource === "gateway") {
+      log.info(
+        `extraction engine: using gateway model source` +
+          (config.gatewayAgentId ? ` (agent: ${config.gatewayAgentId})` : " (defaults)"),
+      );
+    }
+  }
+
+  /**
+   * Whether LLM calls should be routed through the gateway model chain
+   * instead of the plugin's own local/OpenAI clients.
+   */
+  private get useGatewayModelSource(): boolean {
+    return this.config.modelSource === "gateway";
+  }
+
+  /**
+   * Whether the local LLM path should be attempted.
+   * Disabled when gateway model source is active (gateway chain replaces local).
+   */
+  private get shouldUseLocalLlm(): boolean {
+    return this.config.localLlmEnabled && !this.useGatewayModelSource;
+  }
+
+  /**
+   * Whether the direct OpenAI client should be used.
+   * Disabled when gateway model source is active.
+   */
+  private get shouldUseDirectClient(): boolean {
+    return !this.useGatewayModelSource && this.client !== null;
+  }
+
+  /**
+   * Build FallbackLlmOptions with the configured gateway agent ID injected.
+   */
+  private withGatewayAgent(options: import("./fallback-llm.js").FallbackLlmOptions): import("./fallback-llm.js").FallbackLlmOptions {
+    if (!this.useGatewayModelSource) return options;
+    const agentId = this.config.gatewayAgentId || undefined;
+    return agentId ? { ...options, agentId } : options;
   }
 
   private emit(event: LlmTraceEvent): void {
@@ -422,7 +461,7 @@ export class ExtractionEngine {
       conversation,
     ].join("\n");
 
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResponse = await this.localLlm.chatCompletion(
           [
@@ -468,11 +507,11 @@ export class ExtractionEngine {
         { role: "user", content: prompt },
       ],
       ProactiveQuestionsResultSchema,
-      {
+      this.withGatewayAgent({
         temperature: 0.2,
         maxTokens: this.config.proactiveExtractionMaxTokens,
         timeoutMs: this.config.proactiveExtractionTimeoutMs,
-      },
+      }),
     );
     if (!fallbackResult?.questions) return [];
     return fallbackResult.questions
@@ -521,7 +560,7 @@ export class ExtractionEngine {
       conversation,
     ].join("\n");
 
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResponse = await this.localLlm.chatCompletion(
           [
@@ -564,11 +603,11 @@ export class ExtractionEngine {
         { role: "user", content: prompt },
       ],
       ProactiveExtractionResultSchema,
-      {
+      this.withGatewayAgent({
         temperature: 0.2,
         maxTokens: this.config.proactiveExtractionMaxTokens,
         timeoutMs: this.config.proactiveExtractionTimeoutMs,
-      },
+      }),
     );
     if (!fallbackResult) {
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
@@ -675,7 +714,7 @@ export class ExtractionEngine {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: { temperature?: number; maxTokens?: number } = {},
   ): Promise<T | null> {
-    const detailed = await this.fallbackLlm.parseWithSchemaDetailed(messages, schema, options);
+    const detailed = await this.fallbackLlm.parseWithSchemaDetailed(messages, schema, this.withGatewayAgent(options));
     if (detailed?.result) {
       const durationMs = Date.now() - startedAtMs;
       this.emit({
@@ -723,7 +762,7 @@ export class ExtractionEngine {
     const traceId = crypto.randomUUID();
     // Only emit llm_start for the direct path when a client or local LLM is configured.
     // Fallback-only deployments skip this to avoid fake spans in Opik.
-    const emittedDirectStart = !!(this.client || this.config.localLlmEnabled);
+    const emittedDirectStart = !!(this.shouldUseDirectClient || this.shouldUseLocalLlm);
     if (emittedDirectStart) {
       this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "extraction", input: conversation });
     }
@@ -731,7 +770,7 @@ export class ExtractionEngine {
     const startTime = Date.now();
 
     // Try local LLM first if enabled
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResult = await this.extractWithLocalLlm(conversation, existingEntities);
         if (localResult) {
@@ -757,7 +796,7 @@ export class ExtractionEngine {
     }
 
     // Try direct OpenAI-compatible client (Scryr, OpenRouter, etc.)
-    if (this.client) {
+    if (this.shouldUseDirectClient) {
       try {
         const directResult = await this.extractWithDirectClient(conversation, existingEntities);
         if (directResult) {
@@ -816,7 +855,7 @@ export class ExtractionEngine {
       const detailed = await this.fallbackLlm.parseWithSchemaDetailed(
         messages,
         ExtractionResultSchema,
-        { temperature: 0.3, maxTokens: 4096, timeoutMs: 30_000 },
+        this.withGatewayAgent({ temperature: 0.3, maxTokens: 4096, timeoutMs: 30_000 }),
       );
 
       const fallbackDurationMs = Date.now() - fallbackStartTime;
@@ -860,7 +899,7 @@ export class ExtractionEngine {
    */
   private async extractWithLocalLlm(conversation: string, existingEntities?: string[]): Promise<ExtractionResult | null> {
     log.debug(
-      `extractWithLocalLlm: starting extraction, localLlmEnabled=${this.config.localLlmEnabled}, model=${this.config.localLlmModel}`,
+      `extractWithLocalLlm: starting extraction, localLlmEnabled=${this.shouldUseLocalLlm}, model=${this.config.localLlmModel}`,
     );
 
     // Get dynamic context sizes based on model capabilities (with optional user override)
@@ -1231,7 +1270,7 @@ Do NOT write about the extraction process itself. Do NOT say things like "I extr
     const cStartTime = Date.now();
 
     // Try local LLM first if enabled
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResult = await this.consolidateWithLocalLlm(newList, existingList, currentProfile);
         if (localResult) {
@@ -1553,7 +1592,7 @@ Respond with valid JSON matching this schema:
     const pStartTime = Date.now();
 
     // Try local LLM first if enabled
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResult = await this.consolidateProfileWithLocalLlm(fullProfileContent, targetLines);
         if (localResult) {
@@ -1775,7 +1814,7 @@ Respond with valid JSON matching this schema:
     const iStartTime = Date.now();
 
     // Try local LLM first if enabled
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResult = await this.consolidateIdentityWithLocalLlm(fullIdentityContent);
         if (localResult) {
@@ -2024,7 +2063,7 @@ Respond with valid JSON matching this schema:
   "whichIsNewer": "first"
 }`;
 
-      if (this.config.localLlmEnabled) {
+      if (this.shouldUseLocalLlm) {
         try {
           const localResponse = await this.localLlm.chatCompletion(
             [
@@ -2059,13 +2098,13 @@ Respond with valid JSON matching this schema:
         }
       }
 
-      if (!this.client) {
+      if (!this.shouldUseDirectClient) {
         const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: input },
           ],
-          { temperature: 0.3, maxTokens: 2048 },
+          this.withGatewayAgent({ temperature: 0.3, maxTokens: 2048 }),
         );
         const normalized = this.normalizeContradictionVerificationResult(
           this.parseJsonObject(fallbackResponse?.content),
@@ -2080,7 +2119,7 @@ Respond with valid JSON matching this schema:
         return null;
       }
 
-      const response = await this.client.chat.completions.create({
+      const response = await this.client!.chat.completions.create({
         model: this.config.model,
         messages: [
           { role: "system", content: systemPrompt },
@@ -2152,7 +2191,7 @@ Respond with valid JSON matching this schema:
   "links": [{"targetId": "memory-id", "linkType": "follows|references|contradicts|supports|related", "strength": 0.8, "reason": "why"}]
 }`;
 
-      if (this.config.localLlmEnabled) {
+      if (this.shouldUseLocalLlm) {
         try {
           const localResponse = await this.localLlm.chatCompletion(
             [
@@ -2183,13 +2222,13 @@ Respond with valid JSON matching this schema:
         }
       }
 
-      if (!this.client) {
+      if (!this.shouldUseDirectClient) {
         const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: input },
           ],
-          { temperature: 0.3, maxTokens: 2048 },
+          this.withGatewayAgent({ temperature: 0.3, maxTokens: 2048 }),
         );
         const normalized = this.normalizeSuggestedLinksResult(this.parseJsonObject(fallbackResponse?.content));
         if (normalized) {
@@ -2200,7 +2239,7 @@ Respond with valid JSON matching this schema:
         return null;
       }
 
-      const response = await this.client.chat.completions.create({
+      const response = await this.client!.chat.completions.create({
         model: this.config.model,
         messages: [
           { role: "system", content: systemPrompt },
@@ -2243,7 +2282,7 @@ ${memoryContext}`;
     const startedAt = Date.now();
     this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "day_summary", input: memoryContext.slice(0, 4000) });
 
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResponse = await this.localLlm.chatCompletion(
           [
@@ -2301,7 +2340,7 @@ Return valid JSON only.` },
     }
 
     // Direct Responses API fallback (AGENTS.md-compliant: never Chat Completions)
-    if (this.client) {
+    if (this.shouldUseDirectClient) {
       try {
         const response = await (this.client as any).responses.create({
           model: this.config.model,
@@ -2361,7 +2400,7 @@ Respond with valid JSON matching this schema:
   "keyEntities": ["entity-1", "entity-2"]
 }`;
 
-      if (this.config.localLlmEnabled) {
+      if (this.shouldUseLocalLlm) {
         try {
           const localResponse = await this.localLlm.chatCompletion(
             [
@@ -2394,13 +2433,13 @@ Respond with valid JSON matching this schema:
         }
       }
 
-      if (!this.client) {
+      if (!this.shouldUseDirectClient) {
         const fallbackResponse = await this.fallbackLlm.chatCompletion(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: `Summarize these ${memories.length} memories:\n\n${memoryList}` },
           ],
-          { temperature: 0.3, maxTokens: 4096 },
+          this.withGatewayAgent({ temperature: 0.3, maxTokens: 4096 }),
         );
         const normalized = this.normalizeMemorySummaryResult(this.parseJsonObject(fallbackResponse?.content));
         if (normalized) {
@@ -2411,7 +2450,7 @@ Respond with valid JSON matching this schema:
         return null;
       }
 
-      const response = await this.client.chat.completions.create({
+      const response = await this.client!.chat.completions.create({
         model: this.config.model,
         messages: [
           { role: "system", content: systemPrompt },

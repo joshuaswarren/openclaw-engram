@@ -1,5 +1,5 @@
 import { log } from "./logger.js";
-import type { GatewayConfig, ModelProviderConfig } from "./types.js";
+import type { GatewayConfig, ModelProviderConfig, AgentPersona } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import {
   buildChatCompletionTokenLimit,
@@ -10,6 +10,8 @@ export interface FallbackLlmOptions {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /** Override which agent persona's model chain to use (by ID from agents.list[]). */
+  agentId?: string;
 }
 
 export interface FallbackLlmResponse {
@@ -44,20 +46,21 @@ export class FallbackLlmClient {
   /**
    * Check if fallback is available (gateway config has at least one model).
    */
-  isAvailable(): boolean {
-    const models = this.getModelChain();
+  isAvailable(agentId?: string): boolean {
+    const models = this.getModelChain(agentId);
     return models.length > 0;
   }
 
   /**
    * Make a chat completion request using the gateway's default AI chain.
    * Tries primary first, then each fallback in order.
+   * When agentId is provided, uses that agent persona's model chain instead of defaults.
    */
   async chatCompletion(
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions = {},
   ): Promise<FallbackLlmResponse | null> {
-    const models = this.getModelChain();
+    const models = this.getModelChain(options.agentId);
     if (models.length === 0) {
       log.warn("fallback LLM: no models configured in gateway");
       return null;
@@ -161,23 +164,47 @@ export class FallbackLlmClient {
   /**
    * Get the full model chain from gateway config.
    * Returns array of models in order: [primary, fallback1, fallback2, ...]
+   *
+   * When agentId is provided, looks up the matching entry in agents.list[]
+   * and uses that persona's model chain. Falls back to agents.defaults.model
+   * if agentId is not found or not provided.
    */
-  private getModelChain(): ModelRef[] {
+  private getModelChain(agentId?: string): ModelRef[] {
     const chain: ModelRef[] = [];
     const providers = this.gatewayConfig?.models?.providers;
-    const defaultModelConfig = this.gatewayConfig?.agents?.defaults?.model;
 
     if (!providers) return chain;
+
+    // Resolve the model config: agent persona chain or global defaults
+    let modelConfig: { primary?: string; fallbacks?: string[] } | undefined;
+
+    if (agentId) {
+      const persona = this.gatewayConfig?.agents?.list?.find(
+        (a) => a.id === agentId,
+      );
+      if (persona?.model) {
+        modelConfig = persona.model;
+        log.debug(`fallback LLM: using agent persona "${agentId}" model chain`);
+      } else {
+        log.warn(
+          `fallback LLM: agent persona "${agentId}" not found or has no model config, falling back to defaults`,
+        );
+      }
+    }
+
+    if (!modelConfig) {
+      modelConfig = this.gatewayConfig?.agents?.defaults?.model;
+    }
 
     // Build list of model strings: primary + fallbacks
     const modelStrings: string[] = [];
 
-    if (defaultModelConfig?.primary) {
-      modelStrings.push(defaultModelConfig.primary);
+    if (modelConfig?.primary) {
+      modelStrings.push(modelConfig.primary);
     }
 
-    if (Array.isArray(defaultModelConfig?.fallbacks)) {
-      for (const fb of defaultModelConfig.fallbacks) {
+    if (Array.isArray(modelConfig?.fallbacks)) {
+      for (const fb of modelConfig.fallbacks) {
         if (typeof fb === "string" && !modelStrings.includes(fb)) {
           modelStrings.push(fb);
         }

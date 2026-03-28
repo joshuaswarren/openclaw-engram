@@ -188,6 +188,7 @@ export async function synthesizeCalibrationRules(
   corrections: CorrectionMemory[],
   llm: FallbackLlmClient,
   existingRules: CalibrationRule[],
+  agentId?: string,
 ): Promise<CalibrationRule[]> {
   if (corrections.length < 2) return [];
 
@@ -206,7 +207,7 @@ export async function synthesizeCalibrationRules(
       { role: "system", content: CLUSTER_PROMPT },
       { role: "user", content: `Here are ${corrections.length} corrections from this user:\n\n${correctionText}${existingRulesText}` },
     ],
-    { temperature: 0.3, maxTokens: 3000 },
+    { temperature: 0.3, maxTokens: 3000, agentId },
   );
 
   if (!response?.content) return [];
@@ -289,10 +290,11 @@ export function buildCalibrationRecallSection(
 export async function runCalibrationConsolidation(options: {
   memoryDir: string;
   gatewayConfig?: GatewayConfig;
+  gatewayAgentId?: string;
 }): Promise<CalibrationRule[]> {
   try {
     const llm = new FallbackLlmClient(options.gatewayConfig);
-    if (!llm.isAvailable()) {
+    if (!llm.isAvailable(options.gatewayAgentId)) {
       log.debug("[calibration] no LLM available — skipping consolidation");
       return [];
     }
@@ -305,7 +307,7 @@ export async function runCalibrationConsolidation(options: {
 
     const existingIndex = await readCalibrationIndex(options.memoryDir);
 
-    const newRules = await synthesizeCalibrationRules(corrections, llm, existingIndex.rules);
+    const newRules = await synthesizeCalibrationRules(corrections, llm, existingIndex.rules, options.gatewayAgentId);
     if (newRules.length === 0) {
       log.debug("[calibration] no new calibration rules synthesized");
       return existingIndex.rules;

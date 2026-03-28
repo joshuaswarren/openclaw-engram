@@ -177,13 +177,14 @@ If no clear patterns exist, return {"rules": [], "preferences": []}.`;
 async function consolidateWithLlm(
   context: string,
   llm: FallbackLlmClient,
+  agentId?: string,
 ): Promise<LlmConsolidationResult> {
   const response = await llm.chatCompletion(
     [
       { role: "system", content: CONSOLIDATION_PROMPT },
       { role: "user", content: context },
     ],
-    { temperature: 0.2, maxTokens: 2000 },
+    { temperature: 0.2, maxTokens: 2000, agentId },
   );
 
   if (!response?.content) {
@@ -255,6 +256,7 @@ export async function deriveCausalPromotionCandidates(options: {
   causalTrajectoryStoreDir?: string;
   config: ConsolidationConfig;
   gatewayConfig?: GatewayConfig;
+  gatewayAgentId?: string;
 }): Promise<CausalPatternCandidate[]> {
   try {
     const trajectories = await readAllTrajectories(options.memoryDir, options.causalTrajectoryStoreDir);
@@ -268,13 +270,13 @@ export async function deriveCausalPromotionCandidates(options: {
 
     // If no LLM available, fall back to empty (no deterministic fallback)
     const llm = new FallbackLlmClient(options.gatewayConfig);
-    if (!llm.isAvailable()) {
+    if (!llm.isAvailable(options.gatewayAgentId)) {
       log.debug("[cmc] no LLM available for consolidation — skipping");
       return [];
     }
 
     // Call LLM for pattern analysis
-    const result = await consolidateWithLlm(context, llm);
+    const result = await consolidateWithLlm(context, llm, options.gatewayAgentId);
     const candidates = llmResultToCandidates(result);
 
     log.debug(`[cmc] LLM consolidation produced ${candidates.length} rule(s) and ${result.preferences.length} preference(s)`);
@@ -293,6 +295,7 @@ export async function synthesizeCausalPreferencesViaLlm(options: {
   memoryDir: string;
   causalTrajectoryStoreDir?: string;
   gatewayConfig?: GatewayConfig;
+  gatewayAgentId?: string;
   minTrajectories?: number;
 }): Promise<string | null> {
   try {
@@ -304,9 +307,9 @@ export async function synthesizeCausalPreferencesViaLlm(options: {
     const context = formatCausalContext(trajectories, chainIndex);
 
     const llm = new FallbackLlmClient(options.gatewayConfig);
-    if (!llm.isAvailable()) return null;
+    if (!llm.isAvailable(options.gatewayAgentId)) return null;
 
-    const result = await consolidateWithLlm(context, llm);
+    const result = await consolidateWithLlm(context, llm, options.gatewayAgentId);
     if (result.preferences.length === 0 && result.rules.length === 0) return null;
 
     const lines: string[] = ["## Behavioral Insights (from Causal Chain Analysis)", ""];
