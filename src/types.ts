@@ -1376,7 +1376,7 @@ export interface ModelDefinitionConfig {
 
 export interface ModelProviderConfig {
   baseUrl: string;
-  apiKey?: string;
+  apiKey?: string | Record<string, unknown>;
   auth?: ModelProviderAuthMode;
   api?: ModelApi;
   headers?: Record<string, string>;
@@ -1414,6 +1414,9 @@ export interface GatewayConfig {
   };
   models?: {
     providers?: Record<string, ModelProviderConfig>;
+  };
+  auth?: {
+    profiles?: Record<string, unknown>;
   };
 }
 
