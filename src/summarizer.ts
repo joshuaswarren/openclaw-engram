@@ -55,9 +55,23 @@ export class HourlySummarizer {
     // Initialize fallback client with gateway config
     this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
 
-    if (!gatewayConfig?.agents?.defaults?.model?.primary && !config.localLlmEnabled) {
+    if (!gatewayConfig?.agents?.defaults?.model?.primary && !config.localLlmEnabled && config.modelSource !== "gateway") {
       log.warn("no gateway default AI and local LLM disabled — hourly summarization disabled");
     }
+  }
+
+  private get useGatewayModelSource(): boolean {
+    return this.config.modelSource === "gateway";
+  }
+
+  private get shouldUseLocalLlm(): boolean {
+    return this.shouldUseLocalLlm && !this.useGatewayModelSource;
+  }
+
+  private withGatewayAgent(options: import("./fallback-llm.js").FallbackLlmOptions): import("./fallback-llm.js").FallbackLlmOptions {
+    if (!this.useGatewayModelSource) return options;
+    const agentId = this.config.gatewayAgentId || undefined;
+    return agentId ? { ...options, agentId } : options;
   }
 
   async initialize(): Promise<void> {
@@ -105,7 +119,7 @@ export class HourlySummarizer {
     const startTime = Date.now();
 
     // Try local LLM first if enabled
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const localResult = await this.generateWithLocalLlm(conversation);
         if (localResult) {
@@ -164,7 +178,7 @@ Respond with valid JSON matching this schema:
       const result = await this.fallbackLlm.parseWithSchema(
         messages,
         HourlySummarySchema,
-        { temperature: 0.3, maxTokens: 8192 },
+        this.withGatewayAgent({ temperature: 0.3, maxTokens: 8192 }),
       );
 
       const durationMs = Date.now() - startTime;
@@ -219,7 +233,7 @@ Respond with valid JSON matching this schema:
     const user = `Hour: ${hourIso}\nSession: ${sessionKey}\n\n${statsLine}${toolStatsLine}Conversation:\n${conversation}\n`;
 
     // Try local LLM first if enabled
-    if (this.config.localLlmEnabled) {
+    if (this.shouldUseLocalLlm) {
       try {
         const contextSizes = this.modelRegistry.calculateContextSizes(this.config.localLlmModel, this.config.localLlmMaxContext);
         const truncated = user.length > contextSizes.maxInputChars ? user.slice(0, contextSizes.maxInputChars) + "\n\n[truncated]" : user;
@@ -263,7 +277,7 @@ Respond with valid JSON matching this schema:
           { role: "user" as const, content: user },
         ],
         HourlySummaryExtendedSchema,
-        { temperature: 0.2, maxTokens: 2048 },
+        this.withGatewayAgent({ temperature: 0.2, maxTokens: 2048 }),
       );
       if (result) {
         log.debug(`generated extended hourly summary for ${sessionKey} at ${hourIso} in ${Date.now() - startTime}ms (fallback)`);

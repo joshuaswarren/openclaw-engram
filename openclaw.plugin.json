@@ -1401,6 +1401,22 @@
         "type": "string",
         "description": "Model for hourly summaries (defaults to main model)"
       },
+      "modelSource": {
+        "type": "string",
+        "enum": ["plugin", "gateway"],
+        "default": "plugin",
+        "description": "LLM source: 'plugin' uses Engram's own openai/localLlm config; 'gateway' delegates to a gateway agent's model chain (agents.list[])."
+      },
+      "gatewayAgentId": {
+        "type": "string",
+        "default": "",
+        "description": "Agent persona ID (from openclaw.json agents.list[]) whose model chain to use for extraction, consolidation, and summarization. Required when modelSource is 'gateway'. Falls back to agents.defaults.model if empty."
+      },
+      "fastGatewayAgentId": {
+        "type": "string",
+        "default": "",
+        "description": "Agent persona ID for fast-tier ops (rerank, entity summaries, compression guidelines). When modelSource is 'gateway' and this is empty, fast ops use the same chain as gatewayAgentId."
+      },
       "localLlmEnabled": {
         "type": "boolean",
         "default": false,
@@ -3212,6 +3228,22 @@
       "label": "Summary Model",
       "advanced": true,
       "placeholder": "(same as extraction model)"
+    },
+    "modelSource": {
+      "label": "Model Source",
+      "help": "Route LLM calls through the gateway's agent model chain instead of Engram's own config. When set to 'gateway', localLlm and openai settings are ignored."
+    },
+    "gatewayAgentId": {
+      "label": "Gateway Agent ID",
+      "advanced": true,
+      "placeholder": "engram-llm",
+      "help": "Agent persona ID from openclaw.json agents.list[] whose model chain to use. Leave empty to use global defaults."
+    },
+    "fastGatewayAgentId": {
+      "label": "Fast Gateway Agent ID",
+      "advanced": true,
+      "placeholder": "engram-llm-fast",
+      "help": "Agent persona ID for fast-tier ops. Leave empty to use the primary gatewayAgentId."
     },
     "localLlmEnabled": {
       "label": "Enable Local LLM",

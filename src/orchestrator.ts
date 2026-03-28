@@ -37,6 +37,7 @@ import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
+import { FallbackLlmClient } from "./fallback-llm.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -963,6 +964,7 @@ export class Orchestrator {
   readonly summarizer: HourlySummarizer;
   readonly localLlm: LocalLlmClient;
   readonly fastLlm: LocalLlmClient;
+  private readonly fastGatewayLlm: FallbackLlmClient | null;
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
@@ -1231,6 +1233,17 @@ export class Orchestrator {
           return client;
         })()
       : this.localLlm;
+    // Initialize gateway fast LLM for fast-tier ops when modelSource is "gateway"
+    this.fastGatewayLlm = config.modelSource === "gateway"
+      ? new FallbackLlmClient(config.gatewayConfig)
+      : null;
+    if (config.modelSource === "gateway") {
+      log.info(
+        `orchestrator: gateway model source active` +
+          (config.gatewayAgentId ? ` (primary: ${config.gatewayAgentId})` : "") +
+          (config.fastGatewayAgentId ? ` (fast: ${config.fastGatewayAgentId})` : ""),
+      );
+    }
     this.extraction = new ExtractionEngine(
       config,
       this.localLlm,
@@ -1488,6 +1501,28 @@ export class Orchestrator {
       }
     }
     return statuses;
+  }
+
+  /**
+   * Execute a fast-tier LLM chat completion.
+   * When gateway model source is active and fastGatewayAgentId is configured,
+   * routes through the gateway chain. Otherwise uses the local fast LLM.
+   */
+  private async fastChatCompletion(
+    messages: Array<{ role: string; content: string }>,
+    options: { temperature?: number; maxTokens?: number; operation?: string; priority?: "background" | "recall-critical" },
+  ): Promise<{ content: string } | null> {
+    if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
+      const agentId =
+        this.config.fastGatewayAgentId || this.config.gatewayAgentId || undefined;
+      const result = await this.fastGatewayLlm.chatCompletion(
+        messages as Array<{ role: "system" | "user" | "assistant"; content: string }>,
+        { temperature: options.temperature, maxTokens: options.maxTokens, agentId },
+      );
+      return result ? { content: result.content } : null;
+    }
+    const result = await this.fastLlm.chatCompletion(messages, options);
+    return result ? { content: result.content } : null;
   }
 
   async initialize(): Promise<void> {
@@ -1962,12 +1997,18 @@ export class Orchestrator {
     // Use FallbackLlmClient for LLM calls (same pattern as causal-consolidation.ts)
     // Honor semanticConsolidationModel: "auto" = primary, "fast" = local fast, or specific model
     const { FallbackLlmClient } = await import("./fallback-llm.js");
+    const useGateway = this.config.modelSource === "gateway";
     const modelSetting = this.config.semanticConsolidationModel;
-    if (modelSetting === "fast" && this.fastLlm) {
+    if (modelSetting === "fast" && this.fastLlm && !useGateway) {
       log.info("[semantic-consolidation] using fast local LLM for synthesis");
     }
+    const gatewayAgentId = useGateway
+      ? (modelSetting === "fast" && this.config.fastGatewayAgentId
+          ? this.config.fastGatewayAgentId
+          : this.config.gatewayAgentId || undefined)
+      : undefined;
     const llm = new FallbackLlmClient(this.config.gatewayConfig);
-    if (!llm.isAvailable() && !(modelSetting === "fast" && this.fastLlm)) {
+    if (!llm.isAvailable(gatewayAgentId) && !(modelSetting === "fast" && this.fastLlm && !useGateway)) {
       log.warn(
         "[semantic-consolidation] no LLM available — skipping synthesis",
       );
@@ -1989,7 +2030,10 @@ export class Orchestrator {
 
         // Route to the configured model
         let response: { content: string } | null = null;
-        if (modelSetting === "fast" && this.fastLlm) {
+        if (useGateway) {
+          // Gateway model source — use the appropriate agent chain
+          response = await llm.chatCompletion(messages, { ...llmOpts, agentId: gatewayAgentId });
+        } else if (modelSetting === "fast" && this.fastLlm) {
           const fastResult = await this.fastLlm.chatCompletion(messages, {
             operation: "semantic-consolidation",
             maxTokens: llmOpts.maxTokens,
@@ -9289,7 +9333,7 @@ export class Orchestrator {
           try {
             const factsText = entity.facts.slice(0, 10).join("; ");
             const prompt = `Summarize this entity in one sentence. Entity: ${entity.name} (${entity.type}). Facts: ${factsText}`;
-            const response = await this.fastLlm.chatCompletion(
+            const response = await this.fastChatCompletion(
               [
                 {
                   role: "system",
@@ -9537,7 +9581,7 @@ export class Orchestrator {
           tmtEntries,
           async (texts, level) => {
             const prompt = `You are a memory archivist. Summarize the following ${level}-level memories into 3–5 sentences, preserving key facts, decisions, and preferences.\n\n${texts.map((t, i) => `[${i + 1}] ${t}`).join("\n\n")}`;
-            const response = await this.fastLlm.chatCompletion(
+            const response = await this.fastChatCompletion(
               [
                 {
                   role: "system",
@@ -9660,7 +9704,7 @@ export class Orchestrator {
             JSON.stringify(baseline),
           ].join("\n");
 
-          const response = await this.fastLlm.chatCompletion(
+          const response = await this.fastChatCompletion(
             [
               {
                 role: "system",
@@ -9671,7 +9715,6 @@ export class Orchestrator {
             {
               temperature: 0.1,
               maxTokens: 400,
-              timeoutMs: this.config.compressionGuidelineSemanticTimeoutMs,
               operation: "compression_guideline_semantic_refinement",
               priority: "background",
             },

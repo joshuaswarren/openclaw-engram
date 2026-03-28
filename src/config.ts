@@ -1018,6 +1018,17 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.localLlmFastTimeoutMs === "number" ? cfg.localLlmFastTimeoutMs : 15_000,
     // Gateway config (passed from index.ts for fallback AI)
     gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
+    // Gateway model source (v9.2) — route LLM calls through gateway agent model chain
+    modelSource:
+      cfg.modelSource === "gateway" ? "gateway" : "plugin",
+    gatewayAgentId:
+      typeof cfg.gatewayAgentId === "string" && cfg.gatewayAgentId.length > 0
+        ? cfg.gatewayAgentId
+        : "",
+    fastGatewayAgentId:
+      typeof cfg.fastGatewayAgentId === "string" && cfg.fastGatewayAgentId.length > 0
+        ? cfg.fastGatewayAgentId
+        : "",
 
     // v3.0 namespaces (default off)
     namespacesEnabled: cfg.namespacesEnabled === true,

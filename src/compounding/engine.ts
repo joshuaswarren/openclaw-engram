@@ -503,6 +503,7 @@ export class CompoundingEngine {
           memoryDir: this.config.memoryDir,
           causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
           gatewayConfig: this.config.gatewayConfig,
+          gatewayAgentId: this.config.modelSource === "gateway" ? (this.config.gatewayAgentId || undefined) : undefined,
           config: {
             minRecurrence: this.config.cmcConsolidationMinRecurrence,
             minSessions: this.config.cmcConsolidationMinSessions,
@@ -523,6 +524,7 @@ export class CompoundingEngine {
         const calRules = await runCalibrationConsolidation({
           memoryDir: this.config.memoryDir,
           gatewayConfig: this.config.gatewayConfig,
+          gatewayAgentId: this.config.modelSource === "gateway" ? (this.config.gatewayAgentId || undefined) : undefined,
         });
         log.debug(`[calibration] weekly synthesis produced ${calRules.length} calibration rule(s)`);
       } catch (error) {

@@ -400,6 +400,10 @@ export interface PluginConfig {
   localLlmFastTimeoutMs: number;
   // Gateway config for fallback AI
   gatewayConfig?: GatewayConfig;
+  // Gateway model source (v9.2) — route LLM calls through gateway agent model chain
+  modelSource: "plugin" | "gateway";
+  gatewayAgentId: string;
+  fastGatewayAgentId: string;
 
   // v3.0 Multi-agent memory (namespaces)
   namespacesEnabled: boolean;
@@ -1392,9 +1396,21 @@ export interface AgentDefaultsConfig {
   };
 }
 
+export interface AgentPersonaModelConfig {
+  primary?: string;
+  fallbacks?: string[];
+}
+
+export interface AgentPersona {
+  id: string;
+  name?: string;
+  model?: AgentPersonaModelConfig;
+}
+
 export interface GatewayConfig {
   agents?: {
     defaults?: AgentDefaultsConfig;
+    list?: AgentPersona[];
   };
   models?: {
     providers?: Record<string, ModelProviderConfig>;
