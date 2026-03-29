@@ -27,6 +27,31 @@ interface AuthProfile {
 }
 
 const resolvedCache = new Map<string, string | null>();
+const OP_VAULT = "OpenClaw";
+const OP_SERVICE_ACCOUNT_TOKEN_PATH = path.join(os.homedir(), ".openclaw", "secrets", "op-service-account-token");
+
+/**
+ * Build an env object with the 1Password service account token set,
+ * so op CLI works without desktop app integration.
+ */
+function buildOpEnv(): NodeJS.ProcessEnv {
+  // If already set in env, use it
+  if (process.env.OP_SERVICE_ACCOUNT_TOKEN) {
+    return process.env;
+  }
+  // Read from the standard OpenClaw secrets file
+  try {
+    if (existsSync(OP_SERVICE_ACCOUNT_TOKEN_PATH)) {
+      const token = readFileSync(OP_SERVICE_ACCOUNT_TOKEN_PATH, "utf-8").trim();
+      if (token) {
+        return { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token };
+      }
+    }
+  } catch {
+    // Silent — fall through to default env
+  }
+  return process.env;
+}
 
 /**
  * Resolve a provider API key from various OpenClaw secret formats.
@@ -134,11 +159,13 @@ function resolveExecSecret(ref: SecretRef): string | undefined {
   // Use execFileSync (not execSync) to avoid shell injection —
   // arguments are passed as an array, never interpolated into a shell string.
   const args = ref.args ?? (ref.provider === "op" ? ["read", ref.id] : [ref.id]);
+  const env = ref.provider === "op" ? buildOpEnv() : process.env;
   try {
     const result = execFileSync(command, args, {
       encoding: "utf-8",
-      timeout: 10_000,
+      timeout: 15_000,
       stdio: ["pipe", "pipe", "pipe"],
+      env,
     }).trim();
     return result || undefined;
   } catch (err) {
@@ -149,27 +176,54 @@ function resolveExecSecret(ref: SecretRef): string | undefined {
 
 function resolveFileSecret(ref: SecretRef): string | undefined {
   if (ref.provider === "op") {
-    // Try reading from the OpenClaw secrets directory
+    // OpenClaw's auto-migrate-secrets stores API keys as 1Password items with
+    // the ref.id (e.g., "/agent-models-fireworks-apiKey") as the item title.
+    // The "source: file" + "provider: op" pattern means "read from 1Password
+    // item" — not a filesystem file or op:// secret reference.
+    const itemName = ref.id.replace(/^\//, "");
+    const env = buildOpEnv();
+
+    // Try `op item get` with --vault to read the credential field
+    try {
+      const result = execFileSync("op", [
+        "item", "get", itemName,
+        "--vault", OP_VAULT,
+        "--fields", "credential",
+        "--format", "json",
+      ], {
+        encoding: "utf-8",
+        timeout: 15_000,
+        stdio: ["pipe", "pipe", "pipe"],
+        env,
+      }).trim();
+      if (result) {
+        try {
+          const parsed = JSON.parse(result);
+          // op item get --fields returns {"value": "..."} for a single field
+          const value = parsed?.value ?? parsed;
+          if (typeof value === "string" && value.length > 0) {
+            return value;
+          }
+        } catch {
+          // If not JSON, try using result directly (older op versions)
+          if (result.length > 0 && !result.startsWith("{")) {
+            return result;
+          }
+        }
+      }
+    } catch {
+      // Silent — op may not be available or item not found
+    }
+
+    // Fallback: try reading from a local secrets file
     const secretsDir = path.join(os.homedir(), ".openclaw", "secrets");
-    const filePath = path.join(secretsDir, ref.id.replace(/^\//, ""));
+    const filePath = path.join(secretsDir, itemName);
     if (existsSync(filePath)) {
       try {
         return readFileSync(filePath, "utf-8").trim() || undefined;
       } catch {
-        // Fall through to op exec
+        // Silent
       }
-    }
-
-    // Fall back to `op read` via execFileSync (no shell injection)
-    try {
-      const result = execFileSync("op", ["read", ref.id], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-      return result || undefined;
-    } catch {
-      // Silent — op may not be available
     }
   } else {
     // Non-OP file provider: treat ref.id as a file path (absolute or relative to secrets dir)
