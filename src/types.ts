@@ -1415,9 +1415,6 @@ export interface GatewayConfig {
   models?: {
     providers?: Record<string, ModelProviderConfig>;
   };
-  auth?: {
-    profiles?: Record<string, unknown>;
-  };
 }
 
 // ============================================================================

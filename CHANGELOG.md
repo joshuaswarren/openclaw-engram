@@ -4,11 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Gateway-native secret resolution** — Replaced the previous 1Password-specific secret resolution with delegation to OpenClaw's own `resolveApiKeyForProvider()`. This uses the gateway's auth system (auth profiles, SecretRef resolution, 1Password, Vault, env vars, etc.) — the same codepath the gateway uses for its own agent sessions. All existing secret management setups work automatically. Falls back to `PROVIDER_NAME_API_KEY` env vars when the gateway auth module isn't available.
+
 ## [v9.1.17] — 2026-03-28
 
 ### Fixed
 - **Rerank gateway routing** — Reranking now routes through the `fastGatewayAgentId` model chain when `modelSource` is `"gateway"`, instead of always using the local LLM. This eliminates the 7–38s local rerank bottleneck when a cloud fast-tier provider is configured.
-- **Secret resolution for gateway model chain** — `FallbackLlmClient` now resolves OpenClaw secret reference formats (SecretRef objects, `"secretref-managed"`, auth profiles, environment variables) instead of sending raw markers as API keys. Plain-text keys continue to work unchanged.
 
 ## [v9.1.16] — 2026-03-28
 

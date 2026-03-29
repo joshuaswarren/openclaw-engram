@@ -1,394 +1,223 @@
 import { log } from "./logger.js";
-import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
 /**
- * Secret reference object format used by OpenClaw's models.json.
+ * Resolve a provider API key using OpenClaw's own auth resolution system.
+ *
+ * This module delegates to the gateway's `resolveApiKeyForProvider()` function,
+ * which handles all secret reference formats (SecretRef objects, auth profiles,
+ * "secretref-managed" markers, environment variables, etc.) using the same
+ * codepath the gateway uses for its own agent sessions.
+ *
+ * For plain-text API keys, a fast path returns them directly without
+ * involving the gateway auth system.
+ *
+ * Results are cached per provider for the gateway process lifetime.
  */
-interface SecretRef {
-  source: "exec" | "file" | "env";
-  provider?: string;
-  id: string;
-  command?: string;
-  args?: string[];
-}
+
+type ResolveApiKeyFn = (params: {
+  provider: string;
+  cfg?: unknown;
+  agentDir?: string;
+}) => Promise<{ apiKey?: string; source?: string; mode?: string } | null>;
+
+let _resolveApiKeyForProvider: ResolveApiKeyFn | null = null;
+let _resolverLoaded = false;
+const resolvedCache = new Map<string, string | undefined>();
 
 /**
- * Auth profile entry from agent auth-profiles.json files.
+ * Lazily load the gateway's resolveApiKeyForProvider function.
+ * Returns null if not available (e.g., running outside the gateway process).
  */
-interface AuthProfile {
-  type?: string;
-  provider?: string;
-  token?: string | SecretRef;
-  access?: string;
-  apiKey?: string;
-}
-
-const resolvedCache = new Map<string, string | null>();
-const DEFAULT_OP_VAULT = "OpenClaw";
-const OP_SERVICE_ACCOUNT_TOKEN_PATH = path.join(os.homedir(), ".openclaw", "secrets", "op-service-account-token");
-const OP_VAULT_PATH = path.join(os.homedir(), ".openclaw", "secrets", "op-vault-name");
-
-function getOpVault(): string {
-  try {
-    if (existsSync(OP_VAULT_PATH)) {
-      const vault = readFileSync(OP_VAULT_PATH, "utf-8").trim();
-      if (vault) return vault;
-    }
-  } catch { /* silent */ }
-  return process.env.OP_VAULT ?? DEFAULT_OP_VAULT;
-}
-
-/**
- * Build an env object with the 1Password service account token set,
- * so op CLI works without desktop app integration.
- */
-function buildOpEnv(): NodeJS.ProcessEnv {
-  // If already set in env, use it
-  if (process.env.OP_SERVICE_ACCOUNT_TOKEN) {
-    return process.env;
+async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
+  if (_resolverLoaded) {
+    return _resolveApiKeyForProvider;
   }
-  // Read from the standard OpenClaw secrets file
+
   try {
-    if (existsSync(OP_SERVICE_ACCOUNT_TOKEN_PATH)) {
-      const token = readFileSync(OP_SERVICE_ACCOUNT_TOKEN_PATH, "utf-8").trim();
-      if (token) {
-        return { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token };
+    // The gateway bundles this in a runtime chunk — import it dynamically.
+    // This import path is stable across gateway versions since it's a named runtime export.
+    const candidates = [
+      // Try glob-matching the runtime module name (hash varies per build)
+      ...await findRuntimeModules(),
+    ];
+
+    const { pathToFileURL } = await import("node:url");
+    for (const candidate of candidates) {
+      try {
+        // Convert native path to file:// URL for cross-platform ESM import compatibility
+        const importUrl = pathToFileURL(candidate).href;
+        const mod = await import(importUrl);
+        if (typeof mod.resolveApiKeyForProvider === "function") {
+          _resolveApiKeyForProvider = mod.resolveApiKeyForProvider;
+          _resolverLoaded = true;
+          log.debug("loaded gateway resolveApiKeyForProvider from runtime module");
+          return _resolveApiKeyForProvider;
+        }
+      } catch {
+        // Try next candidate
       }
     }
   } catch {
-    // Silent — fall through to default env
+    // Silent
   }
-  return process.env;
+
+  // Don't mark as loaded on failure — allow retry on next call
+  // in case the gateway module becomes available after plugin init
+  log.debug("gateway resolveApiKeyForProvider not available — will retry on next call");
+  return null;
 }
 
 /**
- * Resolve a provider API key from various OpenClaw secret formats.
+ * Find the gateway's model-auth runtime module by scanning the dist directory.
+ * Uses require.resolve to find the openclaw package regardless of install method.
+ */
+async function findRuntimeModules(): Promise<string[]> {
+  const { readdirSync } = await import("node:fs");
+  const { createRequire } = await import("node:module");
+  const candidates: string[] = [];
+
+  // Discover the openclaw dist directory from the installed package,
+  // regardless of how it was installed (Homebrew, npm global, local, etc.)
+  const distDirs: string[] = [];
+
+  try {
+    // require.resolve finds the package from the current process context
+    const req = createRequire(import.meta.url);
+    const openclawMain = req.resolve("openclaw");
+    const openclawDist = path.join(path.dirname(openclawMain), "..", "dist");
+    if (openclawDist) distDirs.push(path.resolve(openclawDist));
+  } catch {
+    // openclaw not resolvable from plugin context — try alternate paths
+  }
+
+  // Fallback: infer from the running process (gateway runs from its own dist/)
+  // Use fs.realpathSync to resolve symlinks (e.g., /usr/local/bin/openclaw → actual path)
+  try {
+    const { realpathSync } = await import("node:fs");
+    const mainScript = process.argv[1];
+    if (mainScript) {
+      const realScript = realpathSync(mainScript);
+      if (realScript.includes("openclaw")) {
+        const distDir = path.dirname(realScript);
+        if (!distDirs.includes(distDir)) distDirs.push(distDir);
+      }
+    }
+  } catch {
+    // Silent
+  }
+
+  for (const dir of distDirs) {
+    try {
+      const files = readdirSync(dir);
+      for (const f of files) {
+        if (f.startsWith("runtime-model-auth.runtime-") && f.endsWith(".js")) {
+          candidates.push(path.join(dir, f));
+        }
+      }
+    } catch {
+      // Directory doesn't exist — skip
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolve a provider API key from various OpenClaw formats.
  *
- * Supported formats:
- * - Plain string (not a marker) → used as-is
- * - SecretRef object (`{ source, provider, id }`) → resolved via exec/file/env
- * - `"secretref-managed"` → looked up from auth profiles and openclaw.json auth config
- * - `"minimax-oauth"`, `"ollama-local"`, etc. → treated as non-secret markers, skipped
- *
- * Results are cached per provider to avoid repeated exec calls.
+ * Resolution order:
+ * 1. Plain-text string → returned immediately
+ * 2. Gateway's resolveApiKeyForProvider → handles all secret ref formats
+ * 3. Environment variable fallback (PROVIDER_NAME_API_KEY)
+ * 4. undefined → provider is skipped in the fallback chain
  */
 export async function resolveProviderApiKey(
   providerId: string,
   apiKeyValue: unknown,
-  gatewayConfig?: { auth?: { profiles?: Record<string, unknown> } },
+  gatewayConfig?: unknown,
+  agentDir?: string,
 ): Promise<string | undefined> {
-  // Fast path: plain string that isn't a marker
-  if (typeof apiKeyValue === "string") {
-    if (apiKeyValue === "secretref-managed") {
-      return resolveSecretRefManaged(providerId, gatewayConfig);
-    }
-    // Known non-secret markers — skip
+  // Check cache first
+  const cacheKey = `provider:${providerId}`;
+  if (resolvedCache.has(cacheKey)) {
+    return resolvedCache.get(cacheKey);
+  }
+
+  let resolved: string | undefined;
+
+  // Fast path: plain-text string that looks like an actual API key
+  if (typeof apiKeyValue === "string" && apiKeyValue.trim().length > 0) {
+    // Skip known non-API-key markers used by the gateway for auth modes
+    // that don't use bearer tokens (OAuth, local endpoints, GCP credentials)
     if (
+      apiKeyValue === "secretref-managed" ||
       apiKeyValue.endsWith("-oauth") ||
       apiKeyValue.endsWith("-local") ||
       apiKeyValue === "lm-studio" ||
       apiKeyValue.startsWith("gcp-")
     ) {
-      return undefined;
-    }
-    // Looks like an actual key
-    return apiKeyValue;
-  }
-
-  // SecretRef object
-  if (isSecretRefObject(apiKeyValue)) {
-    return resolveSecretRef(providerId, apiKeyValue as SecretRef);
-  }
-
-  return undefined;
-}
-
-function isSecretRefObject(value: unknown): value is SecretRef {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "source" in value &&
-    "id" in value &&
-    typeof (value as SecretRef).source === "string" &&
-    typeof (value as SecretRef).id === "string"
-  );
-}
-
-async function resolveSecretRef(
-  providerId: string,
-  ref: SecretRef,
-): Promise<string | undefined> {
-  const cacheKey = `ref:${ref.source}:${ref.provider ?? ""}:${ref.id}:${ref.command ?? ""}:${(ref.args ?? []).join(",")}`;
-  const cached = resolvedCache.get(cacheKey);
-  if (cached !== undefined) {
-    // Don't cache failures permanently — only cache successes
-    if (cached !== null) return cached;
-  }
-
-  let resolved: string | undefined;
-
-  try {
-    switch (ref.source) {
-      case "exec":
-        resolved = resolveExecSecret(ref);
-        break;
-      case "file":
-        resolved = resolveFileSecret(ref);
-        break;
-      case "env":
-        resolved = process.env[ref.id] ?? undefined;
-        break;
-    }
-  } catch (err) {
-    log.warn(
-      `secret resolution failed for provider "${providerId}" (${ref.source}/${ref.provider}): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  // Only cache successful resolutions; failures are retried next time
-  if (resolved) {
-    resolvedCache.set(cacheKey, resolved);
-  }
-
-  if (resolved) {
-    log.debug(`resolved API key for provider "${providerId}" via ${ref.source}/${ref.provider ?? "default"}`);
-  }
-
-  return resolved;
-}
-
-function resolveExecSecret(ref: SecretRef): string | undefined {
-  const command = ref.command ?? (ref.provider === "op" ? "op" : undefined);
-  if (!command) {
-    log.warn(`exec secret ref has no command and provider "${ref.provider}" is not a known exec provider`);
-    return undefined;
-  }
-
-  // Use execFileSync (not execSync) to avoid shell injection —
-  // arguments are passed as an array, never interpolated into a shell string.
-  const args = ref.args ?? (ref.provider === "op" ? ["read", ref.id] : [ref.id]);
-  const env = ref.provider === "op" ? buildOpEnv() : process.env;
-  try {
-    const result = execFileSync(command, args, {
-      encoding: "utf-8",
-      timeout: 15_000,
-      stdio: ["pipe", "pipe", "pipe"],
-      env,
-    }).trim();
-    return result || undefined;
-  } catch (err) {
-    log.warn(`exec secret resolution failed (${command}): ${err instanceof Error ? err.message : String(err)}`);
-    return undefined;
-  }
-}
-
-function resolveFileSecret(ref: SecretRef): string | undefined {
-  if (ref.provider === "op") {
-    // OpenClaw's auto-migrate-secrets stores API keys as 1Password items.
-    // ref.id can be:
-    //   - An item title (e.g., "/agent-models-fireworks-apiKey") → use `op item get`
-    //   - An op:// URI (e.g., "op://vault/item/field") → use `op read`
-    const env = buildOpEnv();
-
-    if (ref.id.startsWith("op://")) {
-      // Direct op:// secret reference — use `op read`
-      try {
-        const result = execFileSync("op", ["read", ref.id], {
-          encoding: "utf-8",
-          timeout: 15_000,
-          stdio: ["pipe", "pipe", "pipe"],
-          env,
-        }).trim();
-        return result || undefined;
-      } catch {
-        // Silent — op may not be available
-      }
+      // Fall through to gateway resolver / env var fallback
     } else {
-      // Item title — use `op item get` with vault
-      const itemName = ref.id.replace(/^\//, "");
-      const vault = getOpVault();
-      try {
-        const result = execFileSync("op", [
-          "item", "get", itemName,
-          "--vault", vault,
-          "--fields", "credential",
-          "--format", "json",
-        ], {
-          encoding: "utf-8",
-          timeout: 15_000,
-          stdio: ["pipe", "pipe", "pipe"],
-          env,
-        }).trim();
-        if (result) {
-          try {
-            const parsed = JSON.parse(result);
-            // op returns various shapes:
-            // - Single field object: {"value": "sk-...", ...}
-            // - Array of field objects: [{"value": "sk-...", ...}]
-            // - Plain string (older op versions)
-            const field = Array.isArray(parsed) ? parsed[0] : parsed;
-            const value = field?.value ?? field;
-            if (typeof value === "string" && value.length > 0) {
-              return value;
-            }
-          } catch {
-            if (result.length > 0 && !result.startsWith("{") && !result.startsWith("[")) {
-              return result;
-            }
-          }
-        }
-      } catch {
-        // Silent — op may not be available or item not found
-      }
-    }
-
-    // Fallback: try reading from a local secrets file
-    const secretsDir = path.join(os.homedir(), ".openclaw", "secrets");
-    const filePath = path.join(secretsDir, ref.id.replace(/^\//, ""));
-    if (existsSync(filePath)) {
-      try {
-        return readFileSync(filePath, "utf-8").trim() || undefined;
-      } catch {
-        // Silent
-      }
-    }
-  } else {
-    // Non-OP file provider: treat ref.id as a file path (absolute or relative to secrets dir)
-    const filePath = path.isAbsolute(ref.id)
-      ? ref.id
-      : path.join(os.homedir(), ".openclaw", "secrets", ref.id.replace(/^\//, ""));
-    if (existsSync(filePath)) {
-      try {
-        return readFileSync(filePath, "utf-8").trim() || undefined;
-      } catch {
-        // Silent
-      }
+      resolved = apiKeyValue;
+      resolvedCache.set(cacheKey, resolved);
+      return resolved;
     }
   }
 
+  // The API key is either a SecretRef object, "secretref-managed", or empty.
+  // Try the gateway's own auth resolution system first.
+  const resolver = await getGatewayResolver();
+  if (resolver) {
+    try {
+      const resolvedAgentDir = agentDir ?? path.join(os.homedir(), ".openclaw", "agents", "main", "agent");
+      const auth = await resolver({ provider: providerId, cfg: gatewayConfig, agentDir: resolvedAgentDir });
+      if (auth?.apiKey) {
+        resolved = auth.apiKey;
+        log.debug(`resolved API key for provider "${providerId}" via gateway auth (source: ${auth.source ?? "unknown"}, mode: ${auth.mode ?? "unknown"})`);
+        resolvedCache.set(cacheKey, resolved);
+        return resolved;
+      }
+    } catch (err) {
+      log.debug(
+        `gateway auth resolution failed for provider "${providerId}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // Environment variable fallback
+  resolved = resolveFromEnv(providerId);
+  if (resolved) {
+    log.debug(`resolved API key for provider "${providerId}" from environment variable`);
+  } else {
+    log.debug(`could not resolve API key for provider "${providerId}" — skipping`);
+  }
+
+  // Only cache successful resolutions — failures are retried on next call
+  // so providers can recover after transient issues (e.g., 1Password agent restart)
+  if (resolved) {
+    resolvedCache.set(cacheKey, resolved);
+  }
+  return resolved;
+}
+
+/**
+ * Try to resolve an API key from environment variables.
+ */
+function resolveFromEnv(providerId: string): string | undefined {
+  const normalized = providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const candidates = [
+    `${normalized}_API_KEY`,
+    `${normalized}_TOKEN`,
+  ];
+  for (const envVar of candidates) {
+    const value = process.env[envVar];
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
   return undefined;
-}
-
-function resolveSecretRefManaged(
-  providerId: string,
-  gatewayConfig?: { auth?: { profiles?: Record<string, unknown> } },
-): string | undefined {
-  const cacheKey = `managed:${providerId}`;
-  const cached = resolvedCache.get(cacheKey);
-  if (cached !== undefined && cached !== null) {
-    return cached;
-  }
-
-  let resolved: string | undefined;
-
-  // Look up auth profiles for this provider
-  const profiles = gatewayConfig?.auth?.profiles;
-  if (profiles) {
-    // Try provider:default, provider:manual, etc.
-    const candidates = [
-      `${providerId}:default`,
-      `${providerId}:manual`,
-      providerId,
-    ];
-
-    for (const profileKey of candidates) {
-      const raw = profiles[profileKey];
-      if (!raw || typeof raw !== "object") continue;
-      const profile = raw as AuthProfile;
-
-      // Token-based auth
-      if (profile.token) {
-        if (typeof profile.token === "string" && !profile.token.startsWith("{")) {
-          resolved = profile.token;
-          break;
-        }
-        if (isSecretRefObject(profile.token)) {
-          // Synchronously resolve — this is at init time
-          try {
-            resolved = resolveSecretRefSync(providerId, profile.token as SecretRef);
-          } catch {
-            // Continue to next profile
-          }
-          if (resolved) break;
-        }
-      }
-
-      // API key auth
-      if (profile.apiKey && typeof profile.apiKey === "string") {
-        resolved = profile.apiKey;
-        break;
-      }
-
-      // Access token (OAuth)
-      if (profile.access && typeof profile.access === "string") {
-        resolved = profile.access;
-        break;
-      }
-    }
-  }
-
-  // Fall back to environment variables
-  if (!resolved) {
-    const envCandidates = [
-      `${providerId.toUpperCase().replace(/-/g, "_")}_API_KEY`,
-      `${providerId.toUpperCase().replace(/-/g, "_")}_TOKEN`,
-    ];
-    for (const envVar of envCandidates) {
-      if (process.env[envVar]) {
-        resolved = process.env[envVar];
-        break;
-      }
-    }
-  }
-
-  // Only cache successful resolutions; failures are retried next time
-  if (resolved) {
-    resolvedCache.set(cacheKey, resolved);
-    log.debug(`resolved managed API key for provider "${providerId}" via auth profile`);
-  } else {
-    log.debug(`could not resolve managed API key for provider "${providerId}"`);
-  }
-
-  return resolved;
-}
-
-function resolveSecretRefSync(
-  providerId: string,
-  ref: SecretRef,
-): string | undefined {
-  const cacheKey = `ref:${ref.source}:${ref.provider ?? ""}:${ref.id}:${ref.command ?? ""}:${(ref.args ?? []).join(",")}`;
-  const cached = resolvedCache.get(cacheKey);
-  if (cached !== undefined && cached !== null) {
-    return cached;
-  }
-
-  let resolved: string | undefined;
-
-  try {
-    switch (ref.source) {
-      case "exec":
-        resolved = resolveExecSecret(ref);
-        break;
-      case "file":
-        resolved = resolveFileSecret(ref);
-        break;
-      case "env":
-        resolved = process.env[ref.id] ?? undefined;
-        break;
-    }
-  } catch (err) {
-    log.warn(
-      `sync secret resolution failed for provider "${providerId}": ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  if (resolved) {
-    resolvedCache.set(cacheKey, resolved);
-  }
-  return resolved;
 }
 
 /**
@@ -396,4 +225,6 @@ function resolveSecretRefSync(
  */
 export function clearSecretCache(): void {
   resolvedCache.clear();
+  _resolveApiKeyForProvider = null;
+  _resolverLoaded = false;
 }

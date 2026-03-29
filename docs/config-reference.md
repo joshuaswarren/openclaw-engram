@@ -519,16 +519,13 @@ Model strings use the format `provider/model-id` where `provider` matches a key 
 
 When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response. Both `openai-completions` and `anthropic-messages` API formats are supported — the client auto-detects based on the provider's `api` field.
 
-### Secret resolution
+### API key resolution
 
-Provider API keys in `models.json` can use any of OpenClaw's secret reference formats:
+Provider API keys in `models.json` are resolved using OpenClaw's own auth system. Engram delegates to the gateway's `resolveApiKeyForProvider()` function, which handles all secret reference formats (SecretRef objects, `"secretref-managed"`, auth profiles, 1Password, Vault, env vars, etc.) using the same codepath the gateway uses for its own agent sessions.
 
-- **Plain strings** — used as-is (e.g., `"apiKey": "sk-..."`)
-- **SecretRef objects** — resolved via exec/file/env (e.g., `"apiKey": {"source": "file", "provider": "op", "id": "/my-key"}`)
-- **`"secretref-managed"`** — resolved from auth profiles in `openclaw.json`
-- **Environment variables** — falls back to `PROVIDER_NAME_API_KEY` env var
+This means your existing secret management setup works automatically — no special configuration needed for Engram. Plain-text API keys also work as-is.
 
-Secret resolution happens lazily on first use and results are cached for the lifetime of the gateway process. Existing setups with plain-text API keys continue to work unchanged.
+If a provider's API key can't be resolved (e.g., the gateway auth module isn't available), Engram checks the `PROVIDER_NAME_API_KEY` environment variable as a fallback before skipping the provider.
 
 ### Switching back
 
