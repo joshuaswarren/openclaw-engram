@@ -24,6 +24,8 @@ type ResolveApiKeyFn = (params: {
 
 let _resolveApiKeyForProvider: ResolveApiKeyFn | null = null;
 let _resolverLoaded = false;
+let _resolverNextRetryAt = 0;
+const RESOLVER_RETRY_BACKOFF_MS = 60_000; // 1 minute between retries after first failure
 const resolvedCache = new Map<string, string | undefined>();
 
 /**
@@ -33,6 +35,11 @@ const resolvedCache = new Map<string, string | undefined>();
 async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
   if (_resolverLoaded) {
     return _resolveApiKeyForProvider;
+  }
+  // Backoff: don't re-scan filesystem on every call when module wasn't found.
+  // After a failure, wait RESOLVER_RETRY_BACKOFF_MS before trying again.
+  if (_resolverNextRetryAt > 0 && Date.now() < _resolverNextRetryAt) {
+    return null;
   }
 
   try {
@@ -63,9 +70,11 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
     // Silent
   }
 
-  // Don't mark as loaded on failure — allow retry on next call
-  // in case the gateway module becomes available after plugin init
-  log.debug("gateway resolveApiKeyForProvider not available — will retry on next call");
+  // Backoff before retrying — avoid repeated fs scanning.
+  // Retries after RESOLVER_RETRY_BACKOFF_MS so the resolver can
+  // recover if the gateway restarts or the module becomes available.
+  _resolverNextRetryAt = Date.now() + RESOLVER_RETRY_BACKOFF_MS;
+  log.debug(`gateway resolveApiKeyForProvider not available — will retry after ${RESOLVER_RETRY_BACKOFF_MS / 1000}s`);
   return null;
 }
 
@@ -227,4 +236,5 @@ export function clearSecretCache(): void {
   resolvedCache.clear();
   _resolveApiKeyForProvider = null;
   _resolverLoaded = false;
+  _resolverNextRetryAt = 0;
 }
