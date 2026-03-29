@@ -60,8 +60,9 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
     // Silent
   }
 
-  _resolverLoaded = true;
-  log.debug("gateway resolveApiKeyForProvider not available — falling back to plain-text only");
+  // Don't mark as loaded on failure — allow retry on next call
+  // in case the gateway module becomes available after plugin init
+  log.debug("gateway resolveApiKeyForProvider not available — will retry on next call");
   return null;
 }
 
@@ -133,6 +134,7 @@ export async function resolveProviderApiKey(
   providerId: string,
   apiKeyValue: unknown,
   gatewayConfig?: unknown,
+  agentDir?: string,
 ): Promise<string | undefined> {
   // Check cache first
   const cacheKey = `provider:${providerId}`;
@@ -166,8 +168,8 @@ export async function resolveProviderApiKey(
   const resolver = await getGatewayResolver();
   if (resolver) {
     try {
-      const agentDir = path.join(os.homedir(), ".openclaw", "agents", "main", "agent");
-      const auth = await resolver({ provider: providerId, cfg: gatewayConfig, agentDir });
+      const resolvedAgentDir = agentDir ?? path.join(os.homedir(), ".openclaw", "agents", "main", "agent");
+      const auth = await resolver({ provider: providerId, cfg: gatewayConfig, agentDir: resolvedAgentDir });
       if (auth?.apiKey) {
         resolved = auth.apiKey;
         log.debug(`resolved API key for provider "${providerId}" via gateway auth (source: ${auth.source ?? "unknown"}, mode: ${auth.mode ?? "unknown"})`);
