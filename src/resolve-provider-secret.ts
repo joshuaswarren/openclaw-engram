@@ -48,6 +48,7 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
         const mod = await import(candidate);
         if (typeof mod.resolveApiKeyForProvider === "function") {
           _resolveApiKeyForProvider = mod.resolveApiKeyForProvider;
+          _resolverLoaded = true;
           log.debug("loaded gateway resolveApiKeyForProvider from runtime module");
           return _resolveApiKeyForProvider;
         }
@@ -163,7 +164,11 @@ export async function resolveProviderApiKey(
     log.debug(`could not resolve API key for provider "${providerId}" — skipping`);
   }
 
-  resolvedCache.set(cacheKey, resolved);
+  // Only cache successful resolutions — failures are retried on next call
+  // so providers can recover after transient issues (e.g., 1Password agent restart)
+  if (resolved) {
+    resolvedCache.set(cacheKey, resolved);
+  }
   return resolved;
 }
 
