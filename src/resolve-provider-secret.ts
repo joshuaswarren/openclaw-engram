@@ -27,8 +27,19 @@ interface AuthProfile {
 }
 
 const resolvedCache = new Map<string, string | null>();
-const OP_VAULT = "OpenClaw";
+const DEFAULT_OP_VAULT = "OpenClaw";
 const OP_SERVICE_ACCOUNT_TOKEN_PATH = path.join(os.homedir(), ".openclaw", "secrets", "op-service-account-token");
+const OP_VAULT_PATH = path.join(os.homedir(), ".openclaw", "secrets", "op-vault-name");
+
+function getOpVault(): string {
+  try {
+    if (existsSync(OP_VAULT_PATH)) {
+      const vault = readFileSync(OP_VAULT_PATH, "utf-8").trim();
+      if (vault) return vault;
+    }
+  } catch { /* silent */ }
+  return process.env.OP_VAULT ?? DEFAULT_OP_VAULT;
+}
 
 /**
  * Build an env object with the 1Password service account token set,
@@ -176,48 +187,62 @@ function resolveExecSecret(ref: SecretRef): string | undefined {
 
 function resolveFileSecret(ref: SecretRef): string | undefined {
   if (ref.provider === "op") {
-    // OpenClaw's auto-migrate-secrets stores API keys as 1Password items with
-    // the ref.id (e.g., "/agent-models-fireworks-apiKey") as the item title.
-    // The "source: file" + "provider: op" pattern means "read from 1Password
-    // item" — not a filesystem file or op:// secret reference.
-    const itemName = ref.id.replace(/^\//, "");
+    // OpenClaw's auto-migrate-secrets stores API keys as 1Password items.
+    // ref.id can be:
+    //   - An item title (e.g., "/agent-models-fireworks-apiKey") → use `op item get`
+    //   - An op:// URI (e.g., "op://vault/item/field") → use `op read`
     const env = buildOpEnv();
 
-    // Try `op item get` with --vault to read the credential field
-    try {
-      const result = execFileSync("op", [
-        "item", "get", itemName,
-        "--vault", OP_VAULT,
-        "--fields", "credential",
-        "--format", "json",
-      ], {
-        encoding: "utf-8",
-        timeout: 15_000,
-        stdio: ["pipe", "pipe", "pipe"],
-        env,
-      }).trim();
-      if (result) {
-        try {
-          const parsed = JSON.parse(result);
-          // op item get --fields returns {"value": "..."} for a single field
-          const value = parsed?.value ?? parsed;
-          if (typeof value === "string" && value.length > 0) {
-            return value;
-          }
-        } catch {
-          // If not JSON, try using result directly (older op versions)
-          if (result.length > 0 && !result.startsWith("{")) {
-            return result;
+    if (ref.id.startsWith("op://")) {
+      // Direct op:// secret reference — use `op read`
+      try {
+        const result = execFileSync("op", ["read", ref.id], {
+          encoding: "utf-8",
+          timeout: 15_000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env,
+        }).trim();
+        return result || undefined;
+      } catch {
+        // Silent — op may not be available
+      }
+    } else {
+      // Item title — use `op item get` with vault
+      const itemName = ref.id.replace(/^\//, "");
+      const vault = getOpVault();
+      try {
+        const result = execFileSync("op", [
+          "item", "get", itemName,
+          "--vault", vault,
+          "--fields", "credential",
+          "--format", "json",
+        ], {
+          encoding: "utf-8",
+          timeout: 15_000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env,
+        }).trim();
+        if (result) {
+          try {
+            const parsed = JSON.parse(result);
+            const value = parsed?.value ?? parsed;
+            if (typeof value === "string" && value.length > 0) {
+              return value;
+            }
+          } catch {
+            if (result.length > 0 && !result.startsWith("{")) {
+              return result;
+            }
           }
         }
+      } catch {
+        // Silent — op may not be available or item not found
       }
-    } catch {
-      // Silent — op may not be available or item not found
     }
 
     // Fallback: try reading from a local secrets file
     const secretsDir = path.join(os.homedir(), ".openclaw", "secrets");
-    const filePath = path.join(secretsDir, itemName);
+    const filePath = path.join(secretsDir, ref.id.replace(/^\//, ""));
     if (existsSync(filePath)) {
       try {
         return readFileSync(filePath, "utf-8").trim() || undefined;
