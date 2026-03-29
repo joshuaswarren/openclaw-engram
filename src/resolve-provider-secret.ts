@@ -225,12 +225,17 @@ function resolveFileSecret(ref: SecretRef): string | undefined {
         if (result) {
           try {
             const parsed = JSON.parse(result);
-            const value = parsed?.value ?? parsed;
+            // op returns various shapes:
+            // - Single field object: {"value": "sk-...", ...}
+            // - Array of field objects: [{"value": "sk-...", ...}]
+            // - Plain string (older op versions)
+            const field = Array.isArray(parsed) ? parsed[0] : parsed;
+            const value = field?.value ?? field;
             if (typeof value === "string" && value.length > 0) {
               return value;
             }
           } catch {
-            if (result.length > 0 && !result.startsWith("{")) {
+            if (result.length > 0 && !result.startsWith("{") && !result.startsWith("[")) {
               return result;
             }
           }
