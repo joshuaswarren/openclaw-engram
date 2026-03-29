@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.1.20] — 2026-03-29
+
 ### Fixed
 - **Gateway-native secret resolution** — Replaced the previous 1Password-specific secret resolution with delegation to OpenClaw's own `resolveApiKeyForProvider()`. This uses the gateway's auth system (auth profiles, SecretRef resolution, 1Password, Vault, env vars, etc.) — the same codepath the gateway uses for its own agent sessions. All existing secret management setups work automatically. Falls back to `PROVIDER_NAME_API_KEY` env vars when the gateway auth module isn't available.
 
