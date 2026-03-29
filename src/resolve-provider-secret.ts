@@ -24,6 +24,8 @@ type ResolveApiKeyFn = (params: {
 
 let _resolveApiKeyForProvider: ResolveApiKeyFn | null = null;
 let _resolverLoaded = false;
+let _resolverAttempts = 0;
+const MAX_RESOLVER_ATTEMPTS = 3;
 const resolvedCache = new Map<string, string | undefined>();
 
 /**
@@ -63,9 +65,17 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
     // Silent
   }
 
-  // Don't mark as loaded on failure — allow retry on next call
-  // in case the gateway module becomes available after plugin init
-  log.debug("gateway resolveApiKeyForProvider not available — will retry on next call");
+  // Allow a limited number of retries in case the gateway module
+  // becomes available after plugin init (e.g., lazy loading).
+  // After MAX_RESOLVER_ATTEMPTS, stop scanning to avoid repeated
+  // filesystem operations in standalone/testing environments.
+  _resolverAttempts++;
+  if (_resolverAttempts >= MAX_RESOLVER_ATTEMPTS) {
+    _resolverLoaded = true;
+    log.debug("gateway resolveApiKeyForProvider not available after multiple attempts — giving up");
+  } else {
+    log.debug(`gateway resolveApiKeyForProvider not available — will retry (attempt ${_resolverAttempts}/${MAX_RESOLVER_ATTEMPTS})`);
+  }
   return null;
 }
 
@@ -227,4 +237,5 @@ export function clearSecretCache(): void {
   resolvedCache.clear();
   _resolveApiKeyForProvider = null;
   _resolverLoaded = false;
+  _resolverAttempts = 0;
 }
