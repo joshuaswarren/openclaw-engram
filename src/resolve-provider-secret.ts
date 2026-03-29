@@ -43,9 +43,12 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
       ...await findRuntimeModules(),
     ];
 
+    const { pathToFileURL } = await import("node:url");
     for (const candidate of candidates) {
       try {
-        const mod = await import(candidate);
+        // Convert native path to file:// URL for cross-platform ESM import compatibility
+        const importUrl = pathToFileURL(candidate).href;
+        const mod = await import(importUrl);
         if (typeof mod.resolveApiKeyForProvider === "function") {
           _resolveApiKeyForProvider = mod.resolveApiKeyForProvider;
           _resolverLoaded = true;
