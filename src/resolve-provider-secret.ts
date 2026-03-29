@@ -89,11 +89,16 @@ async function findRuntimeModules(): Promise<string[]> {
   }
 
   // Fallback: infer from the running process (gateway runs from its own dist/)
+  // Use fs.realpathSync to resolve symlinks (e.g., /usr/local/bin/openclaw → actual path)
   try {
+    const { realpathSync } = await import("node:fs");
     const mainScript = process.argv[1];
-    if (mainScript && mainScript.includes("openclaw")) {
-      const distDir = path.dirname(mainScript);
-      if (!distDirs.includes(distDir)) distDirs.push(distDir);
+    if (mainScript) {
+      const realScript = realpathSync(mainScript);
+      if (realScript.includes("openclaw")) {
+        const distDir = path.dirname(realScript);
+        if (!distDirs.includes(distDir)) distDirs.push(distDir);
+      }
     }
   } catch {
     // Silent
