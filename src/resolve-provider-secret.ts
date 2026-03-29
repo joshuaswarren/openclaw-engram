@@ -67,17 +67,37 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
 
 /**
  * Find the gateway's model-auth runtime module by scanning the dist directory.
+ * Uses require.resolve to find the openclaw package regardless of install method.
  */
 async function findRuntimeModules(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
+  const { createRequire } = await import("node:module");
   const candidates: string[] = [];
 
-  // The gateway is installed globally via npm/homebrew
-  const distDirs = [
-    "/opt/homebrew/lib/node_modules/openclaw/dist",
-    path.join(os.homedir(), ".openclaw", "node_modules", "openclaw", "dist"),
-    path.join(os.homedir(), "node_modules", "openclaw", "dist"),
-  ];
+  // Discover the openclaw dist directory from the installed package,
+  // regardless of how it was installed (Homebrew, npm global, local, etc.)
+  const distDirs: string[] = [];
+
+  try {
+    // require.resolve finds the package from the current process context
+    const req = createRequire(import.meta.url);
+    const openclawMain = req.resolve("openclaw");
+    const openclawDist = path.join(path.dirname(openclawMain), "..", "dist");
+    if (openclawDist) distDirs.push(path.resolve(openclawDist));
+  } catch {
+    // openclaw not resolvable from plugin context — try alternate paths
+  }
+
+  // Fallback: infer from the running process (gateway runs from its own dist/)
+  try {
+    const mainScript = process.argv[1];
+    if (mainScript && mainScript.includes("openclaw")) {
+      const distDir = path.dirname(mainScript);
+      if (!distDirs.includes(distDir)) distDirs.push(distDir);
+    }
+  } catch {
+    // Silent
+  }
 
   for (const dir of distDirs) {
     try {
