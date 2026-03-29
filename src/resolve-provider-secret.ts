@@ -116,11 +116,23 @@ export async function resolveProviderApiKey(
 
   let resolved: string | undefined;
 
-  // Fast path: plain-text string that isn't a secret marker
-  if (typeof apiKeyValue === "string" && apiKeyValue !== "secretref-managed" && apiKeyValue.trim().length > 0) {
-    resolved = apiKeyValue;
-    resolvedCache.set(cacheKey, resolved);
-    return resolved;
+  // Fast path: plain-text string that looks like an actual API key
+  if (typeof apiKeyValue === "string" && apiKeyValue.trim().length > 0) {
+    // Skip known non-API-key markers used by the gateway for auth modes
+    // that don't use bearer tokens (OAuth, local endpoints, GCP credentials)
+    if (
+      apiKeyValue === "secretref-managed" ||
+      apiKeyValue.endsWith("-oauth") ||
+      apiKeyValue.endsWith("-local") ||
+      apiKeyValue === "lm-studio" ||
+      apiKeyValue.startsWith("gcp-")
+    ) {
+      // Fall through to gateway resolver / env var fallback
+    } else {
+      resolved = apiKeyValue;
+      resolvedCache.set(cacheKey, resolved);
+      return resolved;
+    }
   }
 
   // The API key is either a SecretRef object, "secretref-managed", or empty.
