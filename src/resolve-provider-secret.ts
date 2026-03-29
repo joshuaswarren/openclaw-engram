@@ -26,9 +26,21 @@ export async function resolveProviderApiKey(
 
   // Object → this is a SecretRef (e.g., {source: "file", provider: "op", id: "..."})
   // Engram cannot resolve these — they require the gateway's internal secret system.
-  if (typeof apiKeyValue === "object") {
+  // Fall through to env var check below.
+  const isUnresolvableRef =
+    (typeof apiKeyValue === "object") ||
+    (typeof apiKeyValue === "string" && apiKeyValue === "secretref-managed");
+
+  if (isUnresolvableRef) {
+    // Try environment variable fallback before giving up.
+    // This is a safe, portable mechanism that works regardless of secret provider.
+    const envKey = resolveFromEnv(providerId);
+    if (envKey) {
+      log.debug(`provider "${providerId}": resolved API key from environment variable`);
+      return envKey;
+    }
     log.debug(
-      `provider "${providerId}": API key is a SecretRef object — cannot resolve outside gateway core, skipping`,
+      `provider "${providerId}": API key is an unresolved secret ref and no env var fallback found, skipping`,
     );
     return undefined;
   }
@@ -43,16 +55,27 @@ export async function resolveProviderApiKey(
     return undefined;
   }
 
-  // Known gateway-managed markers that are not usable as API keys
-  if (apiKeyValue === "secretref-managed") {
-    log.debug(
-      `provider "${providerId}": API key is "secretref-managed" — cannot resolve outside gateway core, skipping`,
-    );
-    return undefined;
-  }
-
   // Anything else is treated as a plain-text API key
   return apiKeyValue;
+}
+
+/**
+ * Try to resolve an API key from environment variables.
+ * Checks PROVIDER_NAME_API_KEY and PROVIDER_NAME_TOKEN patterns.
+ */
+function resolveFromEnv(providerId: string): string | undefined {
+  const normalized = providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const candidates = [
+    `${normalized}_API_KEY`,
+    `${normalized}_TOKEN`,
+  ];
+  for (const envVar of candidates) {
+    const value = process.env[envVar];
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 /**
