@@ -519,16 +519,13 @@ Model strings use the format `provider/model-id` where `provider` matches a key 
 
 When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response. Both `openai-completions` and `anthropic-messages` API formats are supported — the client auto-detects based on the provider's `api` field.
 
-### API key requirements
+### API key resolution
 
-Providers in the gateway model chain must have **plain-text API keys** in `models.json`. Providers with unresolved secret references (`"secretref-managed"`, SecretRef objects) are automatically skipped — the chain falls through to the next provider.
+Provider API keys in `models.json` are resolved using OpenClaw's own auth system. Engram delegates to the gateway's `resolveApiKeyForProvider()` function, which handles all secret reference formats (SecretRef objects, `"secretref-managed"`, auth profiles, 1Password, Vault, env vars, etc.) using the same codepath the gateway uses for its own agent sessions.
 
-If your `models.json` uses secret references (common when OpenClaw's auto-migrate-secrets has run), you have two options:
+This means your existing secret management setup works automatically — no special configuration needed for Engram. Plain-text API keys also work as-is.
 
-1. **Set the API key as an environment variable** — Engram checks `PROVIDER_NAME_API_KEY` as a fallback. Add the variable to your gateway's launchd plist or systemd environment.
-2. **Use plain-text keys for providers in the Engram chain** — you can keep secret refs for providers used by the gateway's own agent sessions while using plain strings for the providers referenced by `gatewayAgentId` and `fastGatewayAgentId`.
-
-Secret resolution is the gateway's responsibility. A future OpenClaw SDK update may expose resolved provider keys to plugins, which would eliminate this limitation.
+If a provider's API key can't be resolved (e.g., the gateway auth module isn't available), Engram checks the `PROVIDER_NAME_API_KEY` environment variable as a fallback before skipping the provider.
 
 ### Switching back
 

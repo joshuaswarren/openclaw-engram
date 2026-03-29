@@ -257,7 +257,7 @@ export class FallbackLlmClient {
     providerId: string,
     providerConfig: ModelProviderConfig,
   ): Promise<string | undefined> {
-    return resolveProviderApiKey(providerId, providerConfig.apiKey);
+    return resolveProviderApiKey(providerId, providerConfig.apiKey, this.gatewayConfig);
   }
 
   /**
