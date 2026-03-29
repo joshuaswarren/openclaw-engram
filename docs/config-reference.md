@@ -519,16 +519,16 @@ Model strings use the format `provider/model-id` where `provider` matches a key 
 
 When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response. Both `openai-completions` and `anthropic-messages` API formats are supported — the client auto-detects based on the provider's `api` field.
 
-### Secret resolution
+### API key requirements
 
-Provider API keys in `models.json` can use any of OpenClaw's secret reference formats:
+Providers in the gateway model chain must have **plain-text API keys** in `models.json`. Providers with unresolved secret references (`"secretref-managed"`, SecretRef objects) are automatically skipped — the chain falls through to the next provider.
 
-- **Plain strings** — used as-is (e.g., `"apiKey": "sk-..."`)
-- **SecretRef objects** — resolved via exec/file/env (e.g., `"apiKey": {"source": "file", "provider": "op", "id": "/my-key"}`)
-- **`"secretref-managed"`** — resolved from auth profiles in `openclaw.json`
-- **Environment variables** — falls back to `PROVIDER_NAME_API_KEY` env var
+If your `models.json` uses secret references (common when OpenClaw's auto-migrate-secrets has run), you have two options:
 
-Secret resolution happens lazily on first use and results are cached for the lifetime of the gateway process. Existing setups with plain-text API keys continue to work unchanged.
+1. **Set the API key as an environment variable** — Engram checks `PROVIDER_NAME_API_KEY` as a fallback. Add the variable to your gateway's launchd plist or systemd environment.
+2. **Use plain-text keys for providers in the Engram chain** — you can keep secret refs for providers used by the gateway's own agent sessions while using plain strings for the providers referenced by `gatewayAgentId` and `fastGatewayAgentId`.
+
+Secret resolution is the gateway's responsibility. A future OpenClaw SDK update may expose resolved provider keys to plugins, which would eliminate this limitation.
 
 ### Switching back
 
