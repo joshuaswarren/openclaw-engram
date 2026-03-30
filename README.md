@@ -491,7 +491,7 @@ Trust zones now ship with a dedicated admin-console view plus an explicit demo s
 The seeded scenario is `enterprise-buyer-v1`, which creates a small, opinionated dataset covering:
 
 - quarantine records that are ready for review
-- quarantine records that are blocked on missing provenance
+- working records that are blocked on missing provenance
 - working records that still need corroboration
 - working records with independent corroboration support
 - a trusted operator policy record

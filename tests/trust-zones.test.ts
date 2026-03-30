@@ -794,8 +794,8 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   });
   assert.equal(preview.dryRun, true);
   assert.equal(preview.recordsWritten, 0);
-  assert.equal(preview.records.length, 5);
-  assert.equal(new Set(preview.records.map((record) => record.recordId)).size, 5);
+  assert.equal(preview.records.length, 6);
+  assert.equal(new Set(preview.records.map((record) => record.recordId)).size, 6);
   const blockedByProvenance = preview.records.find((record) => record.metadata?.story === "working-missing-provenance");
   assert.ok(blockedByProvenance);
   assert.equal(blockedByProvenance.zone, "working");
@@ -807,7 +807,7 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   assert.equal(blockedByProvenanceReadiness.allowed, false);
   assert.match(blockedByProvenanceReadiness.reasons.join(" "), /sourceId|evidenceHash/i);
 
-  const blockedByCorroboration = preview.records.find((record) => record.metadata?.story === "working-tool-output");
+  const blockedByCorroboration = preview.records.find((record) => record.metadata?.story === "working-awaiting-corroboration");
   assert.ok(blockedByCorroboration);
   const blockedByCorroborationReadiness = summarizeTrustZonePromotionReadiness({
     record: blockedByCorroboration,
@@ -818,6 +818,17 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   assert.equal(blockedByCorroborationReadiness.corroborationCount, 0);
   assert.match(blockedByCorroborationReadiness.reasons.join(" "), /corroborat/i);
 
+  const supportedByCorroboration = preview.records.find((record) => record.metadata?.story === "working-with-corroboration");
+  assert.ok(supportedByCorroboration);
+  const supportedByCorroborationReadiness = summarizeTrustZonePromotionReadiness({
+    record: supportedByCorroboration,
+    allRecords: preview.records,
+    poisoningDefenseEnabled: true,
+  });
+  assert.equal(supportedByCorroborationReadiness.allowed, true);
+  assert.equal(supportedByCorroborationReadiness.corroborationCount, 1);
+  assert.deepEqual(supportedByCorroborationReadiness.corroborationSourceClasses, ["web_content"]);
+
   const written = await runTrustZoneDemoSeedCliCommand({
     memoryDir,
     trustZonesEnabled: true,
@@ -825,9 +836,9 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
     recordedAt: "2026-03-30T18:00:00.000Z",
   });
   assert.equal(written.dryRun, false);
-  assert.equal(written.recordsWritten, 5);
+  assert.equal(written.recordsWritten, 6);
   assert.equal(written.scenario, "enterprise-buyer-v1");
-  assert.equal(new Set(written.records.map((record) => record.recordId)).size, 5);
+  assert.equal(new Set(written.records.map((record) => record.recordId)).size, 6);
 
   const secondRun = await runTrustZoneDemoSeedCliCommand({
     memoryDir,
@@ -835,12 +846,12 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
     dryRun: false,
     recordedAt: "2026-03-31T18:00:00.000Z",
   });
-  assert.equal(secondRun.recordsWritten, 5);
+  assert.equal(secondRun.recordsWritten, 6);
   const combinedIds = new Set([
     ...written.records.map((record) => record.recordId),
     ...secondRun.records.map((record) => record.recordId),
   ]);
-  assert.equal(combinedIds.size, 10);
+  assert.equal(combinedIds.size, 12);
 
   const status = await getTrustZoneStoreStatus({
     memoryDir,
@@ -848,9 +859,9 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
     promotionEnabled: true,
     poisoningDefenseEnabled: true,
   });
-  assert.equal(status.records.valid, 10);
+  assert.equal(status.records.valid, 12);
   assert.equal(status.records.byZone.quarantine, 2);
-  assert.equal(status.records.byZone.working, 6);
+  assert.equal(status.records.byZone.working, 8);
   assert.equal(status.records.byZone.trusted, 2);
 });
 
