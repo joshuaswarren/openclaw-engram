@@ -243,6 +243,12 @@ function hasOverlap(left: string[] | undefined, right: string[] | undefined): bo
   return left.some((value) => rightSet.has(value));
 }
 
+function corroborationTags(record: TrustZoneRecord): string[] | undefined {
+  if (!record.tags || record.tags.length === 0) return undefined;
+  const filtered = record.tags.filter((tag) => tag !== "trust-zone-demo" && tag !== "enterprise-demo");
+  return filtered.length > 0 ? filtered : undefined;
+}
+
 function requiresCorroboration(record: TrustZoneRecord, targetZone: TrustZoneName, poisoningDefenseEnabled: boolean): boolean {
   return (
     poisoningDefenseEnabled === true
@@ -263,7 +269,7 @@ function summarizeCorroboration(options: {
     if (candidate.provenance.sourceClass === options.sourceRecord.provenance.sourceClass) return false;
     return (
       hasOverlap(candidate.entityRefs, options.sourceRecord.entityRefs)
-      || hasOverlap(candidate.tags, options.sourceRecord.tags)
+      || hasOverlap(corroborationTags(candidate), corroborationTags(options.sourceRecord))
     );
   });
 
@@ -756,7 +762,7 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
         evidenceHash: "sha256:sso-rotation-log",
       },
       entityRefs: ["finding:finance-sso-certificate-rotation-tool-output-pending"],
-      tags: ["sso-rotation-pending"],
+      tags: [demoTag, "enterprise-demo", "sso-rotation-pending"],
       metadata: {
         ...commonMetadata,
         story: "working-tool-output",
