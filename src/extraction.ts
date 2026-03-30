@@ -94,8 +94,8 @@ export class ExtractionEngine {
     this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
     this.modelRegistry = modelRegistry ?? new ModelRegistry(config.memoryDir);
     if (config.modelSource === "gateway") {
-      log.info(
-        `extraction engine: using gateway model source` +
+      log.debug(
+        `extraction engine: gateway model source active; extraction uses the gateway chain as its primary path` +
           (config.gatewayAgentId ? ` (agent: ${config.gatewayAgentId})` : " (defaults)"),
       );
     }
@@ -838,11 +838,20 @@ export class ExtractionEngine {
       } catch { /* trace emit must not block fallback */ }
     }
 
-    // Fall back to gateway's default AI — emit a fresh llm_start so the fallback
-    // gets its own trace rather than being orphaned under the direct-client traceId.
+    // In gateway mode this is the primary extraction path. In plugin mode it is the
+    // final fallback after local/direct attempts fail. Emit a fresh llm_start so the
+    // gateway-backed call gets its own trace rather than being orphaned under the
+    // direct-client traceId.
     const fallbackTraceId = crypto.randomUUID();
     const fallbackStartTime = Date.now();
-    log.info("extraction: falling back to gateway default AI");
+    if (this.useGatewayModelSource) {
+      log.debug(
+        `extraction: using gateway model chain as primary path` +
+          (this.config.gatewayAgentId ? ` (agent: ${this.config.gatewayAgentId})` : " (defaults)"),
+      );
+    } else {
+      log.info("extraction: falling back to gateway default AI");
+    }
 
     try {
       const messages = [
@@ -1070,7 +1079,7 @@ ${truncatedConversation}`;
     const tokenParams = buildChatCompletionTokenLimit(this.config.model, this.config.extractionMaxOutputTokens, {
       assumeOpenAI: this.directClientUsesOpenAiTokenSemantics(),
     });
-    log.info(`extractWithDirectClient: calling model=${this.config.model} tokenParams=${JSON.stringify(tokenParams)}`);
+    log.debug(`extractWithDirectClient: calling model=${this.config.model} tokenParams=${JSON.stringify(tokenParams)}`);
 
     const response = await this.client.chat.completions.create({
       model: this.config.model,

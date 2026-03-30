@@ -2,6 +2,8 @@
 
 Use Engram's local LLM path when you want extraction, reranking, and selected helper flows to stay on an OpenAI-compatible endpoint you control.
 
+This guide applies when `modelSource` is `plugin` (the default). If you switch to `modelSource: "gateway"`, Engram sends extraction/consolidation/rerank calls to the configured gateway agent chain instead, and `localLlm*` settings no longer control the primary extraction path.
+
 ## Fast Start
 
 If you want the preset first:
@@ -38,7 +40,7 @@ Use the fast local tier for short-turn helpers:
 
 | Setting | Why it matters |
 |---------|----------------|
-| `localLlmEnabled` | Master switch for local inference |
+| `localLlmEnabled` | Master switch for Engram's local inference path while `modelSource=plugin` |
 | `localLlmUrl` | Base URL for the OpenAI-compatible endpoint |
 | `localLlmModel` | Main local model ID |
 | `localLlmFastEnabled` | Enables the smaller/faster local tier |

@@ -1238,7 +1238,7 @@ export class Orchestrator {
       ? new FallbackLlmClient(config.gatewayConfig)
       : null;
     if (config.modelSource === "gateway") {
-      log.info(
+      log.debug(
         `orchestrator: gateway model source active` +
           (config.gatewayAgentId ? ` (primary: ${config.gatewayAgentId})` : "") +
           (config.fastGatewayAgentId ? ` (fast: ${config.fastGatewayAgentId})` : ""),
@@ -3086,7 +3086,7 @@ export class Orchestrator {
    * Warns the user if there's a mismatch.
    */
   private async validateLocalLlmModel(): Promise<void> {
-    log.info("Local LLM: Validating model configuration...");
+    log.debug("Local LLM: validating model configuration");
     try {
       const modelInfo = await this.localLlm.getLoadedModelInfo();
       if (!modelInfo) {
@@ -3104,7 +3104,7 @@ export class Orchestrator {
       const configuredMaxContext = this.config.localLlmMaxContext;
 
       if (modelInfo.contextWindow) {
-        log.info(
+        log.debug(
           `Local LLM: ${modelInfo.id} loaded with ${modelInfo.contextWindow.toLocaleString()} token context window`,
         );
 
@@ -3123,7 +3123,7 @@ export class Orchestrator {
             modelInfo.contextWindow;
         }
       } else {
-        log.info(
+        log.debug(
           `Local LLM: ${modelInfo.id} loaded (context window not reported by server)`,
         );
 
