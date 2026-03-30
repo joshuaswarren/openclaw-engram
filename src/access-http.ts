@@ -54,6 +54,10 @@ function hostToUrlAuthority(host: string): string {
   return host;
 }
 
+function isTrustZoneName(value: string): value is TrustZoneName {
+  return value === "quarantine" || value === "working" || value === "trusted";
+}
+
 export class EngramAccessHttpServer {
   private readonly service: EngramAccessService;
   private readonly host: string;
@@ -449,14 +453,29 @@ export class EngramAccessHttpServer {
 
     if (req.method === "POST" && pathname === "/engram/v1/trust-zones/promote") {
       const body = await this.readJsonBody(req);
-      this.ensureWriteRateLimitAvailable();
+      const recordId = typeof body.recordId === "string" ? body.recordId.trim() : "";
+      const targetZone = typeof body.targetZone === "string" ? body.targetZone.trim() : "";
+      const promotionReason = typeof body.promotionReason === "string" ? body.promotionReason.trim() : "";
+      const dryRun = body.dryRun === true;
+      if (!recordId) {
+        throw new HttpError(400, "recordId is required");
+      }
+      if (!isTrustZoneName(targetZone)) {
+        throw new HttpError(400, "invalid_trust_zone_target");
+      }
+      if (!promotionReason) {
+        throw new HttpError(400, "promotionReason is required");
+      }
+      if (!dryRun) {
+        this.ensureWriteRateLimitAvailable();
+      }
       const response = await this.service.trustZonePromote({
-        recordId: typeof body.recordId === "string" ? body.recordId : "",
-        targetZone: typeof body.targetZone === "string" ? body.targetZone as TrustZoneName : "" as TrustZoneName,
-        promotionReason: typeof body.promotionReason === "string" ? body.promotionReason : "",
+        recordId,
+        targetZone,
+        promotionReason,
         recordedAt: typeof body.recordedAt === "string" ? body.recordedAt : undefined,
         summary: typeof body.summary === "string" ? body.summary : undefined,
-        dryRun: body.dryRun === true,
+        dryRun,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
@@ -469,11 +488,14 @@ export class EngramAccessHttpServer {
 
     if (req.method === "POST" && pathname === "/engram/v1/trust-zones/demo-seed") {
       const body = await this.readJsonBody(req);
-      this.ensureWriteRateLimitAvailable();
+      const dryRun = body.dryRun === true;
+      if (!dryRun) {
+        this.ensureWriteRateLimitAvailable();
+      }
       const response = await this.service.trustZoneDemoSeed({
         scenario: typeof body.scenario === "string" ? body.scenario : undefined,
         recordedAt: typeof body.recordedAt === "string" ? body.recordedAt : undefined,
-        dryRun: body.dryRun === true,
+        dryRun,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });

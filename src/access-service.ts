@@ -59,6 +59,26 @@ import type {
 
 export class EngramAccessInputError extends Error {}
 
+function normalizeTrustZoneInputError(error: unknown): EngramAccessInputError | null {
+  const message = error instanceof Error ? error.message : null;
+  if (!message) {
+    return null;
+  }
+  if (
+    /^sourceRecordId must /.test(message) ||
+    /^promotionReason must /.test(message) ||
+    /^recordedAt must /.test(message) ||
+    /^trust zone promotion requires /.test(message) ||
+    /^source trust-zone record not found: /.test(message) ||
+    /^trust-zone promotion denied: /.test(message) ||
+    /^trust zone demo seed requires /.test(message) ||
+    /^unsupported trust-zone demo scenario: /.test(message)
+  ) {
+    return new EngramAccessInputError(message);
+  }
+  return null;
+}
+
 export const ENGRAM_ACCESS_WRITE_SCHEMA_VERSION = 1;
 
 export interface EngramAccessHealthResponse {
@@ -1436,19 +1456,24 @@ export class EngramAccessService {
       request.authenticatedPrincipal,
     );
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
-    const result = await promoteTrustZoneRecord({
-      memoryDir: storage.dir,
-      trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
-      enabled: this.orchestrator.config.trustZonesEnabled === true,
-      promotionEnabled: this.orchestrator.config.quarantinePromotionEnabled === true,
-      poisoningDefenseEnabled: this.orchestrator.config.memoryPoisoningDefenseEnabled === true,
-      sourceRecordId: request.recordId,
-      targetZone: request.targetZone,
-      recordedAt: request.recordedAt ?? new Date().toISOString(),
-      promotionReason: request.promotionReason,
-      summary: request.summary,
-      dryRun: request.dryRun === true,
-    });
+    let result: TrustZonePromotionResult;
+    try {
+      result = await promoteTrustZoneRecord({
+        memoryDir: storage.dir,
+        trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
+        enabled: this.orchestrator.config.trustZonesEnabled === true,
+        promotionEnabled: this.orchestrator.config.quarantinePromotionEnabled === true,
+        poisoningDefenseEnabled: this.orchestrator.config.memoryPoisoningDefenseEnabled === true,
+        sourceRecordId: request.recordId,
+        targetZone: request.targetZone,
+        recordedAt: request.recordedAt ?? new Date().toISOString(),
+        promotionReason: request.promotionReason,
+        summary: request.summary,
+        dryRun: request.dryRun === true,
+      });
+    } catch (error) {
+      throw normalizeTrustZoneInputError(error) ?? error;
+    }
     return {
       namespace: resolvedNamespace,
       dryRun: request.dryRun === true,
@@ -1465,14 +1490,19 @@ export class EngramAccessService {
       request.authenticatedPrincipal,
     );
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
-    const result = await seedTrustZoneDemoDataset({
-      memoryDir: storage.dir,
-      trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
-      enabled: this.orchestrator.config.trustZonesEnabled === true,
-      scenario: request.scenario,
-      recordedAt: request.recordedAt,
-      dryRun: request.dryRun === true,
-    });
+    let result: TrustZoneDemoSeedResult;
+    try {
+      result = await seedTrustZoneDemoDataset({
+        memoryDir: storage.dir,
+        trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
+        enabled: this.orchestrator.config.trustZonesEnabled === true,
+        scenario: request.scenario,
+        recordedAt: request.recordedAt,
+        dryRun: request.dryRun === true,
+      });
+    } catch (error) {
+      throw normalizeTrustZoneInputError(error) ?? error;
+    }
     return {
       namespace: resolvedNamespace,
       ...result,

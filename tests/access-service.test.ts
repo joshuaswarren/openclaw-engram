@@ -2146,3 +2146,67 @@ test("access service maintenance uses namespace-scoped health metadata", async (
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("access service maps trust-zone promotion validation failures to input errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-trust-zone-promote-"));
+  try {
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+        trustZonesEnabled: true,
+        quarantinePromotionEnabled: true,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => ({ dir: memoryDir }),
+    } as any);
+
+    await assert.rejects(
+      () => service.trustZonePromote({
+        recordId: "tz-missing",
+        targetZone: "trusted",
+        promotionReason: "Operator approved",
+        recordedAt: "2026-03-08T00:05:00.000Z",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        err.message === "source trust-zone record not found: tz-missing",
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service maps invalid trust-zone demo seed requests to input errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-trust-zone-seed-"));
+  try {
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+        trustZonesEnabled: true,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => ({ dir: memoryDir }),
+    } as any);
+
+    await assert.rejects(
+      () => service.trustZoneDemoSeed({ scenario: "bogus-scenario" }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        err.message === "unsupported trust-zone demo scenario: bogus-scenario",
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
