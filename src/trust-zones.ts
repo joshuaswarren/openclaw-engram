@@ -724,8 +724,8 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
     },
     {
       schemaVersion: 1,
-      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-quarantine-blocked", seedRunId),
-      zone: "quarantine",
+      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-working-blocked", seedRunId),
+      zone: "working",
       recordedAt: addMinutes(baseRecordedAt, 2),
       kind: "external",
       summary: "Unverified rumor about a production freeze captured without source evidence.",
@@ -738,7 +738,7 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
       tags: [demoTag, "enterprise-demo", "needs-evidence"],
       metadata: {
         ...commonMetadata,
-        story: "captured-unverified-rumor",
+        story: "working-missing-provenance",
       },
     },
     {
@@ -755,8 +755,8 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
         sourceId: "tool:sso-rotation-run-42",
         evidenceHash: "sha256:sso-rotation-log",
       },
-      entityRefs: ["workspace:finance", "control:sso-certificate-rotation"],
-      tags: [demoTag, "enterprise-demo", "sso-rotation"],
+      entityRefs: ["finding:finance-sso-certificate-rotation-tool-output-pending"],
+      tags: ["sso-rotation-pending"],
       metadata: {
         ...commonMetadata,
         story: "working-tool-output",

@@ -796,6 +796,27 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   assert.equal(preview.recordsWritten, 0);
   assert.equal(preview.records.length, 5);
   assert.equal(new Set(preview.records.map((record) => record.recordId)).size, 5);
+  const blockedByProvenance = preview.records.find((record) => record.metadata?.story === "working-missing-provenance");
+  assert.ok(blockedByProvenance);
+  assert.equal(blockedByProvenance.zone, "working");
+  const blockedByProvenanceReadiness = summarizeTrustZonePromotionReadiness({
+    record: blockedByProvenance,
+    allRecords: preview.records,
+    poisoningDefenseEnabled: true,
+  });
+  assert.equal(blockedByProvenanceReadiness.allowed, false);
+  assert.match(blockedByProvenanceReadiness.reasons.join(" "), /sourceId|evidenceHash/i);
+
+  const blockedByCorroboration = preview.records.find((record) => record.metadata?.story === "working-tool-output");
+  assert.ok(blockedByCorroboration);
+  const blockedByCorroborationReadiness = summarizeTrustZonePromotionReadiness({
+    record: blockedByCorroboration,
+    allRecords: preview.records,
+    poisoningDefenseEnabled: true,
+  });
+  assert.equal(blockedByCorroborationReadiness.allowed, false);
+  assert.equal(blockedByCorroborationReadiness.corroborationCount, 0);
+  assert.match(blockedByCorroborationReadiness.reasons.join(" "), /corroborat/i);
 
   const written = await runTrustZoneDemoSeedCliCommand({
     memoryDir,
@@ -828,8 +849,8 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
     poisoningDefenseEnabled: true,
   });
   assert.equal(status.records.valid, 10);
-  assert.equal(status.records.byZone.quarantine, 4);
-  assert.equal(status.records.byZone.working, 4);
+  assert.equal(status.records.byZone.quarantine, 2);
+  assert.equal(status.records.byZone.working, 6);
   assert.equal(status.records.byZone.trusted, 2);
 });
 
