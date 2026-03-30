@@ -40,6 +40,8 @@ function resolveDefaultAdminConsolePublicDir(): string {
 const defaultAdminConsolePublicDir = resolveDefaultAdminConsolePublicDir();
 const WRITE_RATE_LIMIT_WINDOW_MS = 60_000;
 const WRITE_RATE_LIMIT_MAX_REQUESTS = 30;
+const TRUST_ZONE_RECORD_KINDS = ["memory", "artifact", "state", "trajectory", "external"] as const;
+const TRUST_ZONE_SOURCE_CLASSES = ["tool_output", "web_content", "subagent_trace", "system_memory", "user_input", "manual"] as const;
 
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -52,6 +54,30 @@ function hostToUrlAuthority(host: string): string {
     return `[${host}]`;
   }
   return host;
+}
+
+function parseTrustZoneKindFilter(raw: string | null): TrustZoneRecordKind | undefined {
+  if (raw === null) return undefined;
+  if ((TRUST_ZONE_RECORD_KINDS as readonly string[]).includes(raw)) {
+    return raw as TrustZoneRecordKind;
+  }
+  throw new HttpError(400, `kind must be one of ${TRUST_ZONE_RECORD_KINDS.join("|")}`);
+}
+
+function parseTrustZoneSourceClassFilter(raw: string | null): TrustZoneSourceClass | undefined {
+  if (raw === null) return undefined;
+  if ((TRUST_ZONE_SOURCE_CLASSES as readonly string[]).includes(raw)) {
+    return raw as TrustZoneSourceClass;
+  }
+  throw new HttpError(400, `sourceClass must be one of ${TRUST_ZONE_SOURCE_CLASSES.join("|")}`);
+}
+
+function parseTrustZoneFilter(raw: string | null): TrustZoneName | undefined {
+  if (raw === null) return undefined;
+  if (isTrustZoneName(raw)) {
+    return raw;
+  }
+  throw new HttpError(400, "zone must be one of quarantine|working|trusted");
 }
 
 export class EngramAccessHttpServer {
@@ -408,9 +434,9 @@ export class EngramAccessHttpServer {
       const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
       const response = await this.service.trustZoneBrowse({
         query: parsed.searchParams.get("q") ?? undefined,
-        zone: (parsed.searchParams.get("zone") ?? undefined) as TrustZoneName | undefined,
-        kind: (parsed.searchParams.get("kind") ?? undefined) as TrustZoneRecordKind | undefined,
-        sourceClass: (parsed.searchParams.get("sourceClass") ?? undefined) as TrustZoneSourceClass | undefined,
+        zone: parseTrustZoneFilter(parsed.searchParams.get("zone")),
+        kind: parseTrustZoneKindFilter(parsed.searchParams.get("kind")),
+        sourceClass: parseTrustZoneSourceClassFilter(parsed.searchParams.get("sourceClass")),
         namespace: parsed.searchParams.get("namespace") ?? undefined,
         limit: Number.isFinite(limitRaw) ? limitRaw : 25,
         offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,

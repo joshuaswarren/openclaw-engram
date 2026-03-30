@@ -544,6 +544,45 @@ test("access HTTP server serves admin console shell without auth and rejects inv
   }
 });
 
+test("access HTTP server rejects invalid trust-zone browse filters", async () => {
+  const server = new EngramAccessHttpServer({
+    service: createFakeService(),
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+  const headers = { Authorization: "Bearer secret-token" };
+
+  try {
+    const cases = [
+      {
+        query: "zone=bogus",
+        error: "zone must be one of quarantine|working|trusted",
+      },
+      {
+        query: "kind=bogus",
+        error: "kind must be one of memory|artifact|state|trajectory|external",
+      },
+      {
+        query: "sourceClass=bogus",
+        error: "sourceClass must be one of tool_output|web_content|subagent_trace|system_memory|user_input|manual",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const res = await fetch(`${base}/engram/v1/trust-zones/records?${testCase.query}`, { headers });
+      assert.equal(res.status, 400);
+      const payload = await res.json() as { error: string };
+      assert.equal(payload.error, testCase.error);
+    }
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server rejects invalid trust-zone promote payloads without consuming the write rate limit", async () => {
   const server = new EngramAccessHttpServer({
     service: createFakeService(),
