@@ -8,7 +8,7 @@ import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import type { RecallPlanMode } from "./types.js";
-import type { TrustZoneName, TrustZoneRecordKind, TrustZoneSourceClass } from "./trust-zones.js";
+import { isTrustZoneName, type TrustZoneName, type TrustZoneRecordKind, type TrustZoneSourceClass } from "./trust-zones.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -52,10 +52,6 @@ function hostToUrlAuthority(host: string): string {
     return `[${host}]`;
   }
   return host;
-}
-
-function isTrustZoneName(value: string): value is TrustZoneName {
-  return value === "quarantine" || value === "working" || value === "trusted";
 }
 
 export class EngramAccessHttpServer {

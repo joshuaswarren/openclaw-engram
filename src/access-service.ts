@@ -35,6 +35,7 @@ import type {
 import { parseEntityFile } from "./storage.js";
 import {
   getTrustZoneStoreStatus,
+  isTrustZoneName,
   listTrustZoneRecords,
   promoteTrustZoneRecord,
   scoreTrustZoneProvenance,
@@ -485,10 +486,6 @@ function bucketMemoryAge(referenceIso: string | undefined, nowMs: number): strin
 
 function incrementCount(counts: Record<string, number>, key: string): void {
   counts[key] = (counts[key] ?? 0) + 1;
-}
-
-function isTrustZoneName(value: string): value is TrustZoneName {
-  return value === "quarantine" || value === "working" || value === "trusted";
 }
 
 function summarizeTrustZoneRecord(

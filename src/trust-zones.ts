@@ -23,6 +23,10 @@ export type TrustZoneSourceClass =
   | "user_input"
   | "manual";
 
+export function isTrustZoneName(value: string): value is TrustZoneName {
+  return value === "quarantine" || value === "working" || value === "trusted";
+}
+
 export interface TrustZoneProvenance {
   sourceClass: TrustZoneSourceClass;
   observedAt: string;
