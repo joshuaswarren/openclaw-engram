@@ -164,6 +164,8 @@ import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./
 import {
   getTrustZoneStoreStatus,
   promoteTrustZoneRecord,
+  seedTrustZoneDemoDataset,
+  type TrustZoneDemoSeedResult,
   type TrustZoneName,
   type TrustZonePromotionResult,
   type TrustZoneStoreStatus,
@@ -1542,6 +1544,24 @@ export async function runTrustZonePromoteCliCommand(options: {
     ...result,
     dryRun: options.dryRun === true,
   };
+}
+
+export async function runTrustZoneDemoSeedCliCommand(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  trustZonesEnabled: boolean;
+  scenario?: string;
+  recordedAt?: string;
+  dryRun?: boolean;
+}): Promise<TrustZoneDemoSeedResult> {
+  return seedTrustZoneDemoDataset({
+    memoryDir: options.memoryDir,
+    trustZoneStoreDir: options.trustZoneStoreDir,
+    enabled: options.trustZonesEnabled,
+    scenario: options.scenario,
+    recordedAt: options.recordedAt,
+    dryRun: options.dryRun === true,
+  });
 }
 
 export async function runSessionCheckCliCommand(
@@ -3663,6 +3683,26 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             memoryPoisoningDefenseEnabled: orchestrator.config.memoryPoisoningDefenseEnabled,
           });
           console.log(JSON.stringify(status, null, 2));
+          console.log("OK");
+        });
+
+      cmd
+        .command("trust-zone-demo-seed")
+        .description("Explicitly seed an opt-in trust-zone demo dataset for buyer-facing walkthroughs")
+        .option("--scenario <scenario>", "Demo scenario id (default: enterprise-buyer-v1)")
+        .option("--recorded-at <isoTimestamp>", "Base ISO timestamp used to anchor demo records")
+        .option("--dry-run", "Preview the demo dataset without writing any trust-zone records")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runTrustZoneDemoSeedCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            trustZoneStoreDir: orchestrator.config.trustZoneStoreDir,
+            trustZonesEnabled: orchestrator.config.trustZonesEnabled,
+            scenario: typeof options.scenario === "string" ? options.scenario : undefined,
+            recordedAt: typeof options.recordedAt === "string" ? options.recordedAt : undefined,
+            dryRun: options.dryRun === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
           console.log("OK");
         });
 

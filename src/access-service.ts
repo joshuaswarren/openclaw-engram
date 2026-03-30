@@ -33,6 +33,22 @@ import type {
   RecallInvocationOptions,
 } from "./orchestrator.js";
 import { parseEntityFile } from "./storage.js";
+import {
+  getTrustZoneStoreStatus,
+  listTrustZoneRecords,
+  promoteTrustZoneRecord,
+  scoreTrustZoneProvenance,
+  seedTrustZoneDemoDataset,
+  summarizeTrustZonePromotionReadiness,
+  type TrustZoneDemoSeedResult,
+  type TrustZoneName,
+  type TrustZonePromotionResult,
+  type TrustZoneProvenanceScore,
+  type TrustZoneRecord,
+  type TrustZoneRecordKind,
+  type TrustZoneSourceClass,
+  type TrustZoneStoreStatus,
+} from "./trust-zones.js";
 import type {
   EntityFile,
   MemoryFile,
@@ -201,6 +217,81 @@ export interface EngramAccessMaintenanceResponse {
   namespace: string;
   health: EngramAccessHealthResponse;
   latestGovernanceRun: EngramAccessReviewQueueResponse;
+}
+
+export interface EngramAccessTrustZoneStatusResponse {
+  namespace: string;
+  status: TrustZoneStoreStatus;
+}
+
+export interface EngramAccessTrustZoneRecordSummary {
+  recordId: string;
+  filePath: string;
+  zone: TrustZoneName;
+  recordedAt: string;
+  kind: TrustZoneRecordKind;
+  summary: string;
+  sourceClass: TrustZoneSourceClass;
+  sessionKey?: string;
+  sourceId?: string;
+  evidenceHashPresent: boolean;
+  anchored: boolean;
+  entityRefs: string[];
+  tags: string[];
+  metadata?: Record<string, string>;
+  trustScore?: TrustZoneProvenanceScore;
+  nextPromotionTarget?: TrustZoneName;
+  nextPromotionAllowed: boolean;
+  nextPromotionReasons: string[];
+  corroborationCount?: number;
+  corroborationSourceClasses?: TrustZoneSourceClass[];
+}
+
+export interface EngramAccessTrustZoneBrowseRequest {
+  query?: string;
+  zone?: TrustZoneName;
+  kind?: TrustZoneRecordKind;
+  sourceClass?: TrustZoneSourceClass;
+  namespace?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface EngramAccessTrustZoneBrowseResponse {
+  namespace: string;
+  total: number;
+  count: number;
+  limit: number;
+  offset: number;
+  records: EngramAccessTrustZoneRecordSummary[];
+}
+
+export interface EngramAccessTrustZonePromoteRequest {
+  recordId: string;
+  targetZone: TrustZoneName;
+  promotionReason: string;
+  recordedAt?: string;
+  summary?: string;
+  dryRun?: boolean;
+  namespace?: string;
+  authenticatedPrincipal?: string;
+}
+
+export interface EngramAccessTrustZonePromoteResponse extends TrustZonePromotionResult {
+  namespace: string;
+  dryRun: boolean;
+}
+
+export interface EngramAccessTrustZoneDemoSeedRequest {
+  scenario?: string;
+  recordedAt?: string;
+  dryRun?: boolean;
+  namespace?: string;
+  authenticatedPrincipal?: string;
+}
+
+export interface EngramAccessTrustZoneDemoSeedResponse extends TrustZoneDemoSeedResult {
+  namespace: string;
 }
 
 export interface EngramAccessQualityResponse {
@@ -374,6 +465,46 @@ function bucketMemoryAge(referenceIso: string | undefined, nowMs: number): strin
 
 function incrementCount(counts: Record<string, number>, key: string): void {
   counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function isTrustZoneName(value: string): value is TrustZoneName {
+  return value === "quarantine" || value === "working" || value === "trusted";
+}
+
+function summarizeTrustZoneRecord(
+  record: TrustZoneRecord,
+  filePath: string,
+  allRecords: TrustZoneRecord[],
+  poisoningDefenseEnabled: boolean,
+): EngramAccessTrustZoneRecordSummary {
+  const trustScore = poisoningDefenseEnabled ? scoreTrustZoneProvenance(record) : undefined;
+  const readiness = summarizeTrustZonePromotionReadiness({
+    record,
+    allRecords,
+    poisoningDefenseEnabled,
+  });
+  return {
+    recordId: record.recordId,
+    filePath,
+    zone: record.zone,
+    recordedAt: record.recordedAt,
+    kind: record.kind,
+    summary: record.summary,
+    sourceClass: record.provenance.sourceClass,
+    sessionKey: record.provenance.sessionKey,
+    sourceId: record.provenance.sourceId,
+    evidenceHashPresent: typeof record.provenance.evidenceHash === "string",
+    anchored: Boolean(record.provenance.sourceId && record.provenance.evidenceHash),
+    entityRefs: [...(record.entityRefs ?? [])],
+    tags: [...(record.tags ?? [])],
+    metadata: record.metadata,
+    trustScore,
+    nextPromotionTarget: readiness.nextTargetZone,
+    nextPromotionAllowed: readiness.allowed,
+    nextPromotionReasons: readiness.reasons,
+    corroborationCount: readiness.requiresCorroboration ? readiness.corroborationCount : undefined,
+    corroborationSourceClasses: readiness.requiresCorroboration ? readiness.corroborationSourceClasses : undefined,
+  };
 }
 
 function compareBrowseMemory(
@@ -1243,6 +1374,108 @@ export class EngramAccessService {
         qualityScore: governance.qualityScore ?? governance.metrics?.qualityScore,
         reviewQueueCount: governance.reviewQueue?.length ?? 0,
       },
+    };
+  }
+
+  async trustZoneStatus(namespace?: string, principal?: string): Promise<EngramAccessTrustZoneStatusResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    return {
+      namespace: resolvedNamespace,
+      status: await getTrustZoneStoreStatus({
+        memoryDir: storage.dir,
+        trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
+        enabled: this.orchestrator.config.trustZonesEnabled === true,
+        promotionEnabled: this.orchestrator.config.quarantinePromotionEnabled === true,
+        poisoningDefenseEnabled: this.orchestrator.config.memoryPoisoningDefenseEnabled === true,
+      }),
+    };
+  }
+
+  async trustZoneBrowse(
+    request: EngramAccessTrustZoneBrowseRequest,
+    principal?: string,
+  ): Promise<EngramAccessTrustZoneBrowseResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(request.namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const result = await listTrustZoneRecords({
+      memoryDir: storage.dir,
+      trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
+      query: request.query,
+      zone: request.zone,
+      kind: request.kind,
+      sourceClass: request.sourceClass,
+      limit: request.limit,
+      offset: request.offset,
+    });
+    return {
+      namespace: resolvedNamespace,
+      total: result.total,
+      count: result.count,
+      limit: result.limit,
+      offset: result.offset,
+      records: result.records.map((entry) =>
+        summarizeTrustZoneRecord(
+          entry.record,
+          entry.filePath,
+          result.allRecords,
+          this.orchestrator.config.memoryPoisoningDefenseEnabled === true,
+        )),
+    };
+  }
+
+  async trustZonePromote(
+    request: EngramAccessTrustZonePromoteRequest,
+  ): Promise<EngramAccessTrustZonePromoteResponse> {
+    if (!isTrustZoneName(request.targetZone)) {
+      throw new EngramAccessInputError(`unsupported trust-zone target: ${String(request.targetZone)}`);
+    }
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      undefined,
+      request.authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const result = await promoteTrustZoneRecord({
+      memoryDir: storage.dir,
+      trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
+      enabled: this.orchestrator.config.trustZonesEnabled === true,
+      promotionEnabled: this.orchestrator.config.quarantinePromotionEnabled === true,
+      poisoningDefenseEnabled: this.orchestrator.config.memoryPoisoningDefenseEnabled === true,
+      sourceRecordId: request.recordId,
+      targetZone: request.targetZone,
+      recordedAt: request.recordedAt ?? new Date().toISOString(),
+      promotionReason: request.promotionReason,
+      summary: request.summary,
+      dryRun: request.dryRun === true,
+    });
+    return {
+      namespace: resolvedNamespace,
+      dryRun: request.dryRun === true,
+      ...result,
+    };
+  }
+
+  async trustZoneDemoSeed(
+    request: EngramAccessTrustZoneDemoSeedRequest,
+  ): Promise<EngramAccessTrustZoneDemoSeedResponse> {
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      undefined,
+      request.authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const result = await seedTrustZoneDemoDataset({
+      memoryDir: storage.dir,
+      trustZoneStoreDir: this.orchestrator.config.trustZoneStoreDir,
+      enabled: this.orchestrator.config.trustZonesEnabled === true,
+      scenario: request.scenario,
+      recordedAt: request.recordedAt,
+      dryRun: request.dryRun === true,
+    });
+    return {
+      namespace: resolvedNamespace,
+      ...result,
     };
   }
 

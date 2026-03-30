@@ -215,6 +215,124 @@ function createFakeService(): EngramAccessService {
         reviewQueueCount: 1,
       },
     }),
+    trustZoneStatus: async () => ({
+      namespace: "global",
+      status: {
+        enabled: true,
+        promotionEnabled: true,
+        poisoningDefenseEnabled: true,
+        rootDir: "/tmp/engram/state/trust-zones",
+        zonesDir: "/tmp/engram/state/trust-zones/zones",
+        records: {
+          total: 3,
+          valid: 3,
+          invalid: 0,
+          byZone: { quarantine: 1, working: 1, trusted: 1 },
+          byKind: { external: 1, state: 1, memory: 1 },
+          latestRecordId: "tz-1",
+          latestRecordedAt: "2026-03-08T00:00:00.000Z",
+          latestZone: "working",
+          averageTrustScore: 0.75,
+          byTrustBand: { medium: 2, high: 1 },
+        },
+      },
+    }),
+    trustZoneBrowse: async () => ({
+      namespace: "global",
+      total: 1,
+      count: 1,
+      limit: 25,
+      offset: 0,
+      records: [{
+        recordId: "tz-1",
+        filePath: "/tmp/engram/state/trust-zones/zones/working/2026-03-08/tz-1.json",
+        zone: "working",
+        recordedAt: "2026-03-08T00:00:00.000Z",
+        kind: "state",
+        summary: "Anchored tool output awaiting promotion.",
+        sourceClass: "tool_output",
+        evidenceHashPresent: true,
+        anchored: true,
+        entityRefs: ["deploy:42"],
+        tags: ["trust-zone-demo"],
+        trustScore: {
+          total: 0.9,
+          band: "high",
+          anchored: true,
+          sourceClassWeight: 0.55,
+          sourceIdBonus: 0.1,
+          evidenceHashBonus: 0.2,
+          sessionKeyBonus: 0.05,
+        },
+        nextPromotionTarget: "trusted",
+        nextPromotionAllowed: false,
+        nextPromotionReasons: ["trusted promotion requires corroboration from an independent non-quarantine source"],
+        corroborationCount: 0,
+        corroborationSourceClasses: [],
+      }],
+    }),
+    trustZonePromote: async ({ recordId, targetZone, dryRun }) => ({
+      namespace: "global",
+      dryRun: dryRun === true,
+      plan: {
+        allowed: true,
+        reasons: [],
+        sourceRecordId: recordId,
+        sourceZone: "working",
+        targetZone,
+        provenanceAnchored: true,
+      },
+      wroteRecord: dryRun !== true,
+      record: {
+        schemaVersion: 1,
+        recordId: `${recordId}-${targetZone}`,
+        zone: targetZone,
+        recordedAt: "2026-03-08T00:05:00.000Z",
+        kind: "state",
+        summary: "Promoted trust-zone record.",
+        provenance: {
+          sourceClass: "tool_output",
+          observedAt: "2026-03-08T00:00:00.000Z",
+          sourceId: "tool:deploy",
+          evidenceHash: "sha256:deploy",
+        },
+        promotedFromZone: "working",
+      },
+      sourceRecord: {
+        schemaVersion: 1,
+        recordId,
+        zone: "working",
+        recordedAt: "2026-03-08T00:00:00.000Z",
+        kind: "state",
+        summary: "Source trust-zone record.",
+        provenance: {
+          sourceClass: "tool_output",
+          observedAt: "2026-03-08T00:00:00.000Z",
+          sourceId: "tool:deploy",
+          evidenceHash: "sha256:deploy",
+        },
+      },
+      filePath: dryRun === true ? undefined : "/tmp/engram/state/trust-zones/zones/trusted/2026-03-08/tz-1-trusted.json",
+    }),
+    trustZoneDemoSeed: async ({ dryRun }) => ({
+      namespace: "global",
+      scenario: "enterprise-buyer-v1",
+      dryRun: dryRun === true,
+      recordsWritten: dryRun === true ? 0 : 5,
+      records: [{
+        schemaVersion: 1,
+        recordId: "tz-demo-1",
+        zone: "quarantine",
+        recordedAt: "2026-03-08T00:00:00.000Z",
+        kind: "external",
+        summary: "Demo trust-zone record.",
+        provenance: {
+          sourceClass: "web_content",
+          observedAt: "2026-03-07T23:59:00.000Z",
+        },
+      }],
+      filePaths: dryRun === true ? [] : ["/tmp/engram/state/trust-zones/zones/quarantine/2026-03-08/tz-demo-1.json"],
+    }),
     reviewDisposition: async ({ memoryId, status }) => ({
       ok: true,
       namespace: "global",
@@ -348,6 +466,37 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     assert.equal(quality.totalMemories, 1);
     assert.equal(quality.latestGovernanceRun.qualityScore.score, 92);
 
+    const trustZoneStatusRes = await fetch(`${base}/engram/v1/trust-zones/status`, { headers });
+    assert.equal(trustZoneStatusRes.status, 200);
+    const trustZoneStatus = await trustZoneStatusRes.json() as { status: { records: { valid: number } } };
+    assert.equal(trustZoneStatus.status.records.valid, 3);
+
+    const trustZoneBrowseRes = await fetch(`${base}/engram/v1/trust-zones/records?zone=working`, { headers });
+    assert.equal(trustZoneBrowseRes.status, 200);
+    const trustZoneBrowse = await trustZoneBrowseRes.json() as { count: number; records: Array<{ recordId: string }> };
+    assert.equal(trustZoneBrowse.count, 1);
+    assert.equal(trustZoneBrowse.records[0]?.recordId, "tz-1");
+
+    const trustZonePromoteRes = await fetch(`${base}/engram/v1/trust-zones/promote`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ recordId: "tz-1", targetZone: "trusted", promotionReason: "Operator approved", dryRun: true }),
+    });
+    assert.equal(trustZonePromoteRes.status, 200);
+    const trustZonePromote = await trustZonePromoteRes.json() as { dryRun: boolean; wroteRecord: boolean };
+    assert.equal(trustZonePromote.dryRun, true);
+    assert.equal(trustZonePromote.wroteRecord, false);
+
+    const trustZoneSeedRes = await fetch(`${base}/engram/v1/trust-zones/demo-seed`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ scenario: "enterprise-buyer-v1", dryRun: true }),
+    });
+    assert.equal(trustZoneSeedRes.status, 200);
+    const trustZoneSeed = await trustZoneSeedRes.json() as { dryRun: boolean; scenario: string };
+    assert.equal(trustZoneSeed.dryRun, true);
+    assert.equal(trustZoneSeed.scenario, "enterprise-buyer-v1");
+
     const dispositionRes = await fetch(`${base}/engram/v1/review-disposition`, {
       method: "POST",
       headers,
@@ -379,6 +528,7 @@ test("access HTTP server serves admin console shell without auth and rejects inv
     const html = await uiRes.text();
     assert.match(html, /Engram Admin Console/);
     assert.match(html, /Quality Dashboard/);
+    assert.match(html, /Trust Zones/);
 
     const badDispositionRes = await fetch(`${base}/engram/v1/review-disposition`, {
       method: "POST",

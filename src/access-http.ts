@@ -8,6 +8,7 @@ import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import type { RecallPlanMode } from "./types.js";
+import type { TrustZoneName, TrustZoneRecordKind, TrustZoneSourceClass } from "./trust-zones.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -393,6 +394,31 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/engram/v1/trust-zones/status") {
+      this.respondJson(
+        res,
+        200,
+        await this.service.trustZoneStatus(parsed.searchParams.get("namespace") ?? undefined, this.resolveRequestPrincipal(req)),
+      );
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/engram/v1/trust-zones/records") {
+      const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "25", 10);
+      const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      const response = await this.service.trustZoneBrowse({
+        query: parsed.searchParams.get("q") ?? undefined,
+        zone: (parsed.searchParams.get("zone") ?? undefined) as TrustZoneName | undefined,
+        kind: (parsed.searchParams.get("kind") ?? undefined) as TrustZoneRecordKind | undefined,
+        sourceClass: (parsed.searchParams.get("sourceClass") ?? undefined) as TrustZoneSourceClass | undefined,
+        namespace: parsed.searchParams.get("namespace") ?? undefined,
+        limit: Number.isFinite(limitRaw) ? limitRaw : 25,
+        offset: Number.isFinite(offsetRaw) ? offsetRaw : 0,
+      }, this.resolveRequestPrincipal(req));
+      this.respondJson(res, 200, response);
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/engram/v1/review-disposition") {
       const body = await this.readJsonBody(req);
       const status = typeof body.status === "string" ? body.status : "";
@@ -418,6 +444,43 @@ export class EngramAccessHttpServer {
         this.recordWriteRateLimitHit();
       }
       this.respondJson(res, 200, response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/trust-zones/promote") {
+      const body = await this.readJsonBody(req);
+      this.ensureWriteRateLimitAvailable();
+      const response = await this.service.trustZonePromote({
+        recordId: typeof body.recordId === "string" ? body.recordId : "",
+        targetZone: typeof body.targetZone === "string" ? body.targetZone as TrustZoneName : "" as TrustZoneName,
+        promotionReason: typeof body.promotionReason === "string" ? body.promotionReason : "",
+        recordedAt: typeof body.recordedAt === "string" ? body.recordedAt : undefined,
+        summary: typeof body.summary === "string" ? body.summary : undefined,
+        dryRun: body.dryRun === true,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
+      });
+      if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
+      this.respondJson(res, response.dryRun ? 200 : 201, response);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/trust-zones/demo-seed") {
+      const body = await this.readJsonBody(req);
+      this.ensureWriteRateLimitAvailable();
+      const response = await this.service.trustZoneDemoSeed({
+        scenario: typeof body.scenario === "string" ? body.scenario : undefined,
+        recordedAt: typeof body.recordedAt === "string" ? body.recordedAt : undefined,
+        dryRun: body.dryRun === true,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
+      });
+      if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
+      this.respondJson(res, response.dryRun ? 200 : 201, response);
       return;
     }
 

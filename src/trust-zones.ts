@@ -111,6 +111,37 @@ export interface TrustZoneSearchResult {
   matchedFields: string[];
 }
 
+export interface TrustZoneRecordEntry {
+  filePath: string;
+  record: TrustZoneRecord;
+}
+
+export interface TrustZoneListResult {
+  total: number;
+  count: number;
+  limit: number;
+  offset: number;
+  records: TrustZoneRecordEntry[];
+  allRecords: TrustZoneRecord[];
+}
+
+export interface TrustZonePromotionReadiness {
+  nextTargetZone?: TrustZoneName;
+  allowed: boolean;
+  reasons: string[];
+  requiresCorroboration: boolean;
+  corroborationCount: number;
+  corroborationSourceClasses: TrustZoneSourceClass[];
+}
+
+export interface TrustZoneDemoSeedResult {
+  scenario: string;
+  dryRun: boolean;
+  recordsWritten: number;
+  records: TrustZoneRecord[];
+  filePaths: string[];
+}
+
 function validateMetadata(raw: unknown): Record<string, string> | undefined {
   return validateStringRecord(raw, "metadata");
 }
@@ -326,9 +357,9 @@ async function findTrustZoneRecordById(options: {
   trustZoneStoreDir?: string;
   recordId: string;
 }): Promise<TrustZoneRecord | null> {
-  const { records } = await readTrustZoneRecords(options);
-  records.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
-  return records.find((record) => record.recordId === options.recordId) ?? null;
+  const { entries } = await readTrustZoneRecordEntries(options);
+  entries.sort((a, b) => b.record.recordedAt.localeCompare(a.record.recordedAt));
+  return entries.find((entry) => entry.record.recordId === options.recordId)?.record ?? null;
 }
 
 export async function promoteTrustZoneRecord(options: {
@@ -371,10 +402,10 @@ export async function promoteTrustZoneRecord(options: {
   const corroboration = requiresCorroboration(sourceRecord, options.targetZone, options.poisoningDefenseEnabled === true)
     ? summarizeCorroboration({
         sourceRecord,
-        records: (await readTrustZoneRecords({
+        records: (await readTrustZoneRecordEntries({
           memoryDir: options.memoryDir,
           trustZoneStoreDir: options.trustZoneStoreDir,
-        })).records,
+        })).entries.map((entry) => entry.record),
       })
     : null;
 
@@ -433,21 +464,24 @@ export async function promoteTrustZoneRecord(options: {
   };
 }
 
-async function readTrustZoneRecords(options: {
+async function readTrustZoneRecordEntries(options: {
   memoryDir: string;
   trustZoneStoreDir?: string;
 }): Promise<{
   files: string[];
-  records: TrustZoneRecord[];
+  entries: TrustZoneRecordEntry[];
   invalidRecords: Array<{ path: string; error: string }>;
 }> {
   const rootDir = resolveTrustZoneStoreDir(options.memoryDir, options.trustZoneStoreDir);
   const files = await listJsonFiles(path.join(rootDir, "zones"));
-  const records: TrustZoneRecord[] = [];
+  const entries: TrustZoneRecordEntry[] = [];
   const invalidRecords: Array<{ path: string; error: string }> = [];
   for (const filePath of files) {
     try {
-      records.push(validateTrustZoneRecord(await readJsonFile(filePath)));
+      entries.push({
+        filePath,
+        record: validateTrustZoneRecord(await readJsonFile(filePath)),
+      });
     } catch (error) {
       invalidRecords.push({
         path: filePath,
@@ -455,7 +489,7 @@ async function readTrustZoneRecords(options: {
       });
     }
   }
-  return { files, records, invalidRecords };
+  return { files, entries, invalidRecords };
 }
 
 function lexicalScoreTrustZoneRecord(
@@ -520,7 +554,8 @@ export async function searchTrustZoneRecords(options: {
   const maxResults = Math.max(0, Math.floor(options.maxResults));
   if (maxResults === 0) return [];
 
-  const { records } = await readTrustZoneRecords(options);
+  const { entries } = await readTrustZoneRecordEntries(options);
+  const records = entries.map((entry) => entry.record);
   const candidates = records.filter((record) => record.zone !== "quarantine");
   if (candidates.length === 0) return [];
 
@@ -550,6 +585,259 @@ export async function searchTrustZoneRecords(options: {
   }));
 }
 
+export async function listTrustZoneRecords(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  query?: string;
+  zone?: TrustZoneName;
+  kind?: TrustZoneRecordKind;
+  sourceClass?: TrustZoneSourceClass;
+  limit?: number;
+  offset?: number;
+}): Promise<TrustZoneListResult> {
+  const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(200, Math.floor(options.limit ?? 25))) : 25;
+  const offset = Number.isFinite(options.offset) ? Math.max(0, Math.floor(options.offset ?? 0)) : 0;
+  const zoneFilter = options.zone?.trim();
+  const kindFilter = options.kind?.trim();
+  const sourceClassFilter = options.sourceClass?.trim();
+  const queryTokens = new Set(normalizeRecallTokens(options.query ?? "", ["what"]));
+
+  const { entries } = await readTrustZoneRecordEntries(options);
+  const filtered = entries
+    .filter((entry) => !zoneFilter || entry.record.zone === zoneFilter)
+    .filter((entry) => !kindFilter || entry.record.kind === kindFilter)
+    .filter((entry) => !sourceClassFilter || entry.record.provenance.sourceClass === sourceClassFilter)
+    .map((entry) => ({
+      entry,
+      lexical: queryTokens.size > 0 ? lexicalScoreTrustZoneRecord(entry.record, queryTokens) : null,
+    }))
+    .filter((candidate) => queryTokens.size === 0 || (candidate.lexical?.score ?? 0) > 0);
+
+  filtered.sort((left, right) => {
+    const leftScore = left.lexical?.score ?? 0;
+    const rightScore = right.lexical?.score ?? 0;
+    if (rightScore !== leftScore) return rightScore - leftScore;
+    return right.entry.record.recordedAt.localeCompare(left.entry.record.recordedAt);
+  });
+
+  return {
+    total: filtered.length,
+    count: filtered.slice(offset, offset + limit).length,
+    limit,
+    offset,
+    records: filtered.slice(offset, offset + limit).map((candidate) => candidate.entry),
+    allRecords: entries.map((entry) => entry.record),
+  };
+}
+
+export function summarizeTrustZonePromotionReadiness(options: {
+  record: TrustZoneRecord;
+  allRecords: TrustZoneRecord[];
+  poisoningDefenseEnabled: boolean;
+}): TrustZonePromotionReadiness {
+  if (options.record.zone === "trusted") {
+    return {
+      allowed: false,
+      reasons: ["trusted records are terminal and do not have a next promotion step"],
+      requiresCorroboration: false,
+      corroborationCount: 0,
+      corroborationSourceClasses: [],
+    };
+  }
+
+  const nextTargetZone: TrustZoneName = options.record.zone === "quarantine" ? "working" : "trusted";
+  const plan = planTrustZonePromotion({
+    record: options.record,
+    targetZone: nextTargetZone,
+  });
+  const requires = requiresCorroboration(options.record, nextTargetZone, options.poisoningDefenseEnabled);
+  const corroboration = requires
+    ? summarizeCorroboration({
+        sourceRecord: options.record,
+        records: options.allRecords,
+      })
+    : { count: 0, sourceClasses: [] };
+
+  const reasons = [...plan.reasons];
+  if (requires && corroboration.count === 0) {
+    reasons.push("trusted promotion requires corroboration from an independent non-quarantine source");
+  }
+
+  return {
+    nextTargetZone,
+    allowed: plan.allowed && (!requires || corroboration.count > 0),
+    reasons,
+    requiresCorroboration: requires,
+    corroborationCount: corroboration.count,
+    corroborationSourceClasses: corroboration.sourceClasses,
+  };
+}
+
+function addMinutes(baseIso: string, minutes: number): string {
+  return new Date(Date.parse(baseIso) + minutes * 60_000).toISOString();
+}
+
+function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): TrustZoneRecord[] {
+  const demoTag = "trust-zone-demo";
+  const commonMetadata = {
+    demoScenario: scenario,
+    demoSeed: "true",
+  };
+  return [
+    {
+      schemaVersion: 1,
+      recordId: "tz-demo-enterprise-buyer-v1-quarantine-ready",
+      zone: "quarantine",
+      recordedAt: addMinutes(baseRecordedAt, 0),
+      kind: "external",
+      summary: "Vendor portal policy excerpt captured before validation for Acme Industrial onboarding.",
+      provenance: {
+        sourceClass: "web_content",
+        observedAt: addMinutes(baseRecordedAt, -2),
+        sessionKey: "demo:enterprise-buyer-v1",
+        sourceId: "https://vendor.example.com/policies/acme-industrial.pdf",
+        evidenceHash: "sha256:vendor-portal-policy-proof",
+      },
+      entityRefs: ["account:acme-industrial", "policy:vendor-onboarding"],
+      tags: [demoTag, "enterprise-demo", "vendor-policy"],
+      metadata: {
+        ...commonMetadata,
+        story: "captured-external-policy",
+      },
+    },
+    {
+      schemaVersion: 1,
+      recordId: "tz-demo-enterprise-buyer-v1-quarantine-blocked",
+      zone: "quarantine",
+      recordedAt: addMinutes(baseRecordedAt, 2),
+      kind: "external",
+      summary: "Unverified rumor about a production freeze captured without source evidence.",
+      provenance: {
+        sourceClass: "subagent_trace",
+        observedAt: addMinutes(baseRecordedAt, 1),
+        sessionKey: "demo:enterprise-buyer-v1",
+      },
+      entityRefs: ["workspace:finance", "incident:freeze-rumor"],
+      tags: [demoTag, "enterprise-demo", "needs-evidence"],
+      metadata: {
+        ...commonMetadata,
+        story: "captured-unverified-rumor",
+      },
+    },
+    {
+      schemaVersion: 1,
+      recordId: "tz-demo-enterprise-buyer-v1-working-awaiting-corroboration",
+      zone: "working",
+      recordedAt: addMinutes(baseRecordedAt, 6),
+      kind: "state",
+      summary: "Tool output says the finance SSO certificate rotation completed successfully.",
+      provenance: {
+        sourceClass: "tool_output",
+        observedAt: addMinutes(baseRecordedAt, 5),
+        sessionKey: "demo:enterprise-buyer-v1",
+        sourceId: "tool:sso-rotation-run-42",
+        evidenceHash: "sha256:sso-rotation-log",
+      },
+      entityRefs: ["workspace:finance", "control:sso-certificate-rotation"],
+      tags: [demoTag, "enterprise-demo", "sso-rotation"],
+      metadata: {
+        ...commonMetadata,
+        story: "working-tool-output",
+      },
+    },
+    {
+      schemaVersion: 1,
+      recordId: "tz-demo-enterprise-buyer-v1-working-corroboration",
+      zone: "working",
+      recordedAt: addMinutes(baseRecordedAt, 8),
+      kind: "external",
+      summary: "Change ticket confirms the same finance SSO certificate rotation with matching artifact hash.",
+      provenance: {
+        sourceClass: "web_content",
+        observedAt: addMinutes(baseRecordedAt, 7),
+        sessionKey: "demo:enterprise-buyer-v1",
+        sourceId: "https://tickets.example.com/changes/CHG-4821",
+        evidenceHash: "sha256:sso-rotation-ticket-proof",
+      },
+      entityRefs: ["workspace:finance", "control:sso-certificate-rotation"],
+      tags: [demoTag, "enterprise-demo", "sso-rotation"],
+      metadata: {
+        ...commonMetadata,
+        story: "independent-corroboration",
+      },
+    },
+    {
+      schemaVersion: 1,
+      recordId: "tz-demo-enterprise-buyer-v1-trusted-governance-rule",
+      zone: "trusted",
+      recordedAt: addMinutes(baseRecordedAt, 12),
+      kind: "memory",
+      summary: "Trusted promotion requires a ticket id and artifact hash before shared recall can use operator actions.",
+      provenance: {
+        sourceClass: "manual",
+        observedAt: addMinutes(baseRecordedAt, 11),
+        sessionKey: "demo:enterprise-buyer-v1",
+        sourceId: "review:trust-zone-policy",
+        evidenceHash: "sha256:trust-zone-policy",
+      },
+      promotedFromZone: "working",
+      entityRefs: ["policy:trust-zone-promotion"],
+      tags: [demoTag, "enterprise-demo", "operator-policy"],
+      metadata: {
+        ...commonMetadata,
+        story: "trusted-policy",
+      },
+    },
+  ];
+}
+
+export async function seedTrustZoneDemoDataset(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  enabled: boolean;
+  scenario?: string;
+  recordedAt?: string;
+  dryRun?: boolean;
+}): Promise<TrustZoneDemoSeedResult> {
+  if (options.enabled !== true) {
+    throw new Error("trust zone demo seed requires trustZonesEnabled=true");
+  }
+
+  const scenario = (options.scenario ?? "enterprise-buyer-v1").trim();
+  if (scenario !== "enterprise-buyer-v1") {
+    throw new Error(`unsupported trust-zone demo scenario: ${scenario}`);
+  }
+
+  const baseRecordedAt = assertIsoRecordedAt(options.recordedAt ?? new Date().toISOString(), "recordedAt");
+  const records = buildTrustZoneDemoRecords(baseRecordedAt, scenario);
+  if (options.dryRun === true) {
+    return {
+      scenario,
+      dryRun: true,
+      recordsWritten: 0,
+      records,
+      filePaths: [],
+    };
+  }
+
+  const filePaths: string[] = [];
+  for (const record of records) {
+    filePaths.push(await recordTrustZoneRecord({
+      memoryDir: options.memoryDir,
+      trustZoneStoreDir: options.trustZoneStoreDir,
+      record,
+    }));
+  }
+
+  return {
+    scenario,
+    dryRun: false,
+    recordsWritten: filePaths.length,
+    records,
+    filePaths,
+  };
+}
+
 export async function getTrustZoneStoreStatus(options: {
   memoryDir: string;
   trustZoneStoreDir?: string;
@@ -559,7 +847,8 @@ export async function getTrustZoneStoreStatus(options: {
 }): Promise<TrustZoneStoreStatus> {
   const rootDir = resolveTrustZoneStoreDir(options.memoryDir, options.trustZoneStoreDir);
   const zonesDir = path.join(rootDir, "zones");
-  const { files, records, invalidRecords } = await readTrustZoneRecords(options);
+  const { files, entries, invalidRecords } = await readTrustZoneRecordEntries(options);
+  const records = entries.map((entry) => entry.record);
   records.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
 
   const byZone: Partial<Record<TrustZoneName, number>> = {};

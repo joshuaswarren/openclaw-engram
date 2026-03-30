@@ -5,14 +5,21 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import test from "node:test";
 import {
   getTrustZoneStoreStatus,
+  listTrustZoneRecords,
   planTrustZonePromotion,
   promoteTrustZoneRecord,
   recordTrustZoneRecord,
   resolveTrustZoneStoreDir,
   scoreTrustZoneProvenance,
+  seedTrustZoneDemoDataset,
+  summarizeTrustZonePromotionReadiness,
   validateTrustZoneRecord,
 } from "../src/trust-zones.js";
-import { runTrustZonePromoteCliCommand, runTrustZoneStatusCliCommand } from "../src/cli.js";
+import {
+  runTrustZoneDemoSeedCliCommand,
+  runTrustZonePromoteCliCommand,
+  runTrustZoneStatusCliCommand,
+} from "../src/cli.js";
 
 test("trust-zones config path resolves under memoryDir by default", () => {
   assert.equal(
@@ -666,4 +673,147 @@ test("trust-zone-promote CLI enforces corroboration when poisoning defense is en
       }),
     /corroborat/i,
   );
+});
+
+test("listTrustZoneRecords filters and paginates trust-zone records", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-trust-zone-list-"));
+  await recordTrustZoneRecord({
+    memoryDir,
+    record: {
+      schemaVersion: 1,
+      recordId: "tz-list-1",
+      zone: "working",
+      recordedAt: "2026-03-07T18:22:00.000Z",
+      kind: "state",
+      summary: "Working deployment evidence for release forty-six.",
+      provenance: {
+        sourceClass: "tool_output",
+        observedAt: "2026-03-07T18:21:30.000Z",
+        sourceId: "tool:deploy-46",
+        evidenceHash: "sha256:deploy-46",
+      },
+      tags: ["release-46"],
+    },
+  });
+  await recordTrustZoneRecord({
+    memoryDir,
+    record: {
+      schemaVersion: 1,
+      recordId: "tz-list-2",
+      zone: "quarantine",
+      recordedAt: "2026-03-07T18:23:00.000Z",
+      kind: "external",
+      summary: "Quarantined vendor policy snippet.",
+      provenance: {
+        sourceClass: "web_content",
+        observedAt: "2026-03-07T18:22:30.000Z",
+      },
+      tags: ["vendor-policy"],
+    },
+  });
+
+  const workingOnly = await listTrustZoneRecords({
+    memoryDir,
+    zone: "working",
+    limit: 10,
+    offset: 0,
+  });
+  assert.equal(workingOnly.total, 1);
+  assert.equal(workingOnly.records[0]?.record.recordId, "tz-list-1");
+
+  const queried = await listTrustZoneRecords({
+    memoryDir,
+    query: "vendor policy",
+    limit: 10,
+    offset: 0,
+  });
+  assert.equal(queried.total, 1);
+  assert.equal(queried.records[0]?.record.recordId, "tz-list-2");
+});
+
+test("summarizeTrustZonePromotionReadiness surfaces corroboration requirements", async () => {
+  const source = validateTrustZoneRecord({
+    schemaVersion: 1,
+    recordId: "tz-readiness-source",
+    zone: "working",
+    recordedAt: "2026-03-07T18:24:00.000Z",
+    kind: "state",
+    summary: "Anchored tool-derived deployment evidence.",
+    provenance: {
+      sourceClass: "tool_output",
+      observedAt: "2026-03-07T18:23:30.000Z",
+      sourceId: "tool:deploy-47",
+      evidenceHash: "sha256:deploy-47",
+    },
+    entityRefs: ["deploy:47"],
+    tags: ["release-47"],
+  });
+  const support = validateTrustZoneRecord({
+    schemaVersion: 1,
+    recordId: "tz-readiness-support",
+    zone: "working",
+    recordedAt: "2026-03-07T18:25:00.000Z",
+    kind: "external",
+    summary: "Independent ticket corroboration.",
+    provenance: {
+      sourceClass: "web_content",
+      observedAt: "2026-03-07T18:24:30.000Z",
+      sourceId: "https://tickets.example.com/CHG-47",
+      evidenceHash: "sha256:chg-47",
+    },
+    entityRefs: ["deploy:47"],
+    tags: ["release-47"],
+  });
+
+  const blocked = summarizeTrustZonePromotionReadiness({
+    record: source,
+    allRecords: [source],
+    poisoningDefenseEnabled: true,
+  });
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.nextTargetZone, "trusted");
+  assert.match(blocked.reasons.join(" "), /corroborat/i);
+
+  const allowed = summarizeTrustZonePromotionReadiness({
+    record: source,
+    allRecords: [source, support],
+    poisoningDefenseEnabled: true,
+  });
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.corroborationCount, 1);
+  assert.deepEqual(allowed.corroborationSourceClasses, ["web_content"]);
+});
+
+test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo scenario", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-trust-zone-demo-seed-"));
+  const preview = await seedTrustZoneDemoDataset({
+    memoryDir,
+    enabled: true,
+    dryRun: true,
+    recordedAt: "2026-03-30T18:00:00.000Z",
+  });
+  assert.equal(preview.dryRun, true);
+  assert.equal(preview.recordsWritten, 0);
+  assert.equal(preview.records.length, 5);
+
+  const written = await runTrustZoneDemoSeedCliCommand({
+    memoryDir,
+    trustZonesEnabled: true,
+    dryRun: false,
+    recordedAt: "2026-03-30T18:00:00.000Z",
+  });
+  assert.equal(written.dryRun, false);
+  assert.equal(written.recordsWritten, 5);
+  assert.equal(written.scenario, "enterprise-buyer-v1");
+
+  const status = await getTrustZoneStoreStatus({
+    memoryDir,
+    enabled: true,
+    promotionEnabled: true,
+    poisoningDefenseEnabled: true,
+  });
+  assert.equal(status.records.valid, 5);
+  assert.equal(status.records.byZone.quarantine, 2);
+  assert.equal(status.records.byZone.working, 2);
+  assert.equal(status.records.byZone.trusted, 1);
 });

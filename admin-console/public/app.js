@@ -5,6 +5,11 @@ const browserState = {
   offset: 0,
   total: 0,
 };
+const trustZoneState = {
+  limit: 12,
+  offset: 0,
+  total: 0,
+};
 
 function $(id) {
   return document.getElementById(id);
@@ -109,10 +114,41 @@ function readMemoryPageSize() {
   return Number.parseInt($("memoryPageSize")?.value || String(browserState.limit || 25), 10) || 25;
 }
 
+function readTrustZonePageSize() {
+  return Number.parseInt($("trustZonePageSize")?.value || String(trustZoneState.limit || 12), 10) || 12;
+}
+
 function stepMemoryPage(direction) {
   const pageSize = readMemoryPageSize();
   browserState.limit = pageSize;
   browserState.offset = Math.max(0, browserState.offset + direction * pageSize);
+}
+
+function syncTrustZoneControls() {
+  const prevButton = $("trustZonePrevButton");
+  const nextButton = $("trustZoneNextButton");
+  if (prevButton) prevButton.disabled = trustZoneState.offset <= 0;
+  if (nextButton) nextButton.disabled = trustZoneState.offset + trustZoneState.limit >= trustZoneState.total;
+
+  const pageStatus = $("trustZonePageStatus");
+  if (!pageStatus) return;
+  if (trustZoneState.total === 0) {
+    pageStatus.textContent = "No results";
+    return;
+  }
+  const pageOffset = Math.min(
+    trustZoneState.offset,
+    Math.max(0, trustZoneState.total - 1),
+  );
+  const start = pageOffset + 1;
+  const end = Math.min(pageOffset + trustZoneState.limit, trustZoneState.total);
+  pageStatus.textContent = `${start}-${end} of ${trustZoneState.total}`;
+}
+
+function stepTrustZonePage(direction) {
+  const pageSize = readTrustZonePageSize();
+  trustZoneState.limit = pageSize;
+  trustZoneState.offset = Math.max(0, trustZoneState.offset + direction * pageSize);
 }
 
 function renderMemoryList(memories) {
@@ -250,6 +286,86 @@ function renderEntityList(entities) {
     button.addEventListener("click", () => void loadEntityDetail(entity.name));
     article.appendChild(button);
 
+    list.appendChild(article);
+  });
+}
+
+function renderTrustZoneList(records) {
+  const list = $("trustZoneList");
+  if (!list) return;
+  if (!Array.isArray(records) || records.length === 0) {
+    renderEmptyState(list, "No trust-zone records matched.");
+    return;
+  }
+  clearChildren(list);
+  records.forEach((record) => {
+    const article = createItem();
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    appendPill(meta, record.zone);
+    appendPill(meta, record.kind);
+    appendPill(meta, record.sourceClass);
+    appendPill(meta, record.anchored ? "anchored" : "unanchored");
+    if (record.trustScore) {
+      appendPill(meta, `trust ${record.trustScore.total} (${record.trustScore.band})`);
+    }
+    article.appendChild(meta);
+
+    const heading = document.createElement("h3");
+    heading.style.marginTop = "10px";
+    heading.textContent = record.recordId;
+    article.appendChild(heading);
+
+    const pathText = document.createElement("div");
+    pathText.className = "status";
+    pathText.textContent = `${record.recordedAt} · ${record.filePath}`;
+    article.appendChild(pathText);
+
+    const preview = document.createElement("p");
+    preview.textContent = record.summary;
+    article.appendChild(preview);
+
+    const readiness = document.createElement("div");
+    readiness.className = "status";
+    if (record.nextPromotionTarget) {
+      readiness.textContent = record.nextPromotionAllowed
+        ? `Ready for promotion to ${record.nextPromotionTarget}.`
+        : `Blocked on ${record.nextPromotionTarget}: ${(record.nextPromotionReasons || []).join("; ") || "operator review required"}`;
+    } else {
+      readiness.textContent = "No further promotion path.";
+    }
+    article.appendChild(readiness);
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "toolbar";
+    toolbar.style.marginTop = "12px";
+
+    const inspectButton = document.createElement("button");
+    inspectButton.className = "secondary";
+    inspectButton.textContent = "Inspect";
+    inspectButton.addEventListener("click", () => {
+      $("trustZoneDetail").textContent = JSON.stringify(record, null, 2);
+      setStatus("trustZoneDetailStatus", `Loaded ${record.recordId}.`, "ok");
+    });
+    toolbar.appendChild(inspectButton);
+
+    if (record.nextPromotionTarget) {
+      const previewButton = document.createElement("button");
+      previewButton.className = "secondary";
+      previewButton.textContent = `Preview → ${record.nextPromotionTarget}`;
+      previewButton.addEventListener("click", () => void promoteTrustZone(record.recordId, record.nextPromotionTarget, true));
+      toolbar.appendChild(previewButton);
+    }
+
+    if (record.nextPromotionTarget && record.nextPromotionAllowed) {
+      const promoteButton = document.createElement("button");
+      promoteButton.className = "accent";
+      promoteButton.textContent = `Promote → ${record.nextPromotionTarget}`;
+      promoteButton.addEventListener("click", () => void promoteTrustZone(record.recordId, record.nextPromotionTarget, false));
+      toolbar.appendChild(promoteButton);
+    }
+
+    article.appendChild(toolbar);
     list.appendChild(article);
   });
 }
@@ -418,6 +534,99 @@ async function loadMaintenance() {
   setStatus("maintenanceStatus", "Maintenance summary loaded.", "ok");
 }
 
+async function loadTrustZones(resetOffset = false) {
+  if (resetOffset) trustZoneState.offset = 0;
+  trustZoneState.limit = readTrustZonePageSize();
+  setStatus("trustZoneStatus", "Loading trust-zone state...");
+  const params = new URLSearchParams();
+  const query = $("trustZoneQuery")?.value?.trim();
+  const zone = $("trustZoneZone")?.value?.trim();
+  const sourceClass = $("trustZoneSourceClass")?.value?.trim();
+  if (query) params.set("q", query);
+  if (zone) params.set("zone", zone);
+  if (sourceClass) params.set("sourceClass", sourceClass);
+  params.set("limit", String(trustZoneState.limit));
+  params.set("offset", String(trustZoneState.offset));
+
+  const [statusResponse, browseResponse] = await Promise.all([
+    fetchJson("/engram/v1/trust-zones/status"),
+    fetchJson(`/engram/v1/trust-zones/records?${params.toString()}`),
+  ]);
+  trustZoneState.total = browseResponse.total || 0;
+  const maxOffset = trustZoneState.total > 0
+    ? Math.floor((trustZoneState.total - 1) / trustZoneState.limit) * trustZoneState.limit
+    : 0;
+  if (!resetOffset && trustZoneState.offset > maxOffset) {
+    trustZoneState.offset = maxOffset;
+    return loadTrustZones(false);
+  }
+
+  renderTrustZoneList(browseResponse.records);
+  syncTrustZoneControls();
+  const byZone = statusResponse?.status?.records?.byZone || {};
+  const zoneSummary = ["quarantine", "working", "trusted"]
+    .filter((name) => typeof byZone[name] === "number")
+    .map((name) => `${name} ${byZone[name]}`)
+    .join(" · ");
+  setStatus(
+    "trustZoneStatus",
+    `Loaded ${browseResponse.count} of ${browseResponse.total} trust-zone records.${zoneSummary ? ` ${zoneSummary}.` : ""}`,
+    "ok",
+  );
+}
+
+async function promoteTrustZone(recordId, targetZone, dryRun) {
+  if (!recordId || !targetZone) return;
+  setStatus("trustZoneDetailStatus", `${dryRun ? "Previewing" : "Applying"} ${targetZone} promotion for ${recordId}...`);
+  const response = await fetchJson("/engram/v1/trust-zones/promote", {
+    method: "POST",
+    body: JSON.stringify({
+      recordId,
+      targetZone,
+      promotionReason: dryRun
+        ? `Previewed in Engram admin console for ${recordId}.`
+        : `Promoted in Engram admin console for ${recordId}.`,
+      dryRun,
+    }),
+  });
+  $("trustZoneSeedResult").textContent = JSON.stringify(response, null, 2);
+  $("trustZoneDetail").textContent = JSON.stringify(response.record, null, 2);
+  await loadTrustZones(false);
+  setStatus(
+    "trustZoneDetailStatus",
+    dryRun ? `Previewed ${targetZone} promotion for ${recordId}.` : `Applied ${targetZone} promotion for ${recordId}.`,
+    "ok",
+  );
+}
+
+async function seedTrustZoneDemo(dryRun) {
+  if (!dryRun && typeof window.confirm === "function") {
+    const confirmed = window.confirm(
+      "Seed the explicit trust-zone demo dataset into the current namespace? This is opt-in demo data for buyer-facing walkthroughs.",
+    );
+    if (!confirmed) return;
+  }
+  setStatus("trustZoneStatus", dryRun ? "Previewing trust-zone demo seed..." : "Seeding trust-zone demo dataset...");
+  const response = await fetchJson("/engram/v1/trust-zones/demo-seed", {
+    method: "POST",
+    body: JSON.stringify({
+      scenario: "enterprise-buyer-v1",
+      dryRun,
+    }),
+  });
+  $("trustZoneSeedResult").textContent = JSON.stringify(response, null, 2);
+  if (!dryRun) {
+    await loadTrustZones(true);
+  }
+  setStatus(
+    "trustZoneStatus",
+    dryRun
+      ? `Previewed ${response.records.length} trust-zone demo records.`
+      : `Seeded ${response.recordsWritten} trust-zone demo records into ${response.namespace}.`,
+    "ok",
+  );
+}
+
 async function connectAndBootstrap() {
   const input = $("tokenInput");
   const token = input?.value?.trim() || readToken();
@@ -433,6 +642,7 @@ async function connectAndBootstrap() {
     setStatus("authStatus", "Connected to Engram access API.", "ok");
     await Promise.allSettled([
       loadMemoryBrowser(true),
+      loadTrustZones(true),
       loadReviewQueue(),
       loadEntities(),
       loadQuality(),
@@ -485,6 +695,17 @@ function bootstrap() {
     void loadMemoryBrowser(false);
   });
   $("runRecallButton")?.addEventListener("click", () => void runRecallDebugger());
+  $("refreshTrustZonesButton")?.addEventListener("click", () => void loadTrustZones(true));
+  $("trustZonePrevButton")?.addEventListener("click", () => {
+    stepTrustZonePage(-1);
+    void loadTrustZones(false);
+  });
+  $("trustZoneNextButton")?.addEventListener("click", () => {
+    stepTrustZonePage(1);
+    void loadTrustZones(false);
+  });
+  $("previewTrustZoneSeedButton")?.addEventListener("click", () => void seedTrustZoneDemo(true));
+  $("seedTrustZoneDemoButton")?.addEventListener("click", () => void seedTrustZoneDemo(false));
   $("refreshQueueButton")?.addEventListener("click", () => void loadReviewQueue());
   $("searchEntitiesButton")?.addEventListener("click", () => void loadEntities());
   $("copyMemoryPathButton")?.addEventListener("click", copyMemoryPath);
@@ -493,6 +714,7 @@ function bootstrap() {
     void connectAndBootstrap();
   } else {
     syncBrowserControls();
+    syncTrustZoneControls();
   }
 }
 
