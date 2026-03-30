@@ -493,6 +493,8 @@ function summarizeTrustZoneRecord(
   filePath: string,
   allRecords: TrustZoneRecord[],
   poisoningDefenseEnabled: boolean,
+  trustZonesEnabled: boolean,
+  promotionEnabled: boolean,
 ): EngramAccessTrustZoneRecordSummary {
   const trustScore = poisoningDefenseEnabled ? scoreTrustZoneProvenance(record) : undefined;
   const readiness = summarizeTrustZonePromotionReadiness({
@@ -500,6 +502,14 @@ function summarizeTrustZoneRecord(
     allRecords,
     poisoningDefenseEnabled,
   });
+  const promotionReasons = [...readiness.reasons];
+  const promotionAllowed = readiness.allowed && trustZonesEnabled === true && promotionEnabled === true;
+  if (trustZonesEnabled !== true) {
+    promotionReasons.push("trust zone promotion requires trustZonesEnabled=true");
+  }
+  if (promotionEnabled !== true) {
+    promotionReasons.push("trust zone promotion requires quarantinePromotionEnabled=true");
+  }
   return {
     recordId: record.recordId,
     filePath,
@@ -517,8 +527,8 @@ function summarizeTrustZoneRecord(
     metadata: record.metadata,
     trustScore,
     nextPromotionTarget: readiness.nextTargetZone,
-    nextPromotionAllowed: readiness.allowed,
-    nextPromotionReasons: readiness.reasons,
+    nextPromotionAllowed: promotionAllowed,
+    nextPromotionReasons: promotionReasons,
     corroborationCount: readiness.requiresCorroboration ? readiness.corroborationCount : undefined,
     corroborationSourceClasses: readiness.requiresCorroboration ? readiness.corroborationSourceClasses : undefined,
   };
@@ -1437,6 +1447,8 @@ export class EngramAccessService {
           entry.filePath,
           result.allRecords,
           this.orchestrator.config.memoryPoisoningDefenseEnabled === true,
+          this.orchestrator.config.trustZonesEnabled === true,
+          this.orchestrator.config.quarantinePromotionEnabled === true,
         )),
     };
   }

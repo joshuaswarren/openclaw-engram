@@ -8,6 +8,7 @@ import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
 import { getMemoryProjectionPath } from "../src/memory-projection-store.js";
 import { StorageManager } from "../src/storage.js";
+import { recordTrustZoneRecord } from "../src/trust-zones.ts";
 
 function createService() {
   const orchestrator = {
@@ -2213,6 +2214,76 @@ test("access service maps invalid trust-zone demo seed requests to input errors"
         err instanceof EngramAccessInputError &&
         err.message === "recordedAt must be a valid ISO timestamp",
     );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service trust-zone browse reports promotions as blocked when promotion is disabled", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-trust-zone-browse-disabled-"));
+  try {
+    await recordTrustZoneRecord({
+      memoryDir,
+      record: {
+        schemaVersion: 1,
+        recordId: "tz-working-demo",
+        zone: "working",
+        recordedAt: "2026-03-08T00:00:00.000Z",
+        kind: "state",
+        summary: "Anchored working record.",
+        provenance: {
+          sourceClass: "tool_output",
+          observedAt: "2026-03-08T00:00:00.000Z",
+          sourceId: "tool:deploy",
+          evidenceHash: "sha256:deploy",
+        },
+        entityRefs: ["deploy:47"],
+        tags: ["release-47"],
+      },
+    });
+    await recordTrustZoneRecord({
+      memoryDir,
+      record: {
+        schemaVersion: 1,
+        recordId: "tz-working-corroboration",
+        zone: "working",
+        recordedAt: "2026-03-08T00:01:00.000Z",
+        kind: "external",
+        summary: "Corroborating ticket.",
+        provenance: {
+          sourceClass: "web_content",
+          observedAt: "2026-03-08T00:01:00.000Z",
+          sourceId: "https://tickets.example.com/CHG-47",
+          evidenceHash: "sha256:chg-47",
+        },
+        entityRefs: ["deploy:47"],
+        tags: ["release-47"],
+      },
+    });
+
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "global",
+        searchBackend: "qmd",
+        qmdEnabled: true,
+        nativeKnowledge: undefined,
+        trustZonesEnabled: true,
+        quarantinePromotionEnabled: false,
+        memoryPoisoningDefenseEnabled: true,
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => ({ dir: memoryDir }),
+    } as any);
+
+    const browse = await service.trustZoneBrowse({ zone: "working", limit: 10 });
+    const target = browse.records.find((record) => record.recordId === "tz-working-demo");
+    assert.ok(target);
+    assert.equal(target.nextPromotionTarget, "trusted");
+    assert.equal(target.nextPromotionAllowed, false);
+    assert.match((target.nextPromotionReasons ?? []).join(" "), /quarantinePromotionEnabled=true/i);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
