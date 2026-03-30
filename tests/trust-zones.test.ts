@@ -832,3 +832,16 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   assert.equal(status.records.byZone.working, 4);
   assert.equal(status.records.byZone.trusted, 2);
 });
+
+test("seedTrustZoneDemoDataset rejects non-parsable recordedAt values before date math", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-trust-zone-demo-seed-invalid-"));
+  await assert.rejects(
+    () => seedTrustZoneDemoDataset({
+      memoryDir,
+      enabled: true,
+      dryRun: true,
+      recordedAt: "2026-03-30Tbad",
+    }),
+    /recordedAt/i,
+  );
+});

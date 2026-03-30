@@ -678,7 +678,11 @@ export function summarizeTrustZonePromotionReadiness(options: {
 }
 
 function addMinutes(baseIso: string, minutes: number): string {
-  return new Date(Date.parse(baseIso) + minutes * 60_000).toISOString();
+  const baseMs = Date.parse(baseIso);
+  if (!Number.isFinite(baseMs)) {
+    throw new Error("recordedAt must be a valid ISO timestamp");
+  }
+  return new Date(baseMs + minutes * 60_000).toISOString();
 }
 
 function buildTrustZoneDemoSeedRunId(baseRecordedAt: string): string {
@@ -822,6 +826,9 @@ export async function seedTrustZoneDemoDataset(options: {
   }
 
   const baseRecordedAt = assertIsoRecordedAt(options.recordedAt ?? new Date().toISOString(), "recordedAt");
+  if (!Number.isFinite(Date.parse(baseRecordedAt))) {
+    throw new Error("recordedAt must be a valid ISO timestamp");
+  }
   const records = buildTrustZoneDemoRecords(baseRecordedAt, scenario);
   if (options.dryRun === true) {
     return {

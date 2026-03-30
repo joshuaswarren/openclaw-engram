@@ -2206,6 +2206,13 @@ test("access service maps invalid trust-zone demo seed requests to input errors"
         err instanceof EngramAccessInputError &&
         err.message === "unsupported trust-zone demo scenario: bogus-scenario",
     );
+
+    await assert.rejects(
+      () => service.trustZoneDemoSeed({ recordedAt: "2026-03-30Tbad" }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        err.message === "recordedAt must be a valid ISO timestamp",
+    );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
