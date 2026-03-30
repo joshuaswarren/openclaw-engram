@@ -795,6 +795,7 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   assert.equal(preview.dryRun, true);
   assert.equal(preview.recordsWritten, 0);
   assert.equal(preview.records.length, 5);
+  assert.equal(new Set(preview.records.map((record) => record.recordId)).size, 5);
 
   const written = await runTrustZoneDemoSeedCliCommand({
     memoryDir,
@@ -805,6 +806,20 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
   assert.equal(written.dryRun, false);
   assert.equal(written.recordsWritten, 5);
   assert.equal(written.scenario, "enterprise-buyer-v1");
+  assert.equal(new Set(written.records.map((record) => record.recordId)).size, 5);
+
+  const secondRun = await runTrustZoneDemoSeedCliCommand({
+    memoryDir,
+    trustZonesEnabled: true,
+    dryRun: false,
+    recordedAt: "2026-03-31T18:00:00.000Z",
+  });
+  assert.equal(secondRun.recordsWritten, 5);
+  const combinedIds = new Set([
+    ...written.records.map((record) => record.recordId),
+    ...secondRun.records.map((record) => record.recordId),
+  ]);
+  assert.equal(combinedIds.size, 10);
 
   const status = await getTrustZoneStoreStatus({
     memoryDir,
@@ -812,8 +827,8 @@ test("seedTrustZoneDemoDataset stays explicit and writes the enterprise demo sce
     promotionEnabled: true,
     poisoningDefenseEnabled: true,
   });
-  assert.equal(status.records.valid, 5);
-  assert.equal(status.records.byZone.quarantine, 2);
-  assert.equal(status.records.byZone.working, 2);
-  assert.equal(status.records.byZone.trusted, 1);
+  assert.equal(status.records.valid, 10);
+  assert.equal(status.records.byZone.quarantine, 4);
+  assert.equal(status.records.byZone.working, 4);
+  assert.equal(status.records.byZone.trusted, 2);
 });

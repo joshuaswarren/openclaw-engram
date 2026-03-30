@@ -681,16 +681,25 @@ function addMinutes(baseIso: string, minutes: number): string {
   return new Date(Date.parse(baseIso) + minutes * 60_000).toISOString();
 }
 
+function buildTrustZoneDemoSeedRunId(baseRecordedAt: string): string {
+  return baseRecordedAt.replace(/[^0-9]/g, "");
+}
+
+function buildTrustZoneDemoRecordId(baseId: string, seedRunId: string): string {
+  return `${baseId}-${seedRunId}`;
+}
+
 function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): TrustZoneRecord[] {
   const demoTag = "trust-zone-demo";
   const commonMetadata = {
     demoScenario: scenario,
     demoSeed: "true",
   };
+  const seedRunId = buildTrustZoneDemoSeedRunId(baseRecordedAt);
   return [
     {
       schemaVersion: 1,
-      recordId: "tz-demo-enterprise-buyer-v1-quarantine-ready",
+      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-quarantine-ready", seedRunId),
       zone: "quarantine",
       recordedAt: addMinutes(baseRecordedAt, 0),
       kind: "external",
@@ -711,7 +720,7 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
     },
     {
       schemaVersion: 1,
-      recordId: "tz-demo-enterprise-buyer-v1-quarantine-blocked",
+      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-quarantine-blocked", seedRunId),
       zone: "quarantine",
       recordedAt: addMinutes(baseRecordedAt, 2),
       kind: "external",
@@ -730,7 +739,7 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
     },
     {
       schemaVersion: 1,
-      recordId: "tz-demo-enterprise-buyer-v1-working-awaiting-corroboration",
+      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-working-awaiting-corroboration", seedRunId),
       zone: "working",
       recordedAt: addMinutes(baseRecordedAt, 6),
       kind: "state",
@@ -751,7 +760,7 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
     },
     {
       schemaVersion: 1,
-      recordId: "tz-demo-enterprise-buyer-v1-working-corroboration",
+      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-working-corroboration", seedRunId),
       zone: "working",
       recordedAt: addMinutes(baseRecordedAt, 8),
       kind: "external",
@@ -772,7 +781,7 @@ function buildTrustZoneDemoRecords(baseRecordedAt: string, scenario: string): Tr
     },
     {
       schemaVersion: 1,
-      recordId: "tz-demo-enterprise-buyer-v1-trusted-governance-rule",
+      recordId: buildTrustZoneDemoRecordId("tz-demo-enterprise-buyer-v1-trusted-governance-rule", seedRunId),
       zone: "trusted",
       recordedAt: addMinutes(baseRecordedAt, 12),
       kind: "memory",
