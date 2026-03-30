@@ -1473,8 +1473,8 @@ export class EngramAccessService {
     }
     return {
       namespace: resolvedNamespace,
-      dryRun: request.dryRun === true,
       ...result,
+      dryRun: request.dryRun === true,
     };
   }
 
