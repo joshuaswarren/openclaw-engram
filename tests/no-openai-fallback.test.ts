@@ -28,6 +28,19 @@ function buildLocalOnlyEngine() {
   return new ExtractionEngine(config);
 }
 
+function buildGatewayModeEngine() {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+    modelSource: "gateway",
+    gatewayAgentId: "engram-llm",
+    localLlmEnabled: true,
+    localLlmFallback: true,
+  });
+  return new ExtractionEngine(config);
+}
+
 test("verifyContradiction falls back to gateway AI when no OpenAI key is configured", async () => {
   const engine = buildEngine();
   let fallbackCalled = false;
@@ -334,4 +347,56 @@ test("summarizeMemories honors localLlmEnabled before cloud routing", async () =
     keyFacts: ["Carrier outage delayed shipments", "Customers were notified about delays"],
     keyEntities: ["carrier", "customers"],
   });
+});
+
+test("extract routes directly to the gateway chain when modelSource is gateway", async () => {
+  const engine = buildGatewayModeEngine();
+  let localCalled = false;
+  let fallbackCalled = false;
+  let fallbackOptions: Record<string, unknown> | undefined;
+
+  (engine as any).localLlm = {
+    chatCompletion: async () => {
+      localCalled = true;
+      return {
+        content: "{\"facts\":[],\"profileUpdates\":[],\"entities\":[],\"questions\":[]}",
+      };
+    },
+  };
+  (engine as any).fallbackLlm = {
+    parseWithSchemaDetailed: async (_messages: unknown, _schema: unknown, options: Record<string, unknown>) => {
+      fallbackCalled = true;
+      fallbackOptions = options;
+      return {
+        result: {
+          facts: [
+            {
+              category: "fact",
+              content: "Fireworks Kimi is the primary extraction path in gateway mode.",
+              confidence: 0.95,
+              tags: ["gateway"],
+            },
+          ],
+          profileUpdates: [],
+          entities: [],
+          questions: [],
+        },
+        modelUsed: "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+      };
+    },
+  };
+
+  const result = await engine.extract([
+    {
+      role: "user",
+      content: "Remember that gateway mode should start on the configured chain.",
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+
+  assert.equal(localCalled, false);
+  assert.equal(fallbackCalled, true);
+  assert.equal(fallbackOptions?.agentId, "engram-llm");
+  assert.equal(result.facts.length, 1);
+  assert.equal(result.facts[0]?.content, "Fireworks Kimi is the primary extraction path in gateway mode.");
 });
