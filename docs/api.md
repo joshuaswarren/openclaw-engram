@@ -20,6 +20,10 @@ Core routes:
 - `GET /engram/v1/entities/:name` — fetch one entity
 - `GET /engram/v1/review-queue` — latest governance review bundle when present
 - `GET /engram/v1/maintenance` — health plus latest governance artifact summary
+- `GET /engram/v1/trust-zones/status` — trust-zone store status, counts, and latest record summary
+- `GET /engram/v1/trust-zones/records` — browse trust-zone records with zone/source/query filters
+- `POST /engram/v1/trust-zones/promote` — dry-run or apply a trust-zone promotion
+- `POST /engram/v1/trust-zones/demo-seed` — explicitly seed the opt-in buyer demo dataset
 - `POST /engram/v1/review-disposition` — operator review decision write path
 - `POST /engram/v1/observe` — feed conversation messages into LCM archive and extraction pipeline
 - `POST /engram/v1/lcm/search` — full-text search over LCM-archived conversations
@@ -52,6 +56,56 @@ Write request envelope:
 - `dryRun`
 
 Write endpoints share the same explicit-capture validation and duplicate suppression as the OpenClaw tooling, enforce request-size limits, and are rate-limited before mutation paths run.
+
+#### Trust-zone routes
+
+`GET /engram/v1/trust-zones/status`
+
+- returns `{ namespace, status }`
+- `status.records.byZone` shows quarantine/working/trusted counts
+- when poisoning defense is enabled, trust-score bands and aggregate provenance scores are included
+
+`GET /engram/v1/trust-zones/records`
+
+Query parameters:
+
+- `q` — free-text search over summary, tags, entity refs, and metadata
+- `zone` — `quarantine`, `working`, or `trusted`
+- `kind` — `memory`, `artifact`, `state`, `trajectory`, or `external`
+- `sourceClass` — `tool_output`, `web_content`, `subagent_trace`, `system_memory`, `user_input`, or `manual`
+- `limit`
+- `offset`
+- `namespace`
+
+Each returned record includes:
+
+- provenance summary (`sourceClass`, `sourceId`, `evidenceHashPresent`, `anchored`)
+- trust score details when poisoning defense is enabled
+- next-step promotion readiness (`nextPromotionTarget`, `nextPromotionAllowed`, `nextPromotionReasons`)
+- corroboration counts for risky `working -> trusted` promotions
+
+`POST /engram/v1/trust-zones/promote`
+
+Request fields:
+
+- `recordId` (required)
+- `targetZone` (required; `working` or `trusted`)
+- `promotionReason` (required)
+- `recordedAt`
+- `summary`
+- `dryRun`
+- `namespace`
+
+`POST /engram/v1/trust-zones/demo-seed`
+
+Request fields:
+
+- `scenario` (optional, default: `enterprise-buyer-v1`)
+- `recordedAt` (optional base ISO timestamp for demo records)
+- `dryRun`
+- `namespace`
+
+This route is intentionally explicit and never runs automatically. Use it only when you want seeded demo data in the selected namespace.
 
 #### `POST /engram/v1/observe`
 
@@ -407,6 +461,9 @@ Run via `openclaw engram <command>`:
 | `continuity incident-open --symptom <text> [--trigger-window <text>] [--suspected-cause <text>]` | Open a continuity incident |
 | `continuity incident-close --id <id> --fix-applied <text> --verification-result <text> [--preventive-rule <text>]` | Close a continuity incident |
 | `action-audit [--namespace <name>] [--limit N]` | Show namespace-aware memory action outcomes and policy decisions |
+| `trust-zone-status` | Show trust-zone store status and aggregate counts |
+| `trust-zone-promote --record-id <id> --target-zone <zone> --reason <text> [--dry-run]` | Preview or apply a trust-zone promotion |
+| `trust-zone-demo-seed [--scenario enterprise-buyer-v1] [--recorded-at <iso>] [--dry-run]` | Explicitly preview or seed the opt-in trust-zone buyer demo dataset |
 
 ## Plugin Hooks
 

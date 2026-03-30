@@ -409,7 +409,7 @@ openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN"
 
 Key endpoints: `GET /engram/v1/health`, `POST /engram/v1/recall`, `POST /engram/v1/memories`, `GET /engram/v1/entities/:name`, and more. Full reference in [API docs](docs/api.md).
 
-The HTTP server also hosts a lightweight operator UI at `http://127.0.0.1:4318/engram/ui/` for memory browsing, recall inspection, governance review, and entity exploration.
+The HTTP server also hosts a lightweight operator UI at `http://127.0.0.1:4318/engram/ui/` for memory browsing, recall inspection, governance review, trust-zone promotion, and entity exploration.
 
 ### MCP Tools
 
@@ -473,7 +473,28 @@ openclaw engram semantic-consolidate --dry-run  # Preview without changes
 # Access layer
 openclaw engram access http-serve --token "$TOKEN"  # Start HTTP API
 openclaw engram access mcp-serve   # Start stdio MCP server
+
+# Trust-zone demos
+openclaw engram trust-zone-demo-seed --dry-run       # Preview the opt-in buyer demo dataset
+openclaw engram trust-zone-demo-seed                 # Explicitly seed the demo dataset
+openclaw engram trust-zone-promote --record-id <id> --target-zone working --reason "Operator review"
 ```
+
+### Trust-zone demo workflow
+
+Trust zones now ship with a dedicated admin-console view plus an explicit demo seeding path for buyer-facing walkthroughs.
+
+- **Never automatic** — Engram does not seed sample trust-zone records on install, startup, or feature enablement.
+- **Explicit only** — demo records appear only after you run `openclaw engram trust-zone-demo-seed` or trigger the matching admin-console action.
+- **Buyer-friendly story** — the trust-zone view surfaces provenance strength, promotion readiness, corroboration requirements, and operator promotion actions in one place.
+
+The seeded scenario is `enterprise-buyer-v1`, which creates a small, opinionated dataset covering:
+
+- quarantine records that are ready for review
+- working records that are blocked on missing provenance
+- working records that still need corroboration
+- working records with independent corroboration support
+- a trusted operator policy record
 
 See the [full CLI reference](docs/api.md#cli-commands) for all commands.
 
