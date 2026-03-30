@@ -200,7 +200,7 @@ Options:
   }
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
+main().catch(() => {
+  console.error("Fatal: unexpected error while running evals. See debug logs for details.");
   process.exitCode = 1;
 });
