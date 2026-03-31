@@ -1520,12 +1520,22 @@ export class StorageManager {
         ? Math.max(1, Math.floor(options.maxMemories))
         : undefined;
     const updatedAfterMs = options.updatedAfter?.getTime();
+    const updatedAfterDay = options.updatedAfter?.toISOString().slice(0, 10);
     const normalizedBatchSize = this.normalizeMemoryReadBatchSize(options.batchSize);
     const memories: MemoryFile[] = [];
     const selectedPaths: string[] = [];
 
     for (let i = 0; i < sortedPaths.length; i += normalizedBatchSize) {
       const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
+      for (const batchPath of batchPaths) {
+        if (updatedAfterDay !== undefined) {
+          const dateMatch = batchPath.match(/[\\/](\d{4}-\d{2}-\d{2})[\\/]/);
+          if (dateMatch && dateMatch[1] < updatedAfterDay) {
+            continue;
+          }
+        }
+        selectedPaths.push(batchPath);
+      }
       const batchMemories = await this.readParsedMemoriesFromPaths(batchPaths, normalizedBatchSize);
       for (const memory of batchMemories) {
         if (updatedAfterMs !== undefined) {
@@ -1535,7 +1545,6 @@ export class StorageManager {
           }
         }
         memories.push(memory);
-        selectedPaths.push(memory.path);
         if (maxMemories !== undefined && memories.length >= maxMemories) {
           return { memories, filePaths: selectedPaths };
         }

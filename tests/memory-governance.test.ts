@@ -544,6 +544,11 @@ test("governance supports bounded recent scans without loading the full corpus i
         confidenceTier: "implied",
       }),
     );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-11/fact-malformed.md",
+      "not-frontmatter\n",
+    );
 
     const result = await runMemoryGovernance({
       memoryDir,
@@ -559,6 +564,7 @@ test("governance supports bounded recent scans without loading the full corpus i
     };
     assert.equal(summary.scannedMemories, 2);
     assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "malformed_import"), true);
     assert.equal(result.reviewQueue.some((entry) => entry.memoryId === "fact-old"), false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
