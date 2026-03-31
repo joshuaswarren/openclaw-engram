@@ -798,7 +798,7 @@ export async function runMemoryGovernance(
     proposed: groupActionsByStatus(proposedActions),
     applied: {},
   };
-  const memoryById = new Map(memories.map((memory) => [memory.frontmatter.id, memory] as const));
+  const memoryPathById = new Map(memories.map((memory) => [memory.frontmatter.id, memory.path] as const));
   const targetedMemoryIds = new Set(proposedActions.map((action) => action.memoryId));
   const keptMemoryIds = memories
     .map((memory) => memory.frontmatter.id)
@@ -809,7 +809,9 @@ export async function runMemoryGovernance(
 
   if (options.mode === "apply") {
     for (const action of proposedActions) {
-      const memory = memoryById.get(action.memoryId) ?? null;
+      const memoryPath = memoryPathById.get(action.memoryId) ?? null;
+      if (!memoryPath) continue;
+      const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
       const beforeRaw = await safeRead(memory.path);
       if (!beforeRaw) continue;
@@ -836,7 +838,9 @@ export async function runMemoryGovernance(
     await persistRestoreManifest(options.memoryDir, restoreManifest);
 
     for (const action of proposedActions) {
-      const memory = memoryById.get(action.memoryId) ?? null;
+      const memoryPath = memoryPathById.get(action.memoryId) ?? null;
+      if (!memoryPath) continue;
+      const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
       const restoreEntry = restoreEntryByMemoryId.get(action.memoryId);
       if (!restoreEntry) continue;

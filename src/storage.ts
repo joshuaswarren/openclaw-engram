@@ -1553,12 +1553,22 @@ export class StorageManager {
     const selectedPaths: string[] = [];
 
     for (let i = 0; i < sortedPaths.length; i += normalizedBatchSize) {
+      if (maxMemories !== undefined && memories.length >= maxMemories) {
+        return { memories, filePaths: selectedPaths };
+      }
       const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
       const candidateBatchPaths = updatedAfterMs === undefined
         ? batchPaths
         : await this.filterWindowPathsByUpdatedAfter(batchPaths, updatedAfterMs);
-      selectedPaths.push(...candidateBatchPaths);
-      const batchMemories = await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize);
+      const remainingSlots = maxMemories === undefined ? undefined : Math.max(0, maxMemories - memories.length);
+      const limitedCandidateBatchPaths = remainingSlots === undefined
+        ? candidateBatchPaths
+        : candidateBatchPaths.slice(0, remainingSlots);
+      selectedPaths.push(...limitedCandidateBatchPaths);
+      const batchMemories = await this.readParsedMemoriesFromPaths(
+        limitedCandidateBatchPaths,
+        normalizedBatchSize,
+      );
       for (const memory of batchMemories) {
         if (updatedAfterMs !== undefined) {
           const updatedMs = Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);

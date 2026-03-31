@@ -695,6 +695,63 @@ test("readMemoriesWindow skips stale corrections during recent-only scans", asyn
   }
 });
 
+test("readMemoriesWindow limits parsed candidates to the remaining maxMemories budget", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-max-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-a.md",
+      memoryDoc({
+        id: "fact-a",
+        content: "Recent memory A.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-b.md",
+      memoryDoc({
+        id: "fact-b",
+        content: "Recent memory B.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-c.md",
+      memoryDoc({
+        id: "fact-c",
+        content: "Recent memory C.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 1,
+      batchSize: 3,
+    });
+
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-c"]);
+    assert.deepEqual(parsedBatches, [[path.join(memoryDir, "facts/2026-03-10/fact-c.md")]]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("bounded governance apply reuses scanned memories without getMemoryById lookups", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-window-"));
   const originalGetMemoryById = StorageManager.prototype.getMemoryById;
@@ -733,6 +790,67 @@ test("bounded governance apply reuses scanned memories without getMemoryById loo
     assert.equal(getMemoryByIdCalls, 0);
   } finally {
     StorageManager.prototype.getMemoryById = originalGetMemoryById;
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("bounded governance apply reloads the latest on-disk memory before mutating", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-refresh-"));
+  const originalReadMemoryByPath = StorageManager.prototype.readMemoryByPath;
+  let refreshed = false;
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-1.md",
+      memoryDoc({
+        id: "fact-1",
+        content: "Original memory content.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        verificationState: "disputed",
+      }),
+    );
+
+    StorageManager.prototype.readMemoryByPath = async function readMemoryByPathRefresh(filePath: string) {
+      if (!refreshed && filePath.endsWith("fact-1.md")) {
+        refreshed = true;
+        await writeText(
+          memoryDir,
+          "facts/2026-03-10/fact-1.md",
+          memoryDoc({
+            id: "fact-1",
+            content: "Fresh on-disk memory content.",
+            created: "2026-03-10T00:00:00.000Z",
+            updated: "2026-03-10T06:00:00.000Z",
+            confidence: 0.2,
+            confidenceTier: "speculative",
+            verificationState: "disputed",
+          }),
+        );
+      }
+      return originalReadMemoryByPath.call(this, filePath);
+    };
+
+    await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      recentDays: 2,
+      maxMemories: 10,
+      batchSize: 1,
+    });
+
+    const refreshedMemory = await originalReadMemoryByPath.call(new StorageManager(memoryDir), path.join(
+      memoryDir,
+      "facts/2026-03-10/fact-1.md",
+    ));
+    assert.equal(refreshed, true);
+    assert.equal(refreshedMemory?.content, "Fresh on-disk memory content.");
+    assert.equal(refreshedMemory?.frontmatter.status, "quarantined");
+  } finally {
+    StorageManager.prototype.readMemoryByPath = originalReadMemoryByPath;
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
