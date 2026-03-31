@@ -1771,9 +1771,11 @@ export class Orchestrator {
         log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
       });
     }
-    this.autoRegisterNightlyGovernanceCron().catch((err) => {
-      log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
-    });
+    if (this.config.nightlyGovernanceCronAutoRegister) {
+      this.autoRegisterNightlyGovernanceCron().catch((err) => {
+        log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
+      });
+    }
   }
 
   /**

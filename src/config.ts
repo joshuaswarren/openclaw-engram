@@ -739,6 +739,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
     daySummaryEnabled: cfg.daySummaryEnabled !== false, // default: true
     hourlySummaryCronAutoRegister: cfg.hourlySummaryCronAutoRegister === true,
+    nightlyGovernanceCronAutoRegister: cfg.nightlyGovernanceCronAutoRegister === true,
     summaryRecallHours:
       typeof cfg.summaryRecallHours === "number" ? cfg.summaryRecallHours : 24,
     maxSummaryCount:
