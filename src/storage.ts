@@ -1527,16 +1527,15 @@ export class StorageManager {
 
     for (let i = 0; i < sortedPaths.length; i += normalizedBatchSize) {
       const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
-      for (const batchPath of batchPaths) {
-        if (updatedAfterDay !== undefined) {
-          const dateMatch = batchPath.match(/[\\/](\d{4}-\d{2}-\d{2})[\\/]/);
-          if (dateMatch && dateMatch[1] < updatedAfterDay) {
-            continue;
-          }
+      const candidateBatchPaths = batchPaths.filter((batchPath) => {
+        if (updatedAfterDay === undefined) {
+          return true;
         }
-        selectedPaths.push(batchPath);
-      }
-      const batchMemories = await this.readParsedMemoriesFromPaths(batchPaths, normalizedBatchSize);
+        const dateMatch = batchPath.match(/[\\/](\d{4}-\d{2}-\d{2})[\\/]/);
+        return !dateMatch || dateMatch[1] >= updatedAfterDay;
+      });
+      selectedPaths.push(...candidateBatchPaths);
+      const batchMemories = await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize);
       for (const memory of batchMemories) {
         if (updatedAfterMs !== undefined) {
           const updatedMs = Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);

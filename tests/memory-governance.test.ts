@@ -570,3 +570,62 @@ test("governance supports bounded recent scans without loading the full corpus i
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("readMemoriesWindow skips parsing old batches during recent-only scans", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-02-20/fact-old.md",
+      memoryDoc({
+        id: "fact-old",
+        content: "Older memory outside the recent window.",
+        created: "2026-02-20T00:00:00.000Z",
+        updated: "2026-02-20T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-09/fact-recent-a.md",
+      memoryDoc({
+        id: "fact-recent-a",
+        content: "Recent memory A.",
+        created: "2026-03-09T00:00:00.000Z",
+        updated: "2026-03-09T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-recent-b.md",
+      memoryDoc({
+        id: "fact-recent-b",
+        content: "Recent memory B.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      batchSize: 1,
+    });
+
+    assert.equal(parsedBatches.some((batch) => batch.some((filePath) => filePath.endsWith("fact-old.md"))), false);
+    assert.deepEqual(
+      window.memories.map((memory) => memory.frontmatter.id).sort(),
+      ["fact-recent-a", "fact-recent-b"],
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
