@@ -1598,7 +1598,11 @@ export class StorageManager {
       const limitedCandidateBatchPaths = remainingSlots === undefined
         ? candidateBatchPaths
         : candidateBatchPaths.slice(0, remainingSlots);
-      selectedPaths.push(...limitedCandidateBatchPaths);
+      if (maxMemories === undefined) {
+        selectedPaths.push(...limitedCandidateBatchPaths);
+      } else if (selectedPaths.length < maxMemories) {
+        selectedPaths.push(...limitedCandidateBatchPaths.slice(0, maxMemories - selectedPaths.length));
+      }
       const batchMemories = await this.readParsedMemoriesFromPaths(
         limitedCandidateBatchPaths,
         normalizedBatchSize,
