@@ -1570,6 +1570,24 @@ export class StorageManager {
     return ordered;
   }
 
+  private async readWindowBoundedBatch(
+    candidateBatchPaths: string[],
+    remainingSlots: number,
+  ): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
+    const memories: MemoryFile[] = [];
+    const filePaths: string[] = [];
+
+    for (const candidatePath of candidateBatchPaths) {
+      if (memories.length >= remainingSlots) break;
+      filePaths.push(candidatePath);
+      const parsedMemories = await this.readParsedMemoriesFromPaths([candidatePath], 1);
+      if (parsedMemories.length === 0) continue;
+      memories.push(...parsedMemories);
+    }
+
+    return { memories, filePaths };
+  }
+
   async readMemoriesWindow(options: {
     maxMemories?: number;
     batchSize?: number;
@@ -1595,18 +1613,17 @@ export class StorageManager {
         ? batchPaths
         : await this.filterWindowPathsByUpdatedAfter(batchPaths, updatedAfterMs);
       const remainingSlots = maxMemories === undefined ? undefined : Math.max(0, maxMemories - memories.length);
-      const limitedCandidateBatchPaths = remainingSlots === undefined
-        ? candidateBatchPaths
-        : candidateBatchPaths.slice(0, remainingSlots);
+      const { memories: batchMemories, filePaths: parsedCandidatePaths } = remainingSlots === undefined
+        ? {
+            memories: await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize),
+            filePaths: candidateBatchPaths,
+          }
+        : await this.readWindowBoundedBatch(candidateBatchPaths, remainingSlots);
       if (maxMemories === undefined) {
-        selectedPaths.push(...limitedCandidateBatchPaths);
+        selectedPaths.push(...parsedCandidatePaths);
       } else if (selectedPaths.length < maxMemories) {
-        selectedPaths.push(...limitedCandidateBatchPaths.slice(0, maxMemories - selectedPaths.length));
+        selectedPaths.push(...parsedCandidatePaths.slice(0, maxMemories - selectedPaths.length));
       }
-      const batchMemories = await this.readParsedMemoriesFromPaths(
-        limitedCandidateBatchPaths,
-        normalizedBatchSize,
-      );
       for (const memory of batchMemories) {
         if (updatedAfterMs !== undefined) {
           const updatedMs = Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);

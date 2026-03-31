@@ -858,10 +858,10 @@ test("readMemoriesWindow gives corrections a bounded slot before consuming the f
     });
 
     assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["correction-recent", "fact-b"]);
-    assert.deepEqual(parsedBatches, [[
-      path.join(memoryDir, "corrections/correction-recent.md"),
-      path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
-    ]]);
+    assert.deepEqual(parsedBatches, [
+      [path.join(memoryDir, "corrections/correction-recent.md")],
+      [path.join(memoryDir, "facts/2026-03-10/fact-b.md")],
+    ]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -917,6 +917,66 @@ test("readMemoriesWindow counts malformed candidates against the maxMemories win
       path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
     ]);
     assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-b", "fact-a"]);
+    assert.deepEqual(parsedBatches, [
+      [path.join(memoryDir, "facts/2026-03-10/fact-c.md")],
+      [path.join(memoryDir, "facts/2026-03-10/fact-b.md")],
+      [path.join(memoryDir, "facts/2026-03-10/fact-a.md")],
+    ]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("readMemoriesWindow keeps filling the current batch after malformed candidates", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-batch-fill-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-c.md",
+      "not valid frontmatter\n",
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-b.md",
+      memoryDoc({
+        id: "fact-b",
+        content: "Recent fact B.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-a.md",
+      memoryDoc({
+        id: "fact-a",
+        content: "Recent fact A.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 2,
+      batchSize: 3,
+    });
+
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-b", "fact-a"]);
+    assert.deepEqual(window.filePaths, [
+      path.join(memoryDir, "facts/2026-03-10/fact-c.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
+    ]);
     assert.deepEqual(parsedBatches, [
       [path.join(memoryDir, "facts/2026-03-10/fact-c.md")],
       [path.join(memoryDir, "facts/2026-03-10/fact-b.md")],
