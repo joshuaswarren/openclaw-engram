@@ -928,8 +928,8 @@ test("readMemoriesWindow counts malformed candidates against the maxMemories win
   }
 });
 
-test("readMemoriesWindow keeps filling the current batch after malformed candidates", async () => {
-  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-batch-fill-"));
+test("readMemoriesWindow caps malformed-heavy scans inside a large batch", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-batch-budget-"));
   try {
     await writeText(
       memoryDir,
@@ -983,6 +983,51 @@ test("readMemoriesWindow keeps filling the current batch after malformed candida
       [path.join(memoryDir, "facts/2026-03-10/fact-c.md")],
       [path.join(memoryDir, "facts/2026-03-10/fact-b.md")],
       [path.join(memoryDir, "facts/2026-03-10/fact-a.md")],
+    ]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("readMemoriesWindow bounds malformed-heavy batches to a finite inspection budget", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-malformed-cap-"));
+  try {
+    for (const name of ["fact-e", "fact-d", "fact-c", "fact-b", "fact-a"]) {
+      await writeText(
+        memoryDir,
+        `facts/2026-03-10/${name}.md`,
+        "not valid frontmatter\n",
+      );
+    }
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 2,
+      batchSize: 5,
+    });
+
+    assert.deepEqual(window.memories, []);
+    assert.deepEqual(window.filePaths, [
+      path.join(memoryDir, "facts/2026-03-10/fact-e.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-d.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-c.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
+    ]);
+    assert.deepEqual(parsedBatches, [
+      [path.join(memoryDir, "facts/2026-03-10/fact-e.md")],
+      [path.join(memoryDir, "facts/2026-03-10/fact-d.md")],
+      [path.join(memoryDir, "facts/2026-03-10/fact-c.md")],
+      [path.join(memoryDir, "facts/2026-03-10/fact-b.md")],
     ]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });

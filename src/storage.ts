@@ -1573,12 +1573,13 @@ export class StorageManager {
   private async readWindowBoundedBatch(
     candidateBatchPaths: string[],
     remainingSlots: number,
+    remainingInspectionBudget: number,
   ): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
     const memories: MemoryFile[] = [];
     const filePaths: string[] = [];
 
     for (const candidatePath of candidateBatchPaths) {
-      if (memories.length >= remainingSlots) break;
+      if (memories.length >= remainingSlots || filePaths.length >= remainingInspectionBudget) break;
       filePaths.push(candidatePath);
       const parsedMemories = await this.readParsedMemoriesFromPaths([candidatePath], 1);
       if (parsedMemories.length === 0) continue;
@@ -1599,13 +1600,17 @@ export class StorageManager {
       typeof options.maxMemories === "number" && Number.isFinite(options.maxMemories)
         ? Math.max(1, Math.floor(options.maxMemories))
         : undefined;
+    const maxCandidatePaths = maxMemories === undefined ? undefined : maxMemories * 2;
     const updatedAfterMs = options.updatedAfter?.getTime();
     const normalizedBatchSize = this.normalizeMemoryReadBatchSize(options.batchSize);
     const memories: MemoryFile[] = [];
     const selectedPaths: string[] = [];
 
     for (let i = 0; i < sortedPaths.length; i += normalizedBatchSize) {
-      if (maxMemories !== undefined && memories.length >= maxMemories) {
+      if (
+        maxMemories !== undefined
+        && (memories.length >= maxMemories || (maxCandidatePaths !== undefined && selectedPaths.length >= maxCandidatePaths))
+      ) {
         return { memories, filePaths: selectedPaths };
       }
       const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
@@ -1613,12 +1618,13 @@ export class StorageManager {
         ? batchPaths
         : await this.filterWindowPathsByUpdatedAfter(batchPaths, updatedAfterMs);
       const remainingSlots = maxMemories === undefined ? undefined : Math.max(0, maxMemories - memories.length);
+      const remainingInspectionBudget = maxCandidatePaths === undefined ? undefined : Math.max(0, maxCandidatePaths - selectedPaths.length);
       const { memories: batchMemories, filePaths: parsedCandidatePaths } = remainingSlots === undefined
         ? {
             memories: await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize),
             filePaths: candidateBatchPaths,
           }
-        : await this.readWindowBoundedBatch(candidateBatchPaths, remainingSlots);
+        : await this.readWindowBoundedBatch(candidateBatchPaths, remainingSlots, remainingInspectionBudget ?? remainingSlots);
       selectedPaths.push(...parsedCandidatePaths);
       for (const memory of batchMemories) {
         memories.push(memory);
