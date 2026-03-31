@@ -771,7 +771,7 @@ export async function runMemoryGovernance(
   const traceId = runId;
   const storage = new StorageManager(options.memoryDir);
   const boundedScan =
-    options.maxMemories !== undefined || options.batchSize !== undefined || options.recentDays !== undefined;
+    options.maxMemories !== undefined || options.recentDays !== undefined;
   const normalizedRecentDays = typeof options.recentDays === "number" && Number.isFinite(options.recentDays)
     ? Math.max(1, Math.floor(options.recentDays))
     : undefined;

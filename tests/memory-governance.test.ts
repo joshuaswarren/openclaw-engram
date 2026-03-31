@@ -987,6 +987,82 @@ test("readMemoriesWindow keeps filling the current batch after malformed candida
   }
 });
 
+test("readMemoriesWindow trusts the pre-filtered recent window for invalid legacy timestamps", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-invalid-date-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-invalid-date.md",
+      [
+        "---",
+        "id: fact-invalid-date",
+        "category: fact",
+        "source: legacy",
+        "updated: not-a-date",
+        "---",
+        "",
+        "Legacy memory with invalid updated timestamp.",
+      ].join("\n"),
+    );
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-invalid-date.md", "2026-03-10T09:00:00.000Z");
+
+    const storage = new StorageManager(memoryDir);
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 1,
+      batchSize: 1,
+    });
+
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-invalid-date"]);
+    assert.deepEqual(window.filePaths, [path.join(memoryDir, "facts/2026-03-10/fact-invalid-date.md")]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("runMemoryGovernance ignores batchSize-only requests for bounded scan ordering", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-batchsize-only-"));
+  const originalReadAllMemories = StorageManager.prototype.readAllMemories;
+  const originalReadMemoriesWindow = StorageManager.prototype.readMemoriesWindow;
+  let readAllMemoriesCalls = 0;
+  let readMemoriesWindowCalls = 0;
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-a.md",
+      memoryDoc({
+        id: "fact-a",
+        content: "Batch-size only governance baseline.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+
+    StorageManager.prototype.readAllMemories = async function readAllMemoriesSpy() {
+      readAllMemoriesCalls += 1;
+      return originalReadAllMemories.call(this);
+    };
+    StorageManager.prototype.readMemoriesWindow = async function readMemoriesWindowSpy(options) {
+      readMemoriesWindowCalls += 1;
+      return originalReadMemoriesWindow.call(this, options);
+    };
+
+    await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      batchSize: 1,
+    });
+
+    assert.equal(readAllMemoriesCalls > 0, true);
+    assert.equal(readMemoriesWindowCalls, 0);
+  } finally {
+    StorageManager.prototype.readAllMemories = originalReadAllMemories;
+    StorageManager.prototype.readMemoriesWindow = originalReadMemoriesWindow;
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("bounded governance apply reuses scanned memories without getMemoryById lookups", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-window-"));
   const originalGetMemoryById = StorageManager.prototype.getMemoryById;

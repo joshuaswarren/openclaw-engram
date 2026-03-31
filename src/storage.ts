@@ -1625,12 +1625,6 @@ export class StorageManager {
         selectedPaths.push(...parsedCandidatePaths.slice(0, maxMemories - selectedPaths.length));
       }
       for (const memory of batchMemories) {
-        if (updatedAfterMs !== undefined) {
-          const updatedMs = Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);
-          if (!Number.isFinite(updatedMs) || updatedMs < updatedAfterMs) {
-            continue;
-          }
-        }
         memories.push(memory);
         if (maxMemories !== undefined && memories.length >= maxMemories) {
           return { memories, filePaths: selectedPaths };
