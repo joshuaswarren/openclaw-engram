@@ -31,7 +31,7 @@ test("nightly governance cron auto-registers a bounded job once", async () => {
       expr: "23 2 * * *",
       tz: "America/Chicago",
     });
-    assert.match(parsed.jobs[0]?.payload.message ?? "", /memory_governance_run/);
+    assert.match(parsed.jobs[0]?.payload.message ?? "", /engram\.memory_governance_run/);
     assert.match(parsed.jobs[0]?.payload.message ?? "", /"recentDays": 2/);
     assert.match(parsed.jobs[0]?.payload.message ?? "", /"maxMemories": 500/);
     assert.match(parsed.jobs[0]?.payload.message ?? "", /"batchSize": 100/);

@@ -14,6 +14,7 @@ import {
   groupActionsByStatus,
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
+  runMemoryGovernance,
 } from "./maintenance/memory-governance.js";
 import {
   normalizeProjectionPreview,
@@ -1401,6 +1402,63 @@ export class EngramAccessService {
         qualityScore: governance.qualityScore ?? governance.metrics?.qualityScore,
         reviewQueueCount: governance.reviewQueue?.length ?? 0,
       },
+    };
+  }
+
+  async governanceRun(
+    request: {
+      namespace?: string;
+      mode?: "shadow" | "apply";
+      recentDays?: number;
+      maxMemories?: number;
+      batchSize?: number;
+      authenticatedPrincipal?: string;
+    },
+    principal?: string,
+  ): Promise<{
+    namespace: string;
+    runId: string;
+    traceId: string;
+    mode: "shadow" | "apply";
+    reviewQueueCount: number;
+    proposedActionCount: number;
+    appliedActionCount: number;
+    summaryPath: string;
+    reportPath: string;
+  }> {
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      undefined,
+      request.authenticatedPrincipal ?? principal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const result = await runMemoryGovernance({
+      memoryDir: storage.dir,
+      mode: request.mode === "apply" ? "apply" : "shadow",
+      recentDays:
+        typeof request.recentDays === "number" && Number.isFinite(request.recentDays)
+          ? Math.max(1, Math.floor(request.recentDays))
+          : undefined,
+      maxMemories:
+        typeof request.maxMemories === "number" && Number.isFinite(request.maxMemories)
+          ? Math.max(1, Math.floor(request.maxMemories))
+          : undefined,
+      batchSize:
+        typeof request.batchSize === "number" && Number.isFinite(request.batchSize)
+          ? Math.max(1, Math.floor(request.batchSize))
+          : undefined,
+    });
+
+    return {
+      namespace: resolvedNamespace,
+      runId: result.runId,
+      traceId: result.traceId,
+      mode: result.mode,
+      reviewQueueCount: result.reviewQueue.length,
+      proposedActionCount: result.proposedActions.length,
+      appliedActionCount: result.appliedActions.length,
+      summaryPath: result.summaryPath,
+      reportPath: result.reportPath,
     };
   }
 

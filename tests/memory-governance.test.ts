@@ -752,6 +752,67 @@ test("readMemoriesWindow limits parsed candidates to the remaining maxMemories b
   }
 });
 
+test("readMemoriesWindow gives corrections a bounded slot before consuming the full facts budget", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-fair-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "corrections/correction-recent.md",
+      memoryDoc({
+        id: "correction-recent",
+        category: "correction",
+        content: "Recent correction memory.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-a.md",
+      memoryDoc({
+        id: "fact-a",
+        content: "Recent fact A.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-b.md",
+      memoryDoc({
+        id: "fact-b",
+        content: "Recent fact B.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 2,
+      batchSize: 3,
+    });
+
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["correction-recent", "fact-b"]);
+    assert.deepEqual(parsedBatches, [[
+      path.join(memoryDir, "corrections/correction-recent.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
+    ]]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("bounded governance apply reuses scanned memories without getMemoryById lookups", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-window-"));
   const originalGetMemoryById = StorageManager.prototype.getMemoryById;

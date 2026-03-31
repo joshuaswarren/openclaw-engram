@@ -171,7 +171,7 @@ export async function ensureNightlyGovernanceCron(
         timeoutSeconds: 900,
         thinking: "off",
         message:
-          "You are OpenClaw automation. Call the tool `memory_governance_run` with params " +
+          "You are OpenClaw automation. Call the tool `engram.memory_governance_run` with params " +
           `{"recentDays": ${recentDays}, "maxMemories": ${maxMemories}, "batchSize": ${batchSize}}` +
           ". If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
       },

@@ -1536,13 +1536,42 @@ export class StorageManager {
     return results.filter((filePath): filePath is string => filePath !== null);
   }
 
+  private orderWindowPaths(filePaths: string[]): string[] {
+    const correctionPaths: string[] = [];
+    const factPaths: string[] = [];
+
+    for (const filePath of filePaths) {
+      if (filePath === this.correctionsDir || filePath.startsWith(`${this.correctionsDir}${path.sep}`)) {
+        correctionPaths.push(filePath);
+      } else {
+        factPaths.push(filePath);
+      }
+    }
+
+    correctionPaths.sort((left, right) => right.localeCompare(left));
+    factPaths.sort((left, right) => right.localeCompare(left));
+
+    if (correctionPaths.length === 0) return factPaths;
+    if (factPaths.length === 0) return correctionPaths;
+
+    const ordered: string[] = [];
+    const maxLength = Math.max(correctionPaths.length, factPaths.length);
+    for (let i = 0; i < maxLength; i += 1) {
+      const correctionPath = correctionPaths[i];
+      if (correctionPath) ordered.push(correctionPath);
+      const factPath = factPaths[i];
+      if (factPath) ordered.push(factPath);
+    }
+    return ordered;
+  }
+
   async readMemoriesWindow(options: {
     maxMemories?: number;
     batchSize?: number;
     updatedAfter?: Date;
   } = {}): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
     const allPaths = await this.collectActiveMemoryPaths();
-    const sortedPaths = [...allPaths].sort((left, right) => right.localeCompare(left));
+    const sortedPaths = this.orderWindowPaths(allPaths);
     const maxMemories =
       typeof options.maxMemories === "number" && Number.isFinite(options.maxMemories)
         ? Math.max(1, Math.floor(options.maxMemories))
