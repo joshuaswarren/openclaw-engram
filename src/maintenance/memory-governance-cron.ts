@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+const DAY_SUMMARY_CRON_ID = "engram-day-summary";
 const GOVERNANCE_CRON_ID = "engram-nightly-governance";
 
 type CronJobsShape =
@@ -63,6 +64,64 @@ async function writeCronJobsAtomic(jobsPath: string, value: CronJobsShape): Prom
   await rename(tempPath, jobsPath);
 }
 
+async function ensureCronJob(
+  jobsPath: string,
+  jobId: string,
+  buildJob: () => Record<string, unknown>,
+): Promise<{ created: boolean; jobId: string }> {
+  const releaseLock = await acquireCronJobsLock(jobsPath);
+  try {
+    const raw = await readFile(jobsPath, "utf-8");
+    const { parsed, jobs } = parseCronJobsShape(raw);
+
+    if (jobs.some((job) => job.id === jobId)) {
+      return { created: false, jobId };
+    }
+
+    jobs.push(buildJob());
+    const output = Array.isArray(parsed) ? jobs : { ...parsed, jobs };
+    await writeCronJobsAtomic(jobsPath, output);
+    return { created: true, jobId };
+  } finally {
+    await releaseLock();
+  }
+}
+
+export async function ensureDaySummaryCron(
+  jobsPath: string,
+  options: {
+    timezone: string;
+    agentId?: string;
+  },
+): Promise<{ created: boolean; jobId: string }> {
+  const agentId =
+    typeof options.agentId === "string" && options.agentId.trim().length > 0
+      ? options.agentId.trim()
+      : "main";
+
+  return ensureCronJob(jobsPath, DAY_SUMMARY_CRON_ID, () => ({
+    id: DAY_SUMMARY_CRON_ID,
+    agentId,
+    name: "Engram Day Summary (auto)",
+    enabled: true,
+    schedule: {
+      kind: "cron",
+      expr: "47 23 * * *",
+      tz: options.timezone,
+    },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload: {
+      kind: "agentTurn",
+      timeoutSeconds: 900,
+      thinking: "off",
+      message:
+        "You are OpenClaw automation. Call tool engram.day_summary with empty params (it will auto-gather today's facts). If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
+    },
+    delivery: { mode: "none" },
+  }));
+}
+
 export async function ensureNightlyGovernanceCron(
   jobsPath: string,
   options: {
@@ -95,16 +154,7 @@ export async function ensureNightlyGovernanceCron(
       ? options.agentId.trim()
       : "main";
 
-  const releaseLock = await acquireCronJobsLock(jobsPath);
-  try {
-    const raw = await readFile(jobsPath, "utf-8");
-    const { parsed, jobs } = parseCronJobsShape(raw);
-
-    if (jobs.some((job) => job.id === GOVERNANCE_CRON_ID)) {
-      return { created: false, jobId: GOVERNANCE_CRON_ID };
-    }
-
-    jobs.push({
+  return ensureCronJob(jobsPath, GOVERNANCE_CRON_ID, () => ({
       id: GOVERNANCE_CRON_ID,
       agentId,
       name: "Engram Nightly Governance (batched)",
@@ -126,12 +176,5 @@ export async function ensureNightlyGovernanceCron(
           ". If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
       },
       delivery: { mode: "none" },
-    });
-
-    const output = Array.isArray(parsed) ? jobs : { ...parsed, jobs };
-    await writeCronJobsAtomic(jobsPath, output);
-    return { created: true, jobId: GOVERNANCE_CRON_ID };
-  } finally {
-    await releaseLock();
-  }
+    }));
 }

@@ -571,7 +571,7 @@ test("governance supports bounded recent scans without loading the full corpus i
   }
 });
 
-test("readMemoriesWindow skips parsing old batches during recent-only scans", async () => {
+test("readMemoriesWindow includes recently updated memories from older folders", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-window-"));
   try {
     await writeText(
@@ -579,19 +579,19 @@ test("readMemoriesWindow skips parsing old batches during recent-only scans", as
       "facts/2026-02-20/fact-old.md",
       memoryDoc({
         id: "fact-old",
-        content: "Older memory outside the recent window.",
+        content: "Older memory that was updated recently.",
         created: "2026-02-20T00:00:00.000Z",
-        updated: "2026-02-20T00:00:00.000Z",
+        updated: "2026-03-10T09:00:00.000Z",
       }),
     );
     await writeText(
       memoryDir,
-      "facts/2026-03-09/fact-recent-a.md",
+      "facts/2026-03-09/fact-stale.md",
       memoryDoc({
-        id: "fact-recent-a",
-        content: "Recent memory A.",
+        id: "fact-stale",
+        content: "Memory outside the recent update window.",
         created: "2026-03-09T00:00:00.000Z",
-        updated: "2026-03-09T00:00:00.000Z",
+        updated: "2026-03-01T00:00:00.000Z",
       }),
     );
     await writeText(
@@ -605,27 +605,58 @@ test("readMemoriesWindow skips parsing old batches during recent-only scans", as
       }),
     );
 
-    const storage = new StorageManager(memoryDir) as StorageManager & {
-      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
-    };
-    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
-    const parsedBatches: string[][] = [];
-    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
-      parsedBatches.push([...filePaths]);
-      return originalReadParsed(filePaths, batchSize);
-    };
-
+    const storage = new StorageManager(memoryDir);
     const window = await storage.readMemoriesWindow({
       updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
       batchSize: 1,
     });
 
-    assert.equal(parsedBatches.some((batch) => batch.some((filePath) => filePath.endsWith("fact-old.md"))), false);
     assert.deepEqual(
       window.memories.map((memory) => memory.frontmatter.id).sort(),
-      ["fact-recent-a", "fact-recent-b"],
+      ["fact-old", "fact-recent-b"],
     );
   } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("bounded governance apply reuses scanned memories without getMemoryById lookups", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-window-"));
+  const originalGetMemoryById = StorageManager.prototype.getMemoryById;
+  let getMemoryByIdCalls = 0;
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-1.md",
+      memoryDoc({
+        id: "fact-1",
+        content: "A disputed speculative memory for bounded apply coverage.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        verificationState: "disputed",
+      }),
+    );
+
+    StorageManager.prototype.getMemoryById = async function getMemoryByIdSpy() {
+      getMemoryByIdCalls += 1;
+      throw new Error("bounded governance apply should not call getMemoryById");
+    };
+
+    const result = await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      recentDays: 2,
+      maxMemories: 10,
+      batchSize: 1,
+    });
+
+    assert.equal(result.appliedActions.length > 0, true);
+    assert.equal(getMemoryByIdCalls, 0);
+  } finally {
+    StorageManager.prototype.getMemoryById = originalGetMemoryById;
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
