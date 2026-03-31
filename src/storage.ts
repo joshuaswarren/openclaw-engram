@@ -1511,9 +1511,14 @@ export class StorageManager {
   private async readWindowUpdatedMs(filePath: string): Promise<number | null> {
     try {
       const raw = await readFile(filePath, "utf-8");
-      const parsed = parseFrontmatter(raw);
-      if (!parsed) return null;
-      const updatedMs = Date.parse(parsed.frontmatter.updated ?? parsed.frontmatter.created);
+      const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
+      if (!match) return null;
+      const frontmatterBlock = match[1];
+      const rawUpdated =
+        frontmatterBlock.match(/^updated:\s*"?([^"\n]*)"?/m)?.[1]
+        ?? frontmatterBlock.match(/^created:\s*"?([^"\n]*)"?/m)?.[1]
+        ?? null;
+      const updatedMs = rawUpdated ? Date.parse(rawUpdated) : Number.NaN;
       return Number.isFinite(updatedMs) ? updatedMs : null;
     } catch {
       return null;

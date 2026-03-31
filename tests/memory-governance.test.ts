@@ -695,6 +695,60 @@ test("readMemoriesWindow skips stale corrections during recent-only scans", asyn
   }
 });
 
+test("readMemoriesWindow falls back to file mtime for undated legacy memories", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-undated-window-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-02-20/fact-undated.md",
+      [
+        "---",
+        'id: "fact-undated"',
+        'category: "fact"',
+        'source: "legacy"',
+        "---",
+        "",
+        "Legacy undated memory.",
+      ].join("\n"),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-recent.md",
+      memoryDoc({
+        id: "fact-recent",
+        content: "Recent memory.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await setTimestamp(memoryDir, "facts/2026-02-20/fact-undated.md", "2026-02-20T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-recent.md", "2026-03-10T00:00:00.000Z");
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      batchSize: 1,
+    });
+
+    assert.equal(
+      parsedBatches.some((batch) => batch.some((filePath) => filePath.endsWith("fact-undated.md"))),
+      false,
+    );
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-recent"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("readMemoriesWindow limits parsed candidates to the remaining maxMemories budget", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-max-window-"));
   try {
