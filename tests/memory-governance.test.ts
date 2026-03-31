@@ -915,6 +915,7 @@ test("readMemoriesWindow counts malformed candidates against the maxMemories win
     assert.deepEqual(window.filePaths, [
       path.join(memoryDir, "facts/2026-03-10/fact-c.md"),
       path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-a.md"),
     ]);
     assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-b", "fact-a"]);
     assert.deepEqual(parsedBatches, [
@@ -976,11 +977,65 @@ test("readMemoriesWindow keeps filling the current batch after malformed candida
     assert.deepEqual(window.filePaths, [
       path.join(memoryDir, "facts/2026-03-10/fact-c.md"),
       path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-a.md"),
     ]);
     assert.deepEqual(parsedBatches, [
       [path.join(memoryDir, "facts/2026-03-10/fact-c.md")],
       [path.join(memoryDir, "facts/2026-03-10/fact-b.md")],
       [path.join(memoryDir, "facts/2026-03-10/fact-a.md")],
+    ]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("readMemoriesWindow keeps all inspected malformed paths in bounded mixed ordering", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-mixed-malformed-"));
+  try {
+    await writeText(
+      memoryDir,
+      "corrections/2026-03-10/correction-bad.md",
+      "not valid frontmatter\n",
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-z-good-b.md",
+      memoryDoc({
+        id: "fact-good-b",
+        content: "Recent fact B.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-y-bad.md",
+      "not valid frontmatter\n",
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-x-good-a.md",
+      memoryDoc({
+        id: "fact-good-a",
+        content: "Recent fact A.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+
+    const storage = new StorageManager(memoryDir);
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 2,
+      batchSize: 4,
+    });
+
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-good-b", "fact-good-a"]);
+    assert.deepEqual(window.filePaths, [
+      path.join(memoryDir, "corrections/2026-03-10/correction-bad.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-z-good-b.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-y-bad.md"),
+      path.join(memoryDir, "facts/2026-03-10/fact-x-good-a.md"),
     ]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });

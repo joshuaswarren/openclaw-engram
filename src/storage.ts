@@ -1619,11 +1619,7 @@ export class StorageManager {
             filePaths: candidateBatchPaths,
           }
         : await this.readWindowBoundedBatch(candidateBatchPaths, remainingSlots);
-      if (maxMemories === undefined) {
-        selectedPaths.push(...parsedCandidatePaths);
-      } else if (selectedPaths.length < maxMemories) {
-        selectedPaths.push(...parsedCandidatePaths.slice(0, maxMemories - selectedPaths.length));
-      }
+      selectedPaths.push(...parsedCandidatePaths);
       for (const memory of batchMemories) {
         memories.push(memory);
         if (maxMemories !== undefined && memories.length >= maxMemories) {
