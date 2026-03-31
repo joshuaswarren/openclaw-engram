@@ -555,10 +555,16 @@ test("governance supports bounded recent scans without loading the full corpus i
       "facts/2026-03-11/fact-malformed.md",
       "not-frontmatter\n",
     );
+    await writeText(
+      memoryDir,
+      "facts/2026-01-15/fact-malformed-stale.md",
+      "not-frontmatter\n",
+    );
     await setTimestamp(memoryDir, "facts/2026-02-20/fact-old.md", "2026-02-20T00:00:00.000Z");
     await setTimestamp(memoryDir, "facts/2026-03-09/fact-recent-a.md", "2026-03-09T00:00:00.000Z");
     await setTimestamp(memoryDir, "facts/2026-03-10/fact-recent-b.md", "2026-03-10T00:00:00.000Z");
     await setTimestamp(memoryDir, "facts/2026-03-11/fact-malformed.md", "2026-03-10T12:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-01-15/fact-malformed-stale.md", "2026-01-15T00:00:00.000Z");
 
     const result = await runMemoryGovernance({
       memoryDir,
@@ -576,6 +582,10 @@ test("governance supports bounded recent scans without loading the full corpus i
     assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "exact_duplicate"), true);
     assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "malformed_import"), true);
     assert.equal(result.reviewQueue.some((entry) => entry.memoryId === "fact-old"), false);
+    assert.equal(
+      result.reviewQueue.some((entry) => entry.path.endsWith("fact-malformed-stale.md")),
+      false,
+    );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -614,7 +624,7 @@ test("readMemoriesWindow includes recently updated memories from older folders",
         updated: "2026-03-10T00:00:00.000Z",
       }),
     );
-    await setTimestamp(memoryDir, "facts/2026-02-20/fact-old.md", "2026-03-10T09:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-02-20/fact-old.md", "2026-02-20T00:00:00.000Z");
     await setTimestamp(memoryDir, "facts/2026-03-09/fact-stale.md", "2026-03-01T00:00:00.000Z");
     await setTimestamp(memoryDir, "facts/2026-03-10/fact-recent-b.md", "2026-03-10T00:00:00.000Z");
 

@@ -1508,6 +1508,34 @@ export class StorageManager {
     return memories;
   }
 
+  private async readWindowUpdatedMs(filePath: string): Promise<number | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const parsed = parseFrontmatter(raw);
+      if (!parsed) return null;
+      const updatedMs = Date.parse(parsed.frontmatter.updated ?? parsed.frontmatter.created);
+      return Number.isFinite(updatedMs) ? updatedMs : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async filterWindowPathsByUpdatedAfter(filePaths: string[], updatedAfterMs: number): Promise<string[]> {
+    const results = await Promise.all(filePaths.map(async (filePath) => {
+      const updatedMs = await this.readWindowUpdatedMs(filePath);
+      if (updatedMs !== null) {
+        return updatedMs >= updatedAfterMs ? filePath : null;
+      }
+      try {
+        const fileStat = await stat(filePath);
+        return fileStat.mtimeMs >= updatedAfterMs ? filePath : null;
+      } catch {
+        return filePath;
+      }
+    }));
+    return results.filter((filePath): filePath is string => filePath !== null);
+  }
+
   async readMemoriesWindow(options: {
     maxMemories?: number;
     batchSize?: number;
@@ -1528,15 +1556,8 @@ export class StorageManager {
       const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
       const candidateBatchPaths = updatedAfterMs === undefined
         ? batchPaths
-        : (await Promise.all(batchPaths.map(async (batchPath) => {
-          try {
-            const fileStat = await stat(batchPath);
-            return fileStat.mtimeMs >= updatedAfterMs ? batchPath : null;
-          } catch {
-            return batchPath;
-          }
-        }))).filter((batchPath): batchPath is string => batchPath !== null);
-      selectedPaths.push(...batchPaths);
+        : await this.filterWindowPathsByUpdatedAfter(batchPaths, updatedAfterMs);
+      selectedPaths.push(...candidateBatchPaths);
       const batchMemories = await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize);
       for (const memory of batchMemories) {
         if (updatedAfterMs !== undefined) {
