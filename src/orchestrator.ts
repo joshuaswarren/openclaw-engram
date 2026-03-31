@@ -38,6 +38,7 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
+import { ensureNightlyGovernanceCron } from "./maintenance/memory-governance-cron.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -1770,6 +1771,9 @@ export class Orchestrator {
         log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
       });
     }
+    this.autoRegisterNightlyGovernanceCron().catch((err) => {
+      log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
+    });
   }
 
   /**
@@ -1848,6 +1852,31 @@ export class Orchestrator {
       );
     } catch (err) {
       log.debug(`day-summary cron auto-register error: ${err}`);
+    }
+  }
+
+  private async autoRegisterNightlyGovernanceCron(): Promise<void> {
+    const home = process.env.HOME || os.homedir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("nightly governance cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+
+      const created = await ensureNightlyGovernanceCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(
+          `nightly governance cron auto-registered (${created.jobId}, 02:23 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+        );
+      } else {
+        log.debug("nightly governance cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`nightly governance cron auto-register error: ${err}`);
     }
   }
 

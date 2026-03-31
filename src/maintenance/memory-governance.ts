@@ -127,6 +127,9 @@ export interface RunMemoryGovernanceOptions {
   memoryDir: string;
   mode: MemoryGovernanceMode;
   now?: Date;
+  maxMemories?: number;
+  batchSize?: number;
+  recentDays?: number;
 }
 
 export interface RestoreMemoryGovernanceRunOptions {
@@ -365,15 +368,16 @@ async function buildMalformedImportEntries(
   memoryDir: string,
   storage: StorageManager,
   parsedMemories: MemoryFile[],
+  candidateFiles?: string[],
 ): Promise<MemoryGovernanceReviewQueueEntry[]> {
   const parsedPaths = new Set(parsedMemories.map((memory) => memory.path));
-  const candidateFiles = [
+  const filesToInspect = candidateFiles ?? [
     ...await listMarkdownFiles(path.join(memoryDir, "facts")),
     ...await listMarkdownFiles(path.join(memoryDir, "corrections")),
   ];
   const entries: MemoryGovernanceReviewQueueEntry[] = [];
 
-  for (const filePath of candidateFiles) {
+  for (const filePath of filesToInspect) {
     if (parsedPaths.has(filePath)) continue;
     const parsed = await storage.readMemoryByPath(filePath);
     if (parsed) continue;
@@ -397,6 +401,9 @@ async function buildReviewQueue(
   storage: StorageManager,
   memories: MemoryFile[],
   now: Date,
+  options: {
+    malformedCandidateFiles?: string[];
+  } = {},
 ): Promise<MemoryGovernanceReviewQueueEntry[]> {
   const reviewQueue: MemoryGovernanceReviewQueueEntry[] = [];
   const activeMemories = memories.filter((memory) => statusOf(memory) === "active");
@@ -477,7 +484,12 @@ async function buildReviewQueue(
 
   const lifecycleEvents = await storage.readMemoryLifecycleEvents(Number.MAX_SAFE_INTEGER);
   reviewQueue.push(...buildExplicitCaptureReviewEntries(memories, lifecycleEvents));
-  reviewQueue.push(...await buildMalformedImportEntries(memoryDir, storage, memories));
+  reviewQueue.push(...await buildMalformedImportEntries(
+    memoryDir,
+    storage,
+    memories,
+    options.malformedCandidateFiles,
+  ));
 
   return reviewQueue;
 }
@@ -758,8 +770,22 @@ export async function runMemoryGovernance(
   const runId = buildRunId(now);
   const traceId = runId;
   const storage = new StorageManager(options.memoryDir);
-  const memories = await storage.readAllMemories();
-  const reviewQueue = await buildReviewQueue(options.memoryDir, storage, memories, now);
+  const boundedScan =
+    options.maxMemories !== undefined || options.batchSize !== undefined || options.recentDays !== undefined;
+  const updatedAfter = typeof options.recentDays === "number" && Number.isFinite(options.recentDays)
+    ? new Date(now.getTime() - Math.max(0, options.recentDays) * 86_400_000)
+    : undefined;
+  const memoryWindow = boundedScan
+    ? await storage.readMemoriesWindow({
+        maxMemories: options.maxMemories,
+        batchSize: options.batchSize,
+        updatedAfter,
+      })
+    : undefined;
+  const memories = memoryWindow?.memories ?? await storage.readAllMemories();
+  const reviewQueue = await buildReviewQueue(options.memoryDir, storage, memories, now, {
+    malformedCandidateFiles: memoryWindow?.filePaths,
+  });
   const proposedActions = buildProposedActions(reviewQueue, memories);
   const reviewEntryByActionKey = new Map(
     reviewQueue.map((entry) => [`${entry.memoryId}:${entry.reasonCode}`, entry] as const),

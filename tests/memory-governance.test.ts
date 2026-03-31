@@ -506,3 +506,61 @@ test("governance surfaces semantic duplicates, queued explicit captures, malform
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("governance supports bounded recent scans without loading the full corpus into the run", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-bounded-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-02-20/fact-old.md",
+      memoryDoc({
+        id: "fact-old",
+        content: "Older memory outside the recent governance window.",
+        created: "2026-02-20T00:00:00.000Z",
+        updated: "2026-02-20T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-09/fact-recent-a.md",
+      memoryDoc({
+        id: "fact-recent-a",
+        content: "Recent duplicate memory for bounded governance coverage.",
+        created: "2026-03-09T00:00:00.000Z",
+        updated: "2026-03-09T00:00:00.000Z",
+        confidence: 0.95,
+        confidenceTier: "explicit",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-recent-b.md",
+      memoryDoc({
+        id: "fact-recent-b",
+        content: "Recent duplicate memory for bounded governance coverage.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+        confidence: 0.4,
+        confidenceTier: "implied",
+      }),
+    );
+
+    const result = await runMemoryGovernance({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      recentDays: 2,
+      maxMemories: 2,
+      batchSize: 1,
+    });
+
+    const summary = JSON.parse(await readFile(result.summaryPath, "utf-8")) as {
+      scannedMemories: number;
+    };
+    assert.equal(summary.scannedMemories, 2);
+    assert.equal(result.reviewQueue.some((entry) => entry.reasonCode === "exact_duplicate"), true);
+    assert.equal(result.reviewQueue.some((entry) => entry.memoryId === "fact-old"), false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});

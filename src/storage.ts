@@ -1437,10 +1437,14 @@ export class StorageManager {
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
   }
 
-  private async _readAllMemoriesFromDisk(): Promise<MemoryFile[]> {
-    // Collect all .md file paths first (directory traversal is sequential but fast),
-    // then read files in parallel batches to avoid O(N) sequential I/O.
-    // With 80k+ memory files, sequential reads can take 60+ seconds under load.
+  private normalizeMemoryReadBatchSize(batchSize?: number): number {
+    if (typeof batchSize !== "number" || !Number.isFinite(batchSize)) {
+      return 50;
+    }
+    return Math.max(1, Math.floor(batchSize));
+  }
+
+  private async collectActiveMemoryPaths(): Promise<string[]> {
     const filePaths: string[] = [];
 
     const collectPaths = async (dir: string) => {
@@ -1455,25 +1459,29 @@ export class StorageManager {
             filePaths.push(fullPath);
           }
         }
-        // Recurse into subdirectories sequentially (directory tree is shallow)
         for (const subdir of subdirs) {
           await collectPaths(subdir);
         }
       } catch {
-        // Directory doesn't exist yet
+        // Directory does not exist yet.
       }
     };
 
     await collectPaths(this.factsDir);
     await collectPaths(this.correctionsDir);
+    return filePaths;
+  }
 
+  private async readParsedMemoriesFromPaths(
+    filePaths: string[],
+    batchSize?: number,
+  ): Promise<MemoryFile[]> {
     if (filePaths.length === 0) return [];
 
-    // Read all files in parallel batches of 50 to balance throughput and I/O pressure.
-    const BATCH_SIZE = 50;
+    const normalizedBatchSize = this.normalizeMemoryReadBatchSize(batchSize);
     const memories: MemoryFile[] = [];
-    for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
-      const batch = filePaths.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < filePaths.length; i += normalizedBatchSize) {
+      const batch = filePaths.slice(i, i + normalizedBatchSize);
       const results = await Promise.all(
         batch.map(async (fullPath) => {
           try {
@@ -1493,11 +1501,53 @@ export class StorageManager {
           }
         }),
       );
-      for (const m of results) {
-        if (m !== null) memories.push(m);
+      for (const memory of results) {
+        if (memory !== null) memories.push(memory);
       }
     }
     return memories;
+  }
+
+  async readMemoriesWindow(options: {
+    maxMemories?: number;
+    batchSize?: number;
+    updatedAfter?: Date;
+  } = {}): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
+    const allPaths = await this.collectActiveMemoryPaths();
+    const sortedPaths = [...allPaths].sort((left, right) => right.localeCompare(left));
+    const maxMemories =
+      typeof options.maxMemories === "number" && Number.isFinite(options.maxMemories)
+        ? Math.max(1, Math.floor(options.maxMemories))
+        : undefined;
+    const updatedAfterMs = options.updatedAfter?.getTime();
+    const normalizedBatchSize = this.normalizeMemoryReadBatchSize(options.batchSize);
+    const memories: MemoryFile[] = [];
+    const selectedPaths: string[] = [];
+
+    for (let i = 0; i < sortedPaths.length; i += normalizedBatchSize) {
+      const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
+      const batchMemories = await this.readParsedMemoriesFromPaths(batchPaths, normalizedBatchSize);
+      for (const memory of batchMemories) {
+        if (updatedAfterMs !== undefined) {
+          const updatedMs = Date.parse(memory.frontmatter.updated ?? memory.frontmatter.created);
+          if (!Number.isFinite(updatedMs) || updatedMs < updatedAfterMs) {
+            continue;
+          }
+        }
+        memories.push(memory);
+        selectedPaths.push(memory.path);
+        if (maxMemories !== undefined && memories.length >= maxMemories) {
+          return { memories, filePaths: selectedPaths };
+        }
+      }
+    }
+
+    return { memories, filePaths: selectedPaths };
+  }
+
+  private async _readAllMemoriesFromDisk(): Promise<MemoryFile[]> {
+    const filePaths = await this.collectActiveMemoryPaths();
+    return this.readParsedMemoriesFromPaths(filePaths, 50);
   }
 
   /**
