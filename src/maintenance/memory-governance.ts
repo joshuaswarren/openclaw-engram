@@ -813,6 +813,7 @@ export async function runMemoryGovernance(
       if (!memoryPath) continue;
       const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
+      if (memory.frontmatter.id !== action.memoryId) continue;
       const beforeRaw = await safeRead(memory.path);
       if (!beforeRaw) continue;
       const entry: MemoryGovernanceRestoreEntry = {
@@ -842,6 +843,7 @@ export async function runMemoryGovernance(
       if (!memoryPath) continue;
       const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
+      if (memory.frontmatter.id !== action.memoryId) continue;
       const restoreEntry = restoreEntryByMemoryId.get(action.memoryId);
       if (!restoreEntry) continue;
 

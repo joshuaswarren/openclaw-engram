@@ -1265,3 +1265,66 @@ test("bounded governance apply reloads the latest on-disk memory before mutating
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+test("bounded governance apply skips path reloads whose memory id changed", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-apply-id-guard-"));
+  const originalReadMemoryByPath = StorageManager.prototype.readMemoryByPath;
+  let replaced = false;
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-1.md",
+      memoryDoc({
+        id: "fact-1",
+        content: "Original disputed memory.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+        confidence: 0.2,
+        confidenceTier: "speculative",
+        verificationState: "disputed",
+      }),
+    );
+
+    StorageManager.prototype.readMemoryByPath = async function readMemoryByPathWithReplacement(filePath: string) {
+      if (!replaced && filePath.endsWith("fact-1.md")) {
+        replaced = true;
+        await writeText(
+          memoryDir,
+          "facts/2026-03-10/fact-1.md",
+          memoryDoc({
+            id: "fact-replacement",
+            content: "Replacement memory at the same path.",
+            created: "2026-03-10T01:00:00.000Z",
+            updated: "2026-03-10T01:00:00.000Z",
+            confidence: 0.95,
+            confidenceTier: "high",
+            verificationState: "verified",
+            status: "active",
+          }),
+        );
+      }
+      return originalReadMemoryByPath.call(this, filePath);
+    };
+
+    const result = await runMemoryGovernance({
+      memoryDir,
+      mode: "apply",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      recentDays: 2,
+      maxMemories: 10,
+      batchSize: 1,
+    });
+
+    const replacementMemory = await originalReadMemoryByPath.call(new StorageManager(memoryDir), path.join(
+      memoryDir,
+      "facts/2026-03-10/fact-1.md",
+    ));
+    assert.equal(replaced, true);
+    assert.equal(result.appliedActions.length, 0);
+    assert.equal(replacementMemory?.frontmatter.id, "fact-replacement");
+    assert.equal(replacementMemory?.frontmatter.status, "active");
+  } finally {
+    StorageManager.prototype.readMemoryByPath = originalReadMemoryByPath;
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
