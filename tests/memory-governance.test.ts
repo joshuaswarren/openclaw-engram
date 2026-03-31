@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { runMemoryGovernance, restoreMemoryGovernanceRun } from "../src/maintenance/memory-governance.ts";
 import { StorageManager } from "../src/storage.ts";
 
@@ -10,6 +10,12 @@ async function writeText(baseDir: string, relPath: string, content: string): Pro
   const full = path.join(baseDir, relPath);
   await mkdir(path.dirname(full), { recursive: true });
   await writeFile(full, content, "utf-8");
+}
+
+async function setTimestamp(baseDir: string, relPath: string, isoTimestamp: string): Promise<void> {
+  const full = path.join(baseDir, relPath);
+  const when = new Date(isoTimestamp);
+  await utimes(full, when, when);
 }
 
 function memoryDoc(options: {
@@ -549,6 +555,10 @@ test("governance supports bounded recent scans without loading the full corpus i
       "facts/2026-03-11/fact-malformed.md",
       "not-frontmatter\n",
     );
+    await setTimestamp(memoryDir, "facts/2026-02-20/fact-old.md", "2026-02-20T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-09/fact-recent-a.md", "2026-03-09T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-recent-b.md", "2026-03-10T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-11/fact-malformed.md", "2026-03-10T12:00:00.000Z");
 
     const result = await runMemoryGovernance({
       memoryDir,
@@ -604,6 +614,9 @@ test("readMemoriesWindow includes recently updated memories from older folders",
         updated: "2026-03-10T00:00:00.000Z",
       }),
     );
+    await setTimestamp(memoryDir, "facts/2026-02-20/fact-old.md", "2026-03-10T09:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-09/fact-stale.md", "2026-03-01T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-recent-b.md", "2026-03-10T00:00:00.000Z");
 
     const storage = new StorageManager(memoryDir);
     const window = await storage.readMemoriesWindow({
@@ -615,6 +628,58 @@ test("readMemoriesWindow includes recently updated memories from older folders",
       window.memories.map((memory) => memory.frontmatter.id).sort(),
       ["fact-old", "fact-recent-b"],
     );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("readMemoriesWindow skips stale corrections during recent-only scans", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-corrections-"));
+  try {
+    await writeText(
+      memoryDir,
+      "corrections/correction-stale.md",
+      memoryDoc({
+        id: "correction-stale",
+        category: "correction",
+        content: "Older correction outside the recent update window.",
+        created: "2026-03-01T00:00:00.000Z",
+        updated: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-recent.md",
+      memoryDoc({
+        id: "fact-recent",
+        content: "Recent memory.",
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await setTimestamp(memoryDir, "corrections/correction-stale.md", "2026-03-01T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-recent.md", "2026-03-10T00:00:00.000Z");
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      batchSize: 1,
+    });
+
+    assert.equal(
+      parsedBatches.some((batch) => batch.some((filePath) => filePath.endsWith("correction-stale.md"))),
+      false,
+    );
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), ["fact-recent"]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -638,6 +703,7 @@ test("bounded governance apply reuses scanned memories without getMemoryById loo
         verificationState: "disputed",
       }),
     );
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-1.md", "2026-03-10T00:00:00.000Z");
 
     StorageManager.prototype.getMemoryById = async function getMemoryByIdSpy() {
       getMemoryByIdCalls += 1;

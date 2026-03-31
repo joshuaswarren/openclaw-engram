@@ -772,8 +772,11 @@ export async function runMemoryGovernance(
   const storage = new StorageManager(options.memoryDir);
   const boundedScan =
     options.maxMemories !== undefined || options.batchSize !== undefined || options.recentDays !== undefined;
-  const updatedAfter = typeof options.recentDays === "number" && Number.isFinite(options.recentDays)
-    ? new Date(now.getTime() - Math.max(0, options.recentDays) * 86_400_000)
+  const normalizedRecentDays = typeof options.recentDays === "number" && Number.isFinite(options.recentDays)
+    ? Math.max(1, Math.floor(options.recentDays))
+    : undefined;
+  const updatedAfter = normalizedRecentDays !== undefined
+    ? new Date(now.getTime() - normalizedRecentDays * 86_400_000)
     : undefined;
   const memoryWindow = boundedScan
     ? await storage.readMemoriesWindow({
