@@ -49,8 +49,7 @@
   "files": [
     "dist",
     "bin/engram-access.js",
-    "openclaw.plugin.json",
-    "scripts/rebuild-native.mjs"
+    "openclaw.plugin.json"
   ],
   "dependencies": {
     "@honcho-ai/sdk": "^2.0.0",
@@ -92,7 +91,6 @@
     "review:cursor": "bash scripts/cursor-prepush-review.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
-    "postinstall": "node scripts/rebuild-native.mjs",
     "prepack": "npm run build"
   },
   "publishConfig": {

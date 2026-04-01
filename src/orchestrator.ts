@@ -12,6 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { formatDaySummaryMemories } from "./day-summary.js";
+import { resolveHomeDir } from "./runtime/env.js";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
@@ -1783,7 +1784,7 @@ export class Orchestrator {
    * Fire-and-forget — never blocks init or crashes on failure.
    */
   private async autoRegisterDaySummaryCron(): Promise<void> {
-    const home = process.env.HOME || os.homedir();
+    const home = resolveHomeDir();
     const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
 
     try {

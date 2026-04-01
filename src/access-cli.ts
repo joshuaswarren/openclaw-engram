@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parseConfig } from "./config.js";
 import type { PluginConfig } from "./types.js";
 import { Orchestrator } from "./orchestrator.js";
 import { EngramAccessService } from "./access-service.js";
+import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 
 type CommandName = "browse" | "store";
 
@@ -162,9 +162,9 @@ function parseFloatOption(args: ParsedArgs, name: string): number | undefined {
 
 function loadPluginConfig(): Record<string, unknown> {
   const configPath =
-    process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
-    process.env.OPENCLAW_CONFIG_PATH ||
-    path.join(process.env.HOME ?? os.homedir(), ".openclaw", "openclaw.json");
+    readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
+    readEnvVar("OPENCLAW_CONFIG_PATH") ||
+    path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
   const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
   return raw?.plugins?.entries?.["openclaw-engram"]?.config ?? {};
 }

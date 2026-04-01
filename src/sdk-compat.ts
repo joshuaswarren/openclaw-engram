@@ -6,6 +6,7 @@
  * patterns branch on these flags so engram works on both old (≤2026.3.13)
  * and new (≥2026.3.22) runtimes.
  */
+import { readEnvVar } from "./runtime/env.js";
 
 export interface SdkCapabilities {
   /** api.on("before_prompt_build", ...) is available */
@@ -37,9 +38,7 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
     (hasRuntimeNamespace && typeof (api as any).runtime?.version === "string"
       ? (api as any).runtime.version
       : null) ??
-    (typeof process?.env?.OPENCLAW_SERVICE_VERSION === "string"
-      ? process.env.OPENCLAW_SERVICE_VERSION
-      : null) ??
+    readEnvVar("OPENCLAW_SERVICE_VERSION") ??
     "legacy";
 
   // New SDK is indicated by any of the new API surfaces being present.

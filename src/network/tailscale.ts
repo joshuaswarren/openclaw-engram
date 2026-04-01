@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { launchProcess } from "../runtime/child-process.js";
 
 export interface TailscaleCommandResult {
   code: number;
@@ -129,9 +129,13 @@ async function assertReadableDirectory(dir: string): Promise<void> {
 
 const defaultCommandRunner: TailscaleCommandRunner = (command, args, options) => {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = launchProcess(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (!child.stdout || !child.stderr) {
+      resolve({ code: 1, stdout: "", stderr: "command pipes unavailable" });
+      return;
+    }
 
     let stdout = "";
     let stderr = "";

@@ -1,8 +1,8 @@
 import path from "node:path";
-import Database from "better-sqlite3";
 import { mkdir, writeFile } from "node:fs/promises";
 import { SQLITE_SCHEMA_VERSION } from "./sqlite-schema.js";
 import { fileExists, fromPosixRelPath } from "./fs-utils.js";
+import { openBetterSqlite3 } from "../runtime/better-sqlite.js";
 
 export type ConflictPolicy = "skip" | "overwrite" | "dedupe";
 
@@ -21,7 +21,7 @@ export async function importSqlite(opts: ImportSqliteOptions): Promise<{ written
   const conflict = opts.conflict ?? "skip";
   const memDirAbs = path.resolve(opts.targetMemoryDir);
   const fromAbs = path.resolve(opts.fromFile);
-  const db = new Database(fromAbs, { readonly: true });
+  const db = openBetterSqlite3(fromAbs, { readonly: true });
 
   const written: Array<{ abs: string; content: string }> = [];
   let skipped = 0;
@@ -71,4 +71,3 @@ export async function importSqlite(opts: ImportSqliteOptions): Promise<{ written
 
   return { written: written.length, skipped };
 }
-

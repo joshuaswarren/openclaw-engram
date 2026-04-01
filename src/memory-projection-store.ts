@@ -1,6 +1,5 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
-import Database from "better-sqlite3";
 import type {
   MemoryGovernanceAppliedAction,
   MemoryGovernanceMetrics,
@@ -13,6 +12,10 @@ import type {
   MemoryProjectionCurrentState,
   MemoryStatus,
 } from "./types.js";
+import {
+  openBetterSqlite3,
+  type BetterSqlite3Database,
+} from "./runtime/better-sqlite.js";
 
 export const MEMORY_PROJECTION_SCHEMA_VERSION = 2;
 
@@ -106,7 +109,7 @@ export function getMemoryProjectionPath(memoryDir: string): string {
   return path.join(memoryDir, "state", "memory-projection.sqlite");
 }
 
-function listTableColumns(db: Database.Database, tableName: string): Set<string> {
+function listTableColumns(db: BetterSqlite3Database, tableName: string): Set<string> {
   try {
     const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>;
     return new Set(rows.map((row) => row.name).filter((name): name is string => typeof name === "string"));
@@ -115,7 +118,7 @@ function listTableColumns(db: Database.Database, tableName: string): Set<string>
   }
 }
 
-function migrateMemoryCurrentTable(db: Database.Database): void {
+function migrateMemoryCurrentTable(db: BetterSqlite3Database): void {
   const columns = listTableColumns(db, "memory_current");
   if (columns.size === 0) return;
 
@@ -127,7 +130,7 @@ function migrateMemoryCurrentTable(db: Database.Database): void {
   }
 }
 
-function memoryCurrentRequiresMigration(db: Database.Database): boolean {
+function memoryCurrentRequiresMigration(db: BetterSqlite3Database): boolean {
   const columns = listTableColumns(db, "memory_current");
   return columns.size > 0 && (!columns.has("tags_json") || !columns.has("preview_text"));
 }
@@ -135,7 +138,7 @@ function memoryCurrentRequiresMigration(db: Database.Database): boolean {
 function migrateProjectionSchemaIfNeeded(memoryDir: string): void {
   const dbPath = getMemoryProjectionPath(memoryDir);
   try {
-    const db = new Database(dbPath, { fileMustExist: true });
+    const db = openBetterSqlite3(dbPath, { fileMustExist: true });
     try {
       if (!memoryCurrentRequiresMigration(db)) return;
       initializeMemoryProjectionDb(db);
@@ -147,7 +150,7 @@ function migrateProjectionSchemaIfNeeded(memoryDir: string): void {
   }
 }
 
-export function memoryCurrentSelectExpressions(db: Database.Database): {
+export function memoryCurrentSelectExpressions(db: BetterSqlite3Database): {
   tagsJson: string;
   previewText: string;
 } {
@@ -158,7 +161,7 @@ export function memoryCurrentSelectExpressions(db: Database.Database): {
   };
 }
 
-export function initializeMemoryProjectionDb(db: Database.Database): void {
+export function initializeMemoryProjectionDb(db: BetterSqlite3Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
@@ -298,10 +301,10 @@ export function initializeMemoryProjectionDb(db: Database.Database): void {
     .run("schemaVersion", String(MEMORY_PROJECTION_SCHEMA_VERSION));
 }
 
-function openProjectionReadonly(memoryDir: string): Database.Database | null {
+function openProjectionReadonly(memoryDir: string): BetterSqlite3Database | null {
   const dbPath = getMemoryProjectionPath(memoryDir);
   try {
-    return new Database(dbPath, { readonly: true, fileMustExist: true });
+    return openBetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
   } catch {
     return null;
   }
@@ -309,7 +312,7 @@ function openProjectionReadonly(memoryDir: string): Database.Database | null {
 
 function withProjectionReadonly<T>(
   memoryDir: string,
-  reader: (db: Database.Database) => T,
+  reader: (db: BetterSqlite3Database) => T,
 ): T | null {
   const db = openProjectionReadonly(memoryDir);
   if (!db) return null;

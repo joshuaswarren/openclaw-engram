@@ -1,9 +1,10 @@
 import { log } from "./logger.js";
 import type { PluginConfig } from "./types.js";
-import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import type { ModelRegistry } from "./model-registry.js";
+import { launchProcessSync } from "./runtime/child-process.js";
+import { mergeEnv, readEnvVar } from "./runtime/env.js";
 
 /**
  * Local LLM client for OpenAI-compatible endpoints (LM Studio, Ollama, MLX, etc.)
@@ -133,7 +134,7 @@ export class LocalLlmClient {
   }
 
   private resolveHomeDir(): string {
-    return this.config.localLlmHomeDir || process.env.HOME || os.homedir();
+    return this.config.localLlmHomeDir || readEnvVar("HOME") || os.homedir();
   }
 
   private buildRequestHeaders(base: Record<string, string> = {}): Record<string, string> {
@@ -390,8 +391,8 @@ export class LocalLlmClient {
    */
   private getContextFromLmsCli(modelId: string): number | null {
     try {
-      // Check if lms CLI exists in common locations
-      // Note: process.env.HOME may not be set in launchd environment
+      // Check if lms CLI exists in common locations.
+      // HOME may be absent in launchd environments, so prefer the resolved helper.
       const homeDir = this.resolveHomeDir();
       const lmsPaths = [
         this.config.localLmsCliPath || "",
@@ -409,15 +410,15 @@ export class LocalLlmClient {
       // Run lms ps --json to get loaded models with context
       // Use spawnSync with shell and explicit PATH to ensure lms can find its dependencies
       log.debug(`LMS CLI: running: ${lmsPath} ps --json`);
-      const result = spawnSync(lmsPath, ["ps", "--json"], {
+      const existingPath = readEnvVar("PATH") || "";
+      const result = launchProcessSync(lmsPath, ["ps", "--json"], {
         encoding: "utf-8",
         timeout: 5000,
         shell: false, // Don't use shell for JSON output - more reliable
-        env: {
-          ...process.env,
-          PATH: `${this.config.localLmsBinDir || `${homeDir}/.cache/lm-studio/bin`}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
+        env: mergeEnv({
+          PATH: `${this.config.localLmsBinDir || `${homeDir}/.cache/lm-studio/bin`}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${existingPath}`,
           HOME: homeDir,
-        },
+        }),
       });
 
       if (result.error) {
@@ -490,7 +491,7 @@ export class LocalLlmClient {
    */
   private getLmsModelInfo(modelId: string): { contextLength: number; maxContextLength: number; identifier: string } | null {
     try {
-      const result = spawnSync("lms", ["ps", "--json"], {
+      const result = launchProcessSync("lms", ["ps", "--json"], {
         encoding: "utf-8",
         timeout: 5000,
         shell: false,
