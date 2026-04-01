@@ -1,13 +1,16 @@
-import Database from "better-sqlite3";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { log } from "../logger.js";
+import {
+  openBetterSqlite3,
+  type BetterSqlite3Database,
+} from "../runtime/better-sqlite.js";
 
 const LCM_SCHEMA_VERSION = 1;
 
-export function openLcmDatabase(memoryDir: string): Database.Database {
+export function openLcmDatabase(memoryDir: string): BetterSqlite3Database {
   const dbPath = path.join(memoryDir, "state", "lcm.sqlite");
-  const db = new Database(dbPath);
+  const db = openBetterSqlite3(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   db.pragma("synchronous = NORMAL");
@@ -19,7 +22,7 @@ export async function ensureLcmStateDir(memoryDir: string): Promise<void> {
   await mkdir(path.join(memoryDir, "state"), { recursive: true });
 }
 
-function applySchema(db: Database.Database): void {
+function applySchema(db: BetterSqlite3Database): void {
   const versionRow = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lcm_meta'")
     .get() as { name: string } | undefined;
@@ -43,7 +46,7 @@ function applySchema(db: Database.Database): void {
   }
 }
 
-function createTables(db: Database.Database): void {
+function createTables(db: BetterSqlite3Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lcm_meta (
       key   TEXT PRIMARY KEY,

@@ -1,6 +1,5 @@
 import path from "node:path";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
-import Database from "better-sqlite3";
 import { StorageManager } from "../storage.js";
 import {
   listMemoryGovernanceRuns,
@@ -40,6 +39,7 @@ import {
   normalizeProjectionPreview,
   normalizeProjectionTags,
 } from "../memory-projection-format.js";
+import { openBetterSqlite3 } from "../runtime/better-sqlite.js";
 
 export interface RebuildMemoryProjectionOptions {
   memoryDir: string;
@@ -514,7 +514,7 @@ function readProjectedCurrentRows(
 ): { projectionExists: boolean; rows: MemoryProjectionCurrentState[] } {
   const dbPath = getMemoryProjectionPath(memoryDir);
   try {
-    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const db = openBetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
     try {
       const selectExpressions = memoryCurrentSelectExpressions(db);
       const rows = db.prepare(`
@@ -559,7 +559,7 @@ function readProjectedTimelineRows(
 ): { projectionExists: boolean; rows: MemoryLifecycleEvent[] } {
   const dbPath = getMemoryProjectionPath(memoryDir);
   try {
-    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const db = openBetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
     try {
       const rows = db.prepare(`
         SELECT
@@ -647,7 +647,7 @@ function writeProjectionDb(
   governance: Awaited<ReturnType<typeof loadLatestGovernanceProjection>>,
   usedLifecycleLedger: boolean,
 ): void {
-  const db = new Database(dbPath);
+  const db = openBetterSqlite3(dbPath);
   try {
     initializeMemoryProjectionDb(db);
 

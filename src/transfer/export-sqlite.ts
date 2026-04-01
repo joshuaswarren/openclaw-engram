@@ -1,8 +1,8 @@
 import path from "node:path";
-import Database from "better-sqlite3";
 import { readFile } from "node:fs/promises";
 import { SQLITE_SCHEMA_VERSION, SQLITE_TABLES_SQL } from "./sqlite-schema.js";
 import { listFilesRecursive, sha256File, toPosixRelPath } from "./fs-utils.js";
+import { openBetterSqlite3 } from "../runtime/better-sqlite.js";
 
 export interface ExportSqliteOptions {
   memoryDir: string;
@@ -23,7 +23,7 @@ export async function exportSqlite(opts: ExportSqliteOptions): Promise<void> {
   const outAbs = path.resolve(opts.outFile);
 
   const filesAbs = await listFilesRecursive(memDirAbs);
-  const db = new Database(outAbs);
+  const db = openBetterSqlite3(outAbs);
   try {
     db.exec("PRAGMA journal_mode=WAL;");
     db.exec(SQLITE_TABLES_SQL);
@@ -56,4 +56,3 @@ export async function exportSqlite(opts: ExportSqliteOptions): Promise<void> {
     db.close();
   }
 }
-
