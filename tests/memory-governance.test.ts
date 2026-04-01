@@ -1087,6 +1087,59 @@ test("readMemoriesWindow keeps all inspected malformed paths in bounded mixed or
   }
 });
 
+test("readMemoriesWindow uses a small parallel window when the bounded budget is large", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-parallel-window-"));
+  try {
+    for (const name of ["fact-e", "fact-d", "fact-c", "fact-b", "fact-a"]) {
+      await writeText(
+        memoryDir,
+        `facts/2026-03-10/${name}.md`,
+        memoryDoc({
+          id: name,
+          content: `Recent memory ${name}.`,
+          created: "2026-03-10T00:00:00.000Z",
+          updated: "2026-03-10T00:00:00.000Z",
+        }),
+      );
+    }
+
+    const storage = new StorageManager(memoryDir) as StorageManager & {
+      readParsedMemoriesFromPaths: (filePaths: string[], batchSize?: number) => Promise<MemoryFile[]>;
+    };
+    const originalReadParsed = storage.readParsedMemoriesFromPaths.bind(storage);
+    const parsedBatches: string[][] = [];
+    storage.readParsedMemoriesFromPaths = async (filePaths, batchSize) => {
+      parsedBatches.push([...filePaths]);
+      return originalReadParsed(filePaths, batchSize);
+    };
+
+    const window = await storage.readMemoriesWindow({
+      updatedAfter: new Date("2026-03-08T12:00:00.000Z"),
+      maxMemories: 5,
+      batchSize: 5,
+    });
+
+    assert.deepEqual(window.memories.map((memory) => memory.frontmatter.id), [
+      "fact-e",
+      "fact-d",
+      "fact-c",
+      "fact-b",
+      "fact-a",
+    ]);
+    assert.deepEqual(parsedBatches, [
+      [
+        path.join(memoryDir, "facts/2026-03-10/fact-e.md"),
+        path.join(memoryDir, "facts/2026-03-10/fact-d.md"),
+        path.join(memoryDir, "facts/2026-03-10/fact-c.md"),
+        path.join(memoryDir, "facts/2026-03-10/fact-b.md"),
+      ],
+      [path.join(memoryDir, "facts/2026-03-10/fact-a.md")],
+    ]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("readMemoriesWindow trusts the pre-filtered recent window for invalid legacy timestamps", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-invalid-date-window-"));
   try {

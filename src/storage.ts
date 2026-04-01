@@ -1574,16 +1574,30 @@ export class StorageManager {
     candidateBatchPaths: string[],
     remainingSlots: number,
     remainingInspectionBudget: number,
+    readBatchSize: number,
   ): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
     const memories: MemoryFile[] = [];
     const filePaths: string[] = [];
+    const normalizedReadBatchSize = this.normalizeMemoryReadBatchSize(readBatchSize);
 
-    for (const candidatePath of candidateBatchPaths) {
+    for (let index = 0; index < candidateBatchPaths.length; ) {
       if (memories.length >= remainingSlots || filePaths.length >= remainingInspectionBudget) break;
-      filePaths.push(candidatePath);
-      const parsedMemories = await this.readParsedMemoriesFromPaths([candidatePath], 1);
+      const availableSlots = remainingSlots - memories.length;
+      const availableInspectionBudget = remainingInspectionBudget - filePaths.length;
+      const parallelWindow =
+        availableSlots >= 4 && availableInspectionBudget >= 4
+          ? Math.min(normalizedReadBatchSize, 4)
+          : 1;
+      const candidatePaths = candidateBatchPaths.slice(
+        index,
+        index + Math.min(parallelWindow, availableInspectionBudget),
+      );
+      index += candidatePaths.length;
+      if (candidatePaths.length === 0) break;
+      filePaths.push(...candidatePaths);
+      const parsedMemories = await this.readParsedMemoriesFromPaths(candidatePaths, candidatePaths.length);
       if (parsedMemories.length === 0) continue;
-      memories.push(...parsedMemories);
+      memories.push(...parsedMemories.slice(0, availableSlots));
     }
 
     return { memories, filePaths };
@@ -1624,7 +1638,12 @@ export class StorageManager {
             memories: await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize),
             filePaths: candidateBatchPaths,
           }
-        : await this.readWindowBoundedBatch(candidateBatchPaths, remainingSlots, remainingInspectionBudget ?? remainingSlots);
+        : await this.readWindowBoundedBatch(
+            candidateBatchPaths,
+            remainingSlots,
+            remainingInspectionBudget ?? remainingSlots,
+            normalizedBatchSize,
+          );
       selectedPaths.push(...parsedCandidatePaths);
       for (const memory of batchMemories) {
         memories.push(memory);
