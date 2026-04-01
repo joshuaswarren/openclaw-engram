@@ -16,7 +16,7 @@ export function resolveHomeDir(): string {
   return readEnvVar("HOME") ?? os.homedir();
 }
 
-export function cloneEnv(): NodeJS.ProcessEnv {
+function cloneEnv(): NodeJS.ProcessEnv {
   return { ...(getEnvMap() ?? {}) };
 }
 
