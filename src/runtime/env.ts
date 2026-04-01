@@ -13,7 +13,7 @@ export function readEnvVar(name: string): string | undefined {
 }
 
 export function resolveHomeDir(): string {
-  return readEnvVar("HOME") ?? os.homedir();
+  return readEnvVar("HOME") || os.homedir();
 }
 
 function cloneEnv(): NodeJS.ProcessEnv {
