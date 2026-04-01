@@ -160,6 +160,8 @@ test("register() registers tools on every api object, not just the first one", a
     assert.deepEqual(firstTools, secondTools, "both registries should receive identical tool registrations");
     assert.ok(firstTools.includes("memory_summarize_hourly"), "first registry must include memory_summarize_hourly");
     assert.ok(secondTools.includes("memory_summarize_hourly"), "second registry must include memory_summarize_hourly (regression: was missing before #283)");
+    assert.ok(firstTools.includes("memory_governance_run"), "first registry must include memory_governance_run");
+    assert.ok(secondTools.includes("memory_governance_run"), "second registry must include memory_governance_run");
   } finally {
     restoreGlobals(saved);
   }

@@ -96,6 +96,17 @@ function createFakeService(): EngramAccessService {
         aliases: ["Alex Ops"],
       },
     }),
+    governanceRun: async ({ mode }) => ({
+      namespace: "global",
+      runId: "gov-1",
+      traceId: "trace-1",
+      mode: mode === "apply" ? "apply" : "shadow",
+      reviewQueueCount: 1,
+      proposedActionCount: 1,
+      appliedActionCount: 0,
+      summaryPath: "/tmp/summary.json",
+      reportPath: "/tmp/report.md",
+    }),
     reviewQueue: async () => ({
       found: true,
       runId: "gov-1",
@@ -145,6 +156,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.recall",
     "engram.recall_explain",
     "engram.day_summary",
+    "engram.memory_governance_run",
     "engram.memory_get",
     "engram.memory_timeline",
     "engram.memory_store",
@@ -180,9 +192,22 @@ test("MCP server advertises tools and dispatches recall", async () => {
   const storeResult = store?.result as { structuredContent: { status: string } };
   assert.equal(storeResult.structuredContent.status, "stored");
 
-  const entity = await server.handleRequest({
+  const governance = await server.handleRequest({
     jsonrpc: "2.0",
     id: 5,
+    method: "tools/call",
+    params: {
+      name: "engram.memory_governance_run",
+      arguments: { recentDays: 2, maxMemories: 100, batchSize: 25 },
+    },
+  });
+  const governanceResult = governance?.result as { structuredContent: { runId: string; mode: string } };
+  assert.equal(governanceResult.structuredContent.runId, "gov-1");
+  assert.equal(governanceResult.structuredContent.mode, "shadow");
+
+  const entity = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 6,
     method: "tools/call",
     params: {
       name: "engram.entity_get",

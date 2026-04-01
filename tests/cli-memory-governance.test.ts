@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import {
   resolveMemoryDirForNamespace,
   runMemoryGovernanceCliCommand,
@@ -18,13 +18,26 @@ async function writeText(baseDir: string, relPath: string, content: string): Pro
   await writeFile(full, content, "utf-8");
 }
 
-function memoryDoc(id: string, content: string): string {
+async function setTimestamp(baseDir: string, relPath: string, isoTimestamp: string): Promise<void> {
+  const full = path.join(baseDir, relPath);
+  const when = new Date(isoTimestamp);
+  await utimes(full, when, when);
+}
+
+function memoryDoc(
+  id: string,
+  content: string,
+  options: {
+    created?: string;
+    updated?: string;
+  } = {},
+): string {
   return [
     "---",
     `id: ${id}`,
     "category: fact",
-    "created: 2026-03-01T00:00:00.000Z",
-    "updated: 2026-03-01T00:00:00.000Z",
+    `created: ${options.created ?? "2026-03-01T00:00:00.000Z"}`,
+    `updated: ${options.updated ?? options.created ?? "2026-03-01T00:00:00.000Z"}`,
     "source: test",
     "confidence: 0.2",
     "confidenceTier: speculative",
@@ -70,6 +83,87 @@ test("governance CLI helpers round-trip apply/report/restore artifacts", async (
       now: new Date("2026-03-09T12:30:00.000Z"),
     });
     assert.equal(restored.restoredActions > 0, true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("governance CLI forwards bounded scan options to the governance run", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-memory-governance-bounded-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-02-20/fact-old.md",
+      memoryDoc("fact-old", "Old memory outside the bounded governance window.", {
+        created: "2026-02-20T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-09/fact-new-a.md",
+      memoryDoc("fact-new-a", "Recent duplicate memory for CLI bounded governance.", {
+        created: "2026-03-09T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-new-b.md",
+      memoryDoc("fact-new-b", "Recent duplicate memory for CLI bounded governance.", {
+        created: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await setTimestamp(memoryDir, "facts/2026-02-20/fact-old.md", "2026-02-20T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-09/fact-new-a.md", "2026-03-09T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-new-b.md", "2026-03-10T00:00:00.000Z");
+
+    const result = await runMemoryGovernanceCliCommand({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      recentDays: 2,
+      maxMemories: 2,
+      batchSize: 1,
+    });
+
+    const summary = JSON.parse(await readFile(result.summaryPath, "utf-8")) as { scannedMemories: number };
+    assert.equal(summary.scannedMemories, 2);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("governance CLI clamps recentDays to a minimum of one day", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-cli-memory-governance-clamp-"));
+  try {
+    await writeText(
+      memoryDir,
+      "facts/2026-03-08/fact-old.md",
+      memoryDoc("fact-old", "Old memory outside the minimum recent window.", {
+        created: "2026-03-08T00:00:00.000Z",
+        updated: "2026-03-08T00:00:00.000Z",
+      }),
+    );
+    await writeText(
+      memoryDir,
+      "facts/2026-03-10/fact-new.md",
+      memoryDoc("fact-new", "Recent memory inside the minimum recent window.", {
+        created: "2026-03-10T00:00:00.000Z",
+        updated: "2026-03-10T00:00:00.000Z",
+      }),
+    );
+    await setTimestamp(memoryDir, "facts/2026-03-08/fact-old.md", "2026-03-08T00:00:00.000Z");
+    await setTimestamp(memoryDir, "facts/2026-03-10/fact-new.md", "2026-03-10T00:00:00.000Z");
+
+    const result = await runMemoryGovernanceCliCommand({
+      memoryDir,
+      mode: "shadow",
+      now: new Date("2026-03-10T12:00:00.000Z"),
+      recentDays: 0,
+      batchSize: 1,
+    });
+
+    const summary = JSON.parse(await readFile(result.summaryPath, "utf-8")) as { scannedMemories: number };
+    assert.equal(summary.scannedMemories, 1);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

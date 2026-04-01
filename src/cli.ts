@@ -373,6 +373,9 @@ export interface MemoryGovernanceCliCommandOptions {
   memoryDir: string;
   mode: "shadow" | "apply";
   now?: Date;
+  maxMemories?: number;
+  batchSize?: number;
+  recentDays?: number;
 }
 
 export interface MemoryGovernanceReportCliCommandOptions {
@@ -878,6 +881,9 @@ export async function runMemoryGovernanceCliCommand(
     memoryDir: options.memoryDir,
     mode: options.mode,
     now: options.now,
+    maxMemories: options.maxMemories,
+    batchSize: options.batchSize,
+    recentDays: options.recentDays,
   });
 }
 
@@ -5070,10 +5076,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("governance-run")
         .description("Run memory governance in shadow/apply mode and write audit artifacts")
         .option("--mode <mode>", "Governance mode (shadow|apply)", "shadow")
+        .option("--max-memories <n>", "Maximum memories to scan in this run")
+        .option("--batch-size <n>", "File-read batch size for bounded governance runs")
+        .option("--recent-days <n>", "Only govern memories updated within the last N days")
         .option("--namespace <ns>", "Namespace to govern (default: current default namespace)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const mode = options.mode === "apply" ? "apply" : "shadow";
+          const maxMemoriesRaw = Number.parseInt(String(options.maxMemories ?? ""), 10);
+          const batchSizeRaw = Number.parseInt(String(options.batchSize ?? ""), 10);
+          const recentDaysRaw = Number.parseInt(String(options.recentDays ?? ""), 10);
           const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
             ? options.namespace.trim()
             : undefined;
@@ -5083,6 +5095,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const result = await runMemoryGovernanceCliCommand({
             memoryDir,
             mode,
+            maxMemories: Number.isFinite(maxMemoriesRaw) ? maxMemoriesRaw : undefined,
+            batchSize: Number.isFinite(batchSizeRaw) ? batchSizeRaw : undefined,
+            recentDays: Number.isFinite(recentDaysRaw) ? recentDaysRaw : undefined,
           });
           console.log(JSON.stringify(result, null, 2));
           console.log("OK");
