@@ -2,6 +2,7 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: ["src/index.ts", "src/access-cli.ts"],
+  bundle: false,
   format: ["esm"],
   target: "es2022",
   platform: "node",

@@ -1,7 +1,6 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
 import { log } from "./logger.js";
@@ -32,8 +31,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
 import { createOpikExporter } from "./opik-exporter.js";
+import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -54,44 +53,15 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
  * Set to null after init completes (success or failure) and cleared on stop().
  */
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
-const ENGRAM_NATIVE_DEPENDENCIES_CHECKED = "__openclawEngramNativeDependenciesChecked";
-
-function ensureNativeDependenciesReady(): void {
-  if ((globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED]) return;
-  (globalThis as any)[ENGRAM_NATIVE_DEPENDENCIES_CHECKED] = true;
-
-  const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const scriptPath = path.join(rootDir, "scripts", "rebuild-native.mjs");
-  const child = spawn(process.execPath, [scriptPath], {
-    cwd: rootDir,
-    env: process.env,
-    stdio: "ignore",
-  });
-  child.unref();
-  child.on("error", (error) => {
-    log.warn(`better-sqlite3 native dependency check failed to start: ${error.message}`);
-  });
-  child.on("exit", (code, signal) => {
-    if (signal) {
-      log.warn(`better-sqlite3 native dependency check terminated by signal ${signal}`);
-      return;
-    }
-    if ((code ?? 0) !== 0) {
-      log.warn(`better-sqlite3 native dependency check exited ${code ?? "unknown"}`);
-    }
-  });
-}
-
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
 // Shared helper: read and parse the full plugin entry from openclaw.json.
 function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
   try {
     const explicitConfigPath =
-      process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
-      process.env.OPENCLAW_CONFIG_PATH;
-    // Gateway may run without HOME env under service managers.
-    const homeDir = process.env.HOME ?? os.homedir();
+      readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
+      readEnvVar("OPENCLAW_CONFIG_PATH");
+    const homeDir = resolveHomeDir();
     const configPath =
       explicitConfigPath && explicitConfigPath.length > 0
         ? explicitConfigPath
@@ -208,8 +178,6 @@ const pluginDefinition = {
       log.info("registrationMode=setup-only — skipping full initialization");
       return;
     }
-
-    ensureNativeDependenciesReady();
 
     // Workaround: Load config from file since gateway may not pass it
     const fileConfig = loadPluginConfigFromFile();
@@ -1066,7 +1034,7 @@ const pluginDefinition = {
       // Typed api.on path for pre-2026.1.29 builds that route heartbeat through the hook system.
       const runtimeVersion =
         runtimeApi.runtime?.version ||
-        process.env.OPENCLAW_SERVICE_VERSION ||
+        readEnvVar("OPENCLAW_SERVICE_VERSION") ||
         "unknown";
       void import("./legacy-hook-compat.js")
         .then(({ shouldRegisterTypedAgentHeartbeat }) => {
@@ -1141,7 +1109,7 @@ const pluginDefinition = {
         // NOTE:
         // - `sessionTarget: "main"` only supports `payload.kind: "systemEvent"` in this install.
         // - For agent-driven automation, use `sessionTarget: "isolated"` + `payload.kind: "agentTurn"`.
-        // - We intentionally avoid posting anywhere; success is silent.
+        // - We intentionally avoid sending messages anywhere; success is silent.
         const newJob = {
           id: jobId,
           agentId: "generalist",
@@ -1169,7 +1137,7 @@ const pluginDefinition = {
               "- If you generated summaries successfully: output exactly NO_REPLY.\n" +
               "- If there is an error: output one concise line describing it.\n\n" +
               "Rules:\n" +
-              "- Do NOT post to Discord.\n" +
+              "- Do NOT send anything to Discord.\n" +
               "- Never print secrets.\n",
           },
           delivery: { mode: "none" as const },
@@ -1507,7 +1475,7 @@ const pluginDefinition = {
         // would let a new registry enter start() before the original initializer settles
         // and call orchestrator.initialize() a second time on the same singleton.
         // The outer try-finally in start() already clears ENGRAM_INIT_PROMISE when
-        // initPromise settles, so no cleanup is needed here — in the normal (post-init)
+        // initPromise settles, so no cleanup is needed here — in the normal (after init)
         // case it is already null, and in the in-flight case it must stay set.
         log.info("stopped");
       },

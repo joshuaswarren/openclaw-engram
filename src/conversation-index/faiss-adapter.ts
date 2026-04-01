@@ -1,9 +1,9 @@
-import * as childProcess from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { log } from "../logger.js";
 import type { ConversationChunk } from "./chunker.js";
 import type { ConversationSearchResult } from "./search.js";
+import { launchProcess } from "../runtime/child-process.js";
 
 export interface FaissAdapterConfig {
   memoryDir: string;
@@ -16,7 +16,7 @@ export interface FaissAdapterConfig {
   healthTimeoutMs: number;
   maxBatchSize: number;
   maxSearchK: number;
-  spawnFn?: typeof childProcess.spawn;
+  spawnFn?: typeof launchProcess;
 }
 
 export interface FaissHealthResult {
@@ -124,7 +124,7 @@ export class FaissConversationIndexAdapter {
   private readonly pythonBin: string;
   private readonly scriptPath: string;
   private readonly indexPath: string;
-  private readonly spawnFn: typeof childProcess.spawn;
+  private readonly spawnFn: typeof launchProcess;
 
   constructor(private readonly config: FaissAdapterConfig) {
     this.pythonBin = config.pythonBin && config.pythonBin.trim().length > 0 ? config.pythonBin.trim() : "python3";
@@ -134,7 +134,7 @@ export class FaissConversationIndexAdapter {
     this.indexPath = path.isAbsolute(config.indexDir)
       ? config.indexDir
       : path.join(config.memoryDir, config.indexDir);
-    this.spawnFn = config.spawnFn ?? childProcess.spawn;
+    this.spawnFn = config.spawnFn ?? launchProcess;
   }
 
   async upsertChunks(chunks: ConversationChunk[]): Promise<number> {
@@ -270,6 +270,15 @@ export class FaissConversationIndexAdapter {
     const child = this.spawnFn(this.pythonBin, args, {
       stdio: ["pipe", "pipe", "pipe"],
     });
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      throw new FaissAdapterError(
+        `FAISS sidecar missing stdio pipes (${command})`,
+        "non_zero_exit",
+      );
+    }
+    const stdinPipe = child.stdin;
+    const stdoutPipe = child.stdout;
+    const stderrPipe = child.stderr;
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -282,17 +291,17 @@ export class FaissConversationIndexAdapter {
       }, timeoutMs)
       : undefined;
 
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    stdoutPipe.on("data", (chunk: Buffer | string) => {
       stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    stderrPipe.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
 
     let code: number | null;
     try {
-      child.stdin.write(JSON.stringify(payload));
-      child.stdin.end();
+      stdinPipe.write(JSON.stringify(payload));
+      stdinPipe.end();
 
       code = await new Promise<number | null>((resolve, reject) => {
         const rejectAsProcessError = (err: unknown) => {
@@ -300,7 +309,7 @@ export class FaissConversationIndexAdapter {
           reject(new FaissAdapterError(`FAISS sidecar stream/process error (${command}): ${msg}`, "non_zero_exit"));
         };
         child.once("error", rejectAsProcessError);
-        child.stdin.once("error", rejectAsProcessError);
+        stdinPipe.once("error", rejectAsProcessError);
         child.once("close", (exitCode) => resolve(exitCode));
       });
     } catch (err) {

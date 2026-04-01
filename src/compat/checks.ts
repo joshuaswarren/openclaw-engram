@@ -1,8 +1,8 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import type { CompatCheckOptions, CompatCheckResult, CompatReport, CompatRunner } from "./types.js";
 import { compareVersions } from "../version-utils.js";
+import { launchProcess } from "../runtime/child-process.js";
 
 const REQUIRED_HOOKS_LEGACY = ["before_agent_start", "agent_end"];
 const REQUIRED_HOOKS_NEW = ["before_prompt_build", "agent_end"];
@@ -17,7 +17,7 @@ const defaultRunner: CompatRunner = {
     const binary = process.platform === "win32" ? "where" : "which";
     const args = [command];
     return new Promise<boolean>((resolve) => {
-      const child = spawn(binary, args, { stdio: "ignore" });
+      const child = launchProcess(binary, args, { stdio: "ignore" });
       child.on("error", () => resolve(false));
       child.on("close", (code) => resolve(code === 0));
     });

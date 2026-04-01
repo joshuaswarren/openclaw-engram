@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
 import { getCachedQmdSearch, setCachedQmdSearch } from "./memory-cache.js";
 import type { QmdSearchExplain, QmdSearchResult } from "./types.js";
 import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "./search/port.js";
+import { launchProcess, type CommandChildProcess } from "./runtime/child-process.js";
+import { mergeEnv } from "./runtime/env.js";
 
 export interface QmdClientOptions {
   slowLog?: { enabled: boolean; thresholdMs: number };
@@ -322,10 +323,14 @@ function runQmdOnce(
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     throwIfAborted(signal, `qmd ${args.join(" ")} aborted before spawn`);
-    const child = spawn(qmdPath, args, {
-      env: { ...process.env, NO_COLOR: "1" },
+    const child = launchProcess(qmdPath, args, {
+      env: mergeEnv({ NO_COLOR: "1" }),
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (!child.stdout || !child.stderr) {
+      reject(new Error(`qmd ${args.join(" ")} failed to open stdio pipes`));
+      return;
+    }
 
     let stdout = "";
     let stderr = "";
@@ -390,7 +395,7 @@ function runQmdOnce(
 let nextJsonRpcId = 1;
 
 class QmdDaemonSession {
-  private child: ChildProcess | null = null;
+  private child: CommandChildProcess | null = null;
   private initialized = false;
   private buffer = "";
   private startPromise: Promise<boolean> | null = null;
@@ -428,8 +433,8 @@ class QmdDaemonSession {
           this.cleanup({ killChild: true });
         }
         try {
-          const child = spawn(this.qmdPath, ["mcp"], {
-            env: { ...process.env, NO_COLOR: "1" },
+          const child = launchProcess(this.qmdPath, ["mcp"], {
+            env: mergeEnv({ NO_COLOR: "1" }),
             stdio: ["pipe", "pipe", "pipe"],
           });
           this.child = child;
@@ -630,7 +635,7 @@ class QmdDaemonSession {
     }
   }
 
-  private cleanup(opts?: { killChild?: boolean; child?: ChildProcess | null }): void {
+  private cleanup(opts?: { killChild?: boolean; child?: CommandChildProcess | null }): void {
     const target = opts?.child ?? this.child;
     if (!target) return;
     if (opts?.child && this.child !== opts.child) {

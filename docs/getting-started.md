@@ -108,7 +108,7 @@ QMD 2.0 is a drop-in upgrade — existing collections, indexes, and config files
 # 1. Install QMD 2.0
 bun install -g @tobilu/qmd
 
-# 2. If bun blocked the postinstall, rebuild native bindings
+# 2. If native bindings need repair, rebuild better-sqlite3 manually
 cd ~/.bun/install/global/node_modules/better-sqlite3
 npm rebuild better-sqlite3
 

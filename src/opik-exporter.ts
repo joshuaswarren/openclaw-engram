@@ -12,10 +12,10 @@ import { createHash, randomBytes } from "node:crypto";
  */
 
 import { readFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { LoggerBackend } from "./logger.js";
+import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 
 // GlobalThis slot that tracks the active OpikExporter instance.
 // Used to make subscribe() idempotent across hot-reload / stop-start cycles.
@@ -85,9 +85,9 @@ export interface OpikExporterConfig {
 function readOpikOpenclawConfig(log?: LoggerBackend): Partial<OpikExporterConfig> {
   try {
     const configPath =
-      process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
-      process.env.OPENCLAW_CONFIG_PATH ||
-      path.join(process.env.HOME || os.homedir(), ".openclaw", "openclaw.json");
+      readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
+      readEnvVar("OPENCLAW_CONFIG_PATH") ||
+      path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
     const raw = JSON.parse(readFileSync(configPath, "utf-8"));
     const entry = raw?.plugins?.entries?.["opik-openclaw"];
     if (!entry?.enabled || !entry?.config) return {};
