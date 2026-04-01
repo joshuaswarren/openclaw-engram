@@ -12,11 +12,6 @@ export function readEnvVar(name: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-export function readTrimmedEnvVar(name: string): string | undefined {
-  const value = readEnvVar(name)?.trim();
-  return value && value.length > 0 ? value : undefined;
-}
-
 export function resolveHomeDir(): string {
   return readEnvVar("HOME") ?? os.homedir();
 }

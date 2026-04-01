@@ -1,9 +1,9 @@
-import os from "node:os";
 import path from "node:path";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { lintWorkspaceFiles } from "./hygiene.js";
 import { parseConfig } from "./config.js";
+import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import {
   resolveCuratedIncludeFilesStatePath,
   resolveNativeKnowledgeStatePath,
@@ -359,10 +359,10 @@ export interface OperatorRepairOptions {
 function resolveConfigPath(explicitPath?: string): string {
   if (explicitPath && explicitPath.trim().length > 0) return explicitPath.trim();
   const configured =
-    process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
-    process.env.OPENCLAW_CONFIG_PATH;
+    readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
+    readEnvVar("OPENCLAW_CONFIG_PATH");
   if (configured && configured.trim().length > 0) return configured.trim();
-  return path.join(process.env.HOME ?? os.homedir(), ".openclaw", "openclaw.json");
+  return path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
 }
 
 async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigLoadResult> {

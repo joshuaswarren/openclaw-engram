@@ -12,9 +12,10 @@ import type {
 } from "./types.js";
 import { log } from "./logger.js";
 import { cloneDefaultSessionObserverBands } from "./session-observer-bands.js";
+import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
-  process.env.HOME ?? "~",
+  resolveHomeDir(),
   ".openclaw",
   "workspace",
   "memory",
@@ -22,14 +23,14 @@ const DEFAULT_MEMORY_DIR = path.join(
 );
 
 const DEFAULT_WORKSPACE_DIR = path.join(
-  process.env.HOME ?? "~",
+  resolveHomeDir(),
   ".openclaw",
   "workspace",
 );
 
 function resolveEnvVars(value: string): string {
   const resolved = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, envVar: string) => {
-    const envValue = process.env[envVar];
+    const envValue = readEnvVar(envVar);
     if (!envValue) {
       throw new Error(`Environment variable ${envVar} is not set`);
     }

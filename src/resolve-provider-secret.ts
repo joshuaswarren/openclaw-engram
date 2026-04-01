@@ -1,4 +1,5 @@
 import { log } from "./logger.js";
+import { readEnvVar } from "./runtime/env.js";
 import path from "node:path";
 import os from "node:os";
 
@@ -221,7 +222,7 @@ function resolveFromEnv(providerId: string): string | undefined {
     `${normalized}_TOKEN`,
   ];
   for (const envVar of candidates) {
-    const value = process.env[envVar];
+    const value = readEnvVar(envVar);
     if (value && value.trim().length > 0) {
       return value.trim();
     }

@@ -1,6 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import type { EngramAccessService } from "./access-service.js";
+import { readEnvVar } from "./runtime/env.js";
 import type { RecallPlanMode } from "./types.js";
 
 type JsonRpcId = string | number | null;
@@ -21,7 +22,9 @@ type McpTool = {
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 
 async function getMcpServerVersion(): Promise<string> {
-  const envVersion = process.env.OPENCLAW_ENGRAM_VERSION?.trim() || process.env.npm_package_version?.trim();
+  const envVersion =
+    readEnvVar("OPENCLAW_ENGRAM_VERSION")?.trim() ||
+    readEnvVar("npm_package_version")?.trim();
   if (envVersion) return envVersion;
   try {
     const pkgPath = new URL("../package.json", import.meta.url);
@@ -44,7 +47,9 @@ export class EngramMcpServer {
     options: { principal?: string } = {},
   ) {
     this.authenticatedPrincipal =
-      options.principal?.trim() || process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL?.trim() || undefined;
+      options.principal?.trim() ||
+      readEnvVar("OPENCLAW_ENGRAM_ACCESS_PRINCIPAL")?.trim() ||
+      undefined;
     this.tools = [
       {
         name: "engram.recall",

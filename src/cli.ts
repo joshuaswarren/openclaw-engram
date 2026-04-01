@@ -182,6 +182,7 @@ import {
   sanitizeRuntimePolicyValues,
   type RuntimePolicyValues,
 } from "./policy-runtime.js";
+import { resolveHomeDir } from "./runtime/env.js";
 
 interface CliApi {
   registerCli(
@@ -5615,7 +5616,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("identity")
         .description("Show agent identity reflections")
         .action(async () => {
-          const workspaceDir = path.join(process.env.HOME ?? "~", ".openclaw", "workspace");
+          const workspaceDir = path.join(resolveHomeDir(), ".openclaw", "workspace");
           const identity = await orchestrator.storage.readIdentity(workspaceDir);
           if (!identity) {
             console.log("No identity file found.");
@@ -5919,7 +5920,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const threadId = options.thread;
           const top = parseInt(options.top ?? "10", 10);
 
-          const memoryDir = path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+          const memoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
           const threading = new ThreadingManager(path.join(memoryDir, "threads"));
 
           if (threadId) {
