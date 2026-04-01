@@ -1120,7 +1120,7 @@ test("readMemoriesWindow trusts the pre-filtered recent window for invalid legac
   }
 });
 
-test("runMemoryGovernance ignores batchSize-only requests for bounded scan ordering", async () => {
+test("runMemoryGovernance uses bounded scan ordering for batchSize-only requests", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-memory-governance-batchsize-only-"));
   const originalReadAllMemories = StorageManager.prototype.readAllMemories;
   const originalReadMemoriesWindow = StorageManager.prototype.readMemoriesWindow;
@@ -1154,8 +1154,8 @@ test("runMemoryGovernance ignores batchSize-only requests for bounded scan order
       batchSize: 1,
     });
 
-    assert.equal(readAllMemoriesCalls > 0, true);
-    assert.equal(readMemoriesWindowCalls, 0);
+    assert.equal(readAllMemoriesCalls, 0);
+    assert.equal(readMemoriesWindowCalls > 0, true);
   } finally {
     StorageManager.prototype.readAllMemories = originalReadAllMemories;
     StorageManager.prototype.readMemoriesWindow = originalReadMemoriesWindow;
