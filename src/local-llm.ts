@@ -731,9 +731,9 @@ export class LocalLlmClient {
     const operation = options.operation ?? "unspecified";
     const startedAtMs = Date.now();
     if (queueMeta) {
-      log.info(
-        `local LLM queue start: priority=${queueMeta.priority} waitMs=${startedAtMs - queueMeta.enqueuedAtMs} op=${operation}`,
-      );
+        log.debug(
+          `local LLM queue start: priority=${queueMeta.priority} waitMs=${startedAtMs - queueMeta.enqueuedAtMs} op=${operation}`,
+        );
     }
 
     try {
@@ -987,7 +987,7 @@ export class LocalLlmClient {
       if (queueMeta) {
         const finishedAtMs = Date.now();
         const waitMs = startedAtMs - queueMeta.enqueuedAtMs;
-        log.info(
+        log.debug(
           `local LLM queue finish: priority=${queueMeta.priority} waitMs=${waitMs} runMs=${finishedAtMs - startedAtMs} totalMs=${finishedAtMs - queueMeta.enqueuedAtMs} op=${operation}`,
         );
       }
@@ -1007,7 +1007,7 @@ export class LocalLlmClient {
     const modelsUrl = baseUrl.endsWith("/v1")
       ? `${baseUrl}/models`
       : `${baseUrl}/v1/models`;
-    log.info(`Fetching model info from ${modelsUrl}`);
+    log.debug(`Fetching model info from ${modelsUrl}`);
 
     try {
       const result = await this.fetchWithTimeout(modelsUrl, 3000);

@@ -164,6 +164,8 @@ import { getObjectiveStateStoreStatus, type ObjectiveStateStoreStatus } from "./
 import {
   getTrustZoneStoreStatus,
   promoteTrustZoneRecord,
+  seedTrustZoneDemoDataset,
+  type TrustZoneDemoSeedResult,
   type TrustZoneName,
   type TrustZonePromotionResult,
   type TrustZoneStoreStatus,
@@ -372,6 +374,9 @@ export interface MemoryGovernanceCliCommandOptions {
   memoryDir: string;
   mode: "shadow" | "apply";
   now?: Date;
+  maxMemories?: number;
+  batchSize?: number;
+  recentDays?: number;
 }
 
 export interface MemoryGovernanceReportCliCommandOptions {
@@ -877,6 +882,9 @@ export async function runMemoryGovernanceCliCommand(
     memoryDir: options.memoryDir,
     mode: options.mode,
     now: options.now,
+    maxMemories: options.maxMemories,
+    batchSize: options.batchSize,
+    recentDays: options.recentDays,
   });
 }
 
@@ -1543,6 +1551,24 @@ export async function runTrustZonePromoteCliCommand(options: {
     ...result,
     dryRun: options.dryRun === true,
   };
+}
+
+export async function runTrustZoneDemoSeedCliCommand(options: {
+  memoryDir: string;
+  trustZoneStoreDir?: string;
+  trustZonesEnabled: boolean;
+  scenario?: string;
+  recordedAt?: string;
+  dryRun?: boolean;
+}): Promise<TrustZoneDemoSeedResult> {
+  return seedTrustZoneDemoDataset({
+    memoryDir: options.memoryDir,
+    trustZoneStoreDir: options.trustZoneStoreDir,
+    enabled: options.trustZonesEnabled,
+    scenario: options.scenario,
+    recordedAt: options.recordedAt,
+    dryRun: options.dryRun === true,
+  });
 }
 
 export async function runSessionCheckCliCommand(
@@ -3668,6 +3694,26 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("trust-zone-demo-seed")
+        .description("Explicitly seed an opt-in trust-zone demo dataset for buyer-facing walkthroughs")
+        .option("--scenario <scenario>", "Demo scenario id (default: enterprise-buyer-v1)")
+        .option("--recorded-at <isoTimestamp>", "Base ISO timestamp used to anchor demo records")
+        .option("--dry-run", "Preview the demo dataset without writing any trust-zone records")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const result = await runTrustZoneDemoSeedCliCommand({
+            memoryDir: orchestrator.config.memoryDir,
+            trustZoneStoreDir: orchestrator.config.trustZoneStoreDir,
+            trustZonesEnabled: orchestrator.config.trustZonesEnabled,
+            scenario: typeof options.scenario === "string" ? options.scenario : undefined,
+            recordedAt: typeof options.recordedAt === "string" ? options.recordedAt : undefined,
+            dryRun: options.dryRun === true,
+          });
+          console.log(JSON.stringify(result, null, 2));
+          console.log("OK");
+        });
+
+      cmd
         .command("abstraction-node-status")
         .description("Show abstraction-node store status, abstraction counts, and latest stored node")
         .action(async () => {
@@ -5031,10 +5077,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("governance-run")
         .description("Run memory governance in shadow/apply mode and write audit artifacts")
         .option("--mode <mode>", "Governance mode (shadow|apply)", "shadow")
+        .option("--max-memories <n>", "Maximum memories to scan in this run")
+        .option("--batch-size <n>", "File-read batch size for bounded governance runs")
+        .option("--recent-days <n>", "Only govern memories updated within the last N days")
         .option("--namespace <ns>", "Namespace to govern (default: current default namespace)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const mode = options.mode === "apply" ? "apply" : "shadow";
+          const maxMemoriesRaw = Number.parseInt(String(options.maxMemories ?? ""), 10);
+          const batchSizeRaw = Number.parseInt(String(options.batchSize ?? ""), 10);
+          const recentDaysRaw = Number.parseInt(String(options.recentDays ?? ""), 10);
           const namespace = typeof options.namespace === "string" && options.namespace.trim().length > 0
             ? options.namespace.trim()
             : undefined;
@@ -5044,6 +5096,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const result = await runMemoryGovernanceCliCommand({
             memoryDir,
             mode,
+            maxMemories: Number.isFinite(maxMemoriesRaw) ? maxMemoriesRaw : undefined,
+            batchSize: Number.isFinite(batchSizeRaw) ? batchSizeRaw : undefined,
+            recentDays: Number.isFinite(recentDaysRaw) ? recentDaysRaw : undefined,
           });
           console.log(JSON.stringify(result, null, 2));
           console.log("OK");

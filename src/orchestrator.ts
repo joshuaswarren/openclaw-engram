@@ -39,6 +39,7 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
+import { ensureDaySummaryCron, ensureNightlyGovernanceCron } from "./maintenance/memory-governance-cron.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -1239,7 +1240,7 @@ export class Orchestrator {
       ? new FallbackLlmClient(config.gatewayConfig)
       : null;
     if (config.modelSource === "gateway") {
-      log.info(
+      log.debug(
         `orchestrator: gateway model source active` +
           (config.gatewayAgentId ? ` (primary: ${config.gatewayAgentId})` : "") +
           (config.fastGatewayAgentId ? ` (fast: ${config.fastGatewayAgentId})` : ""),
@@ -1771,6 +1772,11 @@ export class Orchestrator {
         log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
       });
     }
+    if (this.config.nightlyGovernanceCronAutoRegister) {
+      this.autoRegisterNightlyGovernanceCron().catch((err) => {
+        log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
+      });
+    }
   }
 
   /**
@@ -1778,7 +1784,6 @@ export class Orchestrator {
    * Fire-and-forget — never blocks init or crashes on failure.
    */
   private async autoRegisterDaySummaryCron(): Promise<void> {
-    const CRON_ID = "engram-day-summary";
     const home = resolveHomeDir();
     const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
 
@@ -1789,66 +1794,43 @@ export class Orchestrator {
         );
         return;
       }
-
-      const raw = await readFile(jobsPath, "utf-8");
-      const parsed = JSON.parse(raw);
-
-      // jobs.json may be { version, jobs: [...] } or a plain array
-      const jobsArray: Array<{ id?: string; [key: string]: unknown }> =
-        Array.isArray(parsed)
-          ? parsed
-          : Array.isArray(parsed?.jobs)
-            ? parsed.jobs
-            : (null as any);
-
-      if (!jobsArray) {
-        log.debug(
-          "day-summary cron: jobs.json has unexpected structure, skipping auto-register",
-        );
-        return;
-      }
-
-      if (jobsArray.some((j) => j.id === CRON_ID)) {
-        log.debug("day-summary cron already exists, skipping auto-register");
-        return;
-      }
-
-      jobsArray.push({
-        id: CRON_ID,
-        agentId: "main",
-        name: "Engram Day Summary (auto)",
-        enabled: true,
-        schedule: {
-          kind: "cron",
-          expr: "47 23 * * *",
-          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        },
-        sessionTarget: "isolated",
-        wakeMode: "now",
-        payload: {
-          kind: "agentTurn",
-          timeoutSeconds: 900,
-          thinking: "off",
-          message:
-            "You are OpenClaw automation. Call tool engram.day_summary with empty params (it will auto-gather today's facts). If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
-        },
-        delivery: { mode: "none" },
+      const created = await ensureDaySummaryCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
-
-      // Write back preserving the original shape
-      const output = Array.isArray(parsed)
-        ? jobsArray
-        : { ...parsed, jobs: jobsArray };
-      await writeFile(
-        jobsPath,
-        JSON.stringify(output, null, 2) + "\n",
-        "utf-8",
-      );
-      log.info(
-        `day-summary cron auto-registered (engram-day-summary, 23:47 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
-      );
+      if (created.created) {
+        log.info(
+          `day-summary cron auto-registered (${created.jobId}, 23:47 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+        );
+      } else {
+        log.debug("day-summary cron already exists, skipping auto-register");
+      }
     } catch (err) {
       log.debug(`day-summary cron auto-register error: ${err}`);
+    }
+  }
+
+  private async autoRegisterNightlyGovernanceCron(): Promise<void> {
+    const home = process.env.HOME || os.homedir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("nightly governance cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+
+      const created = await ensureNightlyGovernanceCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(
+          `nightly governance cron auto-registered (${created.jobId}, 02:23 ${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+        );
+      } else {
+        log.debug("nightly governance cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`nightly governance cron auto-register error: ${err}`);
     }
   }
 
@@ -3087,7 +3069,7 @@ export class Orchestrator {
    * Warns the user if there's a mismatch.
    */
   private async validateLocalLlmModel(): Promise<void> {
-    log.info("Local LLM: Validating model configuration...");
+    log.debug("Local LLM: validating model configuration");
     try {
       const modelInfo = await this.localLlm.getLoadedModelInfo();
       if (!modelInfo) {
@@ -3105,7 +3087,7 @@ export class Orchestrator {
       const configuredMaxContext = this.config.localLlmMaxContext;
 
       if (modelInfo.contextWindow) {
-        log.info(
+        log.debug(
           `Local LLM: ${modelInfo.id} loaded with ${modelInfo.contextWindow.toLocaleString()} token context window`,
         );
 
@@ -3124,7 +3106,7 @@ export class Orchestrator {
             modelInfo.contextWindow;
         }
       } else {
-        log.info(
+        log.debug(
           `Local LLM: ${modelInfo.id} loaded (context window not reported by server)`,
         );
 

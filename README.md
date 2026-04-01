@@ -71,12 +71,12 @@ After installation, add Engram to your `openclaw.json`:
           // Option 1: Use OpenAI for extraction:
           "openaiApiKey": "${OPENAI_API_KEY}"
 
-          // Option 2: Use a local LLM (no API key needed):
+          // Option 2: Use Engram's local LLM path (plugin mode only; no API key needed):
           // "localLlmEnabled": true,
           // "localLlmUrl": "http://localhost:1234/v1",
           // "localLlmModel": "qwen2.5-32b-instruct"
 
-          // Option 3: Use the gateway model chain (multi-provider fallback):
+          // Option 3: Use the gateway model chain (primary path in gateway mode):
           // "modelSource": "gateway",
           // "gatewayAgentId": "engram-llm",
           // "fastGatewayAgentId": "engram-llm-fast"
@@ -87,7 +87,7 @@ After installation, add Engram to your `openclaw.json`:
 }
 ```
 
-> **Gateway model source:** When `modelSource` is `"gateway"`, Engram routes all LLM calls (extraction, consolidation, reranking) through an OpenClaw agent persona's model chain instead of its own config. Define agent personas in `openclaw.json → agents.list[]` with a `primary` model and `fallbacks[]` array — Engram tries each in order until one succeeds. This lets you build multi-provider fallback chains like Fireworks → local LLM → cloud OpenAI. See the [Gateway Model Source](docs/config-reference.md#gateway-model-source) guide for full setup.
+> **Gateway model source:** When `modelSource` is `"gateway"`, Engram routes all LLM calls (extraction, consolidation, reranking) through an OpenClaw agent persona's model chain instead of its own config. Extraction starts on the `gatewayAgentId` chain directly in this mode; `localLlm*` settings do not control primary extraction order. Define agent personas in `openclaw.json → agents.list[]` with a `primary` model and `fallbacks[]` array — Engram tries each in order until one succeeds. This lets you build multi-provider fallback chains like Fireworks → local LLM → cloud OpenAI. See the [Gateway Model Source](docs/config-reference.md#gateway-model-source) guide for full setup.
 
 Restart the gateway:
 
@@ -409,7 +409,7 @@ openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN"
 
 Key endpoints: `GET /engram/v1/health`, `POST /engram/v1/recall`, `POST /engram/v1/memories`, `GET /engram/v1/entities/:name`, and more. Full reference in [API docs](docs/api.md).
 
-The HTTP server also hosts a lightweight operator UI at `http://127.0.0.1:4318/engram/ui/` for memory browsing, recall inspection, governance review, and entity exploration.
+The HTTP server also hosts a lightweight operator UI at `http://127.0.0.1:4318/engram/ui/` for memory browsing, recall inspection, governance review, trust-zone promotion, and entity exploration.
 
 ### MCP Tools
 
@@ -473,7 +473,28 @@ openclaw engram semantic-consolidate --dry-run  # Preview without changes
 # Access layer
 openclaw engram access http-serve --token "$TOKEN"  # Start HTTP API
 openclaw engram access mcp-serve   # Start stdio MCP server
+
+# Trust-zone demos
+openclaw engram trust-zone-demo-seed --dry-run       # Preview the opt-in buyer demo dataset
+openclaw engram trust-zone-demo-seed                 # Explicitly seed the demo dataset
+openclaw engram trust-zone-promote --record-id <id> --target-zone working --reason "Operator review"
 ```
+
+### Trust-zone demo workflow
+
+Trust zones now ship with a dedicated admin-console view plus an explicit demo seeding path for buyer-facing walkthroughs.
+
+- **Never automatic** — Engram does not seed sample trust-zone records on install, startup, or feature enablement.
+- **Explicit only** — demo records appear only after you run `openclaw engram trust-zone-demo-seed` or trigger the matching admin-console action.
+- **Buyer-friendly story** — the trust-zone view surfaces provenance strength, promotion readiness, corroboration requirements, and operator promotion actions in one place.
+
+The seeded scenario is `enterprise-buyer-v1`, which creates a small, opinionated dataset covering:
+
+- quarantine records that are ready for review
+- working records that are blocked on missing provenance
+- working records that still need corroboration
+- working records with independent corroboration support
+- a trusted operator policy record
 
 See the [full CLI reference](docs/api.md#cli-commands) for all commands.
 
@@ -484,10 +505,10 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `openaiApiKey` | `(env)` | OpenAI API key (optional when using a local LLM) |
-| `localLlmEnabled` | `false` | Use a local LLM instead of OpenAI for extraction |
+| `localLlmEnabled` | `false` | Enable Engram's local LLM path when `modelSource` is `plugin` |
 | `localLlmUrl` | unset | Local LLM endpoint (e.g., `http://localhost:1234/v1`) |
 | `localLlmModel` | unset | Local model name (e.g., `qwen2.5-32b-instruct`) |
-| `model` | `gpt-5.2` | OpenAI model for extraction (when not using local LLM) |
+| `model` | `gpt-5.2` | OpenAI model for extraction when `modelSource` is `plugin` and local LLM is disabled |
 | `searchBackend` | `"qmd"` | Search engine: `qmd`, `orama`, `lancedb`, `meilisearch`, `remote`, `noop` |
 | `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, `hybrid` |
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Recall budget (default ~8K chars; set 64K+ for large-context models) |

@@ -1618,6 +1618,11 @@
         "default": false,
         "description": "If true, Engram may attempt to auto-register an hourly summary cron job (default off)."
       },
+      "nightlyGovernanceCronAutoRegister": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, Engram may attempt to auto-register the nightly governance cron job (default off)."
+      },
       "hourlySummariesExtendedEnabled": {
         "type": "boolean",
         "default": false,

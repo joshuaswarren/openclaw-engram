@@ -461,7 +461,8 @@ Route all Engram LLM calls through the OpenClaw gateway's agent model chain inst
 
 When `modelSource` is `gateway`:
 
-- `localLlmEnabled` and the direct OpenAI client are bypassed — all LLM calls flow through `FallbackLlmClient` with the configured agent chain
+- `localLlmEnabled` and the direct OpenAI client are bypassed for primary LLM dispatch — all LLM calls flow through `FallbackLlmClient` with the configured agent chain
+- Extraction and consolidation start on the configured gateway chain directly; the historical "falling back to gateway" wording only applies when Engram is still in `plugin` mode
 - The existing `openaiApiKey`, `model`, and `localLlm*` settings are ignored for LLM dispatch but retained as config for backward compatibility
 - `localLlmFast*` settings are also bypassed when `fastGatewayAgentId` is set
 - **Reranking** uses the `fastGatewayAgentId` chain (or `gatewayAgentId` if fast is unset) instead of the local LLM — this can dramatically reduce rerank latency when the fast chain points at a cloud provider
@@ -535,7 +536,7 @@ Set `modelSource` to `plugin` (or remove it) to restore the original behavior wh
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `localLlmEnabled` | `false` | Enable local/compatible endpoint |
+| `localLlmEnabled` | `false` | Enable Engram's local/compatible endpoint when `modelSource` remains `plugin` |
 | `localLlmUrl` | `http://localhost:1234/v1` | Base URL for endpoint |
 | `localLlmModel` | `local-model` | Model ID |
 | `localLlmApiKey` | `(unset)` | Optional API key |

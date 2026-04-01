@@ -21,6 +21,7 @@ import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
 import { wrapWorkLayerContext } from "./work/boundary.js";
 import { VALID_MEMORY_CATEGORIES } from "./config.js";
+import { runMemoryGovernance } from "./maintenance/memory-governance.js";
 
 interface ToolApi {
   registerTool(
@@ -2330,6 +2331,89 @@ Best for:
       },
     },
     { name: "memory_identity" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_governance_run",
+      label: "Run Memory Governance",
+      description: `Run Engram memory governance in a bounded shadow/apply pass.
+
+Cost: Low to medium (local file scan only)
+Speed: Fast for bounded windows
+
+Best for:
+- Nightly incremental governance sweeps
+- Manual shadow runs on recent memory windows
+- Small-batch review queue generation without scanning the full corpus at once`,
+      parameters: Type.Object({
+        namespace: Type.Optional(
+          Type.String({
+            description: "Optional namespace override. Defaults to the default namespace.",
+          }),
+        ),
+        mode: Type.Optional(
+          Type.Union([
+            Type.Literal("shadow"),
+            Type.Literal("apply"),
+          ], {
+            description: "Governance mode. Defaults to shadow.",
+          }),
+        ),
+        recentDays: Type.Optional(
+          Type.Number({
+            description: "Only scan memories updated within the last N days.",
+          }),
+        ),
+        maxMemories: Type.Optional(
+          Type.Number({
+            description: "Maximum number of memories to scan in this run.",
+          }),
+        ),
+        batchSize: Type.Optional(
+          Type.Number({
+            description: "File-read batch size for bounded governance runs.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const namespace = normalizeToolNamespace(params.namespace);
+        const storage = await orchestrator.getStorageForNamespace(namespace);
+        const mode = params.mode === "apply" ? "apply" : "shadow";
+        const recentDays =
+          typeof params.recentDays === "number" && Number.isFinite(params.recentDays)
+            ? Math.max(1, Math.floor(params.recentDays))
+            : undefined;
+        const maxMemories =
+          typeof params.maxMemories === "number" && Number.isFinite(params.maxMemories)
+            ? Math.max(1, Math.floor(params.maxMemories))
+            : undefined;
+        const batchSize =
+          typeof params.batchSize === "number" && Number.isFinite(params.batchSize)
+            ? Math.max(1, Math.floor(params.batchSize))
+            : undefined;
+
+        const result = await runMemoryGovernance({
+          memoryDir: storage.dir,
+          mode,
+          recentDays,
+          maxMemories,
+          batchSize,
+        });
+
+        return toolJsonResult({
+          runId: result.runId,
+          traceId: result.traceId,
+          mode: result.mode,
+          reviewQueueCount: result.reviewQueue.length,
+          proposedActionCount: result.proposedActions.length,
+          appliedActionCount: result.appliedActions.length,
+          summaryPath: result.summaryPath,
+          reportPath: result.reportPath,
+        });
+      },
+    },
+    { name: "memory_governance_run" },
   );
 
   api.registerTool(

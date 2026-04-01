@@ -96,6 +96,21 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.memory_governance_run",
+        description: "Run Engram memory governance in a bounded shadow/apply pass.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+            mode: { type: "string", enum: ["shadow", "apply"] },
+            recentDays: { type: "number" },
+            maxMemories: { type: "number" },
+            batchSize: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.memory_get",
         description: "Fetch one Engram memory by id.",
         inputSchema: {
@@ -423,6 +438,15 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      case "engram.memory_governance_run":
+        return this.service.governanceRun({
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          mode: args.mode === "apply" ? "apply" : "shadow",
+          recentDays: typeof args.recentDays === "number" && Number.isFinite(args.recentDays) ? args.recentDays : undefined,
+          maxMemories: typeof args.maxMemories === "number" && Number.isFinite(args.maxMemories) ? args.maxMemories : undefined,
+          batchSize: typeof args.batchSize === "number" && Number.isFinite(args.batchSize) ? args.batchSize : undefined,
+          authenticatedPrincipal: effectivePrincipal,
+        }, effectivePrincipal);
       case "engram.memory_get":
         return this.service.memoryGet(
           typeof args.memoryId === "string" ? args.memoryId : "",

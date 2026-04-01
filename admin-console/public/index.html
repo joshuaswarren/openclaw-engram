@@ -194,6 +194,15 @@
         font-size: 0.84rem;
         color: var(--muted);
       }
+      .callout {
+        border: 1px dashed var(--line);
+        border-radius: 14px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.62);
+        color: var(--muted);
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
       .status.ok {
         color: var(--ok);
       }
@@ -357,6 +366,69 @@
           <div class="status" id="qualityStatus">Not loaded.</div>
           <div class="quality-grid" id="qualitySummary"></div>
           <div class="mono-box" style="margin-top: 12px;"><pre id="qualityJson">Quality summary will appear here.</pre></div>
+        </section>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <section class="card">
+          <h2>Trust Zones</h2>
+          <div class="callout">
+            Demo data is never seeded automatically. Use the explicit seed action below only when you want a buyer-facing trust-zone walkthrough dataset.
+          </div>
+          <div class="toolbar" style="margin-top: 12px;">
+            <label style="flex: 1;">
+              Query
+              <input id="trustZoneQuery" type="text" placeholder="Search summaries, tags, metadata, or entity refs" />
+            </label>
+            <label>
+              Zone
+              <select id="trustZoneZone">
+                <option value="">All</option>
+                <option value="quarantine">quarantine</option>
+                <option value="working">working</option>
+                <option value="trusted">trusted</option>
+              </select>
+            </label>
+            <label>
+              Source
+              <select id="trustZoneSourceClass">
+                <option value="">All</option>
+                <option value="tool_output">tool_output</option>
+                <option value="web_content">web_content</option>
+                <option value="subagent_trace">subagent_trace</option>
+                <option value="system_memory">system_memory</option>
+                <option value="user_input">user_input</option>
+                <option value="manual">manual</option>
+              </select>
+            </label>
+            <label>
+              Page Size
+              <select id="trustZonePageSize">
+                <option value="8">8</option>
+                <option value="12" selected>12</option>
+                <option value="20">20</option>
+              </select>
+            </label>
+            <button id="refreshTrustZonesButton">Refresh</button>
+            <button class="secondary" id="previewTrustZoneSeedButton">Preview Demo Seed</button>
+            <button class="accent" id="seedTrustZoneDemoButton">Seed Demo Dataset</button>
+          </div>
+          <div class="toolbar pager" style="margin-top: 12px;">
+            <div class="status" id="trustZoneStatus">No trust-zone data loaded yet.</div>
+            <div class="toolbar">
+              <button class="secondary" id="trustZonePrevButton">Previous</button>
+              <div class="status" id="trustZonePageStatus">Page 1</div>
+              <button class="secondary" id="trustZoneNextButton">Next</button>
+            </div>
+          </div>
+          <div class="list" id="trustZoneList"></div>
+        </section>
+
+        <section class="card">
+          <h2>Trust Zone Detail</h2>
+          <div class="status" id="trustZoneDetailStatus">Select a trust-zone record to inspect raw lineage and promotion state.</div>
+          <div class="mono-box" style="margin-top: 12px;"><pre id="trustZoneDetail">Trust-zone detail will appear here.</pre></div>
+          <div class="mono-box" style="margin-top: 12px;"><pre id="trustZoneSeedResult">Demo seed previews and promotion results will appear here.</pre></div>
         </section>
       </div>
 

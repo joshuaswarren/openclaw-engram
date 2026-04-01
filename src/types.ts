@@ -248,6 +248,8 @@ export interface PluginConfig {
   daySummaryEnabled: boolean;
   /** If true, Engram may attempt to auto-register an hourly summary cron job (default off). */
   hourlySummaryCronAutoRegister: boolean;
+  /** If true, Engram may attempt to auto-register the nightly governance cron job (default off). */
+  nightlyGovernanceCronAutoRegister: boolean;
   summaryRecallHours: number;
   maxSummaryCount: number;
   summaryModel: string;

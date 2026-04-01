@@ -1437,10 +1437,14 @@ export class StorageManager {
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
   }
 
-  private async _readAllMemoriesFromDisk(): Promise<MemoryFile[]> {
-    // Collect all .md file paths first (directory traversal is sequential but fast),
-    // then read files in parallel batches to avoid O(N) sequential I/O.
-    // With 80k+ memory files, sequential reads can take 60+ seconds under load.
+  private normalizeMemoryReadBatchSize(batchSize?: number): number {
+    if (typeof batchSize !== "number" || !Number.isFinite(batchSize)) {
+      return 50;
+    }
+    return Math.max(1, Math.floor(batchSize));
+  }
+
+  private async collectActiveMemoryPaths(): Promise<string[]> {
     const filePaths: string[] = [];
 
     const collectPaths = async (dir: string) => {
@@ -1455,25 +1459,29 @@ export class StorageManager {
             filePaths.push(fullPath);
           }
         }
-        // Recurse into subdirectories sequentially (directory tree is shallow)
         for (const subdir of subdirs) {
           await collectPaths(subdir);
         }
       } catch {
-        // Directory doesn't exist yet
+        // Directory does not exist yet.
       }
     };
 
     await collectPaths(this.factsDir);
     await collectPaths(this.correctionsDir);
+    return filePaths;
+  }
 
+  private async readParsedMemoriesFromPaths(
+    filePaths: string[],
+    batchSize?: number,
+  ): Promise<MemoryFile[]> {
     if (filePaths.length === 0) return [];
 
-    // Read all files in parallel batches of 50 to balance throughput and I/O pressure.
-    const BATCH_SIZE = 50;
+    const normalizedBatchSize = this.normalizeMemoryReadBatchSize(batchSize);
     const memories: MemoryFile[] = [];
-    for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
-      const batch = filePaths.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < filePaths.length; i += normalizedBatchSize) {
+      const batch = filePaths.slice(i, i + normalizedBatchSize);
       const results = await Promise.all(
         batch.map(async (fullPath) => {
           try {
@@ -1493,11 +1501,164 @@ export class StorageManager {
           }
         }),
       );
-      for (const m of results) {
-        if (m !== null) memories.push(m);
+      for (const memory of results) {
+        if (memory !== null) memories.push(memory);
       }
     }
     return memories;
+  }
+
+  private async readWindowUpdatedMs(filePath: string): Promise<number | null> {
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
+      if (!match) return null;
+      const frontmatterBlock = match[1];
+      const rawUpdated =
+        frontmatterBlock.match(/^updated:\s*"?([^"\n]*)"?/m)?.[1]
+        ?? frontmatterBlock.match(/^created:\s*"?([^"\n]*)"?/m)?.[1]
+        ?? null;
+      const updatedMs = rawUpdated ? Date.parse(rawUpdated) : Number.NaN;
+      return Number.isFinite(updatedMs) ? updatedMs : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async filterWindowPathsByUpdatedAfter(filePaths: string[], updatedAfterMs: number): Promise<string[]> {
+    const results = await Promise.all(filePaths.map(async (filePath) => {
+      const updatedMs = await this.readWindowUpdatedMs(filePath);
+      if (updatedMs !== null) {
+        return updatedMs >= updatedAfterMs ? filePath : null;
+      }
+      try {
+        const fileStat = await stat(filePath);
+        return fileStat.mtimeMs >= updatedAfterMs ? filePath : null;
+      } catch {
+        return filePath;
+      }
+    }));
+    return results.filter((filePath): filePath is string => filePath !== null);
+  }
+
+  private orderWindowPaths(filePaths: string[]): string[] {
+    const correctionPaths: string[] = [];
+    const factPaths: string[] = [];
+
+    for (const filePath of filePaths) {
+      if (filePath === this.correctionsDir || filePath.startsWith(`${this.correctionsDir}${path.sep}`)) {
+        correctionPaths.push(filePath);
+      } else {
+        factPaths.push(filePath);
+      }
+    }
+
+    correctionPaths.sort((left, right) => right.localeCompare(left));
+    factPaths.sort((left, right) => right.localeCompare(left));
+
+    if (correctionPaths.length === 0) return factPaths;
+    if (factPaths.length === 0) return correctionPaths;
+
+    const ordered: string[] = [];
+    const maxLength = Math.max(correctionPaths.length, factPaths.length);
+    for (let i = 0; i < maxLength; i += 1) {
+      const correctionPath = correctionPaths[i];
+      if (correctionPath) ordered.push(correctionPath);
+      const factPath = factPaths[i];
+      if (factPath) ordered.push(factPath);
+    }
+    return ordered;
+  }
+
+  private async readWindowBoundedBatch(
+    candidateBatchPaths: string[],
+    remainingSlots: number,
+    remainingInspectionBudget: number,
+    readBatchSize: number,
+  ): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
+    const memories: MemoryFile[] = [];
+    const filePaths: string[] = [];
+    const normalizedReadBatchSize = this.normalizeMemoryReadBatchSize(readBatchSize);
+
+    for (let index = 0; index < candidateBatchPaths.length; ) {
+      if (memories.length >= remainingSlots || filePaths.length >= remainingInspectionBudget) break;
+      const availableSlots = remainingSlots - memories.length;
+      const availableInspectionBudget = remainingInspectionBudget - filePaths.length;
+      const parallelWindow =
+        availableSlots >= 4 && availableInspectionBudget >= 4
+          ? Math.min(normalizedReadBatchSize, 4)
+          : 1;
+      const candidatePaths = candidateBatchPaths.slice(
+        index,
+        index + Math.min(parallelWindow, availableInspectionBudget),
+      );
+      index += candidatePaths.length;
+      if (candidatePaths.length === 0) break;
+      filePaths.push(...candidatePaths);
+      const parsedMemories = await this.readParsedMemoriesFromPaths(candidatePaths, candidatePaths.length);
+      if (parsedMemories.length === 0) continue;
+      memories.push(...parsedMemories.slice(0, availableSlots));
+    }
+
+    return { memories, filePaths };
+  }
+
+  async readMemoriesWindow(options: {
+    maxMemories?: number;
+    batchSize?: number;
+    updatedAfter?: Date;
+  } = {}): Promise<{ memories: MemoryFile[]; filePaths: string[] }> {
+    const allPaths = await this.collectActiveMemoryPaths();
+    const sortedPaths = this.orderWindowPaths(allPaths);
+    const maxMemories =
+      typeof options.maxMemories === "number" && Number.isFinite(options.maxMemories)
+        ? Math.max(1, Math.floor(options.maxMemories))
+        : undefined;
+    const maxCandidatePaths = maxMemories === undefined ? undefined : maxMemories * 2;
+    const updatedAfterMs = options.updatedAfter?.getTime();
+    const normalizedBatchSize = this.normalizeMemoryReadBatchSize(options.batchSize);
+    const memories: MemoryFile[] = [];
+    const selectedPaths: string[] = [];
+
+    for (let i = 0; i < sortedPaths.length; i += normalizedBatchSize) {
+      if (
+        maxMemories !== undefined
+        && (memories.length >= maxMemories || (maxCandidatePaths !== undefined && selectedPaths.length >= maxCandidatePaths))
+      ) {
+        return { memories, filePaths: selectedPaths };
+      }
+      const batchPaths = sortedPaths.slice(i, i + normalizedBatchSize);
+      const candidateBatchPaths = updatedAfterMs === undefined
+        ? batchPaths
+        : await this.filterWindowPathsByUpdatedAfter(batchPaths, updatedAfterMs);
+      const remainingSlots = maxMemories === undefined ? undefined : Math.max(0, maxMemories - memories.length);
+      const remainingInspectionBudget = maxCandidatePaths === undefined ? undefined : Math.max(0, maxCandidatePaths - selectedPaths.length);
+      const { memories: batchMemories, filePaths: parsedCandidatePaths } = remainingSlots === undefined
+        ? {
+            memories: await this.readParsedMemoriesFromPaths(candidateBatchPaths, normalizedBatchSize),
+            filePaths: candidateBatchPaths,
+          }
+        : await this.readWindowBoundedBatch(
+            candidateBatchPaths,
+            remainingSlots,
+            remainingInspectionBudget ?? remainingSlots,
+            normalizedBatchSize,
+          );
+      selectedPaths.push(...parsedCandidatePaths);
+      for (const memory of batchMemories) {
+        memories.push(memory);
+        if (maxMemories !== undefined && memories.length >= maxMemories) {
+          return { memories, filePaths: selectedPaths };
+        }
+      }
+    }
+
+    return { memories, filePaths: selectedPaths };
+  }
+
+  private async _readAllMemoriesFromDisk(): Promise<MemoryFile[]> {
+    const filePaths = await this.collectActiveMemoryPaths();
+    return this.readParsedMemoriesFromPaths(filePaths, 50);
   }
 
   /**

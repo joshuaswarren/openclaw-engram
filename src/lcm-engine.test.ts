@@ -97,6 +97,7 @@ function createPluginConfig(memoryDir: string): PluginConfig {
     hourlySummariesEnabled: false,
     daySummaryEnabled: false,
     hourlySummaryCronAutoRegister: false,
+    nightlyGovernanceCronAutoRegister: false,
     summaryRecallHours: 0,
     maxSummaryCount: 0,
     summaryModel: "test-model",

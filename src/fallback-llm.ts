@@ -77,7 +77,7 @@ export class FallbackLlmClient {
           const result = await this.tryModel(model, messages, options);
           if (result) {
             if (isFallback) {
-              log.info(`fallback LLM: succeeded using ${model.modelString} (fallback ${i})`);
+              log.debug(`fallback LLM: succeeded using ${model.modelString} (fallback ${i})`);
             }
             return {
               content: result.content,
