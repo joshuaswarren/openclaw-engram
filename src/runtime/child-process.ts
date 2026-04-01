@@ -33,13 +33,13 @@ export function launchProcess(
 export function launchProcessSync(
   command: string,
   args: string[],
-  options?: SpawnSyncOptionsWithStringEncoding,
+  options: SpawnSyncOptionsWithStringEncoding,
 ): SpawnSyncReturns<string> {
   const moduleApi = loadModule();
   const launchSync = moduleApi["spawnSync"] as (
     command: string,
-    args?: readonly string[],
-    options?: SpawnSyncOptionsWithStringEncoding,
+    args: readonly string[],
+    options: SpawnSyncOptionsWithStringEncoding,
   ) => SpawnSyncReturns<string>;
   return launchSync(command, args, options);
 }
