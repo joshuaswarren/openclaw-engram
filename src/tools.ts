@@ -3085,13 +3085,16 @@ Returns: Performance trace data with timing breakdown`,
         lines.push("=".repeat(60));
         lines.push("");
 
-        // Stats summary
-        if (Object.keys(stats).length > 0) {
+        // Stats summary — stats is { byKind: Record<string, {count, avgMs, …}>, bySpan: Record<string, …> }
+        const hasStats = Object.keys(stats.byKind).length > 0 || Object.keys(stats.bySpan).length > 0;
+        if (hasStats) {
           lines.push("Aggregate Stats (recent traces):");
-          for (const [key, s] of Object.entries(stats)) {
-            lines.push(
-              `  ${key}: avg=${s.avgMs}ms p50=${s.p50Ms}ms p95=${s.p95Ms}ms max=${s.maxMs}ms (n=${s.count})`,
-            );
+          for (const [bucket, entries] of Object.entries(stats)) {
+            for (const [key, s] of Object.entries(entries)) {
+              lines.push(
+                `  ${bucket}/${key}: avg=${s.avgMs}ms p50=${s.p50Ms}ms p95=${s.p95Ms}ms max=${s.maxMs}ms (n=${s.count})`,
+              );
+            }
           }
           lines.push("");
         }
