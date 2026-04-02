@@ -22,6 +22,7 @@ import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapsh
 import { wrapWorkLayerContext } from "./work/boundary.js";
 import { VALID_MEMORY_CATEGORIES } from "./config.js";
 import { formatProfileTraceAscii } from "./profiling.js";
+import type { ProfilingStats } from "./profiling.js";
 import { runMemoryGovernance } from "./maintenance/memory-governance.js";
 
 interface ToolApi {
@@ -3085,11 +3086,16 @@ Returns: Performance trace data with timing breakdown`,
         lines.push("=".repeat(60));
         lines.push("");
 
-        // Stats summary — stats is { byKind: Record<string, {count, avgMs, …}>, bySpan: Record<string, …> }
-        const hasStats = Object.keys(stats.byKind).length > 0 || Object.keys(stats.bySpan).length > 0;
+        // Stats summary — stats is { byKind: Record<string, …>, bySpan: Record<string, …> }
+        type BucketEntry = { count: number; avgMs: number; p50Ms: number; p95Ms: number; maxMs: number };
+        const allBuckets: Array<[string, Record<string, BucketEntry>]> = [
+          ["byKind", stats.byKind],
+          ["bySpan", stats.bySpan],
+        ];
+        const hasStats = allBuckets.some(([, entries]) => Object.keys(entries).length > 0);
         if (hasStats) {
           lines.push("Aggregate Stats (recent traces):");
-          for (const [bucket, entries] of Object.entries(stats)) {
+          for (const [bucket, entries] of allBuckets) {
             for (const [key, s] of Object.entries(entries)) {
               lines.push(
                 `  ${bucket}/${key}: avg=${s.avgMs}ms p50=${s.p50Ms}ms p95=${s.p95Ms}ms max=${s.maxMs}ms (n=${s.count})`,

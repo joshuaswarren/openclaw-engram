@@ -122,7 +122,7 @@ export class ProfilingCollector {
   // ---- Trace lifecycle ---------------------------------------------------
 
   startTrace(kind: "recall" | "extraction", sessionKey?: string, configSnapshot?: Record<string, unknown>): string {
-    if (!this.config.enabled) return "";
+    if (!this.enabled) return "";
     traceCounter++;
     this.activeTraceStart = Date.now();
     this.activeTraceKind = kind;
