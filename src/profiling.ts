@@ -105,7 +105,7 @@ export class ProfilingCollector {
   constructor(config: ProfilingConfig) {
     this.enabled = config.enabled;
     this.storageDir = config.storageDir;
-    this.maxTraces = config.maxTraces;
+    this.maxTraces = Math.max(0, config.maxTraces);
 
     if (this.enabled) {
       if (!existsSync(this.storageDir)) {
@@ -213,10 +213,19 @@ export class ProfilingCollector {
   ): Promise<void> {
     const wallStart = Date.now();
 
-    // Time each member individually to get real per-member durations.
+    // Track actual resolution order by racing each member and recording
+    // its settlement index as it resolves.
+    let nextResolvedIndex = 0;
+    const resolutionOrder = new Map<string, number>();
+
     const timed = members.map(async (m) => {
       const t0 = Date.now();
-      try { await m.promise; } catch { /* settled via allSettled below */ }
+      try {
+        await m.promise;
+      } catch {
+        // settled — still record order
+      }
+      resolutionOrder.set(m.name, nextResolvedIndex++);
       return { name: m.name, durationMs: Date.now() - t0 };
     });
     const timedResults = await Promise.allSettled(timed);
@@ -225,21 +234,14 @@ export class ProfilingCollector {
 
     const wallMs = Date.now() - wallStart;
 
-    // Determine resolution order from the original promises.
-    const origResults = await Promise.allSettled(members.map((m) => m.promise));
-
     const groupMembers: ProfileParallelGroupMember[] = members.map((m, i) => {
       const timedResult = timedResults[i].status === "fulfilled"
         ? timedResults[i].value
         : { name: m.name, durationMs: wallMs };
-      // Find this member's position in the original settlement order.
-      const resolvedIndex = origResults.findIndex((r, j) =>
-        r.status === "fulfilled" && members[j].name === m.name,
-      );
       return {
         name: timedResult.name,
         durationMs: timedResult.durationMs,
-        resolvedIndex: resolvedIndex >= 0 ? resolvedIndex : i,
+        resolvedIndex: resolutionOrder.get(m.name) ?? i,
       };
     });
 
@@ -293,15 +295,6 @@ export class ProfilingCollector {
       if (span.durationMs > slowest.durationMs) slowest = span;
     }
     return slowest.name;
-  }
-
-  parallelEfficiency(trace: ProfileTrace): number | null {
-    if (!trace.parallelGroups || trace.parallelGroups.length === 0) return null;
-    const group = trace.parallelGroups[0];
-    if (group.members.length <= 1) return null;
-    const idealMs = Math.max(...group.members.map((m) => m.durationMs));
-    if (group.wallMs === 0) return null;
-    return Math.round((idealMs / group.wallMs) * 100);
   }
 
   // ---- Persistence -------------------------------------------------------

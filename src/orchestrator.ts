@@ -3210,7 +3210,9 @@ export class Orchestrator {
       }
     } catch (err) {
       this.logRecallFailure(err);
-      this.profiler.endTrace(); // ensure trace is closed on error
+      // endTrace() is safe here: if no trace is active (disabled or already
+      // closed by recallInternal), it returns null immediately.
+      this.profiler.endTrace();
       return ""; // Return empty context on timeout/error
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
@@ -4216,7 +4218,7 @@ export class Orchestrator {
   ): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
-    this.profiler.startTrace("recall", sessionKey, {
+    const profileTraceId = this.profiler.startTrace("recall", sessionKey, {
       qmdEnabled: this.config.qmdEnabled,
       rerankEnabled: this.config.rerankEnabled,
       parallelRetrieval: this.config.parallelRetrievalEnabled,
