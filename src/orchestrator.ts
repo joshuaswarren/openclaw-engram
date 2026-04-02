@@ -213,7 +213,7 @@ import {
   buildBehaviorSignalsForMemory,
   dedupeBehaviorSignalsByMemoryAndHash,
 } from "./behavior-signals.js";
-import { ProfilingCollector, formatProfileTraceAscii } from "./profiling.js";
+import { ProfilingCollector } from "./profiling.js";
 import type {
   AccessTrackingEntry,
   BehaviorLoopPolicyState,
@@ -4228,10 +4228,7 @@ export class Orchestrator {
     const closeProfileTrace = () => {
       if (profileTraceClosed) return;
       profileTraceClosed = true;
-      const profileTrace = this.profiler.endTrace();
-      if (profileTrace) {
-        log.info(formatProfileTraceAscii(profileTrace));
-      }
+      this.profiler.endTrace(); // persists to JSONL file
     };
     const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
     const enrichmentSectionDeadlineMs =

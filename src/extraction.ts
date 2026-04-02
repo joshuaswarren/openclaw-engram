@@ -33,7 +33,7 @@ import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
 import { buildChatCompletionTokenLimit, shouldAssumeOpenAiChatCompletions } from "./openai-chat-compat.js";
 import { formatDaySummaryMemories, loadDaySummaryPrompt } from "./day-summary.js";
-import { ProfilingCollector, formatProfileTraceAscii } from "./profiling.js";
+import { ProfilingCollector } from "./profiling.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 type ExtractedFactResult = ExtractionResult["facts"][number];
@@ -926,12 +926,9 @@ export class ExtractionEngine {
     }
 
     } finally {
-      // --- profiling: close the total span and trace, emit ASCII report ---
+      // --- profiling: close the total span and trace ---
       this.profiler.endSpan("total");
-      const profileTrace = this.profiler.endTrace();
-      if (profileTrace) {
-        log.info(formatProfileTraceAscii(profileTrace));
-      }
+      this.profiler.endTrace(); // persists to JSONL file
     }
   }
 
