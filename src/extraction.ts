@@ -79,11 +79,12 @@ export class ExtractionEngine {
 
   constructor(
     private readonly config: PluginConfig,
-    profiler: ProfilingCollector,
+    profilerArg?: ProfilingCollector,
     localLlm?: LocalLlmClient,
     gatewayConfig?: GatewayConfig,
     modelRegistry?: ModelRegistry,
   ) {
+    this.profiler = profilerArg ?? new ProfilingCollector({ enabled: false, storageDir: "/tmp/engram-profiler-disabled", maxTraces: 0 });
     if (config.openaiApiKey) {
       this.client = new OpenAI({
         apiKey: config.openaiApiKey,
@@ -96,7 +97,6 @@ export class ExtractionEngine {
     this.localLlm = localLlm ?? new LocalLlmClient(config, modelRegistry);
     this.fallbackLlm = new FallbackLlmClient(gatewayConfig);
     this.modelRegistry = modelRegistry ?? new ModelRegistry(config.memoryDir);
-    this.profiler = profiler;
     if (config.modelSource === "gateway") {
       log.debug(
         `extraction engine: gateway model source active; extraction uses the gateway chain as its primary path` +
