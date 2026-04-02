@@ -21,6 +21,7 @@ import { WorkStorage } from "./work/storage.js";
 import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapshot } from "./work/board.js";
 import { wrapWorkLayerContext } from "./work/boundary.js";
 import { VALID_MEMORY_CATEGORIES } from "./config.js";
+import { formatProfileTraceAscii } from "./profiling.js";
 import { runMemoryGovernance } from "./maintenance/memory-governance.js";
 
 interface ToolApi {
@@ -3032,5 +3033,86 @@ Best for:
       },
     },
     { name: "compounding_promote_candidate" },
+  );
+
+  // ── Profiling Report ──────────────────────────────────────────────────
+  api.registerTool(
+    {
+      name: "engram_profiling_report",
+      label: "Profiling Report",
+      description: `Returns timing and performance data for Engram's recall and extraction pipelines.
+
+Requires profilingEnabled: true in plugin config.
+
+Shows per-step timing with parallel vs sequential structure, bottleneck identification, and aggregate stats.
+
+Returns: Performance trace data with timing breakdown`,
+      parameters: Type.Object({
+        format: Type.Optional(
+          Type.String({
+            description: 'Output format: "ascii" for human-readable or "json" for structured data',
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Number of recent traces to include (1-20, default 5)",
+            minimum: 1,
+            maximum: 20,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const profiler = orchestrator.profiler;
+        if (!profiler.isEnabled) {
+          return toolResult(
+            "Profiling is disabled. Set profilingEnabled: true in your plugin config to enable.",
+          );
+        }
+
+        const format = asNonEmptyString(params.format) ?? "ascii";
+        const limit = Math.min(typeof params.limit === "number" ? params.limit : 5, 20);
+        const traces = profiler.getRecentTraces(limit);
+        const stats = profiler.getStats();
+        const bottleneck = profiler.identifyBottleneck();
+
+        if (format === "json") {
+          return toolResult(JSON.stringify({ traces, stats, bottleneck }, null, 2));
+        }
+
+        // ASCII format
+        const lines: string[] = [];
+        lines.push("Engram Profiling Report");
+        lines.push("=".repeat(60));
+        lines.push("");
+
+        // Stats summary
+        if (Object.keys(stats).length > 0) {
+          lines.push("Aggregate Stats (recent traces):");
+          for (const [key, s] of Object.entries(stats)) {
+            lines.push(
+              `  ${key}: avg=${s.avgMs}ms p50=${s.p50Ms}ms p95=${s.p95Ms}ms max=${s.maxMs}ms (n=${s.count})`,
+            );
+          }
+          lines.push("");
+        }
+
+        if (bottleneck) {
+          lines.push(`Bottleneck: ${bottleneck}`);
+          lines.push("");
+        }
+
+        if (traces.length === 0) {
+          lines.push("No traces recorded yet. Trigger a recall or extraction to see timing data.");
+        } else {
+          for (const trace of traces) {
+            lines.push(formatProfileTraceAscii(trace));
+            lines.push("");
+          }
+        }
+
+        return toolResult(lines.join("\n"));
+      },
+    },
+    { name: "engram_profiling_report" },
   );
 }

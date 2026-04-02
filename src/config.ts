@@ -963,6 +963,14 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.slowLogThresholdMs === "number" ? cfg.slowLogThresholdMs : 30_000,
     // Trace recall content — disabled by default; enable to send recalled memory text to trace subscribers
     traceRecallContent: cfg.traceRecallContent === true,
+    // Performance profiling (opt-in, disabled by default)
+    profilingEnabled: cfg.profilingEnabled === true,
+    profilingStorageDir:
+      typeof cfg.profilingStorageDir === "string" && cfg.profilingStorageDir.length > 0
+        ? cfg.profilingStorageDir
+        : path.join(memoryDir, "profiling"),
+    profilingMaxTraces:
+      typeof cfg.profilingMaxTraces === "number" ? cfg.profilingMaxTraces : 100,
     // Extraction stability guards (P0/P1)
     extractionDedupeEnabled: cfg.extractionDedupeEnabled !== false,
     extractionDedupeWindowMs:
