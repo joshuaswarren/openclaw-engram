@@ -1177,9 +1177,9 @@ export class Orchestrator {
   constructor(config: PluginConfig) {
     this.config = config;
     this.profiler = new ProfilingCollector({
-      enabled: (config as any).profilingEnabled as boolean,
-      storageDir: (config as any).profilingStorageDir as string ?? path.join(config.memoryDir, "profiling"),
-      maxTraces: (config as any).profilingMaxTraces as number ?? 100,
+      enabled: config.profilingEnabled,
+      storageDir: config.profilingStorageDir || path.join(config.memoryDir, "profiling"),
+      maxTraces: config.profilingMaxTraces,
     });
     this.storageRouter = new NamespaceStorageRouter(config);
     this.namespaceSearchRouter = new NamespaceSearchRouter(
