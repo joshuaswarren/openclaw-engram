@@ -213,6 +213,7 @@ import {
   buildBehaviorSignalsForMemory,
   dedupeBehaviorSignalsByMemoryAndHash,
 } from "./behavior-signals.js";
+import { ProfilingCollector, formatProfileTraceAscii } from "./profiling.js";
 import type {
   AccessTrackingEntry,
   BehaviorLoopPolicyState,
@@ -976,6 +977,7 @@ export class Orchestrator {
   private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
   readonly config: PluginConfig;
+  readonly profiler: ProfilingCollector;
   private readonly threading: ThreadingManager;
   /** v8.2: Per-namespace multi-graph memory indexes (entity/time/causal edges) */
   private readonly graphIndexes = new Map<string, GraphIndex>();
@@ -1174,6 +1176,11 @@ export class Orchestrator {
 
   constructor(config: PluginConfig) {
     this.config = config;
+    this.profiler = new ProfilingCollector({
+      enabled: config.profilingEnabled,
+      storageDir: config.profilingStorageDir || path.join(config.memoryDir, "profiling"),
+      maxTraces: config.profilingMaxTraces,
+    });
     this.storageRouter = new NamespaceStorageRouter(config);
     this.namespaceSearchRouter = new NamespaceSearchRouter(
       config,
@@ -1248,6 +1255,7 @@ export class Orchestrator {
     }
     this.extraction = new ExtractionEngine(
       config,
+      this.profiler,
       this.localLlm,
       config.gatewayConfig,
       this.modelRegistry,
@@ -3202,6 +3210,9 @@ export class Orchestrator {
       }
     } catch (err) {
       this.logRecallFailure(err);
+      // endTrace() is safe here: if no trace is active (disabled or already
+      // closed by recallInternal), it returns null immediately.
+      this.profiler.endTrace();
       return ""; // Return empty context on timeout/error
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
@@ -4207,6 +4218,21 @@ export class Orchestrator {
   ): Promise<string> {
     const recallStart = Date.now();
     const timings: Record<string, string> = {};
+    const profileTraceId = this.profiler.startTrace("recall", sessionKey, {
+      qmdEnabled: this.config.qmdEnabled,
+      rerankEnabled: this.config.rerankEnabled,
+      parallelRetrieval: this.config.parallelRetrievalEnabled,
+    });
+    this.profiler.startSpan("planning");
+    let profileTraceClosed = false;
+    const closeProfileTrace = () => {
+      if (profileTraceClosed) return;
+      profileTraceClosed = true;
+      const profileTrace = this.profiler.endTrace();
+      if (profileTrace) {
+        log.info(formatProfileTraceAscii(profileTrace));
+      }
+    };
     const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
     const enrichmentSectionDeadlineMs =
       this.config.recallEnrichmentDeadlineMs ?? 25_000;
@@ -4304,6 +4330,7 @@ export class Orchestrator {
         this.config.graphExpandedIntentEnabled === true,
       prompt,
     });
+    this.profiler.endSpan("planning");
     const requestedMode = options.mode;
     const recallMode: RecallPlanMode =
       requestedMode ?? recallDecision.effectiveMode;
@@ -4508,6 +4535,7 @@ export class Orchestrator {
           timings: { ...timings },
         });
       }
+      closeProfileTrace();
       this.emitTrace({
         kind: "recall_summary",
         traceId,
@@ -6157,6 +6185,7 @@ export class Orchestrator {
         : Promise.resolve([] as BoxFrontmatter[]);
 
     // --- Wait for core sections first, then bounded enrichment ---
+    this.profiler.startSpan("phase-1-parallel");
     const phase1Start = Date.now();
     log.info(
       `recall phase-1: starting parallel work at +${phase1Start - recallStart}ms`,
@@ -6237,6 +6266,7 @@ export class Orchestrator {
       "recall aborted during phase-one preamble",
     );
 
+    this.profiler.endSpan("phase-1-parallel");
     log.info(
       `recall phase-1: core work done at +${Date.now() - recallStart}ms ` +
         `(phase took ${Date.now() - phase1Start}ms); continuing with incremental enrichment assembly`,
@@ -6331,6 +6361,7 @@ export class Orchestrator {
     };
 
     // --- Phase 2: Assemble sections in correct order ---
+    this.profiler.startSpan("assembly");
 
     // 0. Shared context
     if (sharedCtx)
@@ -7347,6 +7378,7 @@ export class Orchestrator {
 
     // --- Timing summary ---
     timings.total = `${Date.now() - recallStart}ms`;
+    this.profiler.endSpan("assembly");
     log.info(
       `recall phase-2 checkpoints: afterQmd=${phase2AfterQmdMs}ms, afterQuestions=${phase2QuestionsDoneMs}ms, afterQap=${phase2QapDoneMs}ms`,
     );
@@ -7428,6 +7460,7 @@ export class Orchestrator {
         timings: { ...timings },
       });
     }
+    closeProfileTrace();
     this.emitTrace({
       kind: "recall_summary",
       traceId,

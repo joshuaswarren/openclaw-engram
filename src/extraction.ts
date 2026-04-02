@@ -33,6 +33,7 @@ import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
 import { buildChatCompletionTokenLimit, shouldAssumeOpenAiChatCompletions } from "./openai-chat-compat.js";
 import { formatDaySummaryMemories, loadDaySummaryPrompt } from "./day-summary.js";
+import { ProfilingCollector, formatProfileTraceAscii } from "./profiling.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 type ExtractedFactResult = ExtractionResult["facts"][number];
@@ -74,13 +75,16 @@ export class ExtractionEngine {
   private localLlm: LocalLlmClient;
   private fallbackLlm: FallbackLlmClient;
   private modelRegistry: ModelRegistry;
+  private profiler: ProfilingCollector;
 
   constructor(
     private readonly config: PluginConfig,
+    profilerArg?: ProfilingCollector,
     localLlm?: LocalLlmClient,
     gatewayConfig?: GatewayConfig,
     modelRegistry?: ModelRegistry,
   ) {
+    this.profiler = profilerArg ?? new ProfilingCollector({ enabled: false, storageDir: "/tmp/engram-profiler-disabled", maxTraces: 0 });
     if (config.openaiApiKey) {
       this.client = new OpenAI({
         apiKey: config.openaiApiKey,
@@ -769,12 +773,22 @@ export class ExtractionEngine {
     let closedDirectTrace = false;
     const startTime = Date.now();
 
+    // --- profiling instrumentation ---
+    this.profiler.startTrace("extraction", undefined, {
+      model: this.config.model,
+      localLlm: this.config.localLlmEnabled,
+    });
+    this.profiler.startSpan("total");
+
+    try {
     // Try local LLM first if enabled
     if (this.shouldUseLocalLlm) {
+      this.profiler.startSpan("local-llm");
       try {
         const localResult = await this.extractWithLocalLlm(conversation, existingEntities);
         if (localResult) {
           const durationMs = Date.now() - startTime;
+          this.profiler.endSpan("local-llm");
           this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "extraction", durationMs });
           log.debug(`extraction: used local LLM — ${localResult.facts.length} facts, ${localResult.entities.length} entities`);
           const sanitized = this.sanitizeExtractionResult(localResult, messageTimestamp);
@@ -792,15 +806,20 @@ export class ExtractionEngine {
           return { facts: [], profileUpdates: [], entities: [], questions: [] };
         }
         log.info("extraction: local LLM error, falling back to gateway default AI:", err);
+      } finally {
+        // End local-llm span if it wasn't ended on the success path
+        try { this.profiler.endSpan("local-llm"); } catch { /* span may already be closed */ }
       }
     }
 
     // Try direct OpenAI-compatible client (Scryr, OpenRouter, etc.)
     if (this.shouldUseDirectClient) {
+      this.profiler.startSpan("direct-client");
       try {
         const directResult = await this.extractWithDirectClient(conversation, existingEntities);
         if (directResult) {
           const durationMs = Date.now() - startTime;
+          this.profiler.endSpan("direct-client");
           this.emit({ kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs });
           log.debug(`extraction: used direct client (${this.config.model}) — ${directResult.facts.length} facts, ${directResult.entities.length} entities`);
           const sanitized = this.sanitizeExtractionResult(directResult, messageTimestamp);
@@ -825,6 +844,8 @@ export class ExtractionEngine {
         } catch { /* trace emit must not block fallback */ }
         closedDirectTrace = true;
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
+      } finally {
+        try { this.profiler.endSpan("direct-client"); } catch { /* span may already be closed */ }
       }
     }
 
@@ -853,6 +874,7 @@ export class ExtractionEngine {
       log.info("extraction: falling back to gateway default AI");
     }
 
+    this.profiler.startSpan("gateway-fallback");
     try {
       const messages = [
         { role: "system" as const, content: this.buildExtractionInstructions(existingEntities) },
@@ -899,6 +921,17 @@ export class ExtractionEngine {
       });
       log.error("extraction fallback failed", err);
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
+    } finally {
+      try { this.profiler.endSpan("gateway-fallback"); } catch { /* span may already be closed */ }
+    }
+
+    } finally {
+      // --- profiling: close the total span and trace, emit ASCII report ---
+      this.profiler.endSpan("total");
+      const profileTrace = this.profiler.endTrace();
+      if (profileTrace) {
+        log.info(formatProfileTraceAscii(profileTrace));
+      }
     }
   }
 

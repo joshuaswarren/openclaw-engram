@@ -371,6 +371,13 @@ export interface PluginConfig {
   traceRecallContent: boolean;
   /** Threshold for slow operation logging (ms). */
   slowLogThresholdMs: number;
+  // Performance profiling (opt-in)
+  /** If true, collect and persist timing traces for recall and extraction pipelines. */
+  profilingEnabled: boolean;
+  /** Directory for profiling trace JSONL files. Defaults to <memoryDir>/profiling. */
+  profilingStorageDir: string;
+  /** Maximum number of trace files to keep (rolling window). */
+  profilingMaxTraces: number;
   // Extraction stability guards (P0/P1)
   extractionDedupeEnabled: boolean;
   extractionDedupeWindowMs: number;

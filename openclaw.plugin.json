@@ -1485,6 +1485,21 @@
         "default": false,
         "description": "If true, include the full recalled memory text in RecallTraceEvent.recalledContent emitted to __openclawEngramTrace subscribers (e.g. Langfuse). Disabled by default \u2014 only enable when you want external trace collectors to capture injected memory context."
       },
+      "profilingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, enable performance profiling for recall and extraction pipelines. Profiling data is stored locally in the profiling storage directory."
+      },
+      "profilingStorageDir": {
+        "type": "string",
+        "default": "",
+        "description": "Directory path for storing profiling trace files. Defaults to <memoryDir>/profiling if empty."
+      },
+      "profilingMaxTraces": {
+        "type": "number",
+        "default": 100,
+        "description": "Maximum number of profiling trace files to retain. Oldest traces are pruned when this limit is exceeded."
+      },
       "extractionDedupeEnabled": {
         "type": "boolean",
         "default": true,
