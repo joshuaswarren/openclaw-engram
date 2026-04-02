@@ -22,7 +22,6 @@ import { exportWorkBoardMarkdown, exportWorkBoardSnapshot, importWorkBoardSnapsh
 import { wrapWorkLayerContext } from "./work/boundary.js";
 import { VALID_MEMORY_CATEGORIES } from "./config.js";
 import { formatProfileTraceAscii } from "./profiling.js";
-import type { ProfilingStats } from "./profiling.js";
 import { runMemoryGovernance } from "./maintenance/memory-governance.js";
 
 interface ToolApi {
@@ -3094,7 +3093,7 @@ Returns: Performance trace data with timing breakdown`,
         ];
         const hasStats = allBuckets.some(([, entries]) => Object.keys(entries).length > 0);
         if (hasStats) {
-          lines.push("Aggregate Stats (recent traces):");
+          lines.push("Aggregate Stats (all retained traces):");
           for (const [bucket, entries] of allBuckets) {
             for (const [key, s] of Object.entries(entries)) {
               lines.push(
