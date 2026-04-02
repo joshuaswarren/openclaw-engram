@@ -211,10 +211,11 @@ export class ProfilingCollector {
     handle: ParallelGroupHandle,
     members: Array<{ name: string; promise: Promise<unknown> }>,
   ): Promise<void> {
-    if (!this.activeTraceKind) return;
-
     const wallStart = Date.now();
     const results = await Promise.allSettled(members.map((m) => m.promise));
+
+    if (!this.activeTraceKind) return;
+
     const wallMs = Date.now() - wallStart;
 
     // Capture individual durations by wrapping — but since we receive raw
