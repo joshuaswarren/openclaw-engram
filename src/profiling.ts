@@ -212,25 +212,36 @@ export class ProfilingCollector {
     members: Array<{ name: string; promise: Promise<unknown> }>,
   ): Promise<void> {
     const wallStart = Date.now();
-    const results = await Promise.allSettled(members.map((m) => m.promise));
+
+    // Time each member individually to get real per-member durations.
+    const timed = members.map(async (m) => {
+      const t0 = Date.now();
+      try { await m.promise; } catch { /* settled via allSettled below */ }
+      return { name: m.name, durationMs: Date.now() - t0 };
+    });
+    const timedResults = await Promise.allSettled(timed);
 
     if (!this.activeTraceKind) return;
 
     const wallMs = Date.now() - wallStart;
 
-    // Capture individual durations by wrapping — but since we receive raw
-    // promises, we record wall time per member from settlement timestamps.
-    // We use resolvedIndex to show which finished first.
-    const groupMembers: ProfileParallelGroupMember[] = members.map((m, i) => ({
-      name: m.name,
-      durationMs: wallMs, // fallback — individual timing needs instrumentation
-      resolvedIndex: i,
-    }));
+    // Determine resolution order from the original promises.
+    const origResults = await Promise.allSettled(members.map((m) => m.promise));
 
-    // If we have at least one fulfilled member, try to estimate durations.
-    // Since the promises were started before endParallelGroup was called,
-    // the wall time is the best approximation for all members.
-    // Users who need per-member timing should wrap their promises with timers.
+    const groupMembers: ProfileParallelGroupMember[] = members.map((m, i) => {
+      const timedResult = timedResults[i].status === "fulfilled"
+        ? timedResults[i].value
+        : { name: m.name, durationMs: wallMs };
+      // Find this member's position in the original settlement order.
+      const resolvedIndex = origResults.findIndex((r, j) =>
+        r.status === "fulfilled" && members[j].name === m.name,
+      );
+      return {
+        name: timedResult.name,
+        durationMs: timedResult.durationMs,
+        resolvedIndex: resolvedIndex >= 0 ? resolvedIndex : i,
+      };
+    });
 
     this.activeParallelGroups.push({
       name: handle.name,

@@ -3210,6 +3210,7 @@ export class Orchestrator {
       }
     } catch (err) {
       this.logRecallFailure(err);
+      this.profiler.endTrace(); // ensure trace is closed on error
       return ""; // Return empty context on timeout/error
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
@@ -4221,6 +4222,15 @@ export class Orchestrator {
       parallelRetrieval: this.config.parallelRetrievalEnabled,
     });
     this.profiler.startSpan("planning");
+    let profileTraceClosed = false;
+    const closeProfileTrace = () => {
+      if (profileTraceClosed) return;
+      profileTraceClosed = true;
+      const profileTrace = this.profiler.endTrace();
+      if (profileTrace) {
+        log.info(formatProfileTraceAscii(profileTrace));
+      }
+    };
     const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
     const enrichmentSectionDeadlineMs =
       this.config.recallEnrichmentDeadlineMs ?? 25_000;
@@ -4523,10 +4533,7 @@ export class Orchestrator {
           timings: { ...timings },
         });
       }
-      const earlyProfileTrace = this.profiler.endTrace();
-      if (earlyProfileTrace) {
-        log.info(formatProfileTraceAscii(earlyProfileTrace));
-      }
+      closeProfileTrace();
       this.emitTrace({
         kind: "recall_summary",
         traceId,
@@ -7451,10 +7458,7 @@ export class Orchestrator {
         timings: { ...timings },
       });
     }
-    const profileTrace = this.profiler.endTrace();
-    if (profileTrace) {
-      log.info(formatProfileTraceAscii(profileTrace));
-    }
+    closeProfileTrace();
     this.emitTrace({
       kind: "recall_summary",
       traceId,
