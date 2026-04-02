@@ -123,6 +123,10 @@ export class ProfilingCollector {
 
   startTrace(kind: "recall" | "extraction", sessionKey?: string, configSnapshot?: Record<string, unknown>): string {
     if (!this.enabled) return "";
+    if (this.activeTraceKind) {
+      log.debug(`profiling: skipping startTrace — trace ${this.activeTraceId} already active`);
+      return "";
+    }
     traceCounter++;
     this.activeTraceStart = Date.now();
     this.activeTraceKind = kind;
