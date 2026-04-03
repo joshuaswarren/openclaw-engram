@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -39,6 +40,8 @@ function resolveDefaultAdminConsolePublicDir(): string {
 }
 
 const defaultAdminConsolePublicDir = resolveDefaultAdminConsolePublicDir();
+const correlationIdStore = new AsyncLocalStorage<string>();
+
 const WRITE_RATE_LIMIT_WINDOW_MS = 60_000;
 const WRITE_RATE_LIMIT_MAX_REQUESTS = 30;
 const TRUST_ZONE_RECORD_KINDS = ["memory", "artifact", "state", "trajectory", "external"] as const;
@@ -99,8 +102,6 @@ export class EngramAccessHttpServer {
   private readonly mcpServer: EngramMcpServer;
   private server: Server | null = null;
   private boundPort = 0;
-  /** Correlation ID for the current request (set per-request in handle()) */
-  private currentCorrelationId = "";
 
   constructor(options: EngramAccessHttpServerOptions) {
     this.service = options.service;
@@ -125,23 +126,25 @@ export class EngramAccessHttpServer {
 
     const server = createServer((req, res) => {
       const correlationId = randomUUID();
-      void this.handle(req, res, correlationId).catch((err) => {
-        log.debug(`engram access HTTP request failed [${correlationId}]: ${err}`);
-        if (err instanceof HttpError) {
-          const payload: Record<string, unknown> = { error: err.message, code: err.code };
-          if (err.details) payload.details = err.details;
-          this.respondJson(res, err.status, payload);
-          return;
-        }
-        if (err instanceof EngramAccessInputError) {
-          this.respondJson(res, 400, { error: err.message, code: "input_error" });
-          return;
-        }
-        if (res.headersSent) {
-          res.destroy(err as Error);
-          return;
-        }
-        this.respondJson(res, 500, { error: "internal_error", code: "internal_error" });
+      correlationIdStore.run(correlationId, () => {
+        void this.handle(req, res, correlationId).catch((err) => {
+          log.debug(`engram access HTTP request failed [${correlationId}]: ${err}`);
+          if (err instanceof HttpError) {
+            const payload: Record<string, unknown> = { error: err.message, code: err.code };
+            if (err.details) payload.details = err.details;
+            this.respondJson(res, err.status, payload);
+            return;
+          }
+          if (err instanceof EngramAccessInputError) {
+            this.respondJson(res, 400, { error: err.message, code: "input_error" });
+            return;
+          }
+          if (res.headersSent) {
+            res.destroy(err as Error);
+            return;
+          }
+          this.respondJson(res, 500, { error: "internal_error", code: "internal_error" });
+        });
       });
     });
 
@@ -204,7 +207,6 @@ export class EngramAccessHttpServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse, correlationId: string): Promise<void> {
-    this.currentCorrelationId = correlationId;
     const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
     const pathname = parsed.pathname;
 
@@ -567,8 +569,9 @@ export class EngramAccessHttpServer {
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("content-length", String(Buffer.byteLength(body)));
-    if (this.currentCorrelationId) {
-      res.setHeader("x-request-id", this.currentCorrelationId);
+    const cid = correlationIdStore.getStore();
+    if (cid) {
+      res.setHeader("x-request-id", cid);
     }
     res.end(body);
   }

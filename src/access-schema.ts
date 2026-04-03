@@ -101,20 +101,7 @@ export const memoryStoreRequestSchema = z.object({
   sourceReason: sourceReasonSchema,
 });
 
-export const suggestionSubmitRequestSchema = z.object({
-  schemaVersion: schemaVersionSchema,
-  idempotencyKey: idempotencyKeySchema,
-  dryRun: dryRunSchema,
-  sessionKey: sessionKeySchema,
-  content: writeContentSchema,
-  category: categorySchema,
-  confidence: confidenceSchema,
-  namespace: namespaceSchema,
-  tags: tagsSchema,
-  entityRef: entityRefSchema,
-  ttl: ttlSchema,
-  sourceReason: sourceReasonSchema,
-});
+export const suggestionSubmitRequestSchema = memoryStoreRequestSchema;
 
 // ---------------------------------------------------------------------------
 // Review disposition
