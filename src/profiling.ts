@@ -97,6 +97,7 @@ export class ProfilingCollector {
   private storageDir: string;
   private maxTraces: number;
   private traces: ProfileTrace[] = [];
+  private prunePromise: Promise<void> | null = null;
 
   // Active trace state — keyed by traceId so concurrent pipelines are isolated.
   private activeTraces = new Map<
@@ -210,7 +211,14 @@ export class ProfilingCollector {
       this.traces.shift();
     }
 
-    this.pruneFiles();
+    // Single-flight: if a prune is already running, piggyback on it;
+    // otherwise start one.  This prevents concurrent prunes from racing
+    // on stale directory snapshots.
+    if (!this.prunePromise) {
+      this.prunePromise = this.pruneFiles().finally(() => {
+        this.prunePromise = null;
+      });
+    }
     log.debug(`profiling: trace ${trace.traceId} finalized totalMs=${trace.totalMs}`);
     return trace;
   }
