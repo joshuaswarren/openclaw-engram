@@ -158,7 +158,7 @@ export class HermesClient {
   private readonly timeoutMs: number;
 
   constructor(options: HermesClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = options.baseUrl.endsWith("/") ? options.baseUrl.slice(0, -1) : options.baseUrl;
     this.authToken = options.authToken;
     this.defaultNamespace = options.namespace;
     this.defaultSessionKey = options.sessionKey;
@@ -178,10 +178,14 @@ export class HermesClient {
   async recall(query: string, options?: RecallOptions): Promise<EngramAccessRecallResponse> {
     const body: Record<string, unknown> = {
       query,
-      sessionKey: options?.sessionKey ?? this.defaultSessionKey,
-      namespace: options?.namespace ?? this.defaultNamespace,
-      ...(options ?? {}),
     };
+    const sk = options?.sessionKey ?? this.defaultSessionKey;
+    if (sk) body.sessionKey = sk;
+    const ns = options?.namespace ?? this.defaultNamespace;
+    if (ns) body.namespace = ns;
+    if (options?.topK !== undefined) body.topK = options.topK;
+    if (options?.mode) body.mode = options.mode;
+    if (options?.includeDebug !== undefined) body.includeDebug = options.includeDebug;
     return this.request<EngramAccessRecallResponse>("POST", "/engram/v1/recall", body);
   }
 
@@ -227,9 +231,13 @@ export class HermesClient {
     limit?: number;
     offset?: number;
   }): Promise<EngramAccessEntityListResponse> {
+    const params: Record<string, unknown> = {
+      ...options,
+      namespace: options?.namespace ?? this.defaultNamespace,
+    };
     return this.request<EngramAccessEntityListResponse>(
       "GET",
-      `/engram/v1/entities${this.queryString(options)}`,
+      `/engram/v1/entities${this.queryString(params)}`,
     );
   }
 
@@ -249,7 +257,16 @@ export class HermesClient {
     limit?: number;
     offset?: number;
   }): Promise<EngramAccessMemoryBrowseResponse> {
-    const params = { ...options, namespace: options?.namespace ?? this.defaultNamespace };
+    const params: Record<string, unknown> = {
+      namespace: options?.namespace ?? this.defaultNamespace,
+    };
+    // The HTTP API uses `q` for the search query parameter
+    if (options?.query) params.q = options.query;
+    if (options?.status) params.status = options.status;
+    if (options?.category) params.category = options.category;
+    if (options?.sort) params.sort = options.sort;
+    if (options?.limit !== undefined) params.limit = options.limit;
+    if (options?.offset !== undefined) params.offset = options.offset;
     return this.request<EngramAccessMemoryBrowseResponse>(
       "GET",
       `/engram/v1/memories${this.queryString(params)}`,

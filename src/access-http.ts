@@ -66,7 +66,7 @@ function parseTrustZoneKindFilter(raw: string | null): TrustZoneRecordKind | und
   if ((TRUST_ZONE_RECORD_KINDS as readonly string[]).includes(raw)) {
     return raw as TrustZoneRecordKind;
   }
-  throw new HttpError(400, `kind must be one of ${TRUST_ZONE_RECORD_KINDS.join("|")}`);
+  throw new HttpError(400, `kind must be one of ${TRUST_ZONE_RECORD_KINDS.join("|")}`, "invalid_kind_filter");
 }
 
 function parseTrustZoneSourceClassFilter(raw: string | null): TrustZoneSourceClass | undefined {
@@ -74,7 +74,7 @@ function parseTrustZoneSourceClassFilter(raw: string | null): TrustZoneSourceCla
   if ((TRUST_ZONE_SOURCE_CLASSES as readonly string[]).includes(raw)) {
     return raw as TrustZoneSourceClass;
   }
-  throw new HttpError(400, `sourceClass must be one of ${TRUST_ZONE_SOURCE_CLASSES.join("|")}`);
+  throw new HttpError(400, `sourceClass must be one of ${TRUST_ZONE_SOURCE_CLASSES.join("|")}`, "invalid_source_class_filter");
 }
 
 function parseTrustZoneFilter(raw: string | null): TrustZoneName | undefined {
@@ -82,7 +82,7 @@ function parseTrustZoneFilter(raw: string | null): TrustZoneName | undefined {
   if (isTrustZoneName(raw)) {
     return raw;
   }
-  throw new HttpError(400, "zone must be one of quarantine|working|trusted");
+  throw new HttpError(400, "zone must be one of quarantine|working|trusted", "invalid_zone_filter");
 }
 
 export class EngramAccessHttpServer {
@@ -99,6 +99,8 @@ export class EngramAccessHttpServer {
   private readonly mcpServer: EngramMcpServer;
   private server: Server | null = null;
   private boundPort = 0;
+  /** Correlation ID for the current request (set per-request in handle()) */
+  private currentCorrelationId = "";
 
   constructor(options: EngramAccessHttpServerOptions) {
     this.service = options.service;
@@ -128,18 +130,18 @@ export class EngramAccessHttpServer {
         if (err instanceof HttpError) {
           const payload: Record<string, unknown> = { error: err.message, code: err.code };
           if (err.details) payload.details = err.details;
-          this.respondJson(res, err.status, payload, correlationId);
+          this.respondJson(res, err.status, payload);
           return;
         }
         if (err instanceof EngramAccessInputError) {
-          this.respondJson(res, 400, { error: err.message, code: "input_error" }, correlationId);
+          this.respondJson(res, 400, { error: err.message, code: "input_error" });
           return;
         }
         if (res.headersSent) {
           res.destroy(err as Error);
           return;
         }
-        this.respondJson(res, 500, { error: "internal_error", code: "internal_error" }, correlationId);
+        this.respondJson(res, 500, { error: "internal_error", code: "internal_error" });
       });
     });
 
@@ -202,6 +204,7 @@ export class EngramAccessHttpServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse, correlationId: string): Promise<void> {
+    this.currentCorrelationId = correlationId;
     const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
     const pathname = parsed.pathname;
 
@@ -515,7 +518,7 @@ export class EngramAccessHttpServer {
       return;
     }
 
-    this.respondJson(res, 404, { error: "not_found", code: "not_found" }, correlationId);
+    this.respondJson(res, 404, { error: "not_found", code: "not_found" });
   }
 
   private async handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -559,13 +562,13 @@ export class EngramAccessHttpServer {
     this.respondJson(res, 200, response);
   }
 
-  private respondJson(res: ServerResponse, status: number, payload: unknown, correlationId?: string): void {
+  private respondJson(res: ServerResponse, status: number, payload: unknown): void {
     const body = JSON.stringify(payload, null, 2);
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("content-length", String(Buffer.byteLength(body)));
-    if (correlationId) {
-      res.setHeader("x-request-id", correlationId);
+    if (this.currentCorrelationId) {
+      res.setHeader("x-request-id", this.currentCorrelationId);
     }
     res.end(body);
   }
@@ -606,7 +609,7 @@ export class EngramAccessHttpServer {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += buffer.length;
       if (total > this.maxBodyBytes) {
-        throw new HttpError(413, "request_body_too_large");
+        throw new HttpError(413, "request_body_too_large", "request_body_too_large");
       }
       chunks.push(buffer);
     }
@@ -617,10 +620,10 @@ export class EngramAccessHttpServer {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      throw new HttpError(400, "invalid_json");
+      throw new HttpError(400, "invalid_json", "invalid_json");
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new HttpError(400, "invalid_json_object");
+      throw new HttpError(400, "invalid_json_object", "invalid_json_object");
     }
     return parsed as Record<string, unknown>;
   }
@@ -677,7 +680,7 @@ export class EngramAccessHttpServer {
       this.writeRequestTimestamps.shift();
     }
     if (this.writeRequestTimestamps.length >= WRITE_RATE_LIMIT_MAX_REQUESTS) {
-      throw new HttpError(429, "write_rate_limited");
+      throw new HttpError(429, "write_rate_limited", "write_rate_limited");
     }
   }
 
