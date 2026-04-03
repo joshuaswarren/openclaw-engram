@@ -774,21 +774,21 @@ export class ExtractionEngine {
     const startTime = Date.now();
 
     // --- profiling instrumentation ---
-    this.profiler.startTrace("extraction", undefined, {
+    const extractionTraceId = this.profiler.startTrace("extraction", undefined, {
       model: this.config.model,
       localLlm: this.config.localLlmEnabled,
     });
-    this.profiler.startSpan("total");
+    this.profiler.startSpan("total", extractionTraceId);
 
     try {
     // Try local LLM first if enabled
     if (this.shouldUseLocalLlm) {
-      this.profiler.startSpan("local-llm");
+      this.profiler.startSpan("local-llm", extractionTraceId);
       try {
         const localResult = await this.extractWithLocalLlm(conversation, existingEntities);
         if (localResult) {
           const durationMs = Date.now() - startTime;
-          this.profiler.endSpan("local-llm");
+          this.profiler.endSpan("local-llm", extractionTraceId);
           this.emit({ kind: "llm_end", traceId, model: this.config.localLlmModel, operation: "extraction", durationMs });
           log.debug(`extraction: used local LLM — ${localResult.facts.length} facts, ${localResult.entities.length} entities`);
           const sanitized = this.sanitizeExtractionResult(localResult, messageTimestamp);
@@ -808,18 +808,18 @@ export class ExtractionEngine {
         log.info("extraction: local LLM error, falling back to gateway default AI:", err);
       } finally {
         // End local-llm span if it wasn't ended on the success path
-        try { this.profiler.endSpan("local-llm"); } catch { /* span may already be closed */ }
+        try { this.profiler.endSpan("local-llm", extractionTraceId); } catch { /* span may already be closed */ }
       }
     }
 
     // Try direct OpenAI-compatible client (Scryr, OpenRouter, etc.)
     if (this.shouldUseDirectClient) {
-      this.profiler.startSpan("direct-client");
+      this.profiler.startSpan("direct-client", extractionTraceId);
       try {
         const directResult = await this.extractWithDirectClient(conversation, existingEntities);
         if (directResult) {
           const durationMs = Date.now() - startTime;
-          this.profiler.endSpan("direct-client");
+          this.profiler.endSpan("direct-client", extractionTraceId);
           this.emit({ kind: "llm_end", traceId, model: this.config.model, operation: "extraction", durationMs });
           log.debug(`extraction: used direct client (${this.config.model}) — ${directResult.facts.length} facts, ${directResult.entities.length} entities`);
           const sanitized = this.sanitizeExtractionResult(directResult, messageTimestamp);
@@ -845,7 +845,7 @@ export class ExtractionEngine {
         closedDirectTrace = true;
         log.info("extraction: direct client failed, falling back to gateway AI:", err);
       } finally {
-        try { this.profiler.endSpan("direct-client"); } catch { /* span may already be closed */ }
+        try { this.profiler.endSpan("direct-client", extractionTraceId); } catch { /* span may already be closed */ }
       }
     }
 
@@ -874,7 +874,7 @@ export class ExtractionEngine {
       log.info("extraction: falling back to gateway default AI");
     }
 
-    this.profiler.startSpan("gateway-fallback");
+    this.profiler.startSpan("gateway-fallback", extractionTraceId);
     try {
       const messages = [
         { role: "system" as const, content: this.buildExtractionInstructions(existingEntities) },
@@ -922,13 +922,13 @@ export class ExtractionEngine {
       log.error("extraction fallback failed", err);
       return { facts: [], profileUpdates: [], entities: [], questions: [] };
     } finally {
-      try { this.profiler.endSpan("gateway-fallback"); } catch { /* span may already be closed */ }
+      try { this.profiler.endSpan("gateway-fallback", extractionTraceId); } catch { /* span may already be closed */ }
     }
 
     } finally {
       // --- profiling: close the total span and trace ---
-      this.profiler.endSpan("total");
-      this.profiler.endTrace(); // persists to JSONL file
+      this.profiler.endSpan("total", extractionTraceId);
+      this.profiler.endTrace(extractionTraceId); // persists to JSONL file
     }
   }
 

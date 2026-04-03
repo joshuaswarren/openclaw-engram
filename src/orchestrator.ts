@@ -4223,16 +4223,19 @@ export class Orchestrator {
       rerankEnabled: this.config.rerankEnabled,
       parallelRetrieval: this.config.parallelRetrievalEnabled,
     });
-    this.profiler.startSpan("planning");
+    this.profiler.startSpan("planning", profileTraceId);
     let profileTraceClosed = false;
     const closeProfileTrace = () => {
       if (profileTraceClosed) return;
       profileTraceClosed = true;
-      this.profiler.endTrace(); // persists to JSONL file
+      this.profiler.endTrace(profileTraceId); // persists to JSONL file
     };
     const recallSectionDeadlineMs = this.config.recallCoreDeadlineMs ?? 75_000;
     const enrichmentSectionDeadlineMs =
       this.config.recallEnrichmentDeadlineMs ?? 25_000;
+    // Wrap entire recall body in try/finally so profiling trace is always closed,
+    // even on unexpected exceptions (e.g., throwIfRecallAborted, phase-1 errors).
+    try {
     type DeferredEnrichmentOutcome<T> =
       | { status: "resolved"; value: T }
       | { status: "rejected"; error: unknown };
@@ -4327,7 +4330,7 @@ export class Orchestrator {
         this.config.graphExpandedIntentEnabled === true,
       prompt,
     });
-    this.profiler.endSpan("planning");
+    this.profiler.endSpan("planning", profileTraceId);
     const requestedMode = options.mode;
     const recallMode: RecallPlanMode =
       requestedMode ?? recallDecision.effectiveMode;
@@ -6182,7 +6185,7 @@ export class Orchestrator {
         : Promise.resolve([] as BoxFrontmatter[]);
 
     // --- Wait for core sections first, then bounded enrichment ---
-    this.profiler.startSpan("phase-1-parallel");
+    this.profiler.startSpan("phase-1-parallel", profileTraceId);
     const phase1Start = Date.now();
     log.info(
       `recall phase-1: starting parallel work at +${phase1Start - recallStart}ms`,
@@ -6263,7 +6266,7 @@ export class Orchestrator {
       "recall aborted during phase-one preamble",
     );
 
-    this.profiler.endSpan("phase-1-parallel");
+    this.profiler.endSpan("phase-1-parallel", profileTraceId);
     log.info(
       `recall phase-1: core work done at +${Date.now() - recallStart}ms ` +
         `(phase took ${Date.now() - phase1Start}ms); continuing with incremental enrichment assembly`,
@@ -6358,7 +6361,7 @@ export class Orchestrator {
     };
 
     // --- Phase 2: Assemble sections in correct order ---
-    this.profiler.startSpan("assembly");
+    this.profiler.startSpan("assembly", profileTraceId);
 
     // 0. Shared context
     if (sharedCtx)
@@ -7375,7 +7378,7 @@ export class Orchestrator {
 
     // --- Timing summary ---
     timings.total = `${Date.now() - recallStart}ms`;
-    this.profiler.endSpan("assembly");
+    this.profiler.endSpan("assembly", profileTraceId);
     log.info(
       `recall phase-2 checkpoints: afterQmd=${phase2AfterQmdMs}ms, afterQuestions=${phase2QuestionsDoneMs}ms, afterQap=${phase2QapDoneMs}ms`,
     );
@@ -7489,6 +7492,9 @@ export class Orchestrator {
     });
 
     return context;
+    } finally {
+      closeProfileTrace();
+    }
   }
 
   async processTurn(
