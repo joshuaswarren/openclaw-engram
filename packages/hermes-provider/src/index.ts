@@ -200,7 +200,7 @@ export class HermesClient {
       namespace: options?.namespace ?? this.defaultNamespace,
       skipExtraction: options?.skipExtraction ?? false,
     };
-    return this.request<EngramAccessObserveResponse>("POST", "/engram/v1/observe", body);
+    return this.request<EngramAccessObserveResponse>("POST", "/engram/v1/observe", body, { noRetry: true });
   }
 
   async store(request: MemoryStoreRequest): Promise<EngramAccessWriteResponse> {
@@ -209,7 +209,7 @@ export class HermesClient {
       namespace: request.namespace ?? this.defaultNamespace,
       sessionKey: request.sessionKey ?? this.defaultSessionKey,
     };
-    return this.request<EngramAccessWriteResponse>("POST", "/engram/v1/memories", body);
+    return this.request<EngramAccessWriteResponse>("POST", "/engram/v1/memories", body, { noRetry: true });
   }
 
   async submitSuggestion(request: MemoryStoreRequest): Promise<EngramAccessWriteResponse> {
@@ -218,7 +218,7 @@ export class HermesClient {
       namespace: request.namespace ?? this.defaultNamespace,
       sessionKey: request.sessionKey ?? this.defaultSessionKey,
     };
-    return this.request<EngramAccessWriteResponse>("POST", "/engram/v1/suggestions", body);
+    return this.request<EngramAccessWriteResponse>("POST", "/engram/v1/suggestions", body, { noRetry: true });
   }
 
   // -----------------------------------------------------------------------
@@ -244,10 +244,18 @@ export class HermesClient {
   }
 
   async getEntity(name: string, options?: { namespace?: string }): Promise<EngramAccessEntityGetResponse> {
-    return this.request<EngramAccessEntityGetResponse>(
-      "GET",
-      `/engram/v1/entities/${encodeURIComponent(name)}${this.queryString({ namespace: options?.namespace ?? this.defaultNamespace })}`,
-    );
+    try {
+      return await this.request<EngramAccessEntityGetResponse>(
+        "GET",
+        `/engram/v1/entities/${encodeURIComponent(name)}${this.queryString({ namespace: options?.namespace ?? this.defaultNamespace })}`,
+      );
+    } catch (err) {
+      // 404 is a valid "not found" response for entity lookups
+      if (err instanceof HermesError && err.status === 404) {
+        return { found: false };
+      }
+      throw err;
+    }
   }
 
   async getMemories(options?: {
@@ -276,10 +284,18 @@ export class HermesClient {
   }
 
   async getMemory(id: string, options?: { namespace?: string }): Promise<EngramAccessMemoryGetResponse> {
-    return this.request<EngramAccessMemoryGetResponse>(
-      "GET",
-      `/engram/v1/memories/${encodeURIComponent(id)}${this.queryString({ namespace: options?.namespace ?? this.defaultNamespace })}`,
-    );
+    try {
+      return await this.request<EngramAccessMemoryGetResponse>(
+        "GET",
+        `/engram/v1/memories/${encodeURIComponent(id)}${this.queryString({ namespace: options?.namespace ?? this.defaultNamespace })}`,
+      );
+    } catch (err) {
+      // 404 is a valid "not found" response, not an error
+      if (err instanceof HermesError && err.status === 404) {
+        return { found: false };
+      }
+      throw err;
+    }
   }
 
   async lcmSearch(
@@ -310,8 +326,10 @@ export class HermesClient {
     return parts.length > 0 ? `?${parts.join("&")}` : "";
   }
 
-  private async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
-    const isMutating = method === "POST" && body !== undefined;
+  private async request<T>(method: string, path: string, body?: Record<string, unknown>, options?: { noRetry?: boolean }): Promise<T> {
+    // Skip retries for state-mutating writes to prevent duplicate side effects.
+    // Read-only POST endpoints (recall, lcm/search) are safe to retry.
+    const isMutating = options?.noRetry === true;
     const maxAttempts = isMutating ? 1 : this.maxRetries + 1;
     let lastError: Error | null = null;
     let lastRateLimitError: HermesError | null = null;

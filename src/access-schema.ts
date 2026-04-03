@@ -63,7 +63,7 @@ const messageSchema = z.object({
 });
 
 export const observeRequestSchema = z.object({
-  sessionKey: z.string().trim().min(1, "sessionKey is required"),
+  sessionKey: z.string().trim().min(1, "sessionKey is required").max(512),
   messages: z.array(messageSchema).min(1, "messages must be a non-empty array"),
   namespace: namespaceSchema,
   skipExtraction: z.boolean().optional(),
