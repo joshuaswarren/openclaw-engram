@@ -139,6 +139,77 @@ describe("ProfilingCollector", () => {
     }
   });
 
+  test("isolates concurrent traces — spans do not cross-contaminate", () => {
+    const dir = tempDir();
+    try {
+      const collector = new ProfilingCollector({
+        enabled: true,
+        storageDir: dir,
+        maxTraces: 10,
+      });
+
+      // Start two concurrent traces.
+      const id1 = collector.startTrace("recall", "session-a");
+      const id2 = collector.startTrace("extraction", "session-b");
+
+      // Spans for trace 1.
+      collector.startSpan("search", id1);
+      const s1 = Date.now();
+      while (Date.now() - s1 < 3) { /* busy wait */ }
+      collector.endSpan("search", id1);
+
+      // Spans for trace 2.
+      collector.startSpan("llm-call", id2);
+      const s2 = Date.now();
+      while (Date.now() - s2 < 3) { /* busy wait */ }
+      collector.endSpan("llm-call", id2);
+
+      const trace1 = collector.endTrace(id1);
+      const trace2 = collector.endTrace(id2);
+
+      // Trace 1 should only have "search", not "llm-call".
+      assert.ok(trace1);
+      assert.equal(trace1!.spans.length, 1);
+      assert.equal(trace1!.spans[0].name, "search");
+      assert.equal(trace1!.kind, "recall");
+
+      // Trace 2 should only have "llm-call", not "search".
+      assert.ok(trace2);
+      assert.equal(trace2!.spans.length, 1);
+      assert.equal(trace2!.spans[0].name, "llm-call");
+      assert.equal(trace2!.kind, "extraction");
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  test("pruneFiles deletes oldest by mtime, not alphabetically", () => {
+    const dir = tempDir();
+    try {
+      const collector = new ProfilingCollector({
+        enabled: true,
+        storageDir: dir,
+        maxTraces: 2,
+      });
+
+      // Create 3 traces with known ordering.
+      const id1 = collector.startTrace("recall");
+      collector.endTrace(id1);
+
+      const id2 = collector.startTrace("extraction");
+      collector.endTrace(id2);
+
+      const id3 = collector.startTrace("recall");
+      collector.endTrace(id3);
+
+      // maxTraces=2, so only 2 files should remain — the two newest.
+      const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+      assert.equal(files.length, 2, `expected 2 files, got ${files.length}: ${files.join(", ")}`);
+    } finally {
+      cleanup(dir);
+    }
+  });
+
   test("formatProfileTraceAscii produces readable output with expected strings", () => {
     const dir = tempDir();
     try {

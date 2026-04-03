@@ -1,7 +1,7 @@
 // Performance profiling collector for recall and extraction traces.
 // Zero external dependencies — uses only node:fs and node:path.
 
-import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { log } from "./logger.js";
@@ -49,6 +49,7 @@ export interface ProfilingConfig {
 export interface ParallelGroupHandle {
   name: string;
   startOffsetMs: number;
+  traceId?: string;
 }
 
 export interface ProfilingStats {
@@ -92,20 +93,25 @@ export class ProfilingCollector {
   private maxTraces: number;
   private traces: ProfileTrace[] = [];
 
-  // Active trace state (single trace at a time).
-  private activeTraceStart = 0;
-  private activeTraceKind: "recall" | "extraction" | null = null;
-  private activeTraceId = "";
-  private activeSessionKey?: string;
-  private activeConfigSnapshot?: Record<string, unknown>;
-  private activeSpans: ProfileSpan[] = [];
-  private activeSpanStarts: Map<string, number> = new Map();
-  private activeParallelGroups: ProfileParallelGroup[] = [];
+  // Active trace state — keyed by traceId so concurrent pipelines are isolated.
+  private activeTraces = new Map<
+    string,
+    {
+      kind: "recall" | "extraction";
+      start: number;
+      sessionKey?: string;
+      configSnapshot?: Record<string, unknown>;
+      spans: ProfileSpan[];
+      spanStarts: Map<string, number>;
+      parallelGroups: ProfileParallelGroup[];
+    }
+  >();
+  private latestTraceId = "";
 
   constructor(config: ProfilingConfig) {
     this.enabled = config.enabled;
     this.storageDir = config.storageDir;
-    this.maxTraces = Math.max(0, config.maxTraces);
+    this.maxTraces = Math.max(1, config.maxTraces);
 
     if (this.enabled) {
       if (!existsSync(this.storageDir)) {
@@ -123,63 +129,67 @@ export class ProfilingCollector {
 
   startTrace(kind: "recall" | "extraction", sessionKey?: string, configSnapshot?: Record<string, unknown>): string {
     if (!this.enabled) return "";
-    if (this.activeTraceKind) {
-      log.debug(`profiling: skipping startTrace — trace ${this.activeTraceId} already active`);
-      return "";
-    }
     traceCounter++;
-    this.activeTraceStart = Date.now();
-    this.activeTraceKind = kind;
-    this.activeTraceId = `t${traceCounter}-${Date.now().toString(36)}`;
-    this.activeSessionKey = sessionKey;
-    this.activeConfigSnapshot = configSnapshot;
-    this.activeSpans = [];
-    this.activeSpanStarts = new Map();
-    this.activeParallelGroups = [];
-    log.debug(`profiling: started trace ${this.activeTraceId} kind=${kind}`);
-    return this.activeTraceId;
+    const traceId = `t${traceCounter}-${Date.now().toString(36)}`;
+    this.activeTraces.set(traceId, {
+      kind,
+      start: Date.now(),
+      sessionKey,
+      configSnapshot,
+      spans: [],
+      spanStarts: new Map(),
+      parallelGroups: [],
+    });
+    this.latestTraceId = traceId;
+    log.debug(`profiling: started trace ${traceId} kind=${kind}`);
+    return traceId;
   }
 
-  startSpan(name: string): void {
-    if (!this.activeTraceKind) return;
-    const offset = Date.now() - this.activeTraceStart;
-    this.activeSpanStarts.set(name, Date.now());
-    log.debug(`profiling: span ${name} started at +${offset}ms`);
+  startSpan(name: string, traceId?: string): void {
+    const tid = traceId ?? this.latestTraceId;
+    const t = tid ? this.activeTraces.get(tid) : undefined;
+    if (!t) return;
+    const offset = Date.now() - t.start;
+    t.spanStarts.set(name, Date.now());
+    log.debug(`profiling: span ${name} started at +${offset}ms (trace=${tid})`);
   }
 
-  endSpan(name: string): void {
-    if (!this.activeTraceKind) return;
-    const start = this.activeSpanStarts.get(name);
+  endSpan(name: string, traceId?: string): void {
+    const tid = traceId ?? this.latestTraceId;
+    const t = tid ? this.activeTraces.get(tid) : undefined;
+    if (!t) return;
+    const start = t.spanStarts.get(name);
     if (start === undefined) return;
     const duration = Date.now() - start;
-    const startOffset = start - this.activeTraceStart;
-    this.activeSpans.push({ name, startOffsetMs: startOffset, durationMs: duration });
-    this.activeSpanStarts.delete(name);
-    log.debug(`profiling: span ${name} ended ${duration}ms`);
+    const startOffset = start - t.start;
+    t.spans.push({ name, startOffsetMs: startOffset, durationMs: duration });
+    t.spanStarts.delete(name);
+    log.debug(`profiling: span ${name} ended ${duration}ms (trace=${tid})`);
   }
 
-  endTrace(): ProfileTrace | null {
-    if (!this.activeTraceKind) return null;
+  endTrace(traceId?: string): ProfileTrace | null {
+    const tid = traceId ?? this.latestTraceId;
+    const t = tid ? this.activeTraces.get(tid) : undefined;
+    if (!t) return null;
 
     const trace: ProfileTrace = {
       ts: new Date().toISOString(),
-      kind: this.activeTraceKind,
-      traceId: this.activeTraceId,
-      totalMs: Date.now() - this.activeTraceStart,
-      spans: this.activeSpans,
-      configSnapshot: this.activeConfigSnapshot,
+      kind: t.kind,
+      traceId: tid,
+      totalMs: Date.now() - t.start,
+      spans: t.spans,
+      configSnapshot: t.configSnapshot,
     };
 
-    if (this.activeSessionKey) {
-      trace.sessionKey = this.activeSessionKey;
+    if (t.sessionKey) {
+      trace.sessionKey = t.sessionKey;
     }
-    if (this.activeParallelGroups.length > 0) {
-      trace.parallelGroups = this.activeParallelGroups;
+    if (t.parallelGroups.length > 0) {
+      trace.parallelGroups = t.parallelGroups;
     }
 
-    // Reset active state.
-    this.activeTraceKind = null;
-    this.activeSpanStarts.clear();
+    // Remove from active map.
+    this.activeTraces.delete(tid);
 
     if (!this.enabled) {
       log.debug("profiling: trace discarded (disabled)");
@@ -202,9 +212,11 @@ export class ProfilingCollector {
 
   // ---- Parallel group tracking -------------------------------------------
 
-  startParallelGroup(name: string): ParallelGroupHandle {
-    const startOffsetMs = this.activeTraceKind ? Date.now() - this.activeTraceStart : 0;
-    return { name, startOffsetMs };
+  startParallelGroup(name: string, traceId?: string): ParallelGroupHandle {
+    const tid = traceId ?? this.latestTraceId;
+    const t = tid ? this.activeTraces.get(tid) : undefined;
+    const startOffsetMs = t ? Date.now() - t.start : 0;
+    return { name, startOffsetMs, traceId: tid };
   }
 
   async endParallelGroup(
@@ -213,8 +225,6 @@ export class ProfilingCollector {
   ): Promise<void> {
     const wallStart = Date.now();
 
-    // Track actual resolution order by racing each member and recording
-    // its settlement index as it resolves.
     let nextResolvedIndex = 0;
     const resolutionOrder = new Map<string, number>();
 
@@ -230,7 +240,9 @@ export class ProfilingCollector {
     });
     const timedResults = await Promise.allSettled(timed);
 
-    if (!this.activeTraceKind) return;
+    const tid = handle.traceId ?? this.latestTraceId;
+    const t = tid ? this.activeTraces.get(tid) : undefined;
+    if (!t) return;
 
     const wallMs = Date.now() - wallStart;
 
@@ -245,14 +257,14 @@ export class ProfilingCollector {
       };
     });
 
-    this.activeParallelGroups.push({
+    t.parallelGroups.push({
       name: handle.name,
       startOffsetMs: handle.startOffsetMs,
       wallMs,
       members: groupMembers,
     });
 
-    log.debug(`profiling: parallel group ${handle.name} wallMs=${wallMs}`);
+    log.debug(`profiling: parallel group ${handle.name} wallMs=${wallMs} (trace=${tid})`);
   }
 
   // ---- Query methods -----------------------------------------------------
@@ -312,13 +324,16 @@ export class ProfilingCollector {
 
   pruneFiles(): void {
     try {
-      const files = readdirSync(this.storageDir)
+      const dir = this.storageDir;
+      const files = readdirSync(dir)
         .filter((f) => f.endsWith(".jsonl"))
-        .sort();
+        .map((f) => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
+        .sort((a, b) => a.mtime - b.mtime)
+        .map((f) => f.name);
 
       while (files.length > this.maxTraces) {
         const oldest = files.shift()!;
-        unlinkSync(join(this.storageDir, oldest));
+        unlinkSync(join(dir, oldest));
         log.debug(`profiling: pruned ${oldest}`);
       }
     } catch (err) {
