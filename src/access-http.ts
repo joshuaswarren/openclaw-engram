@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { fileURLToPath, URL } from "node:url";
 import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
 import { EngramMcpServer } from "./access-mcp.js";
+import { validateRequest, type SchemaName, type SchemaTypeFor } from "./access-schema.js";
 import type { RecallPlanMode } from "./types.js";
 import { isTrustZoneName, type TrustZoneName, type TrustZoneRecordKind, type TrustZoneSourceClass } from "./trust-zones.js";
 
@@ -44,8 +45,12 @@ const TRUST_ZONE_RECORD_KINDS = ["memory", "artifact", "state", "trajectory", "e
 const TRUST_ZONE_SOURCE_CLASSES = ["tool_output", "web_content", "subagent_trace", "system_memory", "user_input", "manual"] as const;
 
 class HttpError extends Error {
-  constructor(readonly status: number, message: string) {
+  readonly code: string;
+  readonly details?: unknown;
+  constructor(readonly status: number, message: string, code?: string, details?: unknown) {
     super(message);
+    this.code = code ?? `http_${status}`;
+    this.details = details;
   }
 }
 
@@ -117,21 +122,24 @@ export class EngramAccessHttpServer {
     if (this.server) return this.status();
 
     const server = createServer((req, res) => {
-      void this.handle(req, res).catch((err) => {
-        log.debug(`engram access HTTP request failed: ${err}`);
+      const correlationId = randomUUID();
+      void this.handle(req, res, correlationId).catch((err) => {
+        log.debug(`engram access HTTP request failed [${correlationId}]: ${err}`);
         if (err instanceof HttpError) {
-          this.respondJson(res, err.status, { error: err.message });
+          const payload: Record<string, unknown> = { error: err.message, code: err.code };
+          if (err.details) payload.details = err.details;
+          this.respondJson(res, err.status, payload, correlationId);
           return;
         }
         if (err instanceof EngramAccessInputError) {
-          this.respondJson(res, 400, { error: err.message });
+          this.respondJson(res, 400, { error: err.message, code: "input_error" }, correlationId);
           return;
         }
         if (res.headersSent) {
           res.destroy(err as Error);
           return;
         }
-        this.respondJson(res, 500, { error: "internal_error" });
+        this.respondJson(res, 500, { error: "internal_error", code: "internal_error" }, correlationId);
       });
     });
 
@@ -193,7 +201,7 @@ export class EngramAccessHttpServer {
     return this.authenticatedPrincipal;
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handle(req: IncomingMessage, res: ServerResponse, correlationId: string): Promise<void> {
     const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
     const pathname = parsed.pathname;
 
@@ -202,11 +210,13 @@ export class EngramAccessHttpServer {
     }
 
     if (!this.isAuthorized(req)) {
+      const body = JSON.stringify({ error: "unauthorized", code: "unauthorized" });
       res.writeHead(401, {
         "content-type": "application/json; charset=utf-8",
         "www-authenticate": "Bearer",
+        "x-request-id": correlationId,
       });
-      res.end(JSON.stringify({ error: "unauthorized" }));
+      res.end(body);
       return;
     }
 
@@ -221,13 +231,13 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/recall") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "recall");
       const response = await this.service.recall({
-        query: typeof body.query === "string" ? body.query : "",
-        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-        topK: typeof body.topK === "number" ? body.topK : undefined,
-        mode: typeof body.mode === "string" ? body.mode as RecallPlanMode | "auto" : undefined,
+        query: body.query ?? "",
+        sessionKey: body.sessionKey,
+        namespace: body.namespace,
+        topK: body.topK,
+        mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
       });
       this.respondJson(res, 200, response);
@@ -235,22 +245,22 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/recall/explain") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "recallExplain");
       const response = await this.service.recallExplain({
-        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        sessionKey: body.sessionKey,
+        namespace: body.namespace,
       });
       this.respondJson(res, 200, response);
       return;
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/observe") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "observe");
       this.ensureWriteRateLimitAvailable();
       const response = await this.service.observe({
-        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : "",
-        messages: Array.isArray(body.messages) ? body.messages : [],
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        sessionKey: body.sessionKey,
+        messages: body.messages,
+        namespace: body.namespace,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
         skipExtraction: body.skipExtraction === true,
       });
@@ -260,13 +270,13 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/lcm/search") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "lcmSearch");
       const response = await this.service.lcmSearch({
-        query: typeof body.query === "string" ? body.query : "",
-        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        query: body.query,
+        sessionKey: body.sessionKey,
+        namespace: body.namespace,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
-        limit: typeof body.limit === "number" ? body.limit : undefined,
+        limit: body.limit,
       });
       this.respondJson(res, 200, response);
       return;
@@ -278,21 +288,21 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/memories") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "memoryStore");
       const request = {
-        schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
-        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        schemaVersion: body.schemaVersion,
+        idempotencyKey: body.idempotencyKey,
         dryRun: body.dryRun === true,
-        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        sessionKey: body.sessionKey,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
-        content: typeof body.content === "string" ? body.content : "",
-        category: typeof body.category === "string" ? body.category : undefined,
-        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-        tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
-        entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
-        ttl: typeof body.ttl === "string" ? body.ttl : undefined,
-        sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
+        content: body.content,
+        category: body.category,
+        confidence: body.confidence,
+        namespace: body.namespace,
+        tags: body.tags,
+        entityRef: body.entityRef,
+        ttl: body.ttl,
+        sourceReason: body.sourceReason,
       };
       const idempotencyStatus = await this.service.peekMemoryStoreIdempotency(request);
       if (idempotencyStatus === "miss" && request.dryRun !== true) {
@@ -307,21 +317,21 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/suggestions") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "suggestionSubmit");
       const request = {
-        schemaVersion: typeof body.schemaVersion === "number" ? body.schemaVersion : undefined,
-        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        schemaVersion: body.schemaVersion,
+        idempotencyKey: body.idempotencyKey,
         dryRun: body.dryRun === true,
-        sessionKey: typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+        sessionKey: body.sessionKey,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
-        content: typeof body.content === "string" ? body.content : "",
-        category: typeof body.category === "string" ? body.category : undefined,
-        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
-        tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : undefined,
-        entityRef: typeof body.entityRef === "string" ? body.entityRef : undefined,
-        ttl: typeof body.ttl === "string" ? body.ttl : undefined,
-        sourceReason: typeof body.sourceReason === "string" ? body.sourceReason : undefined,
+        content: body.content,
+        category: body.category,
+        confidence: body.confidence,
+        namespace: body.namespace,
+        tags: body.tags,
+        entityRef: body.entityRef,
+        ttl: body.ttl,
+        sourceReason: body.sourceReason,
       };
       const idempotencyStatus = await this.service.peekSuggestionSubmitIdempotency(request);
       if (idempotencyStatus === "miss" && request.dryRun !== true) {
@@ -446,24 +456,13 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/review-disposition") {
-      const body = await this.readJsonBody(req);
-      const status = typeof body.status === "string" ? body.status : "";
-      if (
-        status !== "active" &&
-        status !== "pending_review" &&
-        status !== "quarantined" &&
-        status !== "rejected" &&
-        status !== "superseded" &&
-        status !== "archived"
-      ) {
-        throw new HttpError(400, "invalid_review_status");
-      }
+      const body = await this.readValidatedBody(req, "reviewDisposition");
       this.ensureWriteRateLimitAvailable();
       const response = await this.service.reviewDisposition({
-        memoryId: typeof body.memoryId === "string" ? body.memoryId : "",
-        status,
-        reasonCode: typeof body.reasonCode === "string" ? body.reasonCode : "",
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        memoryId: body.memoryId,
+        status: body.status,
+        reasonCode: body.reasonCode,
+        namespace: body.namespace,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
@@ -474,31 +473,19 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/trust-zones/promote") {
-      const body = await this.readJsonBody(req);
-      const recordId = typeof body.recordId === "string" ? body.recordId.trim() : "";
-      const targetZone = typeof body.targetZone === "string" ? body.targetZone.trim() : "";
-      const promotionReason = typeof body.promotionReason === "string" ? body.promotionReason.trim() : "";
+      const body = await this.readValidatedBody(req, "trustZonePromote");
       const dryRun = body.dryRun === true;
-      if (!recordId) {
-        throw new HttpError(400, "recordId is required");
-      }
-      if (!isTrustZoneName(targetZone)) {
-        throw new HttpError(400, "invalid_trust_zone_target");
-      }
-      if (!promotionReason) {
-        throw new HttpError(400, "promotionReason is required");
-      }
       if (!dryRun) {
         this.ensureWriteRateLimitAvailable();
       }
       const response = await this.service.trustZonePromote({
-        recordId,
-        targetZone,
-        promotionReason,
-        recordedAt: typeof body.recordedAt === "string" ? body.recordedAt : undefined,
-        summary: typeof body.summary === "string" ? body.summary : undefined,
+        recordId: body.recordId,
+        targetZone: body.targetZone,
+        promotionReason: body.promotionReason,
+        recordedAt: body.recordedAt,
+        summary: body.summary,
         dryRun,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        namespace: body.namespace,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
@@ -509,16 +496,16 @@ export class EngramAccessHttpServer {
     }
 
     if (req.method === "POST" && pathname === "/engram/v1/trust-zones/demo-seed") {
-      const body = await this.readJsonBody(req);
+      const body = await this.readValidatedBody(req, "trustZoneDemoSeed");
       const dryRun = body.dryRun === true;
       if (!dryRun) {
         this.ensureWriteRateLimitAvailable();
       }
       const response = await this.service.trustZoneDemoSeed({
-        scenario: typeof body.scenario === "string" ? body.scenario : undefined,
-        recordedAt: typeof body.recordedAt === "string" ? body.recordedAt : undefined,
+        scenario: body.scenario,
+        recordedAt: body.recordedAt,
         dryRun,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        namespace: body.namespace,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
@@ -528,7 +515,7 @@ export class EngramAccessHttpServer {
       return;
     }
 
-    this.respondJson(res, 404, { error: "not_found" });
+    this.respondJson(res, 404, { error: "not_found", code: "not_found" }, correlationId);
   }
 
   private async handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -572,11 +559,14 @@ export class EngramAccessHttpServer {
     this.respondJson(res, 200, response);
   }
 
-  private respondJson(res: ServerResponse, status: number, payload: unknown): void {
+  private respondJson(res: ServerResponse, status: number, payload: unknown, correlationId?: string): void {
     const body = JSON.stringify(payload, null, 2);
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.setHeader("content-length", String(Buffer.byteLength(body)));
+    if (correlationId) {
+      res.setHeader("x-request-id", correlationId);
+    }
     res.end(body);
   }
 
@@ -633,6 +623,15 @@ export class EngramAccessHttpServer {
       throw new HttpError(400, "invalid_json_object");
     }
     return parsed as Record<string, unknown>;
+  }
+
+  private async readValidatedBody<S extends SchemaName>(req: IncomingMessage, schemaName: S): Promise<SchemaTypeFor<S>> {
+    const raw = await this.readJsonBody(req);
+    const result = validateRequest(schemaName, raw);
+    if (!result.success) {
+      throw new HttpError(400, result.error.error, "validation_error", result.error.details);
+    }
+    return result.data as SchemaTypeFor<S>;
   }
 
   private isAuthorized(req: IncomingMessage): boolean {

@@ -1,0 +1,15 @@
+{
+  "engram": {
+    "baseUrl": "http://127.0.0.1:4318",
+    "authToken": "your-secret-token-here",
+    "namespace": "default",
+    "sessionKey": "hermes-session",
+    "recallOptions": {
+      "topK": 5,
+      "mode": "auto"
+    },
+    "observeOptions": {
+      "skipExtraction": false
+    }
+  }
+}

@@ -1589,8 +1589,9 @@ test("access HTTP server returns 400 for explicit-capture validation errors", as
       }),
     });
     assert.equal(memoryResponse.status, 400);
-    const memoryPayload = await memoryResponse.json() as { error: string };
-    assert.equal(memoryPayload.error, "confidence must be between 0 and 1");
+    const memoryPayload = await memoryResponse.json() as { error: string; code: string; details?: Array<{ field: string; message: string }> };
+    assert.equal(memoryPayload.code, "validation_error");
+    assert.ok(memoryPayload.details?.some(d => d.field.includes("confidence")), `Expected confidence validation error, got: ${JSON.stringify(memoryPayload.details)}`);
 
     const suggestionResponse = await fetch(`${base}/engram/v1/suggestions`, {
       method: "POST",
@@ -1602,8 +1603,9 @@ test("access HTTP server returns 400 for explicit-capture validation errors", as
       }),
     });
     assert.equal(suggestionResponse.status, 400);
-    const suggestionPayload = await suggestionResponse.json() as { error: string };
-    assert.equal(suggestionPayload.error, "confidence must be between 0 and 1");
+    const suggestionPayload = await suggestionResponse.json() as { error: string; code: string; details?: Array<{ field: string; message: string }> };
+    assert.equal(suggestionPayload.code, "validation_error");
+    assert.ok(suggestionPayload.details?.some(d => d.field.includes("confidence")), `Expected confidence validation error, got: ${JSON.stringify(suggestionPayload.details)}`);
   } finally {
     await server.stop();
     await rm(memoryDir, { recursive: true, force: true });

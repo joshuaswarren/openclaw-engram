@@ -1,0 +1,366 @@
+/**
+ * @engram/hermes-provider
+ *
+ * Typed HTTP client for the Engram memory API.
+ *
+ * Usage:
+ *   const client = new HermesClient({ baseUrl: "http://127.0.0.1:4318", authToken: "secret" });
+ *   const health = await client.health();
+ *   const memories = await client.recall("what did I work on last week?");
+ */
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+export interface HermesClientOptions {
+  /** Base URL of the Engram HTTP server (e.g. "http://127.0.0.1:4318") */
+  baseUrl: string;
+  /** Bearer token for authentication */
+  authToken: string;
+  /** Default namespace for requests (optional) */
+  namespace?: string;
+  /** Default session key (optional) */
+  sessionKey?: string;
+  /** Max retries for server errors (default: 3) */
+  maxRetries?: number;
+  /** Base delay in ms between retries (default: 100) */
+  retryBaseDelayMs?: number;
+  /** Request timeout in ms (default: 5000) */
+  timeoutMs?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+export interface EngramAccessHealthResponse {
+  ok: boolean;
+  memoryDir: string;
+  namespacesEnabled: boolean;
+  defaultNamespace: string;
+  searchBackend: string;
+  qmdEnabled: boolean;
+  nativeKnowledgeEnabled: boolean;
+  projectionAvailable: boolean;
+}
+
+export interface EngramAccessRecallResponse {
+  context?: string;
+  results?: Array<{ id: string; content: string; score?: number; category?: string }>;
+  count?: number;
+  traceId?: string;
+  plannerMode?: string;
+  fallbackUsed?: boolean;
+  sourcesUsed?: string[];
+  budgetsApplied?: Record<string, unknown>;
+  latencyMs?: number;
+}
+
+export interface EngramAccessObserveResponse {
+  accepted: number;
+  sessionKey: string;
+  namespace?: string;
+  lcmArchived?: boolean;
+  extractionQueued?: boolean;
+}
+
+export interface EngramAccessWriteResponse {
+  id?: string;
+  status: string;
+  dryRun?: boolean;
+  idempotencyReplay?: boolean;
+  path?: string;
+}
+
+export interface EngramAccessEntityListResponse {
+  entities: Array<{ name: string; type: string; factCount?: number }>;
+  total: number;
+}
+
+export interface EngramAccessEntityGetResponse {
+  found: boolean;
+  entity?: { name: string; type: string; observations?: string[] };
+}
+
+export interface EngramAccessMemoryBrowseResponse {
+  memories: Array<Record<string, unknown>>;
+  total: number;
+}
+
+export interface EngramAccessMemoryGetResponse {
+  found: boolean;
+  memory?: Record<string, unknown>;
+}
+
+export interface EngramAccessLcmSearchResponse {
+  query: string;
+  namespace?: string;
+  results: Array<{ sessionId?: string; content?: string; turnIndex?: number }>;
+  count: number;
+  lcmEnabled: boolean;
+}
+
+export interface RecallOptions {
+  sessionKey?: string;
+  namespace?: string;
+  topK?: number;
+  mode?: "auto" | "no_recall" | "minimal" | "full" | "graph_mode";
+  includeDebug?: boolean;
+}
+
+export interface ObserveOptions {
+  namespace?: string;
+  skipExtraction?: boolean;
+}
+
+export interface MemoryStoreRequest {
+  content: string;
+  category?: string;
+  confidence?: number;
+  tags?: string[];
+  entityRef?: string;
+  ttl?: string;
+  sourceReason?: string;
+  sessionKey?: string;
+  namespace?: string;
+  idempotencyKey?: string;
+  dryRun?: boolean;
+  schemaVersion?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+export class HermesError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly details?: Array<{ field: string; message: string }>,
+  ) {
+    super(message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
+export class HermesClient {
+  private readonly baseUrl: string;
+  private readonly authToken: string;
+  private readonly defaultNamespace?: string;
+  private readonly defaultSessionKey?: string;
+  private readonly maxRetries: number;
+  private readonly retryBaseDelayMs: number;
+  private readonly timeoutMs: number;
+
+  constructor(options: HermesClientOptions) {
+    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.authToken = options.authToken;
+    this.defaultNamespace = options.namespace;
+    this.defaultSessionKey = options.sessionKey;
+    this.maxRetries = options.maxRetries ?? 3;
+    this.retryBaseDelayMs = options.retryBaseDelayMs ?? 100;
+    this.timeoutMs = options.timeoutMs ?? 5000;
+  }
+
+  // -----------------------------------------------------------------------
+  // Core methods
+  // -----------------------------------------------------------------------
+
+  async health(): Promise<EngramAccessHealthResponse> {
+    return this.request<EngramAccessHealthResponse>("GET", "/engram/v1/health");
+  }
+
+  async recall(query: string, options?: RecallOptions): Promise<EngramAccessRecallResponse> {
+    const body: Record<string, unknown> = {
+      query,
+      sessionKey: options?.sessionKey ?? this.defaultSessionKey,
+      namespace: options?.namespace ?? this.defaultNamespace,
+      ...(options ?? {}),
+    };
+    return this.request<EngramAccessRecallResponse>("POST", "/engram/v1/recall", body);
+  }
+
+  async observe(
+    sessionKey: string,
+    messages: Array<{ role: "user" | "assistant"; content: string }>,
+    options?: ObserveOptions,
+  ): Promise<EngramAccessObserveResponse> {
+    const body: Record<string, unknown> = {
+      sessionKey,
+      messages,
+      namespace: options?.namespace ?? this.defaultNamespace,
+      skipExtraction: options?.skipExtraction ?? false,
+    };
+    return this.request<EngramAccessObserveResponse>("POST", "/engram/v1/observe", body);
+  }
+
+  async store(request: MemoryStoreRequest): Promise<EngramAccessWriteResponse> {
+    const body: Record<string, unknown> = {
+      ...request,
+      namespace: request.namespace ?? this.defaultNamespace,
+      sessionKey: request.sessionKey ?? this.defaultSessionKey,
+    };
+    return this.request<EngramAccessWriteResponse>("POST", "/engram/v1/memories", body);
+  }
+
+  async submitSuggestion(request: MemoryStoreRequest): Promise<EngramAccessWriteResponse> {
+    const body: Record<string, unknown> = {
+      ...request,
+      namespace: request.namespace ?? this.defaultNamespace,
+      sessionKey: request.sessionKey ?? this.defaultSessionKey,
+    };
+    return this.request<EngramAccessWriteResponse>("POST", "/engram/v1/suggestions", body);
+  }
+
+  // -----------------------------------------------------------------------
+  // Browse / read methods
+  // -----------------------------------------------------------------------
+
+  async getEntities(options?: {
+    namespace?: string;
+    query?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<EngramAccessEntityListResponse> {
+    return this.request<EngramAccessEntityListResponse>(
+      "GET",
+      `/engram/v1/entities${this.queryString(options)}`,
+    );
+  }
+
+  async getEntity(name: string, options?: { namespace?: string }): Promise<EngramAccessEntityGetResponse> {
+    return this.request<EngramAccessEntityGetResponse>(
+      "GET",
+      `/engram/v1/entities/${encodeURIComponent(name)}${this.queryString({ namespace: options?.namespace ?? this.defaultNamespace })}`,
+    );
+  }
+
+  async getMemories(options?: {
+    query?: string;
+    status?: string;
+    category?: string;
+    namespace?: string;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<EngramAccessMemoryBrowseResponse> {
+    const params = { ...options, namespace: options?.namespace ?? this.defaultNamespace };
+    return this.request<EngramAccessMemoryBrowseResponse>(
+      "GET",
+      `/engram/v1/memories${this.queryString(params)}`,
+    );
+  }
+
+  async getMemory(id: string, options?: { namespace?: string }): Promise<EngramAccessMemoryGetResponse> {
+    return this.request<EngramAccessMemoryGetResponse>(
+      "GET",
+      `/engram/v1/memories/${encodeURIComponent(id)}${this.queryString({ namespace: options?.namespace ?? this.defaultNamespace })}`,
+    );
+  }
+
+  async lcmSearch(
+    query: string,
+    options?: { sessionKey?: string; namespace?: string; limit?: number },
+  ): Promise<EngramAccessLcmSearchResponse> {
+    const body: Record<string, unknown> = {
+      query,
+      sessionKey: options?.sessionKey ?? this.defaultSessionKey,
+      namespace: options?.namespace ?? this.defaultNamespace,
+      ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+    };
+    return this.request<EngramAccessLcmSearchResponse>("POST", "/engram/v1/lcm/search", body);
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal helpers
+  // -----------------------------------------------------------------------
+
+  private queryString(params?: Record<string, unknown>): string {
+    if (!params) return "";
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== "") {
+        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+      }
+    }
+    return parts.length > 0 ? `?${parts.join("&")}` : "";
+  }
+
+  private async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      if (attempt > 0) {
+        const delay = this.retryBaseDelayMs * Math.pow(2, attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      try {
+        const url = `${this.baseUrl}${path}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+        const headers: Record<string, string> = {
+          "Authorization": `Bearer ${this.authToken}`,
+          "Content-Type": "application/json",
+        };
+
+        const response = await fetch(url, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+
+        // Success responses
+        if (response.ok) {
+          if (response.status === 204) return {} as T;
+          return (await response.json()) as T;
+        }
+
+        // Client errors — do not retry (except 429)
+        if (response.status === 429) {
+          const retryAfter = response.headers.get("retry-after");
+          const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : this.retryBaseDelayMs * 4;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          continue;
+        }
+
+        if (response.status >= 400 && response.status < 500) {
+          const error = (await response.json()) as {
+            error: string;
+            code?: string;
+            details?: Array<{ field: string; message: string }>;
+          };
+          throw new HermesError(
+            response.status,
+            error.code ?? `http_${response.status}`,
+            error.error,
+            error.details,
+          );
+        }
+
+        // Server error — retry
+        lastError = new Error(`HTTP ${response.status}`);
+        continue;
+      } catch (err) {
+        if (err instanceof HermesError) throw err;
+        if (err instanceof DOMException && err.name === "AbortError") {
+          lastError = new Error(`request timed out after ${this.timeoutMs}ms`);
+          continue;
+        }
+        lastError = err as Error;
+        continue;
+      }
+    }
+
+    throw lastError ?? new Error("request failed after retries");
+  }
+}

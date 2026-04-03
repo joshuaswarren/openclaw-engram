@@ -1,0 +1,26 @@
+{
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          "debug": false,
+          "model": "gpt-5.2",
+          "modelSource": "openai",
+          "qmdEnabled": true,
+          "memoryDir": "~/.openclaw/workspace/memory/local",
+          "transcriptEnabled": true,
+          "transcriptRetentionDays": 30,
+          "hourlySummariesEnabled": true,
+          "daySummaryEnabled": true,
+          "recallBudgetChars": 64000,
+          "agentAccessHttp": {
+            "enabled": true,
+            "host": "127.0.0.1",
+            "port": 4318,
+            "authToken": "your-secret-token-here"
+          }
+        }
+      }
+    }
+  }
+}
