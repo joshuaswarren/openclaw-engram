@@ -186,7 +186,7 @@ export class HermesClient {
     if (options?.topK !== undefined) body.topK = options.topK;
     if (options?.mode) body.mode = options.mode;
     if (options?.includeDebug !== undefined) body.includeDebug = options.includeDebug;
-    return this.request<EngramAccessRecallResponse>("POST", "/engram/v1/recall", body);
+    return this.request<EngramAccessRecallResponse>("POST", "/engram/v1/recall", body, { noRetry: true });
   }
 
   async observe(
@@ -370,7 +370,15 @@ export class HermesClient {
         // Rate-limited — back off and retry
         if (response.status === 429) {
           const retryAfter = response.headers.get("retry-after");
-          const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : this.retryBaseDelayMs * 4;
+          let waitMs = this.retryBaseDelayMs * 4;
+          if (retryAfter) {
+            const parsed = parseInt(retryAfter, 10);
+            // Only use numeric seconds form; date-form Retry-After is ignored
+            // (isNaN catches NaN from date-form headers like "Fri, 04 Apr 2026")
+            if (Number.isFinite(parsed) && parsed > 0) {
+              waitMs = parsed * 1000;
+            }
+          }
           const errorBody = await response.json().catch(() => ({ error: "rate_limited", code: "rate_limited" })) as { error: string; code?: string };
           lastRateLimitError = new HermesError(429, errorBody.code ?? "rate_limited", errorBody.error);
           await new Promise((resolve) => setTimeout(resolve, waitMs));
