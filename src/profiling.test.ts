@@ -183,7 +183,7 @@ describe("ProfilingCollector", () => {
     }
   });
 
-  test("pruneFiles deletes oldest by mtime, not alphabetically", () => {
+  test("pruneFiles deletes oldest by mtime, not alphabetically", async () => {
     const dir = tempDir();
     try {
       const collector = new ProfilingCollector({
@@ -195,12 +195,15 @@ describe("ProfilingCollector", () => {
       // Create 3 traces with known ordering.
       const id1 = collector.startTrace("recall");
       collector.endTrace(id1);
+      await collector.pruneFiles();
 
       const id2 = collector.startTrace("extraction");
       collector.endTrace(id2);
+      await collector.pruneFiles();
 
       const id3 = collector.startTrace("recall");
       collector.endTrace(id3);
+      await collector.pruneFiles();
 
       // maxTraces=2, so only 2 files should remain — the two newest.
       const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));

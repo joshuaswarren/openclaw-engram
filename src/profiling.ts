@@ -1,7 +1,12 @@
 // Performance profiling collector for recall and extraction traces.
 // Zero external dependencies — uses only node:fs and node:path.
 
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  promises as fsp,
+} from "node:fs";
 import { join } from "node:path";
 
 import { log } from "./logger.js";
@@ -111,7 +116,7 @@ export class ProfilingCollector {
   constructor(config: ProfilingConfig) {
     this.enabled = config.enabled;
     this.storageDir = config.storageDir;
-    this.maxTraces = Math.max(1, config.maxTraces);
+    this.maxTraces = Math.max(0, config.maxTraces);
 
     if (this.enabled) {
       if (!existsSync(this.storageDir)) {
@@ -322,18 +327,22 @@ export class ProfilingCollector {
     }
   }
 
-  pruneFiles(): void {
+  async pruneFiles(): Promise<void> {
     try {
       const dir = this.storageDir;
-      const files = readdirSync(dir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
-        .sort((a, b) => a.mtime - b.mtime)
-        .map((f) => f.name);
+      const entries = await fsp.readdir(dir);
+      const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl"));
+      const withMtime = await Promise.all(
+        jsonlFiles.map(async (f) => ({
+          name: f,
+          mtime: (await fsp.stat(join(dir, f))).mtimeMs,
+        })),
+      );
+      const files = withMtime.sort((a, b) => a.mtime - b.mtime).map((f) => f.name);
 
       while (files.length > this.maxTraces) {
         const oldest = files.shift()!;
-        unlinkSync(join(dir, oldest));
+        await fsp.unlink(join(dir, oldest));
         log.debug(`profiling: pruned ${oldest}`);
       }
     } catch (err) {

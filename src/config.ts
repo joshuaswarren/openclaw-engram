@@ -971,7 +971,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         : path.join(memoryDir, "profiling"),
     profilingMaxTraces:
       typeof cfg.profilingMaxTraces === "number" && Number.isFinite(cfg.profilingMaxTraces)
-        ? Math.max(1, cfg.profilingMaxTraces)
+        ? Math.max(0, cfg.profilingMaxTraces)
         : 100,
     // Extraction stability guards (P0/P1)
     extractionDedupeEnabled: cfg.extractionDedupeEnabled !== false,

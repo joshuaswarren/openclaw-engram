@@ -3211,7 +3211,7 @@ export class Orchestrator {
     } catch (err) {
       this.logRecallFailure(err);
       // endTrace() is safe here: if no trace is active (disabled or already
-      // closed by recallInternal), it returns null immediately.
+      // closed by recallInternal's try/finally), it returns null immediately.
       this.profiler.endTrace();
       return ""; // Return empty context on timeout/error
     } finally {
