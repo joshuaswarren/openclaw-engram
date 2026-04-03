@@ -232,9 +232,11 @@ export class HermesClient {
     offset?: number;
   }): Promise<EngramAccessEntityListResponse> {
     const params: Record<string, unknown> = {
-      ...options,
       namespace: options?.namespace ?? this.defaultNamespace,
     };
+    if (options?.query) params.q = options.query;
+    if (options?.limit !== undefined) params.limit = options.limit;
+    if (options?.offset !== undefined) params.offset = options.offset;
     return this.request<EngramAccessEntityListResponse>(
       "GET",
       `/engram/v1/entities${this.queryString(params)}`,
@@ -309,18 +311,22 @@ export class HermesClient {
   }
 
   private async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
+    const isMutating = method === "POST" && body !== undefined;
+    const maxAttempts = isMutating ? 1 : this.maxRetries + 1;
     let lastError: Error | null = null;
+    let lastRateLimitError: HermesError | null = null;
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (attempt > 0) {
         const delay = this.retryBaseDelayMs * Math.pow(2, attempt - 1);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         const url = `${this.baseUrl}${path}`;
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
         const headers: Record<string, string> = {
           "Authorization": `Bearer ${this.authToken}`,
@@ -335,6 +341,7 @@ export class HermesClient {
         });
 
         clearTimeout(timeout);
+        timeout = undefined;
 
         // Success responses
         if (response.ok) {
@@ -342,14 +349,17 @@ export class HermesClient {
           return (await response.json()) as T;
         }
 
-        // Client errors — do not retry (except 429)
+        // Rate-limited — back off and retry
         if (response.status === 429) {
           const retryAfter = response.headers.get("retry-after");
           const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : this.retryBaseDelayMs * 4;
+          const errorBody = await response.json().catch(() => ({ error: "rate_limited", code: "rate_limited" })) as { error: string; code?: string };
+          lastRateLimitError = new HermesError(429, errorBody.code ?? "rate_limited", errorBody.error);
           await new Promise((resolve) => setTimeout(resolve, waitMs));
           continue;
         }
 
+        // Client errors — do not retry
         if (response.status >= 400 && response.status < 500) {
           const error = (await response.json()) as {
             error: string;
@@ -368,6 +378,7 @@ export class HermesClient {
         lastError = new Error(`HTTP ${response.status}`);
         continue;
       } catch (err) {
+        if (timeout !== undefined) clearTimeout(timeout);
         if (err instanceof HermesError) throw err;
         if (err instanceof DOMException && err.name === "AbortError") {
           lastError = new Error(`request timed out after ${this.timeoutMs}ms`);
@@ -378,6 +389,8 @@ export class HermesClient {
       }
     }
 
+    // If we exhausted retries due to rate limiting, throw the preserved 429 error
+    if (lastRateLimitError) throw lastRateLimitError;
     throw lastError ?? new Error("request failed after retries");
   }
 }
