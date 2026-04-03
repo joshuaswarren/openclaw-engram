@@ -178,6 +178,16 @@ export class ProfilingCollector {
     const t = tid ? this.activeTraces.get(tid) : undefined;
     if (!t) return null;
 
+    // Auto-close any spans still open when the trace finalizes.
+    const now = Date.now();
+    for (const [name, start] of t.spanStarts) {
+      const duration = now - start;
+      const startOffset = start - t.start;
+      t.spans.push({ name, startOffsetMs: startOffset, durationMs: duration });
+      log.debug(`profiling: auto-closed span ${name} at trace end (${duration}ms, trace=${tid})`);
+    }
+    t.spanStarts.clear();
+
     const trace: ProfileTrace = {
       ts: new Date().toISOString(),
       kind: t.kind,
