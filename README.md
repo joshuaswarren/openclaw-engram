@@ -198,6 +198,10 @@ engram query "hello"            # verify
 
 The CLI provides 15+ commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [full CLI reference](docs/api.md#standalone-cli-commands) for all commands.
 
+### Connect to any coding tool
+
+Engram works with 10+ coding tools via MCP or HTTP. See the [Connector Setup Guide](docs/integration/connector-setup.md) for config snippets for Claude Code, Codex CLI, Cursor, GitHub Copilot, Cline, Roo Code, Windsurf, Amp, Replit, and any generic MCP client.
+
 OpenClaw remains the recommended path for most users. The standalone CLI is useful for CI/CD pipelines, scripted memory operations, and environments without OpenClaw.
 
 ### Package Architecture
