@@ -160,6 +160,33 @@ Point your MCP client's command at `openclaw engram access mcp-serve`. Works wit
 
 See the [Standalone Server Guide](docs/guides/standalone-server.md) for multi-tenant setups and connecting multiple agent harnesses.
 
+## Standalone Usage
+
+Engram also works as a standalone tool without OpenClaw. Install and run the CLI directly:
+
+```bash
+npm install -g @joshuaswarren/openclaw-engram
+engram init                     # create engram.config.json
+export OPENAI_API_KEY=sk-...
+export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+engram daemon start             # start background server
+engram query "hello"            # verify
+```
+
+The CLI provides 15+ commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [full CLI reference](docs/api.md#standalone-cli-commands) for all commands.
+
+OpenClaw remains the recommended path for most users. The standalone CLI is useful for CI/CD pipelines, scripted memory operations, and environments without OpenClaw.
+
+### Package Architecture
+
+```
+@engram/core            — Framework-agnostic engine (re-exports orchestrator, config, storage, search, extraction, graph, trust zones)
+@engram/cli             — Standalone CLI binary (15+ commands)
+@engram/server          — Standalone HTTP/MCP server
+@engram/bench           — Benchmarks + CI regression gates
+@engram/hermes-provider — HTTP client for remote Engram instances
+```
+
 ## How It Works
 
 Engram operates in three phases:
@@ -544,6 +571,9 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Lossless Context Management](docs/guides/lossless-context-management.md) — Never lose context to compaction
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Migration Guide](docs/guides/migrations.md) — Upgrading from older versions
+- [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to the v9.1.36+ platform architecture (packages, standalone CLI, spaces, benchmarks)
+- [Platform Migration Guide](docs/guides/platform-migration.md) — Upgrading to v9.1.36+ platform architecture
+- [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to v9.1.36+ platform architecture
 
 ## Contributing
 

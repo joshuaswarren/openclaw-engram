@@ -23,6 +23,32 @@ cd ~/.openclaw/extensions/openclaw-engram
 npm ci && npm run build
 ```
 
+### Option C: Standalone Installation (no OpenClaw)
+
+Use Engram as a standalone memory system without OpenClaw. This is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
+
+```bash
+# Install globally
+npm install -g @joshuaswarren/openclaw-engram
+
+# Create configuration
+engram init
+
+# Set required environment variables
+export OPENAI_API_KEY=sk-...
+export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+
+# Start the background server
+engram daemon start
+
+# Verify it works
+engram query "hello" --json
+```
+
+Standalone mode provides 15+ CLI commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [API Reference](api.md#standalone-cli-commands) for the full command list and the [Platform Migration Guide](guides/platform-migration.md) for detailed setup instructions.
+
+OpenClaw remains the recommended installation path for most users.
+
 ## Minimal Config
 
 Add to `openclaw.json` under `plugins.entries.openclaw-engram.config`:

@@ -8,6 +8,20 @@ Connect an LLM agent to Engram via HTTP.
 
 Hermes is designed for external tool integration. It It works alongside existing OpenClaw plugins, via HTTP calls, — no filesystem access, daemon, or native library dependency.
 
+## Installation
+
+### As a standalone npm package (v9.1.36+)
+
+Hermes is available as `@engram/hermes-provider` for use in any Node.js project:
+
+```bash
+npm install @engram/hermes-provider
+```
+
+### Alternative: via the Engram CLI
+
+If you have the `engram` CLI installed, you can use `engram daemon start` to launch the server that Hermes connects to, rather than running `openclaw engram access http-serve` manually.
+
 ## Quick Start
 
 1. Install the package:
@@ -66,8 +80,28 @@ console.log(observeResult);
 | `store(request)` | Store a memory | `EngramAccessWriteResponse` |
 | `getEntities(options?)` | List entities | `EngramAccessEntityListResponse` |
 
+## Standalone Usage
+
+The `@engram/hermes-provider` package can be used without any Engram installation. Point it at any running Engram HTTP server:
+
+```typescript
+import { HermesClient } from "@engram/hermes-provider";
+
+const client = new HermesClient({
+  baseUrl: "https://engram.example.com",  // remote Engram instance
+  authToken: process.env.ENGRAM_TOKEN,
+});
+
+const results = await client.recall("project decisions");
+```
+
+This is useful for:
+- Connecting scripts and automation to a shared Engram instance
+- Building custom agent integrations without the full Engram engine
+- Connecting to a remote Engram server managed by another team
+
 ## Error Handling
-Hermes retries failed requests with exponential backoff (default: 3 retries, 100ms delay). 429/529/1s timeout). 500 errors throw after 10 retries. Connection errors are logged. Graceful degradation — returns empty results or null for the unknown errors.
+Hermes retries failed requests with exponential backoff (default: 3 retries, 100ms delay). 429/529/1s timeout). 500 errors throw after 10 retries. Connection errors are logged. Graceful degradation -- returns empty results or null for the unknown errors.
 
 ## TypeScript Support
 Works with any TypeScript project. Types are inferred from the response schemas.

@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.1.36] — 2026-04-04
+
+### Added
+
+**Platform architecture (M0-M7)**
+
+- **Monorepo packages** — repository reorganized into five packages: `@engram/core` (framework-agnostic engine), `@engram/cli` (standalone CLI binary), `@engram/server` (standalone HTTP/MCP server), `@engram/bench` (benchmarks + CI regression gates), `@engram/hermes-provider` (HTTP client for remote Engram instances)
+- **Schema validation** — `access-schema.ts` with Zod validates all HTTP and MCP request bodies before processing; structured error responses with `error`, `code`, `details` fields and `X-Request-Id` correlation IDs
+- **Standalone CLI** — 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree`, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark`
+- **Hermes provider** — `@engram/hermes-provider` lightweight HTTP client for connecting LLM agents to remote Engram instances
+- **Workspace tree projection** — context tree generation from workspace directory structure
+- **Onboarding** — project ingestion with language detection, doc discovery, and ingestion planning (`engram onboard`)
+- **Curation** — file curation into memory with duplicate and contradiction detection (`engram curate`)
+- **Review inbox** — approve, dismiss, or flag ingested content before it enters the memory store (`engram review`)
+- **Diff-aware sync** — filesystem sync detecting added/modified/deleted files with incremental ingestion (`engram sync`)
+- **Connector manager** — host adapter lifecycle management: list, install, remove, doctor (`engram connectors`)
+- **Spaces** — personal, project, and team memory spaces with push/pull/share/promote/audit workflows (`engram space`)
+- **Benchmarks** — latency ladder with tier breakdowns, saved baselines, CI regression gates, and `--explain` mode (`engram benchmark`)
+- **Retrieval tier system** — Tier 0 (exact match) through Tier 4 (full scan) with documented latency expectations
+- **Dedup detection** — find and report duplicate memory pairs with similarity scoring (`engram dedup`)
+
+### Changed
+
+- npm entry point (`dist/index.js`) unchanged — backward compatible
+- Config format unchanged — all 60+ options compatible
+- Plugin manifest (`openclaw.plugin.json`) unchanged
+- Memory storage format unchanged
+- Only `prepack` hook — no `postinstall` or `prepare`
+
+### Docs
+
+- New [Platform Migration Guide](docs/guides/platform-migration.md)
+- Updated [Migrations Guide](docs/guides/migrations.md) with platform migration section
+- Updated [README.md](README.md) with standalone usage, package architecture
+- Updated [Getting Started](docs/getting-started.md) with Option C (standalone installation)
+- Updated [API Reference](docs/api.md) with standalone CLI command reference
+- Updated [Hermes Setup](docs/integration/hermes-setup.md) with standalone package note
+- Updated [Deployment Topologies](docs/integration/deployment-topologies.md) with Topology 5 (standalone)
+
 ## [v9.1.20] — 2026-03-29
 
 ### Fixed

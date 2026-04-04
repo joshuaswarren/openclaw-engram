@@ -112,14 +112,21 @@ async function recallWithTiers(
   const t0 = hrTimeMs();
   const r0 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
   const d0 = hrTimeMs() - t0;
+
+  // Tier 0 — check for exact/strong match
   if (r0.results && r0.results.length > 0) {
-    tiers.push("exact_match");
-    tierDetails.push({
-      tier: "exact_match",
-      latencyMs: d0,
-      resultsCount: r0.results.length,
-    });
-    return { tiers, tierDetails };
+    const hasExactMatch = r0.results.some((m) =>
+      m.preview.toLowerCase().includes(query.toLowerCase()),
+    );
+    if (hasExactMatch) {
+      tiers.push("exact_match");
+      tierDetails.push({
+        tier: "exact_match",
+        latencyMs: d0,
+        resultsCount: r0.results.length,
+      });
+      return { tiers, tierDetails };
+    }
   }
 
   // Tier 1 — keyword / category overlap

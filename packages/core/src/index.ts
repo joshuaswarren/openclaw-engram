@@ -23,10 +23,7 @@
 
 export {
   parseConfig,
-  resolveConfig,
-  validateResolvedConfig,
-  type EngramConfig,
-  type ResolvedEngramConfig,
+  type PluginConfig as EngramConfig,
   type ExtractionConfig,
   type SearchBackendConfig,
   type ConsolidationConfig,
@@ -269,6 +266,7 @@ export {
 // ---------------------------------------------------------------------------
 
 export type { AccessConfig, AccessHealthResponse, AccessRecallResponse } from "../../../src/types.js";
+
 
 // ---------------------------------------------------------------------------
 // Bench (M7) — re-export from @engram/bench

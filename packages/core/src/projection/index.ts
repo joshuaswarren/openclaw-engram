@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { StorageManager } from "../../../src/storage.js";
+import { getCategoryDir, ALL_CATEGORY_KEYS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,18 +90,8 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
   // Ensure output directory exists
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // Process each category
-  const allCategories = filterCategories ?? [
-    "fact",
-    "preference",
-    "correction",
-    "decision",
-    "moment",
-    "commitment",
-    "principle",
-    "rule",
-    "skill",
-  ];
+  // Process each category (exclude 'question' — handled by separate includeQuestions pass)
+  const allCategories = filterCategories ?? ALL_CATEGORY_KEYS.filter((c) => c !== "question");
 
   for (const category of allCategories) {
     const categoryDir = getCategoryDir(memoryDir, category);
@@ -221,12 +212,6 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function getCategoryDir(memoryDir: string, category: string): string {
-  if (category === "correction") return path.join(memoryDir, "corrections");
-  if (category === "question") return path.join(memoryDir, "questions");
-  return path.join(memoryDir, "facts");
-}
 
 
 function walkR(dir: string): string[] {
