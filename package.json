@@ -31,6 +31,11 @@
     "url": "https://github.com/joshuaswarren/openclaw-engram/issues"
   },
   "author": "Joshua Warren",
+  "workspaces": [
+    "packages/core",
+    "packages/adapter-openclaw",
+    "packages/hermes-provider"
+  ],
   "engines": {
     "node": ">=22.12.0"
   },
