@@ -24,9 +24,8 @@ The `engram` CLI provides 15+ commands for managing memory outside of OpenClaw. 
 
 All commands accept `--json` for machine-readable output. The `engram` binary resolves configuration from:
 
-1. `--config <path>` CLI flag
-2. `ENGRAM_CONFIG_PATH` environment variable
-3. `./engram.config.json` in the current directory
+1. `ENGRAM_CONFIG_PATH` environment variable
+2. `./engram.config.json` in the current directory
 4. `~/.config/engram/config.json` (default)
 
 See the [Platform Migration Guide](guides/platform-migration.md) for detailed setup and usage instructions.
