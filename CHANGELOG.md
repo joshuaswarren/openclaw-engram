@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.2.3] — 2026-04-04
+
 ### Added
 - **`engram tree watch`** — watch memory directory for changes and incrementally regenerate context tree (debounced, recursive)
 
