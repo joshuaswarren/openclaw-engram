@@ -203,6 +203,11 @@ export function createSpace(options: {
     throw new Error(`Space "${id}" already exists`);
   }
 
+  // Validate parent space exists
+  if (options.parentSpaceId && !manifest.spaces.some((s) => s.id === options.parentSpaceId)) {
+    throw new Error(`Parent space "${options.parentSpaceId}" not found`);
+  }
+
   const now = new Date().toISOString();
   const memoryDir = options.memoryDir ?? path.join(
     getSpacesDir(options.baseDir),
@@ -252,6 +257,13 @@ export function deleteSpace(spaceId: string, baseDir?: string): void {
   // If deleting active space, switch to personal
   if (manifest.activeSpaceId === spaceId) {
     manifest.activeSpaceId = "personal";
+  }
+
+  // Clear parentSpaceId references from children
+  for (const space of manifest.spaces) {
+    if (space.parentSpaceId === spaceId) {
+      space.parentSpaceId = undefined;
+    }
   }
 
   manifest.spaces.splice(idx, 1);
@@ -417,7 +429,7 @@ export function promoteSpace(
 
   const result = copyMemories(source.memoryDir, target.memoryDir, {
     filterIds: options?.memoryIds,
-    force: options?.forceOverwrite ?? options?.force,
+    force: options?.forceOverwrite !== undefined ? options.forceOverwrite : (options?.force ?? false),
   });
 
   appendAudit({

@@ -492,7 +492,6 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--parent") { i++; continue; } // skip --parent and its value
       if (rest[i].startsWith("--")) continue;
-      if (rest[i] === action) continue; // skip action word itself
       positionals.push(rest[i]);
     }
     const name = positionals[0];
