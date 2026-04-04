@@ -57,23 +57,24 @@ npm ci && npm run build
 
 ### Option 4: Standalone (no OpenClaw)
 
-Build from source and use the standalone CLI:
+Build from source and use the standalone CLI. Requires [Node.js](https://nodejs.org/) 20+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
 
 ```bash
+npm install -g tsx              # Required — CLI entry point is TypeScript
 git clone https://github.com/joshuaswarren/openclaw-engram.git
 cd openclaw-engram
 npm ci && npm run build
-cd packages/cli && npm link    # Makes `engram` available on PATH
+cd packages/cli && npm link     # Makes `engram` available on PATH
 cd ../..
-engram init                    # Create engram.config.json
+engram init                     # Create engram.config.json
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram daemon start            # Start background server
-engram status                  # Verify it's running
-engram query "hello" --explain # Test query with tier breakdown
+engram daemon start             # Start background server
+engram status                   # Verify it's running
+engram query "hello" --explain  # Test query with tier breakdown
 ```
 
-> **Note:** The `engram` binary is defined in `packages/cli/package.json`. Running `npm link` from `packages/cli/` makes the CLI available globally. The `daemon start` command launches the server via `tsx` using a monorepo-relative path, so it requires building from source rather than a global npm install.
+> **Note:** The `engram` binary (`packages/cli/bin/engram.ts`) requires `tsx` on PATH because it is a TypeScript entry point. Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/bin/engram.ts <command>`.
 
 The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
 

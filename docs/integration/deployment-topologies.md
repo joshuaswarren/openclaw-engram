@@ -53,11 +53,14 @@ openclaw engram access http-serve --host 127.0.0.1 --port 4318 --token "$TOKEN"
 
 ## 4. Standalone (No OpenClaw)
 
-Run Engram as a standalone CLI/HTTP server using the `engram` binary. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
+Run Engram as a standalone CLI/HTTP server using the `engram` binary. Requires [tsx](https://github.com/privatenumber/tsx) on PATH. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
 
-> **Build from source required for daemon mode:** The `daemon start` command launches the server via a monorepo-relative `tsx` path that only exists when built from source. Run `npm link` from `packages/cli/` to make the `engram` CLI available on PATH (the root package only exposes `engram-access`).
+> **Build from source required:** The `engram` CLI entry point is TypeScript (`bin/engram.ts`), so `tsx` must be installed globally (`npm install -g tsx`). The `daemon start` command launches the server via a monorepo-relative path that only exists when built from source.
 
 ```bash
+# Prerequisite
+npm install -g tsx
+
 # Build from source (required for daemon start)
 git clone https://github.com/joshuaswarren/openclaw-engram.git
 cd openclaw-engram && npm ci && npm run build
@@ -125,46 +128,6 @@ services:
     volumes:
       - ./engram-data:/root/.openclaw/workspace/memory
 ```
-
-## 5. Standalone (No OpenClaw)
-
-Run Engram entirely without OpenClaw, using the standalone CLI and server packages. This is useful for CI/CD pipelines, custom integrations, or environments where OpenClaw is not available.
-
-```
-engram CLI → engram daemon → Memory Store (~/.engram/memory/)
-```
-
-Setup:
-
-```bash
-# Install
-npm install -g @joshuaswarren/openclaw-engram
-
-# Configure
-engram init
-# Edit engram.config.json with your API key and settings
-
-# Start background server
-engram daemon start
-engram status   # verify running
-
-# Use
-engram query "what did I work on yesterday?"
-engram onboard ~/src/my-project
-engram space create my-project project
-engram benchmark run --explain
-```
-
-The standalone server uses the same HTTP API as the OpenClaw plugin mode (see [API Reference](../api.md)). The Hermes provider (`@engram/hermes-provider`) can connect to it from any TypeScript/JavaScript application.
-
-Configuration is read from (in order of precedence):
-
-1. `--config <path>` CLI flag
-2. `ENGRAM_CONFIG_PATH` environment variable
-3. `./engram.config.json` in the current directory
-4. `~/.config/engram/config.json` (default)
-
-This topology does not include OpenClaw gateway features (agent hooks, tool registration, session lifecycle). Use the [Platform Migration Guide](../guides/platform-migration.md) for full details on standalone capabilities.
 
 ## Port Selection
 
