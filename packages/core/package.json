@@ -1,0 +1,46 @@
+{
+  "name": "@engram/core",
+  "version": "0.1.0",
+  "description": "Framework-agnostic Engram memory engine — orchestrator, storage, extraction, search, trust zones",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@honcho-ai/sdk": "^2.0.0",
+    "@lancedb/lancedb": "^0.26.2",
+    "@orama/orama": "^3.0.0",
+    "@orama/plugin-data-persistence": "^3.0.0",
+    "@sinclair/typebox": "^0.34.0",
+    "better-sqlite3": "^12.6.2",
+    "meilisearch": "^0.46.0",
+    "openai": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@lancedb/lancedb-darwin-arm64": "^0.26.2",
+    "@lancedb/lancedb-linux-arm64-gnu": "^0.26.2",
+    "@lancedb/lancedb-linux-x64-gnu": "^0.26.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "directory": "packages/core"
+  },
+  "keywords": ["engram", "memory", "ai", "agent", "core"]
+}
