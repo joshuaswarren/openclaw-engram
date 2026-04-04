@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { ALL_CATEGORY_DIRS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ export function findDuplicates(options: DedupOptions): DedupResult {
           left: memories[i],
           right: memories[j],
           similarity: sim,
-          action: sim >= 0.98 ? "merge" : sim >= 0.9 ? "keep_left" : "keep_left",
+          action: sim >= 0.98 ? "merge" : sim >= 0.9 ? "keep_right" : "keep_left",
         });
       }
     }
@@ -169,7 +170,7 @@ function computeSimilarity(a: string, b: string): number {
 function normalize(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, "")
+    .replace(/[^\w\s']/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -253,7 +254,7 @@ function loadMemories(
   maxLoad = 10000,
 ): MemoryEntry[] {
   const result: MemoryEntry[] = [];
-  const allCategories = categories ?? ["facts", "corrections", "preferences", "decisions"];
+  const allCategories = categories ?? ALL_CATEGORY_DIRS;
 
   for (const category of allCategories) {
     if (result.length >= maxLoad) break;

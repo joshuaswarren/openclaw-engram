@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { getCategoryDir, ALL_CATEGORY_DIRS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -405,8 +406,8 @@ function loadExistingMemories(memoryDir: string): Map<string, ExistingMemory> {
   const result = new Map<string, ExistingMemory>();
   if (!fs.existsSync(memoryDir)) return result;
 
-  // Walk facts/ and corrections/ for existing memories
-  const dirs = ["facts", "corrections", "preferences", "decisions"];
+  // Walk all known category dirs for existing memories
+  const dirs = ALL_CATEGORY_DIRS;
   for (const dir of dirs) {
     const fullDir = path.join(memoryDir, dir);
     if (!fs.existsSync(fullDir)) continue;
@@ -487,12 +488,6 @@ function tierFromConfidence(confidence: number): string {
   if (confidence >= 0.8) return "high";
   if (confidence >= 0.5) return "medium";
   return "low";
-}
-
-function getCategoryDir(memoryDir: string, category: string): string {
-  if (category === "correction") return path.join(memoryDir, "corrections");
-  if (category === "question") return path.join(memoryDir, "questions");
-  return path.join(memoryDir, "facts");
 }
 
 function readFileSafe(filePath: string): string | null {

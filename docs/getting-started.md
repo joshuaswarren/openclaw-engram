@@ -25,6 +25,8 @@ npm ci && npm run build
 
 ### Option C: Standalone (no OpenClaw)
 
+Use Engram as a standalone memory system without OpenClaw. This is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
+
 Build from source and use the standalone CLI:
 
 ```bash
@@ -42,7 +44,9 @@ engram query "hello" --explain   # Test with tier breakdown
 
 > **Note:** The `engram` binary is defined in `packages/cli/package.json`. Running `npm link` from `packages/cli/` (not the repo root) makes the CLI available globally — the root package only exposes `engram-access`. The CLI entry point is TypeScript (`bin/engram.ts`), so you need `tsx` installed globally (`npm install -g tsx`) for the `engram` command to work. Alternatively, run commands directly with `npx tsx packages/cli/bin/engram.ts <command>`.
 
-The standalone path provides all the same memory management capabilities as the OpenClaw plugin. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
+Standalone mode provides 15+ CLI commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
+
+OpenClaw remains the recommended installation path for most users.
 
 ## Minimal Config
 

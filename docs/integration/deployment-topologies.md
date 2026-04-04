@@ -126,6 +126,46 @@ services:
       - ./engram-data:/root/.openclaw/workspace/memory
 ```
 
+## 5. Standalone (No OpenClaw)
+
+Run Engram entirely without OpenClaw, using the standalone CLI and server packages. This is useful for CI/CD pipelines, custom integrations, or environments where OpenClaw is not available.
+
+```
+engram CLI → engram daemon → Memory Store (~/.engram/memory/)
+```
+
+Setup:
+
+```bash
+# Install
+npm install -g @joshuaswarren/openclaw-engram
+
+# Configure
+engram init
+# Edit engram.config.json with your API key and settings
+
+# Start background server
+engram daemon start
+engram status   # verify running
+
+# Use
+engram query "what did I work on yesterday?"
+engram onboard ~/src/my-project
+engram space create my-project project
+engram benchmark run --explain
+```
+
+The standalone server uses the same HTTP API as the OpenClaw plugin mode (see [API Reference](../api.md)). The Hermes provider (`@engram/hermes-provider`) can connect to it from any TypeScript/JavaScript application.
+
+Configuration is read from (in order of precedence):
+
+1. `--config <path>` CLI flag
+2. `ENGRAM_CONFIG_PATH` environment variable
+3. `./engram.config.json` in the current directory
+4. `~/.config/engram/config.json` (default)
+
+This topology does not include OpenClaw gateway features (agent hooks, tool registration, session lifecycle). Use the [Platform Migration Guide](../guides/platform-migration.md) for full details on standalone capabilities.
+
 ## Port Selection
 
 | Port | Use Case |

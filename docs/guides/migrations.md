@@ -1,6 +1,26 @@
 # Migrations Guide
 
-This guide covers two migrations:
+## Platform Migration (v9.1.36+)
+
+The v9.1.36 release reorganizes Engram into a monorepo with five packages (`@engram/core`, `@engram/cli`, `@engram/server`, `@engram/bench`, `@engram/hermes-provider`) and adds a standalone CLI, spaces, benchmarks, onboarding, curation, diff-aware sync, connector management, and a retrieval tier system.
+
+**For most OpenClaw users, the upgrade is transparent** -- the npm entry point, config format, plugin manifest, memory storage, and all 60+ config options are unchanged.
+
+**Full guide:** [Platform Migration Guide](platform-migration.md)
+
+**Quick verification:**
+
+```bash
+openclaw engram doctor --json   # OpenClaw users
+engram doctor                    # standalone users
+npm test                         # 672 tests pass
+```
+
+**Rollback:** `openclaw plugins install @joshuaswarren/openclaw-engram@<previous-version> --pin`
+
+---
+
+This guide also covers:
 
 1. moving from hand-tuned advanced flags to `memoryOsPreset`
 2. moving from historical local plan files to the GitHub Project for roadmap sequencing
