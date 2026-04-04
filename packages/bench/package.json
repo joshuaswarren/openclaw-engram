@@ -1,0 +1,22 @@
+{
+  "name": "@engram/bench",
+  "version": "0.1.0",
+  "description": "Retrieval latency ladder benchmarks + CI regression gates for @engram/core",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/types.ts",
+  "scripts": {
+    "build": "tsup",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@engram/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsup": "^8.5.1"
+  },
+  "files": [
+    "src"
+  ]
+}

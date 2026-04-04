@@ -36,7 +36,8 @@
     "packages/adapter-openclaw",
     "packages/hermes-provider",
     "packages/server",
-    "packages/cli"
+    "packages/cli",
+    "packages/bench"
   ],
   "engines": {
     "node": ">=22.12.0"
