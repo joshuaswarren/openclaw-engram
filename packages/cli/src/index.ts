@@ -36,6 +36,10 @@ import {
   watchForChanges,
   findDuplicates,
   findContradictions,
+  listConnectors,
+  installConnector,
+  removeConnector,
+  doctorConnector,
 } from "@engram/core";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -52,7 +56,8 @@ type CommandName =
   | "curate"
   | "review"
   | "sync"
-  | "dedup";
+  | "dedup"
+  | "connectors";
 
 type DaemonAction = "start" | "stop" | "restart";
 type ReviewAction = "approve" | "dismiss" | "flag";
@@ -510,6 +515,53 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       cmdDedup(json);
       break;
 
+    case "connectors": {
+      const action = rest[0] ?? "list";
+      const json = rest.includes("--json");
+      const connectorId = rest.find((a) => !a.startsWith("--") && !a.startsWith("list"));
+      if (action === "list") {
+        const { installed, available } = listConnectors();
+        if (json) {
+          console.log(JSON.stringify({ installed, available }, null, 2));
+        } else {
+          console.log("Available connectors:");
+          for (const c of available) {
+            const icon = c.installed ? "✓" : "○";
+            console.log(`  ${icon} ${c.id.padEnd(30, 15)} ${c.name} v${c.version} — ${c.description}`);
+          }
+        }
+      } else if (action === "install" && connectorId) {
+        const result = installConnector({
+          connectorId,
+          config: parseConnectorConfig(rest),
+          force: rest.includes("--force"),
+        });
+        console.log(result.message);
+        if (result.configPath) console.log(`  Config: ${result.configPath}`);
+      if (result.status === "already_installed") console.log("Use --force to reinstall.");
+      if (result.status === "config_required") console.log("Set config with --config <key>=<value>");
+      if (result.status === "error") console.error(`Error: ${result.message}`);
+      } else if (action === "remove" && connectorId) {
+        const result = removeConnector(connectorId);
+        console.log(result.message);
+      if (result.message !== "Removed") console.error(`Error: ${result.message}`);
+      } else if (action === "doctor" && connectorId) {
+        const result = await doctorConnector(connectorId);
+        if (json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          for (const check of result.checks) {
+            const icon = check.ok ? "✓" : "✗";
+            console.log(`  ${icon} ${check.name}: ${check.detail}`);
+          }
+          console.log(result.healthy ? "\nConnector healthy" : "\nConnector has issues");
+        }
+      } else {
+        console.log("Usage: engram connectors <list|install|remove|doctor> [id]");
+        process.exit(1);
+      }
+      break;
+
     default:
       console.log(`
 engram — Engram memory CLI
@@ -527,6 +579,7 @@ Usage:
   engram review <list|approve|dismiss|flag> [id]  Review inbox
   engram sync <run|watch> [--source <dir>] Diff-aware sync
   engram dedup [--json]             Find duplicate memories
+  engram connectors <list|install|remove|doctor> [id]  Manage connectors
 
 Options:
   --json    Output in JSON format
