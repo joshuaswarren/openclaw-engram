@@ -92,13 +92,13 @@ openclaw engram inventory --json
 
 ```bash
 # 1. Diagnostics
-engram-access doctor
+engram doctor
 
 # 2. Server status
-engram-access status
+engram status
 
 # 3. Verify query works
-engram-access query "test query" --json
+engram query "test query" --json
 ```
 
 ---
@@ -121,7 +121,7 @@ npm install -g @joshuaswarren/openclaw-engram
 ### Initialize Configuration
 
 ```bash
-engram-access init
+engram init
 # Creates engram.config.json in the current directory
 ```
 
@@ -135,15 +135,15 @@ export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
 ### Start Standalone Server
 
 ```bash
-engram-access daemon start
-engram-access status          # verify it is running
-engram-access daemon stop     # when done
+engram daemon start
+engram status          # verify it is running
+engram daemon stop     # when done
 ```
 
 ### Query with Tier Breakdown
 
 ```bash
-engram-access query "what did I decide about the API?" --explain
+engram query "what did I decide about the API?" --explain
 ```
 
 Output shows which retrieval tiers were used and their latencies:
@@ -161,78 +161,78 @@ Total duration: 142ms
 
 ```bash
 # First run — establishes baseline
-engram-access benchmark run
+engram benchmark run
 
 # Subsequent runs — checks for regressions
-engram-access benchmark check
+engram benchmark check
 
 # Detailed tier breakdown
-engram-access benchmark run --explain
+engram benchmark run --explain
 
 # Generate report
-engram-access benchmark report --report=benchmarks/report.json
+engram benchmark report --report=benchmarks/report.json
 ```
 
 ### Manage Spaces
 
 ```bash
 # List spaces
-engram-access space list
+engram space list
 
 # Create a project space
-engram-access space create my-project project
+engram space create my-project project
 
 # Switch active space
-engram-access space switch <space-id>
+engram space switch <space-id>
 
 # Push memories between spaces
-engram-access space push <source-id> <target-id>
+engram space push <source-id> <target-id>
 
 # Audit trail
-engram-access space audit
+engram space audit
 ```
 
 ### Onboard a Project
 
 ```bash
 # Analyze a project directory
-engram-access onboard ~/src/my-project --json
+engram onboard ~/src/my-project --json
 
 # Curate specific files into memory
-engram-access curate ~/src/my-project/docs/ --json
+engram curate ~/src/my-project/docs/ --json
 
 # Review ingested content
-engram-access review list
-engram-access review approve <id>
+engram review list
+engram review approve <id>
 ```
 
 ### Diff-Aware Sync
 
 ```bash
 # One-time sync
-engram-access sync run --source ~/src/my-project
+engram sync run --source ~/src/my-project
 
 # Continuous watch
-engram-access sync watch --source ~/src/my-project
+engram sync watch --source ~/src/my-project
 ```
 
 ### Find Duplicates
 
 ```bash
-engram-access dedup --json
+engram dedup --json
 ```
 
 ### Manage Connectors
 
 ```bash
 # List available and installed connectors
-engram-access connectors list
+engram connectors list
 
 # Install a connector
-engram-access connectors install <connector-id>
+engram connectors install <connector-id>
 
 # Diagnose connector health
-engram-access connectors doctor <connector-id>
+engram connectors doctor <connector-id>
 ```
 
 ---

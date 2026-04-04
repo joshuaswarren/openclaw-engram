@@ -61,12 +61,12 @@ Install the package globally and use the standalone CLI:
 
 ```bash
 npm install -g @joshuaswarren/openclaw-engram
-engram-access init                      # Create engram.config.json
+engram init                      # Create engram.config.json
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram-access daemon start              # Start background server
-engram-access status                    # Verify it's running
-engram-access query "hello" --explain   # Test query with tier breakdown
+engram daemon start              # Start background server
+engram status                    # Verify it's running
+engram query "hello" --explain   # Test query with tier breakdown
 ```
 
 The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
