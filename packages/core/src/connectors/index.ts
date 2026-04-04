@@ -231,7 +231,7 @@ const REGISTRY_DIR_NAME = ".engram-connectors";
 
 export function getRegistryPath(): string {
   const homeDir = process.env.HOME ?? "~";
-  return path.join(homeDir, ".config", "engram", REGISTRY_DIR_NAME);
+  return path.join(homeDir, ".config", "engram", REGISTRY_DIR_NAME, "registry.json");
 }
 
 export function loadRegistry(): ConnectorRegistry {

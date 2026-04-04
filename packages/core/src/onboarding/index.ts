@@ -286,9 +286,9 @@ function detectLanguages(files: string[], root: string): LanguageInfo[] {
     // Manifest matches
     for (const manifest of rule.manifests) {
       if (manifest.includes("*")) {
-        // Glob pattern — check rootFiles
-        const prefix = manifest.replace("*", "");
-        if ([...rootFiles].some((f) => f.startsWith(prefix))) {
+        // Glob pattern — e.g. "*.gemspec" matches files ending with ".gemspec"
+        const suffix = manifest.replace("*", "");
+        if ([...rootFiles].some((f) => f.endsWith(suffix))) {
           score += 0.2;
           evidence.push(manifest);
         }
