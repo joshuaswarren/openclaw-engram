@@ -118,7 +118,8 @@ All standalone features are optional. OpenClaw users can continue using the plug
 # Build from source (required for daemon mode)
 git clone https://github.com/joshuaswarren/openclaw-engram.git
 cd openclaw-engram && npm ci && npm run build
-npm link    # Makes `engram` available on PATH
+cd packages/cli && npm link    # Makes `engram` available on PATH
+cd ../..
 ```
 
 ### Initialize Configuration

@@ -30,7 +30,8 @@ Build from source and use the standalone CLI:
 ```bash
 git clone https://github.com/joshuaswarren/openclaw-engram.git
 cd openclaw-engram && npm ci && npm run build
-npm link                         # Makes `engram` available on PATH
+cd packages/cli && npm link       # Makes `engram` available on PATH
+cd ../..
 engram init                      # Create config in current directory
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
@@ -39,7 +40,7 @@ engram status                    # Verify it's running
 engram query "hello" --explain   # Test with tier breakdown
 ```
 
-> **Note:** The `engram` binary is provided by the `@engram/cli` package. Running `npm link` from the repo root makes the CLI available on PATH. The `daemon start` command uses a monorepo-relative path to launch the server, so it requires building from source.
+> **Note:** The `engram` binary is defined in `packages/cli/package.json`. Running `npm link` from `packages/cli/` (not the repo root) makes the CLI available globally — the root package only exposes `engram-access`. The `daemon start` command uses a monorepo-relative path to launch the server, so it requires building from source.
 
 The standalone path provides all the same memory management capabilities as the OpenClaw plugin. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
 
