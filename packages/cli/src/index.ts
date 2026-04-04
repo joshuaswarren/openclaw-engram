@@ -916,46 +916,68 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         }
       } else if (subAction === "watch") {
         const memoryDir = resolveMemoryDir();
+
+        // Ensure memory directory exists before watching
+        if (!fs.existsSync(memoryDir)) {
+          fs.mkdirSync(memoryDir, { recursive: true });
+          console.log(`Created memory directory: ${memoryDir}`);
+        }
+
+        // Resolve outputDir relative to memoryDir for exclusion checks
+        const resolvedOutputDir = path.resolve(outputDir);
+        const resolvedMemoryDir = path.resolve(memoryDir);
+
         console.log(`Watching ${memoryDir} for changes…`);
         console.log(`Output: ${outputDir}`);
         console.log("Press Ctrl+C to stop.\n");
 
-        // Initial generation
-        const initial = await generateContextTree({
+        const treeOpts = {
           memoryDir,
           outputDir,
           categories,
           maxPerCategory,
           includeEntities: !rest.includes("--no-entities"),
           includeQuestions: !rest.includes("--no-questions"),
-        });
+        };
+
+        // Initial generation
+        const initial = await generateContextTree(treeOpts);
         console.log(`Initial: ${initial.nodesGenerated} nodes (${initial.durationMs}ms)`);
 
-        // Debounced watcher
+        // Debounced watcher with concurrency guard
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-        const rebuild = () => {
+        let rebuilding = false;
+        let pendingRebuild = false;
+
+        const doRebuild = async () => {
+          if (rebuilding) { pendingRebuild = true; return; }
+          rebuilding = true;
+          const t0 = Date.now();
+          try {
+            const result = await generateContextTree(treeOpts);
+            console.log(`[${new Date().toISOString()}] Rebuilt: ${result.nodesGenerated} nodes (${Date.now() - t0}ms)`);
+          } catch (err) {
+            console.error(`[${new Date().toISOString()}] Rebuild failed:`, err instanceof Error ? err.message : err);
+          } finally {
+            rebuilding = false;
+            if (pendingRebuild) { pendingRebuild = false; scheduleRebuild(); }
+          }
+        };
+
+        const scheduleRebuild = () => {
           if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(async () => {
-            const t0 = Date.now();
-            try {
-              const result = await generateContextTree({
-                memoryDir,
-                outputDir,
-                categories,
-                maxPerCategory,
-                includeEntities: !rest.includes("--no-entities"),
-                includeQuestions: !rest.includes("--no-questions"),
-              });
-              console.log(`[${new Date().toISOString()}] Rebuilt: ${result.nodesGenerated} nodes (${Date.now() - t0}ms)`);
-            } catch (err) {
-              console.error(`[${new Date().toISOString()}] Rebuild failed:`, err instanceof Error ? err.message : err);
-            }
-          }, 500);
+          debounceTimer = setTimeout(doRebuild, 500);
         };
 
         fs.watch(memoryDir, { recursive: true }, (_event, filename) => {
-          if (filename && filename.startsWith(".")) return;
-          rebuild();
+          // Skip dotfiles/dotdirs at any depth (e.g. .git, subdir/.DS_Store)
+          if (filename && filename.split(path.sep).some((seg) => seg.startsWith("."))) return;
+          // Skip events from outputDir if it's nested inside memoryDir
+          if (filename && resolvedOutputDir.startsWith(resolvedMemoryDir)) {
+            const changePath = path.resolve(resolvedMemoryDir, filename);
+            if (changePath.startsWith(resolvedOutputDir)) return;
+          }
+          scheduleRebuild();
         });
 
         // Keep process alive
