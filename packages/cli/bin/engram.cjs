@@ -14,8 +14,13 @@ const { existsSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const cwd = __dirname;
-const tsxLocal = resolve(cwd, "../node_modules/.bin/tsx");
-const tsxCmd = existsSync(tsxLocal) ? tsxLocal : "tsx";
+
+// Resolve tsx: check package-local, then workspace-hoisted root, then global PATH
+const candidates = [
+  resolve(cwd, "../node_modules/.bin/tsx"),        // package-local
+  resolve(cwd, "../../../node_modules/.bin/tsx"),   // workspace root (hoisted)
+];
+const tsxCmd = candidates.find((c) => existsSync(c)) || "tsx";
 
 execFileSync(
   tsxCmd,

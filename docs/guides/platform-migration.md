@@ -27,8 +27,8 @@ packages/
 | M0 | Schema validation | `access-schema.ts` with Zod validates all request bodies before processing |
 | M0 | Structured error responses | Consistent JSON error envelopes with `error`, `code`, `details` fields and `X-Request-Id` correlation IDs |
 | M1 | Hermes provider | `@engram/hermes-provider` — lightweight HTTP client for connecting to remote Engram instances |
-| M1 | Standalone CLI | 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree` *(not yet implemented)*, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark` |
-| M2 | Workspace tree projection | Context tree generation from workspace directory structure *(stub — `engram tree` subcommands print "not yet implemented")* |
+| M1 | Standalone CLI | 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree` *(stub — prints "not yet implemented")*, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark` |
+| M2 | Workspace tree projection | Context tree generation from workspace directory structure *(planned — `engram tree generate\|watch\|validate` are stubs that print "not yet implemented")* |
 | M3 | Onboarding + Curation | Project ingestion with language detection, doc discovery, and ingestion planning; file curation with duplicate/contradiction detection |
 | M3 | Diff-aware sync | Filesystem sync that detects added/modified/deleted files and ingests changes incrementally |
 | M4 | Connector manager | Host adapter lifecycle management (list, install, remove, doctor) |
@@ -243,20 +243,21 @@ engram connectors doctor <connector-id>
 
 ## Rollback
 
-If the upgrade causes issues, pin to the previous version:
+If the upgrade causes issues:
+
+**OpenClaw plugin users** — pin to the previous version:
 
 ```bash
 openclaw plugins install @joshuaswarren/openclaw-engram@<previous-version> --pin
 ```
 
-For standalone installations (note: the root npm package exposes `engram-access`, not the full CLI):
+**Standalone CLI users** — the root npm package (`@joshuaswarren/openclaw-engram`) only exposes `engram-access`, not the full `engram` CLI. Full CLI rollback requires building from source at the desired version tag:
 
 ```bash
-# Full CLI rollback requires building from source
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram && git checkout <previous-version-tag>
+cd openclaw-engram
+git fetch --all && git checkout <previous-version-tag>
 npm ci && npm run build
-cd packages/cli && npm link
+cd packages/cli && npm link    # re-links `engram` binary to this version
 ```
 
 Memory storage is never modified by an upgrade, so rollback is safe and does not lose data.

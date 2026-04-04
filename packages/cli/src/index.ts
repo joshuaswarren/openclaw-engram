@@ -965,13 +965,15 @@ Options:
 }
 
 // Auto-run when executed directly (covers: npx tsx engram.ts, node engram.js, symlinked `engram`,
-// or invoked via bin/engram.cjs which sets ENGRAM_CLI_BIN=1)
+// npx tsx packages/cli/src/index.ts, or invoked via bin/engram.cjs which sets ENGRAM_CLI_BIN=1)
 const argv1 = process.argv[1] ?? "";
+const argv1Base = argv1.replace(/\\/g, "/");
 if (
-  argv1.endsWith("engram.ts") ||
-  argv1.endsWith("engram.js") ||
-  argv1.endsWith("/engram") ||
-  argv1.endsWith("\\engram") ||
+  argv1Base.endsWith("engram.ts") ||
+  argv1Base.endsWith("engram.js") ||
+  argv1Base.endsWith("/engram") ||
+  argv1Base.endsWith("/index.ts") ||
+  argv1Base.endsWith("/index.js") ||
   process.env.ENGRAM_CLI_BIN === "1"
 ) {
   main().catch((err) => {
