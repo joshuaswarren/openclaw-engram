@@ -140,6 +140,76 @@ export {
 } from "./projection/index.js";
 
 // ---------------------------------------------------------------------------
+// Onboarding
+// ---------------------------------------------------------------------------
+
+export {
+  onboard,
+  type OnboardOptions,
+  type OnboardResult,
+  type LanguageInfo,
+  type DocFile,
+  type ProjectShape,
+  type IngestionPlan,
+} from "./onboarding/index.js";
+
+// ---------------------------------------------------------------------------
+// Curation
+// ---------------------------------------------------------------------------
+
+export {
+  curate,
+  type CurateOptions,
+  type CuratedStatement,
+  type StatementProvenance,
+  type CurateResult,
+  type DuplicateResult as CurateDuplicateResult,
+  type ContradictionResult as CurateContradictionResult,
+} from "./curation/index.js";
+
+// ---------------------------------------------------------------------------
+// Dedup & Contradiction Detection
+// ---------------------------------------------------------------------------
+
+export {
+  findDuplicates,
+  findContradictions,
+  type MemoryEntry,
+  type DedupOptions,
+  type DedupResult,
+  type DuplicatePair,
+  type ContradictionOptions,
+  type ContradictionPair,
+} from "./dedup/index.js";
+
+// ---------------------------------------------------------------------------
+// Review Inbox
+// ---------------------------------------------------------------------------
+
+export {
+  listReviewItems,
+  performReview,
+  type ReviewItem,
+  type ReviewAction,
+  type ReviewResult,
+  type ReviewListResult,
+  type ReviewOptions,
+} from "./review/index.js";
+
+// ---------------------------------------------------------------------------
+// Diff-Aware Sync
+// ---------------------------------------------------------------------------
+
+export {
+  syncChanges,
+  watchForChanges,
+  type SyncOptions,
+  type SyncResult,
+  type FileChange,
+  type SyncState,
+} from "./sync/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
