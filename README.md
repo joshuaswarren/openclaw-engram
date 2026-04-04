@@ -63,15 +63,16 @@ Build from source and use the standalone CLI:
 git clone https://github.com/joshuaswarren/openclaw-engram.git
 cd openclaw-engram
 npm ci && npm run build
-engram init                      # Create engram.config.json
+npm link                     # Makes `engram` available on PATH
+engram init                  # Create engram.config.json
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram daemon start              # Start background server
-engram status                    # Verify it's running
+engram daemon start          # Start background server
+engram status                # Verify it's running
 engram query "hello" --explain   # Test query with tier breakdown
 ```
 
-> **Note:** The `engram` binary comes from `@engram/cli` (declared in `packages/cli/package.json`). The `daemon start` command launches the server via `tsx` using a monorepo-relative path, so it requires building from source rather than a global npm install. All other commands (`init`, `query`, `doctor`, `onboard`, etc.) work with a global install of both packages: `npm install -g @joshuaswarren/openclaw-engram @engram/cli`.
+> **Note:** The `engram` binary comes from `@engram/cli` (declared in `packages/cli/package.json`). Running `npm link` from the repo root makes the CLI available globally. The `daemon start` command launches the server via `tsx` using a monorepo-relative path, so it requires building from source rather than a global npm install.
 
 The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
 

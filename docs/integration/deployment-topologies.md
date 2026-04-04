@@ -55,12 +55,13 @@ openclaw engram access http-serve --host 127.0.0.1 --port 4318 --token "$TOKEN"
 
 Run Engram as a standalone CLI/HTTP server using the `engram` binary. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
 
-> **Build from source required for daemon mode:** The `daemon start` command launches the server via a monorepo-relative `tsx` path that only exists when built from source. For daemon usage, clone and build first. For CLI-only usage (query, doctor, onboard, etc.), global install works: `npm install -g @joshuaswarren/openclaw-engram @engram/cli`.
+> **Build from source required for daemon mode:** The `daemon start` command launches the server via a monorepo-relative `tsx` path that only exists when built from source. Run `npm link` from the repo root to make the `engram` CLI available on PATH.
 
 ```bash
 # Build from source (required for daemon start)
 git clone https://github.com/joshuaswarren/openclaw-engram.git
 cd openclaw-engram && npm ci && npm run build
+npm link                         # Makes `engram` available on PATH
 
 # Initialize configuration
 engram init

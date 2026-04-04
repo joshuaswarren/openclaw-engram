@@ -115,7 +115,10 @@ All standalone features are optional. OpenClaw users can continue using the plug
 ### Install Standalone CLI
 
 ```bash
-npm install -g @joshuaswarren/openclaw-engram @engram/cli
+# Build from source (required for daemon mode)
+git clone https://github.com/joshuaswarren/openclaw-engram.git
+cd openclaw-engram && npm ci && npm run build
+npm link    # Makes `engram` available on PATH
 ```
 
 ### Initialize Configuration
