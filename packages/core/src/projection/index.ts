@@ -107,7 +107,7 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
     if (!fs.existsSync(categoryDir)) continue;
 
     categoryCounts[category] = 0;
-    const files = walkDir(categoryDir);
+    const files = walkR(categoryDir);
     let count = 0;
 
     for (const filePath of files) {
@@ -228,7 +228,6 @@ function getCategoryDir(memoryDir: string, category: string): string {
   return path.join(memoryDir, "facts");
 }
 
-}
 
 function walkR(dir: string): string[] {
   const results: string[] = [];
@@ -315,9 +314,9 @@ function projectNode(
 > **Category:** ${fm.category}
 > **Created:** ${fm.created}
 > **Updated:** ${fm.updated ?? fm.created}
-> **Confidence:** ${fm.confidence} (${fm.confidenceTier}${fm.lifecycleState ? `, ${fm.lifecycleState}` : "" : ""})
-${fm.tags?. `\n> **Tags:** ${fm.tags.join(", ")}` : ""}
-${fm.entityRef ? `\n> **Entity:** ${fm.entityRef}` - "")}
+> **Confidence:** ${fm.confidence} (${fm.confidenceTier}${fm.lifecycleState ? `, ${fm.lifecycleState}` : ""})
+${fm.tags?.length ? `\n> **Tags:** ${fm.tags.join(", ")}` : ""}
+${fm.entityRef ? `\n> **Entity:** ${fm.entityRef}` : ""}
 > **Source:** ${fm.source ?? "unknown"}
 > **Projected:** ${generatedAt}
 

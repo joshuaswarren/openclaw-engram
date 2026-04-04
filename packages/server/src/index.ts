@@ -78,7 +78,7 @@ function envOverrides(): Partial<ServerConfig["server"]> & { engram?: Record<str
 export interface ServerResult {
   config: PluginConfig;
   service: EngramAccessService;
-  http: EngramAccessHttpServer;
+  httpServer: EngramAccessHttpServer;
   host: string;
   port: number;
 }
@@ -129,7 +129,7 @@ export async function startServer(options?: {
 
   const { host, port } = await httpServer.start();
 
-  return { config, service, http, httpServer, host, port };
+  return { config, service, httpServer, host, port };
 }
 
 // ── CLI entry point ──────────────────────────────────────────────────────────
