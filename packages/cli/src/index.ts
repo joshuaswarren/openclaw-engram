@@ -114,8 +114,17 @@ function resolveMemoryDir(): string {
         }
         return active.memoryDir;
       }
-    } catch {
-      // Manifest exists but active space not found — fall through to config
+      // No active space with memoryDir — fall through to config
+    } catch (err: unknown) {
+      // getActiveSpace() throws "Active space ... not found" when the activeSpaceId
+      // references a space that was deleted — this is recoverable, fall through.
+      // Any other error (corrupted JSON, permission denied) is fatal.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("not found")) {
+        console.error(`Error: failed to resolve active space from ${manifestPath}: ${msg}`);
+        process.exit(1);
+      }
+      // Active space not found — fall through to config-based dir
     }
   }
 
