@@ -523,7 +523,7 @@ function copyMemories(
   let skipped = 0;
 
   if (!fs.existsSync(sourceDir)) {
-    throw new Error(`Source space directory does not exist: ${sourceDir}`);
+    return { merged: 0, conflicts: [], skipped: 0 };
   }
 
   fs.mkdirSync(targetDir, { recursive: true });
