@@ -26,6 +26,12 @@ export const ALL_CATEGORY_DIRS: string[] = [
   ...Object.values(CATEGORY_DIR_MAP),
 ];
 
+/** All category keys (singular form) — used when iterating categories and calling getCategoryDir. */
+export const ALL_CATEGORY_KEYS: string[] = [
+  "fact",
+  ...Object.keys(CATEGORY_DIR_MAP),
+];
+
 /**
  * Resolve a category name to its directory path under memoryDir.
  * Falls back to `facts/` for unknown categories.

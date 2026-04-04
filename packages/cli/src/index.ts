@@ -202,11 +202,16 @@ async function cmdStatus(json: boolean): Promise<void> {
     const response = await fetch(`http://127.0.0.1:${port}/engram/v1/health`, {
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
-    const health = await response.json();
-    console.log(`Health: ${health.status ?? "ok"}`);
+    if (!response.ok) {
+      console.log(`Health: server responded with ${response.status} ${response.statusText}`);
+    } else {
+      const health = await response.json();
+      console.log(`Health: ${health.status ?? "ok"}`);
+    }
   } catch {
     console.log("Health: unable to reach server");
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

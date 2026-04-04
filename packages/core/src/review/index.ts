@@ -7,7 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getCategoryDir, ALL_CATEGORY_KEYS } from "../utils/category-dir.js";
+import { getCategoryDir, ALL_CATEGORY_DIRS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
