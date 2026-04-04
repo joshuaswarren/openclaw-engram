@@ -57,7 +57,7 @@ npm ci && npm run build
 
 ### Option 4: Standalone (no OpenClaw)
 
-Build from source and use the standalone CLI. Requires [Node.js](https://nodejs.org/) 20+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
+Build from source and use the standalone CLI. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
 
 ```bash
 npm install -g tsx              # Required — CLI entry point is TypeScript

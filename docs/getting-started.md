@@ -25,7 +25,7 @@ npm ci && npm run build
 
 ### Option C: Standalone (no OpenClaw)
 
-Use Engram as a standalone memory system without OpenClaw. Requires [Node.js](https://nodejs.org/) 20+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
+Use Engram as a standalone memory system without OpenClaw. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
 
 Build from source and use the standalone CLI:
 
