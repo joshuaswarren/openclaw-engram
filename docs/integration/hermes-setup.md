@@ -8,6 +8,20 @@ Connect an LLM agent to Engram via HTTP.
 
 Hermes is designed for external tool integration. It It works alongside existing OpenClaw plugins, via HTTP calls, — no filesystem access, daemon, or native library dependency.
 
+## Installation
+
+### As a standalone npm package (v9.1.36+)
+
+Hermes is available as `@engram/hermes-provider` for use in any Node.js project:
+
+```bash
+npm install @engram/hermes-provider
+```
+
+### Alternative: via the Engram CLI
+
+If you have the `engram` CLI installed, you can use `engram daemon start` to launch the server that Hermes connects to, rather than running `openclaw engram access http-serve` manually.
+
 ## Quick Start
 
 1. Install the package:

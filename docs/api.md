@@ -1,5 +1,38 @@
 # API Reference
 
+## Standalone CLI Commands
+
+The `engram` CLI provides 15+ commands for managing memory outside of OpenClaw. Install with `npm install -g @joshuaswarren/openclaw-engram`.
+
+| Command | Description |
+|---------|-------------|
+| `engram init` | Create `engram.config.json` in the current directory |
+| `engram status [--json]` | Show server/daemon status and health |
+| `engram query <text> [--json] [--explain]` | Query memories; `--explain` shows per-tier latency breakdown |
+| `engram doctor` | Run diagnostics (Node version, config, API key, memory dir, daemon status) |
+| `engram config` | Show current resolved configuration |
+| `engram daemon <start\|stop\|restart>` | Manage the background HTTP server |
+| `engram tree <generate\|watch\|validate>` | Workspace context tree operations |
+| `engram onboard [dir] [--json]` | Analyze a project directory (language detection, doc discovery, ingestion plan) |
+| `engram curate <path> [--json]` | Curate files into memory with duplicate/contradiction detection |
+| `engram review <list\|approve\|dismiss\|flag> [id]` | Review inbox management |
+| `engram sync <run\|watch> [--source <dir>]` | Diff-aware filesystem sync |
+| `engram dedup [--json]` | Find duplicate memories |
+| `engram connectors <list\|install\|remove\|doctor> [id]` | Manage host adapter connectors |
+| `engram space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
+| `engram benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
+
+All commands accept `--json` for machine-readable output. The `engram` binary resolves configuration from:
+
+1. `--config <path>` CLI flag
+2. `ENGRAM_CONFIG_PATH` environment variable
+3. `./engram.config.json` in the current directory
+4. `~/.config/engram/config.json` (default)
+
+See the [Platform Migration Guide](guides/platform-migration.md) for detailed setup and usage instructions.
+
+---
+
 ## Universal Access Layer
 
 Engram exposes one shared local service layer through both HTTP and MCP adapters. The HTTP server is bearer-token protected by default and binds to loopback unless you override `agentAccessHttp.host`.

@@ -230,8 +230,8 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
 const REGISTRY_DIR_NAME = ".engram-connectors";
 
 export function getRegistryPath(): string {
-  const homeDir = process.env.HOME ?? "~";
-  return path.join(homeDir, ".config", "engram", REGISTRY_DIR_NAME, "registry.json");
+  const configDir = process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "~", ".config", "engram");
+  return path.join(configDir, REGISTRY_DIR_NAME, "registry.json");
 }
 
 export function loadRegistry(): ConnectorRegistry {

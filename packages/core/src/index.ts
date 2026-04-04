@@ -23,7 +23,7 @@
 
 export {
   parseConfig,
-  type EngramConfig,
+  type PluginConfig as EngramConfig,
   type ExtractionConfig,
   type SearchBackendConfig,
   type ConsolidationConfig,
