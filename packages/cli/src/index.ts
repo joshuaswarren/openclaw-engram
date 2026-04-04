@@ -972,8 +972,7 @@ if (
   argv1Base.endsWith("engram.ts") ||
   argv1Base.endsWith("engram.js") ||
   argv1Base.endsWith("/engram") ||
-  argv1Base.endsWith("/index.ts") ||
-  argv1Base.endsWith("/index.js") ||
+  argv1Base.includes("packages/cli/src/index.") ||
   process.env.ENGRAM_CLI_BIN === "1"
 ) {
   main().catch((err) => {

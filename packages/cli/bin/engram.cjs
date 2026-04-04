@@ -22,11 +22,16 @@ const candidates = [
 ];
 const tsxCmd = candidates.find((c) => existsSync(c)) || "tsx";
 
-execFileSync(
-  tsxCmd,
-  [resolve(cwd, "../src/index.ts"), ...process.argv.slice(2)],
-  {
-    stdio: "inherit",
-    env: { ...process.env, ENGRAM_CLI_BIN: "1", FORCE_COLOR: "1" },
-  },
-);
+try {
+  execFileSync(
+    tsxCmd,
+    [resolve(cwd, "../src/index.ts"), ...process.argv.slice(2)],
+    {
+      stdio: "inherit",
+      env: { ...process.env, ENGRAM_CLI_BIN: "1", FORCE_COLOR: "1" },
+    },
+  );
+} catch (err) {
+  // execFileSync throws on non-zero exit — propagate the child's exit code
+  process.exitCode = err.status ?? 1;
+}
