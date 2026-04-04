@@ -484,8 +484,19 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
     const result = switchSpace(spaceId);
     console.log(result.message);
   } else if (action === "create") {
-    const name = nonFlagArgs[0];
-    const rawKind = nonFlagArgs[1] ?? "project";
+    // Extract --parent <id> before computing positional args
+    const parentIdx = rest.indexOf("--parent");
+    const parentSpaceId = parentIdx >= 0 && rest[parentIdx + 1] ? rest[parentIdx + 1] : undefined;
+    // Build positional args excluding --parent and its value
+    const positionals: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--parent") { i++; continue; } // skip --parent and its value
+      if (rest[i].startsWith("--")) continue;
+      if (rest[i] === action) continue; // skip action word itself
+      positionals.push(rest[i]);
+    }
+    const name = positionals[0];
+    const rawKind = positionals[1] ?? "project";
     const validKinds = ["personal", "project", "team"] as const;
     if (!validKinds.includes(rawKind as typeof validKinds[number])) {
       console.error(`Invalid kind "${rawKind}". Must be one of: ${validKinds.join(", ")}`);
@@ -496,9 +507,6 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
       console.error("Usage: engram space create <name> [personal|project|team] [--parent <id>]");
       process.exit(1);
     }
-    // Extract --parent flag for parent-child relationship
-    const parentIdx = rest.indexOf("--parent");
-    const parentSpaceId = parentIdx >= 0 && rest[parentIdx + 1] ? rest[parentIdx + 1] : undefined;
     const space = createSpace({ name, kind, parentSpaceId });
     if (json) {
       console.log(JSON.stringify(space, null, 2));
