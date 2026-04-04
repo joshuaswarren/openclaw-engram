@@ -57,10 +57,10 @@ npm ci && npm run build
 
 ### Option 4: Standalone (no OpenClaw)
 
-Install the package globally and use the standalone CLI:
+Install the packages globally and use the standalone CLI:
 
 ```bash
-npm install -g @joshuaswarren/openclaw-engram
+npm install -g @joshuaswarren/openclaw-engram @engram/cli
 engram init                      # Create engram.config.json
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)

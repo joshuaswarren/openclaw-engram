@@ -115,7 +115,7 @@ All standalone features are optional. OpenClaw users can continue using the plug
 ### Install Standalone CLI
 
 ```bash
-npm install -g @joshuaswarren/openclaw-engram
+npm install -g @joshuaswarren/openclaw-engram @engram/cli
 ```
 
 ### Initialize Configuration

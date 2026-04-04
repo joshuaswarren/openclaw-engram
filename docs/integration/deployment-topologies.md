@@ -51,7 +51,56 @@ Start Engram binding to localhost behind the proxy:
 openclaw engram access http-serve --host 127.0.0.1 --port 4318 --token "$TOKEN"
 ```
 
-## 4. Containerized (Docker)
+## 4. Standalone (No OpenClaw)
+
+Run Engram as a standalone CLI/HTTP server using the `engram` binary from `@engram/cli`, without requiring OpenClaw. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
+
+```bash
+# Install
+npm install -g @joshuaswarren/openclaw-engram @engram/cli
+
+# Initialize configuration
+engram init
+
+# Set required environment variables
+export OPENAI_API_KEY=sk-...
+export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+
+# Start the server
+engram daemon start
+engram status    # verify it's running
+```
+
+Connect from any HTTP client or use `@engram/hermes-provider`:
+
+```typescript
+import { HermesClient } from "@engram/hermes-provider";
+
+const client = new HermesClient({
+  baseUrl: "http://127.0.0.1:4318",
+  authToken: process.env.ENGRAM_AUTH_TOKEN,
+});
+```
+
+For MCP clients, point at `http://127.0.0.1:4318/mcp`:
+
+```jsonc
+// Claude Code config (~/.claude.json)
+{
+  "mcpServers": {
+    "engram": {
+      "url": "http://localhost:4318/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+The standalone topology supports all the same endpoints and MCP tools as the OpenClaw plugin mode.
+
+## 5. Containerized (Docker)
 
 Run Engram in Docker, either standalone or as a sidecar alongside other services.
 
