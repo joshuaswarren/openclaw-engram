@@ -8,7 +8,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { StorageManager } from "../../../src/storage.js";
 import { getCategoryDir, ALL_CATEGORY_KEYS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -248,7 +247,7 @@ function parseFrontmatter(content: string): Frontmatter | null {
   if (!match) return null;
 
   const fmText = match[1];
-  const fm: Record<string, string> = {};
+  const fm: Record<string, unknown> = {};
   for (const line of fmText.split("\n")) {
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) continue;
@@ -256,17 +255,18 @@ function parseFrontmatter(content: string): Frontmatter | null {
     const value = line.slice(colonIdx + 1).trim();
     if (key === "tags") {
       try {
-        fm[key] = JSON.parse(value);
+        fm[key] = JSON.parse(value) as string[];
       } catch {
-        fm[key] = [];
+        fm[key] = [] as string[];
       }
     } else if (key === "confidence") {
-      fm[key] = parseFloat(value);
+      const parsed = parseFloat(value);
+      fm[key] = Number.isFinite(parsed) ? parsed : 0;
     } else {
       fm[key] = value;
     }
   }
-  return fm as unknown as Frontmatter;
+  return fm as Frontmatter;
 }
 
 function extractBody(content: string): string {
