@@ -964,10 +964,13 @@ Options:
   }
 }
 
-// Auto-run when executed directly
+// Auto-run when executed directly (covers: npx tsx engram.ts, node engram.js, symlinked `engram`)
+const argv1 = process.argv[1] ?? "";
 if (
-  process.argv[1]?.endsWith("engram.ts") ||
-  process.argv[1]?.endsWith("engram.js")
+  argv1.endsWith("engram.ts") ||
+  argv1.endsWith("engram.js") ||
+  argv1.endsWith("/engram") ||
+  argv1.endsWith("\\engram")
 ) {
   main().catch((err) => {
     console.error("Fatal:", err.message);
