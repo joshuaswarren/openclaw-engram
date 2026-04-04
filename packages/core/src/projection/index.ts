@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { StorageManager } from "../../../src/storage.js";
+import { getCategoryDir } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -221,24 +222,6 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-const CATEGORY_DIR_MAP: Record<string, string> = {
-  correction: "corrections",
-  question: "questions",
-  preference: "preferences",
-  decision: "decisions",
-  moment: "moments",
-  commitment: "commitments",
-  principle: "principles",
-  rule: "rules",
-  skill: "skills",
-  relationship: "relationships",
-};
-
-function getCategoryDir(memoryDir: string, category: string): string {
-  const dir = CATEGORY_DIR_MAP[category];
-  return dir ? path.join(memoryDir, dir) : path.join(memoryDir, "facts");
-}
 
 
 function walkR(dir: string): string[] {

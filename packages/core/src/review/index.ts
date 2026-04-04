@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getCategoryDir } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -280,24 +281,6 @@ function flagItem(memoryDir: string, itemId: string): ReviewResult {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-const CATEGORY_DIR_MAP: Record<string, string> = {
-  correction: "corrections",
-  question: "questions",
-  preference: "preferences",
-  decision: "decisions",
-  moment: "moments",
-  commitment: "commitments",
-  principle: "principles",
-  rule: "rules",
-  skill: "skills",
-  relationship: "relationships",
-};
-
-function getCategoryDir(memoryDir: string, category: string): string {
-  const dir = CATEGORY_DIR_MAP[category];
-  return dir ? path.join(memoryDir, dir) : path.join(memoryDir, "facts");
-}
 
 function findFileById(dir: string, id: string): string | null {
   const files = walkMdPaths(dir);

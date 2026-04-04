@@ -135,13 +135,6 @@ function resolveMemoryDir(): string {
       }
       // Active space not found — fall through to config-based dir
     }
-  } catch (err: unknown) {
-    // Non-recoverable errors are fatal
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.includes("not found")) {
-      console.error(`Error: failed to resolve active space from ${manifestPath}: ${msg}`);
-      process.exit(1);
-    }
   }
 
   return configMemoryDir;
@@ -189,7 +182,7 @@ function cmdInit(): void {
   console.log("  npx engram-server");
 }
 
-function cmdStatus(json: boolean): void {
+async function cmdStatus(json: boolean): Promise<void> {
   const running = isDaemonRunning();
   if (json) {
     console.log(JSON.stringify({ running, pidFile: PID_FILE, logFile: LOG_FILE }));
@@ -828,7 +821,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     case "status": {
       const json = rest.includes("--json");
-      cmdStatus(json);
+      await cmdStatus(json);
       break;
     }
 

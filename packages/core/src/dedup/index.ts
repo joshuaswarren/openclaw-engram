@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { ALL_CATEGORY_DIRS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -253,7 +254,7 @@ function loadMemories(
   maxLoad = 10000,
 ): MemoryEntry[] {
   const result: MemoryEntry[] = [];
-  const allCategories = categories ?? ["facts", "corrections", "preferences", "decisions"];
+  const allCategories = categories ?? ALL_CATEGORY_DIRS;
 
   for (const category of allCategories) {
     if (result.length >= maxLoad) break;
