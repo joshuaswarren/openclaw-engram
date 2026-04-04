@@ -914,6 +914,51 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           }
           console.log(`  Duration: ${result.durationMs}ms`);
         }
+      } else if (subAction === "watch") {
+        const memoryDir = resolveMemoryDir();
+        console.log(`Watching ${memoryDir} for changes…`);
+        console.log(`Output: ${outputDir}`);
+        console.log("Press Ctrl+C to stop.\n");
+
+        // Initial generation
+        const initial = await generateContextTree({
+          memoryDir,
+          outputDir,
+          categories,
+          maxPerCategory,
+          includeEntities: !rest.includes("--no-entities"),
+          includeQuestions: !rest.includes("--no-questions"),
+        });
+        console.log(`Initial: ${initial.nodesGenerated} nodes (${initial.durationMs}ms)`);
+
+        // Debounced watcher
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const rebuild = () => {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(async () => {
+            const t0 = Date.now();
+            try {
+              const result = await generateContextTree({
+                memoryDir,
+                outputDir,
+                categories,
+                maxPerCategory,
+                includeEntities: !rest.includes("--no-entities"),
+                includeQuestions: !rest.includes("--no-questions"),
+              });
+              console.log(`[${new Date().toISOString()}] Rebuilt: ${result.nodesGenerated} nodes (${Date.now() - t0}ms)`);
+            } catch (err) {
+              console.error(`[${new Date().toISOString()}] Rebuild failed:`, err instanceof Error ? err.message : err);
+            }
+          }, 500);
+        };
+
+        fs.watch(memoryDir, { recursive: true }, (_event, filename) => {
+          if (filename && !filename.startsWith(".")) rebuild();
+        });
+
+        // Keep process alive
+        await new Promise(() => {});
       } else if (subAction === "validate") {
         const treeDir = outputDir;
         if (!fs.existsSync(treeDir)) {
@@ -927,13 +972,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         }
         console.log(`Context tree at ${treeDir} is valid.`);
       } else {
-        console.log(`Usage: engram tree <generate|validate>
+        console.log(`Usage: engram tree <generate|watch|validate>
+  generate                Generate context tree from memory
+  watch                   Watch memory dir and regenerate on changes
+  validate                Check that context tree exists and is valid
+
+Options:
   --output <dir>          Output directory (default: .engram/context-tree)
   --categories <list>     Comma-separated categories to include
   --max-per-category <n>  Max nodes per category
   --no-entities           Exclude entity nodes
   --no-questions          Exclude question nodes
-  --json                  JSON output`);
+  --json                  JSON output (generate only)`);
       }
       break;
     }
