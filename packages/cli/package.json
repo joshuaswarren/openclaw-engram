@@ -12,12 +12,13 @@
     }
   },
   "bin": {
-    "engram": "./bin/engram.ts"
+    "engram": "./bin/engram.cjs"
   },
   "scripts": {
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@engram/bench": "file:../bench",
     "@engram/core": "file:../core"
   },
   "devDependencies": {

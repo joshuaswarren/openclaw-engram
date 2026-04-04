@@ -55,6 +55,29 @@ cd ~/.openclaw/extensions/openclaw-engram
 npm ci && npm run build
 ```
 
+### Option 4: Standalone (no OpenClaw)
+
+Build from source and use the standalone CLI. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
+
+```bash
+npm install -g tsx              # Required — CLI entry point is TypeScript
+git clone https://github.com/joshuaswarren/openclaw-engram.git
+cd openclaw-engram
+npm ci && npm run build
+cd packages/cli && npm link     # Makes `engram` available on PATH
+cd ../..
+engram init                     # Create engram.config.json
+export OPENAI_API_KEY=sk-...
+export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+engram daemon start             # Start background server
+engram status                   # Verify it's running
+engram query "hello" --explain  # Test query with tier breakdown
+```
+
+> **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
+
+The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
+
 ### Configure
 
 After installation, add Engram to your `openclaw.json`:
@@ -211,6 +234,39 @@ so alternative engines can replace QMD without changing core logic.
 ```
 
 Memory categories include: `fact`, `decision`, `preference`, `correction`, `relationship`, `principle`, `commitment`, `moment`, `skill`, `rule`, and more.
+
+## Architecture
+
+Starting with v9.1.36, Engram is organized as a monorepo with five packages:
+
+```
+                    ┌─────────────────┐
+                    │  @engram/core   │
+                    │  (engine)       │
+                    └────────┬────────┘
+                             │
+               ┌─────────────┼─────────────┐
+               │             │             │
+        ┌──────┴──────┐ ┌───┴────┐ ┌──────┴──────────┐
+        │ @engram/cli │ │@engram/│ │ @engram/         │
+        │ (CLI binary)│ │server  │ │ hermes-provider  │
+        └─────────────┘ └────────┘ └─────────────────┘
+                             │
+                      ┌──────┴──────┐
+                      │ @engram/    │
+                      │ bench       │
+                      └─────────────┘
+```
+
+| Package | Description |
+|---------|-------------|
+| `@engram/core` | Framework-agnostic engine with zero OpenClaw imports. Re-exports orchestrator, config, storage, search, extraction, graph, and trust zones. |
+| `@engram/cli` | Standalone CLI binary with 15+ commands for memory management, project onboarding, curation, sync, dedup, connectors, spaces, and benchmarks. |
+| `@engram/server` | Standalone HTTP/MCP server wrapping the existing access layer. Run independently or as a daemon. |
+| `@engram/bench` | Latency ladder benchmarks with tier breakdowns, saved baselines, and CI regression gates. |
+| `@engram/hermes-provider` | Lightweight HTTP client for connecting to remote Engram instances. Works with any TypeScript project. |
+
+The npm package `@joshuaswarren/openclaw-engram` continues to work as the primary distribution channel for OpenClaw users. The `@engram/*` packages are for standalone use or custom integrations.
 
 ## Why Engram?
 
@@ -571,9 +627,9 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Lossless Context Management](docs/guides/lossless-context-management.md) — Never lose context to compaction
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Migration Guide](docs/guides/migrations.md) — Upgrading from older versions
-- [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to the v9.1.36+ platform architecture (packages, standalone CLI, spaces, benchmarks)
-- [Platform Migration Guide](docs/guides/platform-migration.md) — Upgrading to v9.1.36+ platform architecture
-- [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to v9.1.36+ platform architecture
+- [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to the monorepo architecture (v9.1.36+)
+- [Hermes Setup](docs/integration/hermes-setup.md) — HTTP client for remote Engram instances
+- [Deployment Topologies](docs/integration/deployment-topologies.md) — Localhost, LAN, remote, containerized, standalone
 
 ## Contributing
 

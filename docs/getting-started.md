@@ -23,29 +23,29 @@ cd ~/.openclaw/extensions/openclaw-engram
 npm ci && npm run build
 ```
 
-### Option C: Standalone Installation (no OpenClaw)
+### Option C: Standalone (no OpenClaw)
 
-Use Engram as a standalone memory system without OpenClaw. This is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
+Use Engram as a standalone memory system without OpenClaw. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
+
+Build from source and use the standalone CLI:
 
 ```bash
-# Install globally
-npm install -g @joshuaswarren/openclaw-engram
-
-# Create configuration
-engram init
-
-# Set required environment variables
+npm install -g tsx               # Required — CLI entry point is TypeScript
+git clone https://github.com/joshuaswarren/openclaw-engram.git
+cd openclaw-engram && npm ci && npm run build
+cd packages/cli && npm link       # Makes `engram` available on PATH
+cd ../..
+engram init                      # Create config in current directory
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-
-# Start the background server
-engram daemon start
-
-# Verify it works
-engram query "hello" --json
+engram daemon start              # Start background server (requires source build)
+engram status                    # Verify it's running
+engram query "hello" --explain   # Test with tier breakdown
 ```
 
-Standalone mode provides 15+ CLI commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [API Reference](api.md#standalone-cli-commands) for the full command list and the [Platform Migration Guide](guides/platform-migration.md) for detailed setup instructions.
+> **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
+
+Standalone mode provides 15+ CLI commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
 
 OpenClaw remains the recommended installation path for most users.
 
