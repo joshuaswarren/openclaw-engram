@@ -34,7 +34,9 @@
   "workspaces": [
     "packages/core",
     "packages/adapter-openclaw",
-    "packages/hermes-provider"
+    "packages/hermes-provider",
+    "packages/server",
+    "packages/cli"
   ],
   "engines": {
     "node": ">=22.12.0"
