@@ -21,14 +21,10 @@
 // Configuration
 // ---------------------------------------------------------------------------
 
-export {
-  parseConfig,
-  type PluginConfig as EngramConfig,
-  type ExtractionConfig,
-  type SearchBackendConfig,
-  type ConsolidationConfig,
-  type TrustZoneConfig,
-} from "../../../src/config.js";
+export { parseConfig } from "../../../src/config.js";
+// Note: PluginConfig, ExtractionConfig, SearchBackendConfig, ConsolidationConfig,
+// TrustZoneConfig are not yet exported from the root config module. These will be
+// available once the config types are fully extracted into @engram/core.
 
 // ---------------------------------------------------------------------------
 // Orchestrator — primary entry point
@@ -50,26 +46,24 @@ export { StorageManager } from "../../../src/storage.js";
 // Extraction
 // ---------------------------------------------------------------------------
 
-export {
-  extractMemories,
-  type ExtractedFact,
-  type ExtractionResult,
-} from "../../../src/extraction.js";
+export { ExtractionEngine } from "../../../src/extraction.js";
+// Note: extractMemories, ExtractedFact, ExtractionResult types will be exported
+// once the extraction pipeline is fully extracted into @engram/core.
 
 // ---------------------------------------------------------------------------
 // Search backends
 // ---------------------------------------------------------------------------
 
-export { QmdSearchBackend } from "../../../src/qmd-search.js";
-export { LanceDbSearchBackend } from "../../../src/lancedb-search.js";
-export { OramaSearchBackend } from "../../../src/orama-search.js";
-export { MeiliSearchBackend } from "../../../src/meilisearch-backend.js";
+export { QmdClient } from "../../../src/qmd.js";
+export { LanceDbBackend } from "../../../src/search/lancedb-backend.js";
+export { OramaBackend } from "../../../src/search/orama-backend.js";
+export { MeilisearchBackend } from "../../../src/search/meilisearch-backend.js";
 
 // ---------------------------------------------------------------------------
 // Entity / Graph
 // ---------------------------------------------------------------------------
 
-export { EntityGraphManager } from "../../../src/entity-retrieval.js";
+export { buildEntityRecallSection } from "../../../src/entity-retrieval.js";
 
 // ---------------------------------------------------------------------------
 // Trust zones
@@ -116,7 +110,7 @@ export { loadDaySummaryPrompt } from "../../../src/day-summary.js";
 // Bootstrap
 // ---------------------------------------------------------------------------
 
-export { bootstrap } from "../../../src/bootstrap.js";
+export { BootstrapEngine } from "../../../src/bootstrap.js";
 
 // ---------------------------------------------------------------------------
 // Logger
@@ -265,7 +259,8 @@ export {
 // Public types
 // ---------------------------------------------------------------------------
 
-export type { AccessConfig, AccessHealthResponse, AccessRecallResponse } from "../../../src/types.js";
+// Note: AccessConfig, AccessHealthResponse, AccessRecallResponse are defined
+// in the access layer but not yet exported from the root types module.
 
 
 // ---------------------------------------------------------------------------
