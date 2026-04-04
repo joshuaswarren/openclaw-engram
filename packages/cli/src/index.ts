@@ -40,6 +40,17 @@ import {
   installConnector,
   removeConnector,
   doctorConnector,
+  listSpaces,
+  getActiveSpace,
+  createSpace,
+  deleteSpace,
+  switchSpace,
+  pushToSpace,
+  pullFromSpace,
+  shareSpace,
+  promoteSpace,
+  getAuditLog,
+  getManifestPath,
 } from "@engram/core";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -57,7 +68,8 @@ type CommandName =
   | "review"
   | "sync"
   | "dedup"
-  | "connectors";
+  | "connectors"
+  | "space";
 
 type DaemonAction = "start" | "stop" | "restart";
 type ReviewAction = "approve" | "dismiss" | "flag";
@@ -80,12 +92,43 @@ function resolveConfigPath(cliPath?: string): string {
 }
 
 function resolveMemoryDir(): string {
-  const configPath = resolveConfigPath();
-  const raw = fs.existsSync(configPath)
-    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
-    : {};
-  const engramCfg = raw.engram ?? raw;
-  return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+  // Derive config-based memory dir first (always needed as fallback)
+  const configMemoryDir = (() => {
+    const configPath = resolveConfigPath();
+    const raw = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+      : {};
+    const engramCfg = raw.engram ?? raw;
+    return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+  })();
+
+  // Check active space — only if manifest exists (don't bootstrap just to resolve)
+  const manifestPath = getManifestPath();
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const active = getActiveSpace();
+      if (active?.memoryDir) {
+        if (!fs.existsSync(active.memoryDir)) {
+          // Recreate missing directory instead of silently falling back
+          fs.mkdirSync(active.memoryDir, { recursive: true });
+        }
+        return active.memoryDir;
+      }
+      // No active space with memoryDir — fall through to config
+    } catch (err: unknown) {
+      // getActiveSpace() throws "Active space ... not found" when the activeSpaceId
+      // references a space that was deleted — this is recoverable, fall through.
+      // Any other error (corrupted JSON, permission denied) is fatal.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("not found")) {
+        console.error(`Error: failed to resolve active space from ${manifestPath}: ${msg}`);
+        process.exit(1);
+      }
+      // Active space not found — fall through to config-based dir
+    }
+  }
+
+  return configMemoryDir;
 }
 
 function parseConnectorConfig(args: string[]): Record<string, unknown> {
@@ -425,6 +468,145 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
   }
 }
 
+// ── M6 space command ──────────────────────────────────────────────────────────
+
+async function cmdSpace(action: string, rest: string[], json: boolean): Promise<void> {
+  const nonFlagArgs = rest.filter((a) => !a.startsWith("--"));
+
+  if (action === "list") {
+    const spaces = listSpaces();
+    if (json) {
+      console.log(JSON.stringify(spaces, null, 2));
+    } else {
+      const active = getActiveSpace();
+      for (const s of spaces) {
+        const icon = s.id === active.id ? "●" : "○";
+        console.log(`  ${icon} ${s.name} (${s.kind}) — ${s.memoryDir}`);
+      }
+    }
+  } else if (action === "switch") {
+    const spaceId = nonFlagArgs[0];
+    if (!spaceId) {
+      console.error("Usage: engram space switch <id>");
+      process.exit(1);
+    }
+    const result = switchSpace(spaceId);
+    console.log(result.message);
+  } else if (action === "create") {
+    // Extract --parent <id> before computing positional args
+    const parentIdx = rest.indexOf("--parent");
+    const parentSpaceId = parentIdx >= 0 && rest[parentIdx + 1] ? rest[parentIdx + 1] : undefined;
+    // Build positional args excluding --parent and its value
+    const positionals: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--parent") { i++; continue; } // skip --parent and its value
+      if (rest[i].startsWith("--")) continue;
+      positionals.push(rest[i]);
+    }
+    const name = positionals[0];
+    const rawKind = positionals[1] ?? "project";
+    const validKinds = ["personal", "project", "team"] as const;
+    if (!validKinds.includes(rawKind as typeof validKinds[number])) {
+      console.error(`Invalid kind "${rawKind}". Must be one of: ${validKinds.join(", ")}`);
+      process.exit(1);
+    }
+    const kind = rawKind as "personal" | "project" | "team";
+    if (!name) {
+      console.error("Usage: engram space create <name> [personal|project|team] [--parent <id>]");
+      process.exit(1);
+    }
+    const space = createSpace({ name, kind, parentSpaceId });
+    if (json) {
+      console.log(JSON.stringify(space, null, 2));
+    } else {
+      console.log(`Created space "${space.name}" (${space.id})`);
+      console.log(`  Kind: ${space.kind}`);
+      console.log(`  Dir: ${space.memoryDir}`);
+    }
+  } else if (action === "delete") {
+    const spaceId = nonFlagArgs[0];
+    if (!spaceId) {
+      console.error("Usage: engram space delete <id>");
+      process.exit(1);
+    }
+    deleteSpace(spaceId);
+    console.log(`Deleted space "${spaceId}"`);
+  } else if (action === "push") {
+    const sourceId = nonFlagArgs[0];
+    const targetId = nonFlagArgs[1];
+    if (!sourceId || !targetId) {
+      console.error("Usage: engram space push <source> <target>");
+      process.exit(1);
+    }
+    const result = pushToSpace(sourceId, targetId, { force: rest.includes("--force") });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Pushed ${result.memoriesPushed} memories`);
+      if (result.conflicts.length > 0) console.log(`Conflicts: ${result.conflicts.length}`);
+      console.log(`Duration: ${result.durationMs}ms`);
+    }
+  } else if (action === "pull") {
+    const sourceId = nonFlagArgs[0];
+    const targetId = nonFlagArgs[1];
+    if (!sourceId || !targetId) {
+      console.error("Usage: engram space pull <source> <target>");
+      process.exit(1);
+    }
+    const result = pullFromSpace(sourceId, targetId, { force: rest.includes("--force") });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Pulled ${result.memoriesPulled} memories`);
+      if (result.conflicts.length > 0) console.log(`Conflicts: ${result.conflicts.length}`);
+      console.log(`Duration: ${result.durationMs}ms`);
+    }
+  } else if (action === "share") {
+    const spaceId = nonFlagArgs[0];
+    const members = nonFlagArgs.slice(1);
+    if (!spaceId || members.length === 0) {
+      console.error("Usage: engram space share <id> <member1> [member2 ...]");
+      process.exit(1);
+    }
+    const result = shareSpace(spaceId, members);
+    console.log(result.message);
+  } else if (action === "promote") {
+    const sourceId = nonFlagArgs[0];
+    const targetId = nonFlagArgs[1];
+    if (!sourceId || !targetId) {
+      console.error("Usage: engram space promote <source> <target>");
+      process.exit(1);
+    }
+    const result = promoteSpace(sourceId, targetId, {
+      force: rest.includes("--force"),
+      forceOverwrite: rest.includes("--force-overwrite"),
+    });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Promoted ${result.memoriesPromoted} memories`);
+      if (result.conflicts.length > 0) console.log(`Conflicts: ${result.conflicts.length}`);
+      console.log(`Duration: ${result.durationMs}ms`);
+    }
+  } else if (action === "audit") {
+    const entries = getAuditLog();
+    if (json) {
+      console.log(JSON.stringify(entries, null, 2));
+    } else {
+      if (entries.length === 0) {
+        console.log("No audit entries.");
+      } else {
+        for (const e of entries.slice(-50)) {
+          console.log(`[${e.timestamp}] ${e.action} ${e.details}`);
+        }
+      }
+    }
+  } else {
+    console.log("Usage: engram space <list|switch|create|delete|push|pull|share|promote|audit>");
+    process.exit(1);
+  }
+}
+
 // ── Daemon management ────────────────────────────────────────────────────────
 
 function isDaemonRunning(): boolean {
@@ -614,6 +796,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       break;
     }
 
+    case "space": {
+      const action = rest[0] ?? "list";
+      const json = rest.includes("--json");
+      await cmdSpace(action, rest.slice(1), json);
+      break;
+    }
+
     default:
       console.log(`
 engram — Engram memory CLI
@@ -632,6 +821,8 @@ Usage:
   engram sync <run|watch> [--source <dir>] Diff-aware sync
   engram dedup [--json]             Find duplicate memories
   engram connectors <list|install|remove|doctor> [id]  Manage connectors
+  engram space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
+    create accepts --parent <id> to set parent-child relationship
 
 Options:
   --json    Output in JSON format

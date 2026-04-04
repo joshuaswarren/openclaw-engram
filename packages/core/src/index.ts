@@ -232,6 +232,39 @@ export {
 } from "./connectors/index.js";
 
 // ---------------------------------------------------------------------------
+// Spaces + Collaboration
+// ---------------------------------------------------------------------------
+
+export {
+  listSpaces,
+  getActiveSpace,
+  createSpace,
+  deleteSpace,
+  switchSpace,
+  pushToSpace,
+  pullFromSpace,
+  shareSpace,
+  promoteSpace,
+  mergeSpaces,
+  loadManifest,
+  saveManifest,
+  getAuditLog,
+  getSpacesDir,
+  getManifestPath,
+  type Space,
+  type SpaceKind,
+  type SpaceManifest,
+  type SpaceSwitchResult,
+  type SpacePushResult,
+  type SpacePullResult,
+  type SpaceShareResult,
+  type SpacePromoteResult,
+  type ConflictEntry,
+  type MergeResult,
+  type AuditEntry,
+} from "./spaces/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
