@@ -10,7 +10,7 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@engram/core": "workspace:*"
+    "@engram/core": "file:../core"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
