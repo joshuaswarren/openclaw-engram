@@ -132,12 +132,12 @@ export function getManifestPath(baseDir?: string): string {
   return path.join(getSpacesDir(baseDir), "manifest.json");
 }
 
-export function loadManifest(baseDir?: string): SpaceManifest {
+export function loadManifest(baseDir?: string, memoryDirOverride?: string): SpaceManifest {
   const manifestPath = getManifestPath(baseDir);
 
   if (!fs.existsSync(manifestPath)) {
     // Bootstrap with a personal space
-    const personalSpace = createPersonalSpace(baseDir);
+    const personalSpace = createPersonalSpace(baseDir, memoryDirOverride);
     const manifest: SpaceManifest = {
       activeSpaceId: personalSpace.id,
       spaces: [personalSpace],
@@ -157,9 +157,9 @@ export function saveManifest(manifest: SpaceManifest, baseDir?: string): void {
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 }
 
-function createPersonalSpace(baseDir?: string): Space {
+function createPersonalSpace(baseDir?: string, memoryDirOverride?: string): Space {
   const homeDir = baseDir ?? process.env.HOME ?? "~";
-  const memoryDir = path.join(homeDir, ".openclaw", "workspace", "memory", "local");
+  const memoryDir = memoryDirOverride ?? path.join(homeDir, ".openclaw", "workspace", "memory", "local");
   const now = new Date().toISOString();
 
   return {
@@ -397,7 +397,7 @@ export function shareSpace(
 export function promoteSpace(
   sourceSpaceId: string,
   targetSpaceId: string,
-  options?: { memoryIds?: string[]; force?: boolean; baseDir?: string },
+  options?: { memoryIds?: string[]; force?: boolean; forceOverwrite?: boolean; baseDir?: string },
 ): SpacePromoteResult {
   const startTime = Date.now();
   const manifest = loadManifest(options?.baseDir);
@@ -417,7 +417,7 @@ export function promoteSpace(
 
   const result = copyMemories(source.memoryDir, target.memoryDir, {
     filterIds: options?.memoryIds,
-    force: options?.force,
+    force: options?.forceOverwrite ?? options?.force,
   });
 
   appendAudit({

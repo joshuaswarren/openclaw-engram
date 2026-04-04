@@ -91,6 +91,16 @@ function resolveConfigPath(cliPath?: string): string {
 }
 
 function resolveMemoryDir(): string {
+  // Check active space first
+  try {
+    const active = getActiveSpace();
+    if (active?.memoryDir && fs.existsSync(active.memoryDir)) {
+      return active.memoryDir;
+    }
+  } catch {
+    // No manifest or no active space — fall through to config
+  }
+
   const configPath = resolveConfigPath();
   const raw = fs.existsSync(configPath)
     ? JSON.parse(fs.readFileSync(configPath, "utf8"))
@@ -462,7 +472,13 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
     console.log(result.message);
   } else if (action === "create") {
     const name = nonFlagArgs[0];
-    const kind = (nonFlagArgs[1] ?? "project") as "personal" | "project" | "team";
+    const rawKind = nonFlagArgs[1] ?? "project";
+    const validKinds = ["personal", "project", "team"] as const;
+    if (!validKinds.includes(rawKind as typeof validKinds[number])) {
+      console.error(`Invalid kind "${rawKind}". Must be one of: ${validKinds.join(", ")}`);
+      process.exit(1);
+    }
+    const kind = rawKind as "personal" | "project" | "team";
     if (!name) {
       console.error("Usage: engram space create <name> [personal|project|team]");
       process.exit(1);
@@ -529,7 +545,10 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
       console.error("Usage: engram space promote <source> <target>");
       process.exit(1);
     }
-    const result = promoteSpace(sourceId, targetId, { force: rest.includes("--force") });
+    const result = promoteSpace(sourceId, targetId, {
+      force: rest.includes("--force"),
+      forceOverwrite: rest.includes("--force-overwrite"),
+    });
     if (json) {
       console.log(JSON.stringify(result, null, 2));
     } else {
