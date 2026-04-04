@@ -135,6 +135,13 @@ function resolveMemoryDir(): string {
       }
       // Active space not found — fall through to config-based dir
     }
+  } catch (err: unknown) {
+    // Non-recoverable errors are fatal
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("not found")) {
+      console.error(`Error: failed to resolve active space from ${manifestPath}: ${msg}`);
+      process.exit(1);
+    }
   }
 
   return configMemoryDir;
