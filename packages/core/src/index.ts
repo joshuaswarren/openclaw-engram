@@ -210,6 +210,28 @@ export {
 } from "./sync/index.js";
 
 // ---------------------------------------------------------------------------
+// Connector Manager
+// ---------------------------------------------------------------------------
+
+export {
+  listConnectors,
+  installConnector,
+  removeConnector,
+  doctorConnector,
+  loadRegistry,
+  saveRegistry,
+  type ConnectorManifest,
+  type ConnectorCapability,
+  type ConnectorInstance,
+  type ConnectorRegistry,
+  type InstallOptions,
+  type InstallResult,
+  type RemoveResult,
+  type DoctorResult,
+  type DoctorCheck,
+} from "./connectors/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 

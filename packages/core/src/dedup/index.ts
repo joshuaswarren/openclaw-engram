@@ -100,7 +100,7 @@ export function findDuplicates(options: DedupOptions): DedupResult {
           left: memories[i],
           right: memories[j],
           similarity: sim,
-          action: sim >= 0.98 ? "merge" : sim >= 0.9 ? "keep_left" : "keep_right",
+          action: sim >= 0.98 ? "merge" : sim >= 0.9 ? "keep_left" : "keep_left",
         });
       }
     }

@@ -18,6 +18,7 @@
  *   review            Review inbox management
  *   sync              Diff-aware sync
  *   dedup             Find duplicate memories
+ *   connectors        Manage host adapters
  */
 
 import fs from "node:fs";
@@ -35,6 +36,10 @@ import {
   syncChanges,
   watchForChanges,
   findDuplicates,
+  listConnectors,
+  installConnector,
+  removeConnector,
+  doctorConnector,
 } from "@engram/core";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -51,7 +56,8 @@ type CommandName =
   | "curate"
   | "review"
   | "sync"
-  | "dedup";
+  | "dedup"
+  | "connectors";
 
 type DaemonAction = "start" | "stop" | "restart";
 type ReviewAction = "approve" | "dismiss" | "flag";
@@ -80,6 +86,17 @@ function resolveMemoryDir(): string {
     : {};
   const engramCfg = raw.engram ?? raw;
   return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+}
+
+function parseConnectorConfig(args: string[]): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  for (const arg of args) {
+    if (arg.startsWith("--config=")) {
+      const [key, value] = arg.slice("--config=".length).split("=");
+      if (key && value) config[key] = value;
+    }
+  }
+  return config;
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -209,11 +226,6 @@ function cmdDoctor(): void {
   for (const check of checks) {
     const icon = check.ok ? "✓" : "✗";
     console.log(`  ${icon} ${check.name}: ${check.detail}`);
-  }
-
-  const allOk = checks.every((c) => c.ok);
-  if (!allOk) {
-    console.log("\nSome checks failed. Run `engram init` to get started.");
   }
 }
 
@@ -350,6 +362,67 @@ function cmdDedup(json: boolean): void {
     console.log(`    Similarity: ${(dup.similarity * 100).toFixed(2)}%`);
   }
   console.log(`Duration: ${result.durationMs}ms`);
+}
+
+// ── M5 connectors command ────────────────────────────────────────────────────
+
+async function cmdConnectors(action: string, rest: string[], json: boolean): Promise<void> {
+  // For install/remove/doctor, the connector ID is the second non-flag arg after the action
+  const nonFlagArgs = rest.filter((a) => !a.startsWith("--"));
+  const connectorId = nonFlagArgs[0];
+
+  if (action === "list") {
+    const { installed, available } = listConnectors();
+    if (json) {
+      console.log(JSON.stringify({ installed, available }, null, 2));
+    } else {
+      console.log("Available connectors:");
+      for (const c of available) {
+        const icon = c.installed ? "✓" : "○";
+        console.log(`  ${icon} ${c.id.padEnd(22)} ${c.name} v${c.version} — ${c.description}`);
+      }
+    }
+  } else if (action === "install") {
+    if (!connectorId) {
+      console.error("Usage: engram connectors install <id>");
+      process.exit(1);
+    }
+    const result = installConnector({
+      connectorId,
+      config: parseConnectorConfig(rest),
+      force: rest.includes("--force"),
+    });
+    console.log(result.message);
+    if (result.configPath) console.log(`  Config: ${result.configPath}`);
+    if (result.status === "already_installed") console.log("Use --force to reinstall.");
+    if (result.status === "config_required") console.log("Set config with --config <key>=<value>");
+    if (result.status === "error") console.error(`Error: ${result.message}`);
+  } else if (action === "remove") {
+    if (!connectorId) {
+      console.error("Usage: engram connectors remove <id>");
+      process.exit(1);
+    }
+    const result = removeConnector(connectorId);
+    console.log(result.message);
+  } else if (action === "doctor") {
+    if (!connectorId) {
+      console.error("Usage: engram connectors doctor <id>");
+      process.exit(1);
+    }
+    const result = await doctorConnector(connectorId);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      for (const check of result.checks) {
+        const icon = check.ok ? "✓" : "✗";
+        console.log(`  ${icon} ${check.name}: ${check.detail}`);
+      }
+      console.log(result.healthy ? "\nConnector healthy" : "\nConnector has issues");
+    }
+  } else {
+    console.log("Usage: engram connectors <list|install|remove|doctor> [id]");
+    process.exit(1);
+  }
 }
 
 // ── Daemon management ────────────────────────────────────────────────────────
@@ -534,12 +607,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       break;
     }
 
+    case "connectors": {
+      const action = rest[0] ?? "list";
+      const json = rest.includes("--json");
+      await cmdConnectors(action, rest.slice(1), json);
+      break;
+    }
+
     default:
       console.log(`
 engram — Engram memory CLI
 
 Usage:
-  enram init                  Create config file
+  engram init                  Create config file
   engram status [--json]       Show server status
   engram query <text> [--json] Query memories
   engram doctor                Run diagnostics
@@ -551,6 +631,7 @@ Usage:
   engram review <list|approve|dismiss|flag> [id]  Review inbox
   engram sync <run|watch> [--source <dir>] Diff-aware sync
   engram dedup [--json]             Find duplicate memories
+  engram connectors <list|install|remove|doctor> [id]  Manage connectors
 
 Options:
   --json    Output in JSON format
