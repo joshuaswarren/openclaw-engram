@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`engram tree generate`** — fully wired context tree generation from canonical memory (was stub)
+- **`engram tree validate`** — validates existing context tree integrity
+- **`ENGRAM_MEMORY_DIR` env var** — override memory storage location for standalone deployments
+- **Standalone memory path** — `~/.engram/memory/` used by default for new standalone installs (OpenClaw users keep `~/.openclaw/workspace/memory/local/`)
+- **7 new built-in connectors** — GitHub Copilot, Roo Code, Windsurf, Amp, Replit, Generic MCP (joining Claude Code, Codex CLI, Cursor, Cline)
+- **CLI `--output`, `--categories`, `--max-per-category` flags** for tree generation
+
+### Fixed
+- **CLI `engram.cjs`** — tsx resolution now checks workspace-hoisted root `node_modules` (fixes standalone builds)
+- **CLI auto-run guard** — narrowed to `packages/cli/src/index.` pattern (prevents false triggers when imported by other packages)
+- **CLI error handling** — `engram.cjs` wrapper propagates child exit codes instead of raw stack traces
+
 ## [v9.1.36] — 2026-04-04
 
 ### Added

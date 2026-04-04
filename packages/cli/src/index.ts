@@ -51,6 +51,7 @@ import {
   promoteSpace,
   getAuditLog,
   getManifestPath,
+  generateContextTree,
 } from "@engram/core";
 import {
   runBenchSuite,
@@ -101,14 +102,22 @@ function resolveConfigPath(cliPath?: string): string {
 }
 
 function resolveMemoryDir(): string {
-  // Derive config-based memory dir first (always needed as fallback)
+  // Priority: env var > config file > auto-detect
   const configMemoryDir = (() => {
+    // Env var takes top priority (deployment override)
+    if (process.env.ENGRAM_MEMORY_DIR) return process.env.ENGRAM_MEMORY_DIR;
+    // Then config file
     const configPath = resolveConfigPath();
     const raw = fs.existsSync(configPath)
       ? JSON.parse(fs.readFileSync(configPath, "utf8"))
       : {};
     const engramCfg = raw.engram ?? raw;
-    return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+    if (engramCfg.memoryDir) return engramCfg.memoryDir;
+    // Auto-detect: prefer standalone path if it exists, fall back to OpenClaw
+    const home = process.env.HOME ?? "~";
+    const standalonePath = path.join(home, ".engram", "memory");
+    const openclawPath = path.join(home, ".openclaw", "workspace", "memory", "local");
+    return fs.existsSync(standalonePath) ? standalonePath : openclawPath;
   })();
 
   // Check active space — only if manifest exists (don't bootstrap just to resolve)
@@ -138,6 +147,11 @@ function resolveMemoryDir(): string {
   }
 
   return configMemoryDir;
+}
+
+function resolveFlag(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
 }
 
 function parseConnectorConfig(args: string[]): Record<string, unknown> {
@@ -867,10 +881,59 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     case "tree": {
       const subAction = rest[0];
-      if (subAction === "generate" || subAction === "watch" || subAction === "validate") {
-        console.log(`Tree ${subAction} — not yet implemented`);
+      const json = rest.includes("--json");
+      const outputDir = resolveFlag(rest, "--output") ?? path.join(process.cwd(), ".engram", "context-tree");
+      const categoriesFlag = resolveFlag(rest, "--categories");
+      const categories = categoriesFlag ? categoriesFlag.split(",") : undefined;
+      const maxPerCategoryRaw = resolveFlag(rest, "--max-per-category");
+      let maxPerCategory: number | undefined;
+      if (maxPerCategoryRaw !== undefined) {
+        maxPerCategory = parseInt(maxPerCategoryRaw, 10);
+        if (!Number.isFinite(maxPerCategory) || maxPerCategory < 1) {
+          console.error(`Invalid --max-per-category: ${maxPerCategoryRaw}`);
+          process.exit(1);
+        }
+      }
+
+      if (subAction === "generate") {
+        const result = await generateContextTree({
+          memoryDir: resolveMemoryDir(),
+          outputDir,
+          categories,
+          maxPerCategory,
+          includeEntities: !rest.includes("--no-entities"),
+          includeQuestions: !rest.includes("--no-questions"),
+        });
+        if (json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Context tree generated at ${result.outputDir}`);
+          console.log(`  Nodes: ${result.nodesGenerated} generated, ${result.nodesSkipped} skipped`);
+          for (const [cat, count] of Object.entries(result.categories)) {
+            console.log(`  ${cat}: ${count}`);
+          }
+          console.log(`  Duration: ${result.durationMs}ms`);
+        }
+      } else if (subAction === "validate") {
+        const treeDir = outputDir;
+        if (!fs.existsSync(treeDir)) {
+          console.error(`Context tree not found at ${treeDir}. Run 'engram tree generate' first.`);
+          process.exit(1);
+        }
+        const indexPath = path.join(treeDir, "INDEX.md");
+        if (!fs.existsSync(indexPath)) {
+          console.error(`INDEX.md missing in ${treeDir}. Tree may be corrupt — regenerate.`);
+          process.exit(1);
+        }
+        console.log(`Context tree at ${treeDir} is valid.`);
       } else {
-        console.log("Usage: engram tree <generate|watch|validate>");
+        console.log(`Usage: engram tree <generate|validate>
+  --output <dir>          Output directory (default: .engram/context-tree)
+  --categories <list>     Comma-separated categories to include
+  --max-per-category <n>  Max nodes per category
+  --no-entities           Exclude entity nodes
+  --no-questions          Exclude question nodes
+  --json                  JSON output`);
       }
       break;
     }
