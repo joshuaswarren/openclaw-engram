@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.2.1] — 2026-04-04
+
 ### Added
 - **`engram tree generate`** — fully wired context tree generation from canonical memory (was stub)
 - **`engram tree validate`** — validates existing context tree integrity
