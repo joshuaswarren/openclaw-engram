@@ -465,6 +465,60 @@ Run via `openclaw engram <command>`:
 | `trust-zone-promote --record-id <id> --target-zone <zone> --reason <text> [--dry-run]` | Preview or apply a trust-zone promotion |
 | `trust-zone-demo-seed [--scenario enterprise-buyer-v1] [--recorded-at <iso>] [--dry-run]` | Explicitly preview or seed the opt-in trust-zone buyer demo dataset |
 
+## Error Responses
+
+All error responses follow a consistent JSON structure:
+
+```json
+{
+  "error": "human-readable error description",
+  "code": "machine-readable error code",
+  "details": [{ "field": "fieldName", "message": "field-specific error" }]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error` | string | Human-readable summary of what went wrong |
+| `code` | string | Machine-readable error code for programmatic handling |
+| `details` | array | Optional. Present on validation errors with per-field breakdown |
+
+### Common error codes
+
+| HTTP Status | Code | Meaning |
+|-------------|------|---------|
+| 400 | `validation_error` | Request body failed schema validation; `details` has per-field errors |
+| 400 | `invalid_json` | Request body is not valid JSON |
+| 400 | `invalid_json_object` | Request body is not a JSON object |
+| 400 | `input_error` | Business logic validation failure (from service layer) |
+| 401 | `unauthorized` | Missing or invalid bearer token |
+| 404 | `not_found` | Unknown endpoint or resource |
+| 413 | `request_body_too_large` | Body exceeds `maxBodyBytes` (default: 128KB) |
+| 429 | `write_rate_limited` | Write rate limit exceeded (30 requests per 60 seconds) |
+| 500 | `internal_error` | Unexpected server error |
+
+### Correlation IDs
+
+Every response includes an `X-Request-Id` header with a UUIDv4 correlation ID. Use this when reporting issues — it links to the server-side log entry for that request.
+
+### Validation errors
+
+Write endpoints (`recall`, `observe`, `memories`, `suggestions`, `review-disposition`, `trust-zones/promote`, `trust-zones/demo-seed`, `lcm/search`) validate request bodies against Zod schemas before processing. A validation error returns HTTP 400 with `code: "validation_error"` and a `details` array:
+
+```json
+{
+  "error": "request validation failed",
+  "code": "validation_error",
+  "details": [
+    { "field": "confidence", "message": "Number must be less than or equal to 1" }
+  ]
+}
+```
+
+### Versioning
+
+The v1 API is stable. Breaking changes will use a new path prefix (e.g., `/engram/v2/`). Additive changes (new optional fields, new endpoints) may appear at any time.
+
 ## Plugin Hooks
 
 | Hook | When it fires | What Engram does |

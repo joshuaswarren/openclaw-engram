@@ -1,0 +1,31 @@
+{
+  "name": "@engram/hermes-provider",
+  "version": "0.1.0",
+  "description": "Typed HTTP client for the Engram memory API",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {},
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/openclaw-engram",
+    "directory": "packages/hermes-provider"
+  },
+  "keywords": ["engram", "memory", "ai", "agent", "openclaw"]
+}
