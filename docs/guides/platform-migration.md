@@ -134,6 +134,8 @@ Set required environment variables:
 ```bash
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+# Optional: override memory location (default: ~/.engram/memory for standalone, ~/.openclaw/workspace/memory/local for OpenClaw users)
+# export ENGRAM_MEMORY_DIR=/path/to/custom/memory
 ```
 
 ### Start Standalone Server
