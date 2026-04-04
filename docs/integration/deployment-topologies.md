@@ -55,7 +55,7 @@ openclaw engram access http-serve --host 127.0.0.1 --port 4318 --token "$TOKEN"
 
 Run Engram as a standalone CLI/HTTP server using the `engram` binary. Requires [tsx](https://github.com/privatenumber/tsx) on PATH. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
 
-> **Build from source required:** The `engram` CLI entry point is TypeScript (`bin/engram.ts`), so `tsx` must be installed globally (`npm install -g tsx`). The `daemon start` command launches the server via a monorepo-relative path that only exists when built from source.
+> **Build from source required:** The `engram` CLI binary (`bin/engram.cjs`) auto-locates `tsx` from local `node_modules`, falling back to a global `tsx` if needed. The `daemon start` command launches the server via a monorepo-relative path that only exists when built from source.
 
 ```bash
 # Prerequisite

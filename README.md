@@ -74,7 +74,7 @@ engram status                   # Verify it's running
 engram query "hello" --explain  # Test query with tier breakdown
 ```
 
-> **Note:** The `engram` binary (`packages/cli/bin/engram.ts`) requires `tsx` on PATH because it is a TypeScript entry point. Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/bin/engram.ts <command>`.
+> **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
 
 The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
 

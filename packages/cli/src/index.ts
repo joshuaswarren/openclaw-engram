@@ -964,13 +964,15 @@ Options:
   }
 }
 
-// Auto-run when executed directly (covers: npx tsx engram.ts, node engram.js, symlinked `engram`)
+// Auto-run when executed directly (covers: npx tsx engram.ts, node engram.js, symlinked `engram`,
+// or invoked via bin/engram.cjs which sets ENGRAM_CLI_BIN=1)
 const argv1 = process.argv[1] ?? "";
 if (
   argv1.endsWith("engram.ts") ||
   argv1.endsWith("engram.js") ||
   argv1.endsWith("/engram") ||
-  argv1.endsWith("\\engram")
+  argv1.endsWith("\\engram") ||
+  process.env.ENGRAM_CLI_BIN === "1"
 ) {
   main().catch((err) => {
     console.error("Fatal:", err.message);
