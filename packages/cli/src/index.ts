@@ -14,7 +14,7 @@
  *   daemon restart    Restart background server
  *   tree              Generate context tree
  *   onboard [dir]     Onboard project directory
- *   curate <path>     Curate files into memory
+ *   curate <path>      Curate files into memory
  *   review            Review inbox management
  *   sync              Diff-aware sync
  *   dedup             Find duplicate memories
@@ -35,6 +35,7 @@ import {
   syncChanges,
   watchForChanges,
   findDuplicates,
+  findContradictions,
 } from "@engram/core";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -61,6 +62,7 @@ type ReviewAction = "approve" | "dismiss" | "flag";
 const PID_DIR = path.join(process.env.HOME ?? "~", ".engram");
 const PID_FILE = path.join(PID_DIR, "server.pid");
 const LOG_FILE = path.join(PID_DIR, "server.log");
+const SOCKET_FILE = path.join(PID_DIR, "server.sock");
 
 // ── Config helpers ───────────────────────────────────────────────────────────
 
@@ -82,7 +84,7 @@ function resolveMemoryDir(): string {
   return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
 }
 
-// ── Commands ─────────────────────────────────────────────────────────────────
+// ── Commands ───────────────────────────────────────────────────────────────────────
 
 function cmdInit(): void {
   const configPath = path.join(process.cwd(), "engram.config.json");
@@ -126,6 +128,7 @@ function cmdStatus(json: boolean): void {
   const pid = readPid();
   console.log(`Engram server: running (pid ${pid})`);
 
+  // Try health check
   try {
     const port = inferPort();
     const result = execSync(`curl -sf http://127.0.0.1:${port}/engram/v1/health`, {
@@ -162,7 +165,7 @@ async function cmdQuery(queryText: string, json: boolean): Promise<void> {
     const memories = (result as { memories?: Array<{ content: string }> }).memories ?? [];
     if (memories.length === 0) {
       console.log("No results.");
-      return;
+ return;
     }
     for (const m of memories) {
       console.log(`- ${m.content}`);
@@ -172,7 +175,6 @@ async function cmdQuery(queryText: string, json: boolean): Promise<void> {
 
 function cmdDoctor(): void {
   const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
-
   const nodeVersion = process.version;
   const nodeMajor = parseInt(nodeVersion.slice(1).split(".")[0], 10);
   checks.push({
@@ -180,18 +182,11 @@ function cmdDoctor(): void {
     ok: nodeMajor >= 22,
     detail: `${nodeVersion} (requires >= 22.12.0)`,
   });
-
   const configPath = resolveConfigPath();
   const configExists = fs.existsSync(configPath);
   checks.push({ name: "Config file", ok: configExists, detail: configPath });
-
   const hasApiKey = !!process.env.OPENAI_API_KEY;
-  checks.push({
-    name: "OPENAI_API_KEY",
-    ok: hasApiKey,
-    detail: hasApiKey ? "set" : "not set (extraction will not work)",
-  });
-
+  checks.push({ name: "OPENAI_API_KEY", ok: hasApiKey, detail: hasApiKey ? "set" : "not set (extraction will not work)" });
   const memoryDir = resolveMemoryDir();
   try {
     fs.mkdirSync(memoryDir, { recursive: true });
@@ -199,21 +194,14 @@ function cmdDoctor(): void {
   } catch {
     checks.push({ name: "Memory directory", ok: false, detail: `cannot create ${memoryDir}` });
   }
-
   checks.push({
     name: "Server daemon",
     ok: isDaemonRunning(),
     detail: isDaemonRunning() ? `running (pid ${readPid()})` : "stopped",
   });
-
   for (const check of checks) {
     const icon = check.ok ? "✓" : "✗";
     console.log(`  ${icon} ${check.name}: ${check.detail}`);
-  }
-
-  const allOk = checks.every((c) => c.ok);
-  if (!allOk) {
-    console.log("\nSome checks failed. Run `engram init` to get started.");
   }
 }
 
@@ -227,7 +215,7 @@ function cmdConfig(): void {
   console.log(fs.readFileSync(configPath, "utf8"));
 }
 
-// ── M4 commands ──────────────────────────────────────────────────────────────
+// ── M4 commands ────────────────────────────────────────────────────────────────
 
 function cmdOnboard(dirPath: string, json: boolean): void {
   const directory = path.resolve(dirPath || process.cwd());
@@ -239,7 +227,8 @@ function cmdOnboard(dirPath: string, json: boolean): void {
   console.log(`Shape: ${result.shape}`);
   console.log(`Languages: ${result.languages.map((l) => `${l.language} (${(l.confidence * 100).toFixed(0)}%)`).join(", ")}`);
   console.log(`Docs: ${result.docs.length} file(s)`);
-  console.log(result.docs.map((s) => `  ${s.kind} (${s.size} bytes)`).join("\n"));
+  console.log(`  ${s.kind} (${s.size} bytes)`);
+  }).join(", "));
   console.log(`Plan: ${result.plan.priorityFiles.length} priority, ${result.plan.estimatedFiles} total files`);
   console.log(`\nSuggested namespace: ${result.plan.suggestedNamespace}`);
   console.log(`Total files: ${result.totalFiles}`);
@@ -264,7 +253,7 @@ async function cmdCurate(targetPath: string, json: boolean): Promise<void> {
   if (result.duplicates.length > 0) console.log(`Duplicates: ${result.duplicates.length}`);
   if (result.contradictions.length > 0) console.log(`Contradictions: ${result.contradictions.length}`);
   console.log(`Written: ${result.written.length}`);
-  console.log(`Duration: ${result.durationMs}ms`);
+  console.log(`Duration: ${result.durationMs}m`);
 }
 
 function cmdReview(action: string, rest: string[]): void {
@@ -298,10 +287,8 @@ function cmdReview(action: string, rest: string[]): void {
 }
 
 function cmdSync(action: string, rest: string[], json: boolean): void {
-  const sourceIdx = rest.indexOf("--source");
-  const sourceDir = sourceIdx >= 0 && rest[sourceIdx + 1] ? rest[sourceIdx + 1] : ".";
+  const sourceDir = rest[0] ?? ".";
   const memoryDir = resolveMemoryDir();
-
   if (action === "run") {
     const result = syncChanges({ sourceDir, memoryDir });
     if (json) {
@@ -313,15 +300,13 @@ function cmdSync(action: string, rest: string[], json: boolean): void {
       console.log(`Deleted: ${result.deleted.length}`);
       console.log(`Unchanged: ${result.unchanged}`);
       console.log(`Duration: ${result.durationMs}ms`);
-    }
   } else if (action === "watch") {
     const { stop } = watchForChanges(
       { sourceDir, memoryDir },
       (changes) => {
-        console.log(`Changed: ${changes.length} file(s)`);
-        for (const c of changes) {
+        console.log(`Changed: ${changes.length} files(s)`);
           console.log(`  [${c.type}] ${c.relativePath}`);
-        }
+        },
       },
     );
     console.log("Watching... (Ctrl+C to stop)");
@@ -345,11 +330,12 @@ function cmdDedup(json: boolean): void {
   console.log(`Scanned: ${result.scanned} memories`);
   console.log(`Found ${result.duplicates.length} duplicate pairs`);
   for (const dup of result.duplicates) {
-    console.log(`  [${dup.action}] ${dup.left.content.slice(0, 60)}...`);
-    console.log(`    vs: ${dup.right.content.slice(0, 60)}...`);
-    console.log(`    Similarity: ${(dup.similarity * 100).toFixed(2)}%`);
+      console.log(`  [${dup.action}] ${dup.left.content.slice(0, 60)}...`);
+      console.log(`    vs: ${dup.right.content.slice(0, 60)}...`);
+      console.log(`    Similarity: ${(dup.similarity * 100).toFixed(2)}%`);
+    }
+    console.log(`Duration: ${result.durationMs}m`);
   }
-  console.log(`Duration: ${result.durationMs}ms`);
 }
 
 // ── Daemon management ────────────────────────────────────────────────────────
@@ -441,7 +427,6 @@ function daemonRestart(): void {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const [command, ...rest] = argv;
-
   switch (command as CommandName) {
     case "init":
       cmdInit();
@@ -451,14 +436,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const json = rest.includes("--json");
       cmdStatus(json);
       break;
-    }
 
     case "query": {
       const json = rest.includes("--json");
       const queryText = rest.filter((a) => !a.startsWith("--")).join(" ");
       await cmdQuery(queryText, json);
       break;
-    }
 
     case "doctor":
       cmdDoctor();
@@ -485,7 +468,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           process.exit(1);
       }
       break;
-    }
 
     case "tree": {
       const subAction = rest[0];
@@ -495,14 +477,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         console.log("Usage: engram tree <generate|watch|validate>");
       }
       break;
-    }
 
     case "onboard": {
       const dir = rest[0] ?? ".";
       const json = rest.includes("--json");
       cmdOnboard(dir, json);
       break;
-    }
 
     case "curate": {
       const targetPath = rest[0];
@@ -513,33 +493,29 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
       await cmdCurate(targetPath, json);
       break;
-    }
 
     case "review": {
       const action = rest[0] ?? "list";
       cmdReview(action, rest.slice(1));
       break;
-    }
 
     case "sync": {
       const action = rest[0] ?? "run";
       const json = rest.includes("--json");
       cmdSync(action, rest.slice(1), json);
       break;
-    }
 
     case "dedup": {
       const json = rest.includes("--json");
       cmdDedup(json);
       break;
-    }
 
     default:
       console.log(`
 engram — Engram memory CLI
 
 Usage:
-  enram init                  Create config file
+  engram init                  Create config file
   engram status [--json]       Show server status
   engram query <text> [--json] Query memories
   engram doctor                Run diagnostics
@@ -570,3 +546,4 @@ if (
     process.exit(1);
   });
 }
+
