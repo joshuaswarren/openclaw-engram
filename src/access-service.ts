@@ -1851,9 +1851,9 @@ export class EngramAccessService {
   async memoryQuestions(namespace?: string): Promise<{ questions: string[]; count: number }> {
     const storage = await this.orchestrator.getStorage(namespace);
     const memories = await storage.readAllMemories();
-    const questions = memories.filter((m) => m.category === "question");
+    const questions = memories.filter((m) => m.frontmatter.category === "question");
     return {
-      questions: questions.map((q) => `[${q.id}] ${(q.content ?? "").slice(0, 300)}`),
+      questions: questions.map((q) => `[${q.frontmatter.id}] ${(q.content ?? "").slice(0, 300)}`),
       count: questions.length,
     };
   }
@@ -1866,12 +1866,12 @@ export class EngramAccessService {
   }
 
   async intentDebug(namespace?: string): Promise<unknown> {
-    const snapshot = await this.orchestrator.getLastIntentSnapshot();
+    const snapshot = await this.orchestrator.getLastIntentSnapshot(namespace);
     return snapshot ?? { message: "No intent debug snapshot available" };
   }
 
   async qmdDebug(namespace?: string): Promise<unknown> {
-    const snapshot = await this.orchestrator.getLastQmdRecallSnapshot({ namespace });
+    const snapshot = await this.orchestrator.getLastQmdRecallSnapshot(namespace);
     return snapshot ?? { message: "No QMD debug snapshot available" };
   }
 
@@ -1898,15 +1898,13 @@ export class EngramAccessService {
     namespace?: string;
     principal?: string;
   }): Promise<unknown> {
-    const ok = await this.orchestrator.appendMemoryActionEvent({
-      action: "promote",
-      outcome: "success",
-      memoryId: request.memoryId,
-      namespace: request.namespace,
-      reason: "Promoted via standalone MCP",
-      actor: request.principal ?? "standalone",
+    const storage = await this.orchestrator.getStorage(request.namespace);
+    // Update frontmatter to active status (promote from pending/draft)
+    await storage.updateMemoryFrontmatter(request.memoryId, {
+      lifecycleState: "active",
+      updated: new Date().toISOString(),
     });
-    return { promoted: ok, memoryId: request.memoryId };
+    return { promoted: true, memoryId: request.memoryId };
   }
 
   async contextCheckpoint(request: {
