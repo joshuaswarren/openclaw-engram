@@ -52,6 +52,14 @@ import {
   getAuditLog,
   getManifestPath,
 } from "@engram/core";
+import {
+  runBenchSuite,
+  runExplain,
+  loadBaseline,
+  saveBaseline,
+  checkRegression,
+  type BenchConfig,
+} from "@engram/bench";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,7 +77,8 @@ type CommandName =
   | "sync"
   | "dedup"
   | "connectors"
-  | "space";
+  | "space"
+  | "benchmark";
 
 type DaemonAction = "start" | "stop" | "restart";
 type ReviewAction = "approve" | "dismiss" | "flag";
@@ -199,7 +208,7 @@ function cmdStatus(json: boolean): void {
   }
 }
 
-async function cmdQuery(queryText: string, json: boolean): Promise<void> {
+async function cmdQuery(queryText: string, json: boolean, explain: boolean): Promise<void> {
   if (!queryText) {
     console.error("Usage: engram query <text>");
     process.exit(1);
@@ -214,6 +223,21 @@ async function cmdQuery(queryText: string, json: boolean): Promise<void> {
   const config = parseConfig(engramCfg);
   const orchestrator = new Orchestrator(config);
   const service = new EngramAccessService(orchestrator);
+
+  if (explain) {
+    const result = await runExplain(service, queryText);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Query: ${result.query}`);
+      console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
+      console.log(`Total duration: ${result.totalDurationMs}ms`);
+      for (const t of result.tierResults) {
+        console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+      }
+    }
+    return;
+  }
 
   const result = await service.recall({ query: queryText, mode: "auto" });
   if (json) {
@@ -607,6 +631,90 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
   }
 }
 
+// ── M7 benchmark command ───────────────────────────────────────────────────────
+
+async function cmdBenchmark(action: string, rest: string[], json: boolean): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const engramCfg = raw.engram ?? raw;
+  const config = parseConfig(engramCfg);
+  const orchestrator = new Orchestrator(config);
+  const service = new EngramAccessService(orchestrator);
+
+  const benchConfig: BenchConfig = {
+    queries: rest.filter((a) => !a.startsWith("--")).length > 0
+      ? rest.filter((a) => !a.startsWith("--"))
+      : undefined,
+    explain: rest.includes("--explain"),
+    baselinePath: rest.find((a) => a.startsWith("--baseline="))?.slice("--baseline=".length),
+    reportPath: rest.find((a) => a.startsWith("--report="))?.slice("--report=".length),
+  };
+
+  if (action === "run") {
+    const suite = await runBenchSuite(service, benchConfig);
+    if (json) {
+      console.log(JSON.stringify(suite, null, 2));
+    } else {
+      console.log(`Benchmark suite completed in ${suite.totalDurationMs}ms`);
+      for (const r of suite.results) {
+        const tiers = r.tiersUsed.join(" → ");
+        console.log(`  ${r.query}: ${r.latencyMs}ms (${r.resultsCount} results) [${tiers}]`);
+      }
+      if (suite.regressions.length > 0) {
+        console.log("\nRegressions:");
+        for (const reg of suite.regressions) {
+          const icon = reg.passed ? "✓" : "✗";
+          console.log(`  ${icon} ${reg.metric}: ${reg.currentValue}ms (baseline: ${reg.baselineValue}ms, tolerance: ${reg.tolerance}%)`);
+        }
+      }
+    }
+  } else if (action === "check") {
+    const baselinePath = benchConfig.baselinePath;
+    const baseline = loadBaseline(baselinePath);
+    if (!baseline) {
+      console.log("No baseline found. Run `engram benchmark run` first.");
+      return;
+    }
+    const suite = await runBenchSuite(service, benchConfig);
+    const metrics: Record<string, number> = {};
+    for (const r of suite.results) {
+      metrics[r.query] = r.latencyMs;
+    }
+    const tolerance = benchConfig.regressionTolerance ?? 10;
+    const result = checkRegression(metrics, baseline, tolerance);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      if (result.passed) {
+        console.log("No regressions detected.");
+      } else {
+        console.log("Regressions detected:");
+        for (const reg of result.regressions) {
+          if (!reg.passed) {
+            console.log(`  ✗ ${reg.metric}: ${reg.currentValue}ms vs ${reg.baselineValue}ms baseline (+${(((reg.currentValue - reg.baselineValue) / reg.baselineValue) * 100).toFixed(1)}%)`);
+          }
+        }
+      }
+    }
+    if (!result.passed) {
+      process.exit(1);
+    }
+  } else if (action === "report") {
+    const reportPath = benchConfig.reportPath;
+    const suite = await runBenchSuite(service, { ...benchConfig, reportPath });
+    console.log(`Report saved to ${reportPath ?? "benchmarks/report.json"}`);
+    if (json) {
+      console.log(JSON.stringify(suite.report, null, 2));
+    }
+  } else {
+    console.log("Usage: engram benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]");
+    process.exit(1);
+  }
+}
+
 // ── Daemon management ────────────────────────────────────────────────────────
 
 function isDaemonRunning(): boolean {
@@ -710,8 +818,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     case "query": {
       const json = rest.includes("--json");
+      const explain = rest.includes("--explain");
       const queryText = rest.filter((a) => !a.startsWith("--")).join(" ");
-      await cmdQuery(queryText, json);
+      await cmdQuery(queryText, json, explain);
       break;
     }
 
@@ -803,6 +912,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       break;
     }
 
+    case "benchmark": {
+      const action = rest[0] ?? "run";
+      const json = rest.includes("--json");
+      await cmdBenchmark(action, rest.slice(1), json);
+      break;
+    }
+
     default:
       console.log(`
 engram — Engram memory CLI
@@ -810,7 +926,8 @@ engram — Engram memory CLI
 Usage:
   engram init                  Create config file
   engram status [--json]       Show server status
-  engram query <text> [--json] Query memories
+  engram query <text> [--json] [--explain] Query memories (use --explain for tier breakdown)
+
   engram doctor                Run diagnostics
   engram config                Show current config
   engram daemon <start|stop|restart>  Manage background server
@@ -823,6 +940,7 @@ Usage:
   engram connectors <list|install|remove|doctor> [id]  Manage connectors
   engram space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
+  engram benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
 
 Options:
   --json    Output in JSON format

@@ -269,3 +269,29 @@ export {
 // ---------------------------------------------------------------------------
 
 export type { AccessConfig, AccessHealthResponse, AccessRecallResponse } from "../../../src/types.js";
+
+// ---------------------------------------------------------------------------
+// Bench (M7) — re-export from @engram/bench
+// ---------------------------------------------------------------------------
+
+export type {
+  BenchTier,
+  TierDetail,
+  ExplainResult,
+  RecallMetrics,
+  BenchmarkReport,
+  BenchmarkSuiteResult,
+  SavedBaseline,
+  RegressionGateResult,
+  RegressionDetail,
+  BenchConfig,
+} from "../../bench/src/types.js";
+
+export {
+  loadBaseline,
+  saveBaseline,
+  runExplain,
+  runBenchSuite,
+  checkRegression,
+  generateReport,
+} from "../../bench/src/benchmark.js";
