@@ -40,7 +40,7 @@ engram status                    # Verify it's running
 engram query "hello" --explain   # Test with tier breakdown
 ```
 
-> **Note:** The `engram` binary is defined in `packages/cli/package.json`. Running `npm link` from `packages/cli/` (not the repo root) makes the CLI available globally — the root package only exposes `engram-access`. The `daemon start` command uses a monorepo-relative path to launch the server, so it requires building from source.
+> **Note:** The `engram` binary is defined in `packages/cli/package.json`. Running `npm link` from `packages/cli/` (not the repo root) makes the CLI available globally — the root package only exposes `engram-access`. The CLI entry point is TypeScript (`bin/engram.ts`), so you need `tsx` installed globally (`npm install -g tsx`) for the `engram` command to work. Alternatively, run commands directly with `npx tsx packages/cli/bin/engram.ts <command>`.
 
 The standalone path provides all the same memory management capabilities as the OpenClaw plugin. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
 

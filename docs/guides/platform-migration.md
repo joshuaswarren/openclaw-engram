@@ -249,10 +249,14 @@ If the upgrade causes issues, pin to the previous version:
 openclaw plugins install @joshuaswarren/openclaw-engram@<previous-version> --pin
 ```
 
-For standalone installations:
+For standalone installations (note: the root npm package exposes `engram-access`, not the full CLI):
 
 ```bash
-npm install -g @joshuaswarren/openclaw-engram@<previous-version>
+# Full CLI rollback requires building from source
+git clone https://github.com/joshuaswarren/openclaw-engram.git
+cd openclaw-engram && git checkout <previous-version-tag>
+npm ci && npm run build
+cd packages/cli && npm link
 ```
 
 Memory storage is never modified by an upgrade, so rollback is safe and does not lose data.
