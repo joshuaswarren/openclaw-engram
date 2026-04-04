@@ -47,20 +47,15 @@ Restart Claude Code. Verify with: `What MCP tools do you have?`
 
 ## Codex CLI
 
-Add to `~/.codex/config.json`:
+Add to `~/.codex/config.toml`:
 
-```jsonc
-{
-  "mcpServers": {
-    "engram": {
-      "url": "http://localhost:4318/mcp",
-      "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.engram]
+url = "http://127.0.0.1:4318/mcp"
+bearer_token_env_var = "ENGRAM_AUTH_TOKEN"
 ```
+
+See the [full Codex CLI guide](../guides/codex-cli.md) for session-start hooks and automatic recall.
 
 **Capabilities:** observe, recall, store, batch
 
@@ -244,16 +239,18 @@ Any tool that supports the [Model Context Protocol](https://modelcontextprotocol
 
 | Tool | Description |
 |------|-------------|
-| `engram_recall` | Query memories with semantic search |
-| `engram_observe` | Store conversation context |
-| `engram_store` | Store a memory directly |
-| `engram_search` | Search memories by query |
-| `engram_entities` | List or query entity graph |
-| `engram_entity_get` | Get details for a specific entity |
-| `engram_memories` | List memories with filtering |
-| `engram_memory_get` | Get a specific memory by ID |
-| `engram_lcm_search` | Search using Lossless Context Management |
-| `engram_suggest` | Submit a memory suggestion for review |
+| `engram.recall` | Query memories with semantic search |
+| `engram.recall_explain` | Return the last recall snapshot for a session |
+| `engram.observe` | Store conversation context |
+| `engram.memory_store` | Store a memory directly |
+| `engram.memory_get` | Get a specific memory by ID |
+| `engram.memory_timeline` | Browse memory timeline |
+| `engram.entity_get` | Get details for a specific entity |
+| `engram.lcm_search` | Search using Lossless Context Management |
+| `engram.suggestion_submit` | Submit a memory suggestion for review |
+| `engram.review_queue_list` | List items in the review queue |
+| `engram.day_summary` | Generate end-of-day summary |
+| `engram.memory_governance_run` | Run memory governance pass |
 
 ---
 
@@ -296,7 +293,7 @@ Token mismatch. Verify `ENGRAM_AUTH_TOKEN` matches between server and client con
 ### MCP tools not showing up
 
 1. Restart your tool after config changes
-2. Check the MCP endpoint responds: `curl http://localhost:4318/mcp`
+2. Check the MCP endpoint responds: `curl -H "Authorization: Bearer $ENGRAM_AUTH_TOKEN" -X POST http://localhost:4318/mcp -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'`
 3. Some tools require explicit MCP enable in settings
 
 ### Slow recall
