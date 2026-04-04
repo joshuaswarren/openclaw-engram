@@ -27,7 +27,8 @@ type CommandName =
   | "query"
   | "doctor"
   | "config"
-  | "daemon";
+  | "daemon"
+  | "tree";
 
 type DaemonAction = "start" | "stop" | "restart";
 

@@ -128,6 +128,18 @@ export { bootstrap } from "../../../src/bootstrap.js";
 export { initLogger, log } from "../../../src/logger.js";
 
 // ---------------------------------------------------------------------------
+// Projection (workspace tree)
+// ---------------------------------------------------------------------------
+
+export {
+  generateContextTree,
+  type TreeNode,
+  type ProvenanceEntry,
+  type GenerateOptions,
+  type GenerateResult,
+} from "./projection/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
