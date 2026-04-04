@@ -313,7 +313,7 @@ function cmdConfig(): void {
   console.log(`Config: ${configPath}`);
   const rawConfig = fs.readFileSync(configPath, "utf8");
   const redacted = rawConfig.replace(
-    /("(?:openaiApiKey|localLlmApiKey|authToken|apiKey)"\s*:\s*")([^"]*)(")/g,
+    /("(?:openaiApiKey|localLlmApiKey|authToken|apiKey|remoteSearchApiKey|meilisearchApiKey|opikApiKey)"\s*:\s*")([^"]*)(")/g,
     '$1[REDACTED]$3',
   );
   console.log(redacted);
