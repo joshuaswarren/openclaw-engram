@@ -469,6 +469,8 @@ export async function doctorConnector(connectorId: string): Promise<DoctorResult
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getConnectorsDir(): string {
-  const homeDir = process.env.HOME ?? "~";
-  return path.join(homeDir, ".config", "engram", REGISTRY_DIR_NAME, "connectors");
+  const configDir = process.env.XDG_CONFIG_HOME
+    ? path.join(process.env.XDG_CONFIG_HOME, "engram")
+    : path.join(process.env.HOME ?? "~", ".config", "engram");
+  return path.join(configDir, REGISTRY_DIR_NAME, "connectors");
 }
