@@ -251,6 +251,17 @@ Any tool that supports the [Model Context Protocol](https://modelcontextprotocol
 | `engram.review_queue_list` | List items in the review queue |
 | `engram.day_summary` | Generate end-of-day summary |
 | `engram.memory_governance_run` | Run memory governance pass |
+| `engram.memory_search` | Direct semantic search over memory files |
+| `engram.memory_profile` | Read user behavioral profile |
+| `engram.memory_entities_list` | List all tracked entities |
+| `engram.memory_questions` | List open questions from conversations |
+| `engram.memory_last_recall` | Debug: last recall snapshot |
+| `engram.memory_intent_debug` | Debug: intent classification |
+| `engram.memory_qmd_debug` | Debug: QMD search index |
+| `engram.memory_graph_explain` | Debug: entity graph recall explanation |
+| `engram.memory_feedback` | Record relevance feedback for a memory |
+| `engram.memory_promote` | Promote a memory's lifecycle state |
+| `engram.context_checkpoint` | Save session context checkpoint to disk |
 
 ---
 

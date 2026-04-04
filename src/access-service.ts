@@ -1798,6 +1798,133 @@ export class EngramAccessService {
     };
   }
 
+  // ── Parity tools (match OpenClaw plugin feature set) ──────────────────
+
+  async memorySearch(request: {
+    query: string;
+    namespace?: string;
+    maxResults?: number;
+    collection?: string;
+  }): Promise<{ query: string; results: Array<{ path: string; score: number; snippet: string }>; count: number }> {
+    const { query, namespace, maxResults, collection } = request;
+    const namespaceFilter = namespace?.trim() || undefined;
+
+    const results = collection === "global"
+      ? (await this.orchestrator.qmd.searchGlobal(query, maxResults)).filter((r) =>
+          namespaceFilter
+            ? r.path.includes(`/namespaces/${namespaceFilter}/`) ||
+              (!r.path.includes("/namespaces/") && namespaceFilter === this.orchestrator.config.defaultNamespace)
+            : true,
+        )
+      : await this.orchestrator.searchAcrossNamespaces({
+          query,
+          namespaces: namespaceFilter ? [namespaceFilter] : undefined,
+          maxResults,
+          mode: "search",
+        });
+
+    return {
+      query,
+      results: results.map((r) => ({
+        path: r.path,
+        score: r.score,
+        snippet: (r.snippet ?? "").slice(0, 800),
+      })),
+      count: results.length,
+    };
+  }
+
+  async memoryProfile(namespace?: string): Promise<Record<string, unknown>> {
+    const storage = await this.orchestrator.getStorage(namespace);
+    const profile = await storage.readProfile();
+    return {
+      profile: profile || "No profile built yet. The profile builds automatically through conversations.",
+    };
+  }
+
+  async memoryEntitiesList(namespace?: string): Promise<{ entities: string[]; count: number }> {
+    const storage = await this.orchestrator.getStorage(namespace);
+    const entities = await storage.readEntities();
+    return { entities, count: entities.length };
+  }
+
+  async memoryQuestions(namespace?: string): Promise<{ questions: string[]; count: number }> {
+    const storage = await this.orchestrator.getStorage(namespace);
+    const memories = await storage.readAllMemories();
+    const questions = memories.filter((m) => m.category === "question");
+    return {
+      questions: questions.map((q) => `[${q.id}] ${(q.content ?? "").slice(0, 300)}`),
+      count: questions.length,
+    };
+  }
+
+  async lastRecallSnapshot(sessionKey?: string): Promise<unknown> {
+    const snapshot = sessionKey
+      ? this.orchestrator.lastRecall.get(sessionKey)
+      : this.orchestrator.lastRecall.getMostRecent();
+    return snapshot ?? { message: "No recall snapshot available" };
+  }
+
+  async intentDebug(namespace?: string): Promise<unknown> {
+    const snapshot = await this.orchestrator.getLastIntentSnapshot();
+    return snapshot ?? { message: "No intent debug snapshot available" };
+  }
+
+  async qmdDebug(namespace?: string): Promise<unknown> {
+    const snapshot = await this.orchestrator.getLastQmdRecallSnapshot({ namespace });
+    return snapshot ?? { message: "No QMD debug snapshot available" };
+  }
+
+  async graphExplainLastRecall(namespace?: string): Promise<unknown> {
+    const explanation = await this.orchestrator.explainLastGraphRecall({ namespace });
+    return { explanation };
+  }
+
+  async memoryFeedback(request: {
+    memoryId: string;
+    vote: "up" | "down";
+    note?: string;
+  }): Promise<{ recorded: boolean }> {
+    await this.orchestrator.recordMemoryFeedback(
+      request.memoryId,
+      request.vote,
+      request.note,
+    );
+    return { recorded: true };
+  }
+
+  async memoryPromote(request: {
+    memoryId: string;
+    namespace?: string;
+    principal?: string;
+  }): Promise<unknown> {
+    const ok = await this.orchestrator.appendMemoryActionEvent({
+      action: "promote",
+      outcome: "success",
+      memoryId: request.memoryId,
+      namespace: request.namespace,
+      reason: "Promoted via standalone MCP",
+      actor: request.principal ?? "standalone",
+    });
+    return { promoted: ok, memoryId: request.memoryId };
+  }
+
+  async contextCheckpoint(request: {
+    sessionKey: string;
+    context: string;
+    namespace?: string;
+  }): Promise<{ saved: boolean }> {
+    const memoryDir = this.orchestrator.config.memoryDir;
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const checkpointDir = join(memoryDir, "checkpoints", request.sessionKey);
+    await mkdir(checkpointDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const filePath = join(checkpointDir, `checkpoint-${ts}.md`);
+    await writeFile(filePath, request.context, "utf-8");
+    return { saved: true };
+  }
+
   async lcmStatus(): Promise<EngramAccessLcmStatusResponse> {
     if (!this.orchestrator.lcmEngine || !this.orchestrator.lcmEngine.enabled) {
       return {
