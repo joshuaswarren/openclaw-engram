@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { StorageManager } from "../../../src/storage.js";
-import { getCategoryDir } from "../utils/category-dir.js";
+import { getCategoryDir, ALL_CATEGORY_KEYS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,17 +91,7 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
   fs.mkdirSync(outputDir, { recursive: true });
 
   // Process each category
-  const allCategories = filterCategories ?? [
-    "fact",
-    "preference",
-    "correction",
-    "decision",
-    "moment",
-    "commitment",
-    "principle",
-    "rule",
-    "skill",
-  ];
+  const allCategories = filterCategories ?? ALL_CATEGORY_KEYS;
 
   for (const category of allCategories) {
     const categoryDir = getCategoryDir(memoryDir, category);

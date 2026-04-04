@@ -7,7 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getCategoryDir } from "../utils/category-dir.js";
+import { getCategoryDir, ALL_CATEGORY_KEYS } from "../utils/category-dir.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
   }
 
   // Scan all categories for low-confidence items
-  const categories = ["facts", "corrections", "preferences", "decisions"];
+  const categories = ALL_CATEGORY_DIRS;
   for (const category of categories) {
     if (items.length >= limit) break;
 
