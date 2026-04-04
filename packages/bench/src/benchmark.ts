@@ -33,7 +33,6 @@ const DEFAULT_REPORT_PATH = path.join(
   "benchmarks",
   "report.json",
 );
-const HIGH_CONF_THRESHOLD = 0.95;
 const BASELINE_VERSION = 1;
 
 const DEFAULT_QUERIES = [
@@ -49,20 +48,20 @@ const DEFAULT_QUERIES = [
 
 const DEFAULT_TOLERANCE = 10; // 10 % regression tolerance
 
-// ── Types for recall results ───────────────────────────────────────────────────
+// ── Shape of the access-service recall response (subset we use) ─────────────────
 
-interface RecallMemory {
+interface MemorySummary {
   id: string;
-  content: string;
-  category?: string;
-  confidence?: number;
-  frontmatter?: Record<string, unknown>;
+  path: string;
+  category: string;
+  preview: string;
+  tags: string[];
 }
 
 interface RecallResponse {
-  memories?: RecallMemory[];
-  debug?: unknown;
-  [key: string]: unknown;
+  results: MemorySummary[];
+  count: number;
+  latencyMs?: number;
 }
 
 // ── High-resolution timer ──────────────────────────────────────────────────────
@@ -109,86 +108,77 @@ async function recallWithTiers(
   const tiers: BenchTier[] = [];
   const tierDetails: TierDetail[] = [];
 
-  // Tier 0 — exact match
+  // Tier 0 — exact match (standard recall)
   const t0 = hrTimeMs();
-  const r0 = (await service.recall({ query, mode: "auto" })) as RecallResponse;
+  const r0 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
   const d0 = hrTimeMs() - t0;
-  if (r0.memories && r0.memories.length > 0) {
+  if (r0.results && r0.results.length > 0) {
     tiers.push("exact_match");
     tierDetails.push({
       tier: "exact_match",
       latencyMs: d0,
-      resultsCount: r0.memories.length,
+      resultsCount: r0.results.length,
     });
     return { tiers, tierDetails };
   }
 
   // Tier 1 — keyword / category overlap
   const t1 = hrTimeMs();
-  const r1 = (await service.recall({ query, mode: "auto" })) as RecallResponse;
+  const r1 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
   const d1 = hrTimeMs() - t1;
-  const hasKeywordMatch = (r1.memories ?? []).some((m) =>
-    query
-      .toLowerCase()
-      .split(/\s+/)
-      .some(
-        (kw) =>
-          kw.length > 2 &&
-          m.content.toLowerCase().includes(kw.toLowerCase()),
-      ),
+  const queryWords = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  const hasKeywordMatch = (r1.results ?? []).some((m) =>
+    queryWords.some((kw) => m.preview.toLowerCase().includes(kw)),
   );
   if (hasKeywordMatch) {
     tiers.push("category_match");
     tierDetails.push({
       tier: "category_match",
       latencyMs: d1,
-      resultsCount: r1.memories!.length,
+      resultsCount: r1.results.length,
     });
     return { tiers, tierDetails };
   }
 
-  // Tier 2 — high-confidence facts
+  // Tier 2 — high-confidence (category-based heuristic — memories with tags)
   const t2 = hrTimeMs();
-  const r2 = (await service.recall({ query, mode: "auto" })) as RecallResponse;
+  const r2 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
   const d2 = hrTimeMs() - t2;
-  const highConf = (r2.memories ?? []).filter((m) => {
-    const conf = m.confidence ?? m.frontmatter?.confidence;
-    return conf != null && parseFloat(String(conf)) >= HIGH_CONF_THRESHOLD;
-  });
-  if (highConf.length > 0) {
+  const tagged = (r2.results ?? []).filter((m) => m.tags && m.tags.length > 0);
+  if (tagged.length > 0) {
     tiers.push("high_confidence");
     tierDetails.push({
       tier: "high_confidence",
       latencyMs: d2,
-      resultsCount: highConf.length,
+      resultsCount: tagged.length,
     });
     return { tiers, tierDetails };
   }
 
   // Tier 3 — semantic search (any results from standard recall)
   const t3 = hrTimeMs();
-  const r3 = (await service.recall({ query, mode: "auto" })) as RecallResponse;
+  const r3 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
   const d3 = hrTimeMs() - t3;
-  if (r3.memories && r3.memories.length > 0) {
+  if (r3.results && r3.results.length > 0) {
     tiers.push("semantic_search");
     tierDetails.push({
       tier: "semantic_search",
       latencyMs: d3,
-      resultsCount: r3.memories.length,
+      resultsCount: r3.results.length,
     });
     return { tiers, tierDetails };
   }
 
   // Tier 4 — full search fallback
   const t4 = hrTimeMs();
-  const r4 = (await service.recall({ query, mode: "full" })) as RecallResponse;
+  const r4 = (await service.recall({ query, mode: "full" })) as unknown as RecallResponse;
   const d4 = hrTimeMs() - t4;
-  if (r4.memories && r4.memories.length > 0) {
+  if (r4.results && r4.results.length > 0) {
     tiers.push("full_search");
     tierDetails.push({
       tier: "full_search",
       latencyMs: d4,
-      resultsCount: r4.memories.length,
+      resultsCount: r4.results.length,
     });
     return { tiers, tierDetails };
   }
@@ -263,8 +253,14 @@ export async function runBenchSuite(
         query: ex.query,
         latencyMs: ex.durationMs,
         tiersUsed: ex.tiersUsed,
-        throughput: ex.totalDurationMs > 0 ? 1 / (ex.totalDurationMs / 1_000) : 0,
-        resultsCount: ex.tierResults.reduce((sum, t) => sum + t.resultsCount, 0),
+        throughput:
+          ex.totalDurationMs > 0
+            ? 1 / (ex.totalDurationMs / 1_000)
+            : 0,
+        resultsCount: ex.tierResults.reduce(
+          (sum, t) => sum + t.resultsCount,
+          0,
+        ),
         totalDurationMs: ex.totalDurationMs,
         tierDetails: ex.tierResults,
       });
@@ -283,7 +279,11 @@ export async function runBenchSuite(
 
   const report = generateReport(results, reportPath);
   const baseline = loadBaseline(baselinePath);
-  const regressionResult = checkRegression(metrics, baseline, regressionTolerance);
+  const regressionResult = checkRegression(
+    metrics,
+    baseline,
+    regressionTolerance,
+  );
 
   // Auto-save baseline if none exists
   if (!baseline) {
@@ -350,7 +350,10 @@ export function generateReport(
       throughput: r.throughput,
       tierDetails: r.tierDetails,
     })),
-    totalDurationMs: results.reduce((sum, r) => sum + r.totalDurationMs, 0),
+    totalDurationMs: results.reduce(
+      (sum, r) => sum + r.totalDurationMs,
+      0,
+    ),
   };
 
   if (reportPath) {

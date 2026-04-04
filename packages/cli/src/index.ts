@@ -697,8 +697,10 @@ async function cmdBenchmark(action: string, rest: string[], json: boolean): Prom
             console.log(`  ✗ ${reg.metric}: ${reg.currentValue}ms vs ${reg.baselineValue}ms baseline (+${(((reg.currentValue - reg.baselineValue) / reg.baselineValue) * 100).toFixed(1)}%)`);
           }
         }
-        process.exit(1);
       }
+    }
+    if (!result.passed) {
+      process.exit(1);
     }
   } else if (action === "report") {
     const reportPath = benchConfig.reportPath;
