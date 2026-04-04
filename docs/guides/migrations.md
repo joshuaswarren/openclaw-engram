@@ -111,7 +111,7 @@ The standalone `engram` CLI provides these commands:
 | `engram doctor` | Run diagnostics (Node version, config, API key, memory dir, daemon) |
 | `engram config` | Show current configuration |
 | `engram daemon start\|stop\|restart` | Manage background server |
-| `engram tree generate\|watch\|validate` | Context tree generation |
+| `engram tree generate\|watch\|validate` | Context tree generation *(stub — not yet implemented)* |
 | `engram onboard [dir]` | Onboard project directory |
 | `engram curate <path>` | Curate files into memory |
 | `engram review list\|approve\|dismiss\|flag` | Review inbox management |
