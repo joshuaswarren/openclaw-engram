@@ -66,11 +66,13 @@ export interface EngramAccessObserveResponse {
 }
 
 export interface EngramAccessWriteResponse {
-  id?: string;
+  memoryId?: string;
   status: string;
   dryRun?: boolean;
   idempotencyReplay?: boolean;
   path?: string;
+  duplicateOf?: string;
+  idempotencyKey?: string;
 }
 
 export interface EngramAccessEntityListResponse {
