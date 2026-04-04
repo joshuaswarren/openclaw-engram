@@ -1,6 +1,6 @@
 {
   "name": "@joshuaswarren/openclaw-engram",
-  "version": "9.1.33",
+  "version": "9.1.34",
   "type": "module",
   "description": "Local-first memory plugin for OpenClaw. LLM-powered extraction, markdown storage, hybrid search via QMD.",
   "keywords": [
