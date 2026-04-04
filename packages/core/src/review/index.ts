@@ -96,7 +96,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
         id: fm.id as string,
         content: body,
         category: (fm.category as string) ?? "suggestion",
-        confidence: parseFloat(fm.confidence as string) ?? 0.5,
+        confidence: Number(parseFloat(fm.confidence as string)) || 0.5,
         confidenceTier: (fm.confidenceTier as string) ?? "low",
         source: (fm.source as string) ?? "unknown",
         filePath,
@@ -120,7 +120,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
         id: fm.id as string,
         content: body,
         category: (fm.category as string) ?? "review",
-        confidence: parseFloat(fm.confidence as string) ?? 0.5,
+        confidence: Number(parseFloat(fm.confidence as string)) || 0.5,
         confidenceTier: (fm.confidenceTier as string) ?? "low",
         source: (fm.source as string) ?? "unknown",
         filePath,
@@ -146,7 +146,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
       const body = extractBody(content);
       if (!fm?.id) return;
 
-      const confidence = parseFloat(fm.confidence as string) ?? 1;
+      const confidence = Number(parseFloat(fm.confidence as string)) || 1;
       if (confidence >= confidenceThreshold) return;
 
       // Skip if already in items
@@ -267,11 +267,6 @@ function flagItem(memoryDir: string, itemId: string): ReviewResult {
     if (found) {
       // Add flagged marker to frontmatter
       const content = fs.readFileSync(found, "utf8");
-      const flagged = content.replace(
-        /^---\n/,
-        "---\nflagged: true\nflaggedAt: " + new Date().toISOString() + "\n",
-      );
-      // Replace the first --- incorrectly, fix approach
       const fixed = content.replace(
         /^(---\n)/,
         `---\nflagged: true\nflaggedAt: ${new Date().toISOString()}\n`,

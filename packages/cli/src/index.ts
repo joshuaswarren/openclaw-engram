@@ -298,7 +298,8 @@ function cmdReview(action: string, rest: string[]): void {
 }
 
 function cmdSync(action: string, rest: string[], json: boolean): void {
-  const sourceDir = rest[0] ?? ".";
+  const sourceIdx = rest.indexOf("--source");
+  const sourceDir = sourceIdx >= 0 && rest[sourceIdx + 1] ? rest[sourceIdx + 1] : ".";
   const memoryDir = resolveMemoryDir();
 
   if (action === "run") {
