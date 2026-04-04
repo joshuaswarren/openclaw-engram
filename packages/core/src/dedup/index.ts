@@ -100,7 +100,7 @@ export function findDuplicates(options: DedupOptions): DedupResult {
           left: memories[i],
           right: memories[j],
           similarity: sim,
-          action: sim >= 0.98 ? "merge" : sim >= 0.9 ? "keep_left" : "keep_left",
+          action: sim >= 0.98 ? "merge" : sim >= 0.9 ? "keep_right" : "keep_left",
         });
       }
     }
@@ -169,7 +169,7 @@ function computeSimilarity(a: string, b: string): number {
 function normalize(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, "")
+    .replace(/[^\w\s']/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

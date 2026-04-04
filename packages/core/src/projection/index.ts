@@ -222,10 +222,22 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const CATEGORY_DIR_MAP: Record<string, string> = {
+  correction: "corrections",
+  question: "questions",
+  preference: "preferences",
+  decision: "decisions",
+  moment: "moments",
+  commitment: "commitments",
+  principle: "principles",
+  rule: "rules",
+  skill: "skills",
+  relationship: "relationships",
+};
+
 function getCategoryDir(memoryDir: string, category: string): string {
-  if (category === "correction") return path.join(memoryDir, "corrections");
-  if (category === "question") return path.join(memoryDir, "questions");
-  return path.join(memoryDir, "facts");
+  const dir = CATEGORY_DIR_MAP[category];
+  return dir ? path.join(memoryDir, dir) : path.join(memoryDir, "facts");
 }
 
 

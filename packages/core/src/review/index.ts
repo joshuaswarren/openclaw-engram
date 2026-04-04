@@ -96,7 +96,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
         id: fm.id as string,
         content: body,
         category: (fm.category as string) ?? "suggestion",
-        confidence: parseFloat(fm.confidence as string) ?? 0.5,
+        confidence: parseConfidence(fm.confidence, 0.5),
         confidenceTier: (fm.confidenceTier as string) ?? "low",
         source: (fm.source as string) ?? "unknown",
         filePath,
@@ -120,7 +120,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
         id: fm.id as string,
         content: body,
         category: (fm.category as string) ?? "review",
-        confidence: parseFloat(fm.confidence as string) ?? 0.5,
+        confidence: parseConfidence(fm.confidence, 0.5),
         confidenceTier: (fm.confidenceTier as string) ?? "low",
         source: (fm.source as string) ?? "unknown",
         filePath,
@@ -146,7 +146,7 @@ export function listReviewItems(options: ReviewOptions): ReviewListResult {
       const body = extractBody(content);
       if (!fm?.id) return;
 
-      const confidence = parseFloat(fm.confidence as string) ?? 1;
+      const confidence = parseConfidence(fm.confidence, 1);
       if (confidence >= confidenceThreshold) return;
 
       // Skip if already in items
@@ -267,11 +267,6 @@ function flagItem(memoryDir: string, itemId: string): ReviewResult {
     if (found) {
       // Add flagged marker to frontmatter
       const content = fs.readFileSync(found, "utf8");
-      const flagged = content.replace(
-        /^---\n/,
-        "---\nflagged: true\nflaggedAt: " + new Date().toISOString() + "\n",
-      );
-      // Replace the first --- incorrectly, fix approach
       const fixed = content.replace(
         /^(---\n)/,
         `---\nflagged: true\nflaggedAt: ${new Date().toISOString()}\n`,
@@ -286,10 +281,22 @@ function flagItem(memoryDir: string, itemId: string): ReviewResult {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const CATEGORY_DIR_MAP: Record<string, string> = {
+  correction: "corrections",
+  question: "questions",
+  preference: "preferences",
+  decision: "decisions",
+  moment: "moments",
+  commitment: "commitments",
+  principle: "principles",
+  rule: "rules",
+  skill: "skills",
+  relationship: "relationships",
+};
+
 function getCategoryDir(memoryDir: string, category: string): string {
-  if (category === "correction") return path.join(memoryDir, "corrections");
-  if (category === "question") return path.join(memoryDir, "questions");
-  return path.join(memoryDir, "facts");
+  const dir = CATEGORY_DIR_MAP[category];
+  return dir ? path.join(memoryDir, dir) : path.join(memoryDir, "facts");
 }
 
 function findFileById(dir: string, id: string): string | null {
@@ -301,6 +308,15 @@ function findFileById(dir: string, id: string): string | null {
     if (fm?.id === id) return filePath;
   }
   return null;
+}
+
+function parseConfidence(value: unknown, fallback: number): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  if (typeof value === "string") {
+    const n = parseFloat(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  return fallback;
 }
 
 function readFileSafe(filePath: string): string | null {

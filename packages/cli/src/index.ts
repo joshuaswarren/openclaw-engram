@@ -23,7 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   parseConfig,
   Orchestrator,
@@ -197,11 +197,13 @@ function cmdStatus(json: boolean): void {
 
   try {
     const port = inferPort();
-    const result = execSync(`curl -sf http://127.0.0.1:${port}/engram/v1/health`, {
-      timeout: 3000,
-      encoding: "utf8",
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(`http://127.0.0.1:${port}/engram/v1/health`, {
+      signal: controller.signal,
     });
-    const health = JSON.parse(result);
+    clearTimeout(timeoutId);
+    const health = await response.json();
     console.log(`Health: ${health.status ?? "ok"}`);
   } catch {
     console.log("Health: unable to reach server");
@@ -222,6 +224,7 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const engramCfg = raw.engram ?? raw;
   const config = parseConfig(engramCfg);
   const orchestrator = new Orchestrator(config);
+  await orchestrator.initialize();
   const service = new EngramAccessService(orchestrator);
 
   if (explain) {
@@ -303,7 +306,12 @@ function cmdConfig(): void {
     return;
   }
   console.log(`Config: ${configPath}`);
-  console.log(fs.readFileSync(configPath, "utf8"));
+  const rawConfig = fs.readFileSync(configPath, "utf8");
+  const redacted = rawConfig.replace(
+    /("(?:openaiApiKey|localLlmApiKey|authToken|apiKey)"\s*:\s*")([^"]*)(")/g,
+    '$1[REDACTED]$3',
+  );
+  console.log(redacted);
 }
 
 // ── M4 commands ──────────────────────────────────────────────────────────────
@@ -355,7 +363,7 @@ function cmdReview(action: string, rest: string[]): void {
       return;
     }
     for (const item of result.items) {
-      console.log(`[${item.reviewReason}] ${item.id.slice(0, 8)}... ${item.content.slice(0, 80)}${item.content.length > 80 ? "..." : ""}`);
+      console.log(`[${item.reviewReason}] ${item.id} ${item.content.slice(0, 80)}${item.content.length > 80 ? "..." : ""}`);
       console.log(`  Confidence: ${item.confidence} | Category: ${item.category}`);
       console.log(`  Source: ${item.source} | Created: ${item.created}`);
     }
@@ -377,6 +385,7 @@ function cmdReview(action: string, rest: string[]): void {
 }
 
 function cmdSync(action: string, rest: string[], json: boolean): void {
+  // Extract --source before positional args so that rest args can override it
   const sourceIdx = rest.indexOf("--source");
   const sourceDir = sourceIdx >= 0 && rest[sourceIdx + 1] ? rest[sourceIdx + 1] : ".";
   const memoryDir = resolveMemoryDir();
