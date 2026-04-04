@@ -50,6 +50,7 @@ import {
   shareSpace,
   promoteSpace,
   getAuditLog,
+  getManifestPath,
 } from "@engram/core";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -91,22 +92,34 @@ function resolveConfigPath(cliPath?: string): string {
 }
 
 function resolveMemoryDir(): string {
-  // Check active space first
-  try {
-    const active = getActiveSpace();
-    if (active?.memoryDir && fs.existsSync(active.memoryDir)) {
-      return active.memoryDir;
+  // Derive config-based memory dir first (always needed as fallback)
+  const configMemoryDir = (() => {
+    const configPath = resolveConfigPath();
+    const raw = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+      : {};
+    const engramCfg = raw.engram ?? raw;
+    return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+  })();
+
+  // Check active space — only if manifest exists (don't bootstrap just to resolve)
+  const manifestPath = getManifestPath();
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const active = getActiveSpace();
+      if (active?.memoryDir) {
+        if (!fs.existsSync(active.memoryDir)) {
+          // Recreate missing directory instead of silently falling back
+          fs.mkdirSync(active.memoryDir, { recursive: true });
+        }
+        return active.memoryDir;
+      }
+    } catch {
+      // Manifest exists but active space not found — fall through to config
     }
-  } catch {
-    // No manifest or no active space — fall through to config
   }
 
-  const configPath = resolveConfigPath();
-  const raw = fs.existsSync(configPath)
-    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
-    : {};
-  const engramCfg = raw.engram ?? raw;
-  return engramCfg.memoryDir ?? path.join(process.env.HOME ?? "~", ".openclaw", "workspace", "memory", "local");
+  return configMemoryDir;
 }
 
 function parseConnectorConfig(args: string[]): Record<string, unknown> {
@@ -480,10 +493,13 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
     }
     const kind = rawKind as "personal" | "project" | "team";
     if (!name) {
-      console.error("Usage: engram space create <name> [personal|project|team]");
+      console.error("Usage: engram space create <name> [personal|project|team] [--parent <id>]");
       process.exit(1);
     }
-    const space = createSpace({ name, kind });
+    // Extract --parent flag for parent-child relationship
+    const parentIdx = rest.indexOf("--parent");
+    const parentSpaceId = parentIdx >= 0 && rest[parentIdx + 1] ? rest[parentIdx + 1] : undefined;
+    const space = createSpace({ name, kind, parentSpaceId });
     if (json) {
       console.log(JSON.stringify(space, null, 2));
     } else {
@@ -790,6 +806,7 @@ Usage:
   engram dedup [--json]             Find duplicate memories
   engram connectors <list|install|remove|doctor> [id]  Manage connectors
   engram space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
+    create accepts --parent <id> to set parent-child relationship
 
 Options:
   --json    Output in JSON format

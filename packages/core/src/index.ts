@@ -249,6 +249,8 @@ export {
   loadManifest,
   saveManifest,
   getAuditLog,
+  getSpacesDir,
+  getManifestPath,
   type Space,
   type SpaceKind,
   type SpaceManifest,
