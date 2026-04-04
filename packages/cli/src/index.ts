@@ -102,17 +102,18 @@ function resolveConfigPath(cliPath?: string): string {
 }
 
 function resolveMemoryDir(): string {
-  // Derive config-based memory dir first (always needed as fallback)
+  // Priority: env var > config file > auto-detect
   const configMemoryDir = (() => {
+    // Env var takes top priority (deployment override)
+    if (process.env.ENGRAM_MEMORY_DIR) return process.env.ENGRAM_MEMORY_DIR;
+    // Then config file
     const configPath = resolveConfigPath();
     const raw = fs.existsSync(configPath)
       ? JSON.parse(fs.readFileSync(configPath, "utf8"))
       : {};
     const engramCfg = raw.engram ?? raw;
     if (engramCfg.memoryDir) return engramCfg.memoryDir;
-    if (process.env.ENGRAM_MEMORY_DIR) return process.env.ENGRAM_MEMORY_DIR;
-    // Prefer standalone path (~/.engram/memory) if it exists; fall back to
-    // OpenClaw-compatible path for backward compatibility.
+    // Auto-detect: prefer standalone path if it exists, fall back to OpenClaw
     const home = process.env.HOME ?? "~";
     const standalonePath = path.join(home, ".engram", "memory");
     const openclawPath = path.join(home, ".openclaw", "workspace", "memory", "local");
@@ -884,9 +885,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const outputDir = resolveFlag(rest, "--output") ?? path.join(process.cwd(), ".engram", "context-tree");
       const categoriesFlag = resolveFlag(rest, "--categories");
       const categories = categoriesFlag ? categoriesFlag.split(",") : undefined;
-      const maxPerCategory = resolveFlag(rest, "--max-per-category")
-        ? parseInt(resolveFlag(rest, "--max-per-category")!, 10)
-        : undefined;
+      const maxPerCategoryRaw = resolveFlag(rest, "--max-per-category");
+      let maxPerCategory: number | undefined;
+      if (maxPerCategoryRaw !== undefined) {
+        maxPerCategory = parseInt(maxPerCategoryRaw, 10);
+        if (!Number.isFinite(maxPerCategory) || maxPerCategory < 1) {
+          console.error(`Invalid --max-per-category: ${maxPerCategoryRaw}`);
+          process.exit(1);
+        }
+      }
 
       if (subAction === "generate") {
         const result = await generateContextTree({

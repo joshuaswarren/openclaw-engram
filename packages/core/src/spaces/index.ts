@@ -159,12 +159,14 @@ export function saveManifest(manifest: SpaceManifest, baseDir?: string): void {
 
 function createPersonalSpace(baseDir?: string, memoryDirOverride?: string): Space {
   const homeDir = baseDir ?? process.env.HOME ?? "~";
-  // Prefer standalone path if it exists, fall back to OpenClaw-compatible path
+  // Priority: override > env var > existing standalone dir > existing OpenClaw dir > new standalone dir
   const standalonePath = path.join(homeDir, ".engram", "memory");
   const openclawPath = path.join(homeDir, ".openclaw", "workspace", "memory", "local");
   const memoryDir = memoryDirOverride
     ?? process.env.ENGRAM_MEMORY_DIR
-    ?? (fs.existsSync(standalonePath) ? standalonePath : openclawPath);
+    ?? (fs.existsSync(standalonePath) ? standalonePath
+      : fs.existsSync(openclawPath) ? openclawPath
+      : standalonePath);
   const now = new Date().toISOString();
 
   return {
