@@ -954,7 +954,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         };
 
         fs.watch(memoryDir, { recursive: true }, (_event, filename) => {
-          if (filename && !filename.startsWith(".")) rebuild();
+          if (filename && filename.startsWith(".")) return;
+          rebuild();
         });
 
         // Keep process alive
