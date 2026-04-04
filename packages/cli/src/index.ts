@@ -195,10 +195,10 @@ async function cmdStatus(json: boolean): Promise<void> {
   const pid = readPid();
   console.log(`Engram server: running (pid ${pid})`);
 
+  const port = inferPort();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
   try {
-    const port = inferPort();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const response = await fetch(`http://127.0.0.1:${port}/engram/v1/health`, {
       signal: controller.signal,
     });

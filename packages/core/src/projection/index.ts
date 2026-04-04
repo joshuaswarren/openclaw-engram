@@ -90,8 +90,8 @@ export async function generateContextTree(options: GenerateOptions): Promise<Gen
   // Ensure output directory exists
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // Process each category
-  const allCategories = filterCategories ?? ALL_CATEGORY_KEYS;
+  // Process each category (exclude 'question' — handled by separate includeQuestions pass)
+  const allCategories = filterCategories ?? ALL_CATEGORY_KEYS.filter((c) => c !== "question");
 
   for (const category of allCategories) {
     const categoryDir = getCategoryDir(memoryDir, category);
