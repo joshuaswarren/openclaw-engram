@@ -27,8 +27,8 @@ packages/
 | M0 | Schema validation | `access-schema.ts` with Zod validates all request bodies before processing |
 | M0 | Structured error responses | Consistent JSON error envelopes with `error`, `code`, `details` fields and `X-Request-Id` correlation IDs |
 | M1 | Hermes provider | `@engram/hermes-provider` — lightweight HTTP client for connecting to remote Engram instances |
-| M1 | Standalone CLI | 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree`, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark` |
-| M2 | Workspace tree projection | Context tree generation from workspace directory structure |
+| M1 | Standalone CLI | 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree` *(not yet implemented)*, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark` |
+| M2 | Workspace tree projection | Context tree generation from workspace directory structure *(stub — `engram tree` subcommands print "not yet implemented")* |
 | M3 | Onboarding + Curation | Project ingestion with language detection, doc discovery, and ingestion planning; file curation with duplicate/contradiction detection |
 | M3 | Diff-aware sync | Filesystem sync that detects added/modified/deleted files and ingests changes incrementally |
 | M4 | Connector manager | Host adapter lifecycle management (list, install, remove, doctor) |

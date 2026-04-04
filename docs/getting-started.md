@@ -25,19 +25,22 @@ npm ci && npm run build
 
 ### Option C: Standalone (no OpenClaw)
 
-Use the `engram` CLI without an OpenClaw:
+Build from source and use the standalone CLI:
 
 ```bash
-npm install -g @joshuaswarren/openclaw-engram
+git clone https://github.com/joshuaswarren/openclaw-engram.git
+cd openclaw-engram && npm ci && npm run build
 engram init                      # Create config in current directory
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram daemon start              # Start background server
+engram daemon start              # Start background server (requires source build)
 engram status                    # Verify it's running
 engram query "hello" --explain   # Test with tier breakdown
 ```
 
-The standalone path provides all the same memory management capabilities as the OpenClaw plugin, See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
+> **Note:** The `engram` binary is provided by the `@engram/cli` package. The `daemon start` command uses a monorepo-relative path to launch the server, so it requires building from source. Most other commands (`init`, `query`, `doctor`, `onboard`, etc.) also work with `npm install -g @joshuaswarren/openclaw-engram @engram/cli`.
+
+The standalone path provides all the same memory management capabilities as the OpenClaw plugin. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
 
 ## Minimal Config
 
