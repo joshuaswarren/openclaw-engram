@@ -17,7 +17,7 @@ export function applyWorkExtractionBoundary(conversation: string): string {
   if (conversation.trim().length === 0) return "";
 
   const blockPattern =
-    /(^|\n)\[WORK_LAYER_CONTEXT(?:\s+link_to_memory=(true|false))?(?:\s+encoding=(base64))?\]\s*([\s\S]*?)\s*\[\/WORK_LAYER_CONTEXT\]/g;
+    /(^|\n)\[WORK_LAYER_CONTEXT(?:\s+link_to_memory=(true|false))?(?:\s+encoding=(base64))?\]\n?([\s\S]*?)\n?\[\/WORK_LAYER_CONTEXT\]/g;
 
   const bounded = conversation.replace(
     blockPattern,
@@ -40,10 +40,25 @@ export function applyWorkExtractionBoundary(conversation: string): string {
   // Defensive hardening: if a *real wrapper opener* survives without a closer (e.g., turn-level truncation),
   // strip everything from the opener onward to avoid leaking excluded work-layer payloads.
   // Keep literal "[WORK_LAYER_CONTEXT" text unless it contains wrapper metadata attributes.
-  const strippedUnterminated = bounded.replace(
-    /(^|\n)\[WORK_LAYER_CONTEXT(?=[^\]]*(?:\blink_to_memory=|\bencoding=))[^\]]*\][\s\S]*$/,
-    "$1",
-  );
+  // Strip unterminated work-layer openers using indexOf for safety (avoids backtracking).
+  let strippedUnterminated = bounded;
+  const opener = "[WORK_LAYER_CONTEXT";
+  const closer = "[/WORK_LAYER_CONTEXT]";
+  const lastOpenerIdx = bounded.lastIndexOf(opener);
+  if (lastOpenerIdx >= 0) {
+    const afterOpener = bounded.indexOf("]", lastOpenerIdx);
+    if (afterOpener >= 0) {
+      const closerAfter = bounded.indexOf(closer, afterOpener);
+      if (closerAfter < 0) {
+        // Unterminated — only strip if it has real metadata attributes
+        const bracketContent = bounded.substring(lastOpenerIdx, afterOpener + 1);
+        if (bracketContent.includes("link_to_memory=") || bracketContent.includes("encoding=")) {
+          const newlineIdx = bounded.lastIndexOf("\n", lastOpenerIdx);
+          strippedUnterminated = bounded.substring(0, newlineIdx >= 0 ? newlineIdx : lastOpenerIdx);
+        }
+      }
+    }
+  }
 
   const restoredEscapes = strippedUnterminated
     .replaceAll(WORK_LAYER_CONTEXT_ESCAPED_OPEN, WORK_LAYER_CONTEXT_OPEN)

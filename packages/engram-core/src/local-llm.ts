@@ -6,6 +6,13 @@ import type { ModelRegistry } from "./model-registry.js";
 import { launchProcessSync } from "./runtime/child-process.js";
 import { mergeEnv, readEnvVar } from "./runtime/env.js";
 
+/** Trim trailing slash characters without backtracking regex. */
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.substring(0, end);
+}
+
 /**
  * Local LLM client for OpenAI-compatible endpoints (LM Studio, Ollama, MLX, etc.)
  *
@@ -173,10 +180,9 @@ export class LocalLlmClient {
   }
 
   private getBackendKey(): string {
-    return this.config.localLlmUrl
-      .replace("localhost", "127.0.0.1")
-      .replace(/\/+$/, "")
-      .replace(/\/v1$/, "");
+    return trimTrailingSlashes(
+      this.config.localLlmUrl.replace("localhost", "127.0.0.1"),
+    ).replace(/\/v1$/, "");
   }
 
   private getGlobalBackendState(): Map<string, LocalLlmBackendState> {
@@ -294,9 +300,9 @@ export class LocalLlmClient {
     }
 
     // Normalize URL - replace localhost with 127.0.0.1, remove trailing slashes
-    const baseUrl = this.config.localLlmUrl
-      .replace("localhost", "127.0.0.1")
-      .replace(/\/+$/, "");
+    const baseUrl = trimTrailingSlashes(
+      this.config.localLlmUrl.replace("localhost", "127.0.0.1"),
+    );
     let sawUnauthorizedProbe = false;
 
     // Try to detect which server type is running
@@ -769,9 +775,9 @@ export class LocalLlmClient {
       }
 
       // Normalize URL (use 127.0.0.1 instead of localhost)
-      const baseUrl = this.config.localLlmUrl
-        .replace("localhost", "127.0.0.1")
-        .replace(/\/+$/, "");
+      const baseUrl = trimTrailingSlashes(
+        this.config.localLlmUrl.replace("localhost", "127.0.0.1"),
+      );
       const chatUrl = baseUrl.endsWith("/v1")
         ? `${baseUrl}/chat/completions`
         : `${baseUrl}/v1/chat/completions`;
@@ -999,9 +1005,9 @@ export class LocalLlmClient {
    * Returns null if unavailable or if the model is not found.
    */
   async getLoadedModelInfo(): Promise<LocalModelInfo | null> {
-    const baseUrl = this.config.localLlmUrl
-      .replace("localhost", "127.0.0.1")
-      .replace(/\/+$/, "");
+    const baseUrl = trimTrailingSlashes(
+      this.config.localLlmUrl.replace("localhost", "127.0.0.1"),
+    );
 
     // Handle URL construction - localLlmUrl may already include /v1
     const modelsUrl = baseUrl.endsWith("/v1")

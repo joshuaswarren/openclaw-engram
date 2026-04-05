@@ -302,7 +302,12 @@ function extractWikilinks(content: string): { targets: string[]; aliases: string
 }
 
 function normalizePathPrefix(prefix: string): string {
-  return prefix.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  const fwd = prefix.replace(/\\/g, "/");
+  let start = 0;
+  while (start < fwd.length && fwd[start] === "/") start++;
+  let end = fwd.length;
+  while (end > start && fwd[end - 1] === "/") end--;
+  return fwd.substring(start, end);
 }
 
 function classifyObsidianNote(

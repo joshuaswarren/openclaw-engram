@@ -161,7 +161,7 @@ function isVectorDimensionMismatchError(err: unknown): boolean {
 
 function parseQmdVersion(version: string | null): [number, number, number] | null {
   if (!version) return null;
-  const match = version.match(/v?(\d+)\.(\d+)\.(\d+)/i);
+  const match = version.match(/v?(\d{1,10})\.(\d{1,10})\.(\d{1,10})/i);
   if (!match) return null;
   return [
     Number.parseInt(match[1] ?? "0", 10),

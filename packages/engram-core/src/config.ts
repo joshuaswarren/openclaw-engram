@@ -68,7 +68,9 @@ function normalizeOpenaiBaseUrl(value: string | undefined, source: "config" | "e
   }
 
   // Avoid duplicate slash behavior in downstream baseURL path joins.
-  return parsed.toString().replace(/\/+$/, "");
+  let url = parsed.toString();
+  while (url.endsWith("/")) url = url.slice(0, -1);
+  return url;
 }
 
 function normalizeMemoryRelativeDir(raw: unknown, fallback: string): string {
