@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.2.7] — 2026-04-05
+
 ### Fixed
 - **Adapter rewrite** — replaced fictional per-platform headers with real detection signals:
   - `ClaudeCodeAdapter` — detects via `clientInfo.name = "claude-code"`, `User-Agent: claude-code/…`, or `X-Engram-Client-Id`
