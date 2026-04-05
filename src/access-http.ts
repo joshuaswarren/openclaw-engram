@@ -203,12 +203,14 @@ export class EngramAccessHttpServer {
 
   /**
    * Resolve the adapter identity for the incoming request.
+   * Includes MCP clientInfo from the last initialize handshake if available.
    * Returns null if no adapter matches or adapters are disabled.
    */
   resolveAdapterIdentity(req: IncomingMessage): ResolvedIdentity | null {
     if (!this.adapterRegistry) return null;
     return this.adapterRegistry.resolve({
       headers: req.headers as Record<string, string | string[] | undefined>,
+      clientInfo: this.mcpServer.clientInfo,
     });
   }
 

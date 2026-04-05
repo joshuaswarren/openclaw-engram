@@ -3,40 +3,53 @@ import type { AdapterContext, EngramAdapter, ResolvedIdentity } from "./types.js
 /**
  * Codex CLI adapter.
  *
- * Detects Codex connections via MCP client info (name contains "codex")
- * or the X-Codex-Agent-Name header. Maps the agent name and project
- * directory to Engram namespace.
+ * Detection: Codex CLI sends clientInfo.name = "codex-mcp-client" and
+ * clientInfo.title = "Codex" in the MCP initialize handshake. It does
+ * NOT send agent names, session IDs, or project context automatically.
+ *
+ * For Streamable HTTP transport, Codex supports custom headers via
+ * http_headers in ~/.codex/config.toml:
+ *   [mcp_servers.engram]
+ *   url = "http://localhost:4318/mcp"
+ *   http_headers = { "X-Engram-Namespace" = "my-project", "X-Engram-Principal" = "codex-agent" }
+ *
+ * Codex also sends a custom "sandbox_state" RPC notification after
+ * init with sandbox policy info (read-only/writable paths).
  */
 export class CodexAdapter implements EngramAdapter {
   readonly id = "codex";
 
   matches(context: AdapterContext): boolean {
-    const clientName = context.clientInfo?.name?.toLowerCase() ?? "";
-    if (clientName.includes("codex")) return true;
+    // Primary: MCP clientInfo from initialize handshake (exact match)
+    if (context.clientInfo?.name === "codex-mcp-client") return true;
 
-    const agentHeader = headerValue(context.headers, "x-codex-agent-name");
-    if (agentHeader) return true;
+    // Also match on clientInfo name containing "codex" for forward compat
+    const clientName = context.clientInfo?.name?.toLowerCase() ?? "";
+    if (clientName.includes("codex") && clientName !== "codex-mcp-client") return true;
+
+    // Fallback: user-configured client identifier header
+    const clientId = headerValue(context.headers, "x-engram-client-id");
+    if (clientId?.toLowerCase() === "codex") return true;
 
     return false;
   }
 
   resolveIdentity(context: AdapterContext): ResolvedIdentity {
-    const agentName = headerValue(context.headers, "x-codex-agent-name");
-    const projectDir = headerValue(context.headers, "x-codex-project-dir");
+    // MCP session ID (standard MCP header, server-assigned)
+    const mcpSessionId = headerValue(context.headers, "mcp-session-id");
 
-    const namespace = projectDir
-      ? slugify(projectDir)
-      : "codex";
-
+    // Principal: explicit header > default
     const principal = headerValue(context.headers, "x-engram-principal")
-      || agentName
-      || context.clientInfo?.name
+      || "codex";
+
+    // Namespace: explicit header > default
+    const namespace = headerValue(context.headers, "x-engram-namespace")
       || "codex";
 
     return {
       namespace,
       principal,
-      sessionKey: context.sessionKey,
+      sessionKey: mcpSessionId ?? context.sessionKey,
       adapterId: this.id,
     };
   }
@@ -49,13 +62,4 @@ function headerValue(
   const raw = headers[key];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function slugify(s: string): string {
-  let slug = s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  let start = 0;
-  while (start < slug.length && slug[start] === "-") start++;
-  let end = slug.length;
-  while (end > start && slug[end - 1] === "-") end--;
-  return slug.slice(start, end).slice(0, 80) || "codex";
 }

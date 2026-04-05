@@ -41,6 +41,8 @@ export class EngramMcpServer {
   private flushTask: Promise<void> | null = null;
   private readonly tools: McpTool[];
   private readonly authenticatedPrincipal?: string;
+  /** MCP client info from the last initialize handshake */
+  clientInfo?: { name: string; version?: string };
 
   constructor(
     private readonly service: EngramAccessService,
@@ -693,6 +695,11 @@ export class EngramMcpServer {
       return { jsonrpc: "2.0", id, result: {} };
     }
     if (method === "initialize") {
+      const params = request.params ?? {};
+      const rawClientInfo = params.clientInfo as { name?: string; version?: string } | undefined;
+      if (rawClientInfo && typeof rawClientInfo.name === "string") {
+        this.clientInfo = { name: rawClientInfo.name, version: rawClientInfo.version as string | undefined };
+      }
       const version = await getMcpServerVersion();
       return {
         jsonrpc: "2.0",

@@ -24,15 +24,19 @@ curl -H "Authorization: Bearer $ENGRAM_AUTH_TOKEN" http://localhost:4318/engram/
 
 ## Claude Code
 
-Add to `~/.claude.json` (or project `.claude.json`):
+Add to `~/.claude.json` (or project `.mcp.json`):
 
 ```jsonc
 {
   "mcpServers": {
     "engram": {
+      "type": "http",
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}",
+        // Optional: scope memory to a project/team namespace
+        "X-Engram-Namespace": "my-project",
+        "X-Engram-Principal": "my-team"
       }
     }
   }
@@ -40,6 +44,8 @@ Add to `~/.claude.json` (or project `.claude.json`):
 ```
 
 Restart Claude Code. Verify with: `What MCP tools do you have?`
+
+**Auto-detection:** Claude Code sends `clientInfo.name = "claude-code"` and `User-Agent: claude-code/<version>` — Engram identifies it automatically.
 
 **Capabilities:** observe, recall, store, search, entities, real-time sync
 
@@ -53,9 +59,13 @@ Add to `~/.codex/config.toml`:
 [mcp_servers.engram]
 url = "http://127.0.0.1:4318/mcp"
 bearer_token_env_var = "ENGRAM_AUTH_TOKEN"
+# Optional: scope memory to a project/team namespace
+http_headers = { "X-Engram-Namespace" = "my-project", "X-Engram-Principal" = "codex-agent" }
 ```
 
 See the [full Codex CLI guide](../guides/codex-cli.md) for session-start hooks and automatic recall.
+
+**Auto-detection:** Codex sends `clientInfo.name = "codex-mcp-client"` — Engram identifies it automatically.
 
 **Capabilities:** observe, recall, store, batch
 
@@ -189,41 +199,73 @@ Add to your Amp configuration:
 
 ## Replit Agent
 
-Replit uses HTTP API instead of MCP. Configure via environment variables in your Replit project:
+Replit Agent supports MCP natively via the **Integrations pane** (HTTP transport only — the Engram server must be publicly reachable).
+
+### Option A: MCP (recommended)
+
+1. In your Replit workspace, open **Integrations** > **Add MCP server**
+2. Enter the Engram server URL: `https://your-engram-server.com/mcp`
+3. Add custom headers:
+   - `Authorization`: `Bearer <your-engram-token>`
+   - `X-Engram-Client-Id`: `replit` (enables auto-detection)
+   - `X-Engram-Namespace`: `<your-project-name>` (optional)
+4. Click **Test & Save**
+
+Replit Agent will auto-discover all Engram MCP tools and use them contextually.
+
+### Option B: HTTP API (for custom agent code)
 
 ```bash
-ENGRAM_API_URL=http://your-server:4318/engram/v1
+ENGRAM_API_URL=https://your-engram-server.com/engram/v1
 ENGRAM_AUTH_TOKEN=your-token-here
 ```
 
-Then use the HTTP API directly in your agent code:
-
 ```typescript
-// Recall memories
 const response = await fetch(`${ENGRAM_API_URL}/recall`, {
   method: "POST",
   headers: {
     "Authorization": `Bearer ${ENGRAM_AUTH_TOKEN}`,
     "Content-Type": "application/json",
+    "X-Engram-Client-Id": "replit",
   },
   body: JSON.stringify({ query: "what do I know about this project?" }),
 });
-
-// Store a memory
-await fetch(`${ENGRAM_API_URL}/memories`, {
-  method: "POST",
-  headers: {
-    "Authorization": `Bearer ${ENGRAM_AUTH_TOKEN}`,
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    content: "The API uses REST with bearer auth",
-    category: "fact",
-  }),
-});
 ```
 
-**Capabilities:** observe, recall, store (via HTTP)
+**Note:** Replit does not send identifying headers automatically. The `X-Engram-Client-Id: replit` header enables Engram's adapter auto-detection.
+
+**Capabilities:** observe, recall, store, search (via MCP or HTTP)
+
+---
+
+## Hermes Agent
+
+Hermes supports MCP servers via `config.yaml`. For deeper integration, Hermes v0.7.0+ also supports a dedicated **MemoryProvider plugin protocol** — see [Hermes setup guide](../guides/hermes-setup.md).
+
+### Option A: MCP (quick start)
+
+Add to your Hermes `config.yaml`:
+
+```yaml
+mcp_servers:
+  engram:
+    url: "http://localhost:4318/mcp"
+    headers:
+      Authorization: "Bearer ${ENGRAM_AUTH_TOKEN}"
+      X-Engram-Client-Id: "hermes"
+      # Optional: scope memory to a Hermes profile
+      X-Engram-Namespace: "my-profile"
+```
+
+**Auto-detection:** Hermes sends `X-Hermes-Session-Id` on API requests — Engram identifies it automatically. The `X-Engram-Client-Id: hermes` header provides a fallback for MCP-only connections.
+
+### Option B: MemoryProvider Plugin (recommended for production)
+
+Hermes v0.7.0+ has a Python `MemoryProvider` protocol (`initialize`, `enrich_turn`, `sync_turn`, `shutdown`) that provides tighter integration than MCP alone — including automatic turn-level memory sync and context enrichment.
+
+See the [Hermes MemoryProvider guide](../guides/hermes-setup.md) for the `@engram/hermes-provider` plugin setup.
+
+**Capabilities:** observe, recall, store, search, entity sync, turn-level memory
 
 ---
 
