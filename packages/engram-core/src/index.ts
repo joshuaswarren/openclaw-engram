@@ -258,6 +258,7 @@ export {
   listTokens,
   revokeToken,
   getAllValidTokens,
+  getAllValidTokensCached,
   resolveConnectorFromToken,
   loadTokenStore,
   saveTokenStore,

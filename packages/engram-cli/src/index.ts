@@ -208,7 +208,7 @@ function cmdInit(): void {
 }
 
 async function cmdStatus(json: boolean): Promise<void> {
-  const running = isDaemonRunning();
+  const { running } = isServiceRunning();
   if (json) {
     console.log(JSON.stringify({ running, pidFile: PID_FILE, logFile: LOG_FILE }));
     return;
@@ -317,10 +317,11 @@ function cmdDoctor(): void {
     checks.push({ name: "Memory directory", ok: false, detail: `cannot create ${memoryDir}` });
   }
 
+  const svcState = isServiceRunning();
   checks.push({
     name: "Server daemon",
-    ok: isDaemonRunning(),
-    detail: isDaemonRunning() ? `running (pid ${readPid()})` : "stopped",
+    ok: svcState.running,
+    detail: svcState.running ? `running${svcState.pid ? ` (pid ${svcState.pid})` : ""}` : "stopped",
   });
 
   for (const check of checks) {

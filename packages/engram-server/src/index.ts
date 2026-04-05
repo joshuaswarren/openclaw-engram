@@ -14,7 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseConfig, Orchestrator, EngramAccessService, EngramAccessHttpServer, initLogger, log, getAllValidTokens, type PluginConfig } from "@engram/core";
+import { parseConfig, Orchestrator, EngramAccessService, EngramAccessHttpServer, initLogger, log, getAllValidTokens, getAllValidTokensCached, type PluginConfig } from "@engram/core";
 
 // ── Config loading ──────────────────────────────────────────────────────────
 
@@ -124,7 +124,7 @@ export async function startServer(options?: {
     host: serverConfig.host ?? "127.0.0.1",
     port: serverConfig.port ?? 4318,
     authToken: authToken || undefined,
-    authTokensGetter: () => getAllValidTokens(),
+    authTokensGetter: () => getAllValidTokensCached(),
     principal: serverConfig.principal,
     maxBodyBytes: serverConfig.maxBodyBytes,
     adminConsoleEnabled: serverConfig.adminConsoleEnabled ?? false,

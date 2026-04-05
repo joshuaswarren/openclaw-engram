@@ -121,6 +121,22 @@ export function getAllValidTokens(tokensPath?: string): string[] {
   return loadTokenStore(tokensPath).tokens.map((t) => t.token);
 }
 
+// Cached token loader to avoid synchronous disk I/O on every HTTP request.
+// Re-reads tokens.json at most once per TTL interval (default 5s).
+const TOKEN_CACHE_TTL_MS = 5_000;
+let _cachedTokens: string[] = [];
+let _cachedAt = 0;
+let _cachedPath: string | undefined;
+
+export function getAllValidTokensCached(tokensPath?: string): string[] {
+  const now = Date.now();
+  if (now - _cachedAt < TOKEN_CACHE_TTL_MS && tokensPath === _cachedPath) return _cachedTokens;
+  _cachedTokens = getAllValidTokens(tokensPath);
+  _cachedAt = now;
+  _cachedPath = tokensPath;
+  return _cachedTokens;
+}
+
 export function resolveConnectorFromToken(token: string, tokensPath?: string): string | undefined {
   return loadTokenStore(tokensPath).tokens.find((t) => t.token === token)?.connector;
 }
