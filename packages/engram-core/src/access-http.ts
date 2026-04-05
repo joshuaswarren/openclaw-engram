@@ -18,6 +18,8 @@ export interface EngramAccessHttpServerOptions {
   host?: string;
   port?: number;
   authToken?: string;
+  /** Additional valid tokens (for multi-connector auth). Checked alongside authToken. */
+  authTokens?: string[];
   principal?: string;
   maxBodyBytes?: number;
   adminConsoleEnabled?: boolean;
@@ -98,6 +100,7 @@ export class EngramAccessHttpServer {
   private readonly host: string;
   private readonly requestedPort: number;
   private readonly authToken?: string;
+  private readonly authTokens: string[];
   private readonly authenticatedPrincipal?: string;
   private readonly maxBodyBytes: number;
   private readonly adminConsoleEnabled: boolean;
@@ -114,6 +117,7 @@ export class EngramAccessHttpServer {
     this.host = options.host?.trim() || "127.0.0.1";
     this.requestedPort = Number.isFinite(options.port) ? Math.max(0, Math.floor(options.port ?? 0)) : 0;
     this.authToken = options.authToken?.trim() || undefined;
+    this.authTokens = (options.authTokens ?? []).map((t) => t.trim()).filter(Boolean);
     this.authenticatedPrincipal = options.principal?.trim() || undefined;
     this.maxBodyBytes = Number.isFinite(options.maxBodyBytes)
       ? Math.max(1, Math.floor(options.maxBodyBytes ?? 131072))
@@ -128,8 +132,8 @@ export class EngramAccessHttpServer {
   }
 
   async start(): Promise<EngramAccessHttpServerStatus> {
-    if (!this.authToken) {
-      throw new Error("engram access HTTP requires authToken");
+    if (!this.authToken && this.authTokens.length === 0) {
+      throw new Error("engram access HTTP requires authToken or authTokens");
     }
     if (this.server) return this.status();
 
@@ -730,7 +734,7 @@ export class EngramAccessHttpServer {
   }
 
   private isAuthorized(req: IncomingMessage): boolean {
-    if (!this.authToken) return false;
+    if (!this.authToken && this.authTokens.length === 0) return false;
     const raw = req.headers.authorization;
     if (!raw) return false;
     const separator = raw.indexOf(" ");
@@ -738,7 +742,13 @@ export class EngramAccessHttpServer {
     const scheme = raw.slice(0, separator).toLowerCase();
     if (scheme !== "bearer") return false;
     const token = raw.slice(separator + 1).trim();
-    return this.timingSafeStringEqual(token, this.authToken);
+    // Check primary token
+    if (this.authToken && this.timingSafeStringEqual(token, this.authToken)) return true;
+    // Check multi-connector tokens
+    for (const valid of this.authTokens) {
+      if (this.timingSafeStringEqual(token, valid)) return true;
+    }
+    return false;
   }
 
   private timingSafeStringEqual(a: string, b: string): boolean {

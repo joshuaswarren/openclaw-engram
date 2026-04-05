@@ -250,6 +250,22 @@ export {
 } from "./spaces/index.js";
 
 // ---------------------------------------------------------------------------
+// Token Management
+// ---------------------------------------------------------------------------
+
+export {
+  generateToken,
+  listTokens,
+  revokeToken,
+  getAllValidTokens,
+  resolveConnectorFromToken,
+  loadTokenStore,
+  saveTokenStore,
+  type TokenEntry,
+  type TokenStore,
+} from "./tokens.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 

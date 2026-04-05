@@ -14,7 +14,8 @@
   },
   "files": [
     "dist",
-    "bin/engram.cjs"
+    "bin/engram.cjs",
+    "templates"
   ],
   "publishConfig": {
     "access": "public",
