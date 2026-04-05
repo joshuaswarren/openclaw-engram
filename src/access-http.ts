@@ -624,9 +624,11 @@ export class EngramAccessHttpServer {
       const raw = req.headers["mcp-session-id"];
       return typeof raw === "string" ? raw.trim() : undefined;
     })();
+    const mcpCorrelationId = correlationIdStore.getStore() ?? randomUUID();
     const response = await this.mcpServer.handleRequest(request, {
       principalOverride: this.resolveRequestPrincipal(req),
       sessionId,
+      correlationId: mcpCorrelationId,
     });
 
     if (isMcpWrite && response !== null) {
@@ -643,13 +645,10 @@ export class EngramAccessHttpServer {
       return;
     }
     // If this was an initialize response, pop the session ID keyed by
-    // JSON-RPC request id and set it as a response header.
-    const requestId = request.id;
-    if (requestId != null) {
-      const assignedSessionId = this.mcpServer.popInitSessionId(requestId);
-      if (assignedSessionId) {
-        res.setHeader("mcp-session-id", assignedSessionId);
-      }
+    // correlation ID (unique per HTTP request, not client-chosen JSON-RPC id).
+    const assignedSessionId = this.mcpServer.popInitSessionId(mcpCorrelationId);
+    if (assignedSessionId) {
+      res.setHeader("mcp-session-id", assignedSessionId);
     }
     this.respondJson(res, 200, response);
   }

@@ -51,11 +51,11 @@ export class EngramMcpServer {
    */
   private clientInfoBySession = new Map<string, { name: string; version?: string }>();
   /**
-   * Session IDs generated during initialize, keyed by JSON-RPC request id.
-   * The HTTP handler reads and deletes the entry after each initialize response,
-   * avoiding a shared mutable field that races under concurrent requests.
+   * Session IDs generated during initialize, keyed by caller-supplied correlation
+   * ID (unique per HTTP request) to avoid collisions when multiple clients send
+   * initialize with the same JSON-RPC id concurrently.
    */
-  private initSessionIds = new Map<string | number, string>();
+  private initSessionIds = new Map<string, string>();
 
   constructor(
     private readonly service: EngramAccessService,
@@ -707,14 +707,14 @@ export class EngramMcpServer {
     return undefined;
   }
 
-  /** Pop the session ID generated during an initialize handshake, keyed by JSON-RPC request id. */
-  popInitSessionId(requestId: string | number): string | undefined {
-    const sid = this.initSessionIds.get(requestId);
-    if (sid !== undefined) this.initSessionIds.delete(requestId);
+  /** Pop the session ID generated during an initialize handshake, keyed by correlation ID. */
+  popInitSessionId(correlationId: string): string | undefined {
+    const sid = this.initSessionIds.get(correlationId);
+    if (sid !== undefined) this.initSessionIds.delete(correlationId);
     return sid;
   }
 
-  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string; sessionId?: string }): Promise<Record<string, unknown> | null> {
+  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string; sessionId?: string; correlationId?: string }): Promise<Record<string, unknown> | null> {
     const id = request.id ?? null;
     const method = request.method ?? "";
 
@@ -738,9 +738,10 @@ export class EngramMcpServer {
         }
       }
       const version = await getMcpServerVersion();
-      // Store session ID keyed by request id so the HTTP handler can retrieve
-      // it without a shared mutable field that races under concurrent requests.
-      if (id != null) this.initSessionIds.set(id, newSessionId);
+      // Store session ID keyed by correlation ID (unique per HTTP request) so
+      // concurrent initializes with the same JSON-RPC id don't collide.
+      const corrId = options?.correlationId;
+      if (corrId) this.initSessionIds.set(corrId, newSessionId);
       return {
         jsonrpc: "2.0",
         id,
