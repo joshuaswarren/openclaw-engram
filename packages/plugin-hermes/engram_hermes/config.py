@@ -45,13 +45,24 @@ class EngramHermesConfig:
 
 
 def _load_token_from_file() -> str:
-    """Load the hermes token from ~/.engram/tokens.json."""
+    """Load the hermes token from ~/.engram/tokens.json.
+
+    Token store format: {tokens: [{token, connector, createdAt}]}
+    """
     token_path = os.path.expanduser("~/.engram/tokens.json")
     if not os.path.exists(token_path):
         return ""
     try:
         with open(token_path) as f:
-            tokens = json.load(f)
-            return str(tokens.get("hermes", tokens.get("openclaw", "")))
+            store = json.load(f)
+            token_entries = store.get("tokens", [])
+            for entry in token_entries:
+                if entry.get("connector") == "hermes":
+                    return str(entry.get("token", ""))
+            # Fallback: try openclaw token
+            for entry in token_entries:
+                if entry.get("connector") == "openclaw":
+                    return str(entry.get("token", ""))
+            return ""
     except (json.JSONDecodeError, OSError):
         return ""
