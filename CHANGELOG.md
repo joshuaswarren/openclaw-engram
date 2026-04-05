@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Adapter architecture** for multi-system identity resolution:
+  - `AdapterRegistry` — chainable adapter resolution for incoming requests
+  - `ClaudeCodeAdapter` — resolves Claude Code sessions via MCP client info or `X-Claude-Session-Id` header
+  - `CodexAdapter` — resolves Codex CLI agents via MCP client info or `X-Codex-Agent-Name` header
+  - `ReplitAdapter` — resolves Replit agents via `X-Replit-Project-Id` / `X-Replit-User-Id` headers
+  - `HermesAdapter` — resolves Hermes agents via `X-Hermes-Session-Id` / `X-Hermes-Profile` headers
+  - `GET /engram/v1/adapters` — discovery endpoint showing registered adapters and resolved identity
+- HTTP server now auto-detects connecting system and resolves principal via adapter registry
+
 ## [v9.2.4] — 2026-04-05
 
 ### Added
