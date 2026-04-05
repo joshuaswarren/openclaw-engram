@@ -69,6 +69,7 @@ function readDaemonPort(): number {
 
   try {
     const configPaths = [
+      ...(process.env.ENGRAM_CONFIG_PATH ? [path.resolve(process.env.ENGRAM_CONFIG_PATH)] : []),
       path.join(resolveHomeDir(), ".config", "engram", "config.json"),
       path.join(process.cwd(), "engram.config.json"),
     ];
@@ -149,6 +150,7 @@ function loadAnyToken(): string {
   // Check config file authToken (matches server startup)
   try {
     const configPaths = [
+      ...(process.env.ENGRAM_CONFIG_PATH ? [path.resolve(process.env.ENGRAM_CONFIG_PATH)] : []),
       path.join(resolveHomeDir(), ".config", "engram", "config.json"),
       path.join(process.cwd(), "engram.config.json"),
     ];

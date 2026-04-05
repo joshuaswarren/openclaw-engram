@@ -974,6 +974,26 @@ function daemonStart(): void {
     console.log(`Already running${svc.pid ? ` (pid ${svc.pid})` : " (via service manager)"}`);
     return;
   }
+
+  // Try service manager first (for daemons installed via `engram daemon install`)
+  if (isMacOS() && fs.existsSync(LAUNCHD_PLIST_PATH)) {
+    try {
+      execSync(`launchctl start ${LAUNCHD_LABEL} 2>/dev/null`, { stdio: "pipe" });
+      console.log(`Started engram daemon via launchd (${LAUNCHD_LABEL})`);
+      return;
+    } catch {
+      // launchctl start failed — fall through to manual start
+    }
+  } else if (isLinux() && fs.existsSync(SYSTEMD_UNIT_PATH)) {
+    try {
+      execSync(`systemctl --user start ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      console.log(`Started engram daemon via systemd (${SYSTEMD_SERVICE})`);
+      return;
+    } catch {
+      // systemctl start failed — fall through to manual start
+    }
+  }
+
   fs.mkdirSync(PID_DIR, { recursive: true });
   fs.mkdirSync(LOGS_DIR, { recursive: true });
   const logStream = fs.openSync(LOG_FILE, "a");
@@ -1008,6 +1028,26 @@ function daemonStart(): void {
 }
 
 function daemonStop(): void {
+  // Try service manager first (for daemons started via `engram daemon install`)
+  if (isMacOS() && fs.existsSync(LAUNCHD_PLIST_PATH)) {
+    try {
+      execSync(`launchctl stop ${LAUNCHD_LABEL} 2>/dev/null`, { stdio: "pipe" });
+      console.log(`Stopped engram daemon via launchd (${LAUNCHD_LABEL})`);
+      return;
+    } catch {
+      // launchctl stop failed — fall through to PID-based stop
+    }
+  } else if (isLinux() && fs.existsSync(SYSTEMD_UNIT_PATH)) {
+    try {
+      execSync(`systemctl --user stop ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      console.log(`Stopped engram daemon via systemd (${SYSTEMD_SERVICE})`);
+      return;
+    } catch {
+      // systemctl stop failed — fall through to PID-based stop
+    }
+  }
+
+  // Fall back to PID file (for daemons started via `engram daemon start`)
   const pid = readPid();
   if (!pid) {
     console.log("Not running");
