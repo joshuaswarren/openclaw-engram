@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **9 new continuity/identity standalone MCP tools**:
+  - `engram.continuity_audit_generate` — generate weekly/monthly identity continuity audit
+  - `engram.continuity_incident_open` — create continuity incident record
+  - `engram.continuity_incident_close` — close incident with verification
+  - `engram.continuity_incident_list` — list incidents by state
+  - `engram.continuity_loop_add_or_update` — manage improvement loops
+  - `engram.continuity_loop_review` — review improvement loop metadata
+  - `engram.identity_anchor_get` — read identity anchor document
+  - `engram.identity_anchor_update` — update identity anchor sections
+  - `engram.memory_identity` — read agent identity reflections
 - **11 new standalone MCP tools** for feature parity with OpenClaw plugin:
   - `engram.memory_search` — direct semantic search with QMD index
   - `engram.memory_profile` — user behavioral profile
@@ -19,6 +29,9 @@ All notable changes to this project will be documented in this file.
   - `engram.context_checkpoint` — save session context to disk
 
 ### Fixed
+- **ACLs** — enforce namespace read/write authorization on all parity tools (memorySearch, memoryProfile, memoryEntitiesList, memoryQuestions, memoryPromote, contextCheckpoint)
+- **feedbackEnabled gate** — `engram.memory_feedback` now returns clean JSON when feedback is disabled instead of silently recording
+- **namespace-scoped checkpoints** — `engram.context_checkpoint` now writes to namespace-specific storage directory
 - **CLI `engram.cjs`** — print "Fatal: <message>" when tsx is not found (was silent exit)
 - **CLI `engram.cjs`** — respect `NO_COLOR` and user-set `FORCE_COLOR` instead of unconditionally forcing color
 

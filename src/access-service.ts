@@ -1800,6 +1800,258 @@ export class EngramAccessService {
 
   // ── Parity tools (match OpenClaw plugin feature set) ──────────────────
 
+  // ── Continuity / Identity ──────────────────────────────────────────────
+
+  async continuityAuditGenerate(request: {
+    period?: "weekly" | "monthly";
+    key?: string;
+  }): Promise<{ enabled: boolean; reason?: string; period?: string; key?: string; reportPath?: string }> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled. Enable `identityContinuityEnabled: true`." };
+    }
+    if (!this.orchestrator.config.continuityAuditEnabled) {
+      return { enabled: false, reason: "Continuity audits are disabled. Enable `continuityAuditEnabled: true`." };
+    }
+    if (!this.orchestrator.compounding) {
+      return { enabled: false, reason: "Compounding engine is disabled. Enable `compoundingEnabled: true`." };
+    }
+    const period = request.period === "monthly" ? "monthly" : "weekly";
+    const key = request.key?.trim() || undefined;
+    const audit = await this.orchestrator.compounding.synthesizeContinuityAudit({ period, key });
+    return { enabled: true, period: audit.period, key: audit.key, reportPath: audit.reportPath };
+  }
+
+  async continuityIncidentOpen(request: {
+    symptom: string;
+    namespace?: string;
+    principal?: string;
+    triggerWindow?: string;
+    suspectedCause?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled. Enable `identityContinuityEnabled: true`." };
+    }
+    if (!this.orchestrator.config.continuityIncidentLoggingEnabled) {
+      return { enabled: false, reason: "Continuity incident logging is disabled. Enable `continuityIncidentLoggingEnabled: true`." };
+    }
+    const symptom = request.symptom?.trim();
+    if (!symptom) throw new EngramAccessInputError("symptom is required");
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const created = await storage.appendContinuityIncident({
+      symptom,
+      triggerWindow: request.triggerWindow?.trim() || undefined,
+      suspectedCause: request.suspectedCause?.trim() || undefined,
+    });
+    return { created: true, incident: created };
+  }
+
+  async continuityIncidentClose(request: {
+    id: string;
+    namespace?: string;
+    principal?: string;
+    fixApplied: string;
+    verificationResult: string;
+    preventiveRule?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    if (!this.orchestrator.config.continuityIncidentLoggingEnabled) {
+      return { enabled: false, reason: "Continuity incident logging is disabled." };
+    }
+    const id = request.id?.trim();
+    if (!id) throw new EngramAccessInputError("id is required");
+    const fixApplied = request.fixApplied?.trim();
+    if (!fixApplied) throw new EngramAccessInputError("fixApplied is required");
+    const verificationResult = request.verificationResult?.trim();
+    if (!verificationResult) throw new EngramAccessInputError("verificationResult is required");
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const closed = await storage.closeContinuityIncident(id, {
+      fixApplied,
+      verificationResult,
+      preventiveRule: request.preventiveRule?.trim() || undefined,
+    });
+    if (!closed) return { closed: false, reason: `Incident not found: ${id}` };
+    return { closed: true, incident: closed };
+  }
+
+  async continuityIncidentList(request: {
+    state?: "open" | "closed" | "all";
+    namespace?: string;
+    principal?: string;
+    limit?: number;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const state = request.state === "closed" || request.state === "all" ? request.state : "open";
+    const limit = Math.max(1, Math.min(200, Math.floor(request.limit ?? 25)));
+    const resolvedNs = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const incidents = await storage.readContinuityIncidents(limit, state);
+    return { state, incidents, count: incidents.length };
+  }
+
+  async continuityLoopAddOrUpdate(request: {
+    id: string;
+    cadence: "daily" | "weekly" | "monthly" | "quarterly";
+    purpose: string;
+    status: "active" | "paused" | "retired";
+    killCondition: string;
+    namespace?: string;
+    principal?: string;
+    lastReviewed?: string;
+    notes?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const loop = await storage.upsertIdentityImprovementLoop({
+      id: request.id?.trim() || "",
+      cadence: request.cadence,
+      purpose: request.purpose?.trim() || "",
+      status: request.status,
+      killCondition: request.killCondition?.trim() || "",
+      lastReviewed: request.lastReviewed?.trim() || undefined,
+      notes: request.notes?.trim() || undefined,
+    });
+    return { saved: true, loop };
+  }
+
+  async continuityLoopReview(request: {
+    id: string;
+    namespace?: string;
+    principal?: string;
+    status?: "active" | "paused" | "retired";
+    notes?: string;
+    reviewedAt?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const id = request.id?.trim();
+    if (!id) throw new EngramAccessInputError("id is required");
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const reviewed = await storage.reviewIdentityImprovementLoop(id, {
+      status: request.status,
+      notes: request.notes?.trim() || undefined,
+      reviewedAt: request.reviewedAt?.trim() || undefined,
+    });
+    if (!reviewed) return { reviewed: false, reason: `Continuity loop not found: ${id}` };
+    return { reviewed: true, loop: reviewed };
+  }
+
+  async identityAnchorGet(request: {
+    namespace?: string;
+    principal?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const resolvedNs = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const anchor = await storage.readIdentityAnchor();
+    if (!anchor) return { found: false, message: "No identity anchor found yet. Use identity_anchor_update to create one." };
+    return { found: true, anchor };
+  }
+
+  async identityAnchorUpdate(request: {
+    namespace?: string;
+    principal?: string;
+    identityTraits?: string;
+    communicationPreferences?: string;
+    operatingPrinciples?: string;
+    continuityNotes?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+
+    const updates: Record<string, string | undefined> = {
+      "Identity Traits": request.identityTraits?.trim() || undefined,
+      "Communication Preferences": request.communicationPreferences?.trim() || undefined,
+      "Operating Principles": request.operatingPrinciples?.trim() || undefined,
+      "Continuity Notes": request.continuityNotes?.trim() || undefined,
+    };
+    const hasUpdate = Object.values(updates).some((v) => typeof v === "string" && v.length > 0);
+    if (!hasUpdate) throw new EngramAccessInputError("At least one section field is required.");
+
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const existing = await storage.readIdentityAnchor();
+
+    // Merge sections conservatively (append, don't overwrite)
+    const merged = this.mergeIdentityAnchorSections(existing, updates);
+    await storage.writeIdentityAnchor(merged);
+
+    const updatedSections = Object.entries(updates)
+      .filter(([, v]) => typeof v === "string" && v.length > 0)
+      .map(([name]) => name);
+    return { updated: true, sections: updatedSections, anchor: merged };
+  }
+
+  async memoryIdentity(request: {
+    namespace?: string;
+    principal?: string;
+  }): Promise<unknown> {
+    const resolvedNs = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const identity = await storage.readIdentityReflections();
+    if (!identity) return { found: false, message: "No identity reflections found." };
+    return { found: true, identity };
+  }
+
+  /** Conservative identity anchor section merge (matches tools.ts mergeIdentityAnchor logic). */
+  private mergeIdentityAnchorSections(
+    existingRaw: string | null,
+    updates: Record<string, string | undefined>,
+  ): string {
+    const TITLE = "# Identity Continuity Anchor";
+    const SECTION_ORDER = ["Identity Traits", "Communication Preferences", "Operating Principles", "Continuity Notes"];
+
+    const lines = (existingRaw ?? "").replace(/\r/g, "").split("\n");
+    const headerLines: string[] = [];
+    const sectionContent = new Map<string, string[]>();
+    const order: string[] = [];
+    let current: string | null = null;
+    for (const line of lines) {
+      const m = line.match(/^##\s+(.+?)\s*$/);
+      if (m) { current = m[1].trim(); if (!sectionContent.has(current)) { sectionContent.set(current, []); order.push(current); } continue; }
+      if (!current) { headerLines.push(line); } else { sectionContent.get(current)?.push(line); }
+    }
+    const sections = new Map<string, string>();
+    for (const [name, cLines] of sectionContent) sections.set(name, cLines.join("\n").trim());
+
+    const header = headerLines.join("\n").trim() || TITLE;
+    for (const sectionName of SECTION_ORDER) {
+      const prev = sections.get(sectionName)?.trim();
+      const next = updates[sectionName]?.trim();
+      const existing = prev === "- (empty)" ? "" : prev;
+      if (!next) { if (!sections.has(sectionName)) sections.set(sectionName, ""); continue; }
+      if (!existing) { sections.set(sectionName, next); continue; }
+      if (existing.includes(next)) continue;
+      if (next.includes(existing)) { sections.set(sectionName, next); continue; }
+      sections.set(sectionName, `${existing}\n\n${next}`);
+    }
+
+    const finalOrder = [...SECTION_ORDER.filter((s) => sections.has(s)), ...order.filter((s) => !SECTION_ORDER.includes(s) && sections.has(s))];
+    const out: string[] = [header, ""];
+    for (const name of finalOrder) {
+      out.push(`## ${name}`, "");
+      const body = sections.get(name)?.trim();
+      if (body) out.push(body, "");
+      else out.push("");
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+  }
+
+  // ── Memory search & debug ─────────────────────────────────────────────
+
   async memorySearch(request: {
     query: string;
     namespace?: string;

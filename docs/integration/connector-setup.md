@@ -251,6 +251,15 @@ Any tool that supports the [Model Context Protocol](https://modelcontextprotocol
 | `engram.review_queue_list` | List items in the review queue |
 | `engram.day_summary` | Generate end-of-day summary |
 | `engram.memory_governance_run` | Run memory governance pass |
+| `engram.continuity_audit_generate` | Generate identity continuity audit report |
+| `engram.continuity_incident_open` | Open a continuity incident record |
+| `engram.continuity_incident_close` | Close an open continuity incident |
+| `engram.continuity_incident_list` | List continuity incidents by state |
+| `engram.continuity_loop_add_or_update` | Add/update a continuity improvement loop |
+| `engram.continuity_loop_review` | Review a continuity improvement loop |
+| `engram.identity_anchor_get` | Read identity continuity anchor document |
+| `engram.identity_anchor_update` | Update identity anchor sections |
+| `engram.memory_identity` | Read agent identity reflections |
 | `engram.memory_search` | Direct semantic search over memory files |
 | `engram.memory_profile` | Read user behavioral profile |
 | `engram.memory_entities_list` | List all tracked entities |
