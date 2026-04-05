@@ -30,12 +30,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22.12.0'
           registry-url: 'https://registry.npmjs.org'
-          cache: npm
+          cache: pnpm
 
       - name: Sync with latest main before validation
         run: |
@@ -48,13 +53,16 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3
 
       - name: Verify quality gates
         run: |
-          npm run check-types
-          npm test
-          npm run build
+          pnpm run check-types
+          pnpm test
+          pnpm run build
 
       - name: Configure git identity
         run: |
@@ -130,7 +138,7 @@ jobs:
               echo "new_version=${OVERRIDE}"
               echo "bump_type=override"
             } >> "$GITHUB_OUTPUT"
-            npm version "${OVERRIDE}" --no-git-tag-version --allow-same-version
+            pnpm version "${OVERRIDE}" --no-git-tag-version --allow-same-version
             git add package.json package-lock.json
             if git diff --cached --quiet; then
               echo "::notice title=Release commit skipped::Version already matches v${OVERRIDE}; no package files changed."
@@ -207,7 +215,7 @@ jobs:
             echo "tag_name=v${NEXT_VERSION}"
             echo "new_version=${NEXT_VERSION}"
           } >> "$GITHUB_OUTPUT"
-          npm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
+          pnpm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
           git add package.json package-lock.json
           if git diff --cached --quiet; then
             echo "::notice title=Release commit skipped::Version already matches v${NEXT_VERSION}; no package files changed."
@@ -271,9 +279,14 @@ jobs:
         run: git checkout --detach "${{ steps.version.outputs.tag_name }}"
 
       - name: Install dependencies for tagged source
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      - name: Publish to npm (trusted publishing)
+      - name: Build all packages
+        run: pnpm run build
+
+      - name: Publish root package to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.new_version }}"
           PACKAGE_NAME="$(node -p "require('./package.json').name")"
@@ -281,7 +294,31 @@ jobs:
             echo "::notice title=NPM publish skipped::${PACKAGE_NAME}@${VERSION} is already published."
             exit 0
           fi
-          npm publish --access public
+          pnpm publish --access public --no-git-checks
+
+      - name: Publish workspace packages to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Publish all public workspace packages that have dist/ built
+          for pkg_json in packages/*/package.json; do
+            pkg_dir="$(dirname "$pkg_json")"
+            is_private="$(node -p "require('./$pkg_json').private || false")"
+            if [ "$is_private" = "true" ]; then
+              echo "::notice::Skipping private package: $pkg_dir"
+              continue
+            fi
+            pkg_name="$(node -p "require('./$pkg_json').name")"
+            pkg_version="$(node -p "require('./$pkg_json').version")"
+            if npm view "${pkg_name}@${pkg_version}" version >/dev/null 2>&1; then
+              echo "::notice::${pkg_name}@${pkg_version} already published; skipping."
+              continue
+            fi
+            echo "Publishing ${pkg_name}@${pkg_version} from ${pkg_dir}..."
+            (cd "$pkg_dir" && pnpm publish --access public --no-git-checks) || {
+              echo "::warning::Failed to publish ${pkg_name}@${pkg_version}"
+            }
+          done
 
       - name: Push release commits to main
         # Uses a deploy key (RELEASE_DEPLOY_KEY secret) for the push.
