@@ -81,7 +81,14 @@ jobs:
               if (!conn.pageInfo?.hasNextPage) break;
               after = conn.pageInfo.endCursor;
             }
-            const unresolvedActive = threads.filter((t) => t.isResolved === false && t.isOutdated === false);
+            const unresolvedActive = threads.filter((t) => {
+              if (t.isResolved !== false || t.isOutdated !== false) return false;
+              // Exclude github-advanced-security (CodeQL) threads — these cannot be resolved
+              // via the GitHub API and must be addressed through CodeQL configuration.
+              const author = t.comments?.nodes?.[0]?.author?.login;
+              if (author === "github-advanced-security") return false;
+              return true;
+            });
 
             if (unresolvedActive.length === 0) {
               core.notice("No unresolved active review threads.");

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "engram": {
+      "type": "http",
+      "url": "http://localhost:4318/mcp",
+      "headers": {
+        "Authorization": "Bearer {{ENGRAM_TOKEN}}",
+        "X-Engram-Client-Id": "claude-code"
+      }
+    }
+  }
+}

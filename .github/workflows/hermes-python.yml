@@ -1,0 +1,40 @@
+name: Hermes Python CI
+
+on:
+  pull_request:
+    paths:
+      - "packages/plugin-hermes/**"
+  push:
+    branches: [main]
+    paths:
+      - "packages/plugin-hermes/**"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/plugin-hermes
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" 2>/dev/null || pip install -e .
+
+      - name: Type check
+        run: pip install mypy && mypy engram_hermes/ --ignore-missing-imports
+
+      - name: Lint
+        run: pip install ruff && ruff check engram_hermes/
+
+      - name: Tests
+        run: pip install pytest && pytest tests/ -v

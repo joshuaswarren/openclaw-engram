@@ -32,12 +32,7 @@
   },
   "author": "Joshua Warren",
   "workspaces": [
-    "packages/core",
-    "packages/adapter-openclaw",
-    "packages/hermes-provider",
-    "packages/server",
-    "packages/cli",
-    "packages/bench"
+    "packages/*"
   ],
   "engines": {
     "node": ">=22.12.0"
@@ -89,7 +84,7 @@
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
-    "test": "tsx --test",
+    "test": "tsx --test 'tests/**/*.test.ts' 'packages/engram-core/src/**/*.test.ts'",
     "eval:ci-gate": "tsx scripts/eval-ci-gate.ts",
     "eval:run": "tsx evals/run.ts",
     "eval:download": "bash evals/scripts/download-datasets.sh",
@@ -110,5 +105,14 @@
     "tsup": "^8.5.1",
     "tsx": "^4.0.0",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "sharp",
+      "koffi",
+      "protobufjs"
+    ]
   }
 }

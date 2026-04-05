@@ -1,0 +1,33 @@
+{
+  "name": "openclaw-engram",
+  "version": "9.1.28",
+  "description": "OpenClaw adapter for Engram memory — thin wrapper delegating to @engram/core",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@engram/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "directory": "packages/plugin-openclaw"
+  },
+  "keywords": ["engram", "memory", "openclaw", "adapter", "plugin"]
+}

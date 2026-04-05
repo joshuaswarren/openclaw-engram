@@ -1,0 +1,20 @@
+{
+  "name": "@engram/plugin-codex",
+  "version": "0.1.0",
+  "description": "Engram memory plugin for Codex CLI — hooks, skills, MCP integration",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "directory": "packages/plugin-codex"
+  },
+  "keywords": ["engram", "memory", "codex", "openai", "plugin", "ai-agent"],
+  "private": true,
+  "files": [
+    ".codex-plugin",
+    "hooks",
+    "skills",
+    ".mcp.json"
+  ]
+}

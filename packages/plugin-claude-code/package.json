@@ -1,0 +1,21 @@
+{
+  "name": "@engram/plugin-claude-code",
+  "version": "0.1.0",
+  "description": "Engram memory plugin for Claude Code — hooks, skills, MCP integration",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "directory": "packages/plugin-claude-code"
+  },
+  "keywords": ["engram", "memory", "claude-code", "plugin", "ai-agent"],
+  "private": true,
+  "files": [
+    ".claude-plugin",
+    "hooks",
+    "skills",
+    ".mcp.json",
+    "settings.json"
+  ]
+}

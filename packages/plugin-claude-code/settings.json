@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "mcp": {
+      "engram": {
+        "allow": ["engram_*"]
+      }
+    }
+  }
+}

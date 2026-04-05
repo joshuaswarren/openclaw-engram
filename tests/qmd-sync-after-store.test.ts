@@ -17,7 +17,7 @@ test("QmdClient.update() passes collection flag to qmd subprocess", async () => 
   const { resolve } = await import("node:path");
 
   const qmdSource = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "qmd.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "qmd.ts"),
     "utf-8",
   );
 
