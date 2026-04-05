@@ -19,8 +19,13 @@ log() { echo "$(date '+%F %T') [codex-session-start] $*" >> "$LOG"; }
 ENGRAM_TOKEN=""
 if [ -f "$TOKEN_FILE" ]; then
   ENGRAM_TOKEN="$(node -e "
-    const t = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
-    process.stdout.write(t['codex'] || t['openclaw'] || '');
+    const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
+    const tokens = store.tokens || [];
+    const cx = tokens.find(t => t.connector === 'codex');
+    const oc = tokens.find(t => t.connector === 'openclaw');
+    let tok = (cx && cx.token) || (oc && oc.token) || '';
+    if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
+    process.stdout.write(tok);
   " 2>/dev/null || echo "")"
 fi
 

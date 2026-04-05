@@ -38,7 +38,7 @@ jobs:
         run: pip install ruff && ruff check engram_hermes/
 
       - name: Tests
-        run: pip install pytest && pytest tests/ -v
+        run: pip install pytest pytest-asyncio && pytest tests/ -v
 
   publish:
     needs: test

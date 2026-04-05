@@ -12,6 +12,12 @@
  *   daemon start      Start background server
  *   daemon stop       Stop background server
  *   daemon restart    Restart background server
+ *   daemon install    Install as system service (launchd/systemd)
+ *   daemon uninstall  Remove system service
+ *   daemon status     Show daemon status
+ *   token generate    Generate auth token for a connector
+ *   token list        List all auth tokens
+ *   token revoke      Revoke auth token for a connector
  *   tree              Generate context tree
  *   onboard [dir]     Onboard project directory
  *   curate <path>     Curate files into memory
@@ -23,7 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import {
   parseConfig,
   Orchestrator,
@@ -40,6 +46,9 @@ import {
   installConnector,
   removeConnector,
   doctorConnector,
+  generateToken,
+  listTokens,
+  revokeToken,
   listSpaces,
   getActiveSpace,
   createSpace,
@@ -71,6 +80,7 @@ type CommandName =
   | "doctor"
   | "config"
   | "daemon"
+  | "token"
   | "tree"
   | "onboard"
   | "curate"
@@ -81,7 +91,8 @@ type CommandName =
   | "space"
   | "benchmark";
 
-type DaemonAction = "start" | "stop" | "restart";
+type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
+type TokenAction = "generate" | "list" | "revoke";
 type ReviewAction = "approve" | "dismiss" | "flag";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -197,17 +208,16 @@ function cmdInit(): void {
 }
 
 async function cmdStatus(json: boolean): Promise<void> {
-  const running = isDaemonRunning();
+  const { running, pid } = isServiceRunning();
   if (json) {
-    console.log(JSON.stringify({ running, pidFile: PID_FILE, logFile: LOG_FILE }));
+    console.log(JSON.stringify({ running, pid: pid ?? null, pidFile: PID_FILE, logFile: LOG_FILE }));
     return;
   }
   if (!running) {
     console.log("Engram server: stopped");
     return;
   }
-  const pid = readPid();
-  console.log(`Engram server: running (pid ${pid})`);
+  console.log(`Engram server: running${pid ? ` (pid ${pid})` : ""}`);
 
   const port = inferPort();
   const controller = new AbortController();
@@ -306,10 +316,11 @@ function cmdDoctor(): void {
     checks.push({ name: "Memory directory", ok: false, detail: `cannot create ${memoryDir}` });
   }
 
+  const svcState = isServiceRunning();
   checks.push({
     name: "Server daemon",
-    ok: isDaemonRunning(),
-    detail: isDaemonRunning() ? `running (pid ${readPid()})` : "stopped",
+    ok: svcState.running,
+    detail: svcState.running ? `running${svcState.pid ? ` (pid ${svcState.pid})` : ""}` : "stopped",
   });
 
   for (const check of checks) {
@@ -745,21 +756,23 @@ async function cmdBenchmark(action: string, rest: string[], json: boolean): Prom
 
 // ── Daemon management ────────────────────────────────────────────────────────
 
-function isDaemonRunning(): boolean {
-  const pid = readPid();
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    try {
-      fs.unlinkSync(PID_FILE);
-    } catch {
-      // ignore
-    }
-    return false;
-  }
-}
+const LOGS_DIR = path.join(PID_DIR, "logs");
+const LAUNCHD_LABEL = "ai.engram.daemon";
+const LAUNCHD_PLIST_PATH = path.join(
+  process.env.HOME ?? "~",
+  "Library",
+  "LaunchAgents",
+  `${LAUNCHD_LABEL}.plist`,
+);
+const SYSTEMD_SERVICE = "engram.service";
+const SYSTEMD_UNIT_PATH = path.join(
+  process.env.HOME ?? "~",
+  ".config",
+  "systemd",
+  "user",
+  SYSTEMD_SERVICE,
+);
+
 
 function readPid(): number | undefined {
   try {
@@ -779,25 +792,235 @@ function inferPort(): number {
   }
 }
 
+function resolveNodePath(): string {
+  return process.execPath;
+}
+
+function resolveServerBin(): string {
+  // Prefer built dist (production), fall back to source (dev)
+  const distPath = path.resolve(import.meta.dirname, "../../engram-server/dist/index.js");
+  if (fs.existsSync(distPath)) return distPath;
+  const srcPath = path.resolve(import.meta.dirname, "../../engram-server/src/index.ts");
+  return srcPath;
+}
+
+function isMacOS(): boolean {
+  return process.platform === "darwin";
+}
+
+function isLinux(): boolean {
+  return process.platform === "linux";
+}
+
+function renderTemplate(templateContent: string, vars: Record<string, string>): string {
+  let result = templateContent;
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.replaceAll(`{{${key}}}`, value);
+  }
+  return result;
+}
+
+function daemonInstall(): void {
+  const home = process.env.HOME ?? "~";
+  const nodePath = resolveNodePath();
+  const serverBin = resolveServerBin();
+
+  // Service templates use plain `node` — TypeScript source won't work
+  if (serverBin.endsWith(".ts")) {
+    console.error("Error: @engram/server has not been built. Run 'pnpm run build --filter=@engram/server' first.");
+    console.error(`  Expected: ${path.resolve(import.meta.dirname, "../../engram-server/dist/index.js")}`);
+    console.error(`  Found:    ${serverBin} (TypeScript source — not loadable by node)`);
+    process.exit(1);
+  }
+
+  const vars = { HOME: home, NODE_PATH: nodePath, ENGRAM_SERVER_BIN: serverBin };
+
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+
+  if (isMacOS()) {
+    const templatePath = path.resolve(import.meta.dirname, "../templates/launchd/ai.engram.daemon.plist");
+    const template = fs.readFileSync(templatePath, "utf8");
+    const plist = renderTemplate(template, vars);
+    fs.mkdirSync(path.dirname(LAUNCHD_PLIST_PATH), { recursive: true });
+    fs.writeFileSync(LAUNCHD_PLIST_PATH, plist);
+    try {
+
+      execSync(`launchctl load -w "${LAUNCHD_PLIST_PATH}"`, { stdio: "pipe" });
+    } catch {
+      // May already be loaded
+    }
+    console.log(`Installed launchd service: ${LAUNCHD_PLIST_PATH}`);
+    console.log(`  Label: ${LAUNCHD_LABEL}`);
+    console.log(`  RunAtLoad: true, KeepAlive: true`);
+    console.log(`  Logs: ${LOGS_DIR}/daemon.log`);
+  } else if (isLinux()) {
+    const templatePath = path.resolve(import.meta.dirname, "../templates/systemd/engram.service");
+    const template = fs.readFileSync(templatePath, "utf8");
+    const unit = renderTemplate(template, vars);
+    fs.mkdirSync(path.dirname(SYSTEMD_UNIT_PATH), { recursive: true });
+    fs.writeFileSync(SYSTEMD_UNIT_PATH, unit);
+    try {
+
+      execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      execSync(`systemctl --user start ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+    } catch {
+      // May fail if systemd not available
+    }
+    console.log(`Installed systemd user service: ${SYSTEMD_UNIT_PATH}`);
+    console.log(`  Restart: on-failure, WantedBy: default.target`);
+    console.log(`  Logs: ${LOGS_DIR}/daemon.log`);
+  } else {
+    console.error(`Unsupported platform: ${process.platform}. Use 'engram daemon start' for manual mode.`);
+    process.exit(1);
+  }
+}
+
+function daemonUninstall(): void {
+  if (isMacOS()) {
+    try {
+
+      execSync(`launchctl unload "${LAUNCHD_PLIST_PATH}"`, { stdio: "pipe" });
+    } catch {
+      // May not be loaded
+    }
+    try {
+      fs.unlinkSync(LAUNCHD_PLIST_PATH);
+      console.log(`Removed launchd service: ${LAUNCHD_PLIST_PATH}`);
+    } catch {
+      console.log("Launchd plist not found — nothing to remove.");
+    }
+  } else if (isLinux()) {
+    try {
+
+      execSync(`systemctl --user stop ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      execSync(`systemctl --user disable ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+    } catch {
+      // May not be active
+    }
+    try {
+      fs.unlinkSync(SYSTEMD_UNIT_PATH);
+
+      execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      console.log(`Removed systemd service: ${SYSTEMD_UNIT_PATH}`);
+    } catch {
+      console.log("Systemd unit not found — nothing to remove.");
+    }
+  } else {
+    console.error(`Unsupported platform: ${process.platform}.`);
+    process.exit(1);
+  }
+  // Also stop any manually-started daemon
+  daemonStop();
+}
+
+function isServiceRunning(): { running: boolean; pid?: number } {
+  // Check PID file first (manual `daemon start`)
+  const pidFromFile = readPid();
+  if (pidFromFile) {
+    try {
+      process.kill(pidFromFile, 0);
+      return { running: true, pid: pidFromFile };
+    } catch {
+      // stale pid file
+    }
+  }
+  // Check service manager (launchd/systemd from `daemon install`)
+  try {
+    if (isMacOS()) {
+      const out = execSync(`launchctl list ${LAUNCHD_LABEL} 2>/dev/null`, { encoding: "utf8" });
+      const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
+      if (pidMatch) return { running: true, pid: parseInt(pidMatch[1], 10) };
+      // launchctl list succeeds even when not running — check for PID line
+      if (out.includes('"PID"')) return { running: true };
+    } else if (isLinux()) {
+      const out = execSync(`systemctl --user is-active ${SYSTEMD_SERVICE} 2>/dev/null`, { encoding: "utf8" }).trim();
+      if (out === "active") {
+        try {
+          const pidOut = execSync(`systemctl --user show ${SYSTEMD_SERVICE} --property=MainPID --value`, { encoding: "utf8" }).trim();
+          const spid = parseInt(pidOut, 10);
+          if (spid > 0) return { running: true, pid: spid };
+        } catch { /* ignore */ }
+        return { running: true };
+      }
+    }
+  } catch {
+    // service not registered or command failed
+  }
+  return { running: false };
+}
+
+function daemonStatus(): void {
+  const { running, pid } = isServiceRunning();
+  const port = inferPort();
+  const serviceInstalled = isMacOS()
+    ? fs.existsSync(LAUNCHD_PLIST_PATH)
+    : isLinux()
+      ? fs.existsSync(SYSTEMD_UNIT_PATH)
+      : false;
+
+  console.log(`Engram daemon status:`);
+  console.log(`  Running:   ${running ? `yes${pid ? ` (pid ${pid})` : ""}` : "no"}`);
+  console.log(`  Port:      ${port}`);
+  console.log(`  Service:   ${serviceInstalled ? "installed" : "not installed"}`);
+  console.log(`  Platform:  ${process.platform}`);
+  console.log(`  PID file:  ${PID_FILE}`);
+  console.log(`  Log file:  ${LOG_FILE}`);
+}
+
 function daemonStart(): void {
-  if (isDaemonRunning()) {
-    console.log(`Already running (pid ${readPid()})`);
+  const svc = isServiceRunning();
+  if (svc.running) {
+    console.log(`Already running${svc.pid ? ` (pid ${svc.pid})` : " (via service manager)"}`);
     return;
   }
+
+  // Try service manager first (for daemons installed via `engram daemon install`)
+  if (isMacOS() && fs.existsSync(LAUNCHD_PLIST_PATH)) {
+    try {
+      execSync(`launchctl start ${LAUNCHD_LABEL} 2>/dev/null`, { stdio: "pipe" });
+      console.log(`Started engram daemon via launchd (${LAUNCHD_LABEL})`);
+      return;
+    } catch {
+      // launchctl start failed — fall through to manual start
+    }
+  } else if (isLinux() && fs.existsSync(SYSTEMD_UNIT_PATH)) {
+    try {
+      execSync(`systemctl --user start ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      console.log(`Started engram daemon via systemd (${SYSTEMD_SERVICE})`);
+      return;
+    } catch {
+      // systemctl start failed — fall through to manual start
+    }
+  }
+
   fs.mkdirSync(PID_DIR, { recursive: true });
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
   const logStream = fs.openSync(LOG_FILE, "a");
-  const child = spawn(
-    "npx",
-    ["tsx", path.resolve(import.meta.dirname, "../../server/src/index.ts")],
-    {
-      detached: true,
-      stdio: ["ignore", logStream, logStream],
-      env: {
-        ...process.env,
-        ENGRAM_DAEMON: "1",
-      },
+
+  const serverBin = resolveServerBin();
+  const isSource = serverBin.endsWith(".ts");
+
+  let cmd: string;
+  let args: string[];
+  if (isSource) {
+    // Dev mode: use npx tsx
+    cmd = "npx";
+    args = ["tsx", serverBin];
+  } else {
+    // Production: use node directly
+    cmd = process.execPath;
+    args = [serverBin];
+  }
+
+  const child = spawn(cmd, args, {
+    detached: true,
+    stdio: ["ignore", logStream, logStream],
+    env: {
+      ...process.env,
+      ENGRAM_DAEMON: "1",
     },
-  );
+  });
   child.unref();
   fs.writeFileSync(PID_FILE, String(child.pid));
   console.log(`Started engram server (pid ${child.pid})`);
@@ -805,6 +1028,26 @@ function daemonStart(): void {
 }
 
 function daemonStop(): void {
+  // Try service manager first (for daemons started via `engram daemon install`)
+  if (isMacOS() && fs.existsSync(LAUNCHD_PLIST_PATH)) {
+    try {
+      execSync(`launchctl stop ${LAUNCHD_LABEL} 2>/dev/null`, { stdio: "pipe" });
+      console.log(`Stopped engram daemon via launchd (${LAUNCHD_LABEL})`);
+      return;
+    } catch {
+      // launchctl stop failed — fall through to PID-based stop
+    }
+  } else if (isLinux() && fs.existsSync(SYSTEMD_UNIT_PATH)) {
+    try {
+      execSync(`systemctl --user stop ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      console.log(`Stopped engram daemon via systemd (${SYSTEMD_SERVICE})`);
+      return;
+    } catch {
+      // systemctl stop failed — fall through to PID-based stop
+    }
+  }
+
+  // Fall back to PID file (for daemons started via `engram daemon start`)
   const pid = readPid();
   if (!pid) {
     console.log("Not running");
@@ -826,6 +1069,51 @@ function daemonStop(): void {
 function daemonRestart(): void {
   daemonStop();
   setTimeout(() => daemonStart(), 1000);
+}
+
+// ── Token management ────────────────────────────────────────────────────────
+
+function cmdTokenGenerate(connector: string): void {
+  if (!connector) {
+    console.error("Usage: engram token generate <connector-id>");
+    console.error("  e.g.: engram token generate claude-code");
+    process.exit(1);
+  }
+  const entry = generateToken(connector);
+  console.log(`Generated token for ${connector}:`);
+  console.log(`  Token:   ${entry.token}`);
+  console.log(`  Created: ${entry.createdAt}`);
+  console.log(`\nUse this token as the Bearer token when connecting from ${connector}.`);
+}
+
+function cmdTokenList(json: boolean): void {
+  const tokens = listTokens();
+  if (json) {
+    console.log(JSON.stringify(tokens, null, 2));
+    return;
+  }
+  if (tokens.length === 0) {
+    console.log("No tokens. Generate one with: engram token generate <connector-id>");
+    return;
+  }
+  console.log("Connector tokens:");
+  for (const t of tokens) {
+    // Show only first 20 chars of token for security
+    const masked = t.token.slice(0, 20) + "…";
+    console.log(`  ${t.connector.padEnd(16)} ${masked}  (created ${t.createdAt})`);
+  }
+}
+
+function cmdTokenRevoke(connector: string): void {
+  if (!connector) {
+    console.error("Usage: engram token revoke <connector-id>");
+    process.exit(1);
+  }
+  if (revokeToken(connector)) {
+    console.log(`Revoked token for ${connector}`);
+  } else {
+    console.log(`No token found for ${connector}`);
+  }
 }
 
 // ── CLI entry ────────────────────────────────────────────────────────────────
@@ -872,8 +1160,37 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         case "restart":
           daemonRestart();
           break;
+        case "install":
+          daemonInstall();
+          break;
+        case "uninstall":
+          daemonUninstall();
+          break;
+        case "status":
+          daemonStatus();
+          break;
         default:
-          console.log("Usage: engram daemon <start|stop|restart>");
+          console.log("Usage: engram daemon <start|stop|restart|install|uninstall|status>");
+          process.exit(1);
+      }
+      break;
+    }
+
+    case "token": {
+      const action = rest[0] as TokenAction;
+      const json = rest.includes("--json");
+      switch (action) {
+        case "generate":
+          cmdTokenGenerate(rest[1]);
+          break;
+        case "list":
+          cmdTokenList(json);
+          break;
+        case "revoke":
+          cmdTokenRevoke(rest[1]);
+          break;
+        default:
+          console.log("Usage: engram token <generate|list|revoke> [connector-id] [--json]");
           process.exit(1);
       }
       break;
@@ -1058,7 +1375,8 @@ Usage:
 
   engram doctor                Run diagnostics
   engram config                Show current config
-  engram daemon <start|stop|restart>  Manage background server
+  engram daemon <start|stop|restart|install|uninstall|status>  Manage background server
+  engram token <generate|list|revoke> [connector-id]  Manage auth tokens
   engram tree <generate|watch|validate>  Generate context tree
   engram onboard [dir] [--json]     Onboard project directory
   engram curate <path> [--json]  Curate files into memory

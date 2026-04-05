@@ -18,8 +18,13 @@ log() { echo "$(date '+%F %T') [user-prompt] $*" >> "$LOG"; }
 ENGRAM_TOKEN=""
 if [ -f "$TOKEN_FILE" ]; then
   ENGRAM_TOKEN="$(node -e "
-    const t = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
-    process.stdout.write(t['claude-code'] || t['openclaw'] || '');
+    const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
+    const tokens = store.tokens || [];
+    const cc = tokens.find(t => t.connector === 'claude-code');
+    const oc = tokens.find(t => t.connector === 'openclaw');
+    let tok = (cc && cc.token) || (oc && oc.token) || '';
+    if (!tok) { tok = store['claude-code'] || store['openclaw'] || ''; }
+    process.stdout.write(tok);
   " 2>/dev/null || echo "")"
 fi
 [ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
