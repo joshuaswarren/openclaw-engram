@@ -22,16 +22,28 @@ const candidates = [
 ];
 const tsxCmd = candidates.find((c) => existsSync(c)) || "tsx";
 
+// Respect user color preferences: only force color if not explicitly disabled
+const colorEnv = {};
+if (!process.env.NO_COLOR && process.env.FORCE_COLOR === undefined) {
+  colorEnv.FORCE_COLOR = "1";
+}
+
 try {
   execFileSync(
     tsxCmd,
     [resolve(cwd, "../src/index.ts"), ...process.argv.slice(2)],
     {
       stdio: "inherit",
-      env: { ...process.env, ENGRAM_CLI_BIN: "1", FORCE_COLOR: "1" },
+      env: { ...process.env, ENGRAM_CLI_BIN: "1", ...colorEnv },
     },
   );
 } catch (err) {
-  // execFileSync throws on non-zero exit — propagate the child's exit code
-  process.exitCode = err.status ?? 1;
+  // execFileSync throws on non-zero exit — propagate the child's exit code.
+  // err.status is null for spawn failures (e.g. ENOENT when tsx is missing).
+  if (err.status != null) {
+    process.exitCode = err.status;
+  } else {
+    console.error(`Fatal: ${err.message}`);
+    process.exitCode = 1;
+  }
 }

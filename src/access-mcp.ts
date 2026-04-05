@@ -249,6 +249,127 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Parity tools (matching OpenClaw plugin feature set) ───────────
+      {
+        name: "engram.memory_search",
+        description: "Direct semantic search over memory files using the QMD index. Returns matching memories with relevance scores.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            namespace: { type: "string" },
+            maxResults: { type: "number" },
+            collection: { type: "string", description: "QMD collection (omit for memory, 'global' for all)" },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_profile",
+        description: "Read the user's behavioral profile — a living document of their preferences, habits, and personality.",
+        inputSchema: {
+          type: "object",
+          properties: { namespace: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_entities_list",
+        description: "List all tracked entities (people, projects, tools, companies).",
+        inputSchema: {
+          type: "object",
+          properties: { namespace: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_questions",
+        description: "List open questions the system is curious about from past conversations.",
+        inputSchema: {
+          type: "object",
+          properties: { namespace: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_last_recall",
+        description: "Return the last recall snapshot for a session (debug introspection).",
+        inputSchema: {
+          type: "object",
+          properties: { sessionKey: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_intent_debug",
+        description: "Return the last intent classification debug snapshot.",
+        inputSchema: {
+          type: "object",
+          properties: { namespace: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_qmd_debug",
+        description: "Return QMD search index debug information from the last recall.",
+        inputSchema: {
+          type: "object",
+          properties: { namespace: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_graph_explain",
+        description: "Explain the last entity graph recall — which entities were activated and why.",
+        inputSchema: {
+          type: "object",
+          properties: { namespace: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_feedback",
+        description: "Record relevance feedback (thumbs up/down) for a specific memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            memoryId: { type: "string" },
+            vote: { type: "string", enum: ["up", "down"] },
+            note: { type: "string" },
+          },
+          required: ["memoryId", "vote"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_promote",
+        description: "Promote a memory's lifecycle state (e.g. from draft to active).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            memoryId: { type: "string" },
+            namespace: { type: "string" },
+            sessionKey: { type: "string" },
+          },
+          required: ["memoryId"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.context_checkpoint",
+        description: "Save a structured context checkpoint for a session (preserves conversation state to disk).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionKey: { type: "string" },
+            context: { type: "string", description: "Context content to checkpoint" },
+            namespace: { type: "string" },
+          },
+          required: ["sessionKey", "context"],
+          additionalProperties: false,
+        },
+      },
     ];
   }
 
@@ -520,6 +641,66 @@ export class EngramMcpServer {
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           limit: typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : undefined,
           authenticatedPrincipal: effectivePrincipal,
+        });
+      // ── Parity tools ──────────────────────────────────────────────────
+      case "engram.memory_search":
+        return this.service.memorySearch({
+          query: typeof args.query === "string" ? args.query : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          maxResults: typeof args.maxResults === "number" && Number.isFinite(args.maxResults) ? args.maxResults : undefined,
+          collection: typeof args.collection === "string" ? args.collection : undefined,
+          principal: effectivePrincipal,
+        });
+      case "engram.memory_profile":
+        return this.service.memoryProfile(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
+        );
+      case "engram.memory_entities_list":
+        return this.service.memoryEntitiesList(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
+        );
+      case "engram.memory_questions":
+        return this.service.memoryQuestions(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
+        );
+      case "engram.memory_last_recall":
+        return this.service.lastRecallSnapshot(
+          typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+        );
+      case "engram.memory_intent_debug":
+        return this.service.intentDebug(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+        );
+      case "engram.memory_qmd_debug":
+        return this.service.qmdDebug(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+        );
+      case "engram.memory_graph_explain":
+        return this.service.graphExplainLastRecall(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+        );
+      case "engram.memory_feedback":
+        return this.service.memoryFeedback({
+          memoryId: typeof args.memoryId === "string" ? args.memoryId : "",
+          vote: args.vote === "down" ? "down" : "up",
+          note: typeof args.note === "string" ? args.note : undefined,
+        });
+      case "engram.memory_promote":
+        return this.service.memoryPromote({
+          memoryId: typeof args.memoryId === "string" ? args.memoryId : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+        });
+      case "engram.context_checkpoint":
+        return this.service.contextCheckpoint({
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
+          context: typeof args.context === "string" ? args.context : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
         });
       default:
         throw new Error(`unknown tool: ${name}`);

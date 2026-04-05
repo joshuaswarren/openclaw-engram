@@ -1798,6 +1798,155 @@ export class EngramAccessService {
     };
   }
 
+  // ── Parity tools (match OpenClaw plugin feature set) ──────────────────
+
+  async memorySearch(request: {
+    query: string;
+    namespace?: string;
+    maxResults?: number;
+    collection?: string;
+    principal?: string;
+  }): Promise<{ query: string; results: Array<{ path: string; score: number; snippet: string }>; count: number }> {
+    const { query, namespace, maxResults, collection, principal } = request;
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const namespaceFilter = resolvedNs !== this.orchestrator.config.defaultNamespace ? resolvedNs : undefined;
+
+    const results = collection === "global"
+      ? (await this.orchestrator.qmd.searchGlobal(query, maxResults)).filter((r) =>
+          namespaceFilter
+            ? r.path.includes(`/namespaces/${namespaceFilter}/`) ||
+              (!r.path.includes("/namespaces/") && namespaceFilter === this.orchestrator.config.defaultNamespace)
+            : true,
+        )
+      : await this.orchestrator.searchAcrossNamespaces({
+          query,
+          namespaces: namespaceFilter ? [namespaceFilter] : undefined,
+          maxResults,
+          mode: "search",
+        });
+
+    return {
+      query,
+      results: results.map((r) => ({
+        path: r.path,
+        score: r.score,
+        snippet: (r.snippet ?? "").slice(0, 800),
+      })),
+      count: results.length,
+    };
+  }
+
+  async memoryProfile(namespace?: string, principal?: string): Promise<Record<string, unknown>> {
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const profile = await storage.readProfile();
+    return {
+      profile: profile || "No profile built yet. The profile builds automatically through conversations.",
+    };
+  }
+
+  async memoryEntitiesList(namespace?: string, principal?: string): Promise<{ entities: string[]; count: number }> {
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const entities = await storage.readEntities();
+    return { entities, count: entities.length };
+  }
+
+  async memoryQuestions(namespace?: string, principal?: string): Promise<{ questions: Array<{ id: string; question: string; resolved: boolean }>; count: number }> {
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const questions = await storage.readQuestions();
+    return {
+      questions: questions.map((q) => ({ id: q.id, question: q.question, resolved: q.resolved })),
+      count: questions.length,
+    };
+  }
+
+  async lastRecallSnapshot(sessionKey?: string): Promise<unknown> {
+    const snapshot = sessionKey
+      ? this.orchestrator.lastRecall.get(sessionKey)
+      : this.orchestrator.lastRecall.getMostRecent();
+    return snapshot ?? { message: "No recall snapshot available" };
+  }
+
+  async intentDebug(namespace?: string): Promise<unknown> {
+    const snapshot = await this.orchestrator.getLastIntentSnapshot(namespace);
+    return snapshot ?? { message: "No intent debug snapshot available" };
+  }
+
+  async qmdDebug(namespace?: string): Promise<unknown> {
+    const snapshot = await this.orchestrator.getLastQmdRecallSnapshot(namespace);
+    return snapshot ?? { message: "No QMD debug snapshot available" };
+  }
+
+  async graphExplainLastRecall(namespace?: string): Promise<unknown> {
+    const explanation = await this.orchestrator.explainLastGraphRecall({ namespace });
+    return { explanation };
+  }
+
+  async memoryFeedback(request: {
+    memoryId: string;
+    vote: "up" | "down";
+    note?: string;
+  }): Promise<{ recorded: boolean; enabled?: boolean; reason?: string }> {
+    if (!this.orchestrator.config.feedbackEnabled) {
+      return {
+        recorded: false,
+        enabled: false,
+        reason: "Feedback is disabled. Enable `feedbackEnabled: true` in the Engram config to store feedback.",
+      };
+    }
+    await this.orchestrator.recordMemoryFeedback(
+      request.memoryId,
+      request.vote,
+      request.note,
+    );
+    return { recorded: true };
+  }
+
+  async memoryPromote(request: {
+    memoryId: string;
+    namespace?: string;
+    principal?: string;
+    sessionKey?: string;
+  }): Promise<unknown> {
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, request.sessionKey, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    // Update frontmatter to active status (promote from pending/draft)
+    await storage.updateMemoryFrontmatter(request.memoryId, {
+      lifecycleState: "active",
+      updated: new Date().toISOString(),
+    });
+    return { promoted: true, memoryId: request.memoryId };
+  }
+
+  async contextCheckpoint(request: {
+    sessionKey: string;
+    context: string;
+    namespace?: string;
+    principal?: string;
+  }): Promise<{ saved: boolean }> {
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, request.sessionKey, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const storageDir = storage.dir;
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { join, resolve } = await import("node:path");
+    // Sanitize sessionKey to prevent path traversal
+    const safeKey = request.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    if (!safeKey) throw new EngramAccessInputError("sessionKey is required");
+    const checkpointDir = join(storageDir, "checkpoints", safeKey);
+    // Double-check resolved path stays inside storageDir
+    const resolved = resolve(checkpointDir);
+    if (!resolved.startsWith(resolve(storageDir))) {
+      throw new EngramAccessInputError("Invalid sessionKey");
+    }
+    await mkdir(checkpointDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const filePath = join(checkpointDir, `checkpoint-${ts}.md`);
+    await writeFile(filePath, request.context, "utf-8");
+    return { saved: true };
+  }
+
   async lcmStatus(): Promise<EngramAccessLcmStatusResponse> {
     if (!this.orchestrator.lcmEngine || !this.orchestrator.lcmEngine.enabled) {
       return {

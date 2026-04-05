@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **11 new standalone MCP tools** for feature parity with OpenClaw plugin:
+  - `engram.memory_search` — direct semantic search with QMD index
+  - `engram.memory_profile` — user behavioral profile
+  - `engram.memory_entities_list` — list all tracked entities
+  - `engram.memory_questions` — open questions from conversations
+  - `engram.memory_last_recall` — last recall debug snapshot
+  - `engram.memory_intent_debug` — intent classification debug
+  - `engram.memory_qmd_debug` — QMD index debug info
+  - `engram.memory_graph_explain` — entity graph recall explanation
+  - `engram.memory_feedback` — relevance feedback (up/down) for memories
+  - `engram.memory_promote` — lifecycle state promotion
+  - `engram.context_checkpoint` — save session context to disk
+
+### Fixed
+- **CLI `engram.cjs`** — print "Fatal: <message>" when tsx is not found (was silent exit)
+- **CLI `engram.cjs`** — respect `NO_COLOR` and user-set `FORCE_COLOR` instead of unconditionally forcing color
+
 ## [v9.2.3] — 2026-04-04
 
 ### Added
