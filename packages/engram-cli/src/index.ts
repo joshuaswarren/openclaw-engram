@@ -839,6 +839,15 @@ function daemonInstall(): void {
   const home = process.env.HOME ?? "~";
   const nodePath = resolveNodePath();
   const serverBin = resolveServerBin();
+
+  // Service templates use plain `node` — TypeScript source won't work
+  if (serverBin.endsWith(".ts")) {
+    console.error("Error: @engram/server has not been built. Run 'pnpm run build --filter=@engram/server' first.");
+    console.error(`  Expected: ${path.resolve(import.meta.dirname, "../../engram-server/dist/index.js")}`);
+    console.error(`  Found:    ${serverBin} (TypeScript source — not loadable by node)`);
+    process.exit(1);
+  }
+
   const vars = { HOME: home, NODE_PATH: nodePath, ENGRAM_SERVER_BIN: serverBin };
 
   fs.mkdirSync(LOGS_DIR, { recursive: true });

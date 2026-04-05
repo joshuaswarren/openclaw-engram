@@ -41,9 +41,16 @@ function isDaemonRunning(): boolean {
 }
 
 /**
- * Read daemon port from engram config.
+ * Read daemon port from environment or engram config.
  */
 function readDaemonPort(): number {
+  // Environment takes precedence (matches daemon startup behavior)
+  const envPort = process.env.ENGRAM_PORT;
+  if (envPort) {
+    const parsed = parseInt(envPort, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
   try {
     const configPaths = [
       path.join(resolveHomeDir(), ".config", "engram", "config.json"),
@@ -103,14 +110,35 @@ export function detectBridgeMode(): BridgeConfig {
 }
 
 /**
+ * Load the first valid auth token for health check.
+ */
+function loadAnyToken(): string {
+  try {
+    const tokensPath = path.join(resolveHomeDir(), ".engram", "tokens.json");
+    if (!existsSync(tokensPath)) return "";
+    const store = JSON.parse(readFileSync(tokensPath, "utf8"));
+    const tokens = Array.isArray(store.tokens) ? store.tokens : [];
+    if (tokens.length > 0 && tokens[0].token) return tokens[0].token;
+  } catch {
+    // ignore
+  }
+  return process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN ?? process.env.ENGRAM_AUTH_TOKEN ?? "";
+}
+
+/**
  * Check if the daemon is reachable via HTTP health check.
+ * Uses the authenticated /engram/v1/health endpoint.
  */
 export async function checkDaemonHealth(host: string, port: number): Promise<boolean> {
   try {
     const { request } = await import("node:http");
+    const token = loadAnyToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
     return new Promise((resolve) => {
       const req = request(
-        { hostname: host, port, path: "/health", method: "GET", timeout: 2000 },
+        { hostname: host, port, path: "/engram/v1/health", method: "GET", timeout: 2000, headers },
         (res) => {
           resolve(res.statusCode === 200);
           res.resume();
