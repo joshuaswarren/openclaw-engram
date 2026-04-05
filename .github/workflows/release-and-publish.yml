@@ -281,8 +281,11 @@ jobs:
       - name: Install dependencies for tagged source
         run: pnpm install --frozen-lockfile
 
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3
+
       - name: Build all packages
-        run: pnpm run build
+        run: pnpm -r run build
 
       - name: Publish root package to npm
         env:
@@ -300,9 +303,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Publish all public workspace packages that have dist/ built
-          for pkg_json in packages/*/package.json; do
-            pkg_dir="$(dirname "$pkg_json")"
+          # Publish in dependency order: core first, then packages that depend on it
+          PUBLISH_ORDER=(
+            packages/engram-core
+            packages/engram-server
+            packages/engram-cli
+            packages/hermes-provider
+            packages/plugin-openclaw
+          )
+          for pkg_dir in "${PUBLISH_ORDER[@]}"; do
+            pkg_json="$pkg_dir/package.json"
+            if [ ! -f "$pkg_json" ]; then
+              echo "::warning::$pkg_json not found; skipping."
+              continue
+            fi
             is_private="$(node -p "require('./$pkg_json').private || false")"
             if [ "$is_private" = "true" ]; then
               echo "::notice::Skipping private package: $pkg_dir"

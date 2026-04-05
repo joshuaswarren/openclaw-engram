@@ -2,25 +2,20 @@
 /**
  * engram CLI binary entry point.
  *
- * CJS wrapper that locates tsx (from node_modules or PATH) and runs the
- * TypeScript CLI source.  Uses .cjs extension so Node always treats it as
- * CommonJS regardless of the nearest package.json "type" field.
+ * CJS wrapper that runs the built ESM CLI entry point.
+ * Uses .cjs extension so Node always treats it as CommonJS
+ * regardless of the nearest package.json "type" field.
  *
- * main() is auto-invoked by src/index.ts when it detects this wrapper
- * via the ENGRAM_CLI_BIN environment variable.
+ * In development (from source), falls back to tsx + TypeScript source
+ * when dist/ doesn't exist.
  */
 const { resolve } = require("node:path");
 const { existsSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const cwd = __dirname;
-
-// Resolve tsx: check package-local, then workspace-hoisted root, then global PATH
-const candidates = [
-  resolve(cwd, "../node_modules/.bin/tsx"),        // package-local
-  resolve(cwd, "../../../node_modules/.bin/tsx"),   // workspace root (hoisted)
-];
-const tsxCmd = candidates.find((c) => existsSync(c)) || "tsx";
+const distEntry = resolve(cwd, "../dist/index.js");
+const srcEntry = resolve(cwd, "../src/index.ts");
 
 // Respect user color preferences: only force color if not explicitly disabled
 const colorEnv = {};
@@ -29,21 +24,38 @@ if (!process.env.NO_COLOR && process.env.FORCE_COLOR === undefined) {
 }
 
 try {
-  execFileSync(
-    tsxCmd,
-    [resolve(cwd, "../src/index.ts"), ...process.argv.slice(2)],
-    {
-      stdio: "inherit",
-      env: { ...process.env, ENGRAM_CLI_BIN: "1", ...colorEnv },
-    },
-  );
+  if (existsSync(distEntry)) {
+    // Production: run built ESM output with Node directly
+    execFileSync(
+      process.execPath,
+      [distEntry, ...process.argv.slice(2)],
+      {
+        stdio: "inherit",
+        env: { ...process.env, ENGRAM_CLI_BIN: "1", ...colorEnv },
+      },
+    );
+  } else {
+    // Development: run TypeScript source via tsx
+    const tsxCandidates = [
+      resolve(cwd, "../node_modules/.bin/tsx"),
+      resolve(cwd, "../../../node_modules/.bin/tsx"),
+    ];
+    const tsxCmd = tsxCandidates.find((c) => existsSync(c)) || "tsx";
+    execFileSync(
+      tsxCmd,
+      [srcEntry, ...process.argv.slice(2)],
+      {
+        stdio: "inherit",
+        env: { ...process.env, ENGRAM_CLI_BIN: "1", ...colorEnv },
+      },
+    );
+  }
 } catch (err) {
   // execFileSync throws on non-zero exit — propagate the child's exit code.
-  // err.status is null for spawn failures (e.g. ENOENT when tsx is missing).
   if (err.status != null) {
     process.exitCode = err.status;
   } else {
-    console.error(`Fatal: ${err.message}`);
+    process.stderr.write(`Fatal: ${err.message}\n`);
     process.exitCode = 1;
   }
 }
