@@ -10,11 +10,11 @@
     "directory": "packages/plugin-claude-code"
   },
   "keywords": ["engram", "memory", "claude-code", "plugin", "ai-agent"],
+  "private": true,
   "files": [
     ".claude-plugin",
     "hooks",
     "skills",
-    "agents",
     ".mcp.json",
     "settings.json"
   ]

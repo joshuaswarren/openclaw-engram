@@ -10,6 +10,7 @@
     "directory": "packages/plugin-codex"
   },
   "keywords": ["engram", "memory", "codex", "openai", "plugin", "ai-agent"],
+  "private": true,
   "files": [
     ".codex-plugin",
     "hooks",

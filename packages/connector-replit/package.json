@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Engram MCP connector for Replit Agent — setup instructions and token generator",
   "type": "module",
-  "main": "src/installer.ts",
+  "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Engram session cleanup for Claude Code.
 # Removes cursor and lock files for the session.
+#
+# NOTE: Claude Code does not support a Stop/SessionEnd hook event.
+# This script is provided for manual cleanup or future hook support.
+# Temp files in /tmp/ are cleaned by the OS on reboot.
 
 INPUT="$(cat)"
 SESSION_ID="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.session_id||'')" "$INPUT" 2>/dev/null || echo "")"
