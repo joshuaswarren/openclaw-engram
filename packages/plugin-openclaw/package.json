@@ -4,11 +4,9 @@
   "description": "OpenClaw adapter for Engram memory — thin wrapper delegating to @engram/core",
   "type": "module",
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/index.js"
     }
   },
   "files": [
@@ -26,7 +24,7 @@
     ]
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --target es2022 --platform node --dts --outDir dist --external openclaw --external @engram/core",
+    "build": "tsup --config tsup.config.ts",
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
