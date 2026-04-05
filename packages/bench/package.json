@@ -1,6 +1,7 @@
 {
   "name": "@engram/bench",
   "version": "0.1.0",
+  "private": true,
   "description": "Retrieval latency ladder benchmarks + CI regression gates for @engram/core",
   "type": "module",
   "main": "src/index.ts",

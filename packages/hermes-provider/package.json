@@ -16,6 +16,10 @@
     "build": "tsup src/index.ts --format esm --dts",
     "prepublishOnly": "npm run build"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "peerDependencies": {},
   "devDependencies": {
     "tsup": "^8.0.0",
@@ -24,7 +28,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/openclaw-engram",
+    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
     "directory": "packages/hermes-provider"
   },
   "keywords": ["engram", "memory", "ai", "agent", "openclaw"]

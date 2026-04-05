@@ -3,26 +3,42 @@
   "version": "0.1.0",
   "description": "CLI for Engram memory — init, query, doctor, daemon management",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "types": "./src/index.ts"
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     }
   },
   "bin": {
     "engram": "./bin/engram.cjs"
   },
+  "files": [
+    "dist",
+    "bin/engram.cjs"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "check-types": "tsc --noEmit"
+    "build": "tsup src/index.ts --format esm --target es2022 --platform node --dts --outDir dist",
+    "check-types": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@engram/bench": "workspace:*",
     "@engram/core": "workspace:*"
   },
   "devDependencies": {
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "directory": "packages/engram-cli"
+  }
 }
