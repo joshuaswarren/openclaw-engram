@@ -19,10 +19,17 @@ class EngramHermesConfig:
 
     @classmethod
     def from_hermes_config(cls, config: dict[str, object]) -> EngramHermesConfig:
-        """Load from Hermes config.yaml's engram section."""
-        engram = config.get("engram", {})
-        if not isinstance(engram, dict):
-            engram = {}
+        """Load from the engram config section (already extracted by the register() caller).
+
+        Accepts either the top-level Hermes config (with 'engram' key) or the
+        pre-extracted engram section directly.
+        """
+        # Support both top-level config (with engram key) and pre-extracted section
+        engram_candidate = config.get("engram")
+        if isinstance(engram_candidate, dict):
+            engram = engram_candidate
+        else:
+            engram = config  # already the engram section
 
         token = str(engram.get("token", ""))
         if not token:
