@@ -31,10 +31,10 @@ jobs:
         run: pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
       - name: Type check
-        run: pip install mypy && mypy engram_hermes/ --ignore-missing-imports || true
+        run: pip install mypy && mypy engram_hermes/ --ignore-missing-imports
 
       - name: Lint
         run: pip install ruff && ruff check engram_hermes/
 
       - name: Tests
-        run: pip install pytest && pytest tests/ -v || echo "No tests yet"
+        run: pip install pytest && pytest tests/ -v

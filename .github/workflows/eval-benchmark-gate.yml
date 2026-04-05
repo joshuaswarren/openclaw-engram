@@ -31,16 +31,21 @@ jobs:
         if: github.event_name == 'push'
         run: cp -R candidate base
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22.12.0'
-          cache: npm
-          cache-dependency-path: candidate/package-lock.json
+          cache: pnpm
+          cache-dependency-path: candidate/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: candidate
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Compare eval snapshots
         working-directory: candidate
@@ -52,4 +57,4 @@ jobs:
             echo "No eval snapshot fixture store found in base or candidate checkout; skipping."
             exit 0
           fi
-          npx tsx scripts/eval-baseline-ci-gate.ts --base "$BASE_DIR" --candidate "$CANDIDATE_DIR" --snapshot-id "$SNAPSHOT_ID"
+          pnpm exec tsx scripts/eval-baseline-ci-gate.ts --base "$BASE_DIR" --candidate "$CANDIDATE_DIR" --snapshot-id "$SNAPSHOT_ID"

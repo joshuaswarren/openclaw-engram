@@ -65,12 +65,12 @@ class EngramClient:
         return resp.json()  # type: ignore[no-any-return]
 
     async def store(self, content: str, **kwargs: Any) -> dict[str, Any]:
-        resp = await self._http.post("/store", json={"content": content, **kwargs})
+        resp = await self._http.post("/memories", json={"content": content, **kwargs})
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 
     async def search(self, query: str, *, top_k: int = 10) -> dict[str, Any]:
-        resp = await self._http.post("/search", json={"query": query, "topK": top_k})
+        resp = await self._http.post("/recall", json={"query": query, "topK": top_k})
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 

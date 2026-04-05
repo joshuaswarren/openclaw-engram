@@ -48,7 +48,7 @@ fi
 
 if [ -z "$ENGRAM_TOKEN" ]; then
   log "skipping: no token found"
-  echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Engram: no auth token — run: engram connectors install claude-code]"}}'
+  echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Engram: no auth token — run: engram connectors install codex]"}}'
   exit 0
 fi
 

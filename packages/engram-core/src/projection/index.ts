@@ -266,7 +266,7 @@ function parseFrontmatter(content: string): Frontmatter | null {
       fm[key] = value;
     }
   }
-  return fm as Frontmatter;
+  return fm as unknown as Frontmatter;
 }
 
 function extractBody(content: string): string {
