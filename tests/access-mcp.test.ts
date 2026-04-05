@@ -165,6 +165,17 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.review_queue_list",
     "engram.observe",
     "engram.lcm_search",
+    "engram.memory_search",
+    "engram.memory_profile",
+    "engram.memory_entities_list",
+    "engram.memory_questions",
+    "engram.memory_last_recall",
+    "engram.memory_intent_debug",
+    "engram.memory_qmd_debug",
+    "engram.memory_graph_explain",
+    "engram.memory_feedback",
+    "engram.memory_promote",
+    "engram.context_checkpoint",
   ]);
 
   const recall = await server.handleRequest({
