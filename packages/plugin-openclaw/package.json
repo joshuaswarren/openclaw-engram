@@ -1,5 +1,5 @@
 {
-  "name": "@engram/adapter-openclaw",
+  "name": "openclaw-engram",
   "version": "9.1.28",
   "description": "OpenClaw adapter for Engram memory — thin wrapper delegating to @engram/core",
   "type": "module",
@@ -15,7 +15,7 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@engram/core": "file:../core"
+    "@engram/core": "workspace:*"
   },
   "peerDependencies": {
     "openclaw": "*"
@@ -27,7 +27,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/joshuaswarren/openclaw-engram.git",
-    "directory": "packages/adapter-openclaw"
+    "directory": "packages/plugin-openclaw"
   },
   "keywords": ["engram", "memory", "openclaw", "adapter", "plugin"]
 }

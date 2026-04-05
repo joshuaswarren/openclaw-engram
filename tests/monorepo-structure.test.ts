@@ -20,12 +20,11 @@ const EXPECTED_PACKAGES = [
   { dir: "bench", name: "@engram/bench" },
 ];
 
-// Packages that must exist NOW (pre-migration names accepted too)
+// Packages that must exist NOW (renamed to target names)
 const REQUIRED_NOW = [
-  // These exist under current names or target names
-  "core",
-  "server",
-  "cli",
+  "engram-core",
+  "engram-server",
+  "engram-cli",
 ];
 
 test("packages/ directory exists", () => {
@@ -38,11 +37,10 @@ test("each required package has a package.json", () => {
     .map((d) => d.name);
 
   for (const req of REQUIRED_NOW) {
-    // Accept either current name or target name (e.g., "core" or "engram-core")
-    const found = dirs.some((d) => d === req || d === `engram-${req}`);
-    assert.ok(found, `Required package "${req}" (or "engram-${req}") must exist in packages/`);
+    const found = dirs.some((d) => d === req);
+    assert.ok(found, `Required package "${req}" must exist in packages/`);
 
-    const dirName = dirs.find((d) => d === req || d === `engram-${req}`)!;
+    const dirName = dirs.find((d) => d === req)!;
     const pkgJsonPath = path.join(PACKAGES_DIR, dirName, "package.json");
     assert.ok(fs.existsSync(pkgJsonPath), `${dirName}/package.json must exist`);
   }

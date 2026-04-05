@@ -32,12 +32,7 @@
   },
   "author": "Joshua Warren",
   "workspaces": [
-    "packages/core",
-    "packages/adapter-openclaw",
-    "packages/hermes-provider",
-    "packages/server",
-    "packages/cli",
-    "packages/bench"
+    "packages/*"
   ],
   "engines": {
     "node": ">=22.12.0"
