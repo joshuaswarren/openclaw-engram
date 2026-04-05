@@ -105,5 +105,14 @@
     "tsup": "^8.5.1",
     "tsx": "^4.0.0",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "sharp",
+      "koffi",
+      "protobufjs"
+    ]
   }
 }
