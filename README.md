@@ -25,7 +25,7 @@ OpenClaw's built-in memory works for simple cases, but it doesn't scale. It lack
 
 Engram is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Use OpenAI or a **local LLM** (Ollama, LM Studio, etc.) for extraction — your choice.
 
-It works as a native **[OpenClaw](https://github.com/openclaw/openclaw)** plugin, with **[Codex CLI](https://github.com/openai/codex)** via MCP, and with any other MCP-compatible client — with more integrations coming.
+Engram is the **universal memory layer for AI agents**. It works natively with **[OpenClaw](https://github.com/openclaw/openclaw)**, **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://github.com/openai/codex)**, **[Hermes Agent](https://github.com/hermes-agent/hermes)**, and any **MCP-compatible client** (Replit, Cursor, etc.). When you tell any agent a preference, every agent knows it — they share one memory store.
 
 | Without Engram | With Engram |
 |---|---|
@@ -90,6 +90,27 @@ engram init
 > **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
 
 The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
+
+### Option 5: Connect Other AI Agents
+
+Once the Engram daemon is running, connect any supported agent:
+
+```bash
+engram connectors install claude-code   # Claude Code (hooks + MCP)
+engram connectors install codex         # Codex CLI (hooks + MCP)
+engram connectors install hermes        # Hermes Agent (Python MemoryProvider)
+engram connectors install replit        # Replit (MCP only)
+```
+
+Each connector generates a unique auth token, installs the appropriate plugin/hooks, and verifies the connection. All agents share the same memory store — tell one agent your preference, and every agent remembers it.
+
+| Platform | Integration | Auto-recall | Auto-observe |
+|----------|------------|-------------|--------------|
+| **OpenClaw** | Memory slot plugin | Every session | Every response |
+| **Claude Code** | Native hooks + MCP | Every prompt | Every tool use |
+| **Codex CLI** | Native hooks + MCP | Every prompt | Every tool use |
+| **Hermes** | Python MemoryProvider | Every LLM call | Every turn |
+| **Replit** | MCP only | On demand | On demand |
 
 ### Configure
 
@@ -254,36 +275,40 @@ Memory categories include: `fact`, `decision`, `preference`, `correction`, `rela
 
 ## Architecture
 
-Starting with v9.1.36, Engram is organized as a monorepo with five packages:
+Engram is organized as a monorepo with a core engine, standalone server/CLI, and native plugins for multiple AI platforms:
 
 ```
-                    ┌─────────────────┐
-                    │  @engram/core   │
-                    │  (engine)       │
-                    └────────┬────────┘
-                             │
-               ┌─────────────┼─────────────┐
-               │             │             │
-        ┌──────┴──────┐ ┌───┴────┐ ┌──────┴──────────┐
-        │ @engram/cli │ │@engram/│ │ @engram/         │
-        │ (CLI binary)│ │server  │ │ hermes-provider  │
-        └─────────────┘ └────────┘ └─────────────────┘
-                             │
-                      ┌──────┴──────┐
-                      │ @engram/    │
-                      │ bench       │
-                      └─────────────┘
+                         ┌─────────────────┐
+                         │  @engram/core   │
+                         │  (engine)       │
+                         └────────┬────────┘
+                                  │
+        ┌──────────┬──────────┬───┴────┬──────────┬──────────┐
+        │          │          │        │          │          │
+  ┌─────┴─────┐ ┌─┴──────┐ ┌┴─────┐ ┌┴────────┐ │  Native  │
+  │ @engram/  │ │@engram/│ │engram│ │openclaw- │ │ Plugins  │
+  │ cli       │ │server  │ │hermes│ │engram    │ │          │
+  └───────────┘ └────────┘ └──────┘ └─────────┘ └──────────┘
+                    │                             │
+              ┌─────┴─────┐        ┌──────────────┼──────────┐
+              │ @engram/  │        │              │          │
+              │ bench     │   claude-code     codex     replit
+              └───────────┘
 ```
 
-| Package | Description |
-|---------|-------------|
-| `@engram/core` | Framework-agnostic engine with zero OpenClaw imports. Re-exports orchestrator, config, storage, search, extraction, graph, and trust zones. |
-| `@engram/cli` | Standalone CLI binary with 15+ commands for memory management, project onboarding, curation, sync, dedup, connectors, spaces, and benchmarks. |
-| `@engram/server` | Standalone HTTP/MCP server wrapping the existing access layer. Run independently or as a daemon. |
-| `@engram/bench` | Latency ladder benchmarks with tier breakdowns, saved baselines, and CI regression gates. |
-| `@engram/hermes-provider` | Lightweight HTTP client for connecting to remote Engram instances. Works with any TypeScript project. |
+| Package | npm/PyPI | Description |
+|---------|----------|-------------|
+| `@engram/core` | [![npm](https://img.shields.io/npm/v/@engram/core)](https://www.npmjs.com/package/@engram/core) | Framework-agnostic engine — orchestrator, storage, search, extraction, graph, trust zones |
+| `@engram/server` | [![npm](https://img.shields.io/npm/v/@engram/server)](https://www.npmjs.com/package/@engram/server) | Standalone HTTP/MCP server with multi-token auth. Run as daemon via launchd/systemd |
+| `@engram/cli` | [![npm](https://img.shields.io/npm/v/@engram/cli)](https://www.npmjs.com/package/@engram/cli) | CLI binary — memory management, daemon lifecycle, connectors, tokens, spaces, benchmarks |
+| `@engram/hermes-provider` | [![npm](https://img.shields.io/npm/v/@engram/hermes-provider)](https://www.npmjs.com/package/@engram/hermes-provider) | TypeScript HTTP client for remote Engram instances |
+| `@engram/bench` | (private) | Latency ladder benchmarks with CI regression gates |
+| `openclaw-engram` | [![npm](https://img.shields.io/npm/v/openclaw-engram)](https://www.npmjs.com/package/openclaw-engram) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
+| `engram-hermes` | [![PyPI](https://img.shields.io/pypi/v/engram-hermes)](https://pypi.org/project/engram-hermes/) | Python MemoryProvider for Hermes Agent |
+| `@engram/plugin-claude-code` | (installed via `engram connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
+| `@engram/plugin-codex` | (installed via `engram connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
 
-The npm package `@joshuaswarren/openclaw-engram` continues to work as the primary distribution channel for OpenClaw users. The `@engram/*` packages are for standalone use or custom integrations.
+The `@joshuaswarren/openclaw-engram` npm package is **deprecated** — use `openclaw-engram` (for OpenClaw) or the `@engram/*` packages (for standalone/multi-platform use).
 
 ## Why Engram?
 

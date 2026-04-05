@@ -1,6 +1,6 @@
 {
   "name": "@engram/cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "CLI for Engram memory — init, query, doctor, daemon management",
   "type": "module",
   "main": "dist/index.js",

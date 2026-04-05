@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Phase 9: Publish + Deprecate** — initial 1.0.0 release of Engram workspace packages
+  - `@engram/core` 1.0.0 — framework-agnostic memory engine with multi-token auth
+  - `@engram/server` 1.0.0 — standalone HTTP/MCP server with daemon lifecycle (launchd/systemd)
+  - `@engram/cli` 1.0.0 — CLI with daemon management, connector install, token management
+  - `@engram/hermes-provider` 1.0.0 — TypeScript HTTP client for Engram API
+  - `engram-hermes` 1.0.0 on PyPI — Python MemoryProvider for Hermes Agent
+  - Native plugins for Claude Code (`engram connectors install claude-code`) and Codex CLI (`engram connectors install codex`)
+- README updated with universal memory layer positioning and multi-platform install instructions
+- Root package `@joshuaswarren/openclaw-engram` marked as deprecated in favor of `@engram/*` packages
+
 ## [v9.2.7] — 2026-04-05
 
 ### Fixed
