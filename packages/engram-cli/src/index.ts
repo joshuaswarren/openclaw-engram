@@ -208,17 +208,16 @@ function cmdInit(): void {
 }
 
 async function cmdStatus(json: boolean): Promise<void> {
-  const { running } = isServiceRunning();
+  const { running, pid } = isServiceRunning();
   if (json) {
-    console.log(JSON.stringify({ running, pidFile: PID_FILE, logFile: LOG_FILE }));
+    console.log(JSON.stringify({ running, pid: pid ?? null, pidFile: PID_FILE, logFile: LOG_FILE }));
     return;
   }
   if (!running) {
     console.log("Engram server: stopped");
     return;
   }
-  const pid = readPid();
-  console.log(`Engram server: running (pid ${pid})`);
+  console.log(`Engram server: running${pid ? ` (pid ${pid})` : ""}`);
 
   const port = inferPort();
   const controller = new AbortController();
@@ -774,21 +773,6 @@ const SYSTEMD_UNIT_PATH = path.join(
   SYSTEMD_SERVICE,
 );
 
-function isDaemonRunning(): boolean {
-  const pid = readPid();
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    try {
-      fs.unlinkSync(PID_FILE);
-    } catch {
-      // ignore
-    }
-    return false;
-  }
-}
 
 function readPid(): number | undefined {
   try {
