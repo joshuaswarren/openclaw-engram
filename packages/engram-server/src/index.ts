@@ -202,9 +202,13 @@ Environment:
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// Auto-run when executed directly (handles both `node dist/index.js` and `npx engram-server`)
+// Auto-run when executed directly
+// Matches: `node .../engram-server/dist/index.js`, `node .../engram-server/src/index.ts`,
+// `npx engram-server`, but NOT test files under the engram-server directory
 if (
-  process.argv[1]?.includes("engram-server")
+  process.argv[1] &&
+  (/engram-server[\\/](?:dist|src)[\\/]index\.[jt]s$/.test(process.argv[1]) ||
+   process.argv[1].endsWith("engram-server"))
 ) {
   cliMain().catch((err) => {
     process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);

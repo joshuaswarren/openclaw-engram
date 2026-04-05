@@ -133,8 +133,15 @@ function loadAnyToken(): string {
     const tokensPath = path.join(resolveHomeDir(), ".engram", "tokens.json");
     if (existsSync(tokensPath)) {
       const store = JSON.parse(readFileSync(tokensPath, "utf8"));
+      // New array format
       const tokens = Array.isArray(store.tokens) ? store.tokens : [];
       if (tokens.length > 0 && tokens[0].token) return tokens[0].token;
+      // Legacy flat-map format: {"connector": "token_value", ...}
+      if (typeof store === "object" && store !== null) {
+        for (const val of Object.values(store)) {
+          if (typeof val === "string" && val.length > 0 && val.startsWith("engram_")) return val;
+        }
+      }
     }
   } catch {
     // ignore — fall through to env vars
