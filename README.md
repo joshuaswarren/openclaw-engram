@@ -97,9 +97,9 @@ Once the Engram daemon is running, connect any supported agent:
 
 ```bash
 engram connectors install claude-code   # Claude Code (hooks + MCP)
-engram connectors install codex         # Codex CLI (hooks + MCP)
-engram connectors install hermes        # Hermes Agent (Python MemoryProvider)
+engram connectors install codex-cli     # Codex CLI (hooks + MCP)
 engram connectors install replit        # Replit (MCP only)
+pip install engram-hermes               # Hermes Agent (Python MemoryProvider)
 ```
 
 Each connector generates a unique auth token, installs the appropriate plugin/hooks, and verifies the connection. All agents share the same memory store — tell one agent your preference, and every agent remembers it.
