@@ -1,0 +1,17 @@
+[Unit]
+Description=Engram Memory Orchestrator (EMO)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={{NODE_PATH}} {{ENGRAM_SERVER_BIN}}
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=ENGRAM_CONFIG_PATH=%h/.config/engram/config.json
+WorkingDirectory=%h
+StandardOutput=append:%h/.engram/logs/daemon.log
+StandardError=append:%h/.engram/logs/daemon.log
+
+[Install]
+WantedBy=default.target

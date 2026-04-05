@@ -14,8 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseConfig, Orchestrator, EngramAccessService, EngramAccessHttpServer, initLogger, log } from "@engram/core";
-import type { PluginConfig } from "../../../src/types.js";
+import { parseConfig, Orchestrator, EngramAccessService, EngramAccessHttpServer, initLogger, log, type PluginConfig } from "@engram/core";
 
 // ── Config loading ──────────────────────────────────────────────────────────
 

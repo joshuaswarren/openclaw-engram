@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Engram session cleanup for Claude Code.
+# Removes cursor and lock files for the session.
+
+INPUT="$(cat)"
+SESSION_ID="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.session_id||'')" "$INPUT" 2>/dev/null || echo "")"
+
+echo '{"continue":true}'
+
+[ -z "$SESSION_ID" ] && exit 0
+
+rm -f "/tmp/engram-cursor-${SESSION_ID}" 2>/dev/null
+rmdir "/tmp/engram-lock-${SESSION_ID}.d" 2>/dev/null
+
+exit 0

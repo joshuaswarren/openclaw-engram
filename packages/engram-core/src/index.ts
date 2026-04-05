@@ -254,6 +254,7 @@ export {
 // ---------------------------------------------------------------------------
 
 export type {
+  PluginConfig,
   MemoryFile,
   MemoryCategory,
   MemoryActionType,
