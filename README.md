@@ -8,6 +8,13 @@ Engram gives AI agents long-term memory that survives across conversations. Deci
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/joshuaswarren)
 
+> **Engram is now a monorepo.** For standalone (non-OpenClaw) use, install the scoped packages:
+> [`@engram/core`](https://www.npmjs.com/package/@engram/core),
+> [`@engram/server`](https://www.npmjs.com/package/@engram/server),
+> [`@engram/cli`](https://www.npmjs.com/package/@engram/cli).
+> The `openclaw-engram` and `@joshuaswarren/openclaw-engram` packages remain the OpenClaw plugin entry point.
+> Python users: [`engram-hermes`](https://pypi.org/project/engram-hermes/) on PyPI.
+
 ## The Problem
 
 Every AI agent session starts from zero. Your agent doesn't know your name, your projects, the decisions you've already made, or the bugs you already debugged. Whether it's a personal assistant, a coding agent, a research agent, or a multi-agent team — they all forget everything between conversations. You re-explain the same context over and over, and your agents still make the same mistakes.
@@ -57,21 +64,27 @@ npm ci && npm run build
 
 ### Option 4: Standalone (no OpenClaw)
 
-Build from source and use the standalone CLI. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
+**From npm (recommended):**
 
 ```bash
-npm install -g tsx              # Required — CLI entry point is TypeScript
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram
-npm ci && npm run build
-cd packages/cli && npm link     # Makes `engram` available on PATH
-cd ../..
+npm install -g @engram/cli      # Installs the `engram` binary
 engram init                     # Create engram.config.json
 export OPENAI_API_KEY=sk-...
 export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
 engram daemon start             # Start background server
 engram status                   # Verify it's running
 engram query "hello" --explain  # Test query with tier breakdown
+```
+
+**From source** (requires [Node.js](https://nodejs.org/) 22.12+ and [pnpm](https://pnpm.io/)):
+
+```bash
+git clone https://github.com/joshuaswarren/openclaw-engram.git
+cd openclaw-engram
+pnpm install && pnpm run build
+cd packages/engram-cli && pnpm link --global  # Makes `engram` available on PATH
+cd ../..
+engram init
 ```
 
 > **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
