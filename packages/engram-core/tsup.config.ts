@@ -2,8 +2,8 @@ import { defineConfig } from "tsup";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// Build all .ts files in src/ as individual entry points so consumers
-// can import specific modules: @engram/core/orchestrator, @engram/core/types, etc.
+// Build all .ts files in src/ as individual entry points.
+// Internal packages import specific modules directly from dist/.
 const srcFiles = readdirSync(join(__dirname, "src"))
   .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"))
   .map((f) => `src/${f}`);
