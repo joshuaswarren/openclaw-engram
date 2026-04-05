@@ -41,20 +41,26 @@ export function applyWorkExtractionBoundary(conversation: string): string {
   // strip everything from the opener onward to avoid leaking excluded work-layer payloads.
   // Keep literal "[WORK_LAYER_CONTEXT" text unless it contains wrapper metadata attributes.
   // Strip unterminated work-layer openers using indexOf for safety (avoids backtracking).
+  // Only match openers at the start of a line (like the original ^|\n anchor).
   let strippedUnterminated = bounded;
   const opener = "[WORK_LAYER_CONTEXT";
   const closer = "[/WORK_LAYER_CONTEXT]";
   const lastOpenerIdx = bounded.lastIndexOf(opener);
   if (lastOpenerIdx >= 0) {
-    const afterOpener = bounded.indexOf("]", lastOpenerIdx);
-    if (afterOpener >= 0) {
-      const closerAfter = bounded.indexOf(closer, afterOpener);
-      if (closerAfter < 0) {
-        // Unterminated — only strip if it has real metadata attributes
-        const bracketContent = bounded.substring(lastOpenerIdx, afterOpener + 1);
-        if (bracketContent.includes("link_to_memory=") || bracketContent.includes("encoding=")) {
-          const newlineIdx = bounded.lastIndexOf("\n", lastOpenerIdx);
-          strippedUnterminated = bounded.substring(0, newlineIdx >= 0 ? newlineIdx : lastOpenerIdx);
+    // Require line-start: either position 0 or preceded by \n
+    const isLineStart = lastOpenerIdx === 0 || bounded[lastOpenerIdx - 1] === "\n";
+    if (isLineStart) {
+      const afterOpener = bounded.indexOf("]", lastOpenerIdx);
+      if (afterOpener >= 0) {
+        const closerAfter = bounded.indexOf(closer, afterOpener);
+        if (closerAfter < 0) {
+          // Unterminated — only strip if it has real metadata attributes
+          const bracketContent = bounded.substring(lastOpenerIdx, afterOpener + 1);
+          if (bracketContent.includes("link_to_memory=") || bracketContent.includes("encoding=")) {
+            strippedUnterminated = lastOpenerIdx > 0
+              ? bounded.substring(0, lastOpenerIdx - 1)  // exclude the preceding \n
+              : "";
+          }
         }
       }
     }
