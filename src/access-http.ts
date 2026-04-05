@@ -221,8 +221,13 @@ export class EngramAccessHttpServer {
     });
   }
 
+  /** Cache for per-request identity resolution (avoids double adapter resolution) */
+  private identityCache = new WeakMap<IncomingMessage, { principal?: string; namespace?: string }>();
+
   /** Resolve principal and namespace from request headers and adapter identity */
   private resolveRequestIdentity(req: IncomingMessage): { principal?: string; namespace?: string } {
+    const cached = this.identityCache.get(req);
+    if (cached) return cached;
     let principal: string | undefined;
     let namespace: string | undefined;
 
@@ -251,7 +256,9 @@ export class EngramAccessHttpServer {
       principal = this.authenticatedPrincipal;
     }
 
-    return { principal, namespace };
+    const result = { principal, namespace };
+    this.identityCache.set(req, result);
+    return result;
   }
 
   private resolveRequestPrincipal(req: IncomingMessage): string | undefined {
@@ -633,6 +640,13 @@ export class EngramAccessHttpServer {
       res.statusCode = 202;
       res.end();
       return;
+    }
+    // If the MCP server assigned a session ID (during initialize), set it as
+    // a response header so the client can include it in subsequent requests.
+    const assignedSessionId = (response as Record<string, unknown>)._mcpSessionId;
+    if (typeof assignedSessionId === "string") {
+      res.setHeader("mcp-session-id", assignedSessionId);
+      delete (response as Record<string, unknown>)._mcpSessionId;
     }
     this.respondJson(res, 200, response);
   }

@@ -1,5 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import type { EngramAccessService } from "./access-service.js";
 import { readEnvVar } from "./runtime/env.js";
 import type { RecallPlanMode } from "./types.js";
@@ -42,10 +43,11 @@ export class EngramMcpServer {
   private readonly tools: McpTool[];
   private readonly authenticatedPrincipal?: string;
   /**
-   * MCP client info keyed by session ID. Each MCP session stores its own
-   * clientInfo from the initialize handshake, preventing cross-session leaks.
-   * The legacy `clientInfo` getter returns the most recently initialized value
-   * for backward compatibility with code that doesn't track sessions.
+   * MCP client info keyed by server-assigned session ID. On each `initialize`
+   * handshake the server generates a UUID, stores the client's clientInfo
+   * against it, and returns the ID as `Mcp-Session-Id` in the response
+   * metadata. Subsequent requests from the same client include this header,
+   * allowing per-session clientInfo lookup without cross-session leaks.
    */
   private clientInfoBySession = new Map<string, { name: string; version?: string }>();
   private lastClientInfo?: { name: string; version?: string };
@@ -700,7 +702,7 @@ export class EngramMcpServer {
     return this.lastClientInfo;
   }
 
-  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string; sessionId?: string }): Promise<Record<string, unknown> | null> {
+  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string; sessionId?: string }): Promise<Record<string, unknown> & { _mcpSessionId?: string } | null> {
     const id = request.id ?? null;
     const method = request.method ?? "";
 
@@ -711,12 +713,13 @@ export class EngramMcpServer {
     if (method === "initialize") {
       const params = request.params ?? {};
       const rawClientInfo = params.clientInfo as { name?: string; version?: string } | undefined;
+      // Generate a server-side session ID for this MCP session.
+      // The caller should send this back as Mcp-Session-Id on subsequent requests.
+      const newSessionId = options?.sessionId ?? randomUUID();
       if (rawClientInfo && typeof rawClientInfo.name === "string") {
         const info = { name: rawClientInfo.name, version: rawClientInfo.version as string | undefined };
         this.lastClientInfo = info;
-        if (options?.sessionId) {
-          this.clientInfoBySession.set(options.sessionId, info);
-        }
+        this.clientInfoBySession.set(newSessionId, info);
       }
       const version = await getMcpServerVersion();
       return {
@@ -732,6 +735,10 @@ export class EngramMcpServer {
             version,
           },
         },
+        // Non-standard metadata: tells the HTTP handler which session ID to
+        // set as Mcp-Session-Id response header. Stripped before JSON serialization
+        // by handleMcpRequest.
+        _mcpSessionId: newSessionId,
       };
     }
     if (method === "tools/list") {
