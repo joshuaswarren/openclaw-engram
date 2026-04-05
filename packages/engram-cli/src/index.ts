@@ -1090,7 +1090,7 @@ if (
   process.env.ENGRAM_CLI_BIN === "1"
 ) {
   main().catch((err) => {
-    console.error("Fatal:", err.message);
+    console.error("Fatal:", err instanceof Error ? err.message : "unknown error");
     process.exit(1);
   });
 }

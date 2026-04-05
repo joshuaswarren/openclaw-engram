@@ -16,26 +16,55 @@ export function wrapWorkLayerContext(content: string, options?: { linkToMemory?:
 export function applyWorkExtractionBoundary(conversation: string): string {
   if (conversation.trim().length === 0) return "";
 
-  const blockPattern =
-    /(^|\n)\[WORK_LAYER_CONTEXT(?:\s+link_to_memory=(true|false))?(?:\s+encoding=(base64))?\]\n?([\s\S]*?)\n?\[\/WORK_LAYER_CONTEXT\]/g;
-
-  const bounded = conversation.replace(
-    blockPattern,
-    (_full, prefix: string, flag: string | undefined, encoding: string | undefined, body: string) => {
-    const shouldLink = typeof flag === "string" && flag.toLowerCase() === "true";
-    if (!shouldLink) return prefix;
-
-    if (typeof encoding === "string" && encoding.toLowerCase() === "base64") {
-      try {
-        return `${prefix}${Buffer.from(body.trim(), "base64").toString("utf8").trim()}`;
-      } catch {
-        return prefix;
-      }
+  // Replace work-layer blocks using indexOf to avoid backtracking regex.
+  let bounded = conversation;
+  const OPEN_TAG = "[WORK_LAYER_CONTEXT";
+  const CLOSE_TAG = "[/WORK_LAYER_CONTEXT]";
+  let searchFrom = 0;
+  while (true) {
+    const openIdx = bounded.indexOf(OPEN_TAG, searchFrom);
+    if (openIdx < 0) break;
+    // Require line-start anchor
+    if (openIdx > 0 && bounded[openIdx - 1] !== "\n") {
+      searchFrom = openIdx + OPEN_TAG.length;
+      continue;
     }
-
-    // Default wrapper keeps payload readable and escapes wrapper delimiters inside content.
-    return `${prefix}${body.trim()}`;
-  });
+    const closeBracket = bounded.indexOf("]", openIdx + OPEN_TAG.length);
+    if (closeBracket < 0) break;
+    const header = bounded.substring(openIdx + OPEN_TAG.length, closeBracket);
+    const closeIdx = bounded.indexOf(CLOSE_TAG, closeBracket + 1);
+    if (closeIdx < 0) break;
+    // Parse attributes from header
+    const flagMatch = header.match(/\blink_to_memory=(true|false)/);
+    const encMatch = header.match(/\bencoding=(base64)/);
+    const flag = flagMatch?.[1];
+    const encoding = encMatch?.[1];
+    // Extract body (between ] and closer)
+    let bodyStart = closeBracket + 1;
+    if (bounded[bodyStart] === "\n") bodyStart++;
+    let bodyEnd = closeIdx;
+    if (bodyEnd > bodyStart && bounded[bodyEnd - 1] === "\n") bodyEnd--;
+    const body = bounded.substring(bodyStart, bodyEnd);
+    const shouldLink = flag === "true";
+    const prefix = openIdx > 0 ? bounded.substring(0, openIdx) : "";
+    const suffix = bounded.substring(closeIdx + CLOSE_TAG.length);
+    if (!shouldLink) {
+      bounded = prefix + suffix;
+      searchFrom = prefix.length;
+    } else if (encoding === "base64") {
+      try {
+        const decoded = Buffer.from(body.trim(), "base64").toString("utf8").trim();
+        bounded = prefix + decoded + suffix;
+        searchFrom = prefix.length + decoded.length;
+      } catch {
+        bounded = prefix + suffix;
+        searchFrom = prefix.length;
+      }
+    } else {
+      bounded = prefix + body.trim() + suffix;
+      searchFrom = prefix.length + body.trim().length;
+    }
+  }
 
   // Defensive hardening: if a *real wrapper opener* survives without a closer (e.g., turn-level truncation),
   // strip everything from the opener onward to avoid leaking excluded work-layer payloads.
