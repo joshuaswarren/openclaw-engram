@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.2.6] — 2026-04-05
+
 ### Added
 - **Adapter architecture** for multi-system identity resolution:
   - `AdapterRegistry` — chainable adapter resolution for incoming requests
