@@ -643,10 +643,10 @@ export class EngramAccessHttpServer {
     }
     // If the MCP server assigned a session ID (during initialize), set it as
     // a response header so the client can include it in subsequent requests.
-    const assignedSessionId = (response as Record<string, unknown>)._mcpSessionId;
+    const assignedSessionId = this.mcpServer.lastInitSessionId;
     if (typeof assignedSessionId === "string") {
       res.setHeader("mcp-session-id", assignedSessionId);
-      delete (response as Record<string, unknown>)._mcpSessionId;
+      this.mcpServer.lastInitSessionId = undefined;
     }
     this.respondJson(res, 200, response);
   }
