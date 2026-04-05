@@ -24,11 +24,13 @@ export const SharedFeedbackEntrySchema = z.object({
 export type SharedFeedbackEntry = z.infer<typeof SharedFeedbackEntrySchema>;
 
 function safeSlug(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "output";
+  let slug = s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  // Trim leading/trailing dashes without ReDoS-prone anchored quantifiers
+  let start = 0;
+  while (start < slug.length && slug[start] === "-") start++;
+  let end = slug.length;
+  while (end > start && slug[end - 1] === "-") end--;
+  return slug.slice(start, end).slice(0, 80) || "output";
 }
 
 function ymd(d: Date): string {
