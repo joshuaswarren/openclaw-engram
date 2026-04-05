@@ -36,3 +36,16 @@ export interface EngramAdapter {
   /** Map external session/identity to Engram namespace + principal */
   resolveIdentity(context: AdapterContext): ResolvedIdentity;
 }
+
+/**
+ * Extract and trim a single header value from a headers record.
+ * Returns undefined if the header is missing, empty, or all whitespace.
+ */
+export function headerValue(
+  headers: Record<string, string | string[] | undefined>,
+  key: string,
+): string | undefined {
+  const raw = headers[key];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}

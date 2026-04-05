@@ -1,60 +1,56 @@
-import type { AdapterContext, EngramAdapter, ResolvedIdentity } from "./types.js";
+import { headerValue, type AdapterContext, type EngramAdapter, type ResolvedIdentity } from "./types.js";
 
 /**
  * Claude Code adapter.
  *
- * Detects Claude Code connections via MCP client info (name contains
- * "claude") or the X-Claude-Session-Id header. Maps the project path
- * or session ID to an Engram namespace.
+ * Detection: Claude Code sends clientInfo.name = "claude-code" in the
+ * MCP initialize handshake, and User-Agent: claude-code/<version> in
+ * HTTP requests. Project path is available via MCP ListRoots capability
+ * (server receives the cwd as a file:// URI root), not via headers.
+ *
+ * For HTTP REST (non-MCP) requests, detection relies on User-Agent or
+ * user-configured X-Engram-Client-Id header in .claude.json headers.
+ *
+ * Namespace/principal can be set by configuring custom headers in
+ * .claude.json or .mcp.json:
+ *   "headers": { "X-Engram-Namespace": "my-project", "X-Engram-Principal": "my-team" }
  */
 export class ClaudeCodeAdapter implements EngramAdapter {
   readonly id = "claude-code";
 
   matches(context: AdapterContext): boolean {
-    const clientName = context.clientInfo?.name?.toLowerCase() ?? "";
-    if (clientName.includes("claude")) return true;
+    // Primary: MCP clientInfo from initialize handshake (exact match)
+    if (context.clientInfo?.name === "claude-code") return true;
 
-    const sessionHeader = headerValue(context.headers, "x-claude-session-id");
-    if (sessionHeader) return true;
+    // Fallback: User-Agent header (Claude Code sends "claude-code/<version>")
+    const ua = headerValue(context.headers, "user-agent");
+    if (ua && ua.toLowerCase().startsWith("claude-code/")) return true;
+
+    // Fallback: user-configured client identifier header
+    const clientId = headerValue(context.headers, "x-engram-client-id");
+    if (clientId?.toLowerCase() === "claude-code") return true;
 
     return false;
   }
 
   resolveIdentity(context: AdapterContext): ResolvedIdentity {
-    const sessionId = headerValue(context.headers, "x-claude-session-id");
-    const projectPath = headerValue(context.headers, "x-claude-project-path");
+    // MCP session ID (standard MCP header, server-assigned)
+    const mcpSessionId = headerValue(context.headers, "mcp-session-id");
 
-    const namespace = projectPath
-      ? slugify(projectPath)
-      : "claude-code";
-
+    // Principal: explicit header > default
     const principal = headerValue(context.headers, "x-engram-principal")
-      || context.clientInfo?.name
+      || "claude-code";
+
+    // Namespace: explicit header > default
+    const namespace = headerValue(context.headers, "x-engram-namespace")
       || "claude-code";
 
     return {
       namespace,
       principal,
-      sessionKey: sessionId ?? context.sessionKey,
+      sessionKey: mcpSessionId ?? context.sessionKey,
       adapterId: this.id,
     };
   }
 }
 
-function headerValue(
-  headers: Record<string, string | string[] | undefined>,
-  key: string,
-): string | undefined {
-  const raw = headers[key];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function slugify(s: string): string {
-  let slug = s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  let start = 0;
-  while (start < slug.length && slug[start] === "-") start++;
-  let end = slug.length;
-  while (end > start && slug[end - 1] === "-") end--;
-  return slug.slice(start, end).slice(0, 80) || "claude-code";
-}
