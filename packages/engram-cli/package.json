@@ -28,10 +28,10 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@engram/bench": "workspace:*",
     "@engram/core": "workspace:*"
   },
   "devDependencies": {
+    "@engram/bench": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
