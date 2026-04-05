@@ -63,7 +63,8 @@ jobs:
         run: |
           VERSION="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if pip index versions engram-hermes 2>/dev/null | grep -q "$VERSION"; then
+          ESCAPED="$(echo "$VERSION" | sed 's/\./\\./g')"
+          if pip index versions engram-hermes 2>/dev/null | grep -qE "(^|[ ,])${ESCAPED}([ ,]|$)"; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"

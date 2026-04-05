@@ -26,7 +26,7 @@
     ]
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --target es2022 --platform node --dts --outDir dist --external openclaw",
+    "build": "tsup src/index.ts --format esm --target es2022 --platform node --dts --outDir dist --external openclaw --external @engram/core",
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
