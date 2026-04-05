@@ -41,8 +41,14 @@ export class EngramMcpServer {
   private flushTask: Promise<void> | null = null;
   private readonly tools: McpTool[];
   private readonly authenticatedPrincipal?: string;
-  /** MCP client info from the last initialize handshake */
-  clientInfo?: { name: string; version?: string };
+  /**
+   * MCP client info keyed by session ID. Each MCP session stores its own
+   * clientInfo from the initialize handshake, preventing cross-session leaks.
+   * The legacy `clientInfo` getter returns the most recently initialized value
+   * for backward compatibility with code that doesn't track sessions.
+   */
+  private clientInfoBySession = new Map<string, { name: string; version?: string }>();
+  private lastClientInfo?: { name: string; version?: string };
 
   constructor(
     private readonly service: EngramAccessService,
@@ -686,7 +692,15 @@ export class EngramMcpServer {
     ];
   }
 
-  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string }): Promise<Record<string, unknown> | null> {
+  /** Get clientInfo for a specific session, or the last-known clientInfo if no session specified */
+  getClientInfo(sessionId?: string): { name: string; version?: string } | undefined {
+    if (sessionId) {
+      return this.clientInfoBySession.get(sessionId) ?? this.lastClientInfo;
+    }
+    return this.lastClientInfo;
+  }
+
+  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string; sessionId?: string }): Promise<Record<string, unknown> | null> {
     const id = request.id ?? null;
     const method = request.method ?? "";
 
@@ -698,7 +712,11 @@ export class EngramMcpServer {
       const params = request.params ?? {};
       const rawClientInfo = params.clientInfo as { name?: string; version?: string } | undefined;
       if (rawClientInfo && typeof rawClientInfo.name === "string") {
-        this.clientInfo = { name: rawClientInfo.name, version: rawClientInfo.version as string | undefined };
+        const info = { name: rawClientInfo.name, version: rawClientInfo.version as string | undefined };
+        this.lastClientInfo = info;
+        if (options?.sessionId) {
+          this.clientInfoBySession.set(options.sessionId, info);
+        }
       }
       const version = await getMcpServerVersion();
       return {

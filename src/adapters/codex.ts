@@ -1,4 +1,4 @@
-import type { AdapterContext, EngramAdapter, ResolvedIdentity } from "./types.js";
+import { headerValue, type AdapterContext, type EngramAdapter, type ResolvedIdentity } from "./types.js";
 
 /**
  * Codex CLI adapter.
@@ -55,11 +55,3 @@ export class CodexAdapter implements EngramAdapter {
   }
 }
 
-function headerValue(
-  headers: Record<string, string | string[] | undefined>,
-  key: string,
-): string | undefined {
-  const raw = headers[key];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
