@@ -15,6 +15,7 @@
     ".claude-plugin",
     "hooks",
     "skills",
+    "agents",
     ".mcp.json",
     "settings.json"
   ]
