@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 test("successful qmd fetches refresh the cache even when no hits are returned", async () => {
   const source = await readFile(
-    new URL("../src/orchestrator.ts", import.meta.url),
+    new URL("../packages/engram-core/src/orchestrator.ts", import.meta.url),
     "utf8",
   );
 
