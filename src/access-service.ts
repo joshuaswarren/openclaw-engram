@@ -1805,9 +1805,11 @@ export class EngramAccessService {
     namespace?: string;
     maxResults?: number;
     collection?: string;
+    principal?: string;
   }): Promise<{ query: string; results: Array<{ path: string; score: number; snippet: string }>; count: number }> {
-    const { query, namespace, maxResults, collection } = request;
-    const namespaceFilter = namespace?.trim() || undefined;
+    const { query, namespace, maxResults, collection, principal } = request;
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const namespaceFilter = resolvedNs !== this.orchestrator.config.defaultNamespace ? resolvedNs : undefined;
 
     const results = collection === "global"
       ? (await this.orchestrator.qmd.searchGlobal(query, maxResults)).filter((r) =>
@@ -1834,22 +1836,25 @@ export class EngramAccessService {
     };
   }
 
-  async memoryProfile(namespace?: string): Promise<Record<string, unknown>> {
-    const storage = await this.orchestrator.getStorage(namespace);
+  async memoryProfile(namespace?: string, principal?: string): Promise<Record<string, unknown>> {
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
     const profile = await storage.readProfile();
     return {
       profile: profile || "No profile built yet. The profile builds automatically through conversations.",
     };
   }
 
-  async memoryEntitiesList(namespace?: string): Promise<{ entities: string[]; count: number }> {
-    const storage = await this.orchestrator.getStorage(namespace);
+  async memoryEntitiesList(namespace?: string, principal?: string): Promise<{ entities: string[]; count: number }> {
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
     const entities = await storage.readEntities();
     return { entities, count: entities.length };
   }
 
-  async memoryQuestions(namespace?: string): Promise<{ questions: Array<{ id: string; question: string; resolved: boolean }>; count: number }> {
-    const storage = await this.orchestrator.getStorage(namespace);
+  async memoryQuestions(namespace?: string, principal?: string): Promise<{ questions: Array<{ id: string; question: string; resolved: boolean }>; count: number }> {
+    const resolvedNs = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
     const questions = await storage.readQuestions();
     return {
       questions: questions.map((q) => ({ id: q.id, question: q.question, resolved: q.resolved })),
@@ -1883,7 +1888,14 @@ export class EngramAccessService {
     memoryId: string;
     vote: "up" | "down";
     note?: string;
-  }): Promise<{ recorded: boolean }> {
+  }): Promise<{ recorded: boolean; enabled?: boolean; reason?: string }> {
+    if (!this.orchestrator.config.feedbackEnabled) {
+      return {
+        recorded: false,
+        enabled: false,
+        reason: "Feedback is disabled. Enable `feedbackEnabled: true` in the Engram config to store feedback.",
+      };
+    }
     await this.orchestrator.recordMemoryFeedback(
       request.memoryId,
       request.vote,
@@ -1896,8 +1908,10 @@ export class EngramAccessService {
     memoryId: string;
     namespace?: string;
     principal?: string;
+    sessionKey?: string;
   }): Promise<unknown> {
-    const storage = await this.orchestrator.getStorage(request.namespace);
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, request.sessionKey, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
     // Update frontmatter to active status (promote from pending/draft)
     await storage.updateMemoryFrontmatter(request.memoryId, {
       lifecycleState: "active",
@@ -1910,17 +1924,20 @@ export class EngramAccessService {
     sessionKey: string;
     context: string;
     namespace?: string;
+    principal?: string;
   }): Promise<{ saved: boolean }> {
-    const memoryDir = this.orchestrator.config.memoryDir;
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, request.sessionKey, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const storageDir = storage.dir;
     const { writeFile, mkdir } = await import("node:fs/promises");
     const { join, resolve } = await import("node:path");
     // Sanitize sessionKey to prevent path traversal
     const safeKey = request.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
     if (!safeKey) throw new EngramAccessInputError("sessionKey is required");
-    const checkpointDir = join(memoryDir, "checkpoints", safeKey);
-    // Double-check resolved path stays inside memoryDir
+    const checkpointDir = join(storageDir, "checkpoints", safeKey);
+    // Double-check resolved path stays inside storageDir
     const resolved = resolve(checkpointDir);
-    if (!resolved.startsWith(resolve(memoryDir))) {
+    if (!resolved.startsWith(resolve(storageDir))) {
       throw new EngramAccessInputError("Invalid sessionKey");
     }
     await mkdir(checkpointDir, { recursive: true });

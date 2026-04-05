@@ -350,6 +350,7 @@ export class EngramMcpServer {
           properties: {
             memoryId: { type: "string" },
             namespace: { type: "string" },
+            sessionKey: { type: "string" },
           },
           required: ["memoryId"],
           additionalProperties: false,
@@ -648,18 +649,22 @@ export class EngramMcpServer {
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           maxResults: typeof args.maxResults === "number" && Number.isFinite(args.maxResults) ? args.maxResults : undefined,
           collection: typeof args.collection === "string" ? args.collection : undefined,
+          principal: effectivePrincipal,
         });
       case "engram.memory_profile":
         return this.service.memoryProfile(
           typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
         );
       case "engram.memory_entities_list":
         return this.service.memoryEntitiesList(
           typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
         );
       case "engram.memory_questions":
         return this.service.memoryQuestions(
           typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
         );
       case "engram.memory_last_recall":
         return this.service.lastRecallSnapshot(
@@ -688,12 +693,14 @@ export class EngramMcpServer {
           memoryId: typeof args.memoryId === "string" ? args.memoryId : "",
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           principal: effectivePrincipal,
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
         });
       case "engram.context_checkpoint":
         return this.service.contextCheckpoint({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
           context: typeof args.context === "string" ? args.context : "",
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
         });
       default:
         throw new Error(`unknown tool: ${name}`);
