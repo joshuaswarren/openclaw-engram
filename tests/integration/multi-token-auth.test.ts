@@ -27,11 +27,11 @@ test("EngramAccessHttpServer isAuthorized checks both primary and connector toke
   assert.ok(content.includes("for (const valid of this.authTokens)"), "Must iterate connector tokens");
 });
 
-test("Server loads connector tokens from getAllValidTokens", async () => {
+test("Server loads connector tokens dynamically via authTokensGetter", async () => {
   const serverPath = path.join(ROOT, "packages/engram-server/src/index.ts");
   const content = fs.readFileSync(serverPath, "utf-8");
   assert.ok(content.includes("getAllValidTokens"), "Server must import getAllValidTokens");
-  assert.ok(content.includes("authTokens: connectorTokens"), "Server must pass connector tokens to HTTP server");
+  assert.ok(content.includes("authTokensGetter"), "Server must use authTokensGetter for dynamic token loading");
 });
 
 // ---------------------------------------------------------------------------
