@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import path from "node:path";
 
 export type BridgeMode = "embedded" | "delegate";
@@ -27,17 +28,32 @@ function resolveHomeDir(): string {
 }
 
 /**
- * Detect whether a daemon is already running by checking the PID file.
+ * Detect whether a daemon is already running by checking the PID file
+ * and the system service manager (launchd on macOS, systemd on Linux).
  */
 function isDaemonRunning(): boolean {
+  // Check PID file (manual `engram daemon start`)
   const pidFile = path.join(resolveHomeDir(), ".engram", "server.pid");
   try {
     const pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
     process.kill(pid, 0); // signal 0 = check existence
     return true;
   } catch {
-    return false;
+    // PID file missing or stale — check service manager
   }
+  // Check launchd (macOS) or systemd (Linux) for daemons started via `engram daemon install`
+  try {
+    if (process.platform === "darwin") {
+      const out = execSync("launchctl list ai.engram.daemon 2>/dev/null", { encoding: "utf8" });
+      if (out.includes('"PID"')) return true;
+    } else if (process.platform === "linux") {
+      const out = execSync("systemctl --user is-active engram.service 2>/dev/null", { encoding: "utf8" }).trim();
+      if (out === "active") return true;
+    }
+  } catch {
+    // service not registered
+  }
+  return false;
 }
 
 /**
@@ -115,12 +131,13 @@ export function detectBridgeMode(): BridgeConfig {
 function loadAnyToken(): string {
   try {
     const tokensPath = path.join(resolveHomeDir(), ".engram", "tokens.json");
-    if (!existsSync(tokensPath)) return "";
-    const store = JSON.parse(readFileSync(tokensPath, "utf8"));
-    const tokens = Array.isArray(store.tokens) ? store.tokens : [];
-    if (tokens.length > 0 && tokens[0].token) return tokens[0].token;
+    if (existsSync(tokensPath)) {
+      const store = JSON.parse(readFileSync(tokensPath, "utf8"));
+      const tokens = Array.isArray(store.tokens) ? store.tokens : [];
+      if (tokens.length > 0 && tokens[0].token) return tokens[0].token;
+    }
   } catch {
-    // ignore
+    // ignore — fall through to env vars
   }
   return process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN ?? process.env.ENGRAM_AUTH_TOKEN ?? "";
 }

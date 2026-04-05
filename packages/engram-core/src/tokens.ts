@@ -60,9 +60,13 @@ export function loadTokenStore(tokensPath?: string): TokenStore {
         }
       }
       if (migrated.length > 0) {
-        // Auto-migrate: rewrite in new format
         const store: TokenStore = { tokens: migrated };
-        saveTokenStore(store, tokensPath);
+        // Auto-migrate: rewrite in new format (best-effort, don't lose tokens on write failure)
+        try {
+          saveTokenStore(store, tokensPath);
+        } catch {
+          // Migration write failed (e.g., read-only fs) — still return parsed tokens
+        }
         return store;
       }
     }

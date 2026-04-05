@@ -20,6 +20,8 @@ export interface EngramAccessHttpServerOptions {
   authToken?: string;
   /** Additional valid tokens (for multi-connector auth). Checked alongside authToken. */
   authTokens?: string[];
+  /** Dynamic token loader — called on each auth check so new/revoked tokens take effect without restart. */
+  authTokensGetter?: () => string[];
   principal?: string;
   maxBodyBytes?: number;
   adminConsoleEnabled?: boolean;
@@ -101,6 +103,7 @@ export class EngramAccessHttpServer {
   private readonly requestedPort: number;
   private readonly authToken?: string;
   private readonly authTokens: string[];
+  private readonly authTokensGetter?: () => string[];
   private readonly authenticatedPrincipal?: string;
   private readonly maxBodyBytes: number;
   private readonly adminConsoleEnabled: boolean;
@@ -118,6 +121,7 @@ export class EngramAccessHttpServer {
     this.requestedPort = Number.isFinite(options.port) ? Math.max(0, Math.floor(options.port ?? 0)) : 0;
     this.authToken = options.authToken?.trim() || undefined;
     this.authTokens = (options.authTokens ?? []).map((t) => t.trim()).filter(Boolean);
+    this.authTokensGetter = options.authTokensGetter;
     this.authenticatedPrincipal = options.principal?.trim() || undefined;
     this.maxBodyBytes = Number.isFinite(options.maxBodyBytes)
       ? Math.max(1, Math.floor(options.maxBodyBytes ?? 131072))
@@ -132,7 +136,7 @@ export class EngramAccessHttpServer {
   }
 
   async start(): Promise<EngramAccessHttpServerStatus> {
-    if (!this.authToken && this.authTokens.length === 0) {
+    if (!this.authToken && this.authTokens.length === 0 && !this.authTokensGetter) {
       throw new Error("engram access HTTP requires authToken or authTokens");
     }
     if (this.server) return this.status();
@@ -734,7 +738,7 @@ export class EngramAccessHttpServer {
   }
 
   private isAuthorized(req: IncomingMessage): boolean {
-    if (!this.authToken && this.authTokens.length === 0) return false;
+    if (!this.authToken && this.authTokens.length === 0 && !this.authTokensGetter) return false;
     const raw = req.headers.authorization;
     if (!raw) return false;
     const separator = raw.indexOf(" ");
@@ -744,9 +748,15 @@ export class EngramAccessHttpServer {
     const token = raw.slice(separator + 1).trim();
     // Check primary token
     if (this.authToken && this.timingSafeStringEqual(token, this.authToken)) return true;
-    // Check multi-connector tokens
+    // Check static multi-connector tokens
     for (const valid of this.authTokens) {
       if (this.timingSafeStringEqual(token, valid)) return true;
+    }
+    // Check dynamic tokens (reloaded per request for generate/revoke without restart)
+    if (this.authTokensGetter) {
+      for (const valid of this.authTokensGetter()) {
+        if (this.timingSafeStringEqual(token, valid)) return true;
+      }
     }
     return false;
   }

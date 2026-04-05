@@ -113,7 +113,7 @@ export async function startServer(options?: {
 
   const authToken = serverConfig.authToken ?? process.env.ENGRAM_AUTH_TOKEN ?? "";
 
-  // Load per-connector tokens from ~/.engram/tokens.json
+  // Load per-connector tokens from ~/.engram/tokens.json (reloaded on each auth check)
   const connectorTokens = getAllValidTokens();
 
   if (!authToken && connectorTokens.length === 0) {
@@ -126,6 +126,7 @@ export async function startServer(options?: {
     port: serverConfig.port ?? 4318,
     authToken: authToken || undefined,
     authTokens: connectorTokens,
+    authTokensGetter: () => getAllValidTokens(),
     principal: serverConfig.principal,
     maxBodyBytes: serverConfig.maxBodyBytes,
     adminConsoleEnabled: serverConfig.adminConsoleEnabled ?? false,
