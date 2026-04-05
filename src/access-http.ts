@@ -11,6 +11,7 @@ import { EngramMcpServer } from "./access-mcp.js";
 import { validateRequest, type SchemaName, type SchemaTypeFor } from "./access-schema.js";
 import type { RecallPlanMode } from "./types.js";
 import { isTrustZoneName, type TrustZoneName, type TrustZoneRecordKind, type TrustZoneSourceClass } from "./trust-zones.js";
+import { AdapterRegistry, type ResolvedIdentity } from "./adapters/index.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -22,6 +23,10 @@ export interface EngramAccessHttpServerOptions {
   adminConsoleEnabled?: boolean;
   adminConsolePublicDir?: string;
   trustPrincipalHeader?: boolean;
+  /** Enable adapter-based identity resolution from request headers */
+  enableAdapters?: boolean;
+  /** Custom adapter registry (defaults to built-in adapters) */
+  adapterRegistry?: AdapterRegistry;
 }
 
 export interface EngramAccessHttpServerStatus {
@@ -98,6 +103,7 @@ export class EngramAccessHttpServer {
   private readonly adminConsoleEnabled: boolean;
   private readonly adminConsolePublicDir: string;
   private readonly trustPrincipalHeader: boolean;
+  private readonly adapterRegistry: AdapterRegistry | null;
   private readonly writeRequestTimestamps: number[] = [];
   private readonly mcpServer: EngramMcpServer;
   private server: Server | null = null;
@@ -115,6 +121,9 @@ export class EngramAccessHttpServer {
     this.adminConsoleEnabled = options.adminConsoleEnabled !== false;
     this.adminConsolePublicDir = options.adminConsolePublicDir ?? defaultAdminConsolePublicDir;
     this.trustPrincipalHeader = options.trustPrincipalHeader === true;
+    this.adapterRegistry = options.enableAdapters !== false
+      ? (options.adapterRegistry ?? new AdapterRegistry())
+      : null;
     this.mcpServer = new EngramMcpServer(this.service, { principal: options.principal });
   }
 
@@ -192,7 +201,19 @@ export class EngramAccessHttpServer {
     };
   }
 
+  /**
+   * Resolve the adapter identity for the incoming request.
+   * Returns null if no adapter matches or adapters are disabled.
+   */
+  resolveAdapterIdentity(req: IncomingMessage): ResolvedIdentity | null {
+    if (!this.adapterRegistry) return null;
+    return this.adapterRegistry.resolve({
+      headers: req.headers as Record<string, string | string[] | undefined>,
+    });
+  }
+
   private resolveRequestPrincipal(req: IncomingMessage): string | undefined {
+    // Explicit header override takes priority
     if (this.trustPrincipalHeader) {
       const headerValue = req.headers["x-engram-principal"];
       const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
@@ -202,6 +223,11 @@ export class EngramAccessHttpServer {
           return trimmed;
         }
       }
+    }
+    // Try adapter-based identity resolution
+    const adapterIdentity = this.resolveAdapterIdentity(req);
+    if (adapterIdentity) {
+      return adapterIdentity.principal;
     }
     return this.authenticatedPrincipal;
   }
@@ -232,6 +258,16 @@ export class EngramAccessHttpServer {
 
     if (req.method === "GET" && pathname === "/engram/v1/health") {
       this.respondJson(res, 200, await this.service.health());
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/engram/v1/adapters") {
+      const identity = this.resolveAdapterIdentity(req);
+      this.respondJson(res, 200, {
+        adaptersEnabled: this.adapterRegistry !== null,
+        registered: this.adapterRegistry?.list() ?? [],
+        resolved: identity,
+      });
       return;
     }
 
