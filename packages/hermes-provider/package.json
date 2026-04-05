@@ -1,6 +1,6 @@
 {
   "name": "@engram/hermes-provider",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Typed HTTP client for the Engram memory API",
   "type": "module",
   "main": "dist/index.js",
