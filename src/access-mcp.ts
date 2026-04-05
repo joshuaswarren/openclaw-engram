@@ -1,5 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import type { EngramAccessService } from "./access-service.js";
 import { readEnvVar } from "./runtime/env.js";
 import type { RecallPlanMode } from "./types.js";
@@ -41,6 +42,20 @@ export class EngramMcpServer {
   private flushTask: Promise<void> | null = null;
   private readonly tools: McpTool[];
   private readonly authenticatedPrincipal?: string;
+  /**
+   * MCP client info keyed by server-assigned session ID. On each `initialize`
+   * handshake the server generates a UUID, stores the client's clientInfo
+   * against it, and returns the ID as `Mcp-Session-Id` in the response
+   * metadata. Subsequent requests from the same client include this header,
+   * allowing per-session clientInfo lookup without cross-session leaks.
+   */
+  private clientInfoBySession = new Map<string, { name: string; version?: string }>();
+  /**
+   * Session IDs generated during initialize, keyed by caller-supplied correlation
+   * ID (unique per HTTP request) to avoid collisions when multiple clients send
+   * initialize with the same JSON-RPC id concurrently.
+   */
+  private initSessionIds = new Map<string, string>();
 
   constructor(
     private readonly service: EngramAccessService,
@@ -684,7 +699,22 @@ export class EngramMcpServer {
     ];
   }
 
-  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string }): Promise<Record<string, unknown> | null> {
+  /** Get clientInfo for a specific MCP session. Returns undefined for non-MCP requests. */
+  getClientInfo(sessionId?: string): { name: string; version?: string } | undefined {
+    if (sessionId) {
+      return this.clientInfoBySession.get(sessionId);
+    }
+    return undefined;
+  }
+
+  /** Pop the session ID generated during an initialize handshake, keyed by correlation ID. */
+  popInitSessionId(correlationId: string): string | undefined {
+    const sid = this.initSessionIds.get(correlationId);
+    if (sid !== undefined) this.initSessionIds.delete(correlationId);
+    return sid;
+  }
+
+  async handleRequest(request: JsonRpcRequest, options?: { principalOverride?: string; sessionId?: string; correlationId?: string }): Promise<Record<string, unknown> | null> {
     const id = request.id ?? null;
     const method = request.method ?? "";
 
@@ -693,7 +723,25 @@ export class EngramMcpServer {
       return { jsonrpc: "2.0", id, result: {} };
     }
     if (method === "initialize") {
+      const params = request.params ?? {};
+      const rawClientInfo = params.clientInfo as { name?: string; version?: string } | undefined;
+      // Generate a server-side session ID for this MCP session.
+      // The caller should send this back as Mcp-Session-Id on subsequent requests.
+      const newSessionId = randomUUID();
+      if (rawClientInfo && typeof rawClientInfo.name === "string") {
+        const info = { name: rawClientInfo.name, version: rawClientInfo.version as string | undefined };
+        this.clientInfoBySession.set(newSessionId, info);
+        // Evict oldest sessions if map exceeds limit
+        if (this.clientInfoBySession.size > 1000) {
+          const firstKey = this.clientInfoBySession.keys().next().value;
+          if (firstKey) this.clientInfoBySession.delete(firstKey);
+        }
+      }
       const version = await getMcpServerVersion();
+      // Store session ID keyed by correlation ID (unique per HTTP request) so
+      // concurrent initializes with the same JSON-RPC id don't collide.
+      const corrId = options?.correlationId;
+      if (corrId) this.initSessionIds.set(corrId, newSessionId);
       return {
         jsonrpc: "2.0",
         id,

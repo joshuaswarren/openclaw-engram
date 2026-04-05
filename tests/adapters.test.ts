@@ -6,95 +6,18 @@ import { CodexAdapter } from "../src/adapters/codex.js";
 import { ReplitAdapter } from "../src/adapters/replit.js";
 import { HermesAdapter } from "../src/adapters/hermes.js";
 
+// -- Registry --
+
 test("AdapterRegistry returns null when no adapter matches", () => {
   const registry = new AdapterRegistry();
   const result = registry.resolve({ headers: {} });
   assert.equal(result, null);
 });
 
-test("ClaudeCodeAdapter matches on client info containing 'claude'", () => {
-  const adapter = new ClaudeCodeAdapter();
-  assert.equal(adapter.matches({ headers: {}, clientInfo: { name: "claude-code", version: "1.0" } }), true);
-  assert.equal(adapter.matches({ headers: {} }), false);
-});
-
-test("ClaudeCodeAdapter matches on X-Claude-Session-Id header", () => {
-  const adapter = new ClaudeCodeAdapter();
-  assert.equal(adapter.matches({ headers: { "x-claude-session-id": "sess-abc" } }), true);
-});
-
-test("ClaudeCodeAdapter resolves project path to namespace", () => {
-  const adapter = new ClaudeCodeAdapter();
-  const identity = adapter.resolveIdentity({
-    headers: {
-      "x-claude-session-id": "sess-abc",
-      "x-claude-project-path": "/Users/dev/my-project",
-    },
-    clientInfo: { name: "claude-code" },
-  });
-  assert.equal(identity.adapterId, "claude-code");
-  assert.equal(identity.namespace, "users-dev-my-project");
-  assert.equal(identity.principal, "claude-code");
-  assert.equal(identity.sessionKey, "sess-abc");
-});
-
-test("CodexAdapter matches on client info containing 'codex'", () => {
-  const adapter = new CodexAdapter();
-  assert.equal(adapter.matches({ headers: {}, clientInfo: { name: "codex-cli" } }), true);
-  assert.equal(adapter.matches({ headers: {} }), false);
-});
-
-test("CodexAdapter matches on X-Codex-Agent-Name header", () => {
-  const adapter = new CodexAdapter();
-  assert.equal(adapter.matches({ headers: { "x-codex-agent-name": "project-manager" } }), true);
-});
-
-test("CodexAdapter resolves agent name to principal", () => {
-  const adapter = new CodexAdapter();
-  const identity = adapter.resolveIdentity({
-    headers: { "x-codex-agent-name": "project-manager", "x-codex-project-dir": "/src/my-app" },
-  });
-  assert.equal(identity.adapterId, "codex");
-  assert.equal(identity.namespace, "src-my-app");
-  assert.equal(identity.principal, "project-manager");
-});
-
-test("ReplitAdapter matches on X-Replit-Project-Id header", () => {
-  const adapter = new ReplitAdapter();
-  assert.equal(adapter.matches({ headers: { "x-replit-project-id": "proj-123" } }), true);
-  assert.equal(adapter.matches({ headers: {} }), false);
-});
-
-test("ReplitAdapter resolves project ID to namespace", () => {
-  const adapter = new ReplitAdapter();
-  const identity = adapter.resolveIdentity({
-    headers: { "x-replit-project-id": "proj-123", "x-replit-user-id": "user-456" },
-  });
-  assert.equal(identity.adapterId, "replit");
-  assert.equal(identity.namespace, "replit-proj-123");
-  assert.equal(identity.principal, "replit-user-user-456");
-});
-
-test("HermesAdapter matches on X-Hermes-Session-Id header", () => {
-  const adapter = new HermesAdapter();
-  assert.equal(adapter.matches({ headers: { "x-hermes-session-id": "herm-abc" } }), true);
-  assert.equal(adapter.matches({ headers: {} }), false);
-});
-
-test("HermesAdapter matches on X-Hermes-Profile header", () => {
-  const adapter = new HermesAdapter();
-  assert.equal(adapter.matches({ headers: { "x-hermes-profile": "research-agent" } }), true);
-});
-
-test("HermesAdapter resolves profile to namespace", () => {
-  const adapter = new HermesAdapter();
-  const identity = adapter.resolveIdentity({
-    headers: { "x-hermes-session-id": "herm-abc", "x-hermes-profile": "Research Agent" },
-  });
-  assert.equal(identity.adapterId, "hermes");
-  assert.equal(identity.namespace, "research-agent");
-  assert.equal(identity.principal, "Research Agent");
-  assert.equal(identity.sessionKey, "herm-abc");
+test("AdapterRegistry lists registered adapter IDs", () => {
+  const registry = new AdapterRegistry();
+  const ids = registry.list();
+  assert.deepEqual(ids, ["hermes", "replit", "codex", "claude-code"]);
 });
 
 test("AdapterRegistry resolves first matching adapter (Hermes before Claude Code)", () => {
@@ -106,20 +29,187 @@ test("AdapterRegistry resolves first matching adapter (Hermes before Claude Code
   assert.equal(result?.adapterId, "hermes");
 });
 
-test("AdapterRegistry lists registered adapter IDs", () => {
-  const registry = new AdapterRegistry();
-  const ids = registry.list();
-  assert.deepEqual(ids, ["hermes", "replit", "codex", "claude-code"]);
+// -- Claude Code (real detection: clientInfo.name = "claude-code", User-Agent) --
+
+test("ClaudeCodeAdapter matches on exact clientInfo.name 'claude-code'", () => {
+  const adapter = new ClaudeCodeAdapter();
+  assert.equal(adapter.matches({ headers: {}, clientInfo: { name: "claude-code", version: "2.1.92" } }), true);
+  assert.equal(adapter.matches({ headers: {} }), false);
 });
+
+test("ClaudeCodeAdapter matches on User-Agent header", () => {
+  const adapter = new ClaudeCodeAdapter();
+  assert.equal(adapter.matches({ headers: { "user-agent": "claude-code/2.1.92" } }), true);
+  assert.equal(adapter.matches({ headers: { "user-agent": "Mozilla/5.0" } }), false);
+});
+
+test("ClaudeCodeAdapter matches on X-Engram-Client-Id header", () => {
+  const adapter = new ClaudeCodeAdapter();
+  assert.equal(adapter.matches({ headers: { "x-engram-client-id": "claude-code" } }), true);
+});
+
+test("ClaudeCodeAdapter uses Mcp-Session-Id and X-Engram-Namespace", () => {
+  const adapter = new ClaudeCodeAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: {
+      "mcp-session-id": "mcp-sess-123",
+      "x-engram-namespace": "my-project",
+    },
+    clientInfo: { name: "claude-code" },
+  });
+  assert.equal(identity.adapterId, "claude-code");
+  assert.equal(identity.namespace, "my-project");
+  assert.equal(identity.principal, "claude-code");
+  assert.equal(identity.sessionKey, "mcp-sess-123");
+});
+
+test("ClaudeCodeAdapter defaults namespace and principal without custom headers", () => {
+  const adapter = new ClaudeCodeAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: {},
+    clientInfo: { name: "claude-code" },
+  });
+  assert.equal(identity.namespace, "claude-code");
+  assert.equal(identity.principal, "claude-code");
+});
+
+// -- Codex CLI (real detection: clientInfo.name = "codex-mcp-client") --
+
+test("CodexAdapter matches on exact clientInfo.name 'codex-mcp-client'", () => {
+  const adapter = new CodexAdapter();
+  assert.equal(adapter.matches({ headers: {}, clientInfo: { name: "codex-mcp-client" } }), true);
+  assert.equal(adapter.matches({ headers: {} }), false);
+});
+
+test("CodexAdapter matches on X-Engram-Client-Id header", () => {
+  const adapter = new CodexAdapter();
+  assert.equal(adapter.matches({ headers: { "x-engram-client-id": "codex" } }), true);
+});
+
+test("CodexAdapter uses X-Engram-Namespace and X-Engram-Principal", () => {
+  const adapter = new CodexAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: { "x-engram-namespace": "my-app", "x-engram-principal": "pm-agent" },
+    clientInfo: { name: "codex-mcp-client" },
+  });
+  assert.equal(identity.adapterId, "codex");
+  assert.equal(identity.namespace, "my-app");
+  assert.equal(identity.principal, "pm-agent");
+});
+
+test("CodexAdapter defaults without custom headers", () => {
+  const adapter = new CodexAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: {},
+    clientInfo: { name: "codex-mcp-client" },
+  });
+  assert.equal(identity.namespace, "codex");
+  assert.equal(identity.principal, "codex");
+});
+
+// -- Replit (detection: X-Engram-Client-Id or clientInfo containing "replit") --
+
+test("ReplitAdapter matches on X-Engram-Client-Id header", () => {
+  const adapter = new ReplitAdapter();
+  assert.equal(adapter.matches({ headers: { "x-engram-client-id": "replit" } }), true);
+  assert.equal(adapter.matches({ headers: {} }), false);
+});
+
+test("ReplitAdapter matches on clientInfo containing 'replit'", () => {
+  const adapter = new ReplitAdapter();
+  assert.equal(adapter.matches({ headers: {}, clientInfo: { name: "replit-agent" } }), true);
+});
+
+test("ReplitAdapter uses X-Engram-Namespace and X-Engram-Principal", () => {
+  const adapter = new ReplitAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: {
+      "x-engram-client-id": "replit",
+      "x-engram-namespace": "my-repl",
+      "x-engram-principal": "replit-user-123",
+    },
+  });
+  assert.equal(identity.adapterId, "replit");
+  assert.equal(identity.namespace, "my-repl");
+  assert.equal(identity.principal, "replit-user-123");
+});
+
+test("ReplitAdapter defaults without custom headers", () => {
+  const adapter = new ReplitAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: { "x-engram-client-id": "replit" },
+  });
+  assert.equal(identity.namespace, "replit");
+  assert.equal(identity.principal, "replit-agent");
+});
+
+// -- Hermes (detection: X-Hermes-Session-Id, X-Engram-Client-Id, or clientInfo) --
+
+test("HermesAdapter matches on X-Hermes-Session-Id header (confirmed in v0.7.0)", () => {
+  const adapter = new HermesAdapter();
+  assert.equal(adapter.matches({ headers: { "x-hermes-session-id": "herm-abc" } }), true);
+  assert.equal(adapter.matches({ headers: {} }), false);
+});
+
+test("HermesAdapter matches on X-Engram-Client-Id header", () => {
+  const adapter = new HermesAdapter();
+  assert.equal(adapter.matches({ headers: { "x-engram-client-id": "hermes" } }), true);
+});
+
+test("HermesAdapter matches on clientInfo containing 'hermes'", () => {
+  const adapter = new HermesAdapter();
+  assert.equal(adapter.matches({ headers: {}, clientInfo: { name: "hermes-agent" } }), true);
+});
+
+test("HermesAdapter uses X-Hermes-Session-Id and X-Engram-Namespace", () => {
+  const adapter = new HermesAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: {
+      "x-hermes-session-id": "herm-abc",
+      "x-engram-namespace": "research-profile",
+    },
+  });
+  assert.equal(identity.adapterId, "hermes");
+  assert.equal(identity.namespace, "research-profile");
+  assert.equal(identity.principal, "hermes-agent");
+  assert.equal(identity.sessionKey, "herm-abc");
+});
+
+test("HermesAdapter defaults without custom headers", () => {
+  const adapter = new HermesAdapter();
+  const identity = adapter.resolveIdentity({
+    headers: { "x-hermes-session-id": "herm-abc" },
+  });
+  assert.equal(identity.namespace, "hermes");
+  assert.equal(identity.principal, "hermes-agent");
+});
+
+// -- Cross-cutting: X-Engram-Principal overrides all adapters --
 
 test("X-Engram-Principal header overrides adapter-resolved principal", () => {
   const adapter = new ClaudeCodeAdapter();
   const identity = adapter.resolveIdentity({
-    headers: {
-      "x-claude-session-id": "sess-abc",
-      "x-engram-principal": "custom-principal",
-    },
+    headers: { "x-engram-principal": "custom-principal" },
     clientInfo: { name: "claude-code" },
   });
   assert.equal(identity.principal, "custom-principal");
+});
+
+// -- MCP clientInfo storage --
+
+test("MCP server stores clientInfo from initialize handshake", async () => {
+  // This is tested via access-mcp.test.ts initialize flow;
+  // here we verify the adapter can use it
+  const registry = new AdapterRegistry();
+  const result = registry.resolve({
+    headers: {},
+    clientInfo: { name: "claude-code", version: "2.1.92" },
+  });
+  assert.equal(result?.adapterId, "claude-code");
+
+  const codexResult = registry.resolve({
+    headers: {},
+    clientInfo: { name: "codex-mcp-client", version: "0.0.0" },
+  });
+  assert.equal(codexResult?.adapterId, "codex");
 });

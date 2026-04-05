@@ -203,33 +203,73 @@ export class EngramAccessHttpServer {
 
   /**
    * Resolve the adapter identity for the incoming request.
+   * Includes MCP clientInfo from the last initialize handshake if available.
    * Returns null if no adapter matches or adapters are disabled.
    */
   resolveAdapterIdentity(req: IncomingMessage): ResolvedIdentity | null {
     if (!this.adapterRegistry) return null;
+    // Look up clientInfo for this specific MCP session to avoid cross-session leaks.
+    // Non-MCP requests (no mcp-session-id header) get undefined clientInfo and
+    // rely on HTTP headers for adapter matching.
+    const sessionId = (() => {
+      const raw = req.headers["mcp-session-id"];
+      return typeof raw === "string" ? raw.trim() : undefined;
+    })();
     return this.adapterRegistry.resolve({
       headers: req.headers as Record<string, string | string[] | undefined>,
+      clientInfo: this.mcpServer.getClientInfo(sessionId),
     });
   }
 
-  private resolveRequestPrincipal(req: IncomingMessage): string | undefined {
-    // Explicit header override takes priority
+  /** Cache for per-request identity resolution (avoids double adapter resolution) */
+  private identityCache = new WeakMap<IncomingMessage, { principal?: string; namespace?: string }>();
+
+  /** Resolve principal and namespace from request headers and adapter identity */
+  private resolveRequestIdentity(req: IncomingMessage): { principal?: string; namespace?: string } {
+    const cached = this.identityCache.get(req);
+    if (cached) return cached;
+    let principal: string | undefined;
+    let namespace: string | undefined;
+
+    // Explicit header override takes priority for principal
     if (this.trustPrincipalHeader) {
-      const headerValue = req.headers["x-engram-principal"];
-      const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+      const headerVal = req.headers["x-engram-principal"];
+      const raw = Array.isArray(headerVal) ? headerVal[0] : headerVal;
       if (typeof raw === "string") {
         const trimmed = raw.trim();
         if (trimmed.length > 0) {
-          return trimmed;
+          principal = trimmed;
         }
       }
     }
-    // Try adapter-based identity resolution
+
+    // Try adapter-based identity resolution for both principal and namespace
     const adapterIdentity = this.resolveAdapterIdentity(req);
     if (adapterIdentity) {
-      return adapterIdentity.principal;
+      if (!principal) {
+        principal = adapterIdentity.principal;
+      }
+      namespace = adapterIdentity.namespace;
     }
-    return this.authenticatedPrincipal;
+
+    if (!principal) {
+      principal = this.authenticatedPrincipal;
+    }
+
+    const result = { principal, namespace };
+    this.identityCache.set(req, result);
+    return result;
+  }
+
+  private resolveRequestPrincipal(req: IncomingMessage): string | undefined {
+    return this.resolveRequestIdentity(req).principal;
+  }
+
+  /** Resolve namespace: only use the explicit body value. Adapter-inferred namespace
+   *  is intentionally NOT used as a fallback for REST requests — omitting namespace
+   *  should default to the server's global namespace, not silently scope to an adapter. */
+  private resolveNamespace(_req: IncomingMessage, bodyNamespace?: string): string | undefined {
+    return bodyNamespace || undefined;
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse, correlationId: string): Promise<void> {
@@ -276,7 +316,7 @@ export class EngramAccessHttpServer {
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         topK: body.topK,
         mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
@@ -289,7 +329,7 @@ export class EngramAccessHttpServer {
       const body = await this.readValidatedBody(req, "recallExplain");
       const response = await this.service.recallExplain({
         sessionKey: body.sessionKey,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
       });
       this.respondJson(res, 200, response);
       return;
@@ -301,7 +341,7 @@ export class EngramAccessHttpServer {
       const response = await this.service.observe({
         sessionKey: body.sessionKey,
         messages: body.messages,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
         skipExtraction: body.skipExtraction === true,
       });
@@ -315,7 +355,7 @@ export class EngramAccessHttpServer {
       const response = await this.service.lcmSearch({
         query: body.query,
         sessionKey: body.sessionKey,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
         limit: body.limit,
       });
@@ -339,7 +379,7 @@ export class EngramAccessHttpServer {
         content: body.content,
         category: body.category,
         confidence: body.confidence,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         tags: body.tags,
         entityRef: body.entityRef,
         ttl: body.ttl,
@@ -368,7 +408,7 @@ export class EngramAccessHttpServer {
         content: body.content,
         category: body.category,
         confidence: body.confidence,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         tags: body.tags,
         entityRef: body.entityRef,
         ttl: body.ttl,
@@ -503,7 +543,7 @@ export class EngramAccessHttpServer {
         memoryId: body.memoryId,
         status: body.status,
         reasonCode: body.reasonCode,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
@@ -526,7 +566,7 @@ export class EngramAccessHttpServer {
         recordedAt: body.recordedAt,
         summary: body.summary,
         dryRun,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
@@ -546,7 +586,7 @@ export class EngramAccessHttpServer {
         scenario: body.scenario,
         recordedAt: body.recordedAt,
         dryRun,
-        namespace: body.namespace,
+        namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(response as unknown as { dryRun?: boolean; idempotencyReplay?: boolean })) {
@@ -580,8 +620,15 @@ export class EngramAccessHttpServer {
       this.ensureWriteRateLimitAvailable();
     }
 
+    const sessionId = (() => {
+      const raw = req.headers["mcp-session-id"];
+      return typeof raw === "string" ? raw.trim() : undefined;
+    })();
+    const mcpCorrelationId = correlationIdStore.getStore() ?? randomUUID();
     const response = await this.mcpServer.handleRequest(request, {
       principalOverride: this.resolveRequestPrincipal(req),
+      sessionId,
+      correlationId: mcpCorrelationId,
     });
 
     if (isMcpWrite && response !== null) {
@@ -596,6 +643,12 @@ export class EngramAccessHttpServer {
       res.statusCode = 202;
       res.end();
       return;
+    }
+    // If this was an initialize response, pop the session ID keyed by
+    // correlation ID (unique per HTTP request, not client-chosen JSON-RPC id).
+    const assignedSessionId = this.mcpServer.popInitSessionId(mcpCorrelationId);
+    if (assignedSessionId) {
+      res.setHeader("mcp-session-id", assignedSessionId);
     }
     this.respondJson(res, 200, response);
   }

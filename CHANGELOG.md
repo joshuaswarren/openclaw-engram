@@ -4,15 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Adapter rewrite** — replaced fictional per-platform headers with real detection signals:
+  - `ClaudeCodeAdapter` — detects via `clientInfo.name = "claude-code"`, `User-Agent: claude-code/…`, or `X-Engram-Client-Id`
+  - `CodexAdapter` — detects via `clientInfo.name = "codex-mcp-client"` or `X-Engram-Client-Id`
+  - `ReplitAdapter` — detects via user-configured `X-Engram-Client-Id: replit` (Replit sends no auto headers)
+  - `HermesAdapter` — detects via `X-Hermes-Session-Id` (confirmed v0.7.0), `X-Engram-Client-Id`, or clientInfo
+- MCP server now stores `clientInfo` from initialize handshake and passes it to adapter resolution
+- Standardized scoping headers: `X-Engram-Namespace`, `X-Engram-Principal` (replaces per-platform invented headers)
+- Updated connector-setup docs for Claude Code, Codex CLI, Replit Agent, and added Hermes Agent section
+
 ## [v9.2.6] — 2026-04-05
 
 ### Added
 - **Adapter architecture** for multi-system identity resolution:
   - `AdapterRegistry` — chainable adapter resolution for incoming requests
-  - `ClaudeCodeAdapter` — resolves Claude Code sessions via MCP client info or `X-Claude-Session-Id` header
-  - `CodexAdapter` — resolves Codex CLI agents via MCP client info or `X-Codex-Agent-Name` header
-  - `ReplitAdapter` — resolves Replit agents via `X-Replit-Project-Id` / `X-Replit-User-Id` headers
-  - `HermesAdapter` — resolves Hermes agents via `X-Hermes-Session-Id` / `X-Hermes-Profile` headers
   - `GET /engram/v1/adapters` — discovery endpoint showing registered adapters and resolved identity
 - HTTP server now auto-detects connecting system and resolves principal via adapter registry
 

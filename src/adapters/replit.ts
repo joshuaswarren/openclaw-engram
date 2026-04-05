@@ -1,50 +1,55 @@
-import type { AdapterContext, EngramAdapter, ResolvedIdentity } from "./types.js";
+import { headerValue, type AdapterContext, type EngramAdapter, type ResolvedIdentity } from "./types.js";
 
 /**
  * Replit Agent adapter.
  *
- * Detects Replit connections via the X-Replit-Project-Id header or
- * X-Replit-User-Id header. Replit uses HTTP REST, not MCP stdio,
- * so detection relies entirely on headers.
+ * Detection: Replit Agent supports MCP natively (HTTP-only, configured
+ * via the Integrations pane). It does NOT send identifying headers
+ * automatically — detection relies on user-configured custom headers
+ * in Replit's MCP Integrations UI.
+ *
+ * Replit provides env vars to running code (REPL_ID, REPL_OWNER,
+ * REPL_SLUG) but these are NOT sent as HTTP headers to MCP servers.
+ *
+ * To identify Replit connections, users should configure a custom header
+ * in the Replit Integrations pane when adding the Engram MCP server:
+ *   Header Name: X-Engram-Client-Id
+ *   Header Value: replit
+ *
+ * Optionally also set X-Engram-Namespace and X-Engram-Principal for
+ * project/user scoping.
  */
 export class ReplitAdapter implements EngramAdapter {
   readonly id = "replit";
 
   matches(context: AdapterContext): boolean {
-    if (headerValue(context.headers, "x-replit-project-id")) return true;
-    if (headerValue(context.headers, "x-replit-user-id")) return true;
+    // Primary: user-configured client identifier header
+    const clientId = headerValue(context.headers, "x-engram-client-id");
+    if (clientId?.toLowerCase() === "replit") return true;
+
+    // MCP clientInfo (Replit's MCP client name is not publicly documented,
+    // but check for it in case it becomes available)
+    const clientName = context.clientInfo?.name?.toLowerCase() ?? "";
+    if (clientName.includes("replit")) return true;
+
     return false;
   }
 
   resolveIdentity(context: AdapterContext): ResolvedIdentity {
-    const projectId = headerValue(context.headers, "x-replit-project-id");
-    const userId = headerValue(context.headers, "x-replit-user-id");
-
-    const namespace = projectId
-      ? `replit-${sanitizeId(projectId)}`
-      : "replit";
+    const mcpSessionId = headerValue(context.headers, "mcp-session-id");
 
     const principal = headerValue(context.headers, "x-engram-principal")
-      || (userId ? `replit-user-${sanitizeId(userId)}` : "replit-agent");
+      || "replit-agent";
+
+    const namespace = headerValue(context.headers, "x-engram-namespace")
+      || "replit";
 
     return {
       namespace,
       principal,
-      sessionKey: context.sessionKey,
+      sessionKey: mcpSessionId ?? context.sessionKey,
       adapterId: this.id,
     };
   }
 }
 
-function headerValue(
-  headers: Record<string, string | string[] | undefined>,
-  key: string,
-): string | undefined {
-  const raw = headers[key];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function sanitizeId(s: string): string {
-  return s.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
-}
