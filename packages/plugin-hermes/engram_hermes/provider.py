@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import os
 import uuid
 from typing import Any
 
 from engram_hermes.client import EngramClient
+from engram_hermes.config import EngramHermesConfig
 
 
 class EngramMemoryProvider:
@@ -22,20 +21,12 @@ class EngramMemoryProvider:
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        config = config or {}
-        self._host = config.get("host", os.environ.get("ENGRAM_HOST", "127.0.0.1"))
-        self._port = int(config.get("port", os.environ.get("ENGRAM_PORT", "4318")))
-        self._token = config.get("token", "")
-        self._session_key = config.get("session_key", "") or f"hermes-{uuid.uuid4().hex[:12]}"
+        cfg = EngramHermesConfig.from_hermes_config(config or {})
+        self._host = cfg.host
+        self._port = cfg.port
+        self._token = cfg.token
+        self._session_key = cfg.session_key or f"hermes-{uuid.uuid4().hex[:12]}"
         self._client: EngramClient | None = None
-
-        # Load token from file if not in config
-        if not self._token:
-            token_path = os.path.expanduser("~/.engram/tokens.json")
-            if os.path.exists(token_path):
-                with open(token_path) as f:
-                    tokens = json.load(f)
-                    self._token = tokens.get("hermes", tokens.get("openclaw", ""))
 
     async def initialize(self, config: dict[str, Any] | None = None) -> None:
         """Connect to EMO daemon and verify health."""

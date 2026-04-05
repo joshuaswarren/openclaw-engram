@@ -38,7 +38,7 @@ TOOL_NAME="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(
 PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 
 [ -z "$SESSION_ID" ] && exit 0
-[ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ] && exit 0
+{ [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; } && exit 0
 
 CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
 LOCK_DIR="/tmp/engram-lock-${SESSION_ID}.d"

@@ -35,18 +35,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "./hooks/bin/session-end.sh",
-            "timeout": 5000
-          }
-        ]
-      }
     ]
   }
 }
