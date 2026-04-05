@@ -15,6 +15,21 @@ All notable changes to this project will be documented in this file.
   - `engram.identity_anchor_get` — read identity anchor document
   - `engram.identity_anchor_update` — update identity anchor sections
   - `engram.memory_identity` — read agent identity reflections
+- **3 new work layer standalone MCP tools**:
+  - `engram.work_task` — manage tasks (create/get/list/update/transition/delete)
+  - `engram.work_project` — manage projects (CRUD + link_task)
+  - `engram.work_board` — export/import board snapshots and markdown
+- **7 new shared context/compounding standalone MCP tools**:
+  - `engram.shared_context_write_output` — write agent output for cross-agent coordination
+  - `engram.shared_feedback_record` — record approval/rejection feedback
+  - `engram.shared_priorities_append` — append priorities to inbox
+  - `engram.shared_context_cross_signals_run` — generate cross-signal synthesis
+  - `engram.shared_context_curate_daily` — daily roundtable summary
+  - `engram.compounding_weekly_synthesize` — weekly learning reports + rubrics
+  - `engram.compounding_promote_candidate` — promote candidate to durable memory
+- **2 new compression guidelines standalone MCP tools**:
+  - `engram.compression_guidelines_optimize` — run compression guideline optimizer
+  - `engram.compression_guidelines_activate` — activate staged guideline draft
 - **11 new standalone MCP tools** for feature parity with OpenClaw plugin:
   - `engram.memory_search` — direct semantic search with QMD index
   - `engram.memory_profile` — user behavioral profile

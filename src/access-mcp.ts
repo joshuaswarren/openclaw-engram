@@ -378,6 +378,188 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Work Layer tools ─────────────────────────────────────────────────
+      {
+        name: "engram.work_task",
+        description: "Manage work-layer tasks (create, get, list, update, transition, delete). Excluded from memory extraction.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["create", "get", "list", "update", "transition", "delete"] },
+            id: { type: "string" },
+            title: { type: "string" },
+            description: { type: "string" },
+            status: { type: "string", enum: ["todo", "in_progress", "blocked", "done", "cancelled"] },
+            priority: { type: "string", enum: ["low", "medium", "high"] },
+            owner: { type: "string" },
+            assignee: { type: "string" },
+            projectId: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            dueAt: { type: "string" },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.work_project",
+        description: "Manage work-layer projects (create, get, list, update, delete, link_task). Excluded from memory extraction.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["create", "get", "list", "update", "delete", "link_task"] },
+            id: { type: "string" },
+            name: { type: "string" },
+            description: { type: "string" },
+            status: { type: "string", enum: ["active", "on_hold", "completed", "archived"] },
+            owner: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            taskId: { type: "string", description: "Task ID for link_task." },
+            projectId: { type: "string", description: "Project ID for link_task." },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.work_board",
+        description: "Export/import work-layer board snapshots and markdown.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["export_markdown", "export_snapshot", "import_snapshot"] },
+            projectId: { type: "string" },
+            snapshotJson: { type: "string", description: "Snapshot JSON for import_snapshot." },
+            linkToMemory: { type: "boolean", description: "If true, output can be retained as long-term memory." },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      // ── Shared Context / Compounding tools ────────────────────────────
+      {
+        name: "engram.shared_context_write_output",
+        description: "Write agent work product into shared-context directory for cross-agent coordination.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agentId: { type: "string", description: "Agent ID producing this output." },
+            title: { type: "string", description: "Short title for the output." },
+            content: { type: "string", description: "Markdown content to write." },
+          },
+          required: ["agentId", "title", "content"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_feedback_record",
+        description: "Append approval/rejection decision into shared-context feedback inbox for compounding learning.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent: { type: "string", description: "Agent name that produced the output." },
+            decision: { type: "string", enum: ["approved", "approved_with_feedback", "rejected"] },
+            reason: { type: "string" },
+            date: { type: "string", description: "ISO timestamp. Defaults to now." },
+            learning: { type: "string" },
+            outcome: { type: "string" },
+            severity: { type: "string", enum: ["low", "medium", "high"] },
+            confidence: { type: "number", description: "Confidence 0-1." },
+            workflow: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            evidenceWindowStart: { type: "string" },
+            evidenceWindowEnd: { type: "string" },
+            refs: { type: "array", items: { type: "string" } },
+          },
+          required: ["agent", "decision", "reason"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_priorities_append",
+        description: "Append priorities text into shared-context inbox for curator merge.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agentId: { type: "string" },
+            text: { type: "string", description: "Priority notes (markdown)." },
+          },
+          required: ["agentId", "text"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_context_cross_signals_run",
+        description: "Generate cross-signal markdown + JSON artifacts from agent outputs and feedback.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_context_curate_daily",
+        description: "Generate daily roundtable summary (deterministic baseline aggregation).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.compounding_weekly_synthesize",
+        description: "Generate weekly compounding outputs: reports, mistake registry, rubrics, and promotion candidates.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            weekId: { type: "string", description: "ISO week ID (YYYY-Www). Defaults to current week." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.compounding_promote_candidate",
+        description: "Promote a compounding candidate from weekly report into durable rule/principle memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            weekId: { type: "string" },
+            candidateId: { type: "string" },
+            dryRun: { type: "boolean", description: "Preview without writing." },
+          },
+          required: ["weekId", "candidateId"],
+          additionalProperties: false,
+        },
+      },
+      // ── Compression Guidelines tools ────────────────────────────────────
+      {
+        name: "engram.compression_guidelines_optimize",
+        description: "Run compression guideline optimizer, optionally persisting new guidelines.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            dryRun: { type: "boolean" },
+            eventLimit: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.compression_guidelines_activate",
+        description: "Promote staged compression guideline draft to active (after review).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            expectedContentHash: { type: "string" },
+            expectedGuidelineVersion: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+      },
       // ── Memory search & debug tools ────────────────────────────────────
       {
         name: "engram.memory_search",
@@ -840,6 +1022,97 @@ export class EngramMcpServer {
         return this.service.memoryIdentity({
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           principal: effectivePrincipal,
+        });
+      // ── Work Layer tools ──────────────────────────────────────────────
+      case "engram.work_task":
+        return this.service.workTask({
+          action: (args.action as any) ?? "list",
+          id: typeof args.id === "string" ? args.id : undefined,
+          title: typeof args.title === "string" ? args.title : undefined,
+          description: typeof args.description === "string" ? args.description : undefined,
+          status: typeof args.status === "string" ? args.status : undefined,
+          priority: typeof args.priority === "string" ? args.priority : undefined,
+          owner: typeof args.owner === "string" ? args.owner : undefined,
+          assignee: typeof args.assignee === "string" ? args.assignee : undefined,
+          projectId: typeof args.projectId === "string" ? args.projectId : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((x: unknown): x is string => typeof x === "string") : undefined,
+          dueAt: typeof args.dueAt === "string" ? args.dueAt : undefined,
+        });
+      case "engram.work_project":
+        return this.service.workProject({
+          action: (args.action as any) ?? "list",
+          id: typeof args.id === "string" ? args.id : undefined,
+          name: typeof args.name === "string" ? args.name : undefined,
+          description: typeof args.description === "string" ? args.description : undefined,
+          status: typeof args.status === "string" ? args.status : undefined,
+          owner: typeof args.owner === "string" ? args.owner : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((x: unknown): x is string => typeof x === "string") : undefined,
+          taskId: typeof args.taskId === "string" ? args.taskId : undefined,
+          projectId: typeof args.projectId === "string" ? args.projectId : undefined,
+        });
+      case "engram.work_board":
+        return this.service.workBoard({
+          action: (args.action as any) ?? "export_markdown",
+          projectId: typeof args.projectId === "string" ? args.projectId : undefined,
+          snapshotJson: typeof args.snapshotJson === "string" ? args.snapshotJson : undefined,
+          linkToMemory: args.linkToMemory === true,
+        });
+      // ── Shared Context / Compounding tools ─────────────────────────
+      case "engram.shared_context_write_output":
+        return this.service.sharedContextWriteOutput({
+          agentId: typeof args.agentId === "string" ? args.agentId : "",
+          title: typeof args.title === "string" ? args.title : "",
+          content: typeof args.content === "string" ? args.content : "",
+        });
+      case "engram.shared_feedback_record":
+        return this.service.sharedFeedbackRecord({
+          agent: typeof args.agent === "string" ? args.agent : "",
+          decision: (args.decision as any) ?? "approved",
+          reason: typeof args.reason === "string" ? args.reason : "",
+          date: typeof args.date === "string" ? args.date : undefined,
+          learning: typeof args.learning === "string" ? args.learning : undefined,
+          outcome: typeof args.outcome === "string" ? args.outcome : undefined,
+          severity: args.severity === "low" || args.severity === "medium" || args.severity === "high" ? args.severity : undefined,
+          confidence: typeof args.confidence === "number" ? args.confidence : undefined,
+          workflow: typeof args.workflow === "string" ? args.workflow : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((x: unknown): x is string => typeof x === "string") : undefined,
+          evidenceWindowStart: typeof args.evidenceWindowStart === "string" ? args.evidenceWindowStart : undefined,
+          evidenceWindowEnd: typeof args.evidenceWindowEnd === "string" ? args.evidenceWindowEnd : undefined,
+          refs: Array.isArray(args.refs) ? args.refs.filter((x: unknown): x is string => typeof x === "string") : undefined,
+        });
+      case "engram.shared_priorities_append":
+        return this.service.sharedPrioritiesAppend({
+          agentId: typeof args.agentId === "string" ? args.agentId : "",
+          text: typeof args.text === "string" ? args.text : "",
+        });
+      case "engram.shared_context_cross_signals_run":
+        return this.service.sharedContextCrossSignalsRun({
+          date: typeof args.date === "string" ? args.date : undefined,
+        });
+      case "engram.shared_context_curate_daily":
+        return this.service.sharedContextCurateDaily({
+          date: typeof args.date === "string" ? args.date : undefined,
+        });
+      case "engram.compounding_weekly_synthesize":
+        return this.service.compoundingWeeklySynthesize({
+          weekId: typeof args.weekId === "string" ? args.weekId : undefined,
+        });
+      case "engram.compounding_promote_candidate":
+        return this.service.compoundingPromoteCandidate({
+          weekId: typeof args.weekId === "string" ? args.weekId : "",
+          candidateId: typeof args.candidateId === "string" ? args.candidateId : "",
+          dryRun: args.dryRun === true,
+        });
+      // ── Compression Guidelines tools ───────────────────────────────────
+      case "engram.compression_guidelines_optimize":
+        return this.service.compressionGuidelinesOptimize({
+          dryRun: args.dryRun === true,
+          eventLimit: typeof args.eventLimit === "number" ? args.eventLimit : undefined,
+        });
+      case "engram.compression_guidelines_activate":
+        return this.service.compressionGuidelinesActivate({
+          expectedContentHash: typeof args.expectedContentHash === "string" ? args.expectedContentHash : undefined,
+          expectedGuidelineVersion: typeof args.expectedGuidelineVersion === "number" ? args.expectedGuidelineVersion : undefined,
         });
       // ── Memory search & debug tools ──────────────────────────────────
       case "engram.memory_search":

@@ -260,6 +260,18 @@ Any tool that supports the [Model Context Protocol](https://modelcontextprotocol
 | `engram.identity_anchor_get` | Read identity continuity anchor document |
 | `engram.identity_anchor_update` | Update identity anchor sections |
 | `engram.memory_identity` | Read agent identity reflections |
+| `engram.work_task` | Manage work-layer tasks (CRUD + transition) |
+| `engram.work_project` | Manage work-layer projects (CRUD + link_task) |
+| `engram.work_board` | Export/import work-layer board snapshots |
+| `engram.shared_context_write_output` | Write agent output to shared context |
+| `engram.shared_feedback_record` | Record approval/rejection feedback |
+| `engram.shared_priorities_append` | Append priorities to inbox |
+| `engram.shared_context_cross_signals_run` | Generate cross-signal synthesis |
+| `engram.shared_context_curate_daily` | Generate daily roundtable summary |
+| `engram.compounding_weekly_synthesize` | Weekly compounding reports + rubrics |
+| `engram.compounding_promote_candidate` | Promote compounding candidate to memory |
+| `engram.compression_guidelines_optimize` | Run compression guideline optimizer |
+| `engram.compression_guidelines_activate` | Activate staged compression guideline |
 | `engram.memory_search` | Direct semantic search over memory files |
 | `engram.memory_profile` | Read user behavioral profile |
 | `engram.memory_entities_list` | List all tracked entities |
