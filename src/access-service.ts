@@ -1848,12 +1848,11 @@ export class EngramAccessService {
     return { entities, count: entities.length };
   }
 
-  async memoryQuestions(namespace?: string): Promise<{ questions: string[]; count: number }> {
+  async memoryQuestions(namespace?: string): Promise<{ questions: Array<{ id: string; question: string; resolved: boolean }>; count: number }> {
     const storage = await this.orchestrator.getStorage(namespace);
-    const memories = await storage.readAllMemories();
-    const questions = memories.filter((m) => m.frontmatter.category === "question");
+    const questions = await storage.readQuestions();
     return {
-      questions: questions.map((q) => `[${q.frontmatter.id}] ${(q.content ?? "").slice(0, 300)}`),
+      questions: questions.map((q) => ({ id: q.id, question: q.question, resolved: q.resolved })),
       count: questions.length,
     };
   }
@@ -1914,8 +1913,16 @@ export class EngramAccessService {
   }): Promise<{ saved: boolean }> {
     const memoryDir = this.orchestrator.config.memoryDir;
     const { writeFile, mkdir } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const checkpointDir = join(memoryDir, "checkpoints", request.sessionKey);
+    const { join, resolve } = await import("node:path");
+    // Sanitize sessionKey to prevent path traversal
+    const safeKey = request.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    if (!safeKey) throw new EngramAccessInputError("sessionKey is required");
+    const checkpointDir = join(memoryDir, "checkpoints", safeKey);
+    // Double-check resolved path stays inside memoryDir
+    const resolved = resolve(checkpointDir);
+    if (!resolved.startsWith(resolve(memoryDir))) {
+      throw new EngramAccessInputError("Invalid sessionKey");
+    }
     await mkdir(checkpointDir, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const filePath = join(checkpointDir, `checkpoint-${ts}.md`);
