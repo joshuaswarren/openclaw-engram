@@ -3,9 +3,8 @@
  *
  * Framework-agnostic Engram memory engine.
  *
- * Re-exports the orchestrator, config parsing, storage, search,
- * extraction, graph, trust zones, and access layer from the
- * canonical implementation in `src/`.
+ * Exports the orchestrator, config parsing, storage, search,
+ * extraction, graph, trust zones, and access layer.
  *
  * This package has ZERO OpenClaw imports — it can be consumed by
  * any host adapter (CLI, HTTP server, MCP server, etc.).
@@ -21,10 +20,7 @@
 // Configuration
 // ---------------------------------------------------------------------------
 
-export { parseConfig } from "../../../src/config.js";
-// Note: PluginConfig, ExtractionConfig, SearchBackendConfig, ConsolidationConfig,
-// TrustZoneConfig are not yet exported from the root config module. These will be
-// available once the config types are fully extracted into @engram/core.
+export { parseConfig } from "./config.js";
 
 // ---------------------------------------------------------------------------
 // Orchestrator — primary entry point
@@ -34,36 +30,34 @@ export {
   Orchestrator,
   sanitizeSessionKeyForFilename,
   defaultWorkspaceDir,
-} from "../../../src/orchestrator.js";
+} from "./orchestrator.js";
 
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
 
-export { StorageManager } from "../../../src/storage.js";
+export { StorageManager } from "./storage.js";
 
 // ---------------------------------------------------------------------------
 // Extraction
 // ---------------------------------------------------------------------------
 
-export { ExtractionEngine } from "../../../src/extraction.js";
-// Note: extractMemories, ExtractedFact, ExtractionResult types will be exported
-// once the extraction pipeline is fully extracted into @engram/core.
+export { ExtractionEngine } from "./extraction.js";
 
 // ---------------------------------------------------------------------------
 // Search backends
 // ---------------------------------------------------------------------------
 
-export { QmdClient } from "../../../src/qmd.js";
-export { LanceDbBackend } from "../../../src/search/lancedb-backend.js";
-export { OramaBackend } from "../../../src/search/orama-backend.js";
-export { MeilisearchBackend } from "../../../src/search/meilisearch-backend.js";
+export { QmdClient } from "./qmd.js";
+export { LanceDbBackend } from "./search/lancedb-backend.js";
+export { OramaBackend } from "./search/orama-backend.js";
+export { MeilisearchBackend } from "./search/meilisearch-backend.js";
 
 // ---------------------------------------------------------------------------
 // Entity / Graph
 // ---------------------------------------------------------------------------
 
-export { buildEntityRecallSection } from "../../../src/entity-retrieval.js";
+export { buildEntityRecallSection } from "./entity-retrieval.js";
 
 // ---------------------------------------------------------------------------
 // Trust zones
@@ -75,15 +69,15 @@ export {
   type TrustZoneRecord,
   type TrustZoneRecordKind,
   type TrustZoneSourceClass,
-} from "../../../src/trust-zones.js";
+} from "./trust-zones.js";
 
 // ---------------------------------------------------------------------------
 // Access layer (HTTP + MCP + schema validation)
 // ---------------------------------------------------------------------------
 
-export { EngramAccessService, EngramAccessInputError } from "../../../src/access-service.js";
-export { EngramAccessHttpServer } from "../../../src/access-http.js";
-export { EngramMcpServer } from "../../../src/access-mcp.js";
+export { EngramAccessService, EngramAccessInputError } from "./access-service.js";
+export { EngramAccessHttpServer } from "./access-http.js";
+export { EngramMcpServer } from "./access-mcp.js";
 
 export {
   validateRequest,
@@ -98,25 +92,25 @@ export {
   type ObserveRequest,
   type MemoryStoreRequest,
   type SuggestionSubmitRequest,
-} from "../../../src/access-schema.js";
+} from "./access-schema.js";
 
 // ---------------------------------------------------------------------------
 // Day summary / LCM
 // ---------------------------------------------------------------------------
 
-export { loadDaySummaryPrompt } from "../../../src/day-summary.js";
+export { loadDaySummaryPrompt } from "./day-summary.js";
 
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
-export { BootstrapEngine } from "../../../src/bootstrap.js";
+export { BootstrapEngine } from "./bootstrap.js";
 
 // ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------
 
-export { initLogger, log } from "../../../src/logger.js";
+export { initLogger, log } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Projection (workspace tree)
@@ -259,32 +253,11 @@ export {
 // Public types
 // ---------------------------------------------------------------------------
 
-// Note: AccessConfig, AccessHealthResponse, AccessRecallResponse are defined
-// in the access layer but not yet exported from the root types module.
-
-
-// ---------------------------------------------------------------------------
-// Bench (M7) — re-export from @engram/bench
-// ---------------------------------------------------------------------------
-
 export type {
-  BenchTier,
-  TierDetail,
-  ExplainResult,
-  RecallMetrics,
-  BenchmarkReport,
-  BenchmarkSuiteResult,
-  SavedBaseline,
-  RegressionGateResult,
-  RegressionDetail,
-  BenchConfig,
-} from "../../bench/src/types.js";
-
-export {
-  loadBaseline,
-  saveBaseline,
-  runExplain,
-  runBenchSuite,
-  checkRegression,
-  generateReport,
-} from "../../bench/src/benchmark.js";
+  MemoryFile,
+  MemoryCategory,
+  MemoryActionType,
+  MemoryActionEligibilityContext,
+  MemoryActionEligibilitySource,
+  ContinuityImprovementLoop,
+} from "./types.js";
