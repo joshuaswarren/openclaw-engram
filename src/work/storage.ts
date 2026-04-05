@@ -48,13 +48,13 @@ function parseFrontmatter(raw: string): { data: Record<string, unknown>; body: s
 }
 
 function toSafeSlug(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-    .slice(0, 80);
+  let slug = value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-");
+  // Trim leading/trailing dashes without ReDoS-prone anchored quantifiers
+  let start = 0;
+  while (start < slug.length && slug[start] === "-") start++;
+  let end = slug.length;
+  while (end > start && slug[end - 1] === "-") end--;
+  return slug.slice(start, end).slice(0, 80);
 }
 
 export const WORK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
