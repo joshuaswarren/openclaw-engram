@@ -20,7 +20,9 @@ if [ -f "$TOKEN_FILE" ]; then
     const tokens = store.tokens || [];
     const cx = tokens.find(t => t.connector === 'codex');
     const oc = tokens.find(t => t.connector === 'openclaw');
-    process.stdout.write((cx && cx.token) || (oc && oc.token) || '');
+    let tok = (cx && cx.token) || (oc && oc.token) || '';
+    if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
+    process.stdout.write(tok);
   " 2>/dev/null || echo "")"
 fi
 [ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"

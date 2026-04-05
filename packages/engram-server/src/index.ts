@@ -113,10 +113,9 @@ export async function startServer(options?: {
 
   const authToken = serverConfig.authToken ?? process.env.ENGRAM_AUTH_TOKEN ?? "";
 
-  // Load per-connector tokens from ~/.engram/tokens.json (reloaded on each auth check)
-  const connectorTokens = getAllValidTokens();
-
-  if (!authToken && connectorTokens.length === 0) {
+  // Connector tokens are loaded dynamically per request via authTokensGetter
+  // so that token generate/revoke takes effect without server restart
+  if (!authToken && getAllValidTokens().length === 0) {
     log.warn("No auth token set — server will reject all requests. Set ENGRAM_AUTH_TOKEN, server.authToken in config, or generate tokens with 'engram token generate'.");
   }
 
@@ -125,7 +124,6 @@ export async function startServer(options?: {
     host: serverConfig.host ?? "127.0.0.1",
     port: serverConfig.port ?? 4318,
     authToken: authToken || undefined,
-    authTokens: connectorTokens,
     authTokensGetter: () => getAllValidTokens(),
     principal: serverConfig.principal,
     maxBodyBytes: serverConfig.maxBodyBytes,
@@ -204,10 +202,9 @@ Environment:
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// Auto-run when executed directly
+// Auto-run when executed directly (handles both `node dist/index.js` and `npx engram-server`)
 if (
-  process.argv[1]?.endsWith("engram-server.ts") ||
-  process.argv[1]?.endsWith("engram-server.js")
+  process.argv[1]?.includes("engram-server")
 ) {
   cliMain().catch((err) => {
     process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);

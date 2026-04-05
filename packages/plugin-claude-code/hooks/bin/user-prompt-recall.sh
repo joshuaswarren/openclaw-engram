@@ -22,7 +22,9 @@ if [ -f "$TOKEN_FILE" ]; then
     const tokens = store.tokens || [];
     const cc = tokens.find(t => t.connector === 'claude-code');
     const oc = tokens.find(t => t.connector === 'openclaw');
-    process.stdout.write((cc && cc.token) || (oc && oc.token) || '');
+    let tok = (cc && cc.token) || (oc && oc.token) || '';
+    if (!tok) { tok = store['claude-code'] || store['openclaw'] || ''; }
+    process.stdout.write(tok);
   " 2>/dev/null || echo "")"
 fi
 [ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
