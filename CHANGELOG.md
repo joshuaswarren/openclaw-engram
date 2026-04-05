@@ -7,6 +7,31 @@ All notable changes to this project will be documented in this file.
 ## [v9.2.4] — 2026-04-05
 
 ### Added
+- **9 new continuity/identity standalone MCP tools**:
+  - `engram.continuity_audit_generate` — generate weekly/monthly identity continuity audit
+  - `engram.continuity_incident_open` — create continuity incident record
+  - `engram.continuity_incident_close` — close incident with verification
+  - `engram.continuity_incident_list` — list incidents by state
+  - `engram.continuity_loop_add_or_update` — manage improvement loops
+  - `engram.continuity_loop_review` — review improvement loop metadata
+  - `engram.identity_anchor_get` — read identity anchor document
+  - `engram.identity_anchor_update` — update identity anchor sections
+  - `engram.memory_identity` — read agent identity reflections
+- **3 new work layer standalone MCP tools**:
+  - `engram.work_task` — manage tasks (create/get/list/update/transition/delete)
+  - `engram.work_project` — manage projects (CRUD + link_task)
+  - `engram.work_board` — export/import board snapshots and markdown
+- **7 new shared context/compounding standalone MCP tools**:
+  - `engram.shared_context_write_output` — write agent output for cross-agent coordination
+  - `engram.shared_feedback_record` — record approval/rejection feedback
+  - `engram.shared_priorities_append` — append priorities to inbox
+  - `engram.shared_context_cross_signals_run` — generate cross-signal synthesis
+  - `engram.shared_context_curate_daily` — daily roundtable summary
+  - `engram.compounding_weekly_synthesize` — weekly learning reports + rubrics
+  - `engram.compounding_promote_candidate` — promote candidate to durable memory
+- **2 new compression guidelines standalone MCP tools**:
+  - `engram.compression_guidelines_optimize` — run compression guideline optimizer
+  - `engram.compression_guidelines_activate` — activate staged guideline draft
 - **11 new standalone MCP tools** for feature parity with OpenClaw plugin:
   - `engram.memory_search` — direct semantic search with QMD index
   - `engram.memory_profile` — user behavioral profile
@@ -21,6 +46,9 @@ All notable changes to this project will be documented in this file.
   - `engram.context_checkpoint` — save session context to disk
 
 ### Fixed
+- **ACLs** — enforce namespace read/write authorization on all parity tools (memorySearch, memoryProfile, memoryEntitiesList, memoryQuestions, memoryPromote, contextCheckpoint)
+- **feedbackEnabled gate** — `engram.memory_feedback` now returns clean JSON when feedback is disabled instead of silently recording
+- **namespace-scoped checkpoints** — `engram.context_checkpoint` now writes to namespace-specific storage directory
 - **CLI `engram.cjs`** — print "Fatal: <message>" when tsx is not found (was silent exit)
 - **CLI `engram.cjs`** — respect `NO_COLOR` and user-set `FORCE_COLOR` instead of unconditionally forcing color
 

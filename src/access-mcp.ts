@@ -249,7 +249,318 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
-      // ── Parity tools (matching OpenClaw plugin feature set) ───────────
+      // ── Continuity / Identity tools ─────────────────────────────────────
+      {
+        name: "engram.continuity_audit_generate",
+        description: "Generate a deterministic identity continuity audit report (weekly/monthly).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            period: { type: "string", enum: ["weekly", "monthly"] },
+            key: { type: "string", description: "Period key (weekly: YYYY-Www, monthly: YYYY-MM). Defaults to current." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.continuity_incident_open",
+        description: "Create a new continuity incident record in append-only storage.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            symptom: { type: "string", description: "Observed continuity failure symptom." },
+            namespace: { type: "string" },
+            triggerWindow: { type: "string", description: "Time window when incident occurred." },
+            suspectedCause: { type: "string" },
+          },
+          required: ["symptom"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.continuity_incident_close",
+        description: "Close an open continuity incident with verification details.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Incident ID to close." },
+            namespace: { type: "string" },
+            fixApplied: { type: "string", description: "What fix was applied." },
+            verificationResult: { type: "string", description: "How closure was verified." },
+            preventiveRule: { type: "string", description: "Optional preventive follow-up rule." },
+          },
+          required: ["id", "fixApplied", "verificationResult"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.continuity_incident_list",
+        description: "List continuity incidents, optionally filtered by state.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            state: { type: "string", enum: ["open", "closed", "all"] },
+            namespace: { type: "string" },
+            limit: { type: "number", description: "Max incidents (default 25, max 200)." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.continuity_loop_add_or_update",
+        description: "Add or update a continuity improvement loop entry.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Stable loop identifier." },
+            cadence: { type: "string", enum: ["daily", "weekly", "monthly", "quarterly"] },
+            purpose: { type: "string", description: "What this recurring loop improves." },
+            status: { type: "string", enum: ["active", "paused", "retired"] },
+            killCondition: { type: "string", description: "Clear condition for retiring this loop." },
+            namespace: { type: "string" },
+            lastReviewed: { type: "string", description: "ISO timestamp for last review." },
+            notes: { type: "string" },
+          },
+          required: ["id", "cadence", "purpose", "status", "killCondition"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.continuity_loop_review",
+        description: "Update review metadata for an existing continuity improvement loop.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Loop ID to review." },
+            namespace: { type: "string" },
+            status: { type: "string", enum: ["active", "paused", "retired"] },
+            notes: { type: "string" },
+            reviewedAt: { type: "string", description: "ISO timestamp for review event." },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.identity_anchor_get",
+        description: "Read the identity continuity anchor document (recovery-safe identity context).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.identity_anchor_update",
+        description: "Conservatively merge identity anchor sections without overwriting existing material.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+            identityTraits: { type: "string", description: "Updates for 'Identity Traits' section." },
+            communicationPreferences: { type: "string", description: "Updates for 'Communication Preferences' section." },
+            operatingPrinciples: { type: "string", description: "Updates for 'Operating Principles' section." },
+            continuityNotes: { type: "string", description: "Updates for 'Continuity Notes' section." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.memory_identity",
+        description: "Read the agent's identity reflections from the workspace IDENTITY.md file.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      // ── Work Layer tools ─────────────────────────────────────────────────
+      {
+        name: "engram.work_task",
+        description: "Manage work-layer tasks (create, get, list, update, transition, delete). Excluded from memory extraction.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["create", "get", "list", "update", "transition", "delete"] },
+            id: { type: "string" },
+            title: { type: "string" },
+            description: { type: "string" },
+            status: { type: "string", enum: ["todo", "in_progress", "blocked", "done", "cancelled"] },
+            priority: { type: "string", enum: ["low", "medium", "high"] },
+            owner: { type: "string" },
+            assignee: { type: "string" },
+            projectId: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            dueAt: { type: "string" },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.work_project",
+        description: "Manage work-layer projects (create, get, list, update, delete, link_task). Excluded from memory extraction.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["create", "get", "list", "update", "delete", "link_task"] },
+            id: { type: "string" },
+            name: { type: "string" },
+            description: { type: "string" },
+            status: { type: "string", enum: ["active", "on_hold", "completed", "archived"] },
+            owner: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            taskId: { type: "string", description: "Task ID for link_task." },
+            projectId: { type: "string", description: "Project ID for link_task." },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.work_board",
+        description: "Export/import work-layer board snapshots and markdown.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["export_markdown", "export_snapshot", "import_snapshot"] },
+            projectId: { type: "string" },
+            snapshotJson: { type: "string", description: "Snapshot JSON for import_snapshot." },
+            linkToMemory: { type: "boolean", description: "If true, output can be retained as long-term memory." },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      // ── Shared Context / Compounding tools ────────────────────────────
+      {
+        name: "engram.shared_context_write_output",
+        description: "Write agent work product into shared-context directory for cross-agent coordination.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agentId: { type: "string", description: "Agent ID producing this output." },
+            title: { type: "string", description: "Short title for the output." },
+            content: { type: "string", description: "Markdown content to write." },
+          },
+          required: ["agentId", "title", "content"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_feedback_record",
+        description: "Append approval/rejection decision into shared-context feedback inbox for compounding learning.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent: { type: "string", description: "Agent name that produced the output." },
+            decision: { type: "string", enum: ["approved", "approved_with_feedback", "rejected"] },
+            reason: { type: "string" },
+            date: { type: "string", description: "ISO timestamp. Defaults to now." },
+            learning: { type: "string" },
+            outcome: { type: "string" },
+            severity: { type: "string", enum: ["low", "medium", "high"] },
+            confidence: { type: "number", description: "Confidence 0-1." },
+            workflow: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            evidenceWindowStart: { type: "string" },
+            evidenceWindowEnd: { type: "string" },
+            refs: { type: "array", items: { type: "string" } },
+          },
+          required: ["agent", "decision", "reason"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_priorities_append",
+        description: "Append priorities text into shared-context inbox for curator merge.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agentId: { type: "string" },
+            text: { type: "string", description: "Priority notes (markdown)." },
+          },
+          required: ["agentId", "text"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_context_cross_signals_run",
+        description: "Generate cross-signal markdown + JSON artifacts from agent outputs and feedback.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.shared_context_curate_daily",
+        description: "Generate daily roundtable summary (deterministic baseline aggregation).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.compounding_weekly_synthesize",
+        description: "Generate weekly compounding outputs: reports, mistake registry, rubrics, and promotion candidates.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            weekId: { type: "string", description: "ISO week ID (YYYY-Www). Defaults to current week." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.compounding_promote_candidate",
+        description: "Promote a compounding candidate from weekly report into durable rule/principle memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            weekId: { type: "string" },
+            candidateId: { type: "string" },
+            dryRun: { type: "boolean", description: "Preview without writing." },
+          },
+          required: ["weekId", "candidateId"],
+          additionalProperties: false,
+        },
+      },
+      // ── Compression Guidelines tools ────────────────────────────────────
+      {
+        name: "engram.compression_guidelines_optimize",
+        description: "Run compression guideline optimizer, optionally persisting new guidelines.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            dryRun: { type: "boolean" },
+            eventLimit: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.compression_guidelines_activate",
+        description: "Promote staged compression guideline draft to active (after review).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            expectedContentHash: { type: "string" },
+            expectedGuidelineVersion: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+      },
+      // ── Memory search & debug tools ────────────────────────────────────
       {
         name: "engram.memory_search",
         description: "Direct semantic search over memory files using the QMD index. Returns matching memories with relevance scores.",
@@ -642,7 +953,168 @@ export class EngramMcpServer {
           limit: typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : undefined,
           authenticatedPrincipal: effectivePrincipal,
         });
-      // ── Parity tools ──────────────────────────────────────────────────
+      // ── Continuity / Identity tools ───────────────────────────────────
+      case "engram.continuity_audit_generate":
+        return this.service.continuityAuditGenerate({
+          period: args.period === "monthly" ? "monthly" : args.period === "weekly" ? "weekly" : undefined,
+          key: typeof args.key === "string" ? args.key : undefined,
+        });
+      case "engram.continuity_incident_open":
+        return this.service.continuityIncidentOpen({
+          symptom: typeof args.symptom === "string" ? args.symptom : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          triggerWindow: typeof args.triggerWindow === "string" ? args.triggerWindow : undefined,
+          suspectedCause: typeof args.suspectedCause === "string" ? args.suspectedCause : undefined,
+        });
+      case "engram.continuity_incident_close":
+        return this.service.continuityIncidentClose({
+          id: typeof args.id === "string" ? args.id : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          fixApplied: typeof args.fixApplied === "string" ? args.fixApplied : "",
+          verificationResult: typeof args.verificationResult === "string" ? args.verificationResult : "",
+          preventiveRule: typeof args.preventiveRule === "string" ? args.preventiveRule : undefined,
+        });
+      case "engram.continuity_incident_list":
+        return this.service.continuityIncidentList({
+          state: args.state === "closed" ? "closed" : args.state === "all" ? "all" : args.state === "open" ? "open" : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          limit: typeof args.limit === "number" ? args.limit : undefined,
+        });
+      case "engram.continuity_loop_add_or_update":
+        return this.service.continuityLoopAddOrUpdate({
+          id: typeof args.id === "string" ? args.id : "",
+          cadence: (args.cadence as "daily" | "weekly" | "monthly" | "quarterly") ?? "weekly",
+          purpose: typeof args.purpose === "string" ? args.purpose : "",
+          status: (args.status as "active" | "paused" | "retired") ?? "active",
+          killCondition: typeof args.killCondition === "string" ? args.killCondition : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          lastReviewed: typeof args.lastReviewed === "string" ? args.lastReviewed : undefined,
+          notes: typeof args.notes === "string" ? args.notes : undefined,
+        });
+      case "engram.continuity_loop_review":
+        return this.service.continuityLoopReview({
+          id: typeof args.id === "string" ? args.id : "",
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          status: args.status === "active" || args.status === "paused" || args.status === "retired" ? args.status : undefined,
+          notes: typeof args.notes === "string" ? args.notes : undefined,
+          reviewedAt: typeof args.reviewedAt === "string" ? args.reviewedAt : undefined,
+        });
+      case "engram.identity_anchor_get":
+        return this.service.identityAnchorGet({
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+        });
+      case "engram.identity_anchor_update":
+        return this.service.identityAnchorUpdate({
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          identityTraits: typeof args.identityTraits === "string" ? args.identityTraits : undefined,
+          communicationPreferences: typeof args.communicationPreferences === "string" ? args.communicationPreferences : undefined,
+          operatingPrinciples: typeof args.operatingPrinciples === "string" ? args.operatingPrinciples : undefined,
+          continuityNotes: typeof args.continuityNotes === "string" ? args.continuityNotes : undefined,
+        });
+      case "engram.memory_identity":
+        return this.service.memoryIdentity({
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+        });
+      // ── Work Layer tools ──────────────────────────────────────────────
+      case "engram.work_task":
+        return this.service.workTask({
+          action: (args.action as any) ?? "list",
+          id: typeof args.id === "string" ? args.id : undefined,
+          title: typeof args.title === "string" ? args.title : undefined,
+          description: typeof args.description === "string" ? args.description : undefined,
+          status: typeof args.status === "string" ? args.status : undefined,
+          priority: typeof args.priority === "string" ? args.priority : undefined,
+          owner: typeof args.owner === "string" ? args.owner : undefined,
+          assignee: typeof args.assignee === "string" ? args.assignee : undefined,
+          projectId: typeof args.projectId === "string" ? args.projectId : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((x: unknown): x is string => typeof x === "string") : undefined,
+          dueAt: typeof args.dueAt === "string" ? args.dueAt : undefined,
+        });
+      case "engram.work_project":
+        return this.service.workProject({
+          action: (args.action as any) ?? "list",
+          id: typeof args.id === "string" ? args.id : undefined,
+          name: typeof args.name === "string" ? args.name : undefined,
+          description: typeof args.description === "string" ? args.description : undefined,
+          status: typeof args.status === "string" ? args.status : undefined,
+          owner: typeof args.owner === "string" ? args.owner : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((x: unknown): x is string => typeof x === "string") : undefined,
+          taskId: typeof args.taskId === "string" ? args.taskId : undefined,
+          projectId: typeof args.projectId === "string" ? args.projectId : undefined,
+        });
+      case "engram.work_board":
+        return this.service.workBoard({
+          action: (args.action as any) ?? "export_markdown",
+          projectId: typeof args.projectId === "string" ? args.projectId : undefined,
+          snapshotJson: typeof args.snapshotJson === "string" ? args.snapshotJson : undefined,
+          linkToMemory: args.linkToMemory === true,
+        });
+      // ── Shared Context / Compounding tools ─────────────────────────
+      case "engram.shared_context_write_output":
+        return this.service.sharedContextWriteOutput({
+          agentId: typeof args.agentId === "string" ? args.agentId : "",
+          title: typeof args.title === "string" ? args.title : "",
+          content: typeof args.content === "string" ? args.content : "",
+        });
+      case "engram.shared_feedback_record":
+        return this.service.sharedFeedbackRecord({
+          agent: typeof args.agent === "string" ? args.agent : "",
+          decision: (args.decision as any) ?? "approved",
+          reason: typeof args.reason === "string" ? args.reason : "",
+          date: typeof args.date === "string" ? args.date : undefined,
+          learning: typeof args.learning === "string" ? args.learning : undefined,
+          outcome: typeof args.outcome === "string" ? args.outcome : undefined,
+          severity: args.severity === "low" || args.severity === "medium" || args.severity === "high" ? args.severity : undefined,
+          confidence: typeof args.confidence === "number" ? args.confidence : undefined,
+          workflow: typeof args.workflow === "string" ? args.workflow : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.filter((x: unknown): x is string => typeof x === "string") : undefined,
+          evidenceWindowStart: typeof args.evidenceWindowStart === "string" ? args.evidenceWindowStart : undefined,
+          evidenceWindowEnd: typeof args.evidenceWindowEnd === "string" ? args.evidenceWindowEnd : undefined,
+          refs: Array.isArray(args.refs) ? args.refs.filter((x: unknown): x is string => typeof x === "string") : undefined,
+        });
+      case "engram.shared_priorities_append":
+        return this.service.sharedPrioritiesAppend({
+          agentId: typeof args.agentId === "string" ? args.agentId : "",
+          text: typeof args.text === "string" ? args.text : "",
+        });
+      case "engram.shared_context_cross_signals_run":
+        return this.service.sharedContextCrossSignalsRun({
+          date: typeof args.date === "string" ? args.date : undefined,
+        });
+      case "engram.shared_context_curate_daily":
+        return this.service.sharedContextCurateDaily({
+          date: typeof args.date === "string" ? args.date : undefined,
+        });
+      case "engram.compounding_weekly_synthesize":
+        return this.service.compoundingWeeklySynthesize({
+          weekId: typeof args.weekId === "string" ? args.weekId : undefined,
+        });
+      case "engram.compounding_promote_candidate":
+        return this.service.compoundingPromoteCandidate({
+          weekId: typeof args.weekId === "string" ? args.weekId : "",
+          candidateId: typeof args.candidateId === "string" ? args.candidateId : "",
+          dryRun: args.dryRun === true,
+        });
+      // ── Compression Guidelines tools ───────────────────────────────────
+      case "engram.compression_guidelines_optimize":
+        return this.service.compressionGuidelinesOptimize({
+          dryRun: args.dryRun === true,
+          eventLimit: typeof args.eventLimit === "number" ? args.eventLimit : undefined,
+        });
+      case "engram.compression_guidelines_activate":
+        return this.service.compressionGuidelinesActivate({
+          expectedContentHash: typeof args.expectedContentHash === "string" ? args.expectedContentHash : undefined,
+          expectedGuidelineVersion: typeof args.expectedGuidelineVersion === "number" ? args.expectedGuidelineVersion : undefined,
+        });
+      // ── Memory search & debug tools ──────────────────────────────────
       case "engram.memory_search":
         return this.service.memorySearch({
           query: typeof args.query === "string" ? args.query : "",

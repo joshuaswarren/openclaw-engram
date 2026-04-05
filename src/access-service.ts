@@ -1,5 +1,12 @@
 import { stat } from "node:fs/promises";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
+import { WorkStorage } from "./work/storage.js";
+import {
+  exportWorkBoardMarkdown,
+  exportWorkBoardSnapshot,
+  importWorkBoardSnapshot,
+} from "./work/board.js";
+import { wrapWorkLayerContext } from "./work/boundary.js";
 import {
   persistExplicitCapture,
   queueExplicitCaptureForReview,
@@ -1799,6 +1806,585 @@ export class EngramAccessService {
   }
 
   // ── Parity tools (match OpenClaw plugin feature set) ──────────────────
+
+  // ── Continuity / Identity ──────────────────────────────────────────────
+
+  async continuityAuditGenerate(request: {
+    period?: "weekly" | "monthly";
+    key?: string;
+  }): Promise<{ enabled: boolean; reason?: string; period?: string; key?: string; reportPath?: string }> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled. Enable `identityContinuityEnabled: true`." };
+    }
+    if (!this.orchestrator.config.continuityAuditEnabled) {
+      return { enabled: false, reason: "Continuity audits are disabled. Enable `continuityAuditEnabled: true`." };
+    }
+    if (!this.orchestrator.compounding) {
+      return { enabled: false, reason: "Compounding engine is disabled. Enable `compoundingEnabled: true`." };
+    }
+    const period = request.period === "monthly" ? "monthly" : "weekly";
+    const key = request.key?.trim() || undefined;
+    const audit = await this.orchestrator.compounding.synthesizeContinuityAudit({ period, key });
+    return { enabled: true, period: audit.period, key: audit.key, reportPath: audit.reportPath };
+  }
+
+  async continuityIncidentOpen(request: {
+    symptom: string;
+    namespace?: string;
+    principal?: string;
+    triggerWindow?: string;
+    suspectedCause?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled. Enable `identityContinuityEnabled: true`." };
+    }
+    if (!this.orchestrator.config.continuityIncidentLoggingEnabled) {
+      return { enabled: false, reason: "Continuity incident logging is disabled. Enable `continuityIncidentLoggingEnabled: true`." };
+    }
+    const symptom = request.symptom?.trim();
+    if (!symptom) throw new EngramAccessInputError("symptom is required");
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const created = await storage.appendContinuityIncident({
+      symptom,
+      triggerWindow: request.triggerWindow?.trim() || undefined,
+      suspectedCause: request.suspectedCause?.trim() || undefined,
+    });
+    return { created: true, incident: created };
+  }
+
+  async continuityIncidentClose(request: {
+    id: string;
+    namespace?: string;
+    principal?: string;
+    fixApplied: string;
+    verificationResult: string;
+    preventiveRule?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    if (!this.orchestrator.config.continuityIncidentLoggingEnabled) {
+      return { enabled: false, reason: "Continuity incident logging is disabled." };
+    }
+    const id = request.id?.trim();
+    if (!id) throw new EngramAccessInputError("id is required");
+    const fixApplied = request.fixApplied?.trim();
+    if (!fixApplied) throw new EngramAccessInputError("fixApplied is required");
+    const verificationResult = request.verificationResult?.trim();
+    if (!verificationResult) throw new EngramAccessInputError("verificationResult is required");
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const closed = await storage.closeContinuityIncident(id, {
+      fixApplied,
+      verificationResult,
+      preventiveRule: request.preventiveRule?.trim() || undefined,
+    });
+    if (!closed) return { closed: false, reason: `Incident not found: ${id}` };
+    return { closed: true, incident: closed };
+  }
+
+  async continuityIncidentList(request: {
+    state?: "open" | "closed" | "all";
+    namespace?: string;
+    principal?: string;
+    limit?: number;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const state = request.state === "closed" || request.state === "all" ? request.state : "open";
+    const limit = Math.max(1, Math.min(200, Math.floor(request.limit ?? 25)));
+    const resolvedNs = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const incidents = await storage.readContinuityIncidents(limit, state);
+    return { state, incidents, count: incidents.length };
+  }
+
+  async continuityLoopAddOrUpdate(request: {
+    id: string;
+    cadence: "daily" | "weekly" | "monthly" | "quarterly";
+    purpose: string;
+    status: "active" | "paused" | "retired";
+    killCondition: string;
+    namespace?: string;
+    principal?: string;
+    lastReviewed?: string;
+    notes?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const loop = await storage.upsertIdentityImprovementLoop({
+      id: request.id?.trim() || "",
+      cadence: request.cadence,
+      purpose: request.purpose?.trim() || "",
+      status: request.status,
+      killCondition: request.killCondition?.trim() || "",
+      lastReviewed: request.lastReviewed?.trim() || undefined,
+      notes: request.notes?.trim() || undefined,
+    });
+    return { saved: true, loop };
+  }
+
+  async continuityLoopReview(request: {
+    id: string;
+    namespace?: string;
+    principal?: string;
+    status?: "active" | "paused" | "retired";
+    notes?: string;
+    reviewedAt?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const id = request.id?.trim();
+    if (!id) throw new EngramAccessInputError("id is required");
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const reviewed = await storage.reviewIdentityImprovementLoop(id, {
+      status: request.status,
+      notes: request.notes?.trim() || undefined,
+      reviewedAt: request.reviewedAt?.trim() || undefined,
+    });
+    if (!reviewed) return { reviewed: false, reason: `Continuity loop not found: ${id}` };
+    return { reviewed: true, loop: reviewed };
+  }
+
+  async identityAnchorGet(request: {
+    namespace?: string;
+    principal?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+    const resolvedNs = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const anchor = await storage.readIdentityAnchor();
+    if (!anchor) return { found: false, message: "No identity anchor found yet. Use identity_anchor_update to create one." };
+    return { found: true, anchor };
+  }
+
+  async identityAnchorUpdate(request: {
+    namespace?: string;
+    principal?: string;
+    identityTraits?: string;
+    communicationPreferences?: string;
+    operatingPrinciples?: string;
+    continuityNotes?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.identityContinuityEnabled) {
+      return { enabled: false, reason: "Identity continuity is disabled." };
+    }
+
+    const updates: Record<string, string | undefined> = {
+      "Identity Traits": request.identityTraits?.trim() || undefined,
+      "Communication Preferences": request.communicationPreferences?.trim() || undefined,
+      "Operating Principles": request.operatingPrinciples?.trim() || undefined,
+      "Continuity Notes": request.continuityNotes?.trim() || undefined,
+    };
+    const hasUpdate = Object.values(updates).some((v) => typeof v === "string" && v.length > 0);
+    if (!hasUpdate) throw new EngramAccessInputError("At least one section field is required.");
+
+    const resolvedNs = this.resolveWritableNamespace(request.namespace, undefined, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const existing = await storage.readIdentityAnchor();
+
+    // Merge sections conservatively (append, don't overwrite)
+    const merged = this.mergeIdentityAnchorSections(existing, updates);
+    await storage.writeIdentityAnchor(merged);
+
+    const updatedSections = Object.entries(updates)
+      .filter(([, v]) => typeof v === "string" && v.length > 0)
+      .map(([name]) => name);
+    return { updated: true, sections: updatedSections, anchor: merged };
+  }
+
+  async memoryIdentity(request: {
+    namespace?: string;
+    principal?: string;
+  }): Promise<unknown> {
+    const resolvedNs = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    const identity = await storage.readIdentityReflections();
+    if (!identity) return { found: false, message: "No identity reflections found." };
+    return { found: true, identity };
+  }
+
+  // ── Work Layer ──────────────────────────────────────────────────────────
+
+  async workTask(request: {
+    action: "create" | "get" | "list" | "update" | "transition" | "delete";
+    id?: string;
+    title?: string;
+    description?: string;
+    status?: string;
+    priority?: string;
+    owner?: string;
+    assignee?: string;
+    projectId?: string;
+    tags?: string[];
+    dueAt?: string;
+  }): Promise<unknown> {
+    const STATUSES = new Set(["todo", "in_progress", "blocked", "done", "cancelled"]);
+    const PRIORITIES = new Set(["low", "medium", "high"]);
+    const asStatus = (v?: string) => (v && STATUSES.has(v) ? v as "todo" | "in_progress" | "blocked" | "done" | "cancelled" : undefined);
+    const asPriority = (v?: string) => (v && PRIORITIES.has(v) ? v as "low" | "medium" | "high" : undefined);
+
+    const storage = new WorkStorage(this.orchestrator.config.memoryDir);
+    await storage.ensureDirectories();
+    const action = request.action;
+
+    if (action === "create") {
+      if (!request.title?.trim()) throw new EngramAccessInputError("title is required for create");
+      const task = await storage.createTask({
+        title: request.title,
+        description: request.description,
+        status: asStatus(request.status),
+        priority: asPriority(request.priority),
+        owner: request.owner?.trim() || undefined,
+        assignee: request.assignee?.trim() || undefined,
+        projectId: request.projectId?.trim() || undefined,
+        tags: request.tags,
+        dueAt: request.dueAt?.trim() || undefined,
+      });
+      return { action, task };
+    }
+    if (action === "get") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for get");
+      return { action, task: await storage.getTask(request.id) };
+    }
+    if (action === "list") {
+      const tasks = await storage.listTasks({
+        status: asStatus(request.status),
+        owner: request.owner?.trim() || undefined,
+        assignee: request.assignee?.trim() || undefined,
+        projectId: request.projectId?.trim() || undefined,
+      });
+      return { action, count: tasks.length, tasks };
+    }
+    if (action === "update") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for update");
+      const patch: Record<string, unknown> = {};
+      if (request.title !== undefined) patch.title = request.title;
+      if (request.description !== undefined) patch.description = request.description;
+      const st = asStatus(request.status); if (st) patch.status = st;
+      const pr = asPriority(request.priority); if (pr) patch.priority = pr;
+      if (request.owner !== undefined) patch.owner = request.owner || null;
+      if (request.assignee !== undefined) patch.assignee = request.assignee || null;
+      if (request.projectId !== undefined) patch.projectId = request.projectId || null;
+      if (request.tags) patch.tags = request.tags;
+      if (request.dueAt !== undefined) patch.dueAt = request.dueAt || null;
+      return { action, task: await storage.updateTask(request.id, patch as any) };
+    }
+    if (action === "transition") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for transition");
+      const st = asStatus(request.status);
+      if (!st) throw new EngramAccessInputError("valid status is required for transition");
+      return { action, task: await storage.transitionTask(request.id, st) };
+    }
+    if (action === "delete") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for delete");
+      return { action, deleted: await storage.deleteTask(request.id) };
+    }
+    throw new EngramAccessInputError(`Unsupported work_task action: ${action}`);
+  }
+
+  async workProject(request: {
+    action: "create" | "get" | "list" | "update" | "delete" | "link_task";
+    id?: string;
+    name?: string;
+    description?: string;
+    status?: string;
+    owner?: string;
+    tags?: string[];
+    taskId?: string;
+    projectId?: string;
+  }): Promise<unknown> {
+    const STATUSES = new Set(["active", "on_hold", "completed", "archived"]);
+    const asStatus = (v?: string) => (v && STATUSES.has(v) ? v as "active" | "on_hold" | "completed" | "archived" : undefined);
+
+    const storage = new WorkStorage(this.orchestrator.config.memoryDir);
+    await storage.ensureDirectories();
+    const action = request.action;
+
+    if (action === "create") {
+      if (!request.name?.trim()) throw new EngramAccessInputError("name is required for create");
+      const project = await storage.createProject({
+        name: request.name,
+        description: request.description,
+        status: asStatus(request.status),
+        owner: request.owner?.trim() || undefined,
+        tags: request.tags,
+      });
+      return { action, project };
+    }
+    if (action === "get") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for get");
+      return { action, project: await storage.getProject(request.id) };
+    }
+    if (action === "list") {
+      const projects = await storage.listProjects();
+      return { action, count: projects.length, projects };
+    }
+    if (action === "update") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for update");
+      const patch: Record<string, unknown> = {};
+      if (request.name !== undefined) patch.name = request.name;
+      if (request.description !== undefined) patch.description = request.description;
+      const st = asStatus(request.status); if (st) patch.status = st;
+      if (request.owner !== undefined) patch.owner = request.owner || null;
+      if (request.tags) patch.tags = request.tags;
+      return { action, project: await storage.updateProject(request.id, patch as any) };
+    }
+    if (action === "delete") {
+      if (!request.id?.trim()) throw new EngramAccessInputError("id is required for delete");
+      return { action, deleted: await storage.deleteProject(request.id) };
+    }
+    if (action === "link_task") {
+      if (!request.taskId?.trim() || !request.projectId?.trim()) {
+        throw new EngramAccessInputError("taskId and projectId are required for link_task");
+      }
+      return { action, linked: await storage.linkTaskToProject(request.taskId, request.projectId) };
+    }
+    throw new EngramAccessInputError(`Unsupported work_project action: ${action}`);
+  }
+
+  async workBoard(request: {
+    action: "export_markdown" | "export_snapshot" | "import_snapshot";
+    projectId?: string;
+    snapshotJson?: string;
+    linkToMemory?: boolean;
+  }): Promise<unknown> {
+    const memoryDir = this.orchestrator.config.memoryDir;
+    await new WorkStorage(memoryDir).ensureDirectories();
+    const action = request.action;
+    const projectId = request.projectId?.trim() || undefined;
+
+    if (action === "export_markdown") {
+      const markdown = await exportWorkBoardMarkdown({ memoryDir, projectId });
+      return { action, markdown: wrapWorkLayerContext(markdown, { linkToMemory: request.linkToMemory === true }) };
+    }
+    if (action === "export_snapshot") {
+      const snapshot = await exportWorkBoardSnapshot({ memoryDir, projectId });
+      return { action, snapshot };
+    }
+    if (action === "import_snapshot") {
+      if (!request.snapshotJson?.trim()) throw new EngramAccessInputError("snapshotJson is required for import_snapshot");
+      const snapshot = JSON.parse(request.snapshotJson);
+      const result = await importWorkBoardSnapshot({ memoryDir, snapshot, projectId });
+      return { action, result };
+    }
+    throw new EngramAccessInputError(`Unsupported work_board action: ${action}`);
+  }
+
+  // ── Shared Context / Compounding ────────────────────────────────────────
+
+  async sharedContextWriteOutput(request: {
+    agentId: string;
+    title: string;
+    content: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.sharedContext) {
+      return { enabled: false, reason: "Shared context is disabled. Enable `sharedContextEnabled: true`." };
+    }
+    const fp = await this.orchestrator.sharedContext.writeAgentOutput({
+      agentId: request.agentId,
+      title: request.title,
+      content: request.content,
+    });
+    return { written: true, path: fp };
+  }
+
+  async sharedFeedbackRecord(request: {
+    agent: string;
+    decision: "approved" | "approved_with_feedback" | "rejected";
+    reason: string;
+    date?: string;
+    learning?: string;
+    outcome?: string;
+    severity?: "low" | "medium" | "high";
+    confidence?: number;
+    workflow?: string;
+    tags?: string[];
+    evidenceWindowStart?: string;
+    evidenceWindowEnd?: string;
+    refs?: string[];
+  }): Promise<unknown> {
+    if (!this.orchestrator.sharedContext) {
+      return { enabled: false, reason: "Shared context is disabled. Enable `sharedContextEnabled: true`." };
+    }
+    await this.orchestrator.sharedContext.appendFeedback({
+      agent: request.agent,
+      decision: request.decision,
+      reason: request.reason,
+      date: request.date?.trim() || new Date().toISOString(),
+      learning: request.learning,
+      outcome: request.outcome,
+      severity: request.severity,
+      confidence: request.confidence,
+      workflow: request.workflow,
+      tags: request.tags,
+      evidenceWindowStart: request.evidenceWindowStart,
+      evidenceWindowEnd: request.evidenceWindowEnd,
+      refs: request.refs,
+    });
+    return { recorded: true };
+  }
+
+  async sharedPrioritiesAppend(request: {
+    agentId: string;
+    text: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.sharedContext) {
+      return { enabled: false, reason: "Shared context is disabled. Enable `sharedContextEnabled: true`." };
+    }
+    await this.orchestrator.sharedContext.appendPrioritiesInbox({
+      agentId: request.agentId,
+      text: request.text,
+    });
+    return { appended: true };
+  }
+
+  async sharedContextCrossSignalsRun(request: {
+    date?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.sharedContext) {
+      return { enabled: false, reason: "Shared context is disabled. Enable `sharedContextEnabled: true`." };
+    }
+    const result = await this.orchestrator.sharedContext.synthesizeCrossSignals({ date: request.date });
+    return {
+      crossSignalsMarkdownPath: result.crossSignalsMarkdownPath,
+      crossSignalsPath: result.crossSignalsPath,
+      sourceCount: result.report.sourceCount,
+      feedbackCount: result.report.feedbackCount,
+      overlapCount: result.overlapCount,
+    };
+  }
+
+  async sharedContextCurateDaily(request: {
+    date?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.sharedContext) {
+      return { enabled: false, reason: "Shared context is disabled. Enable `sharedContextEnabled: true`." };
+    }
+    const result = await this.orchestrator.sharedContext.curateDaily({ date: request.date });
+    return {
+      roundtablePath: result.roundtablePath,
+      crossSignalsMarkdownPath: result.crossSignalsMarkdownPath,
+      crossSignalsPath: result.crossSignalsPath,
+      overlapCount: result.overlapCount,
+    };
+  }
+
+  async compoundingWeeklySynthesize(request: {
+    weekId?: string;
+  }): Promise<unknown> {
+    if (!this.orchestrator.compounding) {
+      return { enabled: false, reason: "Compounding engine is disabled. Enable `compoundingEnabled: true`." };
+    }
+    const res = await this.orchestrator.compounding.synthesizeWeekly({ weekId: request.weekId });
+    return {
+      weekId: res.weekId,
+      reportPath: res.reportPath,
+      reportJsonPath: res.reportJsonPath,
+      rubricsPath: res.rubricsPath,
+      rubricsIndexPath: res.rubricsIndexPath,
+      mistakesCount: res.mistakesCount,
+      promotionCandidateCount: res.promotionCandidateCount,
+    };
+  }
+
+  async compoundingPromoteCandidate(request: {
+    weekId: string;
+    candidateId: string;
+    dryRun?: boolean;
+  }): Promise<unknown> {
+    if (!this.orchestrator.compounding) {
+      return { enabled: false, reason: "Compounding engine is disabled. Enable `compoundingEnabled: true`." };
+    }
+    return await this.orchestrator.compounding.promoteCandidate({
+      weekId: request.weekId,
+      candidateId: request.candidateId,
+      dryRun: request.dryRun,
+    });
+  }
+
+  // ── Compression Guidelines ────────────────────────────────────────────
+
+  async compressionGuidelinesOptimize(request: {
+    dryRun?: boolean;
+    eventLimit?: number;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.compressionGuidelineLearningEnabled) {
+      return { enabled: false, reason: "Compression guideline learning is disabled. Enable `compressionGuidelineLearningEnabled: true`." };
+    }
+    return await this.orchestrator.optimizeCompressionGuidelines({
+      dryRun: request.dryRun,
+      eventLimit: request.eventLimit,
+    });
+  }
+
+  async compressionGuidelinesActivate(request: {
+    expectedContentHash?: string;
+    expectedGuidelineVersion?: number;
+  }): Promise<unknown> {
+    if (!this.orchestrator.config.compressionGuidelineLearningEnabled) {
+      return { enabled: false, reason: "Compression guideline learning is disabled." };
+    }
+    return await this.orchestrator.activateCompressionGuidelineDraft({
+      expectedContentHash: request.expectedContentHash,
+      expectedGuidelineVersion: request.expectedGuidelineVersion,
+    });
+  }
+
+  /** Conservative identity anchor section merge (matches tools.ts mergeIdentityAnchor logic). */
+  private mergeIdentityAnchorSections(
+    existingRaw: string | null,
+    updates: Record<string, string | undefined>,
+  ): string {
+    const TITLE = "# Identity Continuity Anchor";
+    const SECTION_ORDER = ["Identity Traits", "Communication Preferences", "Operating Principles", "Continuity Notes"];
+
+    const lines = (existingRaw ?? "").replace(/\r/g, "").split("\n");
+    const headerLines: string[] = [];
+    const sectionContent = new Map<string, string[]>();
+    const order: string[] = [];
+    let current: string | null = null;
+    for (const line of lines) {
+      const m = line.match(/^##\s+(.+?)\s*$/);
+      if (m) { current = m[1].trim(); if (!sectionContent.has(current)) { sectionContent.set(current, []); order.push(current); } continue; }
+      if (!current) { headerLines.push(line); } else { sectionContent.get(current)?.push(line); }
+    }
+    const sections = new Map<string, string>();
+    for (const [name, cLines] of sectionContent) sections.set(name, cLines.join("\n").trim());
+
+    const header = headerLines.join("\n").trim() || TITLE;
+    for (const sectionName of SECTION_ORDER) {
+      const prev = sections.get(sectionName)?.trim();
+      const next = updates[sectionName]?.trim();
+      const existing = prev === "- (empty)" ? "" : prev;
+      if (!next) { if (!sections.has(sectionName)) sections.set(sectionName, ""); continue; }
+      if (!existing) { sections.set(sectionName, next); continue; }
+      if (existing.includes(next)) continue;
+      if (next.includes(existing)) { sections.set(sectionName, next); continue; }
+      sections.set(sectionName, `${existing}\n\n${next}`);
+    }
+
+    const finalOrder = [...SECTION_ORDER.filter((s) => sections.has(s)), ...order.filter((s) => !SECTION_ORDER.includes(s) && sections.has(s))];
+    const out: string[] = [header, ""];
+    for (const name of finalOrder) {
+      out.push(`## ${name}`, "");
+      const body = sections.get(name)?.trim();
+      if (body) out.push(body, "");
+      else out.push("");
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+  }
+
+  // ── Memory search & debug ─────────────────────────────────────────────
 
   async memorySearch(request: {
     query: string;
