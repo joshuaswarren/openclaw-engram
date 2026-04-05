@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
   - `@engram/cli` 1.0.0 — CLI with daemon management, connector install, token management
   - `@engram/hermes-provider` 1.0.0 — TypeScript HTTP client for Engram API
   - `engram-hermes` 1.0.0 on PyPI — Python MemoryProvider for Hermes Agent
-  - Native plugins for Claude Code (`engram connectors install claude-code`) and Codex CLI (`engram connectors install codex`)
+  - Native plugins for Claude Code (`engram connectors install claude-code`) and Codex CLI (`engram connectors install codex-cli`)
 - README updated with universal memory layer positioning and multi-platform install instructions
 - Root package `@joshuaswarren/openclaw-engram` marked as deprecated in favor of `@engram/*` packages
 
