@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 test("ingestReplayBatch enqueues replay slices without clearing shared buffer", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -28,7 +28,7 @@ test("ingestReplayBatch enqueues replay slices without clearing shared buffer", 
 
 test("queueBufferedExtraction preserves explicit false clearBufferAfterExtraction", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -41,7 +41,7 @@ test("queueBufferedExtraction preserves explicit false clearBufferAfterExtractio
 
 test("runExtraction bypass only skips char threshold and still enforces user-turn threshold", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -64,7 +64,7 @@ test("runExtraction bypass only skips char threshold and still enforces user-tur
 
 test("queueBufferedExtraction settles task callbacks on dedupe skip", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 

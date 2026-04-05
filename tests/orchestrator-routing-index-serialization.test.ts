@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 test("persistExtraction serializes per-storage temporal index updates", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   assert.match(
@@ -17,7 +17,7 @@ test("persistExtraction serializes per-storage temporal index updates", () => {
 
 test("persistExtraction derives intent from routed category", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   assert.match(
