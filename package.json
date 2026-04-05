@@ -84,7 +84,7 @@
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
-    "test": "tsx --test",
+    "test": "tsx --test 'src/**/*.test.ts' 'tests/**/*.test.ts' 'packages/engram-core/src/**/*.test.ts'",
     "eval:ci-gate": "tsx scripts/eval-ci-gate.ts",
     "eval:run": "tsx evals/run.ts",
     "eval:download": "bash evals/scripts/download-datasets.sh",

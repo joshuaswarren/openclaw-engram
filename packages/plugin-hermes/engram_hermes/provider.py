@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from typing import Any
 
 from engram_hermes.client import EngramClient
@@ -25,7 +26,7 @@ class EngramMemoryProvider:
         self._host = config.get("host", os.environ.get("ENGRAM_HOST", "127.0.0.1"))
         self._port = int(config.get("port", os.environ.get("ENGRAM_PORT", "4318")))
         self._token = config.get("token", "")
-        self._session_key = config.get("session_key", "")
+        self._session_key = config.get("session_key", "") or f"hermes-{uuid.uuid4().hex[:12]}"
         self._client: EngramClient | None = None
 
         # Load token from file if not in config

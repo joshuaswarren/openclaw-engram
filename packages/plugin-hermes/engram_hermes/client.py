@@ -70,7 +70,7 @@ class EngramClient:
         return resp.json()  # type: ignore[no-any-return]
 
     async def search(self, query: str, *, top_k: int = 10) -> dict[str, Any]:
-        resp = await self._http.post("/recall", json={"query": query, "topK": top_k})
+        resp = await self._http.post("/search", json={"query": query, "topK": top_k})
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 

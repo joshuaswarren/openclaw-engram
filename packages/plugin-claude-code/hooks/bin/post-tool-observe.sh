@@ -27,7 +27,7 @@ fi
 INPUT="$(cat)"
 
 # Return immediately — never block the tool
-echo '{}'
+echo '{"continue":true}'
 
 [ -z "$ENGRAM_TOKEN" ] && exit 0
 
