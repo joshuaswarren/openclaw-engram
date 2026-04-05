@@ -80,6 +80,8 @@ export function saveTokenStore(store: TokenStore, tokensPath?: string): void {
   const p = tokensPath ?? defaultTokensPath();
   ensureDir(p);
   fs.writeFileSync(p, JSON.stringify(store, null, 2) + "\n", { mode: 0o600 });
+  // Tighten permissions on pre-existing files (writeFileSync mode only applies to new files)
+  try { fs.chmodSync(p, 0o600); } catch { /* ignore on platforms without chmod */ }
 }
 
 export function generateToken(connector: string, tokensPath?: string): TokenEntry {

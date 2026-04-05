@@ -144,7 +144,22 @@ function loadAnyToken(): string {
       }
     }
   } catch {
-    // ignore — fall through to env vars
+    // ignore — fall through to config/env
+  }
+  // Check config file authToken (matches server startup)
+  try {
+    const configPaths = [
+      path.join(resolveHomeDir(), ".config", "engram", "config.json"),
+      path.join(process.cwd(), "engram.config.json"),
+    ];
+    for (const p of configPaths) {
+      if (existsSync(p)) {
+        const raw = JSON.parse(readFileSync(p, "utf8"));
+        if (raw.server?.authToken) return raw.server.authToken;
+      }
+    }
+  } catch {
+    // ignore
   }
   return process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN ?? process.env.ENGRAM_AUTH_TOKEN ?? "";
 }

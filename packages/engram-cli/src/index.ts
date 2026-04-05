@@ -984,8 +984,9 @@ function daemonStatus(): void {
 }
 
 function daemonStart(): void {
-  if (isDaemonRunning()) {
-    console.log(`Already running (pid ${readPid()})`);
+  const svc = isServiceRunning();
+  if (svc.running) {
+    console.log(`Already running${svc.pid ? ` (pid ${svc.pid})` : " (via service manager)"}`);
     return;
   }
   fs.mkdirSync(PID_DIR, { recursive: true });
