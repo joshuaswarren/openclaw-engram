@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.2.4] — 2026-04-05
+
 ### Added
 - **11 new standalone MCP tools** for feature parity with OpenClaw plugin:
   - `engram.memory_search` — direct semantic search with QMD index
