@@ -315,9 +315,7 @@ jobs:
               continue
             fi
             echo "Publishing ${pkg_name}@${pkg_version} from ${pkg_dir}..."
-            (cd "$pkg_dir" && pnpm publish --access public --no-git-checks) || {
-              echo "::warning::Failed to publish ${pkg_name}@${pkg_version}"
-            }
+            (cd "$pkg_dir" && pnpm publish --access public --no-git-checks)
           done
 
       - name: Push release commits to main
