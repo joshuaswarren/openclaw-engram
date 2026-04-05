@@ -929,9 +929,44 @@ function daemonUninstall(): void {
   daemonStop();
 }
 
+function isServiceRunning(): { running: boolean; pid?: number } {
+  // Check PID file first (manual `daemon start`)
+  const pidFromFile = readPid();
+  if (pidFromFile) {
+    try {
+      process.kill(pidFromFile, 0);
+      return { running: true, pid: pidFromFile };
+    } catch {
+      // stale pid file
+    }
+  }
+  // Check service manager (launchd/systemd from `daemon install`)
+  try {
+    if (isMacOS()) {
+      const out = execSync(`launchctl list ${LAUNCHD_LABEL} 2>/dev/null`, { encoding: "utf8" });
+      const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
+      if (pidMatch) return { running: true, pid: parseInt(pidMatch[1], 10) };
+      // launchctl list succeeds even when not running — check for PID line
+      if (out.includes('"PID"')) return { running: true };
+    } else if (isLinux()) {
+      const out = execSync(`systemctl --user is-active ${SYSTEMD_SERVICE} 2>/dev/null`, { encoding: "utf8" }).trim();
+      if (out === "active") {
+        try {
+          const pidOut = execSync(`systemctl --user show ${SYSTEMD_SERVICE} --property=MainPID --value`, { encoding: "utf8" }).trim();
+          const spid = parseInt(pidOut, 10);
+          if (spid > 0) return { running: true, pid: spid };
+        } catch { /* ignore */ }
+        return { running: true };
+      }
+    }
+  } catch {
+    // service not registered or command failed
+  }
+  return { running: false };
+}
+
 function daemonStatus(): void {
-  const running = isDaemonRunning();
-  const pid = readPid();
+  const { running, pid } = isServiceRunning();
   const port = inferPort();
   const serviceInstalled = isMacOS()
     ? fs.existsSync(LAUNCHD_PLIST_PATH)
@@ -940,7 +975,7 @@ function daemonStatus(): void {
       : false;
 
   console.log(`Engram daemon status:`);
-  console.log(`  Running:   ${running ? `yes (pid ${pid})` : "no"}`);
+  console.log(`  Running:   ${running ? `yes${pid ? ` (pid ${pid})` : ""}` : "no"}`);
   console.log(`  Port:      ${port}`);
   console.log(`  Service:   ${serviceInstalled ? "installed" : "not installed"}`);
   console.log(`  Platform:  ${process.platform}`);

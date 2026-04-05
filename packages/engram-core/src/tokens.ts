@@ -47,7 +47,26 @@ export function loadTokenStore(tokensPath?: string): TokenStore {
   const p = tokensPath ?? defaultTokensPath();
   try {
     const raw = JSON.parse(fs.readFileSync(p, "utf8"));
-    return { tokens: Array.isArray(raw.tokens) ? raw.tokens : [] };
+    if (Array.isArray(raw.tokens)) {
+      return { tokens: raw.tokens };
+    }
+    // Migrate legacy flat-map format: { "connector": "token_value", ... }
+    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+      const migrated: TokenEntry[] = [];
+      for (const [key, value] of Object.entries(raw)) {
+        if (key === "tokens") continue; // skip if tokens key exists but isn't array
+        if (typeof value === "string" && value.length > 0) {
+          migrated.push({ token: value, connector: key, createdAt: new Date().toISOString() });
+        }
+      }
+      if (migrated.length > 0) {
+        // Auto-migrate: rewrite in new format
+        const store: TokenStore = { tokens: migrated };
+        saveTokenStore(store, tokensPath);
+        return store;
+      }
+    }
+    return { tokens: [] };
   } catch {
     return { tokens: [] };
   }

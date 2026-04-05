@@ -76,6 +76,18 @@ test("tokens.ts removes old token before generating new one for same connector",
   );
 });
 
+test("tokens.ts handles legacy flat-map token format migration", () => {
+  const content = fs.readFileSync(TOKENS_SRC, "utf-8");
+  assert.ok(
+    content.includes("Migrate legacy flat-map format"),
+    "Must handle legacy { connector: token } format",
+  );
+  assert.ok(
+    content.includes("Auto-migrate: rewrite in new format"),
+    "Must auto-migrate legacy format to new format",
+  );
+});
+
 // Cleanup
 test.after(() => {
   try {
