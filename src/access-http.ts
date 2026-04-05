@@ -265,10 +265,11 @@ export class EngramAccessHttpServer {
     return this.resolveRequestIdentity(req).principal;
   }
 
-  /** Resolve namespace: explicit body value takes priority, adapter-resolved namespace as fallback */
-  private resolveNamespace(req: IncomingMessage, bodyNamespace?: string): string | undefined {
-    if (bodyNamespace) return bodyNamespace;
-    return this.resolveRequestIdentity(req).namespace;
+  /** Resolve namespace: only use the explicit body value. Adapter-inferred namespace
+   *  is intentionally NOT used as a fallback for REST requests — omitting namespace
+   *  should default to the server's global namespace, not silently scope to an adapter. */
+  private resolveNamespace(_req: IncomingMessage, bodyNamespace?: string): string | undefined {
+    return bodyNamespace || undefined;
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse, correlationId: string): Promise<void> {
@@ -641,12 +642,14 @@ export class EngramAccessHttpServer {
       res.end();
       return;
     }
-    // If the MCP server assigned a session ID (during initialize), set it as
-    // a response header so the client can include it in subsequent requests.
-    const assignedSessionId = this.mcpServer.lastInitSessionId;
-    if (typeof assignedSessionId === "string") {
-      res.setHeader("mcp-session-id", assignedSessionId);
-      this.mcpServer.lastInitSessionId = undefined;
+    // If this was an initialize response, pop the session ID keyed by
+    // JSON-RPC request id and set it as a response header.
+    const requestId = request.id;
+    if (requestId != null) {
+      const assignedSessionId = this.mcpServer.popInitSessionId(requestId);
+      if (assignedSessionId) {
+        res.setHeader("mcp-session-id", assignedSessionId);
+      }
     }
     this.respondJson(res, 200, response);
   }
