@@ -6,6 +6,6 @@
 import { cliMain } from "../src/index.js";
 
 cliMain().catch((err) => {
-  console.error("Fatal:", err instanceof Error ? err.message : "unknown error");
+  process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
