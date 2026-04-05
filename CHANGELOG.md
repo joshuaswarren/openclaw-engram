@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.2.10] — 2026-04-05
+
 ### Added
 - **Phase 9: Publish + Deprecate** — initial 1.0.0 release of Engram workspace packages
   - `@engram/core` 1.0.0 — framework-agnostic memory engine with multi-token auth
