@@ -689,6 +689,8 @@ If Engram is useful to you, consider [sponsoring the project](https://github.com
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
 
+**Lightning donations:** `joshuaswarren@strike.me`
+
 ## License
 
 [MIT](LICENSE)
