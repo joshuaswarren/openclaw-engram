@@ -15,6 +15,16 @@ Engram gives AI agents long-term memory that survives across conversations. Deci
 > The `openclaw-engram` and `@joshuaswarren/openclaw-engram` packages remain the OpenClaw plugin entry point.
 > Python users: [`engram-hermes`](https://pypi.org/project/engram-hermes/) on PyPI.
 
+## Support Engram
+
+Every bit of support is genuinely appreciated and helps keep this project alive and free for everyone.
+
+If you're able to, [sponsoring on GitHub](https://github.com/sponsors/joshuaswarren) or sending a Lightning donation to `joshuaswarren@strike.me` directly funds continued development, new integrations, and keeping Engram open source.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
+
+If financial support isn't an option, you can still make a big difference — [star the repo on GitHub](https://github.com/joshuaswarren/openclaw-engram), share it on social media, or recommend it to a friend or colleague. Word of mouth is how most people find Engram, and it means the world.
+
 ## The Problem
 
 Every AI agent session starts from zero. Your agent doesn't know your name, your projects, the decisions you've already made, or the bugs you already debugged. Whether it's a personal assistant, a coding agent, a research agent, or a multi-agent team — they all forget everything between conversations. You re-explain the same context over and over, and your agents still make the same mistakes.
@@ -682,14 +692,6 @@ Contributions are welcome! Please:
 3. Write tests for new functionality
 4. Ensure `npm test` (672 tests) and `npm run check-types` pass
 5. Submit a pull request
-
-## Sponsorship
-
-If Engram is useful to you, consider [sponsoring the project](https://github.com/sponsors/joshuaswarren). Sponsorship helps fund continued development, new integrations, and keeping Engram free and open source.
-
-[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
-
-**Lightning donations:** `joshuaswarren@strike.me`
 
 ## License
 
