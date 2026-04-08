@@ -199,16 +199,28 @@ export async function migrateFromEngram(): Promise<MigrationResult> {
 [remnic] Rollback (macOS):
 [remnic]   1. launchctl unload ~/Library/LaunchAgents/ai.remnic.daemon.plist
 [remnic]   2. rm ~/Library/LaunchAgents/ai.remnic.daemon.plist
-[remnic]   3. rm -rf ~/.remnic
-[remnic]   4. launchctl load ~/Library/LaunchAgents/ai.engram.daemon.plist
+[remnic]   3. remnic migrate --rollback   (restores .mcp.json from backup manifest)
+[remnic]   4. rm -rf ~/.remnic
+[remnic]   5. launchctl load ~/Library/LaunchAgents/ai.engram.daemon.plist
 [remnic]      (preserved by migration — not deleted)
 [remnic] Rollback (Linux):
 [remnic]   1. systemctl --user stop remnic.service
 [remnic]   2. systemctl --user disable remnic.service
 [remnic]   3. rm ~/.config/systemd/user/remnic.service
-[remnic]   4. rm -rf ~/.remnic
-[remnic]   5. systemctl --user enable --now engram.service
+[remnic]   4. remnic migrate --rollback   (restores .mcp.json from backup manifest)
+[remnic]   5. rm -rf ~/.remnic
+[remnic]   6. systemctl --user enable --now engram.service
 ```
+
+**Connector config backup + restore.** Before mutating any `.mcp.json` file,
+the migration module copies the original to
+`~/.remnic/.backup/mcp/<hash>.json` and records the mapping in
+`~/.remnic/.rollback.json`. Every token/tool-name/env-var mutation the
+migration makes to a connector config is logged as a reversible entry.
+`remnic migrate --rollback` replays that manifest in reverse: restores each
+`.mcp.json` from its backup, re-deletes any files migration created, and
+exits cleanly so the subsequent `rm -rf ~/.remnic` leaves no dangling
+connector state pointing at the deleted Remnic token store.
 
 **Migration preserves the old service file.** On macOS, `ai.engram.daemon.plist`
 is unloaded but left on disk at `~/Library/LaunchAgents/`. On Linux,
