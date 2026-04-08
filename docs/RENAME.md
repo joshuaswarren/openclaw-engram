@@ -211,7 +211,7 @@ All `@remnic/*` packages ship as 1.0.0 to npm. No shim work required because
 ### Shim: `@joshuaswarren/openclaw-engram@9.3.0`
 **The only shim.** One final release of the existing published package that:
 
-1. Depends on the new bridge plugin (`openclaw-remnic` or `@remnic/plugin-openclaw`)
+1. Depends on the new bridge plugin (`@remnic/plugin-openclaw`)
 2. Re-exports everything — zero behavior change
 3. Emits a loud postinstall banner
 4. Is marked deprecated via `npm deprecate`
@@ -339,7 +339,7 @@ Single coordinated PR. No publishes during this phase.
 
 ### Phase C — Shim package
 - `packages/shim-openclaw-engram/` with `@joshuaswarren/openclaw-engram@9.3.0`
-- `dependencies: { "openclaw-remnic": "^1.0.0" }`
+- `dependencies: { "@remnic/plugin-openclaw": "^1.0.0" }`
 - Postinstall banner script
 - Re-exports everything from the new bridge plugin
 
