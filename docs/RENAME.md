@@ -206,7 +206,9 @@ All `@remnic/*` packages ship as 1.0.0 to npm. No shim work required because
 
 ### PyPI
 - `remnic-hermes@1.0.0` — real package (Python MemoryProvider for Hermes)
-- `remnic@1.0.0` — metapackage, optional; or leave at 0.0.1 placeholder
+- `remnic@1.0.0` — real metapackage. `pip install remnic` pulls in
+  `remnic-hermes` (and any future Python components). Replaces the current
+  0.0.1 placeholder.
 
 ### Shim: `@joshuaswarren/openclaw-engram@9.3.0`
 **The only shim.** One final release of the existing published package that:
@@ -420,12 +422,15 @@ conditions are evidence-based, not calendar-based.
   scope, keeps the namespace coherent, OpenClaw is a first-class citizen
   without owning the product's identity.
 
+- ✅ **`remnic` PyPI metapackage:** real 1.0.0 metapackage. `pip install remnic`
+  installs `remnic-hermes` and any future Python components.
+- ✅ **Shim version:** `@joshuaswarren/openclaw-engram@9.3.0` (minor bump) so
+  `npm update` picks it up for semver-locked users and triggers the migration
+  surfaces.
+
 ## Decisions Open
 
-1. **`remnic` PyPI metapackage.** Leave at 0.0.1 placeholder, or bump to 1.0.0
-   as a real metapackage that installs the CLI via `pip install remnic`?
-2. **Shim version bump.** `@joshuaswarren/openclaw-engram@9.3.0` (minor, lower
-   friction) vs `10.0.0` (major, cleaner identity signal)? Current plan: 9.3.0.
+_None — plan is fully locked. Ready to merge and execute Phase A + B._
 
 ---
 
