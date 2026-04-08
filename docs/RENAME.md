@@ -171,12 +171,23 @@ export async function migrateFromEngram(): Promise<MigrationResult> {
 
 **Properties:**
 - **Idempotent** — safe to run twice, early-exit via marker file
-- **Never destructive** — `~/.engram/` is copied, not moved. Rollback is `rm -rf ~/.remnic`.
+- **Never destructive** — `~/.engram/` is copied, not moved. Rollback is
+  `remnic migrate --rollback` followed by `rm -rf ~/.remnic` and reloading
+  the preserved old daemon (full sequence in the user-facing log above).
 - **Lazy** — only runs on first post-rename invocation
 - **Cheap check** — all call sites do a non-throwing existence probe
   (`fs.existsSync(markerPath)` or `fs.stat` with explicit `ENOENT` handling)
   before invoking the full module. Never `statSync` raw — the expected
   first-run state is "marker missing", which would throw and crash startup.
+- **Interprocess-locked** — the full migration body runs under an exclusive
+  file lock at `~/.remnic/.migration.lock` (acquired via `proper-lockfile` or
+  equivalent `flock`-based primitive). Multiple entry points (`@remnic/cli`,
+  `@remnic/core` init, `@remnic/plugin-openclaw` register, hook preambles)
+  can fire concurrently on first post-rename invocation; the lock ensures
+  exactly one process copies files, rewrites tokens, and installs the new
+  daemon. Contenders block until the holder finishes, then re-check the
+  marker and exit via the `already-migrated` path. Stale locks (holder
+  crashed) are detected via PID liveness and reclaimed.
 
 **Called from:**
 - `@remnic/cli` entry (every command)
