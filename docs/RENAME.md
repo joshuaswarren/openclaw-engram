@@ -128,16 +128,16 @@ handful of early adopters. Tomorrow is worse.
 | `packages/connector-replit` | `@engram/replit` | `@remnic/replit` |
 | `packages/hermes-provider` | `@engram/hermes-provider` | `@remnic/hermes-provider` |
 | `packages/bench` | `@engram/bench` | `@remnic/bench` |
-| CLI binary | `engram` | `remnic` (+ `engram` forwarder through v1.1) |
+| CLI binary | `engram` | `remnic` (+ `engram` forwarder through v1.x, removed in v2.0.0) |
 | Config dir | `~/.engram/` | `~/.remnic/` (auto-migrated) |
 | Log dir | `~/.engram/logs/` | `~/.remnic/logs/` |
-| Env vars | `ENGRAM_*` | `REMNIC_*` (reads `ENGRAM_*` as fallback through v1.1) |
+| Env vars | `ENGRAM_*` | `REMNIC_*` (reads `ENGRAM_*` as fallback through v1.x, removed in v2.0.0) |
 | Token prefixes | `engram_cc_*`, `engram_cx_*`, … | `remnic_cc_*`, `remnic_cx_*`, … (regenerated) |
 | launchd label | `ai.engram.daemon` | `ai.remnic.daemon` |
 | systemd unit | `engram.service` | `remnic.service` |
 | HTTP port | 4318 | unchanged |
 | Memory store | `~/.openclaw/workspace/memory/local/` | unchanged (OpenClaw-owned path) |
-| MCP tool names | `engram_recall`, `engram_observe`, … | **dual-registered**: both `remnic_*` and `engram_*` work through v1.1 |
+| MCP tool names | `engram_recall`, `engram_observe`, … | **dual-registered**: both `remnic_*` and `engram_*` work through v1.x, removed in v2.0.0 |
 
 ---
 
@@ -316,7 +316,7 @@ installed globally months ago and never reinstall.
 ### 4. `engram` CLI forwarder (on command invocation)
 ```
 $ engram recall "typescript preferences"
-⚠  'engram' is now 'remnic'. This alias will be removed in v1.1.
+⚠  'engram' is now 'remnic'. This alias will be removed in v2.0.0.
 → remnic recall "typescript preferences"
 ```
 
@@ -351,7 +351,7 @@ for (const tool of canonicalTools) {
 }
 ```
 
-`engram_*` aliases removed in v1.1 alongside the CLI forwarder and env var fallback.
+`engram_*` aliases removed in v2.0.0 alongside the CLI forwarder and env var fallback.
 
 ---
 
@@ -464,7 +464,7 @@ conditions are evidence-based, not calendar-based.
 ## Decisions Locked
 
 - ✅ Repo: `joshuaswarren/remnic` (drop "openclaw" from repo name)
-- ✅ MCP tools: dual-register `remnic_*` and `engram_*` through v1.1
+- ✅ MCP tools: dual-register `remnic_*` and `engram_*` through v1.x, removed in v2.0.0
 - ✅ Timeline: hours and days, not weeks or months
 - ✅ Four migration surfaces (npm warn, postinstall, runtime, CLI forwarder)
 - ✅ Shim package `@joshuaswarren/openclaw-engram@9.3.0` stays on registry forever
