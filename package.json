@@ -1,6 +1,6 @@
 {
   "name": "@joshuaswarren/openclaw-engram",
-  "version": "9.2.7",
+  "version": "9.2.13",
   "type": "module",
   "description": "DEPRECATED: Use @engram/core, @engram/server, @engram/cli instead. Universal memory layer for AI agents — LLM-powered extraction, markdown storage, hybrid search.",
   "keywords": [
