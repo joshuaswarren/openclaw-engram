@@ -173,7 +173,10 @@ export async function migrateFromEngram(): Promise<MigrationResult> {
 - **Idempotent** — safe to run twice, early-exit via marker file
 - **Never destructive** — `~/.engram/` is copied, not moved. Rollback is `rm -rf ~/.remnic`.
 - **Lazy** — only runs on first post-rename invocation
-- **Cheap check** — all call sites do `fs.statSync(markerPath)` before invoking the full module
+- **Cheap check** — all call sites do a non-throwing existence probe
+  (`fs.existsSync(markerPath)` or `fs.stat` with explicit `ENOENT` handling)
+  before invoking the full module. Never `statSync` raw — the expected
+  first-run state is "marker missing", which would throw and crash startup.
 
 **Called from:**
 - `@remnic/cli` entry (every command)
@@ -193,8 +196,27 @@ export async function migrateFromEngram(): Promise<MigrationResult> {
 [remnic] ✓ Memory store untouched: ~/.openclaw/workspace/memory/local/
 [remnic] ✓ ~/.engram/ preserved as rollback (safe to delete once verified)
 [remnic] Migration complete. Welcome to Remnic.
-[remnic] Rollback: rm -rf ~/.remnic && launchctl unload ~/Library/LaunchAgents/ai.remnic.daemon.plist
+[remnic] Rollback (macOS):
+[remnic]   1. launchctl unload ~/Library/LaunchAgents/ai.remnic.daemon.plist
+[remnic]   2. rm ~/Library/LaunchAgents/ai.remnic.daemon.plist
+[remnic]   3. rm -rf ~/.remnic
+[remnic]   4. launchctl load ~/Library/LaunchAgents/ai.engram.daemon.plist
+[remnic]      (preserved by migration — not deleted)
+[remnic] Rollback (Linux):
+[remnic]   1. systemctl --user stop remnic.service
+[remnic]   2. systemctl --user disable remnic.service
+[remnic]   3. rm ~/.config/systemd/user/remnic.service
+[remnic]   4. rm -rf ~/.remnic
+[remnic]   5. systemctl --user enable --now engram.service
 ```
+
+**Migration preserves the old service file.** On macOS, `ai.engram.daemon.plist`
+is unloaded but left on disk at `~/Library/LaunchAgents/`. On Linux,
+`engram.service` is disabled but the unit file is preserved. This is what
+makes rollback to the old daemon possible without reinstalling Engram. The
+migration module writes a rollback manifest to `~/.remnic/.rollback.json`
+with the exact `launchctl`/`systemctl` commands needed to restore the
+previous state.
 
 ---
 
@@ -370,7 +392,14 @@ Single coordinated PR. No publishes during this phase.
   - `engram` CLI forwarder binary
   - `ENGRAM_*` env var fallback
   - `engram_*` MCP tool aliases
-  - `~/.engram/` migration path (marker assumed or fresh install)
+- **`~/.engram/` migration path is NOT removed in 2.0.0.** Long-tail users on
+  frozen `@joshuaswarren/openclaw-engram@9.2.7` may jump directly from a
+  legacy install to 2.x, and auto-migration is the only thing that carries
+  their tokens, config, and service state forward. The migration module stays
+  shipped in 2.x and beyond; only the *interactive banners* around it get
+  quieter. If/when we ever drop it, 2.x must first hard-gate on a missing
+  marker and refuse to start with an explicit "run `remnic migrate` or
+  reinstall via the 1.x bridge" error — never silently skip.
 - `@joshuaswarren/openclaw-engram` stays frozen — never removed, but no longer
   updated
 
@@ -387,7 +416,8 @@ conditions are evidence-based, not calendar-based.
 | Locked-pin users never reinstall | Their `9.2.7` keeps working untouched. The shim is additive, not a forced break |
 | Regenerated tokens break running daemon | Migration atomically updates `.mcp.json` files, unloads old daemon, installs new |
 | launchd label collision | Migration unloads `ai.engram.daemon` before installing `ai.remnic.daemon`; port 4318 unchanged so only one binds |
-| User runs both `engram` and `remnic` simultaneously | Both resolve to the same `@remnic/cli` code and the same OpenClaw memory store. Divergence impossible |
+| User runs both `engram` and `remnic` simultaneously (shim users) | Shim `9.3.0` re-exports `@remnic/cli`, so both binaries load the same code and read `~/.remnic/`. Divergence impossible for this cohort |
+| User runs `engram` (locked `@joshuaswarren/openclaw-engram@9.2.7`) AND `remnic` side-by-side | Genuinely separate codepaths and config roots: 9.2.7 reads/writes `~/.engram/`, remnic reads/writes `~/.remnic/`. Memories stored via 9.2.7 will NOT appear in Remnic. Mitigation: (a) OpenClaw memory store at `~/.openclaw/workspace/memory/local/` is shared — OEO-mode writes land in both; (b) `remnic migrate --merge` ships in 1.1 to fold post-migration `~/.engram/` deltas back into `~/.remnic/`; (c) release notes explicitly call out that locked-pin users must either upgrade to the 9.3.0 shim or accept the split |
 | MCP clients cache old tool list | Dual-registration means cached `engram_*` lists stay valid through v1.x |
 | SEO loss on "engram memory" searches | `remnic.ai/rename` canonicalizes. GitHub repo redirects. CHANGELOG crosslinks both names |
 | Fork CI breaks on repo rename | GitHub redirect covers clone URLs. Fork owners get a UI banner offering to update |
