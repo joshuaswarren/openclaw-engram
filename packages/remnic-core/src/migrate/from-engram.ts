@@ -497,9 +497,10 @@ async function acquireLock(homeDir: string): Promise<() => Promise<void>> {
       const lines = details.split("\n");
       const pid = Number.parseInt(lines[0] ?? "", 10);
       const createdAt = Number.parseInt(lines[1] ?? "", 10);
+      const malformed = !Number.isFinite(pid) || !Number.isFinite(createdAt);
       const stale = Number.isFinite(createdAt) && Date.now() - createdAt > LOCK_STALE_MS;
       const deadPid = Number.isFinite(pid) && pid > 0 ? !processIsAlive(pid) : false;
-      if (stale || deadPid) {
+      if (malformed || stale || deadPid) {
         await rm(target, { force: true }).catch(() => undefined);
         continue;
       }

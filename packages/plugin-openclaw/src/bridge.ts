@@ -151,9 +151,9 @@ function loadAnyToken(): string {
     path.join(resolveHomeDir(), ".remnic", "tokens.json"),
     path.join(resolveHomeDir(), ".engram", "tokens.json"),
   ];
-  try {
-    for (const tokensPath of tokenPaths) {
-      if (!existsSync(tokensPath)) continue;
+  for (const tokensPath of tokenPaths) {
+    if (!existsSync(tokensPath)) continue;
+    try {
       const store = JSON.parse(readFileSync(tokensPath, "utf8"));
       const tokens = Array.isArray(store.tokens) ? store.tokens : [];
       if (tokens.length > 0 && tokens[0].token) return tokens[0].token;
@@ -168,9 +168,9 @@ function loadAnyToken(): string {
           }
         }
       }
+    } catch {
+      // Ignore malformed token files and continue to the next candidate.
     }
-  } catch {
-    // ignore — fall through to config/env
   }
   try {
     for (const p of configPathCandidates()) {

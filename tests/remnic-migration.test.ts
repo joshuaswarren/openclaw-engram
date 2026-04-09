@@ -215,6 +215,27 @@ test("migrateFromEngram merges legacy tokens into an existing remnic token store
   ]);
 });
 
+test("migrateFromEngram clears malformed migration locks before acquiring a fresh lock", async () => {
+  const homeDir = await makeTempHome("remnic-migrate-lock-recovery-");
+  const legacyRoot = path.join(homeDir, ".engram");
+  const remnicRoot = path.join(homeDir, ".remnic");
+
+  await mkdir(legacyRoot, { recursive: true });
+  await mkdir(remnicRoot, { recursive: true });
+  await writeFile(path.join(legacyRoot, "tokens.json"), JSON.stringify({ tokens: [] }), "utf8");
+  await writeFile(path.join(remnicRoot, ".migration.lock"), "", "utf8");
+
+  const result = await migrateFromEngram({
+    homeDir,
+    cwd: homeDir,
+    quiet: true,
+  });
+
+  assert.equal(result.status, "migrated");
+  assert.equal(existsSync(path.join(remnicRoot, ".migration.lock")), false);
+  assert.equal(existsSync(path.join(remnicRoot, ".migrated-from-engram")), true);
+});
+
 test("rollbackFromEngramMigration restores backed up connector configs and removes created service files", async () => {
   const homeDir = await makeTempHome("remnic-migrate-rollback-");
   const cwd = path.join(homeDir, "repo");
