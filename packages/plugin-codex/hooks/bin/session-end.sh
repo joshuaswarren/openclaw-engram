@@ -52,7 +52,11 @@ echo '{"continue":true}'
 
 # Final observe flush if we have transcript
 if [ -n "$REMNIC_TOKEN" ] && [ -n "$SESSION_ID" ] && [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  LEGACY_CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
   CURSOR_FILE="/tmp/remnic-cursor-${SESSION_ID}"
+  if [ ! -f "$CURSOR_FILE" ] && [ -f "$LEGACY_CURSOR_FILE" ]; then
+    CURSOR_FILE="$LEGACY_CURSOR_FILE"
+  fi
   LAST_COUNT=0
   [ -f "$CURSOR_FILE" ] && LAST_COUNT="$(cat "$CURSOR_FILE" 2>/dev/null || echo 0)"
 
