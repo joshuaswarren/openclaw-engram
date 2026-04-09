@@ -1,6 +1,6 @@
 {
   "name": "@remnic/replit",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Remnic MCP connector for Replit Agent — setup instructions and token generator",
   "type": "module",
   "private": true,
@@ -10,5 +10,11 @@
     "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/connector-replit"
   },
-  "keywords": ["remnic", "memory", "replit", "mcp", "ai-agent"]
+  "keywords": [
+    "remnic",
+    "memory",
+    "replit",
+    "mcp",
+    "ai-agent"
+  ]
 }
