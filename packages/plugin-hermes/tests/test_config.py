@@ -28,6 +28,26 @@ def test_from_hermes_config_empty():
     assert config.port == 4318
 
 
+def test_from_hermes_config_prefers_remnic_section():
+    """Remnic-keyed Hermes config blocks are unwrapped before legacy fallbacks."""
+    config = EngramHermesConfig.from_hermes_config(
+        {
+            "remnic": {
+                "host": "10.0.0.5",
+                "port": 9001,
+                "token": "remnic-token",
+                "session_key": "sess-123",
+                "timeout": 12.5,
+            }
+        }
+    )
+    assert config.host == "10.0.0.5"
+    assert config.port == 9001
+    assert config.token == "remnic-token"
+    assert config.session_key == "sess-123"
+    assert config.timeout == 12.5
+
+
 def test_load_token_prefers_remnic_store(monkeypatch, tmp_path):
     """Fresh Remnic installs read ~/.remnic/tokens.json before legacy fallback."""
     monkeypatch.setenv("HOME", str(tmp_path))

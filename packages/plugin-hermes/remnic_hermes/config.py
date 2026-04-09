@@ -19,17 +19,20 @@ class EngramHermesConfig:
 
     @classmethod
     def from_hermes_config(cls, config: dict[str, object]) -> EngramHermesConfig:
-        """Load from the engram config section (already extracted by the register() caller).
+        """Load from the Remnic config section (already extracted by the register() caller).
 
-        Accepts either the top-level Hermes config (with 'engram' key) or the
-        pre-extracted engram section directly.
+        Accepts either the top-level Hermes config (with 'remnic' or legacy
+        'engram' key) or the pre-extracted section directly.
         """
-        # Support both top-level config (with engram key) and pre-extracted section
+        # Support top-level config wrappers plus pre-extracted sections.
+        remnic_candidate = config.get("remnic")
         engram_candidate = config.get("engram")
-        if isinstance(engram_candidate, dict):
+        if isinstance(remnic_candidate, dict):
+            engram = remnic_candidate
+        elif isinstance(engram_candidate, dict):
             engram = engram_candidate
         else:
-            engram = config  # already the engram section
+            engram = config
 
         token = str(engram.get("token", ""))
         if not token:

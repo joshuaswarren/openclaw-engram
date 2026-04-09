@@ -1003,7 +1003,11 @@ function daemonUninstall(): void {
       }
     }
     if (removed) {
-      childProcess.execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      try {
+        childProcess.execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      } catch {
+        // Keep uninstall best-effort when user systemd is unavailable.
+      }
     } else {
       console.log("Systemd unit not found — nothing to remove.");
     }
