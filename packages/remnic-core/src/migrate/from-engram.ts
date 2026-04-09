@@ -50,6 +50,12 @@ export interface RollbackResult {
   restored: string[];
 }
 
+interface TokenEntry {
+  connector: string;
+  createdAt: string;
+  token: string;
+}
+
 const MARKER_FILE = ".migrated-from-engram";
 const LOCK_FILE = ".migration.lock";
 const ROLLBACK_MANIFEST = ".rollback.json";
@@ -159,6 +165,33 @@ function rewriteTokenValue(token: string): string {
   return token.startsWith("engram_") ? `remnic_${token.slice("engram_".length)}` : token;
 }
 
+function parseTokenEntries(raw: unknown): TokenEntry[] {
+  if (typeof raw !== "object" || raw === null) return [];
+
+  if (Array.isArray((raw as { tokens?: unknown }).tokens)) {
+    return ((raw as { tokens: unknown[] }).tokens)
+      .filter((entry): entry is TokenEntry => {
+        if (typeof entry !== "object" || entry === null) return false;
+        const candidate = entry as Partial<TokenEntry>;
+        return typeof candidate.connector === "string" &&
+          candidate.connector.length > 0 &&
+          typeof candidate.token === "string" &&
+          candidate.token.length > 0 &&
+          typeof candidate.createdAt === "string" &&
+          candidate.createdAt.length > 0;
+      })
+      .map((entry) => ({ ...entry }));
+  }
+
+  return Object.entries(raw)
+    .filter(([key, value]) => key !== "tokens" && typeof value === "string" && value.length > 0)
+    .map(([connector, token]) => ({
+      connector,
+      createdAt: new Date().toISOString(),
+      token,
+    }));
+}
+
 async function rewriteTokensIfPresent(filePath: string): Promise<number> {
   if (!existsSync(filePath)) return 0;
   const raw = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
@@ -189,6 +222,67 @@ async function rewriteTokensIfPresent(filePath: string): Promise<number> {
   if (rewritten > 0) {
     await writeFile(filePath, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
   }
+  return rewritten;
+}
+
+async function mergeLegacyTokens(
+  legacyTokensPath: string,
+  remnicTokensPath: string,
+  homeDir: string,
+  manifest: RollbackManifest,
+  backupExisting: boolean,
+): Promise<number> {
+  if (!existsSync(remnicTokensPath)) return 0;
+  if (!existsSync(legacyTokensPath)) return rewriteTokensIfPresent(remnicTokensPath);
+
+  let remnicRaw: unknown;
+  let legacyRaw: unknown;
+  const originalRemnic = await readFile(remnicTokensPath, "utf8");
+
+  try {
+    remnicRaw = JSON.parse(originalRemnic) as unknown;
+    legacyRaw = JSON.parse(await readFile(legacyTokensPath, "utf8")) as unknown;
+  } catch {
+    return rewriteTokensIfPresent(remnicTokensPath);
+  }
+
+  const mergedEntries = parseTokenEntries(remnicRaw);
+  const legacyEntries = parseTokenEntries(legacyRaw);
+  const existingConnectors = new Set(mergedEntries.map((entry) => entry.connector));
+  let rewritten = 0;
+  let changed = false;
+
+  for (const entry of mergedEntries) {
+    const nextToken = rewriteTokenValue(entry.token);
+    if (nextToken !== entry.token) {
+      entry.token = nextToken;
+      rewritten += 1;
+      changed = true;
+    }
+  }
+
+  for (const entry of legacyEntries) {
+    const nextToken = rewriteTokenValue(entry.token);
+    if (nextToken !== entry.token) {
+      rewritten += 1;
+    }
+    if (existingConnectors.has(entry.connector)) continue;
+    mergedEntries.push({ ...entry, token: nextToken });
+    existingConnectors.add(entry.connector);
+    changed = true;
+  }
+
+  if (!changed) return rewritten;
+
+  if (backupExisting) {
+    await backupFile(remnicTokensPath, originalRemnic, homeDir, manifest);
+  }
+
+  await writeFile(
+    remnicTokensPath,
+    `${JSON.stringify({ tokens: mergedEntries }, null, 2)}\n`,
+    "utf8",
+  );
   return rewritten;
 }
 
@@ -533,8 +627,19 @@ export async function migrateFromEngram(options?: MigrationOptions): Promise<Mig
     await copyTreeMissing(legacyRoot(homeDir), remnicRoot(homeDir), copied);
     await copyLegacyConfig(homeDir, copied);
 
+    const legacyTokens = path.join(legacyRoot(homeDir), "tokens.json");
     const remnicTokens = path.join(remnicRoot(homeDir), "tokens.json");
-    tokensRegenerated += await rewriteTokensIfPresent(remnicTokens);
+    if (copied.includes(remnicTokens)) {
+      tokensRegenerated += await rewriteTokensIfPresent(remnicTokens);
+    } else {
+      tokensRegenerated += await mergeLegacyTokens(
+        legacyTokens,
+        remnicTokens,
+        homeDir,
+        manifest,
+        true,
+      );
+    }
     if (existsSync(remnicTokens)) {
       logger("tokens copied to ~/.remnic/tokens.json (legacy prefixes rewritten)");
     }
