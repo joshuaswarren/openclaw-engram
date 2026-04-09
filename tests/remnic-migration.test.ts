@@ -215,6 +215,43 @@ test("migrateFromEngram merges legacy tokens into an existing remnic token store
   ]);
 });
 
+test("migrateFromEngram recovers from a malformed remnic token store by rebuilding from legacy tokens", async () => {
+  const homeDir = await makeTempHome("remnic-migrate-token-recovery-");
+  const legacyRoot = path.join(homeDir, ".engram");
+  const remnicRoot = path.join(homeDir, ".remnic");
+
+  await mkdir(legacyRoot, { recursive: true });
+  await mkdir(remnicRoot, { recursive: true });
+  await writeFile(
+    path.join(legacyRoot, "tokens.json"),
+    JSON.stringify({
+      tokens: [
+        { connector: "claude-code", token: "engram_cc_legacy", createdAt: "2026-04-08T00:00:00.000Z" },
+        { connector: "codex", token: "engram_cx_legacy", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    }),
+    "utf8",
+  );
+  await writeFile(path.join(remnicRoot, "tokens.json"), "{", "utf8");
+
+  const result = await migrateFromEngram({
+    homeDir,
+    cwd: homeDir,
+    quiet: true,
+  });
+
+  assert.equal(result.status, "migrated");
+  assert.equal(result.tokensRegenerated, 2);
+
+  const tokens = JSON.parse(await readFile(path.join(remnicRoot, "tokens.json"), "utf8")) as {
+    tokens: Array<{ connector: string; token: string }>;
+  };
+  assert.deepEqual(tokens.tokens.map(({ connector, token }) => ({ connector, token })), [
+    { connector: "claude-code", token: "remnic_cc_legacy" },
+    { connector: "codex", token: "remnic_cx_legacy" },
+  ]);
+});
+
 test("migrateFromEngram clears malformed migration locks before acquiring a fresh lock", async () => {
   const homeDir = await makeTempHome("remnic-migrate-lock-recovery-");
   const legacyRoot = path.join(homeDir, ".engram");

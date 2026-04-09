@@ -194,7 +194,12 @@ function parseTokenEntries(raw: unknown): TokenEntry[] {
 
 async function rewriteTokensIfPresent(filePath: string): Promise<number> {
   if (!existsSync(filePath)) return 0;
-  const raw = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return 0;
+  }
   let rewritten = 0;
 
   if (Array.isArray(raw.tokens)) {
@@ -243,7 +248,33 @@ async function mergeLegacyTokens(
     remnicRaw = JSON.parse(originalRemnic) as unknown;
     legacyRaw = JSON.parse(await readFile(legacyTokensPath, "utf8")) as unknown;
   } catch {
-    return rewriteTokensIfPresent(remnicTokensPath);
+    try {
+      legacyRaw = JSON.parse(await readFile(legacyTokensPath, "utf8")) as unknown;
+    } catch {
+      return rewriteTokensIfPresent(remnicTokensPath);
+    }
+
+    const legacyEntries = parseTokenEntries(legacyRaw);
+    let rewritten = 0;
+    const recoveredEntries = legacyEntries.map((entry) => {
+      const nextToken = rewriteTokenValue(entry.token);
+      if (nextToken !== entry.token) rewritten += 1;
+      return {
+        ...entry,
+        token: nextToken,
+      };
+    });
+
+    if (backupExisting) {
+      await backupFile(remnicTokensPath, originalRemnic, homeDir, manifest);
+    }
+
+    await writeFile(
+      remnicTokensPath,
+      `${JSON.stringify({ tokens: recoveredEntries }, null, 2)}\n`,
+      "utf8",
+    );
+    return rewritten;
   }
 
   const mergedEntries = parseTokenEntries(remnicRaw);
