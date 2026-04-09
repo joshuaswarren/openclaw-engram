@@ -19,4 +19,13 @@ for (const hookFile of hookFiles) {
     assert.match(content, /CURSOR_FILE="\$LEGACY_CURSOR_FILE"/);
     assert.match(content, /LOCK_DIR="\$LEGACY_LOCK_DIR"/);
   });
+
+  test(`${hookFile} retries legacy engram tokens when remnic token parsing fails`, async () => {
+    const content = await readFile(hookFile, "utf8");
+
+    assert.match(content, /for TOKEN_FILE in "\$\{HOME\}\/\.remnic\/tokens\.json" "\$\{HOME\}\/\.engram\/tokens\.json"; do/);
+    assert.match(content, /\[ ! -f "\$TOKEN_FILE" \] && continue/);
+    assert.match(content, /JSON\.parse\(fs\.readFileSync\(tokenFile, 'utf8'\)\)/);
+    assert.match(content, /\[ -n "\$REMNIC_TOKEN" \] && break/);
+  });
 }
