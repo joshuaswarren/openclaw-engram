@@ -118,15 +118,15 @@ PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 QUERY="Starting a new coding session in project: ${PROJECT_NAME}. Recall relevant memories, preferences, decisions, and context about this project and the user."
 
 # If no token, skip gracefully
-if [ -z "$ENGRAM_TOKEN" ]; then
+if [ -z "$REMNIC_TOKEN" ]; then
   echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Engram: no token set — skipping memory recall]"}}'
   exit 0
 fi
 
 # Call Engram recall API
 RESPONSE="$(curl -s --max-time 8 \
-  -X POST "$ENGRAM_URL" \
-  -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
+  -X POST "$REMNIC_URL" \
+  -H "Authorization: Bearer ${REMNIC_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"query\": $(echo "$QUERY" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read().strip()))"), \"topK\": 12}" \
   2>/dev/null || echo "")"
