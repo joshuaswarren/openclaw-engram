@@ -317,8 +317,8 @@ Engram is organized as a monorepo with a core engine, standalone server/CLI, and
 | `@remnic/bench` | (private) | Latency ladder benchmarks with CI regression gates |
 | `@remnic/plugin-openclaw` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-openclaw)](https://www.npmjs.com/package/@remnic/plugin-openclaw) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
 | `remnic-hermes` | [![PyPI](https://img.shields.io/pypi/v/remnic-hermes)](https://pypi.org/project/remnic-hermes/) | Python MemoryProvider for Hermes Agent |
-| `@remnic/plugin-claude-code` | (installed via `engram connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
-| `@remnic/plugin-codex` | (installed via `engram connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
+| `@remnic/plugin-claude-code` | (installed via `remnic connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
+| `@remnic/plugin-codex` | (installed via `remnic connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
 
 The old `@joshuaswarren/openclaw-engram` package is **deprecated**. Use `@remnic/plugin-openclaw` for OpenClaw installs and `@remnic/*` for standalone or multi-platform use.
 

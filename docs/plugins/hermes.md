@@ -118,7 +118,7 @@ EMO daemon isn't running:
 
 ```bash
 remnic daemon status
-engram daemon install
+remnic daemon install
 ```
 
 ### Memories not appearing in context
