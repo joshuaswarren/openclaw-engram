@@ -29,7 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, execSync } from "node:child_process";
+import * as childProcess from "node:child_process";
 import {
   parseConfig,
   Orchestrator,
@@ -72,6 +72,7 @@ import {
   checkRegression,
   type BenchConfig,
 } from "@remnic/bench";
+import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -931,7 +932,7 @@ function daemonInstall(): void {
     fs.writeFileSync(LAUNCHD_PLIST_PATH, plist);
     try {
 
-      execSync(`launchctl load -w "${LAUNCHD_PLIST_PATH}"`, { stdio: "pipe" });
+      childProcess.execSync(`launchctl load -w "${LAUNCHD_PLIST_PATH}"`, { stdio: "pipe" });
     } catch {
       // May already be loaded
     }
@@ -947,9 +948,9 @@ function daemonInstall(): void {
     fs.writeFileSync(SYSTEMD_UNIT_PATH, unit);
     try {
 
-      execSync("systemctl --user daemon-reload", { stdio: "pipe" });
-      execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
-      execSync(`systemctl --user start ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      childProcess.execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      childProcess.execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
+      childProcess.execSync(`systemctl --user start ${SYSTEMD_SERVICE}`, { stdio: "pipe" });
     } catch {
       // May fail if systemd not available
     }
@@ -967,7 +968,7 @@ function daemonUninstall(): void {
     let removed = false;
     for (const plistPath of [LAUNCHD_PLIST_PATH, LEGACY_LAUNCHD_PLIST_PATH]) {
       try {
-        execSync(`launchctl unload "${plistPath}"`, { stdio: "pipe" });
+        childProcess.execSync(`launchctl unload "${plistPath}"`, { stdio: "pipe" });
       } catch {
         // May not be loaded
       }
@@ -985,8 +986,8 @@ function daemonUninstall(): void {
   } else if (isLinux()) {
     for (const serviceName of [SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE]) {
       try {
-        execSync(`systemctl --user stop ${serviceName}`, { stdio: "pipe" });
-        execSync(`systemctl --user disable ${serviceName}`, { stdio: "pipe" });
+        childProcess.execSync(`systemctl --user stop ${serviceName}`, { stdio: "pipe" });
+        childProcess.execSync(`systemctl --user disable ${serviceName}`, { stdio: "pipe" });
       } catch {
         // May not be active
       }
@@ -1002,7 +1003,7 @@ function daemonUninstall(): void {
       }
     }
     if (removed) {
-      execSync("systemctl --user daemon-reload", { stdio: "pipe" });
+      childProcess.execSync("systemctl --user daemon-reload", { stdio: "pipe" });
     } else {
       console.log("Systemd unit not found — nothing to remove.");
     }
@@ -1026,31 +1027,33 @@ function isServiceRunning(): { running: boolean; pid?: number } {
     }
   }
   // Check service manager (launchd/systemd from `daemon install`)
-  try {
-    if (isMacOS()) {
-      for (const label of [LAUNCHD_LABEL, LEGACY_LAUNCHD_LABEL]) {
-        const out = execSync(`launchctl list ${label} 2>/dev/null`, { encoding: "utf8" });
-        const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
-        if (pidMatch) return { running: true, pid: parseInt(pidMatch[1], 10) };
-        if (out.includes('"PID"')) return { running: true };
+  if (isMacOS()) {
+    const status = firstSuccessfulResult([LAUNCHD_LABEL, LEGACY_LAUNCHD_LABEL], (label) => {
+      const out = childProcess.execSync(`launchctl list ${label} 2>/dev/null`, { encoding: "utf8" });
+      const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
+      if (pidMatch) return { running: true, pid: parseInt(pidMatch[1], 10) };
+      return out.includes('"PID"') ? { running: true } : undefined;
+    });
+    if (status) return status;
+  } else if (isLinux()) {
+    const status = firstSuccessfulResult([SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE], (serviceName) => {
+      const out = childProcess.execSync(`systemctl --user is-active ${serviceName} 2>/dev/null`, {
+        encoding: "utf8",
+      }).trim();
+      if (out !== "active") return undefined;
+      try {
+        const pidOut = childProcess.execSync(
+          `systemctl --user show ${serviceName} --property=MainPID --value`,
+          { encoding: "utf8" },
+        ).trim();
+        const spid = parseInt(pidOut, 10);
+        if (spid > 0) return { running: true, pid: spid };
+      } catch {
+        // Keep the service running result even if MainPID lookup fails.
       }
-    } else if (isLinux()) {
-      for (const serviceName of [SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE]) {
-        const out = execSync(`systemctl --user is-active ${serviceName} 2>/dev/null`, { encoding: "utf8" }).trim();
-        if (out === "active") {
-          try {
-            const pidOut = execSync(`systemctl --user show ${serviceName} --property=MainPID --value`, { encoding: "utf8" }).trim();
-            const spid = parseInt(pidOut, 10);
-            if (spid > 0) return { running: true, pid: spid };
-          } catch {
-            // ignore
-          }
-          return { running: true };
-        }
-      }
-    }
-  } catch {
-    // service not registered or command failed
+      return { running: true };
+    });
+    if (status) return status;
   }
   return { running: false };
 }
@@ -1082,24 +1085,20 @@ function daemonStart(): void {
 
   // Try service manager first (for daemons installed via `remnic daemon install`)
   if (isMacOS() && (fs.existsSync(LAUNCHD_PLIST_PATH) || fs.existsSync(LEGACY_LAUNCHD_PLIST_PATH))) {
-    try {
-      for (const label of [LAUNCHD_LABEL, LEGACY_LAUNCHD_LABEL]) {
-        execSync(`launchctl start ${label} 2>/dev/null`, { stdio: "pipe" });
-        console.log(`Started remnic daemon via launchd (${label})`);
-        return;
-      }
-    } catch {
-      // launchctl start failed — fall through to manual start
+    const label = firstSuccessfulCandidate([LAUNCHD_LABEL, LEGACY_LAUNCHD_LABEL], (candidate) => {
+      childProcess.execSync(`launchctl start ${candidate} 2>/dev/null`, { stdio: "pipe" });
+    });
+    if (label) {
+      console.log(`Started remnic daemon via launchd (${label})`);
+      return;
     }
   } else if (isLinux() && (fs.existsSync(SYSTEMD_UNIT_PATH) || fs.existsSync(LEGACY_SYSTEMD_UNIT_PATH))) {
-    try {
-      for (const serviceName of [SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE]) {
-        execSync(`systemctl --user start ${serviceName}`, { stdio: "pipe" });
-        console.log(`Started remnic daemon via systemd (${serviceName})`);
-        return;
-      }
-    } catch {
-      // systemctl start failed — fall through to manual start
+    const serviceName = firstSuccessfulCandidate([SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE], (candidate) => {
+      childProcess.execSync(`systemctl --user start ${candidate}`, { stdio: "pipe" });
+    });
+    if (serviceName) {
+      console.log(`Started remnic daemon via systemd (${serviceName})`);
+      return;
     }
   }
 
@@ -1122,7 +1121,7 @@ function daemonStart(): void {
     args = [serverBin];
   }
 
-  const child = spawn(cmd, args, {
+  const child = childProcess.spawn(cmd, args, {
     detached: true,
     stdio: ["ignore", logStream, logStream],
     env: {
@@ -1140,24 +1139,20 @@ function daemonStart(): void {
 function daemonStop(): void {
   // Try service manager first (for daemons started via `remnic daemon install`)
   if (isMacOS() && (fs.existsSync(LAUNCHD_PLIST_PATH) || fs.existsSync(LEGACY_LAUNCHD_PLIST_PATH))) {
-    try {
-      for (const label of [LAUNCHD_LABEL, LEGACY_LAUNCHD_LABEL]) {
-        execSync(`launchctl stop ${label} 2>/dev/null`, { stdio: "pipe" });
-        console.log(`Stopped remnic daemon via launchd (${label})`);
-        return;
-      }
-    } catch {
-      // launchctl stop failed — fall through to PID-based stop
+    const label = firstSuccessfulCandidate([LAUNCHD_LABEL, LEGACY_LAUNCHD_LABEL], (candidate) => {
+      childProcess.execSync(`launchctl stop ${candidate} 2>/dev/null`, { stdio: "pipe" });
+    });
+    if (label) {
+      console.log(`Stopped remnic daemon via launchd (${label})`);
+      return;
     }
   } else if (isLinux() && (fs.existsSync(SYSTEMD_UNIT_PATH) || fs.existsSync(LEGACY_SYSTEMD_UNIT_PATH))) {
-    try {
-      for (const serviceName of [SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE]) {
-        execSync(`systemctl --user stop ${serviceName}`, { stdio: "pipe" });
-        console.log(`Stopped remnic daemon via systemd (${serviceName})`);
-        return;
-      }
-    } catch {
-      // systemctl stop failed — fall through to PID-based stop
+    const serviceName = firstSuccessfulCandidate([SYSTEMD_SERVICE, LEGACY_SYSTEMD_SERVICE], (candidate) => {
+      childProcess.execSync(`systemctl --user stop ${candidate}`, { stdio: "pipe" });
+    });
+    if (serviceName) {
+      console.log(`Stopped remnic daemon via systemd (${serviceName})`);
+      return;
     }
   }
 

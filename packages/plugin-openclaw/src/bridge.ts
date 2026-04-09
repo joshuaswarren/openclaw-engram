@@ -9,8 +9,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import * as childProcess from "node:child_process";
 import path from "node:path";
+import { firstSuccessfulResult } from "./service-candidates.js";
 
 export type BridgeMode = "embedded" | "delegate";
 
@@ -60,20 +61,20 @@ function isDaemonRunning(): boolean {
       // PID file missing or stale — continue checking
     }
   }
-  try {
-    if (process.platform === "darwin") {
-      for (const label of ["ai.remnic.daemon", "ai.engram.daemon"]) {
-        const out = execSync(`launchctl list ${label} 2>/dev/null`, { encoding: "utf8" });
-        if (out.includes('"PID"')) return true;
-      }
-    } else if (process.platform === "linux") {
-      for (const unit of ["remnic.service", "engram.service"]) {
-        const out = execSync(`systemctl --user is-active ${unit} 2>/dev/null`, { encoding: "utf8" }).trim();
-        if (out === "active") return true;
-      }
-    }
-  } catch {
-    // service not registered
+  if (process.platform === "darwin") {
+    const running = firstSuccessfulResult(["ai.remnic.daemon", "ai.engram.daemon"], (label) => {
+      const out = childProcess.execSync(`launchctl list ${label} 2>/dev/null`, { encoding: "utf8" });
+      return out.includes('"PID"') ? true : undefined;
+    });
+    if (running) return true;
+  } else if (process.platform === "linux") {
+    const running = firstSuccessfulResult(["remnic.service", "engram.service"], (unit) => {
+      const out = childProcess.execSync(`systemctl --user is-active ${unit} 2>/dev/null`, {
+        encoding: "utf8",
+      }).trim();
+      return out === "active" ? true : undefined;
+    });
+    if (running) return true;
   }
   return false;
 }

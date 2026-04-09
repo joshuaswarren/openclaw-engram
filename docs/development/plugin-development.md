@@ -10,7 +10,7 @@ Every Remnic plugin follows the same pattern:
 2. **Auto-recall** — inject memory context before the agent processes a prompt
 3. **Auto-observe** — capture conversation turns and file changes for memory extraction
 4. **Explicit tools** — provide the agent with direct recall/store/search capabilities
-5. **Authenticate** — use a per-plugin token from `~/.engram/tokens.json`
+5. **Authenticate** — use a per-plugin token from `~/.remnic/tokens.json` with `~/.engram/tokens.json` as a migration fallback
 
 ## Integration Depth Tiers
 
@@ -136,8 +136,15 @@ For platforms with lifecycle hooks (Tier 2):
 REMNIC_HOST="${REMNIC_HOST:-127.0.0.1}"
 REMNIC_PORT="${REMNIC_PORT:-4318}"
 REMNIC_TOKEN="$(node -e "
-  const t = require('$HOME/.engram/tokens.json');
-  process.stdout.write(t['myplatform'] || '');
+  const fs = require('fs');
+  const path = require('path');
+  const remnic = path.join(process.env.HOME, '.remnic', 'tokens.json');
+  const engram = path.join(process.env.HOME, '.engram', 'tokens.json');
+  const tokenFile = fs.existsSync(remnic) ? remnic : engram;
+  if (fs.existsSync(tokenFile)) {
+    const t = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
+    process.stdout.write(t['myplatform'] || '');
+  }
 ")"
 
 INPUT="$(cat)"

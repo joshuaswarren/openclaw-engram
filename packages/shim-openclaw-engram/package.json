@@ -51,7 +51,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuawarren/remnic.git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/shim-openclaw-engram"
   },
   "keywords": [

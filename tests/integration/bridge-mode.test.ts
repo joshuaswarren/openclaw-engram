@@ -43,3 +43,19 @@ test("checkDaemonHealth returns false when nothing is listening", async () => {
   const healthy = await checkDaemonHealth("127.0.0.1", 49999);
   assert.equal(healthy, false);
 });
+
+test("bridge service candidate helper falls through to legacy labels after a failure", async () => {
+  const { firstSuccessfulResult } = await import(
+    path.join(ROOT, "packages/plugin-openclaw/src/service-candidates.ts")
+  );
+  const calls: string[] = [];
+  const result = firstSuccessfulResult(["ai.remnic.daemon", "ai.engram.daemon"], (candidate) => {
+    calls.push(candidate);
+    if (candidate === "ai.remnic.daemon") {
+      throw new Error("canonical label missing");
+    }
+    return candidate;
+  });
+  assert.equal(result, "ai.engram.daemon");
+  assert.deepEqual(calls, ["ai.remnic.daemon", "ai.engram.daemon"]);
+});
