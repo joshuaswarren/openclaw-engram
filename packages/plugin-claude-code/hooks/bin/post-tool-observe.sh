@@ -62,8 +62,15 @@ PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 [ -z "$SESSION_ID" ] && exit 0
 { [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; } && exit 0
 
+LEGACY_CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
 CURSOR_FILE="/tmp/remnic-cursor-${SESSION_ID}"
+LEGACY_LOCK_DIR="/tmp/engram-lock-${SESSION_ID}.d"
 LOCK_DIR="/tmp/remnic-lock-${SESSION_ID}.d"
+
+if [ ! -f "$CURSOR_FILE" ] && { [ -f "$LEGACY_CURSOR_FILE" ] || [ -d "$LEGACY_LOCK_DIR" ]; }; then
+  CURSOR_FILE="$LEGACY_CURSOR_FILE"
+  LOCK_DIR="$LEGACY_LOCK_DIR"
+fi
 
 (
   # Acquire exclusive lock
