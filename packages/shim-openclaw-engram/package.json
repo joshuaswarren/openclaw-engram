@@ -1,0 +1,65 @@
+{
+  "name": "@joshuaswarren/openclaw-engram",
+  "version": "9.3.0",
+  "description": "Deprecated compatibility shim for Engram installs. Re-exports @remnic/plugin-openclaw and forwards engram-access to @remnic/core.",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    },
+    "./access-cli": {
+      "import": "./dist/access-cli.js"
+    }
+  },
+  "bin": {
+    "engram-access": "./bin/engram-access.js"
+  },
+  "files": [
+    "dist",
+    "bin/engram-access.js",
+    "openclaw.plugin.json"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "openclaw": {
+    "plugin": "./openclaw.plugin.json",
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "node ./scripts/sync-openclaw-plugin.mjs && tsup --config tsup.config.ts",
+    "check-types": "tsc --noEmit",
+    "postinstall": "node ./scripts/postinstall-banner.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@remnic/core": "workspace:*",
+    "@remnic/plugin-openclaw": "workspace:*"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuawarren/remnic.git",
+    "directory": "packages/shim-openclaw-engram"
+  },
+  "keywords": [
+    "engram",
+    "remnic",
+    "openclaw",
+    "memory",
+    "compatibility",
+    "shim"
+  ]
+}

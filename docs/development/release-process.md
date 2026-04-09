@@ -36,6 +36,7 @@ Published automatically by `.github/workflows/release-and-publish.yml`:
 | `packages/remnic-server` | `@remnic/server` | npm |
 | `packages/remnic-cli` | `engram` | npm |
 | `packages/plugin-openclaw` | `@remnic/plugin-openclaw` | npm |
+| `packages/shim-openclaw-engram` | `@joshuaswarren/openclaw-engram` | npm |
 | `packages/plugin-claude-code` | `@remnic/plugin-claude-code` | npm |
 | `packages/plugin-codex` | `@remnic/plugin-codex` | npm |
 | `packages/connector-replit` | `@remnic/replit` | npm |
@@ -72,7 +73,7 @@ The root `package.json` is a workspace root and is NOT published. It exists only
 
 ### Deprecation Notice
 
-The old `@joshuaswarren/openclaw-engram` scope package has a deprecation notice pointing users to the new `@remnic/*` packages.
+The old `@joshuaswarren/openclaw-engram` scope package now lives at `packages/shim-openclaw-engram/` as a frozen compatibility shim. It re-exports the OpenClaw bridge plugin, forwards `engram-access`, prints a postinstall rename banner, and carries the npm deprecation notice pointing users to the new `@remnic/*` packages.
 
 ## Emergency Hotfix
 

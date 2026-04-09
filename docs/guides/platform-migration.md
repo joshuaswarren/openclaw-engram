@@ -253,7 +253,7 @@ If the upgrade causes issues:
 openclaw plugins install @remnic/plugin-openclaw@<previous-version> --pin
 ```
 
-**Standalone CLI users** — the legacy root npm package (`@joshuaswarren/openclaw-engram`) only exposes `engram-access`, not the full CLI. Full CLI rollback requires building from source at the desired version tag:
+**Standalone CLI users** — the legacy shim package (`@joshuaswarren/openclaw-engram`) only exposes `engram-access`, not the full CLI. Full CLI rollback requires building from source at the desired version tag:
 
 ```bash
 cd remnic

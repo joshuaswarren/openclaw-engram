@@ -1,8 +1,9 @@
 {
-  "name": "@joshuaswarren/openclaw-engram",
+  "name": "remnic-workspace",
   "version": "9.2.7",
+  "private": true,
   "type": "module",
-  "description": "DEPRECATED: Use @remnic/core, @remnic/server, @remnic/cli instead. Universal memory layer for AI agents — LLM-powered extraction, markdown storage, hybrid search.",
+  "description": "Workspace root for the Remnic monorepo.",
   "keywords": [
     "openclaw",
     "memory",
@@ -95,10 +96,6 @@
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
     "prepack": "npm run build"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

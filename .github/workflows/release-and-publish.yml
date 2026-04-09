@@ -291,6 +291,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          IS_PRIVATE="$(node -p "require('./package.json').private || false")"
+          if [ "$IS_PRIVATE" = "true" ]; then
+            echo "::notice title=NPM publish skipped::Root package is private workspace metadata only."
+            exit 0
+          fi
           VERSION="${{ steps.version.outputs.new_version }}"
           PACKAGE_NAME="$(node -p "require('./package.json').name")"
           if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
@@ -310,6 +315,7 @@ jobs:
             packages/remnic-cli
             packages/hermes-provider
             packages/plugin-openclaw
+            packages/shim-openclaw-engram
           )
           for pkg_dir in "${PUBLISH_ORDER[@]}"; do
             pkg_json="$pkg_dir/package.json"
@@ -361,4 +367,3 @@ jobs:
           trap 'rm -f ~/.ssh/release_deploy_key' EXIT
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/release_deploy_key -o StrictHostKeyChecking=no"
           git push "git@github.com:${{ github.repository }}.git" "${RELEASE_COMMIT}:refs/heads/main"
-
