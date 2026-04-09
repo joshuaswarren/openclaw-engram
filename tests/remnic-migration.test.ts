@@ -173,6 +173,8 @@ test("rollbackFromEngramMigration restores backed up connector configs and remov
   const claudeConfig = path.join(cwd, "packages", "plugin-claude-code", ".mcp.json");
   const legacyRoot = path.join(homeDir, ".engram");
   const legacyLaunchAgent = path.join(homeDir, "Library", "LaunchAgents", "ai.engram.daemon.plist");
+  const remnicLaunchAgent = path.join(homeDir, "Library", "LaunchAgents", "ai.remnic.daemon.plist");
+  const execCalls: Array<{ command: string; args: string[] }> = [];
 
   await mkdir(path.join(legacyRoot, "logs"), { recursive: true });
   await mkdir(path.dirname(claudeConfig), { recursive: true });
@@ -210,12 +212,13 @@ test("rollbackFromEngramMigration restores backed up connector configs and remov
     homeDir,
     quiet: true,
     platform: "darwin",
-    execCommand: () => undefined,
+    execCommand: (command, args) => execCalls.push({ command, args }),
   });
 
   assert.ok(rollback.restored.includes(claudeConfig));
-  assert.ok(rollback.removed.includes(path.join(homeDir, "Library", "LaunchAgents", "ai.remnic.daemon.plist")));
+  assert.ok(rollback.removed.includes(remnicLaunchAgent));
   assert.equal(existsSync(path.join(homeDir, ".remnic", ".migrated-from-engram")), false);
+  assert.deepEqual(execCalls, [{ command: "launchctl", args: ["unload", remnicLaunchAgent] }]);
 
   const restoredClaudeConfig = JSON.parse(await readFile(claudeConfig, "utf8")) as {
     mcpServers: Record<string, unknown>;

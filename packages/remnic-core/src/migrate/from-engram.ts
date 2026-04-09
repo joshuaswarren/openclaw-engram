@@ -436,19 +436,6 @@ export async function rollbackFromEngramMigration(options?: MigrationOptions): P
 
   if (!manifest) return { restored, removed };
 
-  for (const entry of [...manifest.entries].reverse()) {
-    if (entry.backupPath && existsSync(entry.backupPath)) {
-      await ensureParent(entry.targetPath);
-      await copyFile(entry.backupPath, entry.targetPath);
-      restored.push(entry.targetPath);
-      continue;
-    }
-    if (entry.createdByMigration && existsSync(entry.targetPath)) {
-      await rm(entry.targetPath, { recursive: true, force: true });
-      removed.push(entry.targetPath);
-    }
-  }
-
   if (platform === "darwin") {
     const remnicPlist = path.join(homeDir, "Library", "LaunchAgents", "ai.remnic.daemon.plist");
     if (existsSync(remnicPlist)) {
@@ -465,6 +452,19 @@ export async function rollbackFromEngramMigration(options?: MigrationOptions): P
       exec("systemctl", ["--user", "daemon-reload"]);
     } catch {
       // Ignore systemd rollback failures.
+    }
+  }
+
+  for (const entry of [...manifest.entries].reverse()) {
+    if (entry.backupPath && existsSync(entry.backupPath)) {
+      await ensureParent(entry.targetPath);
+      await copyFile(entry.backupPath, entry.targetPath);
+      restored.push(entry.targetPath);
+      continue;
+    }
+    if (entry.createdByMigration && existsSync(entry.targetPath)) {
+      await rm(entry.targetPath, { recursive: true, force: true });
+      removed.push(entry.targetPath);
     }
   }
 
