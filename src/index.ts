@@ -34,6 +34,7 @@ import os from "node:os";
 import { createOpikExporter } from "./opik-exporter.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
+import { cleanUserMessage } from "./user-message-cleaning.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -1536,22 +1537,4 @@ function extractTextContent(msg: Record<string, unknown>): string {
       .join("\n");
   }
   return "";
-}
-
-function cleanUserMessage(content: string): string {
-  let cleaned = content;
-  // Remove memory context blocks
-  cleaned = cleaned.replace(
-    /<supermemory-context[^>]*>[\s\S]*?<\/supermemory-context>\s*/gi,
-    "",
-  );
-  cleaned = cleaned.replace(
-    /## Memory Context \(Engram\)[\s\S]*?(?=\n## |\n$)/gi,
-    "",
-  );
-  // Remove platform headers
-  cleaned = cleaned.replace(/^\[\w+\s+.+?\s+id:\d+\s+[^\]]+\]\s*/, "");
-  // Remove trailing message IDs
-  cleaned = cleaned.replace(/\s*\[message_id:\s*[^\]]+\]\s*$/, "");
-  return cleaned.trim();
 }
