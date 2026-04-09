@@ -115,6 +115,7 @@ test("migrateFromEngram copies legacy state, rewrites tokens, updates connector 
   assert.equal(result.status, "migrated");
   assert.equal(result.tokensRegenerated, 1);
   assert.ok(existsSync(path.join(homeDir, ".remnic", ".migrated-from-engram")));
+  assert.ok(existsSync(path.join(homeDir, ".remnic", ".rollback.json")));
   assert.ok(existsSync(path.join(homeDir, ".remnic", "logs", "daemon.log")));
   assert.ok(existsSync(path.join(homeDir, ".config", "remnic", "config.json")));
   assert.ok(existsSync(path.join(homeDir, "Library", "LaunchAgents", "ai.remnic.daemon.plist")));
@@ -225,4 +226,41 @@ test("rollbackFromEngramMigration restores backed up connector configs and remov
   };
   assert.ok(restoredClaudeConfig.mcpServers.engram);
   assert.equal(restoredClaudeConfig.mcpServers.remnic, undefined);
+});
+
+test("rollbackFromEngramMigration reloads systemd after removing migrated unit files", async () => {
+  const homeDir = await makeTempHome("remnic-migrate-linux-rollback-");
+  const cwd = path.join(homeDir, "repo");
+  const legacyRoot = path.join(homeDir, ".engram");
+  const legacyUnit = path.join(homeDir, ".config", "systemd", "user", "engram.service");
+  const remnicUnit = path.join(homeDir, ".config", "systemd", "user", "remnic.service");
+  const execCalls: Array<{ command: string; args: string[] }> = [];
+
+  await mkdir(legacyRoot, { recursive: true });
+  await mkdir(path.dirname(legacyUnit), { recursive: true });
+  await writeFile(path.join(legacyRoot, "tokens.json"), JSON.stringify({ tokens: [] }), "utf8");
+  await writeFile(legacyUnit, "[Unit]\nDescription=engram.service\n", "utf8");
+
+  await migrateFromEngram({
+    homeDir,
+    cwd,
+    quiet: true,
+    platform: "linux",
+    execCommand: () => undefined,
+  });
+
+  const rollback = await rollbackFromEngramMigration({
+    homeDir,
+    quiet: true,
+    platform: "linux",
+    execCommand: (command, args) => execCalls.push({ command, args }),
+  });
+
+  assert.ok(rollback.removed.includes(remnicUnit));
+  assert.equal(existsSync(remnicUnit), false);
+  assert.deepEqual(execCalls, [
+    { command: "systemctl", args: ["--user", "stop", "remnic.service"] },
+    { command: "systemctl", args: ["--user", "disable", "remnic.service"] },
+    { command: "systemctl", args: ["--user", "daemon-reload"] },
+  ]);
 });

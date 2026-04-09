@@ -449,7 +449,6 @@ export async function rollbackFromEngramMigration(options?: MigrationOptions): P
     try {
       exec("systemctl", ["--user", "stop", "remnic.service"]);
       exec("systemctl", ["--user", "disable", "remnic.service"]);
-      exec("systemctl", ["--user", "daemon-reload"]);
     } catch {
       // Ignore systemd rollback failures.
     }
@@ -465,6 +464,14 @@ export async function rollbackFromEngramMigration(options?: MigrationOptions): P
     if (entry.createdByMigration && existsSync(entry.targetPath)) {
       await rm(entry.targetPath, { recursive: true, force: true });
       removed.push(entry.targetPath);
+    }
+  }
+
+  if (platform === "linux") {
+    try {
+      exec("systemctl", ["--user", "daemon-reload"]);
+    } catch {
+      // Ignore systemd rollback failures after removing unit files.
     }
   }
 
@@ -538,8 +545,8 @@ export async function migrateFromEngram(options?: MigrationOptions): Promise<Mig
     }
 
     servicesReinstalled = await migrateServices(homeDir, options, manifest);
-    await writeFile(markerPath(homeDir), `${new Date().toISOString()}\n`, "utf8");
     await writeRollbackManifest(homeDir, manifest);
+    await writeFile(markerPath(homeDir), `${new Date().toISOString()}\n`, "utf8");
     logger("Migration complete. Welcome to Remnic.");
 
     return {
