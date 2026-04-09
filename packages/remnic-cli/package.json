@@ -29,10 +29,10 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@remnic/bench": "workspace:*",
     "@remnic/core": "workspace:*"
   },
   "devDependencies": {
-    "@remnic/bench": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },

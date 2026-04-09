@@ -12,3 +12,12 @@ test("Codex session-end hook falls back to legacy engram cursor files", async ()
   assert.match(content, /if \[ ! -f "\$CURSOR_FILE" \] && \[ -f "\$LEGACY_CURSOR_FILE" \]; then/);
   assert.match(content, /CURSOR_FILE="\$LEGACY_CURSOR_FILE"/);
 });
+
+test("Codex session-end hook retries legacy engram tokens when remnic token parsing fails", async () => {
+  const content = await readFile(sessionEndHook, "utf8");
+
+  assert.match(content, /for TOKEN_FILE in "\$\{HOME\}\/\.remnic\/tokens\.json" "\$\{HOME\}\/\.engram\/tokens\.json"; do/);
+  assert.match(content, /\[ ! -f "\$TOKEN_FILE" \] && continue/);
+  assert.match(content, /JSON\.parse\(fs\.readFileSync\(tokenFile, 'utf8'\)\)/);
+  assert.match(content, /\[ -n "\$REMNIC_TOKEN" \] && break/);
+});
