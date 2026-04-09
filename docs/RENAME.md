@@ -104,7 +104,7 @@ handful of early adopters. Tomorrow is worse.
 | `@remnic/*` npm scope | ✅ Claimed (empty) |
 | `remnic` on PyPI | ✅ Claimed at 0.0.1 placeholder |
 | `remnic.ai` | ✅ Live landing page |
-| GitHub repo | `joshuaswarren/openclaw-engram` → rename to `joshuaswarren/remnic` |
+| GitHub repo | ✅ Renamed to `joshuaswarren/remnic` |
 
 **Install base to migrate: one package.** Everything else is free namespace.
 
@@ -274,8 +274,9 @@ The shim stays on the registry **forever**. Never unpublished. Just frozen
 after v2.0.0 of the new packages when we drop the dependency fan-in.
 
 ### GitHub repo rename
-`joshuaswarren/openclaw-engram` → `joshuaswarren/remnic`. GitHub auto-redirects
-clone URLs, PR URLs, issue URLs, raw file URLs. Existing clones continue to work.
+The repo is now `joshuaswarren/remnic`. GitHub auto-redirects old clone URLs,
+PR URLs, issue URLs, and raw file URLs. Existing clones continue to work, but
+all canonical links should now use the new repo path.
 
 ---
 
