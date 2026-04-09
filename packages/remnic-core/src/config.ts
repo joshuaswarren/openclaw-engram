@@ -521,7 +521,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     authToken:
       typeof rawAgentAccessHttp?.authToken === "string" && rawAgentAccessHttp.authToken.trim().length > 0
         ? resolveEnvVars(rawAgentAccessHttp.authToken)
-        : process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN,
+        : process.env.OPENCLAW_REMNIC_ACCESS_TOKEN ?? process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN,
     principal:
       typeof rawAgentAccessHttp?.principal === "string" && rawAgentAccessHttp.principal.trim().length > 0
         ? resolveEnvVars(rawAgentAccessHttp.principal)
