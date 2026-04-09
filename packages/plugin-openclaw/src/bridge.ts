@@ -89,15 +89,14 @@ function readDaemonPort(): number {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
 
-  try {
-    for (const p of configPathCandidates()) {
-      if (existsSync(p)) {
+  for (const p of configPathCandidates()) {
+    if (!existsSync(p)) continue;
+    try {
         const raw = JSON.parse(readFileSync(p, "utf8"));
         if (raw.server?.port) return raw.server.port;
-      }
+    } catch {
+      // Ignore malformed config files and continue to the next candidate.
     }
-  } catch {
-    // ignore
   }
   return DEFAULT_PORT;
 }

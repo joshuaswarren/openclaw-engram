@@ -26,8 +26,7 @@ REMNIC_HOST="${REMNIC_HOST:-${ENGRAM_HOST:-127.0.0.1}}"
 REMNIC_PORT="${REMNIC_PORT:-${ENGRAM_PORT:-4318}}"
 REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/recall"
 REMNIC_HEALTH_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/health"
-TOKEN_FILE="${HOME}/.remnic/tokens.json"
-[ ! -f "$TOKEN_FILE" ] && TOKEN_FILE="${HOME}/.engram/tokens.json"
+TOKEN_FILES=("${HOME}/.remnic/tokens.json" "${HOME}/.engram/tokens.json")
 
 LOG="${HOME}/.remnic/logs/remnic-session-recall.log"
 mkdir -p "$(dirname "$LOG")"
@@ -35,17 +34,19 @@ log() { echo "$(date '+%F %T') [codex-session-start] $*" >> "$LOG"; }
 
 # Read token from per-plugin token store
 REMNIC_TOKEN=""
-if [ -f "$TOKEN_FILE" ]; then
+for TOKEN_FILE in "${TOKEN_FILES[@]}"; do
+  [ ! -f "$TOKEN_FILE" ] && continue
   REMNIC_TOKEN="$(node -e "
-    const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
+    const store = JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
     const tokens = store.tokens || [];
     const cx = tokens.find(t => t.connector === 'codex');
     const oc = tokens.find(t => t.connector === 'openclaw');
     let tok = (cx && cx.token) || (oc && oc.token) || '';
     if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
     process.stdout.write(tok);
-  " 2>/dev/null || echo "")"
-fi
+  " "$TOKEN_FILE" 2>/dev/null || echo "")"
+  [ -n "$REMNIC_TOKEN" ] && break
+done
 
 # Fallback to env var
 [ -z "$REMNIC_TOKEN" ] && REMNIC_TOKEN="${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}"
