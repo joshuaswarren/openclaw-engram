@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/logger.js";
+export * from "../packages/remnic-core/src/logger.js";

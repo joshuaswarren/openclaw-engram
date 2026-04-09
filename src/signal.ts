@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/signal.js";
+export * from "../packages/remnic-core/src/signal.js";

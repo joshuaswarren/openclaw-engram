@@ -32,15 +32,15 @@ Published automatically by `.github/workflows/release-and-publish.yml`:
 
 | Package | npm Name | Registry |
 |---------|----------|----------|
-| `packages/engram-core` | `@engram/core` | npm |
-| `packages/engram-server` | `@engram/server` | npm |
-| `packages/engram-cli` | `engram` | npm |
-| `packages/plugin-openclaw` | `openclaw-engram` | npm |
-| `packages/plugin-claude-code` | `@engram/plugin-claude-code` | npm |
-| `packages/plugin-codex` | `@engram/plugin-codex` | npm |
-| `packages/connector-replit` | `@engram/replit` | npm |
-| `packages/bench` | `@engram/bench` | npm |
-| `packages/hermes-provider` | `@engram/hermes-provider` | npm |
+| `packages/remnic-core` | `@remnic/core` | npm |
+| `packages/remnic-server` | `@remnic/server` | npm |
+| `packages/remnic-cli` | `engram` | npm |
+| `packages/plugin-openclaw` | `@remnic/plugin-openclaw` | npm |
+| `packages/plugin-claude-code` | `@remnic/plugin-claude-code` | npm |
+| `packages/plugin-codex` | `@remnic/plugin-codex` | npm |
+| `packages/connector-replit` | `@remnic/replit` | npm |
+| `packages/bench` | `@remnic/bench` | npm |
+| `packages/hermes-provider` | `@remnic/hermes-provider` | npm |
 
 All npm publishes include provenance attestations.
 
@@ -62,9 +62,9 @@ twine upload dist/*
 
 ## Backward Compatibility
 
-### The `openclaw-engram` Package
+### The `@remnic/plugin-openclaw` Package
 
-The `packages/plugin-openclaw/` directory publishes as `openclaw-engram` on npm. This is critical — OpenClaw's plugin loader resolves this name. Renaming it would break all existing installations.
+The `packages/plugin-openclaw/` directory publishes as `@remnic/plugin-openclaw` on npm. OpenClaw installs should now target that package directly.
 
 ### The Root Package
 
@@ -72,7 +72,7 @@ The root `package.json` is a workspace root and is NOT published. It exists only
 
 ### Deprecation Notice
 
-The old `@joshuaswarren/openclaw-engram` scope package has a deprecation notice pointing users to the new `@engram/*` packages.
+The old `@joshuaswarren/openclaw-engram` scope package has a deprecation notice pointing users to the new `@remnic/*` packages.
 
 ## Emergency Hotfix
 

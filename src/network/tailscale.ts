@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/network/tailscale.js";
+export * from "../../packages/remnic-core/src/network/tailscale.js";

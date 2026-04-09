@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/utility-runtime.js";
+export * from "../packages/remnic-core/src/utility-runtime.js";

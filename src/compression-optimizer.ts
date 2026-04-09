@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/compression-optimizer.js";
+export * from "../packages/remnic-core/src/compression-optimizer.js";

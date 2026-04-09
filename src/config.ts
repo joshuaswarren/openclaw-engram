@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/config.js";
+export * from "../packages/remnic-core/src/config.js";

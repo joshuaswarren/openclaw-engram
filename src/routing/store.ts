@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/routing/store.js";
+export * from "../../packages/remnic-core/src/routing/store.js";

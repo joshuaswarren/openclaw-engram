@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/qmd.js";
+export * from "../packages/remnic-core/src/qmd.js";

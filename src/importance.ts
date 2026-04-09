@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/importance.js";
+export * from "../packages/remnic-core/src/importance.js";

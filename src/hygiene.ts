@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/hygiene.js";
+export * from "../packages/remnic-core/src/hygiene.js";

@@ -1,5 +1,5 @@
 /**
- * @engram/bench — Public types
+ * @remnic/bench — Public types
  *
  * Retrieval latency ladder:
  *   Tier 0 — exact match (skip full search)

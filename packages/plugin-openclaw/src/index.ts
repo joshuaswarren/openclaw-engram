@@ -1,9 +1,9 @@
 /**
- * openclaw-engram — OpenClaw Engram Orchestrator (OEO) bridge plugin.
+ * @remnic/plugin-openclaw — OpenClaw bridge plugin for Remnic.
  *
- * This package is the thin bridge between OpenClaw and the Engram memory engine.
+ * This package is the thin bridge between OpenClaw and the Remnic memory engine.
  * It re-exports the full plugin implementation from the root src/ (until Phase 1
- * core extraction moves framework-agnostic code to @engram/core), and adds the
+ * core extraction moves framework-agnostic code to @remnic/core), and adds the
  * embedded/delegate bridge mode for multi-agent memory sharing.
  *
  * Modes:

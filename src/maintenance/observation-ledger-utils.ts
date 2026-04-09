@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/maintenance/observation-ledger-utils.js";
+export * from "../../packages/remnic-core/src/maintenance/observation-ledger-utils.js";

@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/lcm/schema.js";
+export * from "../../packages/remnic-core/src/lcm/schema.js";

@@ -1,5 +1,5 @@
 /**
- * @engram/bench — Benchmark runner
+ * @remnic/bench — Benchmark runner
  *
  * Runs retrieval queries through the EngramAccessService recall() API
  * and measures latency per tier (exact → full search).
@@ -7,7 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { EngramAccessService } from "@engram/core";
+import { EngramAccessService } from "@remnic/core";
 import type {
   BenchConfig,
   BenchTier,

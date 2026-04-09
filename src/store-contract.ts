@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/store-contract.js";
+export * from "../packages/remnic-core/src/store-contract.js";

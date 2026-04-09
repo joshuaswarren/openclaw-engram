@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a reproducible bug in openclaw-engram
+description: Report a reproducible bug in Remnic
 labels: [bug]
 body:
   - type: markdown
@@ -27,7 +27,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: openclaw-engram version
+      label: remnic version
       placeholder: e.g. 7.2.1
     validations:
       required: true

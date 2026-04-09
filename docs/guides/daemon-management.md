@@ -74,8 +74,8 @@ engram daemon status      # show running state, port, memory path
 |----------|---------|-------------|
 | `ENGRAM_CONFIG_PATH` | `~/.config/engram/config.json` | Config file path |
 | `ENGRAM_MEMORY_DIR` | `~/.engram/memory/` | Memory store directory |
-| `ENGRAM_HOST` | `127.0.0.1` | Bind address |
-| `ENGRAM_PORT` | `4318` | Bind port |
+| `REMNIC_HOST` | `127.0.0.1` | Bind address (`ENGRAM_HOST` also supported) |
+| `REMNIC_PORT` | `4318` | Bind port (`ENGRAM_PORT` also supported) |
 | `OPENAI_API_KEY` | — | Required for LLM extraction |
 
 ## Logs

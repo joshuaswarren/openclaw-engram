@@ -1,24 +1,42 @@
 #!/usr/bin/env bash
-# Engram SessionStart hook for Codex.
+# Remnic SessionStart hook for Codex.
 # Recalls project context and user preferences at session start.
 # Tries auto mode (45s) then falls back to minimal mode (20s).
 # Starts daemon if not running.
 
 set -euo pipefail
 
-ENGRAM_HOST="${ENGRAM_HOST:-127.0.0.1}"
-ENGRAM_PORT="${ENGRAM_PORT:-4318}"
-ENGRAM_URL="http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/recall"
-TOKEN_FILE="${HOME}/.engram/tokens.json"
+ensure_migrated() {
+  if [ -f "${HOME}/.remnic/.migrated-from-engram" ]; then
+    return 0
+  fi
+  if [ ! -d "${HOME}/.engram" ] && [ ! -f "${HOME}/.config/engram/config.json" ]; then
+    return 0
+  fi
+  if command -v remnic >/dev/null 2>&1; then
+    remnic migrate >/dev/null 2>&1 || true
+  elif command -v engram >/dev/null 2>&1; then
+    engram migrate >/dev/null 2>&1 || true
+  fi
+}
 
-LOG="${HOME}/.engram/logs/engram-session-recall.log"
+ensure_migrated
+
+REMNIC_HOST="${REMNIC_HOST:-${ENGRAM_HOST:-127.0.0.1}}"
+REMNIC_PORT="${REMNIC_PORT:-${ENGRAM_PORT:-4318}}"
+REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/recall"
+REMNIC_HEALTH_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/health"
+TOKEN_FILE="${HOME}/.remnic/tokens.json"
+[ ! -f "$TOKEN_FILE" ] && TOKEN_FILE="${HOME}/.engram/tokens.json"
+
+LOG="${HOME}/.remnic/logs/remnic-session-recall.log"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%F %T') [codex-session-start] $*" >> "$LOG"; }
 
 # Read token from per-plugin token store
-ENGRAM_TOKEN=""
+REMNIC_TOKEN=""
 if [ -f "$TOKEN_FILE" ]; then
-  ENGRAM_TOKEN="$(node -e "
+  REMNIC_TOKEN="$(node -e "
     const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
     const tokens = store.tokens || [];
     const cx = tokens.find(t => t.connector === 'codex');
@@ -30,7 +48,7 @@ if [ -f "$TOKEN_FILE" ]; then
 fi
 
 # Fallback to env var
-[ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
+[ -z "$REMNIC_TOKEN" ] && REMNIC_TOKEN="${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}"
 
 INPUT="$(cat)"
 SESSION_ID="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.session_id||'')" "$INPUT" 2>/dev/null || echo "")"
@@ -40,20 +58,24 @@ PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 log "session=$SESSION_ID project=$PROJECT_NAME"
 
 # Health check — start daemon if not running
-if ! curl -sf --max-time 2 "http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/health" >/dev/null 2>&1; then
+if ! curl -sf --max-time 2 "$REMNIC_HEALTH_URL" >/dev/null 2>&1; then
   log "daemon not responding, attempting start..."
-  command -v engram >/dev/null 2>&1 && engram daemon start >/dev/null 2>&1 &
+  if command -v remnic >/dev/null 2>&1; then
+    remnic daemon start >/dev/null 2>&1 &
+  elif command -v engram >/dev/null 2>&1; then
+    engram daemon start >/dev/null 2>&1 &
+  fi
   sleep 2
-  if ! curl -sf --max-time 2 "http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/health" >/dev/null 2>&1; then
+  if ! curl -sf --max-time 2 "$REMNIC_HEALTH_URL" >/dev/null 2>&1; then
     log "daemon still not responding after start attempt"
-    echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Engram: daemon not running — start with: engram daemon start]"}}'
+    echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Remnic: daemon not running — start with: remnic daemon start]"}}'
     exit 0
   fi
 fi
 
-if [ -z "$ENGRAM_TOKEN" ]; then
+if [ -z "$REMNIC_TOKEN" ]; then
   log "skipping: no token found"
-  echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Engram: no auth token — run: engram connectors install codex]"}}'
+  echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Remnic: no auth token — run: remnic connectors install codex]"}}'
   exit 0
 fi
 
@@ -70,8 +92,8 @@ REQUEST_BODY="$(node -e "process.stdout.write(JSON.stringify({
 
 log "attempting full recall (auto mode)..."
 RAW="$(curl -s -w "\n%{http_code}" --max-time 45 \
-  -X POST "$ENGRAM_URL" \
-  -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
+  -X POST "$REMNIC_URL" \
+  -H "Authorization: Bearer ${REMNIC_TOKEN}" \
   -H "Content-Type: application/json" \
   -H "X-Engram-Client-Id: codex" \
   -d "$REQUEST_BODY" 2>/dev/null)"
@@ -88,8 +110,8 @@ if [ $CURL_EXIT -ne 0 ] || ! [[ "$HTTP_STATUS" =~ ^2 ]] || [ -z "$RESPONSE" ]; t
     mode: 'minimal'
   }))" "$QUERY" "$SESSION_ID" 2>/dev/null)"
   RAW="$(curl -s -w "\n%{http_code}" --max-time 20 \
-    -X POST "$ENGRAM_URL" \
-    -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
+    -X POST "$REMNIC_URL" \
+    -H "Authorization: Bearer ${REMNIC_TOKEN}" \
     -H "Content-Type: application/json" \
     -H "X-Engram-Client-Id: codex" \
     -d "${MINIMAL_BODY:-$REQUEST_BODY}" 2>/dev/null)"
@@ -106,15 +128,15 @@ if [ $CURL_EXIT -eq 0 ] && [[ "$HTTP_STATUS" =~ ^2 ]] && [ -n "$RESPONSE" ]; the
     const count = d.count || 0;
     const mode = d.mode || '';
     if (ctx) {
-      const label = '[Engram Memory Recall — ' + count + ' memories' + (mode ? ', ' + mode + ' mode' : '') + ']';
+      const label = '[Remnic Memory Recall — ' + count + ' memories' + (mode ? ', ' + mode + ' mode' : '') + ']';
       process.stdout.write(label + '\n\n' + ctx);
     } else {
-      process.stdout.write('[Engram: no relevant memories found for this session]');
+      process.stdout.write('[Remnic: no relevant memories found for this session]');
     }
-  " "$RESPONSE" 2>/dev/null || echo "[Engram: recall parse error]")"
+  " "$RESPONSE" 2>/dev/null || echo "[Remnic: recall parse error]")"
   log "recall complete: $(echo "$CONTEXT" | head -1)"
 else
-  CONTEXT="[Engram: server unreachable — continuing without memory recall]"
+  CONTEXT="[Remnic: server unreachable — continuing without memory recall]"
   log "$CONTEXT"
 fi
 

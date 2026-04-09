@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/search/embed-helper.js";
+export * from "../../packages/remnic-core/src/search/embed-helper.js";

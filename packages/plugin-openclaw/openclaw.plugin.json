@@ -611,7 +611,7 @@
           },
           "authToken": {
             "type": "string",
-            "description": "Bearer token for the local Engram HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
+            "description": "Bearer token for the local Remnic HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
           },
           "principal": {
             "type": "string",
@@ -620,7 +620,7 @@
           "maxBodyBytes": {
             "type": "number",
             "default": 131072,
-            "description": "Maximum accepted JSON request body size for the local Engram HTTP API."
+            "description": "Maximum accepted JSON request body size for the local Remnic HTTP API."
           }
         },
         "required": [

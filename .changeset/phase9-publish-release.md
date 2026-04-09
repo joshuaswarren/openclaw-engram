@@ -13,5 +13,5 @@ Initial 1.0.0 release of Engram workspace packages as standalone npm packages.
 - `@engram/cli` 1.0.0: CLI with daemon management (launchd/systemd), connector install, token management
 - `@engram/hermes-provider` 1.0.0: TypeScript HTTP client for Engram API
 - `openclaw-engram`: Bridge mode (embedded/delegate), ENGRAM_CONFIG_PATH support
-- `engram-hermes` on PyPI: Python MemoryProvider for Hermes Agent
+- `remnic-hermes` on PyPI: Python MemoryProvider for Hermes Agent
 - Native plugins for Claude Code and Codex CLI (installed via `engram connectors install`)

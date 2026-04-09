@@ -64,9 +64,9 @@ importers:
 
   packages/bench:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
     devDependencies:
       tsup:
         specifier: ^8.5.1
@@ -77,13 +77,13 @@ importers:
 
   packages/connector-replit: {}
 
-  packages/engram-cli:
+  packages/remnic-cli:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
     devDependencies:
-      '@engram/bench':
+      '@remnic/bench':
         specifier: workspace:*
         version: link:../bench
       tsup:
@@ -93,7 +93,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  packages/engram-core:
+  packages/remnic-core:
     dependencies:
       '@honcho-ai/sdk':
         specifier: ^2.0.0
@@ -143,11 +143,11 @@ importers:
         specifier: ^0.26.2
         version: 0.26.2
 
-  packages/engram-server:
+  packages/remnic-server:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
     devDependencies:
       tsup:
         specifier: ^8.5.1
@@ -171,9 +171,9 @@ importers:
 
   packages/plugin-openclaw:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
       openclaw:
         specifier: '*'
         version: 2026.4.2(@napi-rs/canvas@0.1.97)

@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 test("runLifecyclePolicyPass uses path-based frontmatter writes (no per-item corpus rescans)", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 

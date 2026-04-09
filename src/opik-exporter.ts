@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/opik-exporter.js";
+export * from "../packages/remnic-core/src/opik-exporter.js";

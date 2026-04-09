@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/legacy-hook-compat.js";
+export * from "../packages/remnic-core/src/legacy-hook-compat.js";

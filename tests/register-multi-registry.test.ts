@@ -46,6 +46,8 @@ const ACCESS_SVC_KEY = "__openclawEngramAccessService";
 const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
 const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
 const INIT_PROMISE_KEY = "__openclawEngramInitPromise";
+const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
+const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
 // ============================================================================
 // Helpers
@@ -103,6 +105,7 @@ function saveAndResetGlobals() {
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
     initPromise: (globalThis as any)[INIT_PROMISE_KEY],
+    migrationPromise: (globalThis as any)[MIGRATION_PROMISE_KEY],
   };
   delete (globalThis as any)[GUARD_KEY];
   delete (globalThis as any)[HOOK_APIS_KEY];
@@ -111,7 +114,41 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
   delete (globalThis as any)[INIT_PROMISE_KEY];
+  delete (globalThis as any)[MIGRATION_PROMISE_KEY];
   return saved;
+}
+
+async function awaitPendingMigration() {
+  const pending = (globalThis as any)[MIGRATION_PROMISE_KEY];
+  if (pending && typeof pending.then === "function") {
+    try {
+      await pending;
+    } catch {}
+  }
+}
+
+function disableRegisterMigrationForTest(): string | undefined {
+  const previous = process.env[DISABLE_REGISTER_MIGRATION_ENV];
+  process.env[DISABLE_REGISTER_MIGRATION_ENV] = "1";
+  return previous;
+}
+
+function restoreRegisterMigrationEnv(previous: string | undefined) {
+  if (previous === undefined) {
+    delete process.env[DISABLE_REGISTER_MIGRATION_ENV];
+    return;
+  }
+  process.env[DISABLE_REGISTER_MIGRATION_ENV] = previous;
+}
+
+async function safeStop(
+  ...apis: Array<{ _registeredStop: (() => Promise<void>) | null } | undefined>
+) {
+  for (const api of apis) {
+    try {
+      await api._registeredStop?.();
+    } catch {}
+  }
 }
 
 function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
@@ -135,6 +172,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.initPromise !== undefined) (globalThis as any)[INIT_PROMISE_KEY] = saved.initPromise;
   else delete (globalThis as any)[INIT_PROMISE_KEY];
+
+  if (saved.migrationPromise !== undefined) (globalThis as any)[MIGRATION_PROMISE_KEY] = saved.migrationPromise;
+  else delete (globalThis as any)[MIGRATION_PROMISE_KEY];
 }
 
 // ============================================================================
@@ -143,6 +183,7 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
 test("register() registers tools on every api object, not just the first one", async () => {
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -163,12 +204,15 @@ test("register() registers tools on every api object, not just the first one", a
     assert.ok(firstTools.includes("memory_governance_run"), "first registry must include memory_governance_run");
     assert.ok(secondTools.includes("memory_governance_run"), "second registry must include memory_governance_run");
   } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
 
 test("register() registers CLI only on the first api object (must not duplicate central registry)", async () => {
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -181,6 +225,8 @@ test("register() registers CLI only on the first api object (must not duplicate 
     assert.ok(first.getCliCount() > 0, "first registry should have CLI registered");
     assert.equal(second.getCliCount(), 0, "second registry must NOT have CLI (would create duplicate command trees)");
   } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -191,6 +237,7 @@ test("register() calls registerService on every api object, not just the first o
   // When the gateway's startPluginServices() ran against the second registry,
   // it found no service → start() never fired → orchestrator never initialized.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -218,6 +265,8 @@ test("register() calls registerService on every api object, not just the first o
       "third registry must have service registered (simulates 3-4 loads per restart)",
     );
   } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -227,11 +276,14 @@ test("service.start() runs initialize exactly once even when called from multipl
   // Without it, multiple registries each calling start() would run
   // orchestrator.initialize() multiple times → double I/O, double cron, etc.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let first: ReturnType<typeof buildApi> | undefined;
+  let second: ReturnType<typeof buildApi> | undefined;
   try {
     const { default: plugin } = await import("../src/index.js");
 
-    const first = buildApi("first-start");
-    const second = buildApi("second-start");
+    first = buildApi("first-start");
+    second = buildApi("second-start");
 
     plugin.register(first.api as any);
     plugin.register(second.api as any);
@@ -268,6 +320,9 @@ test("service.start() runs initialize exactly once even when called from multipl
       "ENGRAM_SERVICE_STARTED was already true — second start() should have been a no-op",
     );
   } finally {
+    await safeStop(first?.api, second?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -283,11 +338,14 @@ test("concurrent start() calls await the in-flight init promise (regression: iss
   // The fix: start() stores the init Promise in ENGRAM_INIT_PROMISE; concurrent
   // calls await that promise rather than returning as soon as the boolean is set.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let first: ReturnType<typeof buildApi> | undefined;
+  let second: ReturnType<typeof buildApi> | undefined;
   try {
     const { default: plugin } = await import("../src/index.js");
 
-    const first = buildApi("concurrent-first");
-    const second = buildApi("concurrent-second");
+    first = buildApi("concurrent-first");
+    second = buildApi("concurrent-second");
 
     plugin.register(first.api as any);
     plugin.register(second.api as any);
@@ -314,6 +372,9 @@ test("concurrent start() calls await the in-flight init promise (regression: iss
       "ENGRAM_INIT_PROMISE must be null after init completes",
     );
   } finally {
+    await safeStop(first?.api, second?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -324,9 +385,11 @@ test("service.stop() clears ENGRAM_SERVICE_STARTED so restart cycles reinitializ
   // orchestrator.initialize() defers API calls lazily, so start() succeeds here
   // and isOwningRegistry is set to true — verifying the owning-registry stop path.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let stub: ReturnType<typeof buildApi> | undefined;
   try {
     const { default: plugin } = await import("../src/index.js");
-    const stub = buildApi("stop-restart");
+    stub = buildApi("stop-restart");
 
     plugin.register(stub.api as any);
 
@@ -342,6 +405,9 @@ test("service.stop() clears ENGRAM_SERVICE_STARTED so restart cycles reinitializ
       "ENGRAM_SERVICE_STARTED must be cleared by stop() so the next start() reinitializes",
     );
   } finally {
+    await safeStop(stub?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -356,11 +422,14 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
   // initialize() performs teardown. Secondary registries (start() returned early on
   // ENGRAM_SERVICE_STARTED) have didCountStart=false and return immediately.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let first: ReturnType<typeof buildApi> | undefined;
+  let second: ReturnType<typeof buildApi> | undefined;
   try {
     const { default: plugin } = await import("../src/index.js");
 
-    const first = buildApi("primary-running");
-    const second = buildApi("secondary-teardown");
+    first = buildApi("primary-running");
+    second = buildApi("secondary-teardown");
 
     plugin.register(first.api as any);
     plugin.register(second.api as any);
@@ -387,6 +456,9 @@ test("secondary registry stop() does not clear ENGRAM_SERVICE_STARTED while prim
       "secondary registry stop() must not clear ENGRAM_SERVICE_STARTED (didCountStart=false → early return)",
     );
   } finally {
+    await safeStop(first?.api, second?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -401,11 +473,14 @@ test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD 
   // when stop() is called while init is in-flight) is handled by stop() checking
   // ENGRAM_INIT_PROMISE before clearing the guard — not by setting it in the IIFE.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let primary: ReturnType<typeof buildApi> | undefined;
+  let secondary: ReturnType<typeof buildApi> | undefined;
   try {
     const { default: plugin } = await import("../src/index.js");
 
-    const primary = buildApi("primary-full-stop");
-    const secondary = buildApi("secondary-restart");
+    primary = buildApi("primary-full-stop");
+    secondary = buildApi("secondary-restart");
 
     plugin.register(primary.api as any);
     plugin.register(secondary.api as any);
@@ -450,6 +525,9 @@ test("full stop then secondary start: SERVICE_STARTED is true, REGISTERED_GUARD 
       "REGISTERED_GUARD stays false after secondary init following a full stop — next register() re-registers CLI",
     );
   } finally {
+    await safeStop(primary?.api, secondary?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -468,10 +546,13 @@ test("stop-during-init without takeover: REGISTERED_GUARD stays set — original
   // A fresh register() after the abort therefore sees isFirstRegistration=false
   // and correctly skips CLI registration — the original CLI remains the only one.
   const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let primary: ReturnType<typeof buildApi> | undefined;
+  let fresh: ReturnType<typeof buildApi> | undefined;
   try {
     const { default: plugin } = await import("../src/index.js");
 
-    const primary = buildApi("primary-aborted");
+    primary = buildApi("primary-aborted");
 
     plugin.register(primary.api as any);
 
@@ -508,7 +589,7 @@ test("stop-during-init without takeover: REGISTERED_GUARD stays set — original
 
     // A fresh register() sees GUARD=true → isFirstRegistration=false → CLI is
     // NOT re-registered (the original CLI from the first register() is still live).
-    const fresh = buildApi("fresh-after-abort");
+    fresh = buildApi("fresh-after-abort");
     plugin.register(fresh.api as any);
 
     assert.equal(
@@ -531,6 +612,9 @@ test("stop-during-init without takeover: REGISTERED_GUARD stays set — original
       "SERVICE_STARTED should be true after fresh start() completes",
     );
   } finally {
+    await safeStop(primary?.api, fresh?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
   }
 });
@@ -604,6 +688,10 @@ process.stdout.write("PASS\\n");
     encoding: "utf8",
     timeout: 20_000,
     cwd: join(__dirname, ".."),
+    env: {
+      ...process.env,
+      [DISABLE_REGISTER_MIGRATION_ENV]: "1",
+    },
   });
 
   if (result.error) throw result.error;

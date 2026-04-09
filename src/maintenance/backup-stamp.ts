@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/maintenance/backup-stamp.js";
+export * from "../../packages/remnic-core/src/maintenance/backup-stamp.js";

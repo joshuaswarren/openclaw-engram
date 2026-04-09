@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/runtime/child-process.js";
+export * from "../../packages/remnic-core/src/runtime/child-process.js";

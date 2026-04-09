@@ -3,7 +3,7 @@ name: engram:memory
 description: Manage Engram memories — store, recall, search
 ---
 
-Engram memory commands for Codex:
+Remnic memory commands for Codex:
 
 - **Store a memory**: Use the `engram_memory_store` MCP tool to save information
 - **Recall memories**: Use the `engram_recall` MCP tool with a natural language query

@@ -1,15 +1,15 @@
 {
-  "name": "@engram/plugin-claude-code",
+  "name": "@remnic/plugin-claude-code",
   "version": "0.1.0",
-  "description": "Engram memory plugin for Claude Code — hooks, skills, MCP integration",
+  "description": "Remnic memory plugin for Claude Code — hooks, skills, MCP integration",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/plugin-claude-code"
   },
-  "keywords": ["engram", "memory", "claude-code", "plugin", "ai-agent"],
+  "keywords": ["remnic", "memory", "claude-code", "plugin", "ai-agent"],
   "private": true,
   "files": [
     ".claude-plugin",

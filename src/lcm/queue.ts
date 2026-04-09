@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/lcm/queue.js";
+export * from "../../packages/remnic-core/src/lcm/queue.js";

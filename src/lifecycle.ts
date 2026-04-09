@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/lifecycle.js";
+export * from "../packages/remnic-core/src/lifecycle.js";

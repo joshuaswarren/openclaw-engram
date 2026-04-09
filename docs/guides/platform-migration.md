@@ -1,6 +1,6 @@
 # Platform Migration Guide (v9.1.36+)
 
-This guide covers the migration from the single-package Engram plugin to the platform architecture introduced in v9.1.36. If you are an existing OpenClaw user upgrading through the normal plugin update path, most changes are transparent.
+This guide covers the migration from the old single-package Engram plugin to the Remnic platform architecture introduced in v9.1.36. If you are an existing OpenClaw user upgrading through the normal plugin update path, most changes are transparent.
 
 ---
 
@@ -16,17 +16,17 @@ packages/
   cli/               — Standalone CLI binary (15+ commands)
   server/            — Standalone HTTP/MCP server
   bench/             — Benchmarks + CI regression gates
-  hermes-provider/   — HTTP client for remote Engram instances
+  hermes-provider/   — HTTP client for remote Remnic instances
 ```
 
 ### New Capabilities
 
 | Milestone | Capability | Description |
 |-----------|------------|-------------|
-| M0 | Monorepo packages | `@engram/core`, `@engram/cli`, `@engram/server`, `@engram/bench`, `@engram/hermes-provider` |
+| M0 | Monorepo packages | `@remnic/core`, `@remnic/cli`, `@remnic/server`, `@remnic/bench`, `@remnic/hermes-provider` |
 | M0 | Schema validation | `access-schema.ts` with Zod validates all request bodies before processing |
 | M0 | Structured error responses | Consistent JSON error envelopes with `error`, `code`, `details` fields and `X-Request-Id` correlation IDs |
-| M1 | Hermes provider | `@engram/hermes-provider` — lightweight HTTP client for connecting to remote Engram instances |
+| M1 | Hermes provider | `@remnic/hermes-provider` — lightweight HTTP client for connecting to remote Remnic instances |
 | M1 | Standalone CLI | 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree`, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark` |
 | M2 | Workspace tree projection | Context tree generation + validation + live watch mode (`engram tree generate\|watch\|validate`) |
 | M3 | Onboarding + Curation | Project ingestion with language detection, doc discovery, and ingestion planning; file curation with duplicate/contradiction detection |
@@ -39,20 +39,20 @@ packages/
 ### Package Architecture
 
 ```
-@engram/core            — Framework-agnostic engine (re-exports orchestrator, config, storage, search, extraction, graph, trust zones)
-@engram/cli             — Standalone CLI binary (15+ commands)
-@engram/server          — Standalone HTTP/MCP server
-@engram/bench           — Benchmarks + CI regression gates
-@engram/hermes-provider — HTTP client for remote Engram instances
+@remnic/core            — Framework-agnostic engine (re-exports orchestrator, config, storage, search, extraction, graph, trust zones)
+@remnic/cli             — Standalone CLI binary (15+ commands)
+@remnic/server          — Standalone HTTP/MCP server
+@remnic/bench           — Benchmarks + CI regression gates
+@remnic/hermes-provider — HTTP client for remote Remnic instances
 ```
 
-The `@engram/core` package has zero OpenClaw imports and can be consumed by any host adapter (CLI, HTTP server, MCP server, custom integrations).
+The `@remnic/core` package has zero OpenClaw imports and can be consumed by any host adapter (CLI, HTTP server, MCP server, custom integrations).
 
 ---
 
 ## What Stayed the Same
 
-The following integration points are unchanged. If you only use Engram through OpenClaw, your setup continues to work without modification.
+The following integration points are unchanged. If you only used Engram through OpenClaw, your setup continues to work without modification.
 
 | Integration Point | Status |
 |---|---|
@@ -110,22 +110,22 @@ All standalone features are optional. OpenClaw users can continue using the plug
 - Running Engram without OpenClaw
 - CI/CD benchmark regression gates
 - Scripted memory operations
-- Connecting to remote Engram instances via Hermes
+- Connecting to remote Remnic instances via Hermes
 
 ### Install Standalone CLI
 
 ```bash
 # Build from source (required for daemon mode)
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram && npm ci && npm run build
-cd packages/cli && npm link    # Makes `engram` available on PATH
+git clone https://github.com/joshuaswarren/remnic.git
+cd remnic && npm ci && npm run build
+cd packages/remnic-cli && npm link    # Makes `remnic` available on PATH
 cd ../..
 ```
 
 ### Initialize Configuration
 
 ```bash
-engram init
+remnic init
 # Creates engram.config.json in the current directory
 ```
 
@@ -133,7 +133,7 @@ Set required environment variables:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
 # Optional: override memory location (default: ~/.engram/memory for standalone, ~/.openclaw/workspace/memory/local for OpenClaw users)
 # export ENGRAM_MEMORY_DIR=/path/to/custom/memory
 ```
@@ -141,15 +141,15 @@ export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
 ### Start Standalone Server
 
 ```bash
-engram daemon start
-engram status          # verify it is running
-engram daemon stop     # when done
+remnic daemon start
+remnic status          # verify it is running
+remnic daemon stop     # when done
 ```
 
 ### Query with Tier Breakdown
 
 ```bash
-engram query "what did I decide about the API?" --explain
+remnic query "what did I decide about the API?" --explain
 ```
 
 Output shows which retrieval tiers were used and their latencies:
@@ -167,78 +167,78 @@ Total duration: 142ms
 
 ```bash
 # First run — establishes baseline
-engram benchmark run
+remnic benchmark run
 
 # Subsequent runs — checks for regressions
-engram benchmark check
+remnic benchmark check
 
 # Detailed tier breakdown
-engram benchmark run --explain
+remnic benchmark run --explain
 
 # Generate report
-engram benchmark report --report=benchmarks/report.json
+remnic benchmark report --report=benchmarks/report.json
 ```
 
 ### Manage Spaces
 
 ```bash
 # List spaces
-engram space list
+remnic space list
 
 # Create a project space
-engram space create my-project project
+remnic space create my-project project
 
 # Switch active space
-engram space switch <space-id>
+remnic space switch <space-id>
 
 # Push memories between spaces
-engram space push <source-id> <target-id>
+remnic space push <source-id> <target-id>
 
 # Audit trail
-engram space audit
+remnic space audit
 ```
 
 ### Onboard a Project
 
 ```bash
 # Analyze a project directory
-engram onboard ~/src/my-project --json
+remnic onboard ~/src/my-project --json
 
 # Curate specific files into memory
-engram curate ~/src/my-project/docs/ --json
+remnic curate ~/src/my-project/docs/ --json
 
 # Review ingested content
-engram review list
-engram review approve <id>
+remnic review list
+remnic review approve <id>
 ```
 
 ### Diff-Aware Sync
 
 ```bash
 # One-time sync
-engram sync run --source ~/src/my-project
+remnic sync run --source ~/src/my-project
 
 # Continuous watch
-engram sync watch --source ~/src/my-project
+remnic sync watch --source ~/src/my-project
 ```
 
 ### Find Duplicates
 
 ```bash
-engram dedup --json
+remnic dedup --json
 ```
 
 ### Manage Connectors
 
 ```bash
 # List available and installed connectors
-engram connectors list
+remnic connectors list
 
 # Install a connector
-engram connectors install <connector-id>
+remnic connectors install <connector-id>
 
 # Diagnose connector health
-engram connectors doctor <connector-id>
+remnic connectors doctor <connector-id>
 ```
 
 ---
@@ -250,16 +250,16 @@ If the upgrade causes issues:
 **OpenClaw plugin users** — pin to the previous version:
 
 ```bash
-openclaw plugins install @joshuaswarren/openclaw-engram@<previous-version> --pin
+openclaw plugins install @remnic/plugin-openclaw@<previous-version> --pin
 ```
 
-**Standalone CLI users** — the root npm package (`@joshuaswarren/openclaw-engram`) only exposes `engram-access`, not the full `engram` CLI. Full CLI rollback requires building from source at the desired version tag:
+**Standalone CLI users** — the legacy root npm package (`@joshuaswarren/openclaw-engram`) only exposes `engram-access`, not the full CLI. Full CLI rollback requires building from source at the desired version tag:
 
 ```bash
-cd openclaw-engram
+cd remnic
 git fetch --all && git checkout <previous-version-tag>
 npm ci && npm run build
-cd packages/cli && npm link    # re-links `engram` binary to this version
+cd packages/remnic-cli && npm link    # re-links the CLI binary to this version
 ```
 
 Memory storage is never modified by an upgrade, so rollback is safe and does not lose data.

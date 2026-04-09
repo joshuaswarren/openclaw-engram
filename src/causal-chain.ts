@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/causal-chain.js";
+export * from "../packages/remnic-core/src/causal-chain.js";

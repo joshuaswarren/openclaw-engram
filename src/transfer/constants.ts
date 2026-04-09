@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/transfer/constants.js";
+export * from "../../packages/remnic-core/src/transfer/constants.js";

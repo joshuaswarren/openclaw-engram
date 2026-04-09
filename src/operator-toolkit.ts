@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/operator-toolkit.js";
+export * from "../packages/remnic-core/src/operator-toolkit.js";

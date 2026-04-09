@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("orchestrator scopes graph indexes to storage namespace roots", () => {
-  const source = readFileSync(resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"), "utf-8");
+  const source = readFileSync(resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"), "utf-8");
 
   assert.match(
     source,

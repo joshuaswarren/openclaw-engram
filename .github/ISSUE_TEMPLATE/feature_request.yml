@@ -1,5 +1,5 @@
 name: Feature Request
-description: Propose an enhancement for openclaw-engram
+description: Propose an enhancement for Remnic
 labels: [enhancement]
 body:
   - type: textarea

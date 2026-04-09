@@ -81,8 +81,8 @@ The plugin reads its token from `~/.engram/tokens.json` and connects to EMO at `
 Override the server address:
 
 ```bash
-export ENGRAM_HOST=192.168.1.100
-export ENGRAM_PORT=4318
+export REMNIC_HOST=192.168.1.100
+export REMNIC_PORT=4318
 ```
 
 ## Troubleshooting

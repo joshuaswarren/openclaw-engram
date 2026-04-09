@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/session-observer-bands.js";
+export * from "../packages/remnic-core/src/session-observer-bands.js";

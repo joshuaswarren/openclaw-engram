@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/trust-zones.js";
+export * from "../packages/remnic-core/src/trust-zones.js";

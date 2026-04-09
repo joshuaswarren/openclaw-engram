@@ -1,28 +1,28 @@
 # Hermes Agent Plugin
 
-Engram MemoryProvider for Hermes Agent. The deepest integration — memory is injected into every LLM call and conversation turns are observed automatically.
+Remnic MemoryProvider for Hermes Agent. The deepest integration — memory is injected into every LLM call and conversation turns are observed automatically.
 
 ## Installation
 
 ### Option A: pip (recommended)
 
 ```bash
-pip install engram-hermes
-engram connectors install hermes
+pip install remnic-hermes
+remnic connectors install hermes
 ```
 
 ### Option B: Manual
 
 ```bash
 # Copy to Hermes plugins directory
-cp -r packages/plugin-hermes/engram_hermes ~/.hermes/plugins/engram/
+cp -r packages/plugin-hermes/remnic_hermes ~/.hermes/plugins/engram/
 
 # Or install as development plugin
 cd packages/plugin-hermes
 pip install -e .
 ```
 
-The `engram connectors install hermes` command:
+The `remnic connectors install hermes` command:
 1. Starts the EMO daemon if not running
 2. Generates a dedicated auth token
 3. Writes Hermes `config.yaml` entry
@@ -54,7 +54,7 @@ The plugin also registers tools the agent can call directly:
 
 ## Why MemoryProvider > MCP
 
-MCP gives Hermes tools to call, but the agent must choose to call them. The MemoryProvider injects context automatically — the agent doesn't need to know about Engram at all. Memories appear in its context on every turn.
+MCP gives Hermes tools to call, but the agent must choose to call them. The MemoryProvider injects context automatically — the agent doesn't need to know about Remnic at all. Memories appear in its context on every turn.
 
 | Aspect | MCP Only | MemoryProvider |
 |--------|----------|---------------|
@@ -69,14 +69,14 @@ MCP gives Hermes tools to call, but the agent must choose to call them. The Memo
 
 ```yaml
 memory_providers:
-  - name: engram
-    module: engram_hermes
+  - name: remnic
+    module: remnic_hermes
     config:
       host: "127.0.0.1"
       port: 4318
-      token_env: "ENGRAM_AUTH_TOKEN"    # reads from env
+      token_env: "REMNIC_AUTH_TOKEN"    # reads from env
       # Or inline:
-      # token: "engram_hm_..."
+      # token: "remnic_hm_..."
       namespace: "default"               # optional: scope to a profile
       recall_top_k: 12                   # memories per turn
       recall_mode: "auto"                # auto, minimal, full
@@ -85,14 +85,14 @@ memory_providers:
 ### Environment Variables
 
 ```bash
-export ENGRAM_AUTH_TOKEN="engram_hm_..."   # if using token_env
-export ENGRAM_HOST="127.0.0.1"             # optional override
-export ENGRAM_PORT="4318"                  # optional override
+export REMNIC_AUTH_TOKEN="remnic_hm_..."   # if using token_env
+export REMNIC_HOST="127.0.0.1"             # optional override
+export REMNIC_PORT="4318"                  # optional override
 ```
 
 ## Hermes Profile Isolation
 
-Hermes profiles isolate agent state under `~/.hermes/profiles/<name>/`. Each profile can use a different Engram namespace:
+Hermes profiles isolate agent state under `~/.hermes/profiles/<name>/`. Each profile can use a different Remnic namespace:
 
 ```yaml
 # Profile: research
@@ -112,12 +112,12 @@ Or use the default namespace to share memories across profiles.
 
 ## Troubleshooting
 
-### "MemoryProvider engram failed to initialize"
+### "MemoryProvider remnic failed to initialize"
 
 EMO daemon isn't running:
 
 ```bash
-engram daemon status
+remnic daemon status
 engram daemon install
 ```
 
@@ -135,12 +135,12 @@ Ensure the package is installed in the same Python environment as Hermes:
 
 ```bash
 hermes --version
-pip show engram-hermes
+pip show remnic-hermes
 ```
 
 ## Uninstall
 
 ```bash
-pip uninstall engram-hermes
+pip uninstall remnic-hermes
 engram connectors remove hermes
 ```

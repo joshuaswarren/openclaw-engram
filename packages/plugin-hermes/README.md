@@ -1,4 +1,4 @@
-# engram-hermes
+# remnic-hermes
 
 Engram MemoryProvider plugin for [Hermes Agent](https://github.com/hermes-agent/hermes).
 
@@ -7,7 +7,7 @@ Provides automatic memory recall on every LLM turn and observation of every resp
 ## Installation
 
 ```bash
-pip install engram-hermes
+pip install remnic-hermes
 ```
 
 Or via the Engram CLI:
@@ -22,7 +22,7 @@ Add to your Hermes `config.yaml`:
 
 ```yaml
 plugins:
-  - engram_hermes
+  - remnic_hermes
 
 engram:
   host: "127.0.0.1"

@@ -1,6 +1,6 @@
-"""Basic tests for engram_hermes config module."""
+"""Basic tests for remnic_hermes config module."""
 
-from engram_hermes.config import EngramHermesConfig
+from remnic_hermes.config import EngramHermesConfig
 
 
 def test_default_config():

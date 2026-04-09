@@ -103,10 +103,10 @@ Create the hook script at `~/.codex/scripts/engram-session-recall.sh`:
 # Codex SessionStart hook: recall Engram context at session start.
 set -euo pipefail
 
-ENGRAM_HOST="${ENGRAM_HOST:-127.0.0.1}"
-ENGRAM_PORT="${ENGRAM_PORT:-4318}"
-ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
-ENGRAM_URL="http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/recall"
+REMNIC_HOST="${REMNIC_HOST:-127.0.0.1}"
+REMNIC_PORT="${REMNIC_PORT:-4318}"
+REMNIC_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
+REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/recall"
 
 # Read hook input from stdin
 INPUT="$(cat)"
@@ -200,7 +200,7 @@ You can add instructions to your `AGENTS.md` (global or project-level) to guide 
 ```markdown
 ## Memory
 
-Engram is available as an MCP server for long-term memory.
+Remnic is available as an MCP server for long-term memory.
 
 - Use `engram.recall` for targeted lookups on specific topics.
 - Use `engram.memory_store` to persist durable facts, preferences, decisions, and corrections.
@@ -229,9 +229,9 @@ If Engram runs on a different machine than Codex (e.g., a home server), use a VP
 
 1. Install Tailscale on both machines
 2. Use the Engram host's Tailscale IP in `config.toml` and the hook script
-3. Set `ENGRAM_HOST` in the hook script to the Tailscale IP
+3. Set `REMNIC_HOST` in the hook script to the Tailscale IP
 
-The hook script gracefully degrades — if the Engram server is unreachable or the token is missing, it skips recall and lets the session proceed normally.
+The hook script gracefully degrades — if the Remnic server is unreachable or the token is missing, it skips recall and lets the session proceed normally.
 
 ## Verification
 
@@ -257,4 +257,4 @@ After setup, start a new Codex session and check:
 - Check that `OPENCLAW_ENGRAM_ACCESS_TOKEN` is set in your shell environment.
 
 **Slow session start:**
-- The hook has a 15-second timeout. If the Engram server is slow to respond, increase the `timeout` value in `hooks.json` or reduce `topK` in the recall query.
+- The hook has a 15-second timeout. If the Remnic server is slow to respond, increase the `timeout` value in `hooks.json` or reduce `topK` in the recall query.

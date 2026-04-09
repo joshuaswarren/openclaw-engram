@@ -1,4 +1,4 @@
-# Contributing to Engram
+# Contributing to Remnic
 
 ## Monorepo Workflow
 
@@ -11,8 +11,8 @@
 ### Setup
 
 ```bash
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram
+git clone https://github.com/joshuaswarren/remnic.git
+cd remnic
 pnpm install
 pnpm run build
 pnpm test
@@ -22,13 +22,13 @@ pnpm test
 
 ```bash
 # Build one package
-pnpm run build --filter=@engram/core
+pnpm run build --filter=@remnic/core
 
 # Test one package
-pnpm test --filter=@engram/server
+pnpm test --filter=@remnic/server
 
 # Type-check one package
-pnpm run check-types --filter=@engram/cli
+pnpm run check-types --filter=@remnic/cli
 ```
 
 ### Running Everything
@@ -51,10 +51,10 @@ pnpm run check-types    # type-checks all packages
 
 | Published name | Directory |
 |---------------|-----------|
-| `@engram/core` | `packages/engram-core/` |
-| `@engram/server` | `packages/engram-server/` |
-| `openclaw-engram` | `packages/plugin-openclaw/` |
-| `engram-hermes` (PyPI) | `packages/plugin-hermes/` |
+| `@remnic/core` | `packages/remnic-core/` |
+| `@remnic/server` | `packages/remnic-server/` |
+| `@remnic/plugin-openclaw` | `packages/plugin-openclaw/` |
+| `remnic-hermes` (PyPI) | `packages/plugin-hermes/` |
 
 ### Dependencies Between Packages
 
@@ -63,7 +63,7 @@ Use workspace protocol in `package.json`:
 ```json
 {
   "dependencies": {
-    "@engram/core": "workspace:*"
+    "@remnic/core": "workspace:*"
   }
 }
 ```
@@ -111,7 +111,7 @@ test("description of behavior", async () => {
 
 ```bash
 pnpm test                              # all tests
-pnpm test --filter=@engram/core        # one package
+pnpm test --filter=@remnic/core        # one package
 npx tsx --test tests/specific.test.ts  # one file
 ```
 

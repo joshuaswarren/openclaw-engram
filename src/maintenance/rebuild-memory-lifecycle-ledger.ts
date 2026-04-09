@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/maintenance/rebuild-memory-lifecycle-ledger.js";
+export * from "../../packages/remnic-core/src/maintenance/rebuild-memory-lifecycle-ledger.js";

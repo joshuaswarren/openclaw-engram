@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/compat/checks.js";
+export * from "../../packages/remnic-core/src/compat/checks.js";

@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/policy-runtime.js";
+export * from "../packages/remnic-core/src/policy-runtime.js";

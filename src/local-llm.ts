@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/local-llm.js";
+export * from "../packages/remnic-core/src/local-llm.js";

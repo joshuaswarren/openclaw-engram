@@ -152,7 +152,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     params: {},
   });
   const listed = (tools?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
-  assert.deepEqual(listed, [
+  const legacyListed = [
     "engram.recall",
     "engram.recall_explain",
     "engram.day_summary",
@@ -197,7 +197,9 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.memory_feedback",
     "engram.memory_promote",
     "engram.context_checkpoint",
-  ]);
+  ];
+  const canonicalListed = legacyListed.map((name) => name.replace(/^engram\./, "remnic."));
+  assert.deepEqual(listed, legacyListed.flatMap((name, index) => [canonicalListed[index], name]));
 
   const recall = await server.handleRequest({
     jsonrpc: "2.0",

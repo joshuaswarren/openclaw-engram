@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/conversation-index/faiss-adapter.js";
+export * from "../../packages/remnic-core/src/conversation-index/faiss-adapter.js";

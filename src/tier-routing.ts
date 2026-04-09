@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/tier-routing.js";
+export * from "../packages/remnic-core/src/tier-routing.js";

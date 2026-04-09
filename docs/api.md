@@ -2,7 +2,7 @@
 
 ## Standalone CLI Commands
 
-The `engram` CLI provides 15+ commands for managing memory outside of OpenClaw. Install with `npm install -g @joshuaswarren/openclaw-engram`.
+The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder during the rename window, and the standalone commands below are still available through either name.
 
 | Command | Description |
 |---------|-------------|
@@ -22,7 +22,7 @@ The `engram` CLI provides 15+ commands for managing memory outside of OpenClaw. 
 | `engram space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
 | `engram benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
 
-All commands accept `--json` for machine-readable output. The `engram` binary resolves configuration from:
+All commands accept `--json` for machine-readable output. The CLI resolves configuration from:
 
 1. `ENGRAM_CONFIG_PATH` environment variable
 2. `./engram.config.json` in the current directory
@@ -34,7 +34,7 @@ See the [Platform Migration Guide](guides/platform-migration.md) for detailed se
 
 ## Universal Access Layer
 
-Engram exposes one shared local service layer through both HTTP and MCP adapters. The HTTP server is bearer-token protected by default and binds to loopback unless you override `agentAccessHttp.host`.
+Remnic exposes one shared local service layer through both HTTP and MCP adapters. The HTTP server is bearer-token protected by default and binds to loopback unless you override `agentAccessHttp.host`.
 
 ### HTTP
 

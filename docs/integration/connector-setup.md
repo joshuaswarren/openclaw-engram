@@ -1,23 +1,23 @@
 # Connector Setup Guide
 
-Connect Engram memory to your coding tools. All connectors use the same Engram HTTP/MCP server — you just need to point your tool at it.
+Connect Remnic memory to your coding tools. All connectors use the same Remnic HTTP/MCP server — you just need to point your tool at it.
 
 ## Prerequisites
 
-Start the Engram server (one of these):
+Start the Remnic server (one of these):
 
 ```bash
 # Option A: OpenClaw plugin mode (if already using OpenClaw)
-openclaw engram access http-serve --port 4318 --token "$ENGRAM_AUTH_TOKEN"
+openclaw engram access http-serve --port 4318 --token "$REMNIC_AUTH_TOKEN"
 
 # Option B: Standalone daemon
-engram daemon start
+remnic daemon start
 ```
 
 Verify it's running:
 
 ```bash
-curl -H "Authorization: Bearer $ENGRAM_AUTH_TOKEN" http://localhost:4318/engram/v1/health
+curl -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" http://localhost:4318/engram/v1/health
 ```
 
 ---
@@ -33,7 +33,7 @@ Add to `~/.claude.json` (or project `.mcp.json`):
       "type": "http",
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}",
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}",
         // Optional: scope memory to a project/team namespace
         "X-Engram-Namespace": "my-project",
         "X-Engram-Principal": "my-team"
@@ -58,7 +58,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.engram]
 url = "http://127.0.0.1:4318/mcp"
-bearer_token_env_var = "ENGRAM_AUTH_TOKEN"
+bearer_token_env_var = "REMNIC_AUTH_TOKEN"
 # Optional: scope memory to a project/team namespace
 http_headers = { "X-Engram-Namespace" = "my-project", "X-Engram-Principal" = "codex-agent" }
 ```
@@ -81,7 +81,7 @@ Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally
     "engram": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -104,7 +104,7 @@ GitHub Copilot supports MCP servers in VS Code. Add to your VS Code `settings.js
     "engram": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -124,7 +124,7 @@ Add to your Cline MCP settings (VS Code Settings > Cline > MCP Servers):
   "engram": {
     "url": "http://localhost:4318/mcp",
     "headers": {
-      "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+      "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
     }
   }
 }
@@ -144,7 +144,7 @@ Add to your Roo Code MCP settings:
     "engram": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -165,7 +165,7 @@ Add to your Windsurf MCP settings (Settings > MCP):
     "engram": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -186,7 +186,7 @@ Add to your Amp configuration:
     "engram": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -204,7 +204,7 @@ Replit Agent supports MCP natively via the **Integrations pane** (HTTP transport
 ### Option A: MCP (recommended)
 
 1. In your Replit workspace, open **Integrations** > **Add MCP server**
-2. Enter the Engram server URL: `https://your-engram-server.com/mcp`
+2. Enter the Remnic server URL: `https://your-engram-server.com/mcp`
 3. Add custom headers:
    - `Authorization`: `Bearer <your-engram-token>`
    - `X-Engram-Client-Id`: `replit` (enables auto-detection)
@@ -216,15 +216,15 @@ Replit Agent will auto-discover all Engram MCP tools and use them contextually.
 ### Option B: HTTP API (for custom agent code)
 
 ```bash
-ENGRAM_API_URL=https://your-engram-server.com/engram/v1
-ENGRAM_AUTH_TOKEN=your-token-here
+REMNIC_API_URL=https://your-remnic-server.com/engram/v1
+REMNIC_AUTH_TOKEN=your-token-here
 ```
 
 ```typescript
-const response = await fetch(`${ENGRAM_API_URL}/recall`, {
+const response = await fetch(`${REMNIC_API_URL}/recall`, {
   method: "POST",
   headers: {
-    "Authorization": `Bearer ${ENGRAM_AUTH_TOKEN}`,
+    "Authorization": `Bearer ${REMNIC_AUTH_TOKEN}`,
     "Content-Type": "application/json",
     "X-Engram-Client-Id": "replit",
   },
@@ -251,7 +251,7 @@ mcp_servers:
   engram:
     url: "http://localhost:4318/mcp"
     headers:
-      Authorization: "Bearer ${ENGRAM_AUTH_TOKEN}"
+      Authorization: "Bearer ${REMNIC_AUTH_TOKEN}"
       X-Engram-Client-Id: "hermes"
       # Optional: scope memory to a Hermes profile
       X-Engram-Namespace: "my-profile"
@@ -263,7 +263,7 @@ mcp_servers:
 
 Hermes v0.7.0+ has a Python `MemoryProvider` protocol (`initialize`, `enrich_turn`, `sync_turn`, `shutdown`) that provides tighter integration than MCP alone — including automatic turn-level memory sync and context enrichment.
 
-See the [Hermes MemoryProvider guide](../guides/hermes-setup.md) for the `@engram/hermes-provider` plugin setup.
+See the [Hermes MemoryProvider guide](../guides/hermes-setup.md) for the `@remnic/hermes-provider` plugin setup.
 
 **Capabilities:** observe, recall, store, search, entity sync, turn-level memory
 
@@ -352,22 +352,22 @@ engram connectors remove claude-code
 
 ### Connection refused
 
-The Engram server isn't running. Start it:
+The Remnic server isn't running. Start it:
 
 ```bash
 engram daemon start    # standalone
 # or
-openclaw engram access http-serve --port 4318 --token "$ENGRAM_AUTH_TOKEN"  # OpenClaw
+openclaw engram access http-serve --port 4318 --token "$REMNIC_AUTH_TOKEN"  # OpenClaw
 ```
 
 ### 401 Unauthorized
 
-Token mismatch. Verify `ENGRAM_AUTH_TOKEN` matches between server and client config.
+Token mismatch. Verify `REMNIC_AUTH_TOKEN` matches between server and client config.
 
 ### MCP tools not showing up
 
 1. Restart your tool after config changes
-2. Check the MCP endpoint responds: `curl -H "Authorization: Bearer $ENGRAM_AUTH_TOKEN" -X POST http://localhost:4318/mcp -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'`
+2. Check the MCP endpoint responds: `curl -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" -X POST http://localhost:4318/mcp -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'`
 3. Some tools require explicit MCP enable in settings
 
 ### Slow recall

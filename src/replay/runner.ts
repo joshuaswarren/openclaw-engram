@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/replay/runner.js";
+export * from "../../packages/remnic-core/src/replay/runner.js";

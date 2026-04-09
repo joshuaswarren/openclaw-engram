@@ -1,8 +1,8 @@
 # Hermes Integration Guide
 
-Connect an LLM agent to Engram via HTTP.
+Connect an LLM agent to Remnic via HTTP.
 
- Hermes is a lightweight HTTP client for connecting LLM agents to Engram's memory system without requiring a full Engram installation.
+ Hermes is a lightweight HTTP client for connecting LLM agents to Remnic's memory system without requiring a full Remnic installation.
 
 ## Why Hermes?
 
@@ -12,21 +12,21 @@ Hermes is designed for external tool integration. It It works alongside existing
 
 ### As a standalone npm package (v9.1.36+)
 
-Hermes is available as `@engram/hermes-provider` for use in any Node.js project:
+Hermes is available as `@remnic/hermes-provider` for use in any Node.js project:
 
 ```bash
-npm install @engram/hermes-provider
+npm install @remnic/hermes-provider
 ```
 
-### Alternative: via the Engram CLI
+### Alternative: via the Remnic CLI
 
-If you have the `engram` CLI installed, you can use `engram daemon start` to launch the server that Hermes connects to, rather than running `openclaw engram access http-serve` manually.
+If you have the `remnic` CLI installed, you can use `remnic daemon start` to launch the server that Hermes connects to, rather than running `openclaw engram access http-serve` manually.
 
 ## Quick Start
 
 1. Install the package:
 ```bash
-npm install @engram/hermes-provider
+npm install @remnic/hermes-provider
 # or
 bun
 # or
@@ -34,7 +34,7 @@ bun
 
 2. Configure the client:
 ```typescript
-import { HermesClient } from "@engram/hermes-provider";
+import { HermesClient } from "@remnic/hermes-provider";
 
 const client = new HermesClient({
   baseUrl: "http://127.0.0.1:4318",
@@ -82,23 +82,23 @@ console.log(observeResult);
 
 ## Standalone Usage
 
-The `@engram/hermes-provider` package can be used without any Engram installation. Point it at any running Engram HTTP server:
+The `@remnic/hermes-provider` package can be used without any Remnic installation. Point it at any running Remnic HTTP server:
 
 ```typescript
-import { HermesClient } from "@engram/hermes-provider";
+import { HermesClient } from "@remnic/hermes-provider";
 
 const client = new HermesClient({
-  baseUrl: "https://engram.example.com",  // remote Engram instance
-  authToken: process.env.ENGRAM_TOKEN,
+  baseUrl: "https://remnic.example.com",  // remote Remnic instance
+  authToken: process.env.REMNIC_TOKEN,
 });
 
 const results = await client.recall("project decisions");
 ```
 
 This is useful for:
-- Connecting scripts and automation to a shared Engram instance
-- Building custom agent integrations without the full Engram engine
-- Connecting to a remote Engram server managed by another team
+- Connecting scripts and automation to a shared Remnic instance
+- Building custom agent integrations without the full Remnic engine
+- Connecting to a remote Remnic server managed by another team
 
 ## Error Handling
 Hermes retries failed requests with exponential backoff (default: 3 retries, 100ms delay). 429/529/1s timeout). 500 errors throw after 10 retries. Connection errors are logged. Graceful degradation -- returns empty results or null for the unknown errors.

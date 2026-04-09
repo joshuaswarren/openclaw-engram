@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/adapters/hermes.js";
+export * from "../../packages/remnic-core/src/adapters/hermes.js";

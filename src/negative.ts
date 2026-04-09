@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/negative.js";
+export * from "../packages/remnic-core/src/negative.js";

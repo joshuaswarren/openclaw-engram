@@ -2,7 +2,7 @@
 
 ## Platform Migration (v9.1.36+)
 
-The v9.1.36 release reorganizes Engram into a monorepo with five packages (`@engram/core`, `@engram/cli`, `@engram/server`, `@engram/bench`, `@engram/hermes-provider`) and adds a standalone CLI, spaces, benchmarks, onboarding, curation, diff-aware sync, connector management, and a retrieval tier system.
+The v9.1.36 release reorganizes the project into a Remnic monorepo with five packages (`@remnic/core`, `@remnic/cli`, `@remnic/server`, `@remnic/bench`, `@remnic/hermes-provider`) and adds a standalone CLI, spaces, benchmarks, onboarding, curation, diff-aware sync, connector management, and a retrieval tier system.
 
 **For most OpenClaw users, the upgrade is transparent** -- the npm entry point, config format, plugin manifest, memory storage, and all 60+ config options are unchanged.
 
@@ -12,11 +12,11 @@ The v9.1.36 release reorganizes Engram into a monorepo with five packages (`@eng
 
 ```bash
 openclaw engram doctor --json   # OpenClaw users
-engram doctor                    # standalone users
+remnic doctor                    # standalone users
 npm test                         # 672 tests pass
 ```
 
-**Rollback:** `openclaw plugins install @joshuaswarren/openclaw-engram@<previous-version> --pin`
+**Rollback:** `openclaw plugins install @remnic/plugin-openclaw@<previous-version> --pin`
 
 ---
 
@@ -53,7 +53,7 @@ Older docs sometimes used `research` as a preset label. The config parser still 
 
 The roadmap source of truth is now the GitHub Project:
 
-- [Engram Feature Roadmap](https://github.com/users/joshuaswarren/projects/1)
+- [Remnic Feature Roadmap](https://github.com/users/joshuaswarren/projects/1)
 
 Use `docs/plans/` only for architecture context after you already know the active project item.
 
@@ -77,7 +77,7 @@ packages/
   cli/               — Standalone CLI binary (15+ commands)
   server/            — Standalone HTTP/MCP server
   bench/             — Benchmarks + CI regression gates
-  hermes-provider/   — HTTP client for remote Engram instances
+  hermes-provider/   — HTTP client for remote Remnic instances
 ```
 
 New capabilities added across milestones M0-M7:
@@ -86,7 +86,7 @@ New capabilities added across milestones M0-M7:
 |------|-----------|
 | Schema validation | Zod-validated request/response schemas on all endpoints |
 | Structured errors | Consistent JSON errors with correlation IDs |
-| Hermes provider | Standalone HTTP client for remote Engram instances |
+| Hermes provider | Standalone HTTP client for remote Remnic instances |
 | Standalone CLI | 15+ commands for init, status, query, doctor, daemon, onboard, curate, review, sync, dedup, connectors, space, benchmark |
 | Onboarding | Language detection, doc discovery, ingestion planning |
 | Curation | Deliberate ingestion with dedup/contradiction detection |
@@ -113,15 +113,15 @@ These integration points are unchanged -- auto-update is safe:
 
 | Package | Description |
 |---------|-------------|
-| `@engram/core` | Framework-agnostic engine with zero OpenClaw imports |
-| `@engram/cli` | Standalone CLI binary with 15+ commands |
-| `@engram/server` | Standalone HTTP/MCP server |
-| `@engram/bench` | Benchmarks + CI regression gates |
-| `@engram/hermes-provider` | HTTP client for remote Engram instances |
+| `@remnic/core` | Framework-agnostic engine with zero OpenClaw imports |
+| `@remnic/cli` | Standalone CLI binary with 15+ commands |
+| `@remnic/server` | Standalone HTTP/MCP server |
+| `@remnic/bench` | Benchmarks + CI regression gates |
+| `@remnic/hermes-provider` | HTTP client for remote Remnic instances |
 
 ### New CLI Commands
 
-The standalone `engram` CLI provides these commands:
+The standalone `remnic` CLI provides these commands:
 
 | Command | Description |
 |---------|-------------|

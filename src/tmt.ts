@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/tmt.js";
+export * from "../packages/remnic-core/src/tmt.js";

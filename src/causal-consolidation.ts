@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/causal-consolidation.js";
+export * from "../packages/remnic-core/src/causal-consolidation.js";

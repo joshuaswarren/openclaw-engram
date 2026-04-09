@@ -32,10 +32,10 @@ jobs:
         run: pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
       - name: Type check
-        run: pip install mypy && mypy engram_hermes/ --ignore-missing-imports
+        run: pip install mypy && mypy remnic_hermes/ --ignore-missing-imports
 
       - name: Lint
-        run: pip install ruff && ruff check engram_hermes/
+        run: pip install ruff && ruff check remnic_hermes/
 
       - name: Tests
         run: pip install pytest pytest-asyncio && pytest tests/ -v
@@ -64,7 +64,7 @@ jobs:
           VERSION="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           ESCAPED="$(echo "$VERSION" | sed 's/\./\\./g')"
-          if pip index versions engram-hermes 2>/dev/null | grep -qE "(^|[ ,])${ESCAPED}([ ,]|$)"; then
+          if pip index versions remnic-hermes 2>/dev/null | grep -qE "(^|[ ,])${ESCAPED}([ ,]|$)"; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"

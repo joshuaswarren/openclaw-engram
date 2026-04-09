@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/transfer/import-md.js";
+export * from "../../packages/remnic-core/src/transfer/import-md.js";

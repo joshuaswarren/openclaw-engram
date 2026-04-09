@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/search/document-scanner.js";
+export * from "../../packages/remnic-core/src/search/document-scanner.js";

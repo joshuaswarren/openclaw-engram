@@ -1,14 +1,14 @@
 {
-  "name": "@engram/replit",
+  "name": "@remnic/replit",
   "version": "0.1.0",
-  "description": "Engram MCP connector for Replit Agent — setup instructions and token generator",
+  "description": "Remnic MCP connector for Replit Agent — setup instructions and token generator",
   "type": "module",
   "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/connector-replit"
   },
-  "keywords": ["engram", "memory", "replit", "mcp", "ai-agent"]
+  "keywords": ["remnic", "memory", "replit", "mcp", "ai-agent"]
 }

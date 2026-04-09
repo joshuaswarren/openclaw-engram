@@ -17,7 +17,7 @@ test("QmdClient.update() passes collection flag to qmd subprocess", async () => 
   const { resolve } = await import("node:path");
 
   const qmdSource = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "qmd.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "qmd.ts"),
     "utf-8",
   );
 
@@ -39,7 +39,7 @@ test("QmdClient.update() passes collection flag to qmd subprocess", async () => 
   assert.match(
     qmdSource,
     /runQmd(?:Command)?\(\["embed",\s*"-c",\s*this\.collection\]/,
-    "embed() should pass -c this.collection to scope embedding to the engram collection",
+    "embed() should pass -c this.collection to scope embedding to the remnic collection",
   );
 });
 

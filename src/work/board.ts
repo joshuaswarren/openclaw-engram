@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/work/board.js";
+export * from "../../packages/remnic-core/src/work/board.js";

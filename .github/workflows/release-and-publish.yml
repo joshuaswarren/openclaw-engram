@@ -305,9 +305,9 @@ jobs:
         run: |
           # Publish in dependency order: core first, then packages that depend on it
           PUBLISH_ORDER=(
-            packages/engram-core
-            packages/engram-server
-            packages/engram-cli
+            packages/remnic-core
+            packages/remnic-server
+            packages/remnic-cli
             packages/hermes-provider
             packages/plugin-openclaw
           )

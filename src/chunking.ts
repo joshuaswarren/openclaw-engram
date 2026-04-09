@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/chunking.js";
+export * from "../packages/remnic-core/src/chunking.js";

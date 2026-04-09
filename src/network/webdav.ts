@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/network/webdav.js";
+export * from "../../packages/remnic-core/src/network/webdav.js";

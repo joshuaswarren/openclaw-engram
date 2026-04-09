@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/behavior-learner.js";
+export * from "../packages/remnic-core/src/behavior-learner.js";

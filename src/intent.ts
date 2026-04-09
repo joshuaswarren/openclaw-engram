@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/intent.js";
+export * from "../packages/remnic-core/src/intent.js";

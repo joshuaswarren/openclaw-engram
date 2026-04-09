@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/summary-snapshot.js";
+export * from "../packages/remnic-core/src/summary-snapshot.js";

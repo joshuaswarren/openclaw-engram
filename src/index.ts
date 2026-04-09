@@ -33,6 +33,7 @@ import path from "node:path";
 import os from "node:os";
 import { createOpikExporter } from "./opik-exporter.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
+import { migrateFromEngram } from "./migrate/from-engram.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -53,6 +54,7 @@ const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
  * Set to null after init completes (success or failure) and cleared on stop().
  */
 const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
+const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
 // Shared helper: read and parse the full plugin entry from openclaw.json.
@@ -158,14 +160,28 @@ let sdkCaps: SdkCapabilities | undefined;
 
 const pluginDefinition = {
   id: "openclaw-engram",
-  name: "Engram (Local Memory)",
+  name: "Remnic (Local Memory)",
   description:
-    "Local-first memory plugin. Uses GPT-5.2 for intelligent extraction and QMD for storage/retrieval.",
+    "Local-first memory plugin. Uses GPT-5.2 for intelligent extraction and hybrid local retrieval.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
+
+    const disableRegisterMigration =
+      readEnvVar("REMNIC_DISABLE_REGISTER_MIGRATION") === "1" ||
+      readEnvVar("OPENCLAW_ENGRAM_DISABLE_REGISTER_MIGRATION") === "1";
+    if (!disableRegisterMigration) {
+      const migrationPromise = ((globalThis as any)[ENGRAM_MIGRATION_PROMISE] ??=
+        migrateFromEngram({
+          quiet: true,
+          logger: (message) => log.info(message),
+        }).catch((error) => {
+          log.warn(`register migration failed: ${error}`);
+        }));
+      void migrationPromise;
+    }
 
     // Detect SDK capabilities for dual-path hook registration.
     sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
@@ -348,7 +364,7 @@ const pluginDefinition = {
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
 
-        const memoryContextPrompt = `## Memory Context (Engram)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+        const memoryContextPrompt = `## Memory Context (Remnic)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
 
         log.debug(
           `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
@@ -463,7 +479,7 @@ const pluginDefinition = {
                 ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
                 : context;
             cachedMemoryBySession.set(sessionKey, [
-              "## Memory Context (Engram)",
+              "## Memory Context (Remnic)",
               "",
               trimmed,
               "",

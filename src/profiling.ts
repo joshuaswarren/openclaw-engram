@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/profiling.js";
+export * from "../packages/remnic-core/src/profiling.js";
