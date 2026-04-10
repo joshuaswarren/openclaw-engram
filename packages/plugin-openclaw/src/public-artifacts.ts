@@ -12,7 +12,7 @@
  * is explicitly excluded.
  */
 
-import { readdir, access, stat } from "node:fs/promises";
+import { readdir, access, stat, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -37,18 +37,17 @@ export interface RemnicPublicArtifact {
 /**
  * Directories and file patterns that are safe to expose as public artifacts.
  * Each entry maps a directory name (relative to memoryDir) to the artifact
- * kind and content type.
+ * kind and content type. All directories are scanned recursively.
  */
 const PUBLIC_DIRS: ReadonlyArray<{
   dir: string;
   kind: string;
   contentType: PublicArtifactContentType;
-  recursive: boolean;
 }> = [
-  { dir: "facts", kind: "fact", contentType: "markdown", recursive: true },
-  { dir: "entities", kind: "entity", contentType: "markdown", recursive: true },
-  { dir: "corrections", kind: "correction", contentType: "markdown", recursive: true },
-  { dir: "artifacts", kind: "artifact", contentType: "markdown", recursive: true },
+  { dir: "facts", kind: "fact", contentType: "markdown" },
+  { dir: "entities", kind: "entity", contentType: "markdown" },
+  { dir: "corrections", kind: "correction", contentType: "markdown" },
+  { dir: "artifacts", kind: "artifact", contentType: "markdown" },
 ];
 
 /**
@@ -63,24 +62,56 @@ const PUBLIC_FILES: ReadonlyArray<{
 ];
 
 /**
- * Recursively list all markdown files under a directory.
+ * Check whether a path is contained within a boundary directory.
+ * Resolves symlinks via realpath and verifies the resolved path
+ * starts with the boundary prefix, preventing symlink traversal.
  */
-async function listMarkdownFilesRecursive(rootDir: string): Promise<string[]> {
-  let entries: Awaited<ReturnType<typeof readdir>>;
+async function isContainedWithin(target: string, boundary: string): Promise<boolean> {
   try {
-    entries = await readdir(rootDir, { withFileTypes: true });
+    const resolvedTarget = await realpath(target);
+    const resolvedBoundary = await realpath(boundary);
+    // Ensure the resolved path is within the boundary (with trailing sep)
+    return resolvedTarget === resolvedBoundary || resolvedTarget.startsWith(resolvedBoundary + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recursively list all markdown files under a directory.
+ * Skips symlinked directories/files that resolve outside the boundary
+ * to prevent symlink traversal attacks.
+ */
+async function listMarkdownFilesRecursive(rootDir: string, boundary?: string): Promise<string[]> {
+  const boundaryDir = boundary ?? rootDir;
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await readdir(rootDir, { withFileTypes: true }) as import("node:fs").Dirent[];
   } catch {
     return [];
   }
 
   const files: string[] = [];
   for (const entry of entries) {
-    const fullPath = path.join(rootDir, entry.name);
+    const fullPath = path.join(rootDir, String(entry.name));
+
+    // Check if entry is a symlink — if so, verify containment
+    try {
+      const linkStat = await lstat(fullPath);
+      if (linkStat.isSymbolicLink()) {
+        if (!(await isContainedWithin(fullPath, boundaryDir))) {
+          continue; // Symlink escapes boundary — skip
+        }
+      }
+    } catch {
+      continue; // Cannot stat — skip
+    }
+
     if (entry.isDirectory()) {
-      files.push(...(await listMarkdownFilesRecursive(fullPath)));
+      files.push(...(await listMarkdownFilesRecursive(fullPath, boundaryDir)));
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith(".md")) {
+    if (entry.isFile() && String(entry.name).endsWith(".md")) {
       files.push(fullPath);
     }
   }
@@ -128,23 +159,10 @@ export async function listRemnicPublicArtifacts(params: {
     const dirPath = path.join(memoryDir, spec.dir);
     if (!(await pathExists(dirPath))) continue;
 
-    const files = spec.recursive
-      ? await listMarkdownFilesRecursive(dirPath)
-      : [];
+    // Block symlink traversal: verify the directory resolves within memoryDir
+    if (!(await isContainedWithin(dirPath, memoryDir))) continue;
 
-    if (!spec.recursive) {
-      // Non-recursive: only list direct children
-      try {
-        const entries = await readdir(dirPath, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isFile() && entry.name.endsWith(".md")) {
-            files.push(path.join(dirPath, entry.name));
-          }
-        }
-      } catch {
-        // Skip inaccessible directories
-      }
-    }
+    const files = await listMarkdownFilesRecursive(dirPath, memoryDir);
 
     for (const absolutePath of files) {
       const relativePath = path.relative(memoryDir, absolutePath).replace(/\\/g, "/");
@@ -163,6 +181,8 @@ export async function listRemnicPublicArtifacts(params: {
   for (const spec of PUBLIC_FILES) {
     const absolutePath = path.join(memoryDir, spec.relativePath);
     if (!(await pathExists(absolutePath))) continue;
+    // Block symlink traversal for standalone files
+    if (!(await isContainedWithin(absolutePath, memoryDir))) continue;
     // Verify it's a file (not a directory)
     try {
       const fileStat = await stat(absolutePath);

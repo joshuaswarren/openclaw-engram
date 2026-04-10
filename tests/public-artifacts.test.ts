@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, symlink } from "node:fs/promises";
 import {
   listRemnicPublicArtifacts,
   type RemnicPublicArtifact,
@@ -288,6 +288,32 @@ test("handles mixed public content across all directories", async () => {
     assert.ok(kinds.has("memory-root"), "should have memory-root");
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("blocks symlink traversal outside memoryDir", async () => {
+  const dir = await createTempMemoryDir();
+  const outsideDir = await createTempMemoryDir();
+  try {
+    // Create a file outside the memory dir
+    await writeFile(path.join(outsideDir, "secret.md"), "private data outside memory boundary");
+
+    // Create a symlink inside the memory dir pointing outside
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+    await symlink(outsideDir, path.join(dir, "facts", "escape"), "dir");
+
+    const artifacts = await listRemnicPublicArtifacts({
+      memoryDir: dir,
+      workspaceDir: "/tmp/workspace",
+      agentIds: AGENT_IDS,
+    });
+
+    // The symlinked directory should NOT expose files outside the boundary
+    const leaked = artifacts.filter((a) => a.absolutePath.startsWith(outsideDir));
+    assert.equal(leaked.length, 0, "symlinked files outside memoryDir must not be exposed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
   }
 });
 

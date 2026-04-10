@@ -430,6 +430,11 @@ const pluginDefinition = {
     // cannot clobber another's cached recall result.
     const cachedMemoryBySession = new Map<string, string[] | null>();
 
+    // Hoisted reference to the prompt builder so registerMemoryCapability
+    // can include it alongside publicArtifacts (prevents SDK >=2026.4.5
+    // from treating the capability as authoritative without a promptBuilder).
+    let memoryPromptBuilder: ((params: { sessionKey?: string }) => string[] | null) | undefined;
+
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
       // Async pre-compute: run recall in before_prompt_build and cache result.
       // The hook receives both event and ctx — session identity is in ctx.
@@ -513,6 +518,9 @@ const pluginDefinition = {
       (memoryBuildFn as any).id = "engram-memory";
       (memoryBuildFn as any).label = "Engram Memory Context";
       api.registerMemoryPromptSection(memoryBuildFn as any);
+
+      // Hoist for registerMemoryCapability below
+      memoryPromptBuilder = memoryBuildFn;
     }
 
     // ========================================================================
@@ -531,6 +539,10 @@ const pluginDefinition = {
       typeof (api as any).registerMemoryCapability === "function"
     ) {
       const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
+        // Include the promptBuilder so runtimes that treat unified capability
+        // registration as authoritative (SDK >=2026.4.5) continue to inject
+        // recall context via the prompt builder.
+        ...(memoryPromptBuilder ? { promptBuilder: memoryPromptBuilder } : {}),
         publicArtifacts: {
           listArtifacts: async (_params: { cfg: unknown }) => {
             try {
@@ -547,7 +559,10 @@ const pluginDefinition = {
         },
       };
       (api as any).registerMemoryCapability(memoryCapability);
-      log.info("registered memory capability with publicArtifacts provider");
+      log.info(
+        `registered memory capability with publicArtifacts provider` +
+        (memoryPromptBuilder ? " and promptBuilder" : " (promptBuilder unavailable — legacy hook path)"),
+      );
     }
 
     // ========================================================================
