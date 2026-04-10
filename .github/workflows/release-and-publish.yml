@@ -314,13 +314,8 @@ jobs:
       - name: Checkout release tag source for publish
         run: git checkout --detach "${{ steps.version.outputs.tag_name }}"
 
-      - name: Restore npm auth after tag checkout
-        run: |
-          # setup-node wrote registry auth into .npmrc, but git checkout
-          # replaced it with the repo's version. Re-inject the auth line.
-          if ! grep -q '_authToken' .npmrc 2>/dev/null; then
-            echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' >> .npmrc
-          fi
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
 
       - name: Install dependencies for tagged source
         run: pnpm install --frozen-lockfile
@@ -332,8 +327,6 @@ jobs:
         run: pnpm -r run build
 
       - name: Publish root package to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           IS_PRIVATE="$(node -p "require('./package.json').private || false")"
           if [ "$IS_PRIVATE" = "true" ]; then
@@ -346,13 +339,12 @@ jobs:
             echo "::notice title=NPM publish skipped::${PACKAGE_NAME}@${VERSION} is already published."
             exit 0
           fi
-          pnpm publish --access public --no-git-checks
+          npm publish --access public --provenance
 
       - name: Publish workspace packages to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Publish in dependency order: core first, then packages that depend on it
+          # Publish in dependency order: core first, then packages that depend on it.
+          # Uses npm (not pnpm) because trusted publishing requires npm's OIDC support.
           PUBLISH_ORDER=(
             packages/remnic-core
             packages/remnic-server
@@ -379,7 +371,7 @@ jobs:
               continue
             fi
             echo "Publishing ${pkg_name}@${pkg_version} from ${pkg_dir}..."
-            (cd "$pkg_dir" && pnpm publish --access public --no-git-checks)
+            (cd "$pkg_dir" && npm publish --access public --provenance)
           done
 
       - name: Push release commits to main
