@@ -42,7 +42,7 @@ Generate a secure token and add it to your shell profile (`~/.zshenv`, `~/.bashr
 openssl rand -base64 32
 
 # Add to your shell profile
-export OPENCLAW_REMNIC_ACCESS_TOKEN="<paste-generated-token-here>"
+export REMNIC_AUTH_TOKEN="<paste-generated-token-here>"
 ```
 
 Source the profile or open a new terminal so the variable is available.
@@ -52,20 +52,17 @@ Source the profile or open a new terminal so the variable is available.
 On the machine where Remnic runs:
 
 ```bash
-openclaw engram access http-serve \
-  --host 0.0.0.0 \
-  --port 4318 \
-  --token "$OPENCLAW_REMNIC_ACCESS_TOKEN"
+remnic daemon start
 ```
 
 If you have `namespacesEnabled: true` in your Remnic config, also pass `--principal <name>` where `<name>` matches a `writePrincipals` entry for your target namespace:
 
 ```bash
-openclaw engram access http-serve \
+npx remnic-server \
   --host 0.0.0.0 \
   --port 4318 \
   --principal generalist \
-  --token "$OPENCLAW_REMNIC_ACCESS_TOKEN"
+  --auth-token "$REMNIC_AUTH_TOKEN"
 ```
 
 For persistent operation, set up a launchd plist (macOS), systemd unit (Linux), or similar service manager so the server survives reboots.
@@ -77,7 +74,7 @@ Edit `~/.codex/config.toml`:
 ```toml
 [mcp_servers.remnic]
 url = "http://<remnic-host>:4318/mcp"
-bearer_token_env_var = "OPENCLAW_REMNIC_ACCESS_TOKEN"
+bearer_token_env_var = "REMNIC_AUTH_TOKEN"
 ```
 
 Replace `<remnic-host>` with:
@@ -105,7 +102,7 @@ set -euo pipefail
 
 REMNIC_HOST="${REMNIC_HOST:-127.0.0.1}"
 REMNIC_PORT="${REMNIC_PORT:-4318}"
-REMNIC_TOKEN="${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}"
+REMNIC_TOKEN="${REMNIC_AUTH_TOKEN:-${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}}"
 REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/recall"
 
 # Read hook input from stdin
@@ -246,7 +243,7 @@ After setup, start a new Codex session and check:
 **Remnic tools not showing up in Codex:**
 - Codex loads MCP servers at session start. If the server was down when the session started, restart Codex.
 - Verify with `codex mcp list` — remnic should show `enabled` with `Bearer token` auth.
-- Check the server is reachable: `curl -s http://<host>:4318/mcp -X POST -H "Authorization: Bearer $OPENCLAW_REMNIC_ACCESS_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`
+- Check the server is reachable: `curl -s http://<host>:4318/mcp -X POST -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`
 
 **"namespace is not writable" error:**
 - You have `namespacesEnabled: true` in your Remnic config. Pass `--principal <name>` when starting the HTTP server, where `<name>` is in the `writePrincipals` list for your target namespace.
@@ -254,7 +251,7 @@ After setup, start a new Codex session and check:
 **Hook not firing:**
 - Verify `~/.codex/hooks.json` exists and uses the correct absolute path.
 - Ensure the script is executable (`chmod +x`).
-- Check that `OPENCLAW_REMNIC_ACCESS_TOKEN` is set in your shell environment.
+- Check that `REMNIC_AUTH_TOKEN` is set in your shell environment. The older `OPENCLAW_REMNIC_ACCESS_TOKEN` and `OPENCLAW_ENGRAM_ACCESS_TOKEN` names are still accepted during the compatibility window.
 
 **Slow session start:**
 - The hook has a 15-second timeout. If the Remnic server is slow to respond, increase the `timeout` value in `hooks.json` or reduce `topK` in the recall query.

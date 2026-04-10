@@ -1,6 +1,6 @@
 # Engram → Remnic Rename Plan
 
-**Status:** In Progress
+**Status:** In Progress — core engineering landed, repo cleanup and release rollout remain
 **Owner:** @joshuaswarren
 **Target:** Execute before first 1.0.0 publish
 
@@ -107,6 +107,28 @@ handful of early adopters. Tomorrow is worse.
 | GitHub repo | ✅ Renamed to `joshuaswarren/remnic` |
 
 **Install base to migrate: one package.** Everything else is free namespace.
+
+### Execution Snapshot (2026-04-10)
+
+The rename is no longer mostly theoretical. The heavy engineering pieces are in
+the tree:
+
+- `@remnic/server`, `@remnic/cli`, `@remnic/plugin-openclaw`, and the monorepo
+  package layout are in place.
+- The Engram → Remnic migration module exists and is wired into runtime entry
+  points.
+- The shim package exists, including the postinstall banner.
+- Migration tests exist, including fresh-install, idempotency, merge, lock
+  recovery, and rollback coverage.
+
+What is **not** done yet:
+
+- Repo-local rename cleanup is complete. Remaining legacy names in docs are
+  intentional compatibility guidance for v1.x aliases, HTTP paths,
+  OpenClaw-hosted commands, or migration instructions.
+- Release operations have not happened yet: no `@remnic/*` publish, no shim
+  publish, no npm deprecations, no PyPI release, no release-note pass.
+- Brand rollout is still pending beyond the repo rename itself.
 
 ---
 
@@ -361,6 +383,8 @@ for (const tool of canonicalTools) {
 Compressed cadence. Not days-with-slack — hours-with-verification.
 
 ### Phase A — Repo rename
+**Status:** ✅ Complete
+
 1. GitHub UI: rename `joshuaswarren/openclaw-engram` → `joshuaswarren/remnic`
 2. Update local remotes
 3. Verify GitHub redirect from old URL
@@ -368,6 +392,8 @@ Compressed cadence. Not days-with-slack — hours-with-verification.
 5. Update `remnic.ai/rename` landing to link new repo
 
 ### Phase B — Rename PR against `main`
+**Status:** ✅ Complete (repo-local cleanup finished; explicit compatibility aliases remain by design)
+
 Single coordinated PR. No publishes during this phase.
 
 - Rename all `packages/engram-*` → `packages/remnic-*`
@@ -385,19 +411,29 @@ Single coordinated PR. No publishes during this phase.
 - Full test suite green
 - `pnpm -r publish --dry-run` validates publish config
 
+Phase B cleanup is now closed in-tree. Remaining legacy names in docs are
+intentional compatibility guidance for v1.x aliases, HTTP paths, OpenClaw-hosted
+commands, or migration instructions.
+
 ### Phase C — Shim package
+**Status:** ✅ Complete in repo (publish/deprecate work moves to Phase D)
+
 - `packages/shim-openclaw-engram/` with `@joshuaswarren/openclaw-engram@9.3.0`
 - `dependencies: { "@remnic/plugin-openclaw": "^1.0.0" }`
 - Postinstall banner script
 - Re-exports everything from the new bridge plugin
 
 ### Phase D — Publish
+**Status:** ⏳ Pending
+
 - `pnpm -r publish --access public` for all `@remnic/*`
 - `twine upload dist/*` for `remnic-hermes`
 - `npm publish` for the shim
 - `npm deprecate` incantations for all old versions and the new shim
 
 ### Phase E — Brand surfaces
+**Status:** ⏳ Pending
+
 - Publish `remnic.ai/rename` landing page
 - Pin rename banner on `joshuaswarren/remnic` README
 - CHANGELOG 1.0.0 "The Remnic Release" section
@@ -405,6 +441,8 @@ Single coordinated PR. No publishes during this phase.
 - User posts to Discords they're on
 
 ### Phase F — Monitor & tighten
+**Status:** ⏳ Pending post-publish
+
 - Watch shim download stats, GitHub issues, runtime migration telemetry
 - Ship `@remnic/*@1.1.0` that tightens deprecations:
   - Louder `engram` CLI forwarder warning
@@ -412,6 +450,8 @@ Single coordinated PR. No publishes during this phase.
   - Louder `engram_*` MCP tool warning
 
 ### Phase G — Drop shims
+**Status:** ⏳ Future (2.0.0)
+
 - `@remnic/*@2.0.0` removes:
   - `engram` CLI forwarder binary
   - `ENGRAM_*` env var fallback
@@ -484,7 +524,9 @@ conditions are evidence-based, not calendar-based.
 
 ## Decisions Open
 
-_None — plan is fully locked. Execution is underway; publish and brand rollout remain._
+_None at the strategy level. The remaining work is execution: run
+publishes/deprecations, complete brand rollout, then monitor and trim
+compatibility in later releases._
 
 ---
 

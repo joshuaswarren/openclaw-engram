@@ -34,7 +34,7 @@ Install plugins for the AI tools you use:
 remnic connectors install claude-code
 
 # Connect Codex CLI (hooks + MCP + skills)
-remnic connectors install codex
+remnic connectors install codex-cli
 
 # Connect Hermes Agent (MemoryProvider + tools)
 remnic connectors install hermes
@@ -50,7 +50,7 @@ Each command generates a dedicated auth token and installs the native plugin for
 ```bash
 remnic connectors doctor
 # ✓ claude-code: connected, 44 tools available
-# ✓ codex: connected, 44 tools available
+# ✓ codex-cli: connected, 44 tools available
 # ✓ hermes: connected, MemoryProvider active
 # ✓ replit: token generated (configure in Integrations pane)
 ```

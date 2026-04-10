@@ -28,7 +28,7 @@ packages/
 | M0 | Structured error responses | Consistent JSON error envelopes with `error`, `code`, `details` fields and `X-Request-Id` correlation IDs |
 | M1 | Hermes provider | `@remnic/hermes-provider` — lightweight HTTP client for connecting to remote Remnic instances |
 | M1 | Standalone CLI | 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree`, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark` |
-| M2 | Workspace tree projection | Context tree generation + validation + live watch mode (`engram tree generate\|watch\|validate`) |
+| M2 | Workspace tree projection | Context tree generation + validation + live watch mode (`remnic tree generate\|watch\|validate`) |
 | M3 | Onboarding + Curation | Project ingestion with language detection, doc discovery, and ingestion planning; file curation with duplicate/contradiction detection |
 | M3 | Diff-aware sync | Filesystem sync that detects added/modified/deleted files and ingests changes incrementally |
 | M4 | Connector manager | Host adapter lifecycle management (list, install, remove, doctor) |
@@ -92,13 +92,13 @@ openclaw engram inventory --json
 
 ```bash
 # 1. Diagnostics
-engram doctor
+remnic doctor
 
 # 2. Server status
-engram status
+remnic status
 
 # 3. Verify query works
-engram query "test query" --json
+remnic query "test query" --json
 ```
 
 ---
@@ -126,7 +126,7 @@ cd ../..
 
 ```bash
 remnic init
-# Creates engram.config.json in the current directory
+# Creates remnic.config.json in the current directory
 ```
 
 Set required environment variables:
@@ -134,8 +134,8 @@ Set required environment variables:
 ```bash
 export OPENAI_API_KEY=sk-...
 export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
-# Optional: override memory location (default: ~/.engram/memory for standalone, ~/.openclaw/workspace/memory/local for OpenClaw users)
-# export ENGRAM_MEMORY_DIR=/path/to/custom/memory
+# Optional: override memory location (default: ~/.remnic/memory for standalone, ~/.openclaw/workspace/memory/local for OpenClaw users)
+# export REMNIC_MEMORY_DIR=/path/to/custom/memory
 ```
 
 ### Start Standalone Server
