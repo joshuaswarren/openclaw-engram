@@ -1,8 +1,8 @@
 # Engram → Remnic Rename Plan
 
-**Status:** In Progress — core engineering landed, repo cleanup and release rollout remain
+**Status:** Complete — all packages published, shim live, deprecations applied; brand rollout remains
 **Owner:** @joshuaswarren
-**Target:** Execute before first 1.0.0 publish
+**Completed:** 2026-04-10
 
 ---
 
@@ -11,8 +11,9 @@
 Rename Engram to **Remnic** — **R**ecall **E**ngine: **M**emory **N**etwork
 for **I**ntelligent **C**ollaboration — before we cut the first 1.0.0 npm and
 PyPI publish. Because the `@remnic/*` workspace packages and `remnic-hermes`
-were never actually published, they rename for free. The only install base
-that needs a migration path is `@joshuaswarren/openclaw-engram@9.2.7`.
+had never been published at rename time, they renamed for free. The only
+install base that needed a migration path was
+`@joshuaswarren/openclaw-engram` (latest pre-shim: 9.2.7).
 
 The rename is the natural capstone for the EMO/OEO architecture split: the
 product is no longer an OpenClaw plugin that happens to have standalone mode,
@@ -78,57 +79,51 @@ thirty other things, the recommendation dies in the search bar.
 
 ### 4. The timing is free
 
-Phase 9 merged the monorepo and the publish config, but `npm publish` never
-ran. `@remnic/core`, `@remnic/server`, `@remnic/cli`, and `remnic-hermes`
-are all 404 on their respective registries right now. We can rename every
-workspace package *before first publish* and skip the shim work entirely
-for them. Only one package — `@joshuaswarren/openclaw-engram@9.2.7` —
-needs a migration path, because it's the only thing that ever shipped under
-the old name.
-
-Waiting makes this harder. Every day closer to 1.0.0 publish adds install
-base we'd need to migrate. Today, the install base is one package and a
-handful of early adopters. Tomorrow is worse.
+Phase 9 merged the monorepo and the publish config, but `npm publish` hadn't
+run yet. The `@remnic/*` packages were all 404 on npm at rename time, so we
+renamed every workspace package *before first publish* and skipped shim work
+entirely for them. Only one package — `@joshuaswarren/openclaw-engram` —
+needed a migration path, because it was the only thing that had ever shipped
+under the old name. The timing was free, and we took it.
 
 ---
 
-## Current State (verified)
+## Current State (verified 2026-04-10)
 
 | Artifact | State |
 |---|---|
 | Phase 9 code (monorepo + publish config) | ✅ Merged to `main` (PRs #348–352) |
-| `@remnic/core`, `@remnic/server`, `@remnic/cli`, etc. | ❌ Never published — 404 on npm |
-| `remnic-hermes` on PyPI | ❌ Does not exist |
+| `@remnic/core` | ✅ Published on npm at 1.0.2 |
+| `@remnic/cli` | ✅ Published on npm at 1.0.3 |
+| `@remnic/server` | ✅ Published on npm at 1.0.3 |
+| `@remnic/plugin-openclaw` | ✅ Published on npm at 1.0.3 |
+| `@joshuaswarren/openclaw-engram` (shim) | ✅ Published at 9.3.3 — all versions deprecated with rename notice |
+| `remnic-hermes` on PyPI | ❌ Not yet published |
 | `openclaw-engram` on npm (unscoped) | ⚠️ Owned by a different, unrelated project |
-| `@joshuaswarren/openclaw-engram` | ✅ Published at 9.2.7 — **the only live artifact** |
-| `@remnic/*` npm scope | ✅ Claimed (empty) |
+| `@remnic/*` npm scope | ✅ Claimed and populated |
 | `remnic` on PyPI | ✅ Claimed at 0.0.1 placeholder |
 | `remnic.ai` | ✅ Live landing page |
 | GitHub repo | ✅ Renamed to `joshuaswarren/remnic` |
-
-**Install base to migrate: one package.** Everything else is free namespace.
+| npm publish auth | ✅ OIDC trusted publishing (no access tokens) |
 
 ### Execution Snapshot (2026-04-10)
 
-The rename is no longer mostly theoretical. The heavy engineering pieces are in
-the tree:
+All core rename engineering and publish operations are complete:
 
-- `@remnic/server`, `@remnic/cli`, `@remnic/plugin-openclaw`, and the monorepo
-  package layout are in place.
-- The Engram → Remnic migration module exists and is wired into runtime entry
-  points.
-- The shim package exists, including the postinstall banner.
-- Migration tests exist, including fresh-install, idempotency, merge, lock
-  recovery, and rollback coverage.
+- All four `@remnic/*` npm packages are published with provenance attestation
+  via GitHub Actions OIDC trusted publishing.
+- The shim package `@joshuaswarren/openclaw-engram@9.3.3` is published with
+  postinstall banner, re-exports, and npm deprecation notices.
+- All 267 versions deprecated on npm (264 pre-shim + 3 shim, each with
+  appropriate message).
+- Every npm package has a README visible on npmjs.com.
+- `@remnic/core` works standalone without OpenClaw installed (graceful
+  fallbacks at every layer: models-json, gateway auth, provider resolution).
 
 What is **not** done yet:
 
-- Repo-local rename cleanup is complete. Remaining legacy names in docs are
-  intentional compatibility guidance for v1.x aliases, HTTP paths,
-  OpenClaw-hosted commands, or migration instructions.
-- Release operations have not happened yet: no `@remnic/*` publish, no shim
-  publish, no npm deprecations, no PyPI release, no release-note pass.
-- Brand rollout is still pending beyond the repo rename itself.
+- PyPI release of `remnic-hermes` has not happened.
+- Brand rollout (Phase E) is still pending beyond the repo rename itself.
 
 ---
 
@@ -139,7 +134,7 @@ What is **not** done yet:
 | Product | Engram | Remnic |
 | Backronym | — | Recall Engine: Memory Network for Intelligent Collaboration |
 | GitHub repo | `joshuaswarren/openclaw-engram` | `joshuaswarren/remnic` |
-| npm scope | `@remnic/*` (unpublished) | `@remnic/*` |
+| npm scope | `@remnic/*` | `@remnic/*` |
 | `packages/remnic-core` | `@remnic/core` | `@remnic/core` |
 | `packages/remnic-server` | `@remnic/server` | `@remnic/server` |
 | `packages/remnic-cli` | `@remnic/cli` | `@remnic/cli` |
@@ -267,18 +262,25 @@ previous state.
 
 ## Package Strategy
 
-### Workspace packages — fresh publish
-All `@remnic/*` packages ship as 1.0.0 to npm. No shim work required because
-`@remnic/*` never existed on the registry.
+### Workspace packages — published
+All `@remnic/*` packages are published on npm with provenance attestation:
+
+| Package | Version | Notes |
+|---|---|---|
+| `@remnic/core` | 1.0.2 | Core memory engine, standalone-capable |
+| `@remnic/cli` | 1.0.3 | CLI with daemon management |
+| `@remnic/server` | 1.0.3 | HTTP + MCP server |
+| `@remnic/plugin-openclaw` | 1.0.3 | OpenClaw bridge plugin |
+
+Publishing uses GitHub Actions OIDC trusted publishing (no npm access tokens).
 
 ### PyPI
-- `remnic-hermes@1.0.0` — real package (Python MemoryProvider for Hermes)
-- `remnic@1.0.0` — real metapackage. `pip install remnic` pulls in
-  `remnic-hermes` (and any future Python components). Replaces the current
-  0.0.1 placeholder.
+- `remnic-hermes` — not yet published (Python MemoryProvider for Hermes)
+- `remnic@0.0.1` — placeholder claimed on PyPI. Will become real metapackage
+  when `remnic-hermes` ships.
 
-### Shim: `@joshuaswarren/openclaw-engram@9.3.0`
-**The only shim.** One final release of the existing published package that:
+### Shim: `@joshuaswarren/openclaw-engram@9.3.3`
+**The only shim.** The final release series of the existing published package that:
 
 1. Depends on the new bridge plugin (`@remnic/plugin-openclaw`)
 2. Re-exports everything — zero behavior change
@@ -286,10 +288,9 @@ All `@remnic/*` packages ship as 1.0.0 to npm. No shim work required because
 4. Is marked deprecated via `npm deprecate`
 
 ```bash
-npm deprecate "@joshuaswarren/openclaw-engram@<9.3.0" \
-  "Renamed to Remnic. See https://remnic.ai/rename"
-npm deprecate "@joshuaswarren/openclaw-engram@9.3.0" \
-  "Renamed to Remnic. Auto-migrates on first run. See https://remnic.ai/rename"
+# Applied 2026-04-10 via scripts/npm-deprecate.mjs (registry API + OTP):
+# Pre-shim (<=9.3.0): "Renamed to Remnic. Install @remnic/plugin-openclaw instead. See https://remnic.ai/rename"
+# Shim (>=9.3.1):     "Engram is now Remnic. This shim auto-migrates. See https://remnic.ai/rename"
 ```
 
 The shim stays on the registry **forever**. Never unpublished. Just frozen
@@ -309,8 +310,8 @@ next interaction, regardless of how they interact.
 
 ### 1. npm deprecation warning (passive, on install)
 ```
-npm warn deprecated @joshuaswarren/openclaw-engram@9.3.0:
-  Renamed to Remnic. See https://remnic.ai/rename
+npm warn deprecated @joshuaswarren/openclaw-engram@9.3.3:
+  Engram is now Remnic. This shim auto-migrates. See https://remnic.ai/rename
 ```
 
 ### 2. postinstall banner (loud, on install)
@@ -416,29 +417,33 @@ intentional compatibility guidance for v1.x aliases, HTTP paths, OpenClaw-hosted
 commands, or migration instructions.
 
 ### Phase C — Shim package
-**Status:** ✅ Complete in repo (publish/deprecate work moves to Phase D)
+**Status:** ✅ Complete
 
-- `packages/shim-openclaw-engram/` with `@joshuaswarren/openclaw-engram@9.3.0`
-- `dependencies: { "@remnic/plugin-openclaw": "^1.0.0" }`
+- `packages/shim-openclaw-engram/` with `@joshuaswarren/openclaw-engram@9.3.3`
+- `dependencies: { "@remnic/plugin-openclaw": "workspace:^", "@remnic/core": "workspace:^" }`
 - Postinstall banner script
 - Re-exports everything from the new bridge plugin
+- README on npmjs.com with migration instructions
 
 ### Phase D — Publish
-**Status:** ⏳ Pending
+**Status:** ✅ Complete (npm; PyPI still pending)
 
-- `pnpm -r publish --access public` for all `@remnic/*`
-- `twine upload dist/*` for `remnic-hermes`
-- `npm publish` for the shim
-- `npm deprecate` incantations for all old versions and the new shim
+- All `@remnic/*` packages published via GitHub Actions OIDC trusted publishing
+  with `npm publish --access public --provenance`
+- Shim published at 9.3.3 (9.3.0 was an early publish with invalid workspace
+  dep metadata; 9.3.1+ are the good releases)
+- `npm deprecate` applied to all 267 versions via registry API
+  (`scripts/npm-deprecate.mjs`)
+- PyPI `remnic-hermes` not yet published
 
 ### Phase E — Brand surfaces
-**Status:** ⏳ Pending
+**Status:** ✅ Mostly complete (GitHub release notes and community posts remain)
 
-- Publish `remnic.ai/rename` landing page
-- Pin rename banner on `joshuaswarren/remnic` README
-- CHANGELOG 1.0.0 "The Remnic Release" section
-- GitHub release notes
-- User posts to Discords they're on
+- ✅ `remnic.ai/rename` landing page created (`src/pages/rename.astro`)
+- ✅ Rename banner pinned on `joshuaswarren/remnic` README (lines 11-18)
+- ✅ CHANGELOG 1.0.0 "The Remnic Release" section written
+- ⏳ GitHub release notes
+- ⏳ User posts to Discords they're on
 
 ### Phase F — Monitor & tighten
 **Status:** ⏳ Pending post-publish
@@ -464,8 +469,8 @@ commands, or migration instructions.
   quieter. If/when we ever drop it, 2.x must first hard-gate on a missing
   marker and refuse to start with an explicit "run `remnic migrate` or
   reinstall via the 1.x bridge" error — never silently skip.
-- `@joshuaswarren/openclaw-engram` stays frozen — never removed, but no longer
-  updated
+- `@joshuaswarren/openclaw-engram` stays frozen at 9.3.x — never removed, but
+  no longer updated
 
 The spacing between phases is measured in hours-to-a-day, not weeks. Stop
 conditions are evidence-based, not calendar-based.
@@ -508,7 +513,7 @@ conditions are evidence-based, not calendar-based.
 - ✅ MCP tools: dual-register `remnic_*` and `engram_*` through v1.x, removed in v2.0.0
 - ✅ Timeline: hours and days, not weeks or months
 - ✅ Four migration surfaces (npm warn, postinstall, runtime, CLI forwarder)
-- ✅ Shim package `@joshuaswarren/openclaw-engram@9.3.0` stays on registry forever
+- ✅ Shim package `@joshuaswarren/openclaw-engram` (9.3.x series) stays on registry forever
 
 ## Decisions Locked (continued)
 
@@ -518,9 +523,9 @@ conditions are evidence-based, not calendar-based.
 
 - ✅ **`remnic` PyPI metapackage:** real 1.0.0 metapackage. `pip install remnic`
   installs `remnic-hermes` and any future Python components.
-- ✅ **Shim version:** `@joshuaswarren/openclaw-engram@9.3.0` (minor bump) so
+- ✅ **Shim version:** `@joshuaswarren/openclaw-engram@9.3.x` (minor bump) so
   `npm update` picks it up for semver-locked users and triggers the migration
-  surfaces.
+  surfaces. Current: 9.3.3.
 
 ## Decisions Open
 
