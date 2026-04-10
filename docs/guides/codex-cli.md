@@ -69,7 +69,7 @@ server currently reads `server.principal` from config but does not expose a
 `--principal` CLI flag.
 
 ```bash
-cat > remnic.config.json <<'EOF'
+cat > remnic.config.json <<EOF
 {
   "remnic": {
     "namespacesEnabled": true
@@ -265,7 +265,7 @@ After setup, start a new Codex session and check:
 - Check the server is reachable: `curl -s http://<host>:4318/mcp -X POST -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`
 
 **"namespace is not writable" error:**
-- You have `namespacesEnabled: true` in your Remnic config. Pass `--principal <name>` when starting the HTTP server, where `<name>` is in the `writePrincipals` list for your target namespace.
+- You have `namespacesEnabled: true` in your Remnic config. Set `server.principal` in `remnic.config.json` so it matches a `writePrincipals` entry for your target namespace.
 
 **Hook not firing:**
 - Verify `~/.codex/hooks.json` exists and uses the correct absolute path.
