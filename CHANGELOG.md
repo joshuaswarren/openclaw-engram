@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.0] — 2026-04-10
+
 ### The Remnic Release
 - Engram is now Remnic across the canonical package, docs, repo, and runtime surfaces.
 - The canonical install paths are `@remnic/plugin-openclaw`, `@remnic/core`, `@remnic/server`, `@remnic/cli`, and `remnic-hermes`.
