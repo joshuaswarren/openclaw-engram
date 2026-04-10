@@ -93,8 +93,8 @@ importers:
   packages/plugin-openclaw:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
-        version: link:../remnic-core
+        specifier: ^1.0.0
+        version: 1.0.0(apache-arrow@18.1.0)(ws@8.20.0)
       openclaw:
         specifier: '*'
         version: 2026.4.2(@napi-rs/canvas@0.1.97)
@@ -109,8 +109,8 @@ importers:
   packages/remnic-cli:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
-        version: link:../remnic-core
+        specifier: ^1.0.0
+        version: 1.0.0(apache-arrow@18.1.0)(ws@8.20.0)
     devDependencies:
       '@remnic/bench':
         specifier: workspace:*
@@ -175,8 +175,8 @@ importers:
   packages/remnic-server:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
-        version: link:../remnic-core
+        specifier: ^1.0.0
+        version: 1.0.0(apache-arrow@18.1.0)(ws@8.20.0)
     devDependencies:
       tsup:
         specifier: ^8.5.1
@@ -188,11 +188,11 @@ importers:
   packages/shim-openclaw-engram:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
-        version: link:../remnic-core
+        specifier: ^1.0.0
+        version: 1.0.0(apache-arrow@18.1.0)(ws@8.20.0)
       '@remnic/plugin-openclaw':
-        specifier: workspace:*
-        version: link:../plugin-openclaw
+        specifier: ^1.0.1
+        version: 1.0.1(apache-arrow@18.1.0)(openclaw@2026.4.2(@napi-rs/canvas@0.1.97))(ws@8.20.0)
       openclaw:
         specifier: '*'
         version: 2026.4.2(@napi-rs/canvas@0.1.97)
@@ -1062,6 +1062,14 @@ packages:
 
   '@protobufjs/utf8@1.1.0':
     resolution: {integrity: sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw==}
+
+  '@remnic/core@1.0.0':
+    resolution: {integrity: sha512-DkQhuHk8pZFq2oeg/hZ7DMOskBedUBOGkzqMJzUWu/axt/a6PqMCOr8PHR/pPDyskPHlSHYLLTWZdvn7HdYozQ==}
+
+  '@remnic/plugin-openclaw@1.0.1':
+    resolution: {integrity: sha512-8BT2ki+i74tEvBy2ahZmtSGR1aF45z6iZAsN+JYRBwCO3lVFEb2R0kax2AFmKhO5ba74UHWI0UfpgUNOVtMinQ==}
+    peerDependencies:
+      openclaw: '*'
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     resolution: {integrity: sha512-d6FinEBLdIiK+1uACUttJKfgZREXrF0Qc2SmLII7W2AD8FfiZ9Wjd+rD/iRuf5s5dWrr1GgwXCvPqOuDquOowA==}
@@ -4140,6 +4148,33 @@ snapshots:
   '@protobufjs/pool@1.1.0': {}
 
   '@protobufjs/utf8@1.1.0': {}
+
+  '@remnic/core@1.0.0(apache-arrow@18.1.0)(ws@8.20.0)':
+    dependencies:
+      '@honcho-ai/sdk': 2.1.0
+      '@lancedb/lancedb': 0.26.2(apache-arrow@18.1.0)
+      '@orama/orama': 3.1.18
+      '@orama/plugin-data-persistence': 3.1.18
+      '@sinclair/typebox': 0.34.49
+      better-sqlite3: 12.8.0
+      meilisearch: 0.46.0
+      openai: 6.33.0(ws@8.20.0)(zod@3.25.76)
+      zod: 3.25.76
+    optionalDependencies:
+      '@lancedb/lancedb-darwin-arm64': 0.26.2
+      '@lancedb/lancedb-linux-arm64-gnu': 0.26.2
+      '@lancedb/lancedb-linux-x64-gnu': 0.26.2
+    transitivePeerDependencies:
+      - apache-arrow
+      - ws
+
+  '@remnic/plugin-openclaw@1.0.1(apache-arrow@18.1.0)(openclaw@2026.4.2(@napi-rs/canvas@0.1.97))(ws@8.20.0)':
+    dependencies:
+      '@remnic/core': 1.0.0(apache-arrow@18.1.0)(ws@8.20.0)
+      openclaw: 2026.4.2(@napi-rs/canvas@0.1.97)
+    transitivePeerDependencies:
+      - apache-arrow
+      - ws
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     optional: true
