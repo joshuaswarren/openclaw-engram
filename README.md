@@ -587,7 +587,7 @@ The HTTP server exposes an MCP JSON-RPC endpoint at `POST /mcp`, allowing remote
 npx remnic-server --host 0.0.0.0 --port 4318 --auth-token "$REMNIC_AUTH_TOKEN"
 ```
 
-For namespace-enabled deployments, pass `--principal <name>` where `<name>` matches a `writePrincipals` entry for your target namespace. Deployments with `namespacesEnabled: false` (the default) do not need `--principal`.
+For namespace-enabled deployments, configure `server.principal` in `remnic.config.json` so it matches a `writePrincipals` entry for your target namespace. Deployments with `namespacesEnabled: false` (the default) do not need a principal.
 
 ## CLI Reference
 

@@ -452,12 +452,11 @@ The shared namespace provides cross-tenant knowledge sharing. All tenants can re
 
 ### Writing to the shared namespace
 
-Use the `memory_promote` tool to manually promote a memory, or use `memory_store` with `namespace: "shared"` when the authenticated principal has write access:
+Use the `memory_promote` tool to manually promote a memory, or use `memory_store` with `namespace: "shared"` when the authenticated principal has write access. In standalone mode, that means `server.principal` (or your session-key routing rules) must resolve to a writer for the `shared` namespace:
 
 ```bash
 curl -X POST http://localhost:4318/engram/v1/memories \
   -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" \
-  -H "X-Engram-Principal: admin" \
   -H "Content-Type: application/json" \
   -d '{
     "content": "Company-wide coding standard: all APIs must return JSON.",
