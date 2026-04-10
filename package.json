@@ -72,7 +72,7 @@
     "@lancedb/lancedb-linux-x64-gnu": "^0.26.2"
   },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=2026.4.8"
   },
   "openclaw": {
     "plugin": "./openclaw.plugin.json",
@@ -99,6 +99,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "openclaw": "^2026.4.8",
     "tsup": "^8.5.1",
     "tsx": "^4.0.0",
     "typescript": "^5.9.3"
