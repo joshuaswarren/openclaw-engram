@@ -42,7 +42,7 @@
     "@remnic/plugin-openclaw": "workspace:^"
   },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=2026.4.8"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

@@ -147,3 +147,35 @@ test("plugin-openclaw publishes under the Remnic scope", () => {
     `OpenClaw plugin package must be named "@remnic/plugin-openclaw" (got "${pkg.name}")`,
   );
 });
+
+test("published OpenClaw packages require openclaw 2026.4.8 or greater", () => {
+  for (const packageDir of ["plugin-openclaw", "shim-openclaw-engram"]) {
+    const pkgJsonPath = path.join(PACKAGES_DIR, packageDir, "package.json");
+    assert.ok(fs.existsSync(pkgJsonPath), `${packageDir}/package.json must exist`);
+
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+    assert.equal(
+      pkg.peerDependencies?.openclaw,
+      ">=2026.4.8",
+      `${packageDir} must require openclaw >=2026.4.8`,
+    );
+  }
+});
+
+test("packages that depend on LanceDB declare apache-arrow explicitly", () => {
+  for (const pkgJsonPath of [
+    path.join(ROOT, "package.json"),
+    path.join(PACKAGES_DIR, "remnic-core", "package.json"),
+  ]) {
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+    assert.ok(
+      pkg.dependencies?.["@lancedb/lancedb"],
+      `${path.relative(ROOT, pkgJsonPath)} must depend on @lancedb/lancedb for this guard to apply`,
+    );
+    assert.equal(
+      pkg.dependencies?.["apache-arrow"],
+      "^18.1.0",
+      `${path.relative(ROOT, pkgJsonPath)} must declare apache-arrow explicitly for LanceDB runtime compatibility`,
+    );
+  }
+});
