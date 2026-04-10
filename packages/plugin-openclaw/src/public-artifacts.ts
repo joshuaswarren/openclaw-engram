@@ -95,23 +95,33 @@ async function listMarkdownFilesRecursive(rootDir: string, boundary?: string): P
   for (const entry of entries) {
     const fullPath = path.join(rootDir, String(entry.name));
 
-    // Check if entry is a symlink — if so, verify containment
+    // For symlinks, Dirent.isDirectory()/isFile() return false, so we
+    // must use stat() (which follows symlinks) to determine the target type.
+    // Before following any symlink, verify the resolved path stays within
+    // the boundary to prevent traversal attacks.
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+
     try {
       const linkStat = await lstat(fullPath);
       if (linkStat.isSymbolicLink()) {
         if (!(await isContainedWithin(fullPath, boundaryDir))) {
           continue; // Symlink escapes boundary — skip
         }
+        // Follow the symlink to determine target type
+        const targetStat = await stat(fullPath);
+        isDir = targetStat.isDirectory();
+        isFile = targetStat.isFile();
       }
     } catch {
       continue; // Cannot stat — skip
     }
 
-    if (entry.isDirectory()) {
+    if (isDir) {
       files.push(...(await listMarkdownFilesRecursive(fullPath, boundaryDir)));
       continue;
     }
-    if (entry.isFile() && String(entry.name).endsWith(".md")) {
+    if (isFile && String(entry.name).endsWith(".md")) {
       files.push(fullPath);
     }
   }

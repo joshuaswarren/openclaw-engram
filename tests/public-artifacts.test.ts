@@ -291,6 +291,39 @@ test("handles mixed public content across all directories", async () => {
   }
 });
 
+test("follows symlinks within memoryDir boundary", async () => {
+  const dir = await createTempMemoryDir();
+  try {
+    // Create real content within memoryDir
+    const realDir = path.join(dir, "facts", "actual-data");
+    await mkdir(realDir, { recursive: true });
+    await writeFile(path.join(realDir, "internal.md"), "internal fact");
+
+    // Create a symlink within memoryDir that points to another dir inside memoryDir
+    const entitiesDir = path.join(dir, "entities");
+    await mkdir(entitiesDir, { recursive: true });
+    const linkTarget = path.join(dir, "entities", "linked-data");
+    await mkdir(path.join(dir, "entities", "real-target"), { recursive: true });
+    await writeFile(path.join(dir, "entities", "real-target", "entity.md"), "linked entity");
+    await symlink(path.join(dir, "entities", "real-target"), linkTarget, "dir");
+
+    const artifacts = await listRemnicPublicArtifacts({
+      memoryDir: dir,
+      workspaceDir: "/tmp/workspace",
+      agentIds: AGENT_IDS,
+    });
+
+    // Should find both the real file and the symlinked file (since it's within boundary)
+    const entityPaths = artifacts.filter((a) => a.kind === "entity").map((a) => a.relativePath);
+    assert.ok(
+      entityPaths.some((p) => p.includes("linked-data/entity.md")),
+      "should follow contained symlinks: " + JSON.stringify(entityPaths),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("blocks symlink traversal outside memoryDir", async () => {
   const dir = await createTempMemoryDir();
   const outsideDir = await createTempMemoryDir();

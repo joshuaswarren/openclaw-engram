@@ -538,11 +538,24 @@ const pluginDefinition = {
       sdkCaps.hasRegisterMemoryCapability &&
       typeof (api as any).registerMemoryCapability === "function"
     ) {
+      // When registerMemoryPromptSection was available, memoryPromptBuilder
+      // was already set above. In capability-only SDK shapes (where only
+      // registerMemoryCapability exists), we must still provide a promptBuilder
+      // so the runtime can inject recall context via the unified capability.
+      // The builder reads from the same cachedMemoryBySession cache that the
+      // before_prompt_build hook populates.
+      const capabilityPromptBuilder = memoryPromptBuilder ?? ((params: { sessionKey?: string }): string[] | null => {
+        const key = params?.sessionKey ?? "default";
+        const lines = cachedMemoryBySession.get(key) ?? null;
+        cachedMemoryBySession.delete(key);
+        return lines;
+      });
+
       const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
         // Include the promptBuilder so runtimes that treat unified capability
         // registration as authoritative (SDK >=2026.4.5) continue to inject
         // recall context via the prompt builder.
-        ...(memoryPromptBuilder ? { promptBuilder: memoryPromptBuilder } : {}),
+        promptBuilder: capabilityPromptBuilder,
         publicArtifacts: {
           listArtifacts: async (_params: { cfg: unknown }) => {
             try {
@@ -560,8 +573,8 @@ const pluginDefinition = {
       };
       (api as any).registerMemoryCapability(memoryCapability);
       log.info(
-        `registered memory capability with publicArtifacts provider` +
-        (memoryPromptBuilder ? " and promptBuilder" : " (promptBuilder unavailable — legacy hook path)"),
+        `registered memory capability with publicArtifacts provider and promptBuilder` +
+        (memoryPromptBuilder ? " (from registerMemoryPromptSection)" : " (capability-only fallback)"),
       );
     }
 
