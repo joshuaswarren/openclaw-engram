@@ -502,7 +502,7 @@ When `modelSource` is `gateway`:
 }
 ```
 
-Model strings use the format `provider/model-id` where `provider` matches a key in the `providers` object of your agent's `models.json`.
+Model strings use the format `provider/model-id` where `provider` matches a key in the `providers` object of your agent's `models.json`. Built-in OpenClaw providers (e.g., `openai-codex`, `google-vertex`, `github-copilot`) work automatically — they don't need explicit entries in `models.json` since the gateway materializes them from its plugin catalogs.
 
 3. **Configure Engram** in `openclaw.json → plugins.entries.openclaw-engram.config`:
 
@@ -518,15 +518,17 @@ Model strings use the format `provider/model-id` where `provider` matches a key 
 
 ### How the fallback chain works
 
-When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response. Both `openai-completions` and `anthropic-messages` API formats are supported — the client auto-detects based on the provider's `api` field.
+When a primary model call fails (timeout, HTTP error, empty response), `FallbackLlmClient` tries each fallback in order. The chain stops at the first successful response.
+
+Provider lookup checks the explicit `models.providers` config first, then falls back to the gateway's materialized `models.json` (`~/.openclaw/agents/main/agent/models.json`), which contains all providers including built-in ones registered by gateway plugins (e.g., `openai-codex` with OAuth, `google-vertex`, `github-copilot`). This means any provider the gateway knows about — including OAuth-based providers — can be used in Engram's model chain without additional configuration.
 
 ### API key resolution
 
-Provider API keys in `models.json` are resolved using OpenClaw's own auth system. Engram delegates to the gateway's `resolveApiKeyForProvider()` function, which handles all secret reference formats (SecretRef objects, `"secretref-managed"`, auth profiles, 1Password, Vault, env vars, etc.) using the same codepath the gateway uses for its own agent sessions.
+Provider auth is resolved using OpenClaw's native runtime. Engram first tries the gateway's `getRuntimeAuthForModel()` function, which handles all provider-specific transforms — OAuth token exchange (for `openai-codex`, `github-copilot`, etc.), base URL overrides, profile-based credentials, and secret reference formats — using the same codepath the gateway uses for its own agent sessions.
 
-This means your existing secret management setup works automatically — no special configuration needed for Engram. Plain-text API keys also work as-is.
+If the gateway runtime isn't available (e.g., running outside the gateway process), Engram falls back to `resolveProviderApiKey()` for secret ref resolution, then checks the `PROVIDER_NAME_API_KEY` environment variable before skipping the provider.
 
-If a provider's API key can't be resolved (e.g., the gateway auth module isn't available), Engram checks the `PROVIDER_NAME_API_KEY` environment variable as a fallback before skipping the provider.
+This means your existing auth setup works automatically — OAuth providers, API keys, 1Password, Vault, env vars, and plain-text keys all work without special Engram configuration.
 
 ### Switching back
 

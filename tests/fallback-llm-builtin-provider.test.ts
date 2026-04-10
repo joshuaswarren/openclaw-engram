@@ -174,3 +174,40 @@ test("FallbackLlmClient resolves google provider from models.json", () => {
   assert.equal(chain.length, 1);
   assert.equal(chain[0].providerConfig.api, "google-generative-ai");
 });
+
+test("FallbackLlmClient chatCompletion attempts built-in provider and invokes tryModel", async () => {
+  setModelsJson({
+    "openai-codex": {
+      baseUrl: "https://chatgpt.com/backend-api",
+      api: "openai-codex-responses",
+      auth: "oauth",
+      models: [],
+    },
+  });
+
+  const config = makeConfig({ providers: {} }, "openai-codex/gpt-5.4");
+  const client = new FallbackLlmClient(config);
+
+  // Stub tryModel to verify it's called with the correct model ref
+  // (without actually making HTTP calls)
+  let triedModel: { providerId: string; modelId: string; api?: string } | null = null;
+  (client as any).tryModel = async (model: any) => {
+    triedModel = {
+      providerId: model.providerId,
+      modelId: model.modelId,
+      api: model.providerConfig.api,
+    };
+    return { content: '{"test": true}', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+  };
+
+  const result = await client.chatCompletion([
+    { role: "user", content: "test" },
+  ]);
+
+  assert.ok(result, "chatCompletion should return a result");
+  assert.equal(result.modelUsed, "openai-codex/gpt-5.4");
+  assert.ok(triedModel, "tryModel should have been called");
+  assert.equal(triedModel!.providerId, "openai-codex");
+  assert.equal(triedModel!.modelId, "gpt-5.4");
+  assert.equal(triedModel!.api, "openai-codex-responses");
+});
