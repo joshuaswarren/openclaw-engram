@@ -229,17 +229,28 @@ This means:
 - `client-b`'s agents have the same isolation in reverse.
 - An admin can write to the shared namespace to publish cross-tenant knowledge.
 
-When starting the server for a specific tenant, pass `--principal` to set the default:
+When you want a standalone server instance to run as a specific tenant, set the
+default principal in `remnic.config.json`:
 
 ```bash
-npx remnic-server \
-  --host 127.0.0.1 \
-  --port 4318 \
-  --auth-token "$REMNIC_AUTH_TOKEN" \
-  --principal client-a-agent
+cat > remnic.config.json <<'EOF'
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4318,
+    "authToken": "${REMNIC_AUTH_TOKEN}",
+    "principal": "client-a-agent"
+  }
+}
+EOF
 ```
 
-For multi-tenant access from a single server instance, use the `X-Engram-Principal` header instead (see [Per-Request Principal Override](#per-request-principal-override) below).
+Then start the server normally with `npx remnic-server` (or `remnic daemon start`
+if your config is already in place).
+
+For multi-tenant access from a single standalone instance, prefer session-key
+prefix rules. Header-based per-request principal override is not currently
+available through `remnic-server` (see [Per-Request Principal Override](#per-request-principal-override) below).
 
 See the [Namespaces documentation](../namespaces.md) for full details on namespace storage layout, QMD collection configuration, and CLI tooling.
 
@@ -363,21 +374,22 @@ If `lcmEnabled` is `false`, the response will have an empty `results` array and 
 
 ## Per-Request Principal Override
 
-By default, the server resolves the principal from the `--principal` CLI flag or from the session key prefix. When you need multiple tenants to connect through a single server instance, you can override the principal per request using the `X-Engram-Principal` header.
+Standalone `remnic-server` does not currently expose a CLI flag to enable
+trusted per-request principal override. In standalone mode, principal resolution
+comes from `server.principal` in config or from session-key prefix rules.
 
-### Enabling
-
-Pass `--trust-principal-header` when starting the server:
+If you need `X-Engram-Principal` header trust today, use the OpenClaw-hosted HTTP
+access server instead of `remnic-server`:
 
 ```bash
-npx remnic-server \
+openclaw engram access http-serve \
   --host 127.0.0.1 \
   --port 4318 \
-  --auth-token "$REMNIC_AUTH_TOKEN" \
+  --token "$REMNIC_AUTH_TOKEN" \
   --trust-principal-header
 ```
 
-### Usage
+### Usage (OpenClaw compatibility path)
 
 Include the header in your requests:
 
@@ -401,8 +413,8 @@ The `X-Engram-Principal` header value becomes the authenticated principal for th
 
 - **Only enable `--trust-principal-header` when the bearer token provides sufficient trust.** Anyone with the token can impersonate any principal.
 - If you run the server behind a reverse proxy, ensure the proxy strips or validates the `X-Engram-Principal` header from untrusted clients.
-- Without `--trust-principal-header`, the header is silently ignored — the principal always comes from `--principal` or session key rules.
-- For production multi-tenant setups, consider running separate server instances per tenant with different tokens and `--principal` values, rather than trusting a single token with header-based principal resolution.
+- Without `--trust-principal-header`, the header is silently ignored — principal resolution falls back to configured principal or session key rules.
+- For production multi-tenant standalone setups, consider running separate server instances per tenant with different tokens and fixed configured principals, rather than trusting a single token with header-based principal resolution.
 
 ## Shared Knowledge Layer
 
