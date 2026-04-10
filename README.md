@@ -4,7 +4,7 @@
 
 Remnic gives AI agents long-term memory that survives across conversations. Decisions, preferences, project context, personal details, past mistakes — everything your agent learns persists and resurfaces exactly when it's needed. All data stays on your machine as plain markdown files. No cloud services, no subscriptions, no sharing your data with third parties.
 
-[![npm version](https://img.shields.io/npm/v/@joshuaswarren/openclaw-engram)](https://www.npmjs.com/package/@joshuaswarren/openclaw-engram)
+[![npm version](https://img.shields.io/npm/v/@remnic/cli)](https://www.npmjs.com/package/@remnic/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/joshuaswarren)
 
@@ -95,7 +95,12 @@ cd remnic
 pnpm install && pnpm run build
 cd packages/remnic-cli && pnpm link --global  # Makes `remnic` and `engram` available on PATH
 cd ../..
-remnic init
+remnic init                     # Create remnic.config.json
+export OPENAI_API_KEY=sk-...
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
+remnic daemon start             # Start background server
+remnic status                   # Verify it's running
+remnic query "hello" --explain  # Test query with tier breakdown
 ```
 
 > **Note:** `remnic` is the canonical CLI. The legacy `engram` binary is a compatibility forwarder to the same implementation. Running `pnpm link --global` from `packages/remnic-cli/` (not the repo root) makes both names available on PATH. Alternatively, invoke directly: `npx tsx packages/remnic-cli/src/index.ts <command>`.
@@ -176,32 +181,35 @@ openclaw engram doctor --json        # Health diagnostics with remediation hints
 openclaw engram config-review --json # Opinionated config tuning recommendations
 ```
 
-## Using Engram with Codex CLI
+## Using Remnic with Codex CLI
 
-Start the Engram HTTP server:
+Start the Remnic server directly for the current shell session:
 
 ```bash
 # Generate a token
-export OPENCLAW_ENGRAM_ACCESS_TOKEN="$(openssl rand -base64 32)"
+export REMNIC_AUTH_TOKEN="$(openssl rand -base64 32)"
 
-# Start the server
-openclaw engram access http-serve \
-  --host 127.0.0.1 \
-  --port 4318 \
-  --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN"
+npx remnic-server --host 127.0.0.1 --port 4318 --auth-token "$REMNIC_AUTH_TOKEN"
 ```
+
+If you want to use `remnic daemon start`, persist the token in
+`remnic.config.json` first. `daemon start` will hand off to launchd/systemd
+when a service is installed, and those service templates read `server.authToken`
+from config rather than inheriting your shell's exported token.
+
+The HTTP API path remains `/engram/v1/...` during the v1.x compatibility window.
 
 Add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.engram]
+[mcp_servers.remnic]
 url = "http://127.0.0.1:4318/mcp"
-bearer_token_env_var = "OPENCLAW_ENGRAM_ACCESS_TOKEN"
+bearer_token_env_var = "REMNIC_AUTH_TOKEN"
 ```
 
-That's it. Codex now has access to Engram's recall, store, and entity tools. See the [full Codex integration guide](docs/guides/codex-cli.md) for session-start hooks, cross-machine setup, and automatic recall at session start.
+That's it. Codex now has access to Remnic's recall, store, and entity tools. See the [full Codex integration guide](docs/guides/codex-cli.md) for session-start hooks, cross-machine setup, and automatic recall at session start.
 
-## Using Engram with Any MCP Client
+## Using Remnic with Any MCP Client
 
 Run the stdio MCP server:
 
@@ -209,17 +217,19 @@ Run the stdio MCP server:
 openclaw engram access mcp-serve
 ```
 
-Point your MCP client's command at `openclaw engram access mcp-serve`. Works with Claude Code, and any other MCP-compatible client. The server exposes the same tools as the HTTP endpoint.
+Point your MCP client's command at `openclaw engram access mcp-serve`. This
+is the OpenClaw-hosted stdio compatibility path. For standalone Remnic installs,
+prefer the HTTP MCP endpoint exposed by `remnic daemon start` or `remnic-server`.
 
-**Claude Code (MCP over HTTP):** Start the Engram HTTP server, then add to `~/.claude.json`:
+**Claude Code (MCP over HTTP):** Start the Remnic server, then add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -317,7 +327,7 @@ Engram is organized as a monorepo with a core engine, standalone server/CLI, and
 | `@remnic/bench` | (private) | Latency ladder benchmarks with CI regression gates |
 | `@remnic/plugin-openclaw` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-openclaw)](https://www.npmjs.com/package/@remnic/plugin-openclaw) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
 | `remnic-hermes` | [![PyPI](https://img.shields.io/pypi/v/remnic-hermes)](https://pypi.org/project/remnic-hermes/) | Python MemoryProvider for Hermes Agent |
-| `@remnic/plugin-claude-code` | (installed via `remnic connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
+| `@remnic/plugin-claude-code` | Installed via `remnic connectors install` | Native Claude Code plugin — hooks, skills, MCP |
 | `@remnic/plugin-codex` | (installed via `remnic connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
 
 The old `@joshuaswarren/openclaw-engram` package is **deprecated**. Use `@remnic/plugin-openclaw` for OpenClaw installs and `@remnic/*` for standalone or multi-platform use.
@@ -536,12 +546,14 @@ See [Enable All Features](docs/enable-all-v8.md) for a full-feature config profi
 
 ## Access Layer
 
-Engram exposes one shared service layer through multiple transports:
+Remnic exposes one shared service layer through multiple transports. During the
+v1.x compatibility window, the HTTP API path remains `/engram/v1/...` and the
+legacy `engram.*` MCP aliases still work.
 
 ### HTTP API
 
 ```bash
-openclaw engram access http-serve --token "$OPENCLAW_ENGRAM_ACCESS_TOKEN"
+remnic daemon start
 ```
 
 Key endpoints: `GET /engram/v1/health`, `POST /engram/v1/recall`, `POST /engram/v1/memories`, `GET /engram/v1/entities/:name`, and more. Full reference in [API docs](docs/api.md).
@@ -571,13 +583,13 @@ Available via both stdio and HTTP transports:
 
 ### MCP over HTTP
 
-The HTTP server exposes an MCP JSON-RPC endpoint at `POST /mcp`, allowing remote MCP clients to use Engram tools over HTTP:
+The HTTP server exposes an MCP JSON-RPC endpoint at `POST /mcp`, allowing remote MCP clients to use Remnic tools over HTTP:
 
 ```bash
-openclaw engram access http-serve --host 0.0.0.0 --port 4318 --token "$TOKEN"
+npx remnic-server --host 0.0.0.0 --port 4318 --auth-token "$REMNIC_AUTH_TOKEN"
 ```
 
-For namespace-enabled deployments, pass `--principal <name>` where `<name>` matches a `writePrincipals` entry for your target namespace. Deployments with `namespacesEnabled: false` (the default) do not need `--principal`.
+For namespace-enabled deployments, configure `server.principal` in `remnic.config.json` so it matches a `writePrincipals` entry for your target namespace. Deployments with `namespacesEnabled: false` (the default) do not need a principal.
 
 ## CLI Reference
 
@@ -608,8 +620,8 @@ openclaw engram semantic-consolidate         # Run semantic dedup consolidation
 openclaw engram semantic-consolidate --dry-run  # Preview without changes
 
 # Access layer
-openclaw engram access http-serve --token "$TOKEN"  # Start HTTP API
-openclaw engram access mcp-serve   # Start stdio MCP server
+remnic daemon start                # Start HTTP API + managed daemon
+openclaw engram access mcp-serve   # Start OpenClaw-hosted stdio MCP server
 
 # Trust-zone demos
 openclaw engram trust-zone-demo-seed --dry-run       # Preview the opt-in buyer demo dataset
@@ -621,7 +633,7 @@ openclaw engram trust-zone-promote --record-id <id> --target-zone working --reas
 
 Trust zones now ship with a dedicated admin-console view plus an explicit demo seeding path for buyer-facing walkthroughs.
 
-- **Never automatic** — Engram does not seed sample trust-zone records on install, startup, or feature enablement.
+- **Never automatic** — Remnic does not seed sample trust-zone records on install, startup, or feature enablement.
 - **Explicit only** — demo records appear only after you run `openclaw engram trust-zone-demo-seed` or trigger the matching admin-console action.
 - **Buyer-friendly story** — the trust-zone view surfaces provenance strength, promotion readiness, corroboration requirements, and operator promotion actions in one place.
 

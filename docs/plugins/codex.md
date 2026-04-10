@@ -5,7 +5,7 @@ Native Remnic plugin for OpenAI Codex CLI. Provides automatic memory recall, obs
 ## Installation
 
 ```bash
-remnic connectors install codex
+remnic connectors install codex-cli
 ```
 
 This:
@@ -66,5 +66,5 @@ grep codex_hooks ~/.codex/config.toml
 ## Uninstall
 
 ```bash
-remnic connectors remove codex
+remnic connectors remove codex-cli
 ```

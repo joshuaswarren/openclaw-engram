@@ -93,7 +93,7 @@ importers:
   packages/plugin-openclaw:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
       openclaw:
         specifier: '*'
@@ -109,7 +109,7 @@ importers:
   packages/remnic-cli:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
     devDependencies:
       '@remnic/bench':
@@ -175,7 +175,7 @@ importers:
   packages/remnic-server:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
     devDependencies:
       tsup:
@@ -188,10 +188,10 @@ importers:
   packages/shim-openclaw-engram:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
       '@remnic/plugin-openclaw':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../plugin-openclaw
       openclaw:
         specifier: '*'

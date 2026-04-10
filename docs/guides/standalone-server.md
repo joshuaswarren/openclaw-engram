@@ -2,13 +2,13 @@
 
 ## Introduction
 
-Remnic can run as a standalone HTTP server that provides persistent memory to multiple agent harnesses simultaneously. In plugin mode, Remnic is embedded inside a single OpenClaw gateway process. In standalone mode, Engram runs as its own process and exposes both a REST API and an MCP-over-HTTP endpoint that any number of clients can connect to — OpenClaw, Codex CLI, Claude Code, custom scripts, or any MCP-compatible agent.
+Remnic can run as a standalone HTTP server that provides persistent memory to multiple agent harnesses simultaneously. In plugin mode, Remnic is embedded inside a single OpenClaw gateway process. In standalone mode, Remnic runs as its own process and exposes both a REST API and an MCP-over-HTTP endpoint that any number of clients can connect to — OpenClaw, Codex CLI, Claude Code, custom scripts, or any MCP-compatible agent.
 
 Use standalone mode when:
 
 - You run multiple agent harnesses (e.g., OpenClaw + Codex CLI + Claude Code) and want them to share one memory backend.
 - You want to isolate different projects or clients into separate namespaces with access control.
-- You need to feed conversation data from custom agents or automation scripts into Engram's extraction pipeline.
+- You need to feed conversation data from custom agents or automation scripts into Remnic's extraction pipeline.
 
 Use plugin mode when:
 
@@ -24,14 +24,14 @@ Use plugin mode when:
 └──────┬───────┘  └──────┬──────┘  └──────┬────────┘  └───────┬───────┘
        │                 │                 │                    │
        │    ┌────────────┴─────────────────┴────────────┐      │
-       │    │         Engram Standalone Server           │      │
+       │    │         Remnic Standalone Server           │      │
        │    │  ┌──────────┐ ┌─────────┐ ┌────────────┐  │◄─────┘
        ├────┤  │   MCP    │ │  HTTP   │ │  Plugin    │  │
             │  │ (stdio)  │ │  REST   │ │  hooks     │  │
             │  └────┬─────┘ └────┬────┘ └─────┬──────┘  │
             │       └────────────┼─────────────┘         │
             │              ┌─────┴──────┐                │
-            │              │  Engram    │                │
+            │              │  Remnic    │                │
             │              │  Core      │                │
             │              ├────────────┤                │
             │  ┌───────────┤ Namespaces ├────────────┐   │
@@ -45,7 +45,7 @@ Use plugin mode when:
             └────────────────────────────────────────────┘
 ```
 
-All clients connect to the same Engram process. Each tenant's memories are isolated in their own namespace, with a shared namespace for cross-tenant knowledge. The server authenticates every request with a bearer token and resolves the caller's principal to enforce namespace read/write policies.
+All clients connect to the same Remnic process. Each tenant's memories are isolated in their own namespace, with a shared namespace for cross-tenant knowledge. The server authenticates every request with a bearer token and resolves the caller's principal to enforce namespace read/write policies.
 
 ## Quick Start
 
@@ -53,23 +53,20 @@ Generate a secure token and start the server:
 
 ```bash
 # Generate a random token
-export ENGRAM_TOKEN="$(openssl rand -hex 32)"
+export REMNIC_AUTH_TOKEN="$(openssl rand -hex 32)"
 
-# Start the standalone server
-openclaw engram access http-serve \
-  --host 127.0.0.1 \
-  --port 4318 \
-  --token "$ENGRAM_TOKEN"
+# Start the standalone server directly
+npx remnic-server --host 127.0.0.1 --port 4318 --auth-token "$REMNIC_AUTH_TOKEN"
 ```
 
 Verify it is running:
 
 ```bash
 curl -s http://localhost:4318/engram/v1/health \
-  -H "Authorization: Bearer $ENGRAM_TOKEN" | jq .
+  -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" | jq .
 ```
 
-You should see a JSON response with `status: "ok"` and details about search availability.
+You should see a JSON response with `status: "ok"` and details about search availability. The API path remains `/engram/v1/...` during the v1.x compatibility window.
 
 To bind to all interfaces (e.g., for LAN access from other machines), use `--host 0.0.0.0`. Only do this on trusted networks or behind a reverse proxy.
 
@@ -77,7 +74,7 @@ To bind to all interfaces (e.g., for LAN access from other machines), use `--hos
 
 ### OpenClaw (plugin mode)
 
-OpenClaw uses Engram as a native plugin — it communicates in-process, not over HTTP. No standalone server configuration is needed. See the main [Installation](../../README.md#installation) section for plugin setup.
+OpenClaw uses Remnic as a native plugin bridge — it communicates in-process, not over HTTP unless you explicitly delegate to a running daemon. See the main [Installation](../../README.md#installation) section for plugin setup.
 
 If you are also running a standalone server for other clients, OpenClaw's plugin instance and the standalone server share the same memory directory on disk. Changes made by either are visible to both.
 
@@ -86,9 +83,9 @@ If you are also running a standalone server for other clients, OpenClaw's plugin
 Start the Remnic server as shown in Quick Start, then add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.engram]
+[mcp_servers.remnic]
 url = "http://127.0.0.1:4318/mcp"
-bearer_token_env_var = "ENGRAM_TOKEN"
+bearer_token_env_var = "REMNIC_AUTH_TOKEN"
 ```
 
 Or in `~/.codex/config.json`:
@@ -96,11 +93,11 @@ Or in `~/.codex/config.json`:
 ```json
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "type": "http",
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR_ENGRAM_TOKEN"
+        "Authorization": "Bearer YOUR_REMNIC_AUTH_TOKEN"
       }
     }
   }
@@ -111,22 +108,22 @@ See the [Codex CLI Integration Guide](codex-cli.md) for session-start hooks and 
 
 ### Claude Code (MCP over HTTP)
 
-Add Engram to your `~/.claude.json`:
+Add Remnic to your `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
 }
 ```
 
-Claude Code will discover Engram's tools automatically. All MCP tools — `engram.recall`, `engram.memory_store`, `engram.observe`, `engram.lcm_search`, and others — are available.
+Claude Code will discover Remnic's tools automatically. Canonical tool names use the `remnic.*` prefix; legacy `engram.*` aliases remain available through v1.x.
 
 ### Custom HTTP Agents
 
@@ -137,11 +134,11 @@ Any HTTP client can use the REST API directly. Here are examples in Python and J
 ```python
 import requests
 
-ENGRAM_URL = "http://localhost:4318"
+REMNIC_URL = "http://localhost:4318"
 HEADERS = {"Authorization": "Bearer YOUR_TOKEN"}
 
 # Feed conversation into memory
-requests.post(f"{ENGRAM_URL}/engram/v1/observe", json={
+requests.post(f"{REMNIC_URL}/engram/v1/observe", json={
     "sessionKey": "my-agent-session-1",
     "messages": [
         {"role": "user", "content": "What's the status of project Alpha?"},
@@ -150,7 +147,7 @@ requests.post(f"{ENGRAM_URL}/engram/v1/observe", json={
 }, headers=HEADERS)
 
 # Recall relevant context
-resp = requests.post(f"{ENGRAM_URL}/engram/v1/recall", json={
+resp = requests.post(f"{REMNIC_URL}/engram/v1/recall", json={
     "query": "project Alpha status"
 }, headers=HEADERS)
 print(resp.json()["results"])
@@ -159,14 +156,14 @@ print(resp.json()["results"])
 **JavaScript / TypeScript:**
 
 ```javascript
-const ENGRAM_URL = "http://localhost:4318";
+const REMNIC_URL = "http://localhost:4318";
 const headers = {
   "Authorization": "Bearer YOUR_TOKEN",
   "Content-Type": "application/json"
 };
 
 // Feed conversation into memory
-await fetch(`${ENGRAM_URL}/engram/v1/observe`, {
+await fetch(`${REMNIC_URL}/engram/v1/observe`, {
   method: "POST",
   headers,
   body: JSON.stringify({
@@ -179,7 +176,7 @@ await fetch(`${ENGRAM_URL}/engram/v1/observe`, {
 });
 
 // Recall relevant context
-const resp = await fetch(`${ENGRAM_URL}/engram/v1/recall`, {
+const resp = await fetch(`${REMNIC_URL}/engram/v1/recall`, {
   method: "POST",
   headers,
   body: JSON.stringify({ query: "project Alpha status" }),
@@ -232,23 +229,34 @@ This means:
 - `client-b`'s agents have the same isolation in reverse.
 - An admin can write to the shared namespace to publish cross-tenant knowledge.
 
-When starting the server for a specific tenant, pass `--principal` to set the default:
+When you want a standalone server instance to run as a specific tenant, set the
+default principal in `remnic.config.json`:
 
 ```bash
-openclaw engram access http-serve \
-  --host 127.0.0.1 \
-  --port 4318 \
-  --token "$ENGRAM_TOKEN" \
-  --principal client-a-agent
+cat > remnic.config.json <<EOF
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4318,
+    "authToken": "${REMNIC_AUTH_TOKEN}",
+    "principal": "client-a-agent"
+  }
+}
+EOF
 ```
 
-For multi-tenant access from a single server instance, use the `X-Engram-Principal` header instead (see [Per-Request Principal Override](#per-request-principal-override) below).
+Then start the server normally with `npx remnic-server` (or `remnic daemon start`
+if your config is already in place).
+
+For multi-tenant access from a single standalone instance, prefer session-key
+prefix rules. Header-based per-request principal override is not currently
+available through `remnic-server` (see [Per-Request Principal Override](#per-request-principal-override) below).
 
 See the [Namespaces documentation](../namespaces.md) for full details on namespace storage layout, QMD collection configuration, and CLI tooling.
 
 ## The Observe Endpoint
 
-`POST /engram/v1/observe` feeds conversation messages into Engram's memory pipeline. This is the primary integration point for custom agents that are not using MCP.
+`POST /engram/v1/observe` feeds conversation messages into Remnic's memory pipeline. This is the primary integration point for custom agents that are not using MCP.
 
 ### Request
 
@@ -366,27 +374,28 @@ If `lcmEnabled` is `false`, the response will have an empty `results` array and 
 
 ## Per-Request Principal Override
 
-By default, the server resolves the principal from the `--principal` CLI flag or from the session key prefix. When you need multiple tenants to connect through a single server instance, you can override the principal per request using the `X-Engram-Principal` header.
+Standalone `remnic-server` does not currently expose a CLI flag to enable
+trusted per-request principal override. In standalone mode, principal resolution
+comes from `server.principal` in config or from session-key prefix rules.
 
-### Enabling
-
-Pass `--trust-principal-header` when starting the server:
+If you need `X-Engram-Principal` header trust today, use the OpenClaw-hosted HTTP
+access server instead of `remnic-server`:
 
 ```bash
 openclaw engram access http-serve \
   --host 127.0.0.1 \
   --port 4318 \
-  --token "$ENGRAM_TOKEN" \
+  --token "$REMNIC_AUTH_TOKEN" \
   --trust-principal-header
 ```
 
-### Usage
+### Usage (OpenClaw compatibility path)
 
 Include the header in your requests:
 
 ```bash
 curl -X POST http://localhost:4318/engram/v1/observe \
-  -H "Authorization: Bearer $ENGRAM_TOKEN" \
+  -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" \
   -H "X-Engram-Principal: client-a-agent" \
   -H "Content-Type: application/json" \
   -d '{
@@ -404,8 +413,8 @@ The `X-Engram-Principal` header value becomes the authenticated principal for th
 
 - **Only enable `--trust-principal-header` when the bearer token provides sufficient trust.** Anyone with the token can impersonate any principal.
 - If you run the server behind a reverse proxy, ensure the proxy strips or validates the `X-Engram-Principal` header from untrusted clients.
-- Without `--trust-principal-header`, the header is silently ignored — the principal always comes from `--principal` or session key rules.
-- For production multi-tenant setups, consider running separate server instances per tenant with different tokens and `--principal` values, rather than trusting a single token with header-based principal resolution.
+- Without `--trust-principal-header`, the header is silently ignored — principal resolution falls back to configured principal or session key rules.
+- For production multi-tenant standalone setups, consider running separate server instances per tenant with different tokens and fixed configured principals, rather than trusting a single token with header-based principal resolution.
 
 ## Shared Knowledge Layer
 
@@ -443,12 +452,11 @@ The shared namespace provides cross-tenant knowledge sharing. All tenants can re
 
 ### Writing to the shared namespace
 
-Use the `memory_promote` tool to manually promote a memory, or use `memory_store` with `namespace: "shared"` when the authenticated principal has write access:
+Use the `memory_promote` tool to manually promote a memory, or use `memory_store` with `namespace: "shared"` when the authenticated principal has write access. In standalone mode, that means `server.principal` (or your session-key routing rules) must resolve to a writer for the `shared` namespace:
 
 ```bash
 curl -X POST http://localhost:4318/engram/v1/memories \
-  -H "Authorization: Bearer $ENGRAM_TOKEN" \
-  -H "X-Engram-Principal: admin" \
+  -H "Authorization: Bearer $REMNIC_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "content": "Company-wide coding standard: all APIs must return JSON.",

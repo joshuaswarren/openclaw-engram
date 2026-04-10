@@ -1,6 +1,6 @@
 {
   "name": "@remnic/plugin-openclaw",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenClaw adapter for Remnic memory — thin wrapper delegating to @remnic/core",
   "type": "module",
   "main": "dist/index.js",
@@ -29,7 +29,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@remnic/core": "workspace:*"
+    "@remnic/core": "workspace:^"
   },
   "peerDependencies": {
     "openclaw": "*"
