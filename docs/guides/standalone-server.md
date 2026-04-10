@@ -233,7 +233,7 @@ When you want a standalone server instance to run as a specific tenant, set the
 default principal in `remnic.config.json`:
 
 ```bash
-cat > remnic.config.json <<'EOF'
+cat > remnic.config.json <<EOF
 {
   "server": {
     "host": "127.0.0.1",
