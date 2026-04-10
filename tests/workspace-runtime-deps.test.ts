@@ -2,24 +2,26 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const testDir = new URL(".", import.meta.url);
+
 const packageExpectations = [
   {
     label: "CLI",
-    path: "packages/remnic-cli/package.json",
+    path: new URL("../packages/remnic-cli/package.json", testDir),
     deps: {
       "@remnic/core": "workspace:^",
     },
   },
   {
     label: "server",
-    path: "packages/remnic-server/package.json",
+    path: new URL("../packages/remnic-server/package.json", testDir),
     deps: {
       "@remnic/core": "workspace:^",
     },
   },
   {
     label: "OpenClaw plugin",
-    path: "packages/plugin-openclaw/package.json",
+    path: new URL("../packages/plugin-openclaw/package.json", testDir),
     deps: {
       "@remnic/core": "workspace:^",
     },
