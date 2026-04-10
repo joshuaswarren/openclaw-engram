@@ -34,7 +34,7 @@ Published automatically by `.github/workflows/release-and-publish.yml`:
 |---------|----------|----------|
 | `packages/remnic-core` | `@remnic/core` | npm |
 | `packages/remnic-server` | `@remnic/server` | npm |
-| `packages/remnic-cli` | `engram` | npm |
+| `packages/remnic-cli` | `@remnic/cli` | npm |
 | `packages/plugin-openclaw` | `@remnic/plugin-openclaw` | npm |
 | `packages/shim-openclaw-engram` | `@joshuaswarren/openclaw-engram` | npm |
 | `packages/plugin-claude-code` | `@remnic/plugin-claude-code` | npm |
@@ -44,6 +44,12 @@ Published automatically by `.github/workflows/release-and-publish.yml`:
 | `packages/hermes-provider` | `@remnic/hermes-provider` | npm |
 
 All npm publishes include provenance attestations.
+
+For the first public Remnic publish, the workflow treats the workspace root
+`package.json` version as authoritative while `@remnic/core` is still absent
+from npm. That bootstrap rule prevents the release job from inheriting the old
+Engram `v9.x` tag line before the `1.0.0` Remnic packages exist on the
+registry.
 
 ### PyPI Package
 

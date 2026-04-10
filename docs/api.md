@@ -6,27 +6,27 @@ The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder
 
 | Command | Description |
 |---------|-------------|
-| `engram init` | Create `engram.config.json` in the current directory |
-| `engram status [--json]` | Show server/daemon status and health |
-| `engram query <text> [--json] [--explain]` | Query memories; `--explain` shows per-tier latency breakdown |
-| `engram doctor` | Run diagnostics (Node version, config, API key, memory dir, daemon status) |
-| `engram config` | Show current resolved configuration |
-| `engram daemon <start\|stop\|restart>` | Manage the background HTTP server |
-| `engram tree <generate\|watch\|validate>` | Workspace context tree operations |
-| `engram onboard [dir] [--json]` | Analyze a project directory (language detection, doc discovery, ingestion plan) |
-| `engram curate <path> [--json]` | Curate files into memory with duplicate/contradiction detection |
-| `engram review <list\|approve\|dismiss\|flag> [id]` | Review inbox management |
-| `engram sync <run\|watch> [--source <dir>]` | Diff-aware filesystem sync |
-| `engram dedup [--json]` | Find duplicate memories |
-| `engram connectors <list\|install\|remove\|doctor> [id]` | Manage host adapter connectors |
-| `engram space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
-| `engram benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
+| `remnic init` | Create `remnic.config.json` in the current directory |
+| `remnic status [--json]` | Show server/daemon status and health |
+| `remnic query <text> [--json] [--explain]` | Query memories; `--explain` shows per-tier latency breakdown |
+| `remnic doctor` | Run diagnostics (Node version, config, API key, memory dir, daemon status) |
+| `remnic config` | Show current resolved configuration |
+| `remnic daemon <start\|stop\|restart>` | Manage the background HTTP server |
+| `remnic tree <generate\|watch\|validate>` | Workspace context tree operations |
+| `remnic onboard [dir] [--json]` | Analyze a project directory (language detection, doc discovery, ingestion plan) |
+| `remnic curate <path> [--json]` | Curate files into memory with duplicate/contradiction detection |
+| `remnic review <list\|approve\|dismiss\|flag> [id]` | Review inbox management |
+| `remnic sync <run\|watch> [--source <dir>]` | Diff-aware filesystem sync |
+| `remnic dedup [--json]` | Find duplicate memories |
+| `remnic connectors <list\|install\|remove\|doctor> [id]` | Manage host adapter connectors |
+| `remnic space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
+| `remnic benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
 
 All commands accept `--json` for machine-readable output. The CLI resolves configuration from:
 
-1. `ENGRAM_CONFIG_PATH` environment variable
-2. `./engram.config.json` in the current directory
-4. `~/.config/engram/config.json` (default)
+1. `REMNIC_CONFIG_PATH` environment variable (`ENGRAM_CONFIG_PATH` is still accepted in v1.x)
+2. `./remnic.config.json` in the current directory
+3. `~/.config/remnic/config.json` (default)
 
 See the [Platform Migration Guide](guides/platform-migration.md) for detailed setup and usage instructions.
 
@@ -203,22 +203,24 @@ openclaw engram access mcp-serve
 
 Available MCP tools:
 
-- `engram.recall`
-- `engram.recall_explain`
-- `engram.memory_get`
-- `engram.memory_timeline`
-- `engram.memory_store`
-- `engram.suggestion_submit`
-- `engram.entity_get`
-- `engram.review_queue_list`
-- `engram.observe`
-- `engram.lcm_search`
+- `remnic.recall`
+- `remnic.recall_explain`
+- `remnic.memory_get`
+- `remnic.memory_timeline`
+- `remnic.memory_store`
+- `remnic.suggestion_submit`
+- `remnic.entity_get`
+- `remnic.review_queue_list`
+- `remnic.observe`
+- `remnic.lcm_search`
+
+The legacy `engram.*` aliases remain available through the v1.x compatibility window.
 
 The MCP adapter calls the same `EngramAccessService` methods used by HTTP, so equivalent request classes return the same structured payloads.
 
-#### `engram.observe`
+#### `remnic.observe`
 
-Feed conversation messages into Engram's memory pipeline (LCM archive + extraction).
+Feed conversation messages into Remnic's memory pipeline (LCM archive + extraction).
 
 **Parameters:**
 - `sessionKey` (string, required) — conversation session identifier
@@ -228,7 +230,7 @@ Feed conversation messages into Engram's memory pipeline (LCM archive + extracti
 
 **Returns:** `{ accepted, sessionKey, namespace, lcmArchived, extractionQueued }`
 
-#### `engram.lcm_search`
+#### `remnic.lcm_search`
 
 Search the LCM conversation archive for matching content using full-text search.
 

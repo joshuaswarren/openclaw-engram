@@ -24,7 +24,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --target es2022 --platform node --outDir dist --no-external @remnic/bench",
+    "build": "tsup --config tsup.config.ts",
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

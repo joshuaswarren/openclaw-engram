@@ -1,4 +1,4 @@
-# Engram Docs
+# Remnic Docs
 
 ## Getting Started
 
@@ -40,6 +40,6 @@
 
 ## Plans / Roadmaps
 
-- [Engram Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1) — Current priority order, blockers, and next work
+- [Remnic Feature Roadmap (GitHub Project)](https://github.com/users/joshuaswarren/projects/1) — Current priority order, blockers, and next work
 - [Plans Index](plans/README.md) — Historical design plans and archive layout
 - [Research Paper Mapping](research/paper-mapping.md) — How live features map to the papers and concepts that inspired them
