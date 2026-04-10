@@ -183,22 +183,19 @@ openclaw engram config-review --json # Opinionated config tuning recommendations
 
 ## Using Remnic with Codex CLI
 
-Start the Remnic server:
+Start the Remnic server directly for the current shell session:
 
 ```bash
 # Generate a token
 export REMNIC_AUTH_TOKEN="$(openssl rand -base64 32)"
 
-# Start the server (CLI-managed daemon)
-remnic daemon start
-```
-
-If you prefer to launch the standalone server directly instead of using the
-daemon helper:
-
-```bash
 npx remnic-server --host 127.0.0.1 --port 4318 --auth-token "$REMNIC_AUTH_TOKEN"
 ```
+
+If you want to use `remnic daemon start`, persist the token in
+`remnic.config.json` first. `daemon start` will hand off to launchd/systemd
+when a service is installed, and those service templates read `server.authToken`
+from config rather than inheriting your shell's exported token.
 
 The HTTP API path remains `/engram/v1/...` during the v1.x compatibility window.
 
