@@ -1,49 +1,58 @@
 import { log } from "./logger.js";
-import type { GatewayConfig, ModelProviderConfig, ModelApi, AgentPersona } from "./types.js";
+import type { GatewayConfig, ModelProviderConfig, AgentPersona } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import {
   buildChatCompletionTokenLimit,
   shouldAssumeOpenAiChatCompletions,
 } from "./openai-chat-compat.js";
 import { resolveProviderApiKey } from "./resolve-provider-secret.js";
+import { loadModelsJsonProviders } from "./models-json.js";
 
 /**
- * Map of well-known provider ID prefixes to their API format and base URL.
- * Used to synthesize a ModelProviderConfig when the provider isn't declared
- * in the user's models.providers config (e.g., OAuth-based providers like
- * openai-codex or anthropic-enterprise).
+ * Supported API formats that FallbackLlmClient can drive directly.
  */
-const KNOWN_PROVIDER_DEFAULTS: Record<
-  string,
-  { format: ModelApi; baseUrl: string }
-> = {
-  openai: { format: "openai-completions", baseUrl: "https://api.openai.com/v1" },
-  anthropic: { format: "anthropic-messages", baseUrl: "https://api.anthropic.com" },
-  google: { format: "google-generative", baseUrl: "https://generativelanguage.googleapis.com" },
-};
+type SupportedApi = "openai-completions" | "anthropic-messages";
 
 /**
- * Infer the API format and base URL for a provider ID that isn't in the
- * explicit providers map. Matches exact entries first, then tries prefixes
- * (e.g., "openai-codex" matches the "openai" prefix). For completely
- * unknown providers, falls back to OpenAI-compatible format since that's
- * the most common API shape for third-party providers.
+ * Normalize a provider's API format to one this client can drive.
+ *
+ * The gateway supports many transport formats (openai-codex-responses, ollama,
+ * github-copilot, etc.) via its plugin system. This client only speaks
+ * openai-completions and anthropic-messages. For providers using unsupported
+ * formats, we map to a compatible format when the provider's auth token is
+ * valid at a standard endpoint (e.g., openai-codex OAuth tokens work at
+ * api.openai.com).
  */
-function inferApiFormat(
+function normalizeApiTransport(
+  api: string | undefined,
   providerId: string,
-): { format: ModelApi; baseUrl: string } {
-  if (KNOWN_PROVIDER_DEFAULTS[providerId]) {
-    return KNOWN_PROVIDER_DEFAULTS[providerId];
+): { api: SupportedApi; baseUrl?: string } {
+  switch (api) {
+    case "openai-completions":
+    case "openai-responses":
+    case undefined:
+      return { api: "openai-completions" };
+
+    case "anthropic-messages":
+      return { api: "anthropic-messages" };
+
+    // OpenAI-family transports: codex-responses uses ChatGPT backend-api but
+    // the OAuth token is also valid at the standard OpenAI API endpoint.
+    case "openai-codex-responses":
+    case "azure-openai-responses":
+      return { api: "openai-completions", baseUrl: "https://api.openai.com/v1" };
+
+    // Google Generative AI: uses a different protocol but shares API keys
+    // with the OpenAI-compatible endpoint that Google also serves.
+    case "google-generative-ai":
+      return { api: "openai-completions", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" };
+
+    default:
+      log.debug(`fallback LLM: unsupported API format "${api}" for provider "${providerId}"`);
+      // Return openai-completions as a best-effort — tryModel() will catch
+      // HTTP errors and the chain will continue to the next fallback.
+      return { api: "openai-completions" };
   }
-  for (const [prefix, defaults] of Object.entries(KNOWN_PROVIDER_DEFAULTS)) {
-    if (providerId.startsWith(`${prefix}-`)) {
-      return defaults;
-    }
-  }
-  // Unknown provider — assume OpenAI-compatible. The gateway resolver will
-  // handle auth; if it can't resolve a key, tryModel() will skip this
-  // provider and the chain continues to the next fallback.
-  return { format: "openai-completions", baseUrl: "https://api.openai.com/v1" };
 }
 
 export interface FallbackLlmOptions {
@@ -279,32 +288,31 @@ export class FallbackLlmClient {
     const providerId = parts[0];
     const modelId = parts.slice(1).join("/"); // Handle cases like "openai/gpt-5.2-turbo"
 
-    // Look up explicit config first; fall back to synthesizing a config
-    // for built-in providers (e.g., OAuth-based providers like openai-codex)
-    const providerConfig = providers[providerId] ?? this.synthesizeBuiltinProvider(providerId);
+    // Look up explicit config first; fall back to the gateway's materialized
+    // models.json which contains built-in providers (openai-codex, etc.)
+    const providerConfig = providers[providerId] ?? this.resolveFromModelsJson(providerId);
+    if (!providerConfig) {
+      log.warn(`fallback LLM: provider not found: ${providerId}`);
+      return null;
+    }
 
     return { providerId, modelId, providerConfig, modelString };
   }
 
   /**
-   * Synthesize a ModelProviderConfig for a provider that isn't declared in
-   * models.providers (e.g., "openai-codex" using OAuth, or any built-in
-   * OpenClaw provider).
-   *
-   * The gateway's resolveApiKeyForProvider() knows how to resolve auth for
-   * these providers, so we only need to supply enough config for the HTTP
-   * call. The API format and base URL are inferred from the provider ID.
+   * Look up a provider from the gateway's materialized models.json, which
+   * contains all providers including built-in ones (openai-codex, google-vertex,
+   * etc.) that aren't in the user's openclaw.json but are registered by
+   * gateway plugins. Returns null if the provider isn't found there either.
    */
-  private synthesizeBuiltinProvider(providerId: string): ModelProviderConfig {
-    const api = inferApiFormat(providerId);
-
-    log.debug(`fallback LLM: synthesizing config for built-in provider "${providerId}" (api: ${api.format})`);
-    return {
-      baseUrl: api.baseUrl,
-      apiKey: "secretref-managed",
-      api: api.format,
-      models: [],
-    };
+  private resolveFromModelsJson(providerId: string): ModelProviderConfig | null {
+    const allProviders = loadModelsJsonProviders();
+    const config = allProviders[providerId];
+    if (config) {
+      log.debug(`fallback LLM: resolved provider "${providerId}" from models.json (api: ${config.api ?? "default"})`);
+      return config;
+    }
+    return null;
   }
 
   /**
@@ -342,17 +350,33 @@ export class FallbackLlmClient {
       ? { ...model.providerConfig, apiKey: resolvedApiKey }
       : model.providerConfig;
 
-    switch (model.providerConfig.api) {
+    // Resolve API format to a transport this client supports.
+    // Some providers use specialized formats (openai-codex-responses, ollama,
+    // github-copilot) that we can't drive directly — normalizeApiTransport()
+    // maps them to a compatible format when possible.
+    const transport = normalizeApiTransport(model.providerConfig.api, model.providerId);
+
+    switch (transport.api) {
       case "anthropic-messages":
-        return await this.callAnthropic(configWithResolvedKey, model.modelId, messages, options);
-      case "openai-completions":
-      default:
+        return await this.callAnthropic(
+          transport.baseUrl ? { ...configWithResolvedKey, baseUrl: transport.baseUrl } : configWithResolvedKey,
+          model.modelId, messages, options,
+        );
+      case "openai-completions": {
+        const effectiveConfig = transport.baseUrl
+          ? { ...configWithResolvedKey, baseUrl: transport.baseUrl }
+          : configWithResolvedKey;
         return await this.callOpenAI(
-          configWithResolvedKey,
+          effectiveConfig,
           model.modelId,
           messages,
           options,
-          shouldAssumeOpenAiChatCompletions(model.providerConfig.baseUrl),
+          shouldAssumeOpenAiChatCompletions(effectiveConfig.baseUrl),
+        );
+      }
+      default:
+        throw new Error(
+          `unsupported API format "${model.providerConfig.api}" for provider "${model.providerId}"`,
         );
     }
   }

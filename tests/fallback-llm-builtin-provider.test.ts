@@ -1,7 +1,8 @@
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { FallbackLlmClient } from "../src/fallback-llm.ts";
-import type { GatewayConfig } from "../src/types.ts";
+import { clearModelsJsonCache, __setModelsJsonForTest } from "../src/models-json.ts";
+import type { GatewayConfig, ModelProviderConfig } from "../src/types.ts";
 
 /**
  * Helper: create a gateway config with explicit providers and a model chain.
@@ -21,38 +22,71 @@ function makeConfig(
   };
 }
 
-test("FallbackLlmClient resolves built-in openai-codex provider not in explicit providers", () => {
-  // Config has no "openai-codex" in providers, but the model chain references it
-  const config = makeConfig(
-    { providers: {} },
-    "openai-codex/gpt-5.4",
-  );
+/**
+ * Helper: inject test providers into the models.json cache.
+ */
+function setModelsJson(providers: Record<string, ModelProviderConfig>): void {
+  clearModelsJsonCache();
+  __setModelsJsonForTest(providers);
+}
 
+// Reset the models.json cache before each test.
+beforeEach(() => {
+  clearModelsJsonCache();
+});
+
+test("FallbackLlmClient resolves built-in openai-codex provider from models.json", () => {
+  setModelsJson({
+    "openai-codex": {
+      baseUrl: "https://chatgpt.com/backend-api",
+      api: "openai-codex-responses",
+      auth: "oauth",
+      models: [],
+    },
+  });
+
+  const config = makeConfig({ providers: {} }, "openai-codex/gpt-5.4");
   const client = new FallbackLlmClient(config);
   assert.ok(client.isAvailable(), "client should report available for built-in provider");
 });
 
-test("FallbackLlmClient resolves built-in anthropic-prefixed provider", () => {
-  const config = makeConfig(
-    { providers: {} },
-    "anthropic-enterprise/claude-opus-4-6",
-  );
+test("FallbackLlmClient resolves anthropic provider from models.json with correct API format", () => {
+  setModelsJson({
+    anthropic: {
+      baseUrl: "https://api.anthropic.com",
+      api: "anthropic-messages",
+      auth: "token",
+      apiKey: "secretref-managed",
+      models: [],
+    },
+  });
 
+  const config = makeConfig({ providers: {} }, "anthropic/claude-opus-4-6");
   const client = new FallbackLlmClient(config);
-  assert.ok(client.isAvailable(), "client should report available for anthropic-prefixed provider");
+  const chain = (client as any).getModelChain();
+  assert.equal(chain.length, 1);
+  assert.equal(chain[0].providerConfig.api, "anthropic-messages");
+  assert.equal(chain[0].providerConfig.baseUrl, "https://api.anthropic.com");
 });
 
-test("FallbackLlmClient resolves unknown provider via fallback synthesis", () => {
-  const config = makeConfig(
-    { providers: {} },
-    "custom-provider/some-model",
-  );
+test("FallbackLlmClient returns unavailable when provider not in config or models.json", () => {
+  setModelsJson({});
 
+  const config = makeConfig({ providers: {} }, "nonexistent-provider/some-model");
   const client = new FallbackLlmClient(config);
-  assert.ok(client.isAvailable(), "client should report available for unknown provider (gateway resolver handles auth)");
+  assert.equal(client.isAvailable(), false);
 });
 
-test("FallbackLlmClient prefers explicit provider config over synthesized", () => {
+test("FallbackLlmClient prefers explicit provider config over models.json", () => {
+  setModelsJson({
+    "openai-codex": {
+      baseUrl: "https://chatgpt.com/backend-api",
+      api: "openai-codex-responses",
+      auth: "oauth",
+      models: [],
+    },
+  });
+
   const config = makeConfig(
     {
       providers: {
@@ -68,41 +102,29 @@ test("FallbackLlmClient prefers explicit provider config over synthesized", () =
   );
 
   const client = new FallbackLlmClient(config);
-  assert.ok(client.isAvailable());
-
-  // Access the internal model chain to verify the explicit config is used
   const chain = (client as any).getModelChain();
   assert.equal(chain.length, 1);
   assert.equal(chain[0].providerConfig.baseUrl, "https://custom.endpoint.example.com/v1");
   assert.equal(chain[0].providerConfig.apiKey, "sk-test-key");
 });
 
-test("FallbackLlmClient synthesizes correct API format for anthropic prefix", () => {
-  const config = makeConfig(
-    { providers: {} },
-    "anthropic-oauth/claude-opus-4-6",
-  );
+test("FallbackLlmClient builds mixed chain with explicit and models.json providers", () => {
+  setModelsJson({
+    "openai-codex": {
+      baseUrl: "https://chatgpt.com/backend-api",
+      api: "openai-codex-responses",
+      auth: "oauth",
+      models: [],
+    },
+    anthropic: {
+      baseUrl: "https://api.anthropic.com",
+      api: "anthropic-messages",
+      auth: "token",
+      apiKey: "secretref-managed",
+      models: [],
+    },
+  });
 
-  const client = new FallbackLlmClient(config);
-  const chain = (client as any).getModelChain();
-  assert.equal(chain.length, 1);
-  assert.equal(chain[0].providerConfig.api, "anthropic-messages");
-  assert.equal(chain[0].providerConfig.apiKey, "secretref-managed");
-});
-
-test("FallbackLlmClient synthesizes correct API format for google prefix", () => {
-  const config = makeConfig(
-    { providers: {} },
-    "google-vertex/gemini-pro",
-  );
-
-  const client = new FallbackLlmClient(config);
-  const chain = (client as any).getModelChain();
-  assert.equal(chain.length, 1);
-  assert.equal(chain[0].providerConfig.api, "google-generative");
-});
-
-test("FallbackLlmClient builds mixed chain with explicit and synthesized providers", () => {
   const config = makeConfig(
     {
       providers: {
@@ -115,7 +137,7 @@ test("FallbackLlmClient builds mixed chain with explicit and synthesized provide
       },
     },
     "openai/gpt-5.2",
-    ["openai-codex/gpt-5.4", "anthropic-oauth/claude-opus-4-6"],
+    ["openai-codex/gpt-5.4", "anthropic/claude-opus-4-6"],
   );
 
   const client = new FallbackLlmClient(config);
@@ -126,13 +148,29 @@ test("FallbackLlmClient builds mixed chain with explicit and synthesized provide
   assert.equal(chain[0].providerId, "openai");
   assert.equal(chain[0].providerConfig.apiKey, "sk-real");
 
-  // Second: synthesized openai-codex
+  // Second: from models.json (openai-codex)
   assert.equal(chain[1].providerId, "openai-codex");
-  assert.equal(chain[1].providerConfig.apiKey, "secretref-managed");
-  assert.equal(chain[1].providerConfig.api, "openai-completions");
+  assert.equal(chain[1].providerConfig.api, "openai-codex-responses");
+  assert.equal(chain[1].providerConfig.baseUrl, "https://chatgpt.com/backend-api");
 
-  // Third: synthesized anthropic-oauth
-  assert.equal(chain[2].providerId, "anthropic-oauth");
-  assert.equal(chain[2].providerConfig.apiKey, "secretref-managed");
+  // Third: from models.json (anthropic)
+  assert.equal(chain[2].providerId, "anthropic");
   assert.equal(chain[2].providerConfig.api, "anthropic-messages");
+});
+
+test("FallbackLlmClient resolves google provider from models.json", () => {
+  setModelsJson({
+    google: {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      api: "google-generative-ai",
+      apiKey: "secretref-managed",
+      models: [],
+    },
+  });
+
+  const config = makeConfig({ providers: {} }, "google/gemini-pro");
+  const client = new FallbackLlmClient(config);
+  const chain = (client as any).getModelChain();
+  assert.equal(chain.length, 1);
+  assert.equal(chain[0].providerConfig.api, "google-generative-ai");
 });
