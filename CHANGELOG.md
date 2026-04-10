@@ -4,24 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [v9.2.15] — 2026-04-10
+## 1.0.0 — The Remnic Release — 2026-04-10
 
-### The Remnic Release
-- Engram is now Remnic across the canonical package, docs, repo, and runtime surfaces.
-- The canonical install paths are `@remnic/plugin-openclaw`, `@remnic/core`, `@remnic/server`, `@remnic/cli`, and `remnic-hermes`.
-- First-run migration now copies legacy `~/.engram/` state into `~/.remnic/`, rewrites token/config surfaces, and preserves rollback metadata.
-- The legacy `engram` CLI name remains as a forwarder during the 1.x compatibility window.
+### Engram is now Remnic
 
-### Added
-- **Phase 9: Publish + Deprecate** — initial 1.0.0 release of Remnic workspace packages
-  - `@remnic/core` 1.0.0 — framework-agnostic memory engine with multi-token auth
-  - `@remnic/server` 1.0.0 — standalone HTTP/MCP server with daemon lifecycle (launchd/systemd)
-  - `@remnic/cli` 1.0.0 — CLI with daemon management, connector install, token management
-  - `@remnic/hermes-provider` 1.0.0 — TypeScript HTTP client for the Remnic API
-  - `remnic-hermes` 1.0.0 on PyPI — Python MemoryProvider for Hermes Agent
-  - Native plugins for Claude Code (`remnic connectors install claude-code`) and Codex CLI (`remnic connectors install codex-cli`)
-- README updated with universal memory layer positioning and multi-platform install instructions
-- Root package `@joshuaswarren/openclaw-engram` marked as deprecated in favor of `@remnic/*` packages
+- Engram is now **Remnic** across all packages, docs, repo, and runtime surfaces.
+- The canonical install paths are `@remnic/plugin-openclaw`, `@remnic/core`,
+  `@remnic/server`, and `@remnic/cli`.
+- First-run migration copies legacy `~/.engram/` state into `~/.remnic/`,
+  rewrites token/config surfaces, and preserves rollback metadata.
+- The legacy `engram` CLI name remains as a forwarder during the 1.x
+  compatibility window.
+
+### Published packages
+
+- [`@remnic/core`](https://www.npmjs.com/package/@remnic/core) 1.0.2 —
+  framework-agnostic memory engine with built-in provider fallback for
+  standalone use (works without OpenClaw)
+- [`@remnic/server`](https://www.npmjs.com/package/@remnic/server) 1.0.3 —
+  standalone HTTP/MCP server with daemon lifecycle (launchd/systemd)
+- [`@remnic/cli`](https://www.npmjs.com/package/@remnic/cli) 1.0.3 — CLI
+  with daemon management, connector install, token management
+- [`@remnic/plugin-openclaw`](https://www.npmjs.com/package/@remnic/plugin-openclaw)
+  1.0.3 — OpenClaw bridge plugin (the deepest integration)
+- [`@joshuaswarren/openclaw-engram`](https://www.npmjs.com/package/@joshuaswarren/openclaw-engram)
+  9.3.3 — compatibility shim, re-exports `@remnic/plugin-openclaw`
+
+### Infrastructure
+
+- All npm publishes use GitHub Actions OIDC trusted publishing with
+  provenance attestation — no npm access tokens
+- All pre-shim versions of `@joshuaswarren/openclaw-engram` deprecated on npm
+- Every npm package has a README visible on npmjs.com
+- Rename landing page live at [remnic.ai/rename](https://remnic.ai/rename)
 
 ## [v9.2.7] — 2026-04-05
 
