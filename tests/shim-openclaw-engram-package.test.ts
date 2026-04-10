@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const shimPackageJsonPath = new URL("../packages/shim-openclaw-engram/package.json", import.meta.url);
 const bannerScriptPath = new URL("../packages/shim-openclaw-engram/scripts/postinstall-banner.mjs", import.meta.url);
 
-test("Phase C shim package is scaffolded with the legacy npm identity", async () => {
+test("Phase C shim package is scaffolded with the released npm identity", async () => {
   const raw = await readFile(shimPackageJsonPath, "utf8");
   const pkg = JSON.parse(raw) as Record<string, unknown>;
   const bin = pkg.bin as Record<string, string>;
@@ -13,12 +13,12 @@ test("Phase C shim package is scaffolded with the legacy npm identity", async ()
   const dependencies = pkg.dependencies as Record<string, string>;
 
   assert.equal(pkg.name, "@joshuaswarren/openclaw-engram");
-  assert.equal(pkg.version, "9.3.0");
+  assert.equal(pkg.version, "9.3.1");
   assert.equal(bin["engram-access"], "./bin/engram-access.js");
   assert.equal(exportsMap["."].import, "./dist/index.js");
   assert.equal(exportsMap["./access-cli"].import, "./dist/access-cli.js");
-  assert.equal(dependencies["@remnic/plugin-openclaw"], "workspace:*");
-  assert.equal(dependencies["@remnic/core"], "workspace:*");
+  assert.equal(dependencies["@remnic/plugin-openclaw"], "^1.0.1");
+  assert.equal(dependencies["@remnic/core"], "^1.0.0");
 });
 
 test("Phase C shim package includes the rename postinstall banner script", async () => {
