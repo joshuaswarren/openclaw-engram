@@ -175,6 +175,31 @@ test("FallbackLlmClient resolves google provider from models.json", () => {
   assert.equal(chain[0].providerConfig.api, "google-generative-ai");
 });
 
+test("FallbackLlmClient resolves models.json provider when config has no providers key", () => {
+  setModelsJson({
+    "openai-codex": {
+      baseUrl: "https://chatgpt.com/backend-api",
+      api: "openai-codex-responses",
+      auth: "oauth",
+      models: [],
+    },
+  });
+
+  // Config with no providers property at all (models key is missing)
+  const config: GatewayConfig = {
+    agents: {
+      defaults: {
+        model: { primary: "openai-codex/gpt-5.4" },
+      },
+    },
+  };
+  const client = new FallbackLlmClient(config);
+  assert.ok(client.isAvailable(), "client should be available via models.json even without explicit providers");
+  const chain = (client as any).getModelChain();
+  assert.equal(chain.length, 1);
+  assert.equal(chain[0].providerConfig.api, "openai-codex-responses");
+});
+
 test("FallbackLlmClient chatCompletion attempts built-in provider and invokes tryModel", async () => {
   setModelsJson({
     "openai-codex": {

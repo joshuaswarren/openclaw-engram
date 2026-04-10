@@ -173,9 +173,7 @@ export class FallbackLlmClient {
    */
   private getModelChain(agentId?: string): ModelRef[] {
     const chain: ModelRef[] = [];
-    const providers = this.gatewayConfig?.models?.providers;
-
-    if (!providers) return chain;
+    const providers = this.gatewayConfig?.models?.providers ?? {};
 
     // Resolve the model config: agent persona chain or global defaults
     let modelConfig: { primary?: string; fallbacks?: string[] } | undefined;
@@ -303,32 +301,21 @@ export class FallbackLlmClient {
       ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
     };
 
-    switch (model.providerConfig.api) {
-      case "anthropic-messages":
-        return await this.callAnthropic(effectiveConfig, model.modelId, messages, options);
-      case "openai-completions":
-      case "openai-responses":
-      case undefined:
-        return await this.callOpenAI(
-          effectiveConfig,
-          model.modelId,
-          messages,
-          options,
-          shouldAssumeOpenAiChatCompletions(effectiveConfig.baseUrl),
-        );
-      default:
-        // For other API formats (openai-codex-responses, ollama, etc.),
-        // try OpenAI chat completions — the gateway's runtime auth resolver
-        // returns the request-ready base URL and credentials that work with
-        // the standard chat completions endpoint for many providers.
-        return await this.callOpenAI(
-          effectiveConfig,
-          model.modelId,
-          messages,
-          options,
-          shouldAssumeOpenAiChatCompletions(effectiveConfig.baseUrl),
-        );
+    if (model.providerConfig.api === "anthropic-messages") {
+      return await this.callAnthropic(effectiveConfig, model.modelId, messages, options);
     }
+
+    // For OpenAI-compatible APIs (openai-completions, openai-responses,
+    // openai-codex-responses, ollama, etc.) and unknown formats, use
+    // OpenAI chat completions — the gateway's runtime auth resolver returns
+    // request-ready base URL and credentials for most providers.
+    return await this.callOpenAI(
+      effectiveConfig,
+      model.modelId,
+      messages,
+      options,
+      shouldAssumeOpenAiChatCompletions(effectiveConfig.baseUrl),
+    );
   }
 
   /**
@@ -353,7 +340,7 @@ export class FallbackLlmClient {
         cfg: this.gatewayConfig,
       });
 
-      if (result?.apiKey) {
+      if (result?.apiKey || result?.baseUrl) {
         log.debug(
           `fallback LLM: resolved runtime auth for "${model.modelString}" (source: ${result.source ?? "unknown"}, mode: ${result.mode ?? "unknown"})`,
         );
