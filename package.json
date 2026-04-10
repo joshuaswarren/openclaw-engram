@@ -61,6 +61,7 @@
     "@orama/orama": "^3.0.0",
     "@orama/plugin-data-persistence": "^3.0.0",
     "@sinclair/typebox": "^0.34.0",
+    "apache-arrow": "^18.1.0",
     "better-sqlite3": "^12.6.2",
     "meilisearch": "^0.46.0",
     "openai": "^6.0.0",

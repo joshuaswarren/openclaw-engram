@@ -161,3 +161,21 @@ test("published OpenClaw packages require openclaw 2026.4.8 or greater", () => {
     );
   }
 });
+
+test("packages that depend on LanceDB declare apache-arrow explicitly", () => {
+  for (const pkgJsonPath of [
+    path.join(ROOT, "package.json"),
+    path.join(PACKAGES_DIR, "remnic-core", "package.json"),
+  ]) {
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+    assert.ok(
+      pkg.dependencies?.["@lancedb/lancedb"],
+      `${path.relative(ROOT, pkgJsonPath)} must depend on @lancedb/lancedb for this guard to apply`,
+    );
+    assert.equal(
+      pkg.dependencies?.["apache-arrow"],
+      "^18.1.0",
+      `${path.relative(ROOT, pkgJsonPath)} must declare apache-arrow explicitly for LanceDB runtime compatibility`,
+    );
+  }
+});
