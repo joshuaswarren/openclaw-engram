@@ -52,17 +52,36 @@ Source the profile or open a new terminal so the variable is available.
 On the machine where Remnic runs:
 
 ```bash
-remnic daemon start
-```
-
-If you have `namespacesEnabled: true` in your Remnic config, also pass `--principal <name>` where `<name>` matches a `writePrincipals` entry for your target namespace:
-
-```bash
 npx remnic-server \
   --host 0.0.0.0 \
   --port 4318 \
-  --principal generalist \
   --auth-token "$REMNIC_AUTH_TOKEN"
+```
+
+Use `remnic daemon start` only when Codex and Remnic run on the same machine, or
+when your `remnic.config.json` already sets a non-loopback bind address under
+`server.host`. The daemon helper defaults to `127.0.0.1`, which is not reachable
+from a second machine unless you change the config first.
+
+If you have `namespacesEnabled: true` in your Remnic config, set the principal in
+the config file rather than on the `remnic-server` command line. The standalone
+server currently reads `server.principal` from config but does not expose a
+`--principal` CLI flag.
+
+```bash
+cat > remnic.config.json <<'EOF'
+{
+  "remnic": {
+    "namespacesEnabled": true
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 4318,
+    "authToken": "${REMNIC_AUTH_TOKEN}",
+    "principal": "generalist"
+  }
+}
+EOF
 ```
 
 For persistent operation, set up a launchd plist (macOS), systemd unit (Linux), or similar service manager so the server survives reboots.
