@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## 1.0.0 — The Remnic Release — 2026-04-10
+## [1.0.0] — The Remnic Release — 2026-04-10
 
 ### Engram is now Remnic
 
