@@ -23,7 +23,24 @@ type ResolveApiKeyFn = (params: {
   agentDir?: string;
 }) => Promise<{ apiKey?: string; source?: string; mode?: string } | null>;
 
+/**
+ * Resolve request-ready auth for a model, including provider-owned transforms
+ * (e.g., OAuth token exchange, base URL override for openai-codex).
+ */
+export type GetRuntimeAuthForModelFn = (params: {
+  model: { provider: string; id: string; api?: string; baseUrl?: string };
+  cfg?: unknown;
+  workspaceDir?: string;
+}) => Promise<{
+  apiKey?: string;
+  baseUrl?: string;
+  source?: string;
+  mode?: string;
+  profileId?: string;
+} | null>;
+
 let _resolveApiKeyForProvider: ResolveApiKeyFn | null = null;
+let _getRuntimeAuthForModel: GetRuntimeAuthForModelFn | null = null;
 let _resolverLoaded = false;
 let _resolverNextRetryAt = 0;
 const RESOLVER_RETRY_BACKOFF_MS = 60_000; // 1 minute between retries after first failure
@@ -59,6 +76,10 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
         const mod = await import(importUrl);
         if (typeof mod.resolveApiKeyForProvider === "function") {
           _resolveApiKeyForProvider = mod.resolveApiKeyForProvider;
+          if (typeof mod.getRuntimeAuthForModel === "function") {
+            _getRuntimeAuthForModel = mod.getRuntimeAuthForModel;
+            log.debug("loaded gateway getRuntimeAuthForModel from runtime module");
+          }
           _resolverLoaded = true;
           log.debug("loaded gateway resolveApiKeyForProvider from runtime module");
           return _resolveApiKeyForProvider;
@@ -231,11 +252,25 @@ function resolveFromEnv(providerId: string): string | undefined {
 }
 
 /**
+ * Get the gateway's getRuntimeAuthForModel function, if available.
+ * This resolves request-ready auth including provider-owned transforms
+ * (OAuth token exchange, base URL override for codex/copilot/etc.).
+ * Must be called after at least one resolveProviderApiKey() call to
+ * trigger the lazy module load.
+ */
+export async function getGatewayRuntimeAuthForModel(): Promise<GetRuntimeAuthForModelFn | null> {
+  // Ensure the runtime module has been loaded
+  await getGatewayResolver();
+  return _getRuntimeAuthForModel;
+}
+
+/**
  * Clear the resolution cache (useful for testing or key rotation).
  */
 export function clearSecretCache(): void {
   resolvedCache.clear();
   _resolveApiKeyForProvider = null;
+  _getRuntimeAuthForModel = null;
   _resolverLoaded = false;
   _resolverNextRetryAt = 0;
 }

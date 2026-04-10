@@ -5,55 +5,8 @@ import {
   buildChatCompletionTokenLimit,
   shouldAssumeOpenAiChatCompletions,
 } from "./openai-chat-compat.js";
-import { resolveProviderApiKey } from "./resolve-provider-secret.js";
+import { resolveProviderApiKey, getGatewayRuntimeAuthForModel } from "./resolve-provider-secret.js";
 import { loadModelsJsonProviders } from "./models-json.js";
-
-/**
- * Supported API formats that FallbackLlmClient can drive directly.
- */
-type SupportedApi = "openai-completions" | "anthropic-messages";
-
-/**
- * Normalize a provider's API format to one this client can drive.
- *
- * The gateway supports many transport formats (openai-codex-responses, ollama,
- * github-copilot, etc.) via its plugin system. This client only speaks
- * openai-completions and anthropic-messages. For providers using unsupported
- * formats, we map to a compatible format when the provider's auth token is
- * valid at a standard endpoint (e.g., openai-codex OAuth tokens work at
- * api.openai.com).
- */
-function normalizeApiTransport(
-  api: string | undefined,
-  providerId: string,
-): { api: SupportedApi; baseUrl?: string } {
-  switch (api) {
-    case "openai-completions":
-    case "openai-responses":
-    case undefined:
-      return { api: "openai-completions" };
-
-    case "anthropic-messages":
-      return { api: "anthropic-messages" };
-
-    // OpenAI-family transports: codex-responses uses ChatGPT backend-api but
-    // the OAuth token is also valid at the standard OpenAI API endpoint.
-    case "openai-codex-responses":
-    case "azure-openai-responses":
-      return { api: "openai-completions", baseUrl: "https://api.openai.com/v1" };
-
-    // Google Generative AI: uses a different protocol but shares API keys
-    // with the OpenAI-compatible endpoint that Google also serves.
-    case "google-generative-ai":
-      return { api: "openai-completions", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" };
-
-    default:
-      log.debug(`fallback LLM: unsupported API format "${api}" for provider "${providerId}"`);
-      // Return openai-completions as a best-effort — tryModel() will catch
-      // HTTP errors and the chain will continue to the next fallback.
-      return { api: "openai-completions" };
-  }
-}
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -316,56 +269,46 @@ export class FallbackLlmClient {
   }
 
   /**
-   * Resolve the API key for a provider, handling OpenClaw secret ref formats.
-   * Results are cached per provider so exec calls only happen once.
-   */
-  private async resolveApiKey(
-    providerId: string,
-    providerConfig: ModelProviderConfig,
-  ): Promise<string | undefined> {
-    return resolveProviderApiKey(providerId, providerConfig.apiKey, this.gatewayConfig);
-  }
-
-  /**
    * Try to call a single model.
+   *
+   * Uses the gateway's native getRuntimeAuthForModel when available — this
+   * handles all provider-specific auth transforms (OAuth token exchange,
+   * base URL overrides for codex/copilot/etc.) through the same codepath
+   * the gateway itself uses. Falls back to resolveProviderApiKey for
+   * simpler providers or when the runtime module isn't loaded.
    */
   private async tryModel(
     model: ModelRef,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
-    // Resolve the API key from secret refs before making the call.
+    // Try the gateway's native runtime auth first — it handles all provider-
+    // specific transforms (OAuth exchange, base URL rewrite, etc.)
+    const runtimeAuth = await this.resolveRuntimeAuth(model);
+    const effectiveBaseUrl = runtimeAuth?.baseUrl ?? model.providerConfig.baseUrl;
+    const resolvedApiKey = runtimeAuth?.apiKey ?? await this.resolveFallbackApiKey(model);
+
     // If the raw key looks like an unresolved secret ref and resolution fails,
     // skip this provider entirely so the chain falls through to the next.
     const rawKey = model.providerConfig.apiKey;
     const needsResolution = rawKey === "secretref-managed"
       || (typeof rawKey === "object" && rawKey !== null);
-    const resolvedApiKey = await this.resolveApiKey(model.providerId, model.providerConfig);
-
     if (needsResolution && !resolvedApiKey) {
       throw new Error(`API key for provider "${model.providerId}" could not be resolved from secret ref`);
     }
 
-    const configWithResolvedKey = resolvedApiKey
-      ? { ...model.providerConfig, apiKey: resolvedApiKey }
-      : model.providerConfig;
+    const effectiveConfig: ModelProviderConfig = {
+      ...model.providerConfig,
+      baseUrl: effectiveBaseUrl,
+      ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
+    };
 
-    // Resolve API format to a transport this client supports.
-    // Some providers use specialized formats (openai-codex-responses, ollama,
-    // github-copilot) that we can't drive directly — normalizeApiTransport()
-    // maps them to a compatible format when possible.
-    const transport = normalizeApiTransport(model.providerConfig.api, model.providerId);
-
-    switch (transport.api) {
+    switch (model.providerConfig.api) {
       case "anthropic-messages":
-        return await this.callAnthropic(
-          transport.baseUrl ? { ...configWithResolvedKey, baseUrl: transport.baseUrl } : configWithResolvedKey,
-          model.modelId, messages, options,
-        );
-      case "openai-completions": {
-        const effectiveConfig = transport.baseUrl
-          ? { ...configWithResolvedKey, baseUrl: transport.baseUrl }
-          : configWithResolvedKey;
+        return await this.callAnthropic(effectiveConfig, model.modelId, messages, options);
+      case "openai-completions":
+      case "openai-responses":
+      case undefined:
         return await this.callOpenAI(
           effectiveConfig,
           model.modelId,
@@ -373,12 +316,63 @@ export class FallbackLlmClient {
           options,
           shouldAssumeOpenAiChatCompletions(effectiveConfig.baseUrl),
         );
-      }
       default:
-        throw new Error(
-          `unsupported API format "${model.providerConfig.api}" for provider "${model.providerId}"`,
+        // For other API formats (openai-codex-responses, ollama, etc.),
+        // try OpenAI chat completions — the gateway's runtime auth resolver
+        // returns the request-ready base URL and credentials that work with
+        // the standard chat completions endpoint for many providers.
+        return await this.callOpenAI(
+          effectiveConfig,
+          model.modelId,
+          messages,
+          options,
+          shouldAssumeOpenAiChatCompletions(effectiveConfig.baseUrl),
         );
     }
+  }
+
+  /**
+   * Resolve request-ready auth through the gateway's native runtime, which
+   * handles provider-specific transforms (OAuth token exchange for codex/copilot,
+   * base URL rewrite, etc.). Returns null if the runtime isn't available.
+   */
+  private async resolveRuntimeAuth(
+    model: ModelRef,
+  ): Promise<{ apiKey?: string; baseUrl?: string } | null> {
+    try {
+      const getRuntimeAuth = await getGatewayRuntimeAuthForModel();
+      if (!getRuntimeAuth) return null;
+
+      const result = await getRuntimeAuth({
+        model: {
+          provider: model.providerId,
+          id: model.modelId,
+          api: model.providerConfig.api,
+          baseUrl: model.providerConfig.baseUrl,
+        },
+        cfg: this.gatewayConfig,
+      });
+
+      if (result?.apiKey) {
+        log.debug(
+          `fallback LLM: resolved runtime auth for "${model.modelString}" (source: ${result.source ?? "unknown"}, mode: ${result.mode ?? "unknown"})`,
+        );
+        return { apiKey: result.apiKey, baseUrl: result.baseUrl };
+      }
+    } catch (err) {
+      log.debug(
+        `fallback LLM: gateway runtime auth failed for "${model.modelString}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Resolve API key through the existing provider-level resolution (env vars,
+   * secret refs, etc.). Used as fallback when gateway runtime auth isn't available.
+   */
+  private async resolveFallbackApiKey(model: ModelRef): Promise<string | undefined> {
+    return resolveProviderApiKey(model.providerId, model.providerConfig.apiKey, this.gatewayConfig);
   }
 
   /**
